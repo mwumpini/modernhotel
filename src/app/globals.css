@@ -1,13 +1,27 @@
 @import "tailwindcss";
+@plugin './hero.ts';
+@source '../../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}';
 
 :root {
   --background: #ffffff;
   --foreground: #171717;
+  
+  /* Ghana-inspired color palette */
+  --ghana-gold: #FCD116;
+  --ghana-red: #CE1126;
+  --ghana-green: #006B3F;
+  --ghana-black: #000000;
+  --ghana-white: #FFFFFF;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-ghana-gold: var(--ghana-gold);
+  --color-ghana-red: var(--ghana-red);
+  --color-ghana-green: var(--ghana-green);
+  --color-ghana-black: var(--ghana-black);
+  --color-ghana-white: var(--ghana-white);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
