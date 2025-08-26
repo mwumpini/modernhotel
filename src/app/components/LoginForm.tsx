@@ -2,24 +2,36 @@
 
 import React, { useState } from 'react';
 import { Button, Input, Checkbox, Link } from "@heroui/react";
+import { signIn } from 'next-auth/react';
 
-interface LoginFormProps {
-  onLogin: () => void;
-}
-
-export default function LoginForm({ onLogin }: LoginFormProps) {
+export default function LoginForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [tenantId, setTenantId] = useState('demo'); // Default to demo tenant
   const [rememberMe, setRememberMe] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Handle login logic here
-    console.log('Login attempt:', { email, password, rememberMe });
-    
-    // For demo purposes, accept any login
-    if (email && password) {
-      onLogin();
+    setError('');
+    setIsLoading(true);
+
+    try {
+      const result = await signIn('credentials', {
+        email,
+        password,
+        tenantId,
+        redirect: false,
+      });
+
+      if (result?.error) {
+        setError('Invalid credentials. Please try again.');
+      }
+    } catch {
+      setError('An error occurred. Please try again.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -33,13 +45,28 @@ export default function LoginForm({ onLogin }: LoginFormProps) {
           <h2 className="text-3xl font-bold text-ghana-black">
             Welcome Back
           </h2>
-          <p className="mt-2 text-sm text-gray-600">
+          <p className="mt-2 text-sm text-ghana-black">
             Sign in to your hotel management account
           </p>
         </div>
         
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="space-y-4">
+            <Input
+              type="text"
+              label="Tenant ID"
+              placeholder="Enter tenant ID (e.g., demo)"
+              value={tenantId}
+              onChange={(e) => setTenantId(e.target.value)}
+              required
+              variant="bordered"
+              classNames={{
+                input: "text-ghana-black",
+                label: "text-ghana-black font-medium",
+                inputWrapper: "border-ghana-green focus-within:border-ghana-gold"
+              }}
+            />
+
             <Input
               type="email"
               label="Email Address"
@@ -71,6 +98,12 @@ export default function LoginForm({ onLogin }: LoginFormProps) {
             />
           </div>
 
+          {error && (
+            <div className="bg-red-50 border border-red-200 rounded-md p-3">
+              <p className="text-sm text-red-600">{error}</p>
+            </div>
+          )}
+
           <div className="flex items-center justify-between">
             <Checkbox
               checked={rememberMe}
@@ -94,22 +127,21 @@ export default function LoginForm({ onLogin }: LoginFormProps) {
             type="submit"
             className="w-full bg-ghana-green hover:bg-ghana-gold text-white font-semibold py-3 px-4 rounded-lg transition-all duration-200 transform hover:scale-105"
             size="lg"
+            isLoading={isLoading}
+            disabled={isLoading}
           >
-            Sign In
+            {isLoading ? 'Signing In...' : 'Sign In'}
           </Button>
-        </form>
 
-        <div className="text-center">
-          <p className="text-sm text-gray-600">
-            Don't have an account?{' '}
-            <Link
-              href="#"
-              className="text-ghana-green hover:text-ghana-gold font-medium transition-colors"
-            >
-              Contact Administrator
-            </Link>
-          </p>
-        </div>
+          <div className="text-center">
+            <p className="text-xs text-gray-500">
+              Demo Credentials: demo / admin@demohotel.com / any password
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Also try: manager@demohotel.com or staff@demohotel.com
+            </p>
+          </div>
+        </form>
       </div>
     </div>
   );

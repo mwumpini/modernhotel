@@ -1,0 +1,382 @@
+// Accounting Models for Ghana/Africa Hotel Management System
+
+// Chart of Accounts Structure
+export interface ChartOfAccounts {
+  id: string;
+  code: string;
+  name: string;
+  type: 'Asset' | 'Liability' | 'Equity' | 'Revenue' | 'Expense';
+  category: string;
+  subcategory?: string;
+  description?: string;
+  isActive: boolean;
+  parentAccount?: string;
+  level: number; // 1 = Main account, 2 = Sub-account, 3 = Detail account
+  currency: string; // GHS, USD, EUR, etc.
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Journal Entry
+export interface JournalEntry {
+  id: string;
+  entryNumber: string;
+  date: string;
+  reference: string;
+  description: string;
+  totalDebit: number;
+  totalCredit: number;
+  currency: string;
+  exchangeRate?: number;
+  status: 'Draft' | 'Posted' | 'Void';
+  postedBy?: string;
+  postedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: JournalEntryLine[];
+}
+
+// Journal Entry Line
+export interface JournalEntryLine {
+  id: string;
+  journalEntryId: string;
+  accountCode: string;
+  description: string;
+  debit: number;
+  credit: number;
+  currency: string;
+  exchangeRate?: number;
+  taxCode?: string;
+  taxAmount?: number;
+  department?: string;
+  project?: string;
+  costCenter?: string;
+  reference?: string;
+}
+
+// General Ledger Account Balance
+export interface GLBalance {
+  id: string;
+  accountCode: string;
+  period: string; // YYYY-MM format
+  openingBalance: number;
+  currentDebit: number;
+  currentCredit: number;
+  closingBalance: number;
+  currency: string;
+  lastUpdated: string;
+}
+
+// Tax Configuration
+export interface TaxConfig {
+  id: string;
+  code: string;
+  name: string;
+  rate: number;
+  type: 'VAT' | 'NHIL' | 'GETFund' | 'COVID19' | 'Tourism' | 'Withholding' | 'Other';
+  glAccountCode: string;
+  isRecoverable: boolean;
+  isActive: boolean;
+  effectiveFrom: string;
+  effectiveTo?: string;
+  countryCode: string;
+}
+
+// Financial Period
+export interface FinancialPeriod {
+  id: string;
+  name: string;
+  startDate: string;
+  endDate: string;
+  isOpen: boolean;
+  isCurrent: boolean;
+  year: number;
+  period: number; // 1-12 for months
+  createdAt: string;
+  closedAt?: string;
+  closedBy?: string;
+}
+
+// Bank Account
+export interface BankAccount {
+  id: string;
+  accountNumber: string;
+  accountName: string;
+  bankName: string;
+  branch?: string;
+  swiftCode?: string;
+  iban?: string;
+  currency: string;
+  glAccountCode: string;
+  openingBalance: number;
+  currentBalance: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Bank Transaction
+export interface BankTransaction {
+  id: string;
+  bankAccountId: string;
+  transactionDate: string;
+  reference: string;
+  description: string;
+  amount: number;
+  type: 'Deposit' | 'Withdrawal' | 'Transfer' | 'Charge' | 'Interest';
+  currency: string;
+  balance: number;
+  status: 'Pending' | 'Cleared' | 'Reconciled';
+  reconciledAt?: string;
+  reconciledBy?: string;
+  journalEntryId?: string;
+  createdAt: string;
+}
+
+// Customer/Supplier Account
+export interface BusinessPartner {
+  id: string;
+  code: string;
+  name: string;
+  type: 'Customer' | 'Supplier' | 'Both';
+  taxNumber?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  contactPerson?: string;
+  creditLimit?: number;
+  paymentTerms?: number; // days
+  glAccountCode: string;
+  currency: string;
+  balance: number;
+  isActive: boolean;
+  countryCode: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Invoice
+export interface Invoice {
+  id: string;
+  invoiceNumber: string;
+  type: 'Sales' | 'Purchase';
+  date: string;
+  dueDate: string;
+  businessPartnerId: string;
+  reference?: string;
+  description: string;
+  subtotal: number;
+  taxAmount: number;
+  total: number;
+  currency: string;
+  exchangeRate?: number;
+  status: 'Draft' | 'Posted' | 'Paid' | 'Void';
+  paidAmount: number;
+  paidDate?: string;
+  journalEntryId?: string;
+  createdAt: string;
+  updatedAt: string;
+  lines: InvoiceLine[];
+}
+
+// Invoice Line
+export interface InvoiceLine {
+  id: string;
+  invoiceId: string;
+  itemCode?: string;
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+  taxCode?: string;
+  taxAmount: number;
+  glAccountCode: string;
+  costCenter?: string;
+  project?: string;
+}
+
+// Payment
+export interface Payment {
+  id: string;
+  paymentNumber: string;
+  date: string;
+  type: 'Receipt' | 'Payment';
+  businessPartnerId: string;
+  invoiceId?: string;
+  reference?: string;
+  description: string;
+  amount: number;
+  currency: string;
+  exchangeRate?: number;
+  paymentMethod: 'Cash' | 'Bank' | 'Check' | 'Card' | 'Mobile Money';
+  bankAccountId?: string;
+  checkNumber?: string;
+  status: 'Draft' | 'Posted' | 'Void';
+  journalEntryId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Fixed Asset
+export interface FixedAsset {
+  id: string;
+  assetNumber: string;
+  name: string;
+  description?: string;
+  category: string;
+  purchaseDate: string;
+  purchaseCost: number;
+  currency: string;
+  exchangeRate?: number;
+  usefulLife: number; // years
+  salvageValue: number;
+  depreciationMethod: 'Straight Line' | 'Declining Balance' | 'Units of Production';
+  depreciationRate: number;
+  accumulatedDepreciation: number;
+  netBookValue: number;
+  location?: string;
+  department?: string;
+  status: 'Active' | 'Disposed' | 'Under Maintenance';
+  glAccountCode: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Depreciation Schedule
+export interface DepreciationSchedule {
+  id: string;
+  assetId: string;
+  period: string; // YYYY-MM
+  depreciationAmount: number;
+  accumulatedDepreciation: number;
+  netBookValue: number;
+  isPosted: boolean;
+  journalEntryId?: string;
+  createdAt: string;
+}
+
+// Cost Center
+export interface CostCenter {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  parentCenter?: string;
+  manager?: string;
+  budget?: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Project
+export interface Project {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  startDate: string;
+  endDate?: string;
+  budget: number;
+  currency: string;
+  status: 'Active' | 'Completed' | 'On Hold' | 'Cancelled';
+  manager?: string;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Financial Report
+export interface FinancialReport {
+  id: string;
+  name: string;
+  type: 'Balance Sheet' | 'Income Statement' | 'Cash Flow' | 'Trial Balance' | 'Custom';
+  period: string;
+  currency: string;
+  data: any; // Report-specific data structure
+  generatedAt: string;
+  generatedBy: string;
+}
+
+// Audit Trail
+export interface AuditTrail {
+  id: string;
+  tableName: string;
+  recordId: string;
+  action: 'Create' | 'Update' | 'Delete' | 'Post' | 'Void';
+  oldValues?: any;
+  newValues?: any;
+  userId: string;
+  timestamp: string;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+// Ghana-Specific Tax Codes
+export const GHANA_TAX_CODES = {
+  VAT: { code: 'VAT', name: 'Value Added Tax', rate: 15.0, glCode: '2100' },
+  NHIL: { code: 'NHIL', name: 'National Health Insurance Levy', rate: 2.5, glCode: '2101' },
+  GETFUND: { code: 'GETFUND', name: 'Ghana Education Trust Fund', rate: 2.5, glCode: '2102' },
+  COVID19: { code: 'COVID19', name: 'COVID-19 Recovery Levy', rate: 1.0, glCode: '2103' },
+  TOURISM: { code: 'TOURISM', name: 'Tourism Development Levy', rate: 1.0, glCode: '2104' },
+  WITHHOLDING: { code: 'WITHHOLDING', name: 'Withholding Tax', rate: 5.0, glCode: '2105' }
+};
+
+// Standard Chart of Accounts for Ghana Hotels
+export const GHANA_CHART_OF_ACCOUNTS = [
+  // Assets (1000-1999)
+  { code: '1000', name: 'Current Assets', type: 'Asset', category: 'Current Assets', level: 1 },
+  { code: '1100', name: 'Cash and Cash Equivalents', type: 'Asset', category: 'Current Assets', level: 2 },
+  { code: '1110', name: 'Cash in Hand', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1120', name: 'Bank Accounts', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1200', name: 'Accounts Receivable', type: 'Asset', category: 'Current Assets', level: 2 },
+  { code: '1210', name: 'Guest Accounts Receivable', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1220', name: 'Other Receivables', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1300', name: 'Inventory', type: 'Asset', category: 'Current Assets', level: 2 },
+  { code: '1310', name: 'Food and Beverage Inventory', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1320', name: 'Housekeeping Supplies', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1330', name: 'Operating Supplies', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1400', name: 'Prepaid Expenses', type: 'Asset', category: 'Current Assets', level: 2 },
+  { code: '1500', name: 'Fixed Assets', type: 'Asset', category: 'Fixed Assets', level: 1 },
+  { code: '1510', name: 'Property and Equipment', type: 'Asset', category: 'Fixed Assets', level: 2 },
+  { code: '1520', name: 'Accumulated Depreciation', type: 'Asset', category: 'Fixed Assets', level: 2 },
+
+  // Liabilities (2000-2999)
+  { code: '2000', name: 'Current Liabilities', type: 'Liability', category: 'Current Liabilities', level: 1 },
+  { code: '2100', name: 'Tax Payables', type: 'Liability', category: 'Current Liabilities', level: 2 },
+  { code: '2110', name: 'VAT Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
+  { code: '2120', name: 'NHIL Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
+  { code: '2130', name: 'GETFund Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
+  { code: '2140', name: 'COVID-19 Levy Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
+  { code: '2150', name: 'Tourism Levy Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
+  { code: '2200', name: 'Accounts Payable', type: 'Liability', category: 'Current Liabilities', level: 2 },
+  { code: '2300', name: 'Accrued Expenses', type: 'Liability', category: 'Current Liabilities', level: 2 },
+  { code: '2400', name: 'Deferred Revenue', type: 'Liability', category: 'Current Liabilities', level: 2 },
+
+  // Equity (3000-3999)
+  { code: '3000', name: 'Owner\'s Equity', type: 'Equity', category: 'Equity', level: 1 },
+  { code: '3100', name: 'Share Capital', type: 'Equity', category: 'Equity', level: 2 },
+  { code: '3200', name: 'Retained Earnings', type: 'Equity', category: 'Equity', level: 2 },
+  { code: '3300', name: 'Current Year Earnings', type: 'Equity', category: 'Equity', level: 2 },
+
+  // Revenue (4000-4999)
+  { code: '4000', name: 'Operating Revenue', type: 'Revenue', category: 'Revenue', level: 1 },
+  { code: '4100', name: 'Room Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
+  { code: '4200', name: 'Food and Beverage Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
+  { code: '4300', name: 'Other Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
+  { code: '4400', name: 'Service Charges', type: 'Revenue', category: 'Revenue', level: 2 },
+
+  // Expenses (5000-5999)
+  { code: '5000', name: 'Operating Expenses', type: 'Expense', category: 'Expenses', level: 1 },
+  { code: '5100', name: 'Cost of Goods Sold', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5110', name: 'Food and Beverage Cost', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5200', name: 'Payroll Expenses', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5210', name: 'Salaries and Wages', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5220', name: 'Employee Benefits', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5300', name: 'Utilities', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5400', name: 'Maintenance and Repairs', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5500', name: 'Marketing and Advertising', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5600', name: 'Administrative Expenses', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5700', name: 'Depreciation Expense', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5800', name: 'Tax Expenses', type: 'Expense', category: 'Expenses', level: 2 }
+];

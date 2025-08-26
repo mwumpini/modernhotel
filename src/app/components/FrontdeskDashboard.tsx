@@ -7,719 +7,609 @@ import {
   CardHeader, 
   Button, 
   Badge, 
-  Table,
-  TableHeader,
-  TableColumn,
-  TableBody,
-  TableRow,
-  TableCell,
-  Input,
-  Select,
-  SelectItem,
-  Chip,
-  Progress,
-  Avatar,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  useDisclosure,
-  Tabs,
-  Tab
+  Tabs, 
+  Tab,
+  Chip
 } from "@heroui/react";
 import OfflineIndicator from './OfflineIndicator';
-
-interface Guest {
-  id: string;
-  name: string;
-  roomNumber: string;
-  checkIn: string;
-  checkOut: string;
-  status: 'checked-in' | 'checked-out' | 'extended' | 'vip';
-  phone: string;
-  email: string;
-  nationality: string;
-  ghanaCard: string;
-}
-
-interface Booking {
-  id: string;
-  guestName: string;
-  roomType: string;
-  checkIn: string;
-  checkOut: string;
-  status: 'confirmed' | 'pending' | 'cancelled';
-  amount: string;
-  paymentStatus: 'paid' | 'pending' | 'partial';
-  source: string;
-}
-
-interface Room {
-  number: string;
-  type: string;
-  status: 'available' | 'occupied' | 'maintenance' | 'cleaning' | 'reserved';
-  guest?: string;
-  checkIn?: string;
-  checkOut?: string;
-  rate: string;
-  floor: string;
-}
+import { useRouter } from 'next/navigation';
 
 export default function FrontdeskDashboard() {
-  const { isOpen, onOpen, onClose } = useDisclosure();
   const [selectedTab, setSelectedTab] = useState("overview");
+  const router = useRouter();
 
-  const guests: Guest[] = [
+  // Room status data - this would typically come from your backend/database
+  const roomStatusData = {
+    totalRooms: 50,
+    available: {
+      total: 28,
+      breakdown: {
+        standard: 18,
+        deluxe: 8,
+        suite: 2
+      }
+    },
+    occupied: {
+      total: 20,
+      breakdown: {
+        checkingOutToday: 5,
+        extendedStays: 12,
+        vipGuests: 3
+      }
+    },
+    maintenance: {
+      total: 2,
+      breakdown: {
+        underMaintenance: 1,
+        deepCleaning: 1,
+        readySoon: 0
+      }
+    },
+    todayOperations: {
+      checkIns: 8,
+      checkOuts: 5,
+      maintenance: 2
+    }
+  };
+
+  const operationalItems = [
     {
-      id: 'G001',
-      name: 'John Doe',
-      roomNumber: '205',
-      checkIn: '2024-01-15',
-      checkOut: '2024-01-18',
-      status: 'checked-in',
-      phone: '+233 24 123 4567',
-      email: 'john.doe@email.com',
-      nationality: 'Ghanaian',
-      ghanaCard: 'GHA-123456789-0'
+      category: 'Reservations & Bookings',
+      items: [
+        { title: '📅 Reservations', icon: '📅', description: 'Manage room reservations and bookings', status: 'active', count: 45 },
+        { title: '🏠 Rooms & Bookings', icon: '🏠', description: 'View and manage room assignments', status: 'active', count: 156 },
+        { title: '📋 Room Management', icon: '📋', description: 'Room status and maintenance tracking', status: 'active', count: 156 },
+        { title: '👥 Manage Clients', icon: '👥', description: 'Client profiles and management', status: 'active', count: 234 },
+      ]
     },
     {
-      id: 'G002',
-      name: 'Sarah Johnson',
-      roomNumber: '312',
-      checkIn: '2024-01-14',
-      checkOut: '2024-01-20',
-      status: 'extended',
-      phone: '+233 20 987 6543',
-      email: 'sarah.j@email.com',
-      nationality: 'American',
-      ghanaCard: 'N/A'
+      category: 'Guest Services',
+      items: [
+        { title: '✅ Check-ins', icon: '✅', description: 'Guest check-in processing', status: 'active', count: 12 },
+        { title: '🏠 In-House', icon: '🏠', description: 'Current guest management', status: 'active', count: 142 },
+        { title: '🚪 Check-outs', icon: '🚪', description: 'Guest check-out processing', status: 'active', count: 8 },
+        { title: '👥 Guest Experience Manager', icon: '👥', description: 'Guest satisfaction and services', status: 'active', count: 142 },
+        { title: '📱 Mobile Guest Services', icon: '📱', description: 'Mobile app guest services', status: 'active', count: 89 },
+      ]
     },
     {
-      id: 'G003',
-      name: 'Kwame Asante',
-      roomNumber: '401',
-      checkIn: '2024-01-10',
-      checkOut: '2024-01-25',
-      status: 'vip',
-      phone: '+233 26 555 1234',
-      email: 'kasante@company.com',
-      nationality: 'Ghanaian',
-      ghanaCard: 'GHA-987654321-0'
+      category: 'Financial Operations',
+      items: [
+        { title: '💰 Invoices & Payments', icon: '💰', description: 'Billing and payment processing', status: 'active', count: 67 },
+        { title: '👥 Clients & Services', icon: '👥', description: 'Client relationship management', status: 'active', count: 234 },
+      ]
+    },
+    {
+      category: 'Tools & Support',
+      items: [
+        { title: '🛠️ Tools & Templates', icon: '🛠️', description: 'Operational tools and templates', status: 'active', count: 15 },
+        { title: '📊 View Activities', icon: '📊', description: 'Activity logs and audit trails', status: 'active', count: 1234 },
+      ]
+    },
+
+    {
+      category: 'User Preferences',
+      items: [
+        { title: '⚙️ System Settings', icon: '⚙️', description: 'System configuration and preferences', status: 'active', count: 12 },
+        { title: '👤 User Management', icon: '👤', description: 'User accounts and permissions', status: 'active', count: 89 },
+        { title: '🎨 Interface Customization', icon: '🎨', description: 'Personalize dashboard and interface', status: 'active', count: 34 },
+        { title: '🔔 Notification Settings', icon: '🔔', description: 'Alert and notification preferences', status: 'active', count: 56 },
+      ]
     }
   ];
-
-  const bookings: Booking[] = [
-    {
-      id: 'B001',
-      guestName: 'Michael Brown',
-      roomType: 'Deluxe Room',
-      checkIn: '2024-01-16',
-      checkOut: '2024-01-19',
-      status: 'confirmed',
-      amount: '₵2,400',
-      paymentStatus: 'paid',
-      source: 'Direct Booking'
-    },
-    {
-      id: 'B002',
-      guestName: 'Lisa Wang',
-      roomType: 'Standard Room',
-      checkIn: '2024-01-17',
-      checkOut: '2024-01-20',
-      status: 'pending',
-      amount: '₵1,800',
-      paymentStatus: 'pending',
-      source: 'Booking.com'
-    },
-    {
-      id: 'B003',
-      guestName: 'David Osei',
-      roomType: 'Suite',
-      checkIn: '2024-01-18',
-      checkOut: '2024-01-22',
-      status: 'confirmed',
-      amount: '₵4,500',
-      paymentStatus: 'partial',
-      source: 'Corporate'
-    }
-  ];
-
-  const rooms: Room[] = [
-    { number: '101', type: 'Standard', status: 'available', rate: '₵600', floor: '1st' },
-    { number: '102', type: 'Standard', status: 'occupied', guest: 'John Doe', checkIn: '2024-01-15', checkOut: '2024-01-18', rate: '₵600', floor: '1st' },
-    { number: '103', type: 'Standard', status: 'cleaning', rate: '₵600', floor: '1st' },
-    { number: '201', type: 'Deluxe', status: 'available', rate: '₵800', floor: '2nd' },
-    { number: '202', type: 'Deluxe', status: 'reserved', rate: '₵800', floor: '2nd' },
-    { number: '203', type: 'Deluxe', status: 'maintenance', rate: '₵800', floor: '2nd' },
-    { number: '301', type: 'Suite', status: 'occupied', guest: 'Kwame Asante', checkIn: '2024-01-10', checkOut: '2024-01-25', rate: '₵1,200', floor: '3rd' },
-    { number: '302', type: 'Suite', status: 'available', rate: '₵1,200', floor: '3rd' }
-  ];
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'available': return 'success';
-      case 'occupied': return 'danger';
-      case 'maintenance': return 'warning';
-      case 'cleaning': return 'secondary';
-      case 'reserved': return 'primary';
-      default: return 'default';
-    }
-  };
-
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'available': return 'Available';
-      case 'occupied': return 'Occupied';
-      case 'maintenance': return 'Maintenance';
-      case 'cleaning': return 'Cleaning';
-      case 'reserved': return 'Reserved';
-      default: return status;
-    }
-  };
-
-  const getGuestStatusColor = (status: string) => {
-    switch (status) {
-      case 'checked-in': return 'success';
-      case 'checked-out': return 'default';
-      case 'extended': return 'warning';
-      case 'vip': return 'secondary';
-      default: return 'default';
-    }
-  };
-
-  const getPaymentStatusColor = (status: string) => {
-    switch (status) {
-      case 'paid': return 'success';
-      case 'pending': return 'warning';
-      case 'partial': return 'secondary';
-      default: return 'default';
-    }
-  };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-ghana-black">🏨 Front Office Operations</h1>
-              <p className="text-gray-600 mt-2">Guest Services & Room Management Center</p>
-            </div>
-            
-            {/* System Status Indicators */}
-            <div className="flex items-center space-x-4">
-              <OfflineIndicator />
-              <div className="text-center">
-                <div className="h-3 w-3 bg-green-500 rounded-full mb-1"></div>
-                <span className="text-sm font-medium text-green-600">Front Desk Open</span>
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-ghana-black">🏨 Front Office Operations</h2>
+        <OfflineIndicator />
+      </div>
+
+      {/* Room Status Overview */}
+      <div className="mb-8">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-semibold text-ghana-black flex items-center gap-2">
+            🏠 Room Status Overview - Ghana Hotel ({roomStatusData.totalRooms} Rooms)
+          </h3>
+        </div>
+        
+        {/* Status Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          {/* Available Rooms */}
+          <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
+            <CardBody className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-lg font-semibold text-ghana-black">Available Rooms</h4>
+                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
               </div>
-              <div className="text-center">
-                <div className="h-3 w-3 bg-blue-500 rounded-full mb-1"></div>
-                <span className="text-sm font-medium text-blue-600">24/7 Service</span>
+              <div className="text-3xl font-bold text-green-600 mb-3">{roomStatusData.available.total}</div>
+              <div className="space-y-1 text-sm text-gray-600">
+                <div className="flex justify-between">
+                  <span>Standard Rooms</span>
+                  <span className="font-medium">{roomStatusData.available.breakdown.standard}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Deluxe Rooms</span>
+                  <span className="font-medium">{roomStatusData.available.breakdown.deluxe}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Suite Rooms</span>
+                  <span className="font-medium">{roomStatusData.available.breakdown.suite}</span>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          {/* Occupied Rooms */}
+          <Card className="border-0 shadow-lg border-l-4 border-l-red-500">
+            <CardBody className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-lg font-semibold text-ghana-black">Occupied Rooms</h4>
+                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+              </div>
+              <div className="text-3xl font-bold text-red-600 mb-3">{roomStatusData.occupied.total}</div>
+              <div className="space-y-1 text-sm text-gray-600">
+                <div className="flex justify-between">
+                  <span>Checking Out Today</span>
+                  <span className="font-medium">{roomStatusData.occupied.breakdown.checkingOutToday}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Extended Stays</span>
+                  <span className="font-medium">{roomStatusData.occupied.breakdown.extendedStays}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>VIP Guests</span>
+                  <span className="font-medium">{roomStatusData.occupied.breakdown.vipGuests}</span>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          {/* Maintenance & Cleaning */}
+          <Card className="border-0 shadow-lg border-l-4 border-l-yellow-500">
+            <CardBody className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-lg font-semibold text-ghana-black">Maintenance & Cleaning</h4>
+                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+              </div>
+              <div className="text-3xl font-bold text-yellow-600 mb-3">{roomStatusData.maintenance.total}</div>
+              <div className="space-y-1 text-sm text-gray-600">
+                <div className="flex justify-between">
+                  <span>Under Maintenance</span>
+                  <span className="font-medium">{roomStatusData.maintenance.breakdown.underMaintenance}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Deep Cleaning</span>
+                  <span className="font-medium">{roomStatusData.maintenance.breakdown.deepCleaning}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Ready Soon</span>
+                  <span className="font-medium">{roomStatusData.maintenance.breakdown.readySoon}</span>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+        </div>
+
+        {/* Today's Room Operations */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">📅</span>
+              <h4 className="text-lg font-semibold text-ghana-black">Today's Room Operations</h4>
+            </div>
+            <div className="flex items-center gap-6 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-green-600 font-medium">{roomStatusData.todayOperations.checkIns} Check-ins</span>
+                <span className="text-gray-500">Starting 2:00 PM</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-blue-600 font-medium">{roomStatusData.todayOperations.checkOuts} Check-outs</span>
+                <span className="text-gray-500">By 12:00 PM</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-orange-600 font-medium">{roomStatusData.todayOperations.maintenance} Maintenance</span>
+                <span className="text-gray-500">Scheduled</span>
               </div>
             </div>
           </div>
+          <Button 
+            color="success" 
+            variant="solid"
+            className="bg-green-600 hover:bg-green-700"
+            onClick={() => router.push('/room-assignments')}
+          >
+            🏢 View Full Status
+          </Button>
         </div>
+      </div>
 
-        {/* Room Status Overview */}
-        <Card className="border-0 shadow-lg mb-6">
-          <CardHeader className="pb-3">
-            <h2 className="text-xl font-semibold text-ghana-black">🏠 Room Status Overview - Ghana Hotel (50 Rooms)</h2>
-          </CardHeader>
-          <CardBody>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-              <div className="text-center p-4 bg-green-50 rounded-lg border border-green-200">
-                <div className="flex items-center justify-center space-x-2 mb-2">
-                  <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                  <span className="text-lg font-semibold text-green-800">Available Rooms</span>
-                </div>
-                <p className="text-3xl font-bold text-green-600">28</p>
-                <div className="text-sm text-green-700 mt-2">
-                  <p>18 Standard Rooms</p>
-                  <p>8 Deluxe Rooms</p>
-                  <p>2 Suite Rooms</p>
-                </div>
-              </div>
-              
-              <div className="text-center p-4 bg-red-50 rounded-lg border border-red-200">
-                <div className="flex items-center justify-center space-x-2 mb-2">
-                  <div className="h-3 w-3 bg-red-500 rounded-full"></div>
-                  <span className="text-lg font-semibold text-red-800">Occupied Rooms</span>
-                </div>
-                <p className="text-3xl font-bold text-red-600">20</p>
-                <div className="text-sm text-red-700 mt-2">
-                  <p>5 Checking Out Today</p>
-                  <p>12 Extended Stays</p>
-                  <p>3 VIP Guests</p>
-                </div>
-              </div>
-              
-              <div className="text-center p-4 bg-yellow-50 rounded-lg border border-yellow-200">
-                <div className="flex items-center justify-center space-x-2 mb-2">
-                  <div className="h-3 w-3 bg-yellow-500 rounded-full"></div>
-                  <span className="text-lg font-semibold text-yellow-800">Maintenance & Cleaning</span>
-                </div>
-                <p className="text-3xl font-bold text-yellow-600">2</p>
-                <div className="text-sm text-yellow-700 mt-2">
-                  <p>1 Under Maintenance</p>
-                  <p>1 Deep Cleaning</p>
-                  <p>0 Ready Soon</p>
-                </div>
-              </div>
-            </div>
-
-            {/* Today's Room Operations */}
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h3 className="text-lg font-semibold text-ghana-black mb-4">📅 Today's Room Operations</h3>
-              <div className="flex items-center justify-between">
-                <div className="flex space-x-4">
-                  <div className="flex items-center space-x-2">
-                    <div className="h-4 w-4 bg-green-500 rounded"></div>
-                    <span className="text-sm font-medium text-green-600">8 Check-ins</span>
-                    <span className="text-xs text-gray-500">Starting 2:00 PM</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <div className="h-4 w-4 bg-blue-500 rounded"></div>
-                    <span className="text-sm font-medium text-blue-600">5 Check-outs</span>
-                    <span className="text-xs text-gray-500">By 12:00 PM</span>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <div className="h-4 w-4 bg-yellow-500 rounded"></div>
-                    <span className="text-sm font-medium text-yellow-600">2 Maintenance</span>
-                    <span className="text-xs text-gray-500">Scheduled</span>
-                  </div>
-                </div>
-                <Button
-                  color="primary"
-                  className="bg-ghana-green text-white"
-                  variant="flat"
-                >
-                  🏢 View Full Status
-                </Button>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-
-        {/* Hotel Facilities & Services */}
-        <Card className="border-0 shadow-lg mb-6">
-          <CardHeader className="pb-3">
-            <h3 className="text-lg font-semibold text-ghana-black">🏨 Ghana Hotel Facilities & Services</h3>
-          </CardHeader>
-          <CardBody>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-              <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <div className="text-3xl mb-2">🛏️</div>
-                <h4 className="font-semibold text-blue-800">50 Rooms</h4>
-                <p className="text-sm text-blue-600">Accommodation</p>
-              </div>
-              <div className="text-center p-4 bg-purple-50 rounded-lg border border-purple-200">
-                <div className="text-3xl mb-2">🏢</div>
-                <h4 className="font-semibold text-purple-800">3 Conference Halls</h4>
-                <p className="text-sm text-purple-600">Events & Meetings</p>
-              </div>
-              <div className="text-center p-4 bg-green-50 rounded-lg border border-green-200">
-                <div className="text-3xl mb-2">☕</div>
-                <h4 className="font-semibold text-green-800">Restaurant & Bar</h4>
-                <p className="text-sm text-green-600">Dining</p>
-              </div>
-              <div className="text-center p-4 bg-orange-50 rounded-lg border border-orange-200">
-                <div className="text-3xl mb-2">🏊</div>
-                <h4 className="font-semibold text-orange-800">Swimming Pool</h4>
-                <p className="text-sm text-orange-600">Recreation</p>
-              </div>
-              <div className="text-center p-4 bg-pink-50 rounded-lg border border-pink-200">
-                <div className="text-3xl mb-2">✨</div>
-                <h4 className="font-semibold text-pink-800">Massage Parlor</h4>
-                <p className="text-sm text-pink-600">Wellness</p>
-              </div>
-              <div className="text-center p-4 bg-indigo-50 rounded-lg border border-indigo-200">
-                <div className="text-3xl mb-2">🎵</div>
-                <h4 className="font-semibold text-indigo-800">Nightclub</h4>
-                <p className="text-sm text-indigo-600">Entertainment</p>
-              </div>
-              <div className="text-center p-4 bg-teal-50 rounded-lg border border-teal-200">
-                <div className="text-3xl mb-2">🚗</div>
-                <h4 className="font-semibold text-teal-800">Vehicle Rental</h4>
-                <p className="text-sm text-teal-600">Transport</p>
-              </div>
-              <div className="text-center p-4 bg-gray-50 rounded-lg border border-gray-200">
-                <div className="text-3xl mb-2">🛍️</div>
-                <h4 className="font-semibold text-gray-800">Mini Shop</h4>
-                <p className="text-sm text-gray-600">Essentials</p>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="flex items-center space-x-2 p-3 bg-gray-50 rounded-lg">
-                <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                <span className="text-sm text-gray-700">Free WiFi Internet</span>
-              </div>
-              <div className="flex items-center space-x-2 p-3 bg-gray-50 rounded-lg">
-                <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                <span className="text-sm text-gray-700">Airport Pickup Service</span>
-              </div>
-              <div className="flex items-center space-x-2 p-3 bg-gray-50 rounded-lg">
-                <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                <span className="text-sm text-gray-700">Tour Services</span>
-              </div>
-              <div className="flex items-center space-x-2 p-3 bg-gray-50 rounded-lg">
-                <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                <span className="text-sm text-gray-700">24/7 Front Desk</span>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-
-        {/* Main Content Tabs */}
-        <Card className="border-0 shadow-lg mb-6">
-          <CardHeader className="pb-3">
-            <Tabs 
-              selectedKey={selectedTab} 
-              onSelectionChange={(key) => setSelectedTab(key as string)}
-              className="w-full"
-            >
-              <Tab key="overview" title="📊 Overview" />
-              <Tab key="rooms" title="🏠 Room Management" />
-              <Tab key="guests" title="👥 Guest Services" />
-              <Tab key="bookings" title="📅 Bookings" />
-              <Tab key="conference" title="🏢 Conference Halls" />
-            </Tabs>
-          </CardHeader>
-          <CardBody>
-            {selectedTab === "overview" && (
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Quick Actions */}
-                <div>
-                  <h3 className="text-lg font-semibold text-ghana-black mb-4">🚀 Quick Actions</h3>
-                  <div className="space-y-3">
-                    <Button
-                      variant="flat"
-                      className="w-full justify-start bg-ghana-green text-white h-12"
-                      size="lg"
-                    >
-                      <span className="mr-3">📅</span>
-                      Create New Booking
-                    </Button>
-                    <Button
-                      variant="flat"
-                      className="w-full justify-start bg-blue-500 text-white h-12"
-                      size="lg"
-                    >
-                      <span className="mr-3">📄</span>
-                      Generate Invoice
-                    </Button>
-                    <Button
-                      variant="flat"
-                      className="w-full justify-start bg-ghana-gold text-white h-12"
-                      size="lg"
-                    >
-                      <span className="mr-3">👤</span>
-                      Add New Client
-                    </Button>
-                    <Button
-                      variant="flat"
-                      className="w-full justify-start bg-purple-500 text-white h-12"
-                      size="lg"
-                    >
-                      <span className="mr-3">🏢</span>
-                      Book Conference Hall
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Recent Activity */}
-                <div>
-                  <h3 className="text-lg font-semibold text-ghana-black mb-4">📋 Recent Activity</h3>
-                  <div className="space-y-3">
-                    <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                      <span className="text-sm text-gray-800">Invoice #INV-001 sent (2 minutes ago)</span>
-                    </div>
-                    <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <div className="h-3 w-3 bg-blue-500 rounded-full"></div>
-                      <span className="text-sm text-gray-800">New booking from John Doe (5 minutes ago)</span>
-                    </div>
-                    <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <div className="h-3 w-3 bg-purple-500 rounded-full"></div>
-                      <span className="text-sm text-gray-800">Hall 1 booked for conference (10 minutes ago)</span>
-                    </div>
-                    <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                      <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                      <span className="text-sm text-gray-800">Payment received (1 hour ago)</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {selectedTab === "rooms" && (
-              <div>
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold text-ghana-black">🏠 Room Status Grid</h3>
-                  <Button
-                    color="primary"
-                    className="bg-ghana-green text-white"
-                    variant="flat"
-                    onClick={onOpen}
-                  >
-                    🔧 Manage Rooms
-                  </Button>
-                </div>
-                
-                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
-                  {rooms.map((room) => (
-                    <div
-                      key={room.number}
-                      className={`p-3 rounded-lg border-2 cursor-pointer transition-all hover:shadow-md ${
-                        room.status === 'available' ? 'bg-green-50 border-green-200' :
-                        room.status === 'occupied' ? 'bg-red-50 border-red-200' :
-                        room.status === 'maintenance' ? 'bg-yellow-50 border-yellow-200' :
-                        room.status === 'cleaning' ? 'bg-blue-50 border-blue-200' :
-                        'bg-purple-50 border-purple-200'
-                      }`}
-                    >
-                      <div className="text-center">
-                        <p className="font-bold text-lg text-ghana-black">{room.number}</p>
-                        <p className="text-xs text-gray-600">{room.type}</p>
-                        <Badge
-                          color={getStatusColor(room.status)}
-                          variant="flat"
-                          size="sm"
-                          className="mt-1"
-                        >
-                          {getStatusText(room.status)}
-                        </Badge>
-                        {room.guest && (
-                          <p className="text-xs text-gray-600 mt-1 truncate">{room.guest}</p>
-                        )}
-                        <p className="text-xs font-semibold text-ghana-black mt-1">{room.rate}</p>
+      {/* Main Operations Interface */}
+      <Card className="border-0 shadow-lg">
+        <CardHeader className="pb-3">
+          <h3 className="text-xl font-semibold text-ghana-black">📊 Operations Overview</h3>
+        </CardHeader>
+        <CardBody>
+          <Tabs 
+            selectedKey={selectedTab} 
+            onSelectionChange={(key) => {
+              console.log(`[FRONT-OFFICE] Tab changed from ${selectedTab} to ${key}`);
+              setSelectedTab(key as string);
+            }}
+            className="w-full"
+          >
+            <Tab key="overview" title="📊 Overview">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-4">
+                {operationalItems.slice(0, 4).map((category, categoryIndex) => (
+                  <Card key={categoryIndex} className="border border-gray-200 shadow-md">
+                    <CardHeader className="pb-3">
+                      <h4 className="text-lg font-semibold text-ghana-black">{category.category}</h4>
+                    </CardHeader>
+                    <CardBody className="pt-0">
+                      <div className="space-y-3">
+                        {category.items.map((item, itemIndex) => (
+                          <div 
+                            key={itemIndex}
+                            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
+                            onClick={() => {
+                              // Handle navigation based on item type
+                              if (item.title.includes('Reservations')) {
+                                router.push('/reservations');
+                              } else if (item.title.includes('Rooms & Bookings')) {
+                                router.push('/room-assignments');
+                              } else if (item.title.includes('Room Management')) {
+                                router.push('/room-status');
+                              } else if (item.title.includes('Manage Clients')) {
+                                router.push('/manage-clients');
+                              } else if (item.title.includes('Check-ins')) {
+                                router.push('/guest-services/check-ins');
+                              } else if (item.title.includes('In-House')) {
+                                router.push('/guest-services/in-house');
+                              } else if (item.title.includes('Check-outs')) {
+                                router.push('/guest-services/check-outs');
+                              } else if (item.title.includes('Guest Experience Manager')) {
+                                router.push('/guest-services/guest-experience');
+                              } else if (item.title.includes('Mobile Guest Services')) {
+                                router.push('/guest-services/mobile-services');
+                              } else if (item.title.includes('Invoices & Payments')) {
+                                router.push('/financial-operations/invoices-payments');
+                              } else if (item.title.includes('Clients & Services')) {
+                                router.push('/financial-operations/clients-services');
+                              } else if (item.title.includes('Tools & Templates')) {
+                                router.push('/tools-support/tools-templates');
+                              } else if (item.title.includes('View Activities')) {
+                                router.push('/tools-support/view-activities');
+                              }
+                            }}
+                          >
+                            <div className="flex items-center space-x-3">
+                              <span className="text-xl">{item.icon}</span>
+                              <div>
+                                <p className="font-medium text-ghana-black">{item.title}</p>
+                                <p className="text-sm text-gray-600">{item.description}</p>
+                              </div>
+                            </div>
+                            <div className="flex items-center space-x-2">
+                              <Badge 
+                                color={item.status === 'active' ? 'success' : 'default'}
+                                variant="flat"
+                              >
+                                {item.status}
+                              </Badge>
+                              <Chip size="sm" variant="flat" color="primary">
+                                {item.count}
+                              </Chip>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    </div>
+                    </CardBody>
+                  </Card>
+                ))}
+              </div>
+            </Tab>
+            <Tab key="reservations" title="📅 Reservations">
+              <div className="mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {operationalItems[0].items.map((item, index) => (
+                    <Card key={index} className="border border-gray-200">
+                      <CardBody className="p-4">
+                        <div className="flex items-center space-x-3 mb-3">
+                          <span className="text-2xl">{item.icon}</span>
+                          <div>
+                            <h4 className="font-semibold text-ghana-black">{item.title}</h4>
+                            <p className="text-sm text-gray-600">{item.description}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <Badge color="success" variant="flat">{item.status}</Badge>
+                          <Chip size="sm" variant="flat" color="primary">{item.count}</Chip>
+                        </div>
+                        <div className="mt-3">
+                          <Button
+                            size="sm"
+                            color="primary"
+                            variant="flat"
+                            className="w-full"
+                            onClick={() => {
+                              if (item.title.includes('Reservations')) {
+                                router.push('/reservations');
+                              } else if (item.title.includes('Rooms & Bookings')) {
+                                router.push('/room-assignments');
+                              } else if (item.title.includes('Room Management')) {
+                                router.push('/room-status');
+                              } else if (item.title.includes('Manage Clients')) {
+                                router.push('/manage-clients');
+                              }
+                            }}
+                          >
+                            {item.title.includes('Reservations') ? '📅 Manage Reservations' :
+                             item.title.includes('Rooms & Bookings') ? '🏠 Manage Assignments' :
+                             '📋 Track Status'}
+                          </Button>
+                        </div>
+                      </CardBody>
+                    </Card>
                   ))}
                 </div>
               </div>
-            )}
-
-            {selectedTab === "guests" && (
-              <div>
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold text-ghana-black">👥 Current Guests</h3>
-                  <Button
-                    color="primary"
-                    className="bg-ghana-green text-white"
-                    variant="flat"
-                  >
-                    🔑 Check In/Out
-                  </Button>
-                </div>
-                
-                <Table aria-label="Current guests table">
-                  <TableHeader>
-                    <TableColumn>Guest</TableColumn>
-                    <TableColumn>Room</TableColumn>
-                    <TableColumn>Check In</TableColumn>
-                    <TableColumn>Check Out</TableColumn>
-                    <TableColumn>Status</TableColumn>
-                    <TableColumn>Ghana Card</TableColumn>
-                    <TableColumn>Actions</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {guests.map((guest) => (
-                      <TableRow key={guest.id}>
-                        <TableCell>
-                          <div className="flex items-center space-x-3">
-                            <Avatar
-                              name={guest.name}
-                              className="h-8 w-8 bg-gradient-to-br from-ghana-green to-ghana-gold text-white"
-                            />
-                            <div>
-                              <p className="font-semibold text-ghana-black">{guest.name}</p>
-                              <p className="text-xs text-gray-500">{guest.phone}</p>
-                            </div>
+            </Tab>
+            
+            <Tab key="guest-services" title="👥 Guest Services">
+              <div className="mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {operationalItems[1].items.map((item, index) => (
+                    <Card key={index} className="border border-gray-200">
+                      <CardBody className="p-4">
+                        <div className="flex items-center space-x-3 mb-3">
+                          <span className="text-2xl">{item.icon}</span>
+                          <div>
+                            <h4 className="font-semibold text-ghana-black">{item.title}</h4>
+                            <p className="text-sm text-gray-600">{item.description}</p>
                           </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge color="primary" variant="flat">{guest.roomNumber}</Badge>
-                        </TableCell>
-                        <TableCell>{guest.checkIn}</TableCell>
-                        <TableCell>{guest.checkOut}</TableCell>
-                        <TableCell>
-                          <Badge
-                            color={getGuestStatusColor(guest.status)}
+                        </div>
+                        <div className="flex items-center justify-between mb-3">
+                          <Badge color="success" variant="flat">{item.status}</Badge>
+                          <Chip size="sm" variant="flat" color="primary">{item.count}</Chip>
+                        </div>
+                        <div className="mt-3">
+                          <Button
+                            size="sm"
+                            color="primary"
                             variant="flat"
+                            className="w-full"
+                            onClick={() => {
+                              if (item.title.includes('Check-ins')) {
+                                router.push('/guest-services/check-ins?type=walkin');
+                              } else if (item.title.includes('In-House')) {
+                                router.push('/guest-services/in-house');
+                              } else if (item.title.includes('Check-outs')) {
+                                router.push('/guest-services/check-outs');
+                              } else if (item.title.includes('Guest Experience Manager')) {
+                                router.push('/guest-services/guest-experience');
+                              } else if (item.title.includes('Mobile Guest Services')) {
+                                router.push('/guest-services/mobile-services');
+                              }
+                            }}
                           >
-                            {guest.status.replace('-', ' ')}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <span className="text-xs font-mono bg-gray-100 px-2 py-1 rounded">
-                            {guest.ghanaCard}
-                          </span>
-                        </TableCell>
-                        <TableCell>
-                          <Button size="sm" variant="light">👁️</Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-
-            {selectedTab === "bookings" && (
-              <div>
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold text-ghana-black">📅 Recent Bookings</h3>
-                  <Button
-                    color="primary"
-                    className="bg-ghana-green text-white"
-                    variant="flat"
-                  >
-                    📅 New Booking
-                  </Button>
-                </div>
-                
-                <Table aria-label="Bookings table">
-                  <TableHeader>
-                    <TableColumn>Guest</TableColumn>
-                    <TableColumn>Room Type</TableColumn>
-                    <TableColumn>Check In</TableColumn>
-                    <TableColumn>Check Out</TableColumn>
-                    <TableColumn>Amount</TableColumn>
-                    <TableColumn>Payment</TableColumn>
-                    <TableColumn>Source</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {bookings.map((booking) => (
-                      <TableRow key={booking.id}>
-                        <TableCell>
-                          <p className="font-semibold text-ghana-black">{booking.guestName}</p>
-                        </TableCell>
-                        <TableCell>{booking.roomType}</TableCell>
-                        <TableCell>{booking.checkIn}</TableCell>
-                        <TableCell>{booking.checkOut}</TableCell>
-                        <TableCell>
-                          <span className="font-semibold text-ghana-black">{booking.amount}</span>
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            color={getPaymentStatusColor(booking.paymentStatus)}
-                            variant="flat"
-                          >
-                            {booking.paymentStatus}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Chip variant="flat" color="primary" size="sm">
-                            {booking.source}
-                          </Chip>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-
-            {selectedTab === "conference" && (
-              <div>
-                <h3 className="text-lg font-semibold text-ghana-black mb-4">🏢 Conference Halls Status</h3>
-                
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <Card className="border-0 shadow-lg">
-                    <CardBody className="p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="font-semibold text-ghana-black">Hall 1</h4>
-                        <Badge color="success" variant="flat">Available</Badge>
-                      </div>
-                      <p className="text-sm text-gray-600 mb-2">Capacity: 70 people</p>
-                      <p className="text-sm text-gray-600 mb-3">Next Booking: Tomorrow 9:00 AM</p>
-                      <div className="space-y-1">
-                        <p className="text-xs text-gray-500">• Projector</p>
-                        <p className="text-xs text-gray-500">• Sound System</p>
-                        <p className="text-xs text-gray-500">• AC</p>
-                        <p className="text-xs text-gray-500">• WiFi</p>
-                      </div>
-                    </CardBody>
-                  </Card>
-
-                  <Card className="border-0 shadow-lg">
-                    <CardBody className="p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="font-semibold text-ghana-black">Hall 2</h4>
-                        <Badge color="danger" variant="flat">Occupied</Badge>
-                      </div>
-                      <p className="text-sm text-gray-600 mb-2">Capacity: 30 people</p>
-                      <p className="text-sm text-gray-600 mb-3">Current Event: Board Meeting</p>
-                      <div className="space-y-1">
-                        <p className="text-xs text-gray-500">• Projector</p>
-                        <p className="text-xs text-gray-500">• Whiteboard</p>
-                        <p className="text-xs text-gray-500">• AC</p>
-                        <p className="text-xs text-gray-500">• WiFi</p>
-                      </div>
-                    </CardBody>
-                  </Card>
-
-                  <Card className="border-0 shadow-lg">
-                    <CardBody className="p-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="font-semibold text-ghana-black">Hall 3</h4>
-                        <Badge color="success" variant="flat">Available</Badge>
-                      </div>
-                      <p className="text-sm text-gray-600 mb-2">Capacity: 15 people</p>
-                      <p className="text-sm text-gray-600 mb-3">Next Booking: Friday 2:00 PM</p>
-                      <div className="space-y-1">
-                        <p className="text-xs text-gray-500">• Smart Board</p>
-                        <p className="text-xs text-gray-500">• Video Conf</p>
-                        <p className="text-xs text-gray-500">• AC</p>
-                        <p className="text-xs text-gray-500">• WiFi</p>
-                      </div>
-                    </CardBody>
-                  </Card>
+                            {item.title.includes('Check-ins') ? '✅ Process Check-ins' :
+                             item.title.includes('In-House') ? '🏠 Manage Guests' :
+                             item.title.includes('Check-outs') ? '🚪 Process Check-outs' :
+                             item.title.includes('Guest Experience Manager') ? '👥 Manage Experience' :
+                             '📱 Mobile Services'}
+                          </Button>
+                          {item.title.includes('Check-ins') && (
+                            <Button
+                              size="sm"
+                              color="secondary"
+                              variant="flat"
+                              className="w-full mt-2"
+                              onClick={() => router.push('/guest-services/check-ins?type=walkin&quick=true')}
+                            >
+                              🚶‍♂️ Quick Walk-In
+                            </Button>
+                          )}
+                        </div>
+                      </CardBody>
+                    </Card>
+                  ))}
                 </div>
               </div>
-            )}
-          </CardBody>
-        </Card>
+            </Tab>
+            
+            <Tab key="financial-operations" title="💰 Financial Operations">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/financial-operations/invoices-payments')}>
+                  <CardBody className="p-4 text-center">
+                    <div className="text-3xl mb-2">📄</div>
+                    <h3 className="text-lg font-semibold text-gray-800">Invoices & Payments</h3>
+                    <p className="text-sm text-gray-600">Billing and payment processing</p>
+                    <Button color="primary" variant="flat" size="sm" className="mt-3">Manage</Button>
+                  </CardBody>
+                </Card>
+                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/financial-operations/revenue-analytics')}>
+                  <CardBody className="p-4 text-center">
+                    <div className="text-3xl mb-2">📈</div>
+                    <h3 className="text-lg font-semibold text-gray-800">Revenue Analytics</h3>
+                    <p className="text-sm text-gray-600">Financial reporting and analysis</p>
+                    <Button color="primary" variant="flat" size="sm" className="mt-3">View</Button>
+                  </CardBody>
+                </Card>
+                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/financial-operations/payment-methods')}>
+                  <CardBody className="p-4 text-center">
+                    <div className="text-3xl mb-2">💳</div>
+                    <h3 className="text-lg font-semibold text-gray-800">Payment Methods</h3>
+                    <p className="text-sm text-gray-600">Payment options and methods</p>
+                    <Button color="primary" variant="flat" size="sm" className="mt-3">Configure</Button>
+                  </CardBody>
+                </Card>
+                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/financial-operations/tax-management')}>
+                  <CardBody className="p-4 text-center">
+                    <div className="text-3xl mb-2">🧮</div>
+                    <h3 className="text-lg font-semibold text-gray-800">Tax Management</h3>
+                    <p className="text-sm text-gray-600">VAT and tax compliance</p>
+                    <Button color="primary" variant="flat" size="sm" className="mt-3">Manage</Button>
+                  </CardBody>
+                </Card>
+              </div>
+            </Tab>
+            
+            <Tab key="tools-support" title="🛠️ Tools & Support">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/tools-support/tools-templates')}>
+                  <CardBody className="p-4 text-center">
+                    <div className="text-3xl mb-2">🛠️</div>
+                    <h3 className="text-lg font-semibold text-gray-800">Tools & Templates</h3>
+                    <p className="text-sm text-gray-600">Operational tools and communication templates</p>
+                    <Button color="primary" variant="flat" size="sm" className="mt-3">Manage</Button>
+                  </CardBody>
+                </Card>
+                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/tools-support/view-activities')}>
+                  <CardBody className="p-4 text-center">
+                    <div className="text-3xl mb-2">📊</div>
+                    <h3 className="text-lg font-semibold text-gray-800">View Activities</h3>
+                    <p className="text-sm text-gray-600">Activity logs and audit trails</p>
+                    <Button color="primary" variant="flat" size="sm" className="mt-3">Monitor</Button>
+                  </CardBody>
+                </Card>
+                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer">
+                  <CardBody className="p-4 text-center">
+                    <div className="text-3xl mb-2">📋</div>
+                    <h3 className="text-lg font-semibold text-gray-800">Reports</h3>
+                    <p className="text-sm text-gray-600">Generate and export reports</p>
+                    <Button color="primary" variant="flat" size="sm" className="mt-3">Create</Button>
+                  </CardBody>
+                </Card>
+                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer">
+                  <CardBody className="p-4 text-center">
+                    <div className="text-3xl mb-2">⚙️</div>
+                    <h3 className="text-lg font-semibold text-gray-800">System Tools</h3>
+                    <p className="text-sm text-gray-600">System maintenance and utilities</p>
+                    <Button color="primary" variant="flat" size="sm" className="mt-3">Access</Button>
+                  </CardBody>
+                </Card>
+              </div>
+            </Tab>
+            
+
+            
+            <Tab key="user-preferences" title="⚙️ User Preferences">
+              <div className="mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {operationalItems[4].items.map((item, index) => (
+                    <Card key={index} className="border border-gray-200">
+                      <CardBody className="p-4">
+                        <div className="flex items-center space-x-3 mb-3">
+                          <span className="text-2xl">{item.icon}</span>
+                          <div>
+                            <h4 className="font-semibold text-ghana-black">{item.title}</h4>
+                            <p className="text-sm text-gray-600">{item.description}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between mb-3">
+                          <Badge color="success" variant="flat">{item.status}</Badge>
+                          <Chip size="sm" variant="flat" color="primary">{item.count}</Chip>
+                        </div>
+                        <div className="mt-3">
+                          <Button
+                            size="sm"
+                            color="primary"
+                            variant="flat"
+                            className="w-full"
+                            onClick={() => {
+                              if (item.title.includes('System Settings')) {
+                                router.push('/settings');
+                              } else if (item.title.includes('User Management')) {
+                                router.push('/user-management');
+                              } else if (item.title.includes('Interface Customization')) {
+                                router.push('/settings/interface');
+                              } else if (item.title.includes('Notification Settings')) {
+                                router.push('/settings/notifications');
+                              }
+                            }}
+                          >
+                            {item.title.includes('System Settings') ? '⚙️ Configure' :
+                             item.title.includes('User Management') ? '👤 Manage Users' :
+                             item.title.includes('Interface Customization') ? '🎨 Customize' :
+                             '🔔 Configure'}
+                          </Button>
+                        </div>
+                      </CardBody>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            </Tab>
+          </Tabs>
+        </CardBody>
+      </Card>
+
+      {/* Recent Activities & Notices */}
+      <div className="mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Recent Activities */}
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3">
+              <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+            </CardHeader>
+            <CardBody>
+              <div className="space-y-3">
+                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="h-3 w-3 bg-green-500 rounded-full"></div>
+                  <span className="text-sm text-gray-800">Invoice #INV-001 sent (2 minutes ago)</span>
+                </div>
+                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="h-3 w-3 bg-blue-500 rounded-full"></div>
+                  <span className="text-sm text-gray-800">New booking from John Doe (5 minutes ago)</span>
+                </div>
+                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="h-3 w-3 bg-purple-500 rounded-full"></div>
+                  <span className="text-sm text-gray-800">Hall 1 booked for conference (10 minutes ago)</span>
+              </div>
+                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="h-3 w-3 bg-green-500 rounded-full"></div>
+                  <span className="text-sm text-gray-800">Payment received (1 hour ago)</span>
+                </div>
+                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="h-3 w-3 bg-orange-500 rounded-full"></div>
+                  <span className="text-sm text-gray-800">Room 205 marked for maintenance (2 hours ago)</span>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+
+          {/* Notices & Alerts */}
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3">
+              <h3 className="text-xl font-semibold text-ghana-black">🔔 Notices & Alerts</h3>
+            </CardHeader>
+            <CardBody>
+              <div className="space-y-3">
+                <div className="flex items-center space-x-3 p-3 bg-red-50 rounded-lg border border-red-200">
+                  <div className="h-3 w-3 bg-red-500 rounded-full"></div>
+                  <span className="text-sm text-red-800 font-medium">High occupancy alert: 95% rooms occupied</span>
+                </div>
+                <div className="flex items-center space-x-3 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                  <div className="h-3 w-3 bg-yellow-500 rounded-full"></div>
+                  <span className="text-sm text-yellow-800 font-medium">Maintenance scheduled: Room 203 tomorrow</span>
+                </div>
+                <div className="flex items-center space-x-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
+                  <div className="h-3 w-3 bg-blue-500 rounded-full"></div>
+                  <span className="text-sm text-blue-800 font-medium">New policy update: Check-in time changed to 3 PM</span>
+                </div>
+                <div className="flex items-center space-x-3 p-3 bg-green-50 rounded-lg border border-green-200">
+                  <div className="h-3 w-3 bg-green-500 rounded-full"></div>
+                  <span className="text-sm text-green-800 font-medium">System maintenance: Tonight 2-4 AM</span>
+                </div>
+                <div className="flex items-center space-x-3 p-3 bg-purple-50 rounded-lg border border-purple-200">
+                  <div className="h-3 w-3 bg-purple-500 rounded-full"></div>
+                  <span className="text-sm text-purple-800 font-medium">Staff meeting: Tomorrow 9 AM in Conference Room</span>
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+        </div>
       </div>
-
-      {/* Room Management Modal */}
-      <Modal isOpen={isOpen} onClose={onClose} size="2xl">
-        <ModalContent>
-          <ModalHeader>🔧 Room Management</ModalHeader>
-          <ModalBody>
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <Input label="Room Number" placeholder="e.g., 101" />
-                <Select label="Room Type" placeholder="Select type">
-                  <SelectItem key="standard">Standard</SelectItem>
-                  <SelectItem key="deluxe">Deluxe</SelectItem>
-                  <SelectItem key="suite">Suite</SelectItem>
-                </Select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <Select label="Status" placeholder="Select status">
-                  <SelectItem key="available">Available</SelectItem>
-                  <SelectItem key="occupied">Occupied</SelectItem>
-                  <SelectItem key="maintenance">Maintenance</SelectItem>
-                  <SelectItem key="cleaning">Cleaning</SelectItem>
-                </Select>
-                <Input label="Rate (₵)" placeholder="e.g., 600" />
-              </div>
-              <Input label="Floor" placeholder="e.g., 1st" />
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="light" onPress={onClose}>Cancel</Button>
-            <Button color="primary" className="bg-ghana-green text-white" onPress={onClose}>
-              Save Changes
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
     </div>
   );
 }

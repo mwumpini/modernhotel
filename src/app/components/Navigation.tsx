@@ -1,26 +1,88 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import { Button, Link, Accordion, AccordionItem, Badge, Divider, Card, CardBody, CardHeader, Progress, Avatar, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from "@heroui/react";
 import FrontdeskDashboard from './FrontdeskDashboard';
 import HousekeepingDashboard from './HousekeepingDashboard';
 import FoodBeverageDashboard from './FoodBeverageDashboard';
+import FBPOS from './FBPOS';
+import RestaurantManagement from './RestaurantManagement';
+import BarManagement from './BarManagement';
+import KitchenDisplay from './KitchenDisplay';
 import SecurityDashboard from './SecurityDashboard';
+import HRPayrollDashboard from './HRPayrollDashboard';
 import OfflineIndicator from './OfflineIndicator';
 import OfflineManager from './OfflineManager';
 import ActivityLog from './ActivityLog';
 import SettingsDashboard from './SettingsDashboard';
+import StoresManagement from './StoresManagement';
+import UserPreferences from './UserPreferences';
+import AutoComplianceDashboard from './AutoComplianceDashboard';
+import InventoryDashboard from './InventoryDashboard';
+import AccountingDashboard from './AccountingDashboard';
+import UserManagement from './UserManagement';
+import UserManagementUnified from './UserManagementUnified';
+import ThemeTest from './ThemeTest';
+import FrontofficeRoomsBookings from './FrontofficeRoomsBookings';
+import FrontofficeInvoicesPayments from './FrontofficeInvoicesPayments';
+import FrontofficeClientsServices from './FrontofficeClientsServices';
+import FrontofficeEventsConferences from './FrontofficeEventsConferences';
+// duplicate import removed
+import RoomManagementDashboard from './RoomManagementDashboard';
+import GuestExperienceManager from './GuestExperienceManager';
+import MobileGuestServices from './MobileGuestServices';
+import FoodBeverageManagementDashboard from './FoodBeverageManagementDashboard';
+import AccountingManagementDashboard from './AccountingManagementDashboard';
+import HRPayrollManagementDashboard from './HRPayrollManagementDashboard';
+import SecurityComplianceDashboard from './SecurityComplianceDashboard';
+import InventorySupplyChainDashboard from './InventorySupplyChainDashboard';
+// Removed unused import
+import UserManagementDashboard from './UserManagementDashboard';
+import OfflineManagementDashboard from './OfflineManagementDashboard';
+import APIIntegrationDashboard from './APIIntegrationDashboard';
+import PerformanceOptimizationDashboard from './PerformanceOptimizationDashboard';
+import TemplateBuilder from './TemplateBuilder';
+import FoodBeverageRestaurantBar from './FoodBeverageRestaurantBar';
+import FoodBeverageKitchen from './FoodBeverageKitchen';
+import FoodBeverageMenuInventory from './FoodBeverageMenuInventory';
+import FoodBeverageStaffReports from './FoodBeverageStaffReports';
+import FoodBeverageAnalyticsDashboard from './FoodBeverageAnalyticsDashboard';
+import HousekeepingAnalyticsDashboard from './HousekeepingAnalyticsDashboard';
+import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
+import SecurityAnalyticsDashboard from './SecurityAnalyticsDashboard';
+import HRAnalyticsDashboard from './HRAnalyticsDashboard';
+import DepartmentActivityLog from './DepartmentActivityLog';
+import { 
+  ChartOfAccountsPage,
+  BankCashReceivablesPage,
+  AccountsPayablePage,
+  InventoryFixedAssetsPage,
+  FinancialReportsPage,
+  AuditControlsPage,
+  AccountingViewActivitiesPage
+} from './accounting';
 
 interface NavigationProps {
   onLogout: () => void;
 }
 
-type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'security' | 'hr' | 'accounting' | 'reports' | 'settings';
-
+type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'user-preferences' | 'compliance' | 'inventory' | 'user-management' | 'user-management-dashboard' | 'user-management-unified' | 'theme-test' | 'offline-management' | 'api-integration' | 'performance-optimization' | 'template-builder' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'room-management' | 'front-office-operations' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-receivables' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs';
 export default function Navigation({ onLogout }: NavigationProps) {
-  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set(['dashboard']));
-  const [activeSection, setActiveSection] = useState<ActiveSection>('dashboard');
+  const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
+  const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
 
+  // Log navigation component initialization and state changes
+  React.useEffect(() => {
+    console.log('Navigation component initialized with default section:', activeSection);
+  }, []);
+
+  React.useEffect(() => {
+    console.log('Active section changed to:', activeSection);
+  }, [activeSection]);
+
+  React.useEffect(() => {
+    console.log('Expanded keys changed:', Array.from(expandedKeys));
+  }, [expandedKeys]);
 
 
   const navigationSections = [
@@ -38,18 +100,21 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'frontdesk',
       title: '🏨 Front Office Operations',
       icon: '🏨',
+                                                               items: [
+                    { title: '📊 Operations', href: '#' },
+                    { title: '📈 Reports & Analysis', href: '/reports' },
+                    { title: '📊 Analytics Dashboard', href: '/analytics' },
+                    { title: '⚙️ User Preferences', href: '#' },
+                  ]
+    },
+    {
+      key: 'events-conferences',
+      title: '🎪 Events & Conferences',
+      icon: '🎪',
       items: [
-        { title: 'Dashboard', href: '#' },
-        { title: 'Rooms', href: '#' },
-        { title: 'Bookings', href: '#' },
-        { title: 'Invoices', href: '#' },
-        { title: 'Clients', href: '#' },
-        { title: 'Services & Facilities', href: '#' },
-        { title: 'Events & Conferences', href: '#' },
-        { title: 'Tools', href: '#' },
-        { title: 'Templates', href: '#' },
-        { title: 'Reports', href: '#' },
-        { title: 'Payments', href: '#' },
+        { title: '📊 Operations', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '⚙️ User Preferences', href: '#' },
       ]
     },
     {
@@ -57,14 +122,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🍽️ Food & Beverage',
       icon: '🍽️',
       items: [
-        { title: 'Dashboard', href: '#' },
-        { title: 'Point of Sale', href: '#' },
+        { title: 'R&B Operations', href: '#' },
         { title: 'Kitchen Operations', href: '#' },
-        { title: 'Bar Management', href: '#' },
-        { title: 'Menu Management', href: '#' },
-        { title: 'Inventory', href: '#' },
-        { title: 'Reports & Analytics', href: '#' },
-        { title: 'Staff Management', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '⚙️ User Preferences', href: '#' },
       ]
     },
     {
@@ -72,11 +133,19 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🛏️ Housekeeping & Maintenance',
       icon: '🛏️',
       items: [
-        { title: 'Room Status Grid', href: '#' },
-        { title: 'Inspection Checklists', href: '#' },
-        { title: 'Deep Cleaning', href: '#' },
-        { title: 'Work Orders', href: '#' },
-        { title: 'Preventive Maintenance', href: '#' },
+        { title: '📊 Operations', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '⚙️ User Preferences', href: '#' },
+      ]
+    },
+    {
+      key: 'inventory',
+      title: '📦 Inventory & Stores',
+      icon: '📦',
+      items: [
+        { title: '📊 Operations', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '⚙️ User Preferences', href: '#' },
       ]
     },
     {
@@ -84,11 +153,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🚨 Security Operations',
       icon: '🚨',
       items: [
-        { title: 'Incident Reporting', href: '#' },
-        { title: 'Visitor Management', href: '#' },
-        { title: 'Patrol Tracking', href: '#' },
-        { title: 'Emergency Protocols', href: '#' },
-        { title: 'Key Control', href: '#' },
+        { title: '📊 Operations', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '⚙️ User Preferences', href: '#' },
       ]
     },
     {
@@ -96,11 +163,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '👥 HR & Payroll',
       icon: '👥',
       items: [
-        { title: 'Staff Management', href: '#' },
-        { title: 'Shift Scheduling', href: '#' },
-        { title: 'Training Records', href: '#' },
-        { title: 'Payroll Processing', href: '#' },
-        { title: 'Benefits Admin', href: '#' },
+        { title: '📊 Operations', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '⚙️ User Preferences', href: '#' },
       ]
     },
     {
@@ -108,27 +173,25 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🧾 Complete Accounting System',
       icon: '🧾',
       items: [
-        { title: 'CFO Dashboard', href: '#' },
+        { title: 'Accounting Management', href: '#' },
         { title: 'Chart of Accounts', href: '#' },
-        { title: 'Bank & Cash', href: '#' },
+        { title: 'Bank, Cash & Receivables', href: '#' },
         { title: 'Accounts Payable', href: '#' },
-        { title: 'Accounts Receivable', href: '#' },
-        { title: 'Inventory Accounting', href: '#' },
-        { title: 'Fixed Assets', href: '#' },
+        { title: 'Inventory & Fixed Assets', href: '#' },
         { title: 'Financial Reports', href: '#' },
         { title: 'Audit & Controls', href: '#' },
+        { title: 'View Activities', href: '#' },
       ]
     },
     {
-      key: 'reports',
-      title: '📈 Reports & Analytics',
-      icon: '📈',
+      key: 'compliance',
+      title: '⚖️ Compliance & Reports',
+      icon: '⚖️',
       items: [
-        { title: 'Operational Reports', href: '#' },
-        { title: 'Compliance Reports', href: '#' },
+        { title: 'Tax Calculator & Rules', href: '#' },
         { title: 'VAT/NHIL Returns', href: '#' },
-        { title: 'Tourism Levy', href: '#' },
-        { title: 'SSNIT Filings', href: '#' },
+        { title: 'Tourism Levy & SSNIT', href: '#' },
+        { title: 'Operational Reports', href: '#' },
       ]
     },
     {
@@ -136,38 +199,318 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '⚙️ System Settings',
       icon: '⚙️',
       items: [
-        { title: 'User Role Matrix', href: '#' },
+        { title: 'Reports & Analytics', href: '#' },
+        { title: 'User Management & Preferences', href: '#' },
+        { title: 'Theme Test', href: '#' },
+        { title: 'Offline Management & Sync', href: '#' },
+        { title: 'API Integration', href: '#' },
+        { title: 'Performance Optimization', href: '#' },
+        { title: 'Template Builder', href: '#' },
         { title: 'Activity Logs', href: '#' },
-        { title: 'Offline Management', href: '#' },
-        { title: 'Tax Rule Setup', href: '#' },
-        { title: 'Mobile Money APIs', href: '#' },
-        { title: 'Localization', href: '#' },
-        { title: 'GRA Templates', href: '#' },
+        { title: 'Tax Rules & APIs', href: '#' },
+        { title: 'Localization & Templates', href: '#' },
       ]
     }
   ];
 
   const handleSelectionChange = (keys: any) => {
-    setExpandedKeys(keys);
+    // Handle both Set<string> and Selection types
+    if (keys instanceof Set) {
+      setExpandedKeys(keys);
+    } else if (typeof keys === 'string') {
+      setExpandedKeys(new Set([keys]));
+    } else if (Array.isArray(keys)) {
+      setExpandedKeys(new Set(keys));
+    } else {
+      setExpandedKeys(new Set(['dashboard']));
+    }
   };
 
-  const handleSectionClick = (sectionKey: string) => {
-    setActiveSection(sectionKey as ActiveSection);
+  // Allow deep-links/navigation triggers from inner modules (e.g., POS → Kitchen Orders)
+  React.useEffect(() => {
+    const handler = (ev: Event) => {
+      try {
+        const customEv = ev as CustomEvent<{ section?: string }>;
+        const section = customEv?.detail?.section as ActiveSection | undefined;
+        if (section) setActiveSection(section);
+      } catch {}
+    };
+    window.addEventListener('app.navigate', handler);
+    return () => {
+      window.removeEventListener('app.navigate', handler);
+    };
+  }, []);
+
+  const handleSectionClick = (sectionKey: string, itemTitle?: string) => {
+    // If no itemTitle is provided, it means the main section header was clicked
+    // This should navigate to the dashboard for that section
+    if (!itemTitle) {
+      setActiveSection(sectionKey as ActiveSection);
+      return;
+    }
+
+    // Handle Front Office sub-items
+    if (sectionKey === 'frontdesk' && itemTitle) {
+              if (itemTitle === '📊 Operations') {
+          setActiveSection('front-office-operations');
+        } else if (itemTitle === '📈 Reports & Analysis') {
+          setActiveSection('reports-analytics');
+        } else if (itemTitle === '⚙️ User Preferences') {
+          setActiveSection('user-preferences');
+        } else {
+          setActiveSection('frontdesk');
+        }
+    // Handle Events & Conferences sub-items
+    } else if (sectionKey === 'events-conferences' && itemTitle) {
+      if (itemTitle === '📊 Operations') {
+        setActiveSection('events-conferences-standalone');
+      } else if (itemTitle === '📈 Reports & Analysis') {
+        setActiveSection('events-conferences-analytics');
+      } else if (itemTitle === '⚙️ User Preferences') {
+        setActiveSection('events-conferences-preferences');
+      } else {
+        setActiveSection('events-conferences-standalone');
+      }
+    // Handle Food & Beverage sub-items
+    } else if (sectionKey === 'f&b' && itemTitle) {
+      if (itemTitle === 'R&B Operations') {
+        setActiveSection('food-beverage');
+      } else if (itemTitle === 'Kitchen Operations') {
+        setActiveSection('fb-kitchen');
+      } else if (itemTitle === '📈 Reports & Analysis') {
+        setActiveSection('fb-analytics');
+      } else if (itemTitle === '⚙️ User Preferences') {
+        setActiveSection('fb-preferences');
+      } else {
+        setActiveSection('f&b');
+      }
+    // Handle Housekeeping sub-items
+    } else if (sectionKey === 'housekeeping' && itemTitle) {
+      if (itemTitle === '📊 Operations') {
+        setActiveSection('housekeeping');
+      } else if (itemTitle === '📈 Reports & Analysis') {
+        setActiveSection('housekeeping-analytics');
+      } else if (itemTitle === '⚙️ User Preferences') {
+        setActiveSection('housekeeping-preferences');
+      } else {
+        setActiveSection('housekeeping');
+      }
+    // Handle Security sub-items
+    } else if (sectionKey === 'security' && itemTitle) {
+      if (itemTitle === '📊 Operations') {
+        setActiveSection('security');
+      } else if (itemTitle === '📈 Reports & Analysis') {
+        setActiveSection('security-analytics');
+      } else if (itemTitle === '⚙️ User Preferences') {
+        setActiveSection('security-preferences');
+      } else {
+        setActiveSection('security');
+      }
+    // Handle Inventory sub-items
+    } else if (sectionKey === 'inventory' && itemTitle) {
+      if (itemTitle === '📊 Operations') {
+        setActiveSection('inventory');
+      } else if (itemTitle === '📈 Reports & Analysis') {
+        setActiveSection('inventory-analytics');
+      } else if (itemTitle === '⚙️ User Preferences') {
+        setActiveSection('inventory-preferences');
+      } else {
+        setActiveSection('inventory');
+      }
+    // Handle HR sub-items
+    } else if (sectionKey === 'hr' && itemTitle) {
+      if (itemTitle === '📊 Operations') {
+        setActiveSection('hr');
+      } else if (itemTitle === '📈 Reports & Analysis') {
+        setActiveSection('hr-analytics');
+      } else if (itemTitle === '⚙️ User Preferences') {
+        setActiveSection('hr-preferences');
+      } else {
+        setActiveSection('hr');
+      }
+    } else if (sectionKey === 'compliance') {
+      setActiveSection('compliance');
+    } else if (sectionKey === 'accounting' && itemTitle) {
+      if (itemTitle === 'Accounting Management') {
+        setActiveSection('accounting-management');
+      } else if (itemTitle === 'Chart of Accounts') {
+        setActiveSection('chart-of-accounts');
+      } else if (itemTitle === 'Bank, Cash & Receivables') {
+        setActiveSection('bank-cash-receivables');
+      } else if (itemTitle === 'Accounts Payable') {
+        setActiveSection('accounts-payable');
+      } else if (itemTitle === 'Inventory & Fixed Assets') {
+        setActiveSection('inventory-fixed-assets');
+      } else if (itemTitle === 'Financial Reports') {
+        setActiveSection('financial-reports');
+      } else if (itemTitle === 'Audit & Controls') {
+        setActiveSection('audit-controls');
+      } else if (itemTitle === 'View Activities') {
+        setActiveSection('accounting-activities');
+      } else {
+        setActiveSection('accounting');
+      }
+    } else if (sectionKey === 'housekeeping' && itemTitle) {
+      if (itemTitle === 'Analytics Dashboard') {
+        setActiveSection('housekeeping-analytics');
+      } else if (itemTitle === 'View Activities') {
+        setActiveSection('housekeeping-activities');
+      } else {
+        setActiveSection('housekeeping');
+      }
+    } else if (sectionKey === 'inventory' && itemTitle) {
+      if (itemTitle === 'Analytics Dashboard') {
+        setActiveSection('inventory-analytics');
+      } else if (itemTitle === 'View Activities') {
+        setActiveSection('inventory-activities');
+      } else {
+        setActiveSection('inventory');
+      }
+    } else if (sectionKey === 'settings' && itemTitle) {
+      if (itemTitle === 'Reports & Analytics') {
+        setActiveSection('reports-analytics');
+      } else if (itemTitle === 'User Management & Preferences') {
+        setActiveSection('user-management-unified');
+      } else if (itemTitle === 'Theme Test') {
+        setActiveSection('theme-test');
+      } else if (itemTitle === 'Offline Management & Sync') {
+        setActiveSection('offline-management');
+      } else if (itemTitle === 'API Integration') {
+        setActiveSection('api-integration');
+      } else if (itemTitle === 'Performance Optimization') {
+        setActiveSection('performance-optimization');
+      } else if (itemTitle === 'Template Builder') {
+        setActiveSection('template-builder');
+      } else {
+        setActiveSection('settings');
+      }
+    } else {
+      setActiveSection(sectionKey as ActiveSection);
+    }
   };
 
   const renderDashboardContent = () => {
     switch (activeSection) {
       case 'frontdesk':
         return <FrontdeskDashboard />;
+      case 'frontdesk-activities':
+        return <DepartmentActivityLog area="frontdesk" title="Front Office - View Activities" />;
+      case 'rooms-bookings':
+        return <FrontofficeRoomsBookings />;
+      case 'invoices-payments':
+        return <FrontofficeInvoicesPayments />;
+      case 'clients-services':
+        return <FrontofficeClientsServices />;
+      case 'events-conferences':
+        return <FrontofficeEventsConferences />;
+      case 'events-conferences-standalone':
+        return <FrontofficeEventsConferences />;
+      case 'room-management':
+        return <RoomManagementDashboard />;
+              case 'front-office-operations':
+          return <FrontdeskDashboard />;
+      case 'check-ins':
+      case 'in-house':
+      case 'check-outs':
+        return <FrontdeskDashboard />;
+      case 'guest-experience-manager':
+        return <GuestExperienceManager />;
+      case 'mobile-guest-services':
+        return <MobileGuestServices />;
+      case 'food-beverage':
+        return <FoodBeverageManagementDashboard />;
+      case 'accounting-management':
+        return <AccountingManagementDashboard />;
+      case 'hr-payroll-management':
+        return <HRPayrollManagementDashboard />;
+      case 'security-compliance':
+        return <SecurityComplianceDashboard />;
+      case 'inventory-supply-chain':
+        return <InventorySupplyChainDashboard />;
+      case 'reports-analytics':
+        return <FrontOfficeReportsAnalysis />;
+      case 'user-management-dashboard':
+        return <UserManagementDashboard />;
+      case 'user-management-unified':
+        return <UserManagementUnified />;
+      case 'theme-test':
+        return <ThemeTest />;
+      case 'offline-management':
+        return <OfflineManagementDashboard />;
+      case 'api-integration':
+        return <APIIntegrationDashboard />;
+      case 'performance-optimization':
+        return <PerformanceOptimizationDashboard />;
+      case 'template-builder':
+        return <TemplateBuilder />;
       case 'housekeeping':
         return <HousekeepingDashboard />;
+      case 'housekeeping-analytics':
+        return <HousekeepingAnalyticsDashboard />;
       case 'f&b':
         return <FoodBeverageDashboard />;
+      case 'fb-activities':
+        return <DepartmentActivityLog area="f&b" title="Food & Beverage - View Activities" />;
+      case 'fb-pos':
+        return <FBPOS onClose={() => setActiveSection('f&b')} />;
+      case 'fb-restaurant-bar':
+        return <FoodBeverageRestaurantBar />;
+      case 'fb-kitchen':
+        return <FoodBeverageKitchen />;
+      case 'fb-menu-inventory':
+        return <FoodBeverageMenuInventory />;
+      case 'fb-staff-reports':
+        return <FoodBeverageStaffReports />;
+      case 'fb-analytics':
+        return <FoodBeverageAnalyticsDashboard />;
+      case 'pos':
+        return <FBPOS onClose={() => setActiveSection('f&b')} />;
+      case 'restaurant':
+        return <RestaurantManagement />;
+      case 'kitchen':
+        return <KitchenDisplay />;
       case 'security':
         return <SecurityDashboard />;
+      case 'security-analytics':
+        return <SecurityAnalyticsDashboard />;
+      case 'security-activities':
+        return <DepartmentActivityLog area="security" title="Security - View Activities" />;
+      case 'hr':
+        return <HRPayrollDashboard />;
+      case 'hr-analytics':
+        return <HRAnalyticsDashboard />;
+      case 'hr-activities':
+        return <DepartmentActivityLog area="hr" title="HR & Payroll - View Activities" />;
+      case 'accounting':
+        return <AccountingDashboard />;
+      case 'chart-of-accounts':
+        return <ChartOfAccountsPage />;
+      case 'bank-cash-receivables':
+        return <BankCashReceivablesPage />;
+      case 'accounts-payable':
+        return <AccountsPayablePage />;
+      case 'inventory-fixed-assets':
+        return <InventoryFixedAssetsPage />;
+      case 'financial-reports':
+        return <FinancialReportsPage />;
+      case 'audit-controls':
+        return <AuditControlsPage />;
+      case 'accounting-activities':
+        return <DepartmentActivityLog area="accounting" title="Accounting - View Activities" />;
       case 'settings':
         return <SettingsDashboard />;
-
+      case 'user-preferences':
+        return <UserPreferences />;
+      case 'user-management':
+        return <UserManagement />;
+      case 'compliance':
+        return <AutoComplianceDashboard />;
+      case 'inventory':
+        return <InventoryDashboard />;
+      case 'inventory-analytics':
+        return <InventoryAnalyticsDashboard />;
+      case 'inventory-activities':
+        return <DepartmentActivityLog area="inventory" title="Inventory - View Activities" />;
       case 'dashboard':
       default:
         return (
@@ -336,7 +679,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
                 title={
                   <div 
                     className="flex items-center justify-between w-full cursor-pointer"
-                    onClick={() => handleSectionClick(section.key)}
+                    onClick={() => handleSectionClick(section.key, undefined)}
                   >
                     <div className="flex items-center">
                       <span className="text-lg mr-3">{section.icon}</span>
@@ -353,7 +696,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
                            <div
                              key={index}
                              className="w-full px-4 py-2.5 rounded-lg transition-all duration-200 text-sm cursor-pointer hover:bg-ghana-gold/20 hover:text-ghana-green"
-                             onClick={() => handleSectionClick(section.key)}
+                             onClick={() => handleSectionClick(section.key, item.title)}
                            >
                              <span className="font-medium">{item.title}</span>
                            </div>

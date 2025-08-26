@@ -2,29 +2,47 @@
   "name": "ghana-hotel-management",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@auth/prisma-adapter": "^2.10.0",
+    "@babel/runtime": "^7.28.3",
+    "@babel/runtime-corejs3": "^7.28.3",
     "@heroicons/react": "^2.2.0",
     "@heroui/react": "^2.8.2",
     "@heroui/theme": "^2.4.20",
+    "@prisma/client": "^6.14.0",
+    "@types/bcryptjs": "^2.4.6",
+    "bcryptjs": "^3.0.2",
+    "lucide-react": "^0.541.0",
     "next": "15.4.6",
-    "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "next-auth": "^4.24.11",
+    "preact-render-to-string": "^6.6.1",
+    "prisma": "^6.14.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^5.0.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
-    "@types/react": "^19",
-    "@types/react-dom": "^19",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
     "eslint": "^9",
     "eslint-config-next": "15.4.6",
     "tailwindcss": "^4",
+    "tsx": "^4.20.4",
     "typescript": "^5"
   }
 }

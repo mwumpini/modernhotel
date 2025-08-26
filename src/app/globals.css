@@ -14,6 +14,55 @@
   --ghana-white: #FFFFFF;
 }
 
+/* Light theme (default) */
+[data-theme="light"] {
+  --background: #ffffff;
+  --foreground: #171717;
+  --card-background: #ffffff;
+  --card-border: #e5e7eb;
+  --text-primary: #171717;
+  --text-secondary: #6b7280;
+  --accent: #006B3F;
+  --accent-foreground: #ffffff;
+}
+
+/* Dark theme */
+[data-theme="dark"] {
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --card-background: #1a1a1a;
+  --card-border: #374151;
+  --text-primary: #ededed;
+  --text-secondary: #9ca3af;
+  --accent: #FCD116;
+  --accent-foreground: #000000;
+}
+
+/* Auto theme - follows system preference */
+[data-theme="auto"] {
+  --background: #ffffff;
+  --foreground: #171717;
+  --card-background: #ffffff;
+  --card-border: #e5e7eb;
+  --text-primary: #171717;
+  --text-secondary: #6b7280;
+  --accent: #006B3F;
+  --accent-foreground: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+    --card-background: #1a1a1a;
+    --card-border: #374151;
+    --text-primary: #ededed;
+    --text-secondary: #9ca3af;
+    --accent: #FCD116;
+    --accent-foreground: #000000;
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -37,4 +86,32 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Apply theme to html element */
+html {
+  transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+/* Ensure cards and other components use theme colors */
+.card, [class*="Card"] {
+  background: var(--card-background);
+  border-color: var(--card-border);
+  color: var(--text-primary);
+}
+
+/* Text colors */
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+/* Accent colors */
+.accent {
+  background: var(--accent);
+  color: var(--accent-foreground);
 }

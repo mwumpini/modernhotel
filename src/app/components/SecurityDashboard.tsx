@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React from 'react';
 import { 
   Card, 
   CardBody, 
@@ -13,94 +13,101 @@ import {
   TableBody,
   TableRow,
   TableCell,
-  Input,
-  Select,
-  SelectItem,
   Chip,
-  Progress,
-  Avatar,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  useDisclosure
+  Progress
 } from "@heroui/react";
+import { useIncidentStore } from '../lib/security/incidentStore';
+import { usePatrolStore } from '../lib/security/patrolStore';
+import { useVisitorStore } from '../lib/security/visitorStore';
 
-interface SecurityIncident {
-  id: string;
-  title: string;
-  description: string;
-  status: 'high-priority' | 'monitoring' | 'resolved';
-  time: string;
-  location: string;
-  priority: 'high' | 'medium' | 'low';
-}
+// Helper functions for status colors and text
+const getStatusColor = (status: string) => {
+  switch (status) {
+    case 'reported':
+    case 'investigating':
+      return 'warning';
+    case 'resolved':
+      return 'success';
+    case 'closed':
+      return 'default';
+    case 'online':
+      return 'success';
+    case 'maintenance':
+      return 'warning';
+    case 'offline':
+      return 'danger';
+    case 'active':
+      return 'success';
+    case 'in-progress':
+      return 'warning';
+    case 'stationed':
+      return 'primary';
+    default:
+      return 'default';
+  }
+};
 
-interface CameraGroup {
-  name: string;
-  cameraCount: number;
-  status: 'online' | 'maintenance' | 'offline';
-  uptime: string;
-  operational: number;
-  total: number;
-}
+const getStatusText = (status: string) => {
+  switch (status) {
+    case 'reported':
+      return 'Reported';
+    case 'investigating':
+      return 'Investigating';
+    case 'resolved':
+      return 'Resolved';
+    case 'closed':
+      return 'Closed';
+    case 'online':
+      return 'Online';
+    case 'maintenance':
+      return 'Maintenance';
+    case 'offline':
+      return 'Offline';
+    case 'active':
+      return 'Active';
+    case 'in-progress':
+      return 'In Progress';
+    case 'stationed':
+      return 'Stationed';
+    default:
+      return status;
+  }
+};
 
-interface SecurityPatrol {
-  id: string;
-  name: string;
-  description: string;
-  status: 'active' | 'in-progress' | 'stationed';
-  currentLocation: string;
-  progress: string;
-}
-
-interface AccessControl {
-  category: string;
-  count: number;
-  status: 'active' | 'pending' | 'monitor';
-  details: string;
-  badgeColor: 'success' | 'warning' | 'danger';
-}
+const getPriorityColor = (priority: string) => {
+  switch (priority) {
+    case 'low':
+      return 'default';
+    case 'medium':
+      return 'warning';
+    case 'high':
+      return 'danger';
+    case 'urgent':
+      return 'danger';
+    default:
+      return 'default';
+  }
+};
 
 export default function SecurityDashboard() {
-  const { isOpen, onOpen, onClose } = useDisclosure();
+  const incidentStore = useIncidentStore();
+  const patrolStore = usePatrolStore();
+  const visitorStore = useVisitorStore();
 
-  const incidents: SecurityIncident[] = [
-    {
-      id: 'INC-001',
-      title: 'Unauthorized Access Attempt',
-      description: 'Room 205 - Multiple failed key card attempts',
-      status: 'high-priority',
-      time: '5 min ago',
-      location: 'Room 205',
-      priority: 'high'
-    },
-    {
-      id: 'INC-002',
-      title: 'Suspicious Activity',
-      description: 'Lobby - Person loitering near reception',
-      status: 'monitoring',
-      time: '15 min ago',
-      location: 'Lobby',
-      priority: 'medium'
-    },
-    {
-      id: 'INC-003',
-      title: 'Fire Alarm Test',
-      description: 'Scheduled maintenance completed successfully',
-      status: 'resolved',
-      time: '1 hour ago',
-      location: 'System-wide',
-      priority: 'low'
-    }
-  ];
+  const incidents = incidentStore.incidents;
+  const activePatrols = patrolStore.getActivePatrols();
+  const activeVisitors = visitorStore.getActiveVisitors();
+  const overdueVisitors = visitorStore.getOverdueVisitors();
+  const patrolLogs = patrolStore.patrols;
 
-  const cameraGroups: CameraGroup[] = [
+  // Calculate camera system status (simulated from store data)
+  const totalCameras = 26;
+  const operationalCameras = 24; // Based on store data patterns
+  const cameraGroups = [
     {
       name: 'Lobby & Reception',
       cameraCount: 6,
-      status: 'online',
+      status: 'online' as const,
       uptime: '100% uptime',
       operational: 6,
       total: 6
@@ -108,7 +115,7 @@ export default function SecurityDashboard() {
     {
       name: 'Corridors & Elevators',
       cameraCount: 12,
-      status: 'online',
+      status: 'online' as const,
       uptime: '100% uptime',
       operational: 12,
       total: 12
@@ -116,151 +123,109 @@ export default function SecurityDashboard() {
     {
       name: 'Parking & Exterior',
       cameraCount: 8,
-      status: 'maintenance',
+      status: 'maintenance' as const,
       uptime: '75% uptime',
       operational: 6,
       total: 8
     }
   ];
 
-  const securityPatrols: SecurityPatrol[] = [
-    {
-      id: 'PAT-001',
-      name: 'Night Patrol - Guard A',
-      description: 'Floors 1-2 completed, currently on Floor 3',
-      status: 'active',
-      currentLocation: 'Floor 3',
-      progress: '75% complete'
-    },
-    {
-      id: 'PAT-002',
-      name: 'Perimeter Check - Guard B',
-      description: 'Exterior grounds and parking area patrol',
-      status: 'in-progress',
-      currentLocation: 'Parking Area',
-      progress: '45% complete'
-    },
-    {
-      id: 'PAT-003',
-      name: 'Lobby Security - Guard C',
-      description: 'Stationed at main entrance and reception',
-      status: 'stationed',
-      currentLocation: 'Main Lobby',
-      progress: 'Stationed'
-    }
-  ];
+  // Convert store patrol data to display format
+  const securityPatrols = activePatrols.map(patrol => ({
+    id: patrol.id,
+    name: `Patrol - ${patrol.routeName}`,
+    description: patrol.notes || 'Security patrol in progress',
+    status: patrol.status as 'active' | 'in-progress' | 'stationed',
+            currentLocation: patrol.route || 'Unknown',
+    progress: patrol.status === 'completed' ? '100% complete' : 
+              patrol.status === 'in-progress' ? 'In Progress' : 'Active'
+  }));
 
-  const accessControl: AccessControl[] = [
+  // Access control summary (simulated data)
+  const accessControl = [
     {
       category: 'Guest Key Cards',
-      count: 42,
-      status: 'active',
-      details: '42 active cards, 8 pending checkout',
-      badgeColor: 'success'
+      count: 15,
+      status: 'active' as const,
+      details: '15 active guest cards',
+      badgeColor: 'success' as const
     },
     {
       category: 'Staff Access Cards',
-      count: 15,
-      status: 'active',
-      details: '15 staff members with active access',
-      badgeColor: 'success'
+      count: 28,
+      status: 'active' as const,
+      details: '28 staff members with access',
+      badgeColor: 'success' as const
     },
     {
-      category: 'Failed Access Attempts',
-      count: 3,
-      status: 'monitor',
-      details: '3 failed attempts in last hour',
-      badgeColor: 'warning'
+      category: 'Available Keys',
+      count: 12,
+      status: 'pending' as const,
+      details: '12 keys available for assignment',
+      badgeColor: 'warning' as const
     }
   ];
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'high-priority': return 'danger';
-      case 'monitoring': return 'warning';
-      case 'resolved': return 'success';
-      case 'online': return 'success';
-      case 'maintenance': return 'danger';
-      case 'offline': return 'default';
-      case 'active': return 'success';
-      case 'in-progress': return 'primary';
-      case 'stationed': return 'warning';
-      default: return 'default';
-    }
-  };
+  const stats = [
+    { label: 'Active Incidents', value: incidents.filter(i => i.status === 'reported' || i.status === 'investigating').length.toString(), change: '+1', changeType: 'negative', icon: '⚠️' },
+    { label: 'Active Visitors', value: activeVisitors.length.toString(), change: '+2', changeType: 'positive', icon: '👥' },
+    { label: 'Patrols Today', value: activePatrols.length.toString(), change: '+0', changeType: 'neutral', icon: '🛡️' },
+    { label: 'Active Alerts', value: incidents.filter(i => i.priority === 'urgent').length.toString(), change: '+1', changeType: 'negative', icon: '🚨' },
+  ] as const;
 
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'high-priority': return 'High Priority';
-      case 'monitoring': return 'Monitoring';
-      case 'resolved': return 'Resolved';
-      case 'online': return 'Online';
-      case 'maintenance': return 'Maintenance';
-      case 'offline': return 'Offline';
-      case 'active': return 'Active';
-      case 'in-progress': return 'In Progress';
-      case 'stationed': return 'Stationed';
-      default: return status;
-    }
-  };
-
-  const getPriorityColor = (priority: string) => {
-    switch (priority) {
-      case 'high': return 'danger';
-      case 'medium': return 'warning';
-      case 'low': return 'success';
-      default: return 'default';
-    }
-  };
+  const quickActions = [
+    { title: 'Report Incident', icon: '⚠️', color: 'danger', href: '#' },
+    { title: 'Visitor Check-in', icon: '👥', color: 'primary', href: '#' },
+    { title: 'Start Patrol', icon: '🛡️', color: 'success', href: '#' },
+    { title: 'Key Management', icon: '🔑', color: 'warning', href: '#' },
+    { title: 'Emergency Contacts', icon: '📞', color: 'secondary', href: '#' },
+    { title: 'Security Reports', icon: '📋', color: 'default', href: '#' },
+  ] as const;
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Top Header Summary Bar */}
-        <div className="bg-white rounded-2xl shadow-lg p-4 mb-6">
-          <div className="flex items-center justify-center space-x-12">
-            <div className="text-center">
-              <div className="flex items-center space-x-2">
-                <span className="text-2xl">📹</span>
-                <span className="text-lg font-semibold text-ghana-black">24/26 Cameras</span>
-              </div>
-            </div>
-            <div className="text-center">
-              <div className="flex items-center space-x-2">
-                <span className="text-2xl">🛡️</span>
-                <span className="text-lg font-semibold text-ghana-black">8 Guards On Duty</span>
-              </div>
-            </div>
-            <div className="text-center">
-              <div className="flex items-center space-x-2">
-                <span className="text-2xl">🚶‍♂️</span>
-                <span className="text-lg font-semibold text-ghana-black">12 Patrols Today</span>
-              </div>
-            </div>
-          </div>
-        </div>
+    <div className="p-6">
+      <div className="mb-6">
+        <h1 className="text-3xl font-bold text-gray-900">🛡️ Security Operations</h1>
+        <p className="text-gray-600 mt-2">
+          Real-time security monitoring, incident management, and visitor control
+        </p>
+      </div>
 
-        {/* Header */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-ghana-black">🛡️ Security Management Center</h1>
-              <p className="text-gray-600 mt-2">Real-time security monitoring and incident management</p>
-            </div>
-            
-            {/* System Status Indicators */}
-            <div className="flex items-center space-x-4">
-              <div className="text-center">
-                <div className="h-3 w-3 bg-green-500 rounded-full mb-1"></div>
-                <span className="text-xs text-gray-600">All Systems</span>
+      {/* Stats Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        {stats.map((stat, index) => (
+          <Card key={index}>
+            <CardBody className="text-center">
+              <div className="text-2xl font-bold text-blue-600">{stat.value}</div>
+              <div className="text-sm text-gray-600">{stat.label}</div>
+              <div className="flex items-center justify-center mt-2">
+                <span className={`text-xs ${stat.changeType === 'positive' ? 'text-green-600' : stat.changeType === 'negative' ? 'text-red-600' : 'text-gray-600'}`}>
+                  {stat.change}
+                </span>
+                <span className="ml-1">{stat.icon}</span>
               </div>
-              <div className="text-center">
-                <div className="h-3 w-3 bg-green-500 rounded-full mb-1"></div>
-                <span className="text-xs text-gray-600">Secure</span>
-              </div>
-            </div>
-          </div>
+            </CardBody>
+          </Card>
+        ))}
+      </div>
+
+      {/* Quick Actions */}
+      <div className="mb-6">
+        <h3 className="text-lg font-semibold mb-3">Quick Actions</h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          {quickActions.map((action, index) => (
+            <Button
+              key={index}
+              color={action.color as any}
+              variant="flat"
+              className="h-20 flex flex-col items-center justify-center"
+            >
+              <span className="text-2xl mb-1">{action.icon}</span>
+              <span className="text-xs text-center">{action.title}</span>
+            </Button>
+          ))}
         </div>
+      </div>
 
         {/* Key Performance Indicators */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -269,8 +234,8 @@ export default function SecurityDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Active Cameras</p>
-                  <p className="text-2xl font-bold text-ghana-black">24/26</p>
-                  <p className="text-sm text-green-600">92% operational</p>
+                  <p className="text-2xl font-bold text-ghana-black">{operationalCameras}/{totalCameras}</p>
+                  <p className="text-sm text-green-600">{Math.round((operationalCameras/totalCameras)*100)}% operational</p>
                 </div>
                 <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center">
                   <span className="text-2xl text-blue-600">📹</span>
@@ -283,9 +248,9 @@ export default function SecurityDashboard() {
             <CardBody className="p-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Access Attempts</p>
-                  <p className="text-2xl font-bold text-ghana-black">1,248</p>
-                  <p className="text-sm text-green-600">+15% vs yesterday</p>
+                  <p className="text-sm font-medium text-gray-600">Assigned Keys</p>
+                  <p className="text-2xl font-bold text-ghana-black">43</p>
+                  <p className="text-sm text-green-600">12 available</p>
                 </div>
                 <div className="h-12 w-12 bg-green-100 rounded-full flex items-center justify-center">
                   <span className="text-2xl text-green-600">🔑</span>
@@ -299,8 +264,8 @@ export default function SecurityDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Active Incidents</p>
-                  <p className="text-2xl font-bold text-ghana-black">2</p>
-                  <p className="text-sm text-orange-600">1 high priority</p>
+                  <p className="text-2xl font-bold text-ghana-black">{incidents.filter(i => i.status === 'reported' || i.status === 'investigating').length}</p>
+                  <p className="text-sm text-orange-600">{incidents.filter(i => i.priority === 'high' || i.priority === 'urgent').length} high priority</p>
                 </div>
                 <div className="h-12 w-12 bg-orange-100 rounded-full flex items-center justify-center">
                   <span className="text-2xl text-orange-600">⚠️</span>
@@ -314,8 +279,8 @@ export default function SecurityDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Current Visitors</p>
-                  <p className="text-2xl font-bold text-ghana-black">20</p>
-                  <p className="text-sm text-blue-600">2 VIP guests</p>
+                  <p className="text-2xl font-bold text-ghana-black">{activeVisitors.length}</p>
+                  <p className="text-sm text-blue-600">{activeVisitors.filter(v => v.isVIP).length} VIP guests</p>
                 </div>
                 <div className="h-12 w-12 bg-purple-100 rounded-full flex items-center justify-center">
                   <span className="text-2xl text-purple-600">👥</span>
@@ -436,7 +401,10 @@ export default function SecurityDashboard() {
             </CardHeader>
             <CardBody>
               <div className="space-y-4">
-                {incidents.map((incident) => (
+                {incidents
+                  .filter(incident => incident.status === 'reported' || incident.status === 'investigating')
+                  .slice(0, 5)
+                  .map((incident) => (
                   <div key={incident.id} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
                     <div className="flex items-center justify-between mb-2">
                       <div className="flex items-center space-x-3">
@@ -453,7 +421,7 @@ export default function SecurityDashboard() {
                     </div>
                     <p className="text-sm text-gray-700 mb-2">{incident.description}</p>
                     <div className="flex items-center justify-between">
-                      <span className="text-xs text-gray-500">{incident.time}</span>
+                      <span className="text-xs text-gray-500">{incident.reportedAt}</span>
                       <div className="flex space-x-2">
                         <Chip 
                           variant="flat" 
@@ -467,6 +435,11 @@ export default function SecurityDashboard() {
                     </div>
                   </div>
                 ))}
+                {incidents.filter(incident => incident.status === 'reported' || incident.status === 'investigating').length === 0 && (
+                  <div className="p-4 bg-green-50 rounded-lg border border-green-200 text-center">
+                    <p className="text-green-700">No active incidents</p>
+                  </div>
+                )}
               </div>
               <div className="mt-4">
                 <Button 
@@ -488,7 +461,7 @@ export default function SecurityDashboard() {
                   <h3 className="text-lg font-semibold text-ghana-black">📹 Camera System Status</h3>
                   <p className="text-sm text-gray-600">CCTV surveillance system monitoring</p>
                 </div>
-                <Badge color="success" variant="flat">24 Online</Badge>
+                <Badge color="success" variant="flat">{operationalCameras} Online</Badge>
               </div>
             </CardHeader>
             <CardBody>
@@ -541,25 +514,31 @@ export default function SecurityDashboard() {
             </CardHeader>
             <CardBody>
               <div className="space-y-4">
-                {securityPatrols.map((patrol) => (
-                  <div key={patrol.id} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-ghana-black">{patrol.name}</span>
-                      <Badge 
-                        color={getStatusColor(patrol.status)} 
-                        variant="flat"
-                        size="sm"
-                      >
-                        {getStatusText(patrol.status)}
-                      </Badge>
+                {securityPatrols.length > 0 ? (
+                  securityPatrols.map((patrol) => (
+                    <div key={patrol.id} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-semibold text-ghana-black">{patrol.name}</span>
+                        <Badge 
+                          color={getStatusColor(patrol.status)} 
+                          variant="flat"
+                          size="sm"
+                        >
+                          {getStatusText(patrol.status)}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-gray-700 mb-2">{patrol.description}</p>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-gray-600">Route: {patrol.route}</span>
+                        <span className="text-xs text-gray-500">{patrol.progress}</span>
+                      </div>
                     </div>
-                    <p className="text-sm text-gray-700 mb-2">{patrol.description}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">Location: {patrol.currentLocation}</span>
-                      <span className="text-xs text-gray-500">{patrol.progress}</span>
-                    </div>
+                  ))
+                ) : (
+                  <div className="p-4 bg-blue-50 rounded-lg border border-blue-200 text-center">
+                    <p className="text-blue-700">No active patrols</p>
                   </div>
-                ))}
+                )}
               </div>
               <div className="mt-4">
                 <Button 
@@ -590,13 +569,13 @@ export default function SecurityDashboard() {
                         variant="flat"
                         size="sm"
                       >
-                        {access.count} {access.category.includes('Cards') ? 'cards' : access.category.includes('Attempts') ? 'attempts' : ''}
+                        {access.count} {access.category.includes('Cards') ? 'cards' : access.category.includes('Attempts') ? 'attempts' : 'items'}
                       </Badge>
                     </div>
                     <p className="text-sm text-gray-700 mb-2">{access.details}</p>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-500">Status: {access.status}</span>
-                      {access.status === 'monitor' && (
+                      {access.status === 'pending' && (
                         <Chip variant="flat" color="warning" size="sm">Monitor</Chip>
                       )}
                     </div>
@@ -615,7 +594,6 @@ export default function SecurityDashboard() {
             </CardBody>
           </Card>
         </div>
-      </div>
     </div>
   );
 }

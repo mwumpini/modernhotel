@@ -23,6 +23,12 @@ export function useServiceWorker() {
 
   useEffect(() => {
     if (!state.isSupported) return;
+    
+    // Additional check for development environment
+    if (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')) {
+      console.log('Service Worker disabled in development mode');
+      return;
+    }
 
     let registration: ServiceWorkerRegistration | null = null;
 
@@ -32,6 +38,18 @@ export function useServiceWorker() {
         registration = await navigator.serviceWorker.getRegistration();
         
         if (!registration) {
+          // Check if service worker file exists before registering
+          try {
+            const response = await fetch('/sw.js');
+            if (!response.ok) {
+              console.log('Service Worker file not found, skipping registration');
+              return;
+            }
+          } catch (error) {
+            console.log('Service Worker file not accessible, skipping registration');
+            return;
+          }
+          
           // Register new service worker
           registration = await navigator.serviceWorker.register('/sw.js', {
             scope: '/',

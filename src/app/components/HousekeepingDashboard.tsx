@@ -1,610 +1,255 @@
 'use client';
 
-import React, { useState } from 'react';
-import { 
-  Card, 
-  CardBody, 
-  CardHeader, 
-  Button, 
-  Badge, 
-  Table,
-  TableHeader,
-  TableColumn,
-  TableBody,
-  TableRow,
-  TableCell,
-  Input,
-  Select,
-  SelectItem,
-  Chip,
-  Progress,
-  Avatar,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  useDisclosure
-} from "@heroui/react";
+import React from 'react';
+import { Card, CardBody, CardHeader, Button, Chip, Progress, Badge } from '@heroui/react';
+import { housekeepingStore } from '../lib/housekeeping/store';
+import { RoomStatus } from '../lib/housekeeping/types';
+import DashboardWrapper from './DashboardWrapper';
 
-interface WorkOrder {
-  id: string;
-  location: string;
-  description: string;
-  status: 'urgent' | 'in-progress' | 'scheduled';
-  time: string;
-  priority: 'high' | 'medium' | 'low';
-  type: 'maintenance' | 'repair' | 'preventive';
-}
+const statusColors: Record<RoomStatus, string> = {
+  occupied: 'bg-blue-100 text-blue-800',
+  vacant: 'bg-gray-100 text-gray-800',
+  dirty: 'bg-red-100 text-red-800',
+  clean: 'bg-green-100 text-green-800',
+  inspected: 'bg-emerald-100 text-emerald-800',
+  'out-of-order': 'bg-orange-100 text-orange-800',
+  maintenance: 'bg-purple-100 text-purple-800'
+};
 
-interface RoomStatus {
-  range: string;
-  status: 'complete' | 'in-progress' | 'pending';
-  count: number;
-  description: string;
-}
-
-interface SupplyAlert {
-  item: string;
-  description: string;
-  status: 'critical' | 'low-stock' | 'reorder';
-  quantity?: string;
-}
-
-interface StaffPerformance {
-  team: string;
-  details: string;
-  efficiency: 'excellent' | 'good' | 'average';
-  percentage: string;
-  staffCount: number;
-  roomsCleaned?: number;
-  workOrdersCompleted?: number;
-}
+const statusLabels: Record<RoomStatus, string> = {
+  occupied: 'Occupied',
+  vacant: 'Vacant',
+  dirty: 'Dirty',
+  clean: 'Clean',
+  inspected: 'Inspected',
+  'out-of-order': 'OOO',
+  maintenance: 'Maintenance'
+};
 
 export default function HousekeepingDashboard() {
-  const { isOpen, onOpen, onClose } = useDisclosure();
+  const [tick, setTick] = React.useState(0);
+  const [selectedStatus, setSelectedStatus] = React.useState<RoomStatus | 'all'>('all');
+  
+  React.useEffect(() => {
+    const unsubscribe = housekeepingStore.subscribe(() => setTick(t => t + 1));
+    return unsubscribe;
+  }, []);
 
-  const workOrders: WorkOrder[] = [
-    {
-      id: 'WO-001',
-      location: 'Room 205',
-      description: 'AC Not Working - Reported by guest, needs immediate attention',
-      status: 'urgent',
-      time: '2 hours ago',
-      priority: 'high',
-      type: 'repair'
-    },
-    {
-      id: 'WO-002',
-      location: 'Lobby',
-      description: 'Light Fixture Replacement - Scheduled maintenance, parts ordered',
-      status: 'in-progress',
-      time: 'Started 1h ago',
-      priority: 'medium',
-      type: 'maintenance'
-    },
-    {
-      id: 'WO-003',
-      location: 'Room 108',
-      description: 'Plumbing Check - Preventive maintenance scheduled',
-      status: 'scheduled',
-      time: 'Tomorrow 9 AM',
-      priority: 'low',
-      type: 'preventive'
-    }
+  const allRooms = housekeepingStore.getAllRooms();
+  const filteredRooms = selectedStatus === 'all' 
+    ? allRooms 
+    : allRooms.filter(room => room.status === selectedStatus);
+
+  const stats = housekeepingStore.getDailyStats();
+  const staff = housekeepingStore.getStaffByRole('housekeeper');
+  const pendingTasks = housekeepingStore.getTasksByStatus('pending');
+  const inProgressTasks = housekeepingStore.getTasksByStatus('in-progress');
+  const maintenanceRequests = housekeepingStore.getMaintenanceRequests();
+
+  const quickActions = [
+    { title: 'Create Task', icon: 'plus', color: 'primary', href: '#' },
+    { title: 'Assign Tasks', icon: 'users', color: 'secondary', href: '#' },
+    { title: 'Room Inspection', icon: 'check', color: 'success', href: '#' },
+    { title: 'Maintenance Request', icon: 'wrench', color: 'warning', href: '#' }
   ];
 
-  const roomStatus: RoomStatus[] = [
-    {
-      range: 'Rooms 101-110',
-      status: 'complete',
-      count: 10,
-      description: 'All rooms cleaned and inspected'
-    },
-    {
-      range: 'Rooms 201-206',
-      status: 'in-progress',
-      count: 6,
-      description: 'Currently being cleaned'
-    },
-    {
-      range: 'Rooms 301-306',
-      status: 'pending',
-      count: 6,
-      description: 'Awaiting checkout, then cleaning'
-    }
+  const kpis = [
+    { label: 'Tasks Completed', value: stats.tasksCompleted, target: 50, color: 'success' },
+    { label: 'Inspections', value: stats.inspectionsCompleted, target: 20, color: 'primary' },
+    { label: 'Avg Task Time', value: `${stats.averageTaskTime}m`, target: 30, color: 'secondary' },
+    { label: 'Avg Score', value: `${stats.averageInspectionScore}%`, target: 90, color: 'warning' }
   ];
-
-  const supplyAlerts: SupplyAlert[] = [
-    {
-      item: 'Toilet Paper',
-      description: 'Only 5 rolls remaining. Reorder immediately.',
-      status: 'critical',
-      quantity: '5 rolls'
-    },
-    {
-      item: 'Towels',
-      description: '15 clean towels available. Laundry in progress.',
-      status: 'low-stock',
-      quantity: '15 towels'
-    },
-    {
-      item: 'Cleaning Supplies',
-      description: 'All-purpose cleaner needs restocking.',
-      status: 'reorder'
-    }
-  ];
-
-  const staffPerformance: StaffPerformance[] = [
-    {
-      team: 'Housekeeping Team A',
-      details: '4 staff, 12 rooms cleaned today',
-      efficiency: 'excellent',
-      percentage: '98% efficiency',
-      staffCount: 4,
-      roomsCleaned: 12
-    },
-    {
-      team: 'Maintenance Team',
-      details: '2 staff, 3 work orders completed',
-      efficiency: 'good',
-      percentage: '85% efficiency',
-      staffCount: 2,
-      workOrdersCompleted: 3
-    },
-    {
-      team: 'Housekeeping Team B',
-      details: '2 staff, 8 rooms cleaned today',
-      efficiency: 'good',
-      percentage: '92% efficiency',
-      staffCount: 2,
-      roomsCleaned: 8
-    }
-  ];
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'urgent': return 'danger';
-      case 'in-progress': return 'warning';
-      case 'scheduled': return 'primary';
-      case 'complete': return 'success';
-      case 'pending': return 'warning';
-      default: return 'default';
-    }
-  };
-
-  const getStatusText = (status: string) => {
-    switch (status) {
-      case 'urgent': return 'Urgent';
-      case 'in-progress': return 'In Progress';
-      case 'scheduled': return 'Scheduled';
-      case 'complete': return 'Complete';
-      case 'pending': return 'Pending';
-      default: return status;
-    }
-  };
-
-  const getAlertColor = (status: string) => {
-    switch (status) {
-      case 'critical': return 'danger';
-      case 'low-stock': return 'warning';
-      case 'reorder': return 'secondary';
-      default: return 'default';
-    }
-  };
-
-  const getEfficiencyColor = (efficiency: string) => {
-    switch (efficiency) {
-      case 'excellent': return 'success';
-      case 'good': return 'primary';
-      case 'average': return 'warning';
-      default: return 'default';
-    }
-  };
 
   return (
-    <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-ghana-black">🛏️ Housekeeping & Maintenance Operations</h1>
-              <p className="text-gray-600 mt-2">Real-time facility management and room operations</p>
+    <DashboardWrapper
+      title="Housekeeping & Maintenance"
+      subtitle="Room status management, task assignment, and quality control"
+      icon="🏠"
+      stats={[
+        { label: 'Total Rooms', value: allRooms.length.toString(), change: '+0', changeType: 'neutral', icon: '🏠' },
+        { label: 'Available', value: allRooms.filter(r => r.status === 'clean' || r.status === 'inspected').length.toString(), change: '+2', changeType: 'positive', icon: '✅' },
+        { label: 'Pending Tasks', value: pendingTasks.length.toString(), change: '-1', changeType: 'positive', icon: '📋' },
+        { label: 'Active Staff', value: staff.filter(s => s.active).length.toString(), change: '+0', changeType: 'neutral', icon: '👥' }
+      ]}
+      quickActions={quickActions}
+    >
+      {/* Room Status Grid */}
+      <Card className="border-0 shadow-lg">
+        <CardHeader className="pb-2 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-ghana-black">Room Status Overview</h3>
+          <div className="flex gap-2">
+            <Button 
+              size="sm" 
+              variant={selectedStatus === 'all' ? 'solid' : 'bordered'}
+              onClick={() => setSelectedStatus('all')}
+            >
+              All ({allRooms.length})
+            </Button>
+            {Object.entries(statusLabels).map(([status, label]) => (
+              <Button
+                key={status}
+                size="sm"
+                variant={selectedStatus === status ? 'solid' : 'bordered'}
+                onClick={() => setSelectedStatus(status as RoomStatus)}
+              >
+                {label} ({allRooms.filter(r => r.status === status).length})
+              </Button>
+            ))}
+          </div>
+        </CardHeader>
+        <CardBody>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {filteredRooms.map(room => (
+              <div
+                key={room.roomNumber}
+                className="p-3 border rounded-lg hover:shadow-md transition-shadow cursor-pointer"
+                onClick={() => console.log('Room details:', room.roomNumber)}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold text-ghana-black">{room.roomNumber}</span>
+                  <Chip size="sm" className={statusColors[room.status]}>
+                    {statusLabels[room.status]}
+                  </Chip>
+                </div>
+                <div className="text-xs text-gray-600">
+                  <div>Type: {room.roomTypeId}</div>
+                  {room.currentGuest && <div>Guest: {room.currentGuest}</div>}
+                  <div>Updated: {new Date(room.lastUpdated).toLocaleTimeString()}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Staff Overview */}
+      <Card className="border-0 shadow-lg">
+        <CardHeader className="pb-2">
+          <h3 className="text-lg font-semibold text-ghana-black">Staff Performance</h3>
+        </CardHeader>
+        <CardBody>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {staff.map(member => (
+              <div key={member.id} className="p-4 border rounded-lg">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <h4 className="font-semibold text-ghana-black">{member.name}</h4>
+                    <p className="text-sm text-gray-600 capitalize">{member.role}</p>
+                  </div>
+                  <Badge 
+                    color={member.active ? 'success' : 'default'}
+                    size="sm"
+                  >
+                    {member.active ? 'Active' : 'Offline'}
+                  </Badge>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span>Today's Progress</span>
+                    <span>{member.completedToday}/{member.dailyTarget}</span>
+                  </div>
+                  <Progress 
+                    value={(member.completedToday / member.dailyTarget) * 100} 
+                    color={member.efficiency >= 90 ? 'success' : member.efficiency >= 70 ? 'warning' : 'danger'}
+                    size="sm"
+                  />
+                  <div className="flex justify-between text-xs text-gray-600">
+                    <span>Efficiency</span>
+                    <span>{member.efficiency}%</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardBody>
+      </Card>
+
+      {/* Task Management */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="border-0 shadow-lg">
+          <CardHeader className="pb-2">
+            <h3 className="text-lg font-semibold text-ghana-black">Pending Tasks</h3>
+          </CardHeader>
+          <CardBody>
+            <div className="space-y-3">
+              {pendingTasks.slice(0, 5).map(task => (
+                <div key={task.id} className="p-3 border rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold">Room {task.roomNumber}</span>
+                    <Chip size="sm" color={task.priority === 'urgent' ? 'danger' : task.priority === 'high' ? 'warning' : 'default'}>
+                      {task.priority}
+                    </Chip>
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    <div>Type: {task.taskType}</div>
+                    <div>Est. Time: {task.estimatedMinutes}m</div>
+                    <div>Checklist: {task.checklist.length} items</div>
+                  </div>
+                </div>
+              ))}
+              {pendingTasks.length === 0 && (
+                <div className="text-center text-gray-500 py-4">No pending tasks</div>
+              )}
             </div>
-            
-            {/* Overall Metrics */}
-            <div className="flex items-center space-x-6">
-              <div className="text-center">
-                <div className="flex items-center space-x-2">
-                  <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                  <span className="text-sm font-medium text-green-600">92% Efficiency</span>
+          </CardBody>
+        </Card>
+
+        <Card className="border-0 shadow-lg">
+          <CardHeader className="pb-2">
+            <h3 className="text-lg font-semibold text-ghana-black">In Progress</h3>
+          </CardHeader>
+          <CardBody>
+            <div className="space-y-3">
+              {inProgressTasks.slice(0, 5).map(task => (
+                <div key={task.id} className="p-3 border rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="font-semibold">Room {task.roomNumber}</span>
+                    <Chip size="sm" color="primary">In Progress</Chip>
+                  </div>
+                  <div className="text-sm text-gray-600">
+                    <div>Assigned: {task.assignedTo}</div>
+                    <div>Started: {task.startedAt ? new Date(task.startedAt).toLocaleTimeString() : 'N/A'}</div>
+                    <div>Completed: {task.completedItems.length}/{task.checklist.length} items</div>
+                  </div>
                 </div>
-              </div>
-              <div className="text-center">
-                <div className="flex items-center space-x-2">
-                  <div className="h-3 w-3 bg-blue-500 rounded-full">👥</div>
-                  <span className="text-sm font-medium text-blue-600">8 Staff On Duty</span>
-                </div>
-              </div>
-              <div className="text-center">
-                <div className="flex items-center space-x-2">
-                  <div className="h-3 w-3 bg-purple-500 rounded-full">⏱️</div>
-                  <span className="text-sm font-medium text-purple-600">35 min avg</span>
-                </div>
-              </div>
+              ))}
+              {inProgressTasks.length === 0 && (
+                <div className="text-center text-gray-500 py-4">No tasks in progress</div>
+              )}
             </div>
-          </div>
-        </div>
-
-        {/* Key Performance Indicators */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <Card className="border-0 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Rooms Cleaned</p>
-                  <p className="text-2xl font-bold text-ghana-black">28</p>
-                  <p className="text-sm text-green-600">+5 since morning</p>
-                </div>
-                <div className="h-12 w-12 bg-green-100 rounded-full flex items-center justify-center">
-                  <span className="text-2xl text-green-600">🧹</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Pending Rooms</p>
-                  <p className="text-2xl font-bold text-ghana-black">12</p>
-                  <p className="text-sm text-blue-600">In progress 6</p>
-                </div>
-                <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center">
-                  <span className="text-2xl text-blue-600">⏰</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Maintenance Orders</p>
-                  <p className="text-2xl font-bold text-ghana-black">5</p>
-                  <p className="text-sm text-red-600">2 urgent</p>
-                </div>
-                <div className="h-12 w-12 bg-orange-100 rounded-full flex items-center justify-center">
-                  <span className="text-2xl text-orange-600">🔧</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg hover:shadow-xl transition-all duration-300 transform hover:-translate-y-1">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Staff Efficiency</p>
-                  <p className="text-2xl font-bold text-ghana-black">92%</p>
-                  <p className="text-sm text-green-600">Above target</p>
-                </div>
-                <div className="h-12 w-12 bg-purple-100 rounded-full flex items-center justify-center">
-                  <span className="text-2xl text-purple-600">👥</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
-
-        {/* Quick Actions and Management Modules */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 mb-8">
-          {/* Quick Actions */}
-          <div className="lg:col-span-1">
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="pb-3">
-                <h3 className="text-lg font-semibold text-ghana-black">🚀 Quick Actions</h3>
-                <p className="text-sm text-gray-600">Common housekeeping operations</p>
-              </CardHeader>
-              <CardBody className="space-y-3">
-                <Button
-                  variant="flat"
-                  className="w-full justify-start bg-ghana-green/10 text-ghana-green border border-ghana-green/20"
-                  size="lg"
-                >
-                  <span className="mr-3">🛏️</span>
-                  Room Status
-                </Button>
-                <Button
-                  variant="flat"
-                  className="w-full justify-start bg-orange-500/10 text-orange-600 border border-orange-500/20"
-                  size="lg"
-                >
-                  <span className="mr-3">📝</span>
-                  Create Work Order
-                </Button>
-                <Button
-                  variant="flat"
-                  className="w-full justify-start bg-blue-500/10 text-blue-600 border border-blue-500/20"
-                  size="lg"
-                >
-                  <span className="mr-3">👥</span>
-                  Assign Tasks
-                </Button>
-                <Button
-                  variant="flat"
-                  className="w-full justify-start bg-purple-600/10 text-purple-600 border border-purple-600/20"
-                  size="lg"
-                >
-                  <span className="mr-3">📦</span>
-                  Check Inventory
-                </Button>
-              </CardBody>
-            </Card>
-          </div>
-
-          {/* Housekeeping & Maintenance Modules */}
-          <div className="lg:col-span-2">
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="pb-3">
-                <h3 className="text-lg font-semibold text-ghana-black">🏗️ Housekeeping & Maintenance Modules</h3>
-                <p className="text-sm text-gray-600">Access all facility management features</p>
-              </CardHeader>
-              <CardBody>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                  <div className="p-4 bg-green-50 rounded-lg border border-green-200 text-center hover:bg-green-100 transition-colors cursor-pointer">
-                    <div className="text-3xl mb-2">🧹</div>
-                    <h4 className="font-semibold text-ghana-black">Room Management</h4>
-                    <p className="text-sm text-gray-600">Cleaning & Status</p>
-                  </div>
-                  
-                  <div className="p-4 bg-orange-50 rounded-lg border border-orange-200 text-center hover:bg-orange-100 transition-colors cursor-pointer">
-                    <div className="text-3xl mb-2">🔧</div>
-                    <h4 className="font-semibold text-ghana-black">Maintenance</h4>
-                    <p className="text-sm text-gray-600">Work Orders</p>
-                  </div>
-                  
-                  <div className="p-4 bg-blue-50 rounded-lg border border-blue-200 text-center hover:bg-blue-100 transition-colors cursor-pointer">
-                    <div className="text-3xl mb-2">👥</div>
-                    <h4 className="font-semibold text-ghana-black">Staff Management</h4>
-                    <p className="text-sm text-gray-600">Scheduling & Tasks</p>
-                  </div>
-                  
-                  <div className="p-4 bg-purple-50 rounded-lg border border-purple-200 text-center hover:bg-purple-100 transition-colors cursor-pointer">
-                    <div className="text-3xl mb-2">📦</div>
-                    <h4 className="font-semibold text-ghana-black">Inventory</h4>
-                    <p className="text-sm text-gray-600">Supplies & Equipment</p>
-                  </div>
-                  
-                  <div className="p-4 bg-yellow-50 rounded-lg border border-yellow-200 text-center hover:bg-yellow-100 transition-colors cursor-pointer">
-                    <div className="text-3xl mb-2">✅</div>
-                    <h4 className="font-semibold text-ghana-black">Inspections</h4>
-                    <p className="text-sm text-gray-600">Quality Control</p>
-                  </div>
-                  
-                  <div className="p-4 bg-gray-50 rounded-lg border border-gray-200 text-center hover:bg-gray-100 transition-colors cursor-pointer">
-                    <div className="text-3xl mb-2">📊</div>
-                    <h4 className="font-semibold text-ghana-black">Reports</h4>
-                    <p className="text-sm text-gray-600">Analytics & Metrics</p>
-                  </div>
-                </div>
-              </CardBody>
-            </Card>
-          </div>
-        </div>
-
-        {/* Main Content Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
-          {/* Active Work Orders */}
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-ghana-black">🔧 Active Work Orders</h3>
-                  <p className="text-sm text-gray-600">Current maintenance requests and repairs</p>
-                </div>
-                <Badge color="primary" variant="flat">5 Active</Badge>
-              </div>
-            </CardHeader>
-            <CardBody>
-              <div className="space-y-4">
-                {workOrders.map((order) => (
-                  <div key={order.id} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center space-x-3">
-                        <span className="font-mono text-sm text-gray-600">#{order.id}</span>
-                        <span className="font-semibold text-ghana-black">{order.location}</span>
-                      </div>
-                      <Badge 
-                        color={getStatusColor(order.status)} 
-                        variant="flat"
-                        size="sm"
-                      >
-                        {getStatusText(order.status)}
-                      </Badge>
-                    </div>
-                    <p className="text-sm text-gray-700 mb-2">{order.description}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-gray-500">{order.time}</span>
-                      <div className="flex space-x-2">
-                        <Chip 
-                          variant="flat" 
-                          color={order.priority === 'high' ? 'danger' : order.priority === 'medium' ? 'warning' : 'success'} 
-                          size="sm"
-                        >
-                          {order.priority} priority
-                        </Chip>
-                        <Chip 
-                          variant="flat" 
-                          color="secondary" 
-                          size="sm"
-                        >
-                          {order.type}
-                        </Chip>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4">
-                <Button 
-                  color="primary" 
-                  className="w-full bg-orange-500 text-white"
-                  variant="flat"
-                >
-                  🔧 Manage Work Orders
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-
-          {/* Room Cleaning Status */}
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-ghana-black">🛏️ Room Cleaning Status</h3>
-                  <p className="text-sm text-gray-600">Current room cleaning progress</p>
-                </div>
-                <Badge color="warning" variant="flat">12 Pending</Badge>
-              </div>
-            </CardHeader>
-            <CardBody>
-              <div className="space-y-4">
-                {roomStatus.map((room, index) => (
-                  <div key={index} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-ghana-black">{room.range}</span>
-                      <Badge 
-                        color={getStatusColor(room.status)} 
-                        variant="flat"
-                        size="sm"
-                      >
-                        {getStatusText(room.status)}
-                      </Badge>
-                    </div>
-                    <p className="text-sm text-gray-700 mb-2">{room.description}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">{room.count} rooms</span>
-                      <Progress 
-                        value={room.status === 'complete' ? 100 : room.status === 'in-progress' ? 60 : 0} 
-                        color={getStatusColor(room.status)}
-                        size="sm"
-                        className="w-24"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4">
-                <Button 
-                  color="primary" 
-                  className="w-full bg-ghana-green text-white"
-                  variant="flat"
-                >
-                  🛏️ View Room Status
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
-
-        {/* Bottom Row */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Supply Alerts */}
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
-              <h3 className="text-lg font-semibold text-ghana-black">⚠️ Supply Alerts</h3>
-              <p className="text-sm text-gray-600">Low stock and inventory warnings</p>
-            </CardHeader>
-            <CardBody>
-              <div className="space-y-4">
-                {supplyAlerts.map((supply, index) => (
-                  <div key={index} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-ghana-black">{supply.item}</span>
-                      <Badge 
-                        color={getAlertColor(supply.status)} 
-                        variant="flat"
-                        size="sm"
-                      >
-                        {supply.status === 'critical' ? 'Critical' : supply.status === 'low-stock' ? 'Low Stock' : 'Reorder'}
-                      </Badge>
-                    </div>
-                    <p className="text-sm text-gray-700 mb-2">{supply.description}</p>
-                    {supply.quantity && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs text-gray-500">Quantity: {supply.quantity}</span>
-                        <Button size="sm" color="primary" variant="light">Reorder</Button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4">
-                <Button 
-                  color="primary" 
-                  className="w-full bg-purple-600 text-white"
-                  variant="flat"
-                >
-                  📦 Manage Inventory
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-
-          {/* Staff Performance */}
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
-              <h3 className="text-lg font-semibold text-ghana-black">👥 Staff Performance</h3>
-              <p className="text-sm text-gray-600">Team efficiency and task completion</p>
-            </CardHeader>
-            <CardBody>
-              <div className="space-y-4">
-                {staffPerformance.map((staff, index) => (
-                  <div key={index} className="p-4 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-semibold text-ghana-black">{staff.team}</span>
-                      <Badge 
-                        color={getEfficiencyColor(staff.efficiency)} 
-                        variant="flat"
-                        size="sm"
-                      >
-                        {staff.efficiency === 'excellent' ? 'Excellent' : staff.efficiency === 'good' ? 'Good' : 'Average'}
-                      </Badge>
-                    </div>
-                    <p className="text-sm text-gray-700 mb-2">{staff.details}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-gray-600">{staff.percentage}</span>
-                      <div className="flex items-center space-x-2">
-                        <span className="text-xs text-gray-500">{staff.staffCount} staff</span>
-                        {staff.roomsCleaned && (
-                          <span className="text-xs text-gray-500">• {staff.roomsCleaned} rooms</span>
-                        )}
-                        {staff.workOrdersCompleted && (
-                          <span className="text-xs text-gray-500">• {staff.workOrdersCompleted} orders</span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4">
-                <Button 
-                  color="primary" 
-                  className="w-full bg-blue-600 text-white"
-                  variant="flat"
-                >
-                  👥 Staff Management
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
+          </CardBody>
+        </Card>
       </div>
-    </div>
+
+      {/* Maintenance Requests */}
+      <Card className="border-0 shadow-lg">
+        <CardHeader className="pb-2">
+          <h3 className="text-lg font-semibold text-ghana-black">Maintenance Requests</h3>
+        </CardHeader>
+        <CardBody>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {maintenanceRequests.slice(0, 6).map(request => (
+              <div key={request.id} className="p-4 border rounded-lg">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="font-semibold">Room {request.roomNumber}</span>
+                  <Chip size="sm" color={request.priority === 'urgent' ? 'danger' : request.priority === 'high' ? 'warning' : 'default'}>
+                    {request.priority}
+                  </Chip>
+                </div>
+                <div className="text-sm text-gray-600 mb-2">
+                  <div>Category: {request.category}</div>
+                  <div>Status: {request.status}</div>
+                  <div>Reported: {new Date(request.reportedAt).toLocaleDateString()}</div>
+                </div>
+                <p className="text-sm text-gray-700">{request.description}</p>
+              </div>
+            ))}
+            {maintenanceRequests.length === 0 && (
+              <div className="text-center text-gray-500 py-4 col-span-full">No maintenance requests</div>
+            )}
+          </div>
+        </CardBody>
+      </Card>
+    </DashboardWrapper>
   );
 }

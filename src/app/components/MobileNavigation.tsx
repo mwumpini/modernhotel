@@ -55,6 +55,7 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
         { title: 'Check-In/Out', href: '/frontdesk/checkin', badge: 'Ghana Card' },
         { title: 'Guest Services', href: '/frontdesk/services', badge: 'Tracking' },
         { title: 'Rate Management', href: '/frontdesk/rates', badge: 'Dynamic' },
+        { title: 'Billing Persons', href: '/billing-persons', badge: 'Corporate' },
       ]
     },
     {
@@ -62,11 +63,11 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       title: '🍽️ Food & Beverage',
       icon: '🍽️',
       items: [
-        { title: 'Restaurant Dashboard', href: '/f&b/dashboard', badge: 'Covers' },
-        { title: 'Order Management', href: '/f&b/orders', badge: '1-2-3' },
-        { title: 'Kitchen Display', href: '/f&b/kitchen', badge: 'Prep' },
-        { title: 'Inventory Control', href: '/f&b/inventory', badge: 'Auto' },
-        { title: 'Payment Processing', href: '/f&b/payments', badge: 'Mobile' },
+        { title: 'Point of Sale', href: '/f&b/pos', badge: 'POS' },
+        { title: 'Restaurant & Bar', href: '/restaurant', badge: 'Kitchen' },
+        { title: 'Kitchen Operations', href: '/f&b/kitchen', badge: 'Prep' },
+        { title: 'Menu & Inventory', href: '/f&b/inventory', badge: 'Auto' },
+        { title: 'Staff & Reports', href: '/f&b/payments', badge: 'Mobile' },
       ]
     },
     {
@@ -75,10 +76,19 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       icon: '🛏️',
       items: [
         { title: 'Room Status Grid', href: '/housekeeping/rooms', badge: 'Color' },
-        { title: 'Inspection Checklists', href: '/housekeeping/inspections', badge: 'QC' },
-        { title: 'Deep Cleaning', href: '/housekeeping/cleaning', badge: 'Scheduled' },
-        { title: 'Work Orders', href: '/housekeeping/maintenance', badge: 'Vendor' },
-        { title: 'Preventive Maintenance', href: '/housekeeping/preventive', badge: 'Auto' },
+        { title: 'Inspection & Cleaning', href: '/housekeeping/inspections', badge: 'QC' },
+        { title: 'Work Orders & Maintenance', href: '/housekeeping/maintenance', badge: 'Vendor' },
+      ]
+    },
+    {
+      key: 'inventory',
+      title: '📦 Inventory & Stores',
+      icon: '📦',
+      items: [
+        { title: 'Stock Items & Suppliers', href: '/inventory/items', badge: 'Manage' },
+        { title: 'Purchase Orders', href: '/inventory/orders', badge: 'PO' },
+        { title: 'Stock Movements', href: '/inventory/movements', badge: 'Track' },
+        { title: 'Reports & Alerts', href: '/inventory/reports', badge: 'Auto' },
       ]
     },
     {
@@ -87,10 +97,8 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       icon: '🚨',
       items: [
         { title: 'Incident Reporting', href: '/security/incidents', badge: 'Real-time' },
-        { title: 'Visitor Management', href: '/security/visitors', badge: 'Track' },
-        { title: 'Patrol Tracking', href: '/security/patrols', badge: 'GPS' },
-        { title: 'Emergency Protocols', href: '/security/emergency', badge: 'Library' },
-        { title: 'Key Control', href: '/security/keys', badge: 'Digital' },
+        { title: 'Visitor & Patrol Management', href: '/security/visitors', badge: 'Track' },
+        { title: 'Emergency & Key Control', href: '/security/emergency', badge: 'Library' },
       ]
     },
     {
@@ -100,9 +108,8 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       items: [
         { title: 'Staff Management', href: '/hr/staff', badge: 'Biometric' },
         { title: 'Shift Scheduling', href: '/hr/scheduling', badge: 'Auto' },
-        { title: 'Training Records', href: '/hr/training', badge: 'Certified' },
+        { title: 'Training & Benefits', href: '/hr/training', badge: 'Certified' },
         { title: 'Payroll Processing', href: '/hr/payroll', badge: 'PAYE/SSNIT' },
-        { title: 'Benefits Admin', href: '/hr/benefits', badge: 'Comprehensive' },
       ]
     },
     {
@@ -110,27 +117,23 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       title: '🧾 Complete Accounting System',
       icon: '🧾',
       items: [
-        { title: 'CFO Dashboard', href: '/accounting/cfo', badge: 'Real-time' },
         { title: 'Chart of Accounts', href: '/accounting/coa', badge: 'Ghana GAAP' },
-        { title: 'Bank & Cash', href: '/accounting/banking', badge: 'Mobile Money' },
+        { title: 'Bank, Cash & Receivables', href: '/accounting/banking', badge: 'Mobile Money' },
         { title: 'Accounts Payable', href: '/accounting/ap', badge: 'Vendor' },
-        { title: 'Accounts Receivable', href: '/accounting/ar', badge: 'Guest Ledger' },
-        { title: 'Inventory Accounting', href: '/accounting/inventory', badge: 'COGS' },
-        { title: 'Fixed Assets', href: '/accounting/assets', badge: 'Ghana IRS' },
+        { title: 'Inventory & Fixed Assets', href: '/accounting/inventory', badge: 'COGS' },
         { title: 'Financial Reports', href: '/accounting/reports', badge: 'Compliance' },
         { title: 'Audit & Controls', href: '/accounting/audit', badge: 'Logs' },
       ]
     },
     {
-      key: 'reports',
-      title: '📈 Reports & Analytics',
-      icon: '📈',
+      key: 'compliance',
+      title: '⚖️ Compliance & Reports',
+      icon: '⚖️',
       items: [
-        { title: 'Operational Reports', href: '/reports/operational', badge: 'RevPAR' },
-        { title: 'Compliance Reports', href: '/reports/compliance', badge: 'GRA' },
-        { title: 'VAT/NHIL Returns', href: '/reports/vat', badge: '12.5%+2.5%' },
-        { title: 'Tourism Levy', href: '/reports/tourism', badge: 'Auto' },
-        { title: 'SSNIT Filings', href: '/reports/ssnit', badge: 'Monthly' },
+        { title: 'Tax Calculator & Rules', href: '/compliance/tax', badge: 'Ghana' },
+        { title: 'VAT/NHIL Returns', href: '/compliance/vat', badge: '12.5%+2.5%' },
+        { title: 'Tourism Levy & SSNIT', href: '/compliance/levy', badge: 'Auto' },
+        { title: 'Operational Reports', href: '/compliance/reports', badge: 'RevPAR' },
       ]
     },
     {
@@ -138,17 +141,17 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       title: '⚙️ System Settings',
       icon: '⚙️',
       items: [
-        { title: 'User Role Matrix', href: '/settings/roles', badge: 'Security' },
+        { title: 'User Management & Preferences', href: '/settings/users', badge: 'Security' },
+        { title: 'Theme Test', href: '/settings/theme-test', badge: 'Test' },
         { title: 'Activity Logs', href: '/settings/logs', badge: 'Audit' },
-        { title: 'Tax Rule Setup', href: '/settings/tax', badge: 'Ghana' },
-        { title: 'Mobile Money APIs', href: '/settings/mobile-money', badge: 'MTN/Voda' },
-        { title: 'Localization', href: '/settings/localization', badge: 'Twi' },
-        { title: 'GRA Templates', href: '/settings/gra', badge: 'Receipts' },
+        { title: 'Offline Management', href: '/settings/offline', badge: 'Sync' },
+        { title: 'Tax Rules & APIs', href: '/settings/tax', badge: 'Ghana' },
+        { title: 'Localization & Templates', href: '/settings/localization', badge: 'Twi' },
       ]
     }
   ];
 
-  const handleSelectionChange = (keys: any) => {
+  const handleSelectionChange = (keys: Set<string>) => {
     setExpandedKeys(keys);
   };
 
@@ -206,7 +209,14 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
                 key={section.key}
                 aria-label={section.title}
                 title={
-                  <div className="flex items-center justify-between w-full">
+                  <div 
+                    className="flex items-center justify-between w-full cursor-pointer"
+                    onClick={() => {
+                      // Navigate to the section dashboard
+                      window.location.href = `/${section.key}`;
+                      onClose();
+                    }}
+                  >
                     <div className="flex items-center">
                       <span className="text-lg mr-3">{section.icon}</span>
                       <span className="font-semibold text-ghana-black text-sm">

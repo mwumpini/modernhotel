@@ -1,0 +1,138 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./test.db"
+}
+
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String
+  subdomain   String   @unique
+  plan        String   @default("starter")
+  status      String   @default("active")
+  maxUsers    Int      @default(5)
+  maxRooms    Int      @default(20)
+  maxProperties Int    @default(1)
+  features    Json     @default("[]")
+  metadata    Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  users       User[]
+  properties  Property[]
+  settings    SystemSettings[]
+  guests      Guest[]
+
+  @@map("tenants")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  tenantId    String
+  email       String
+  name        String
+  password    String?
+  role        String   @default("user")
+  permissions Json     @default("[]")
+  isActive    Boolean  @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+model Property {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  address     String
+  city        String
+  state       String
+  country     String   @default("Ghana")
+  postalCode  String?
+  phone       String?
+  email       String?
+  website     String?
+  timezone    String   @default("Africa/Accra")
+  currency    String   @default("GHS")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@map("properties")
+}
+
+model Guest {
+  id          String   @id @default(cuid())
+  tenantId    String
+  serialNumber String  @unique
+  name        String
+  email       String?
+  phone       String?
+  nationality String?
+  ghanaCard   String?
+  
+  // Marketing attribution
+  source      String?
+  referralGuestId String?
+  referralName String?
+  socialPlatform String?
+  socialHandle String?
+  campaignCode String?
+  
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("guests")
+}
+
+model SystemSettings {
+  id          String   @id @default(cuid())
+  tenantId    String   @unique
+  
+  // General settings
+  generalSettings Json @default("{}")
+  
+  // Hotel settings
+  hotelSettings Json @default("{}")
+  
+  // Room settings
+  roomSettings Json @default("{}")
+  
+  // Financial settings
+  financialSettings Json @default("{}")
+  
+  // Client settings
+  clientSettings Json @default("{}")
+  
+  // SaaS settings
+  saasSettings Json @default("{}")
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("system_settings")
+}

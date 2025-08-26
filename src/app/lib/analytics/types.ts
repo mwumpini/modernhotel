@@ -1,0 +1,112 @@
+export type DomainEventType =
+  | 'Booking.Created'
+  | 'CheckIn.Completed'
+  | 'CheckOut.Completed'
+  | 'Room.Cleaned'
+  | 'FB.OrderPlaced'
+  | 'FB.OrderUpdated'
+  | 'FB.OrderStatusChanged'
+  | 'FB.MenuAliasesUpdated'
+  | 'FB.MenuItemAdded'
+  | 'FB.KOT.Created'
+  | 'FB.KOT.Done'
+  | 'FB.OrderEdited'
+  | 'FB.Invoice.Created'
+  | 'FB.Invoice.Voided'
+  | 'FB.Invoice.PartialRefund'
+  | 'FB.Receipt.Printed'
+  | 'FB.Receipt.Reprinted'
+  | 'Stores.Issued'
+  | 'Accounting.COGSBooked'
+  | 'FO.Reservation.Created'
+  | 'FO.Reservation.Updated'
+  | 'FO.Reservation.Cancelled'
+  | 'FO.Reservation.CheckedIn'
+  | 'FO.Reservation.CheckedOut'
+  | 'FO.Reservation.DepositAdded'
+  | 'FO.Room.MarkedOOO'
+  | 'FO.Folio.ChargePosted'
+  | 'FO.Folio.PaymentReceived'
+  | 'FO.Guest.Created'
+  | 'Security.IncidentReported'
+  | 'Payroll.RunRequested'
+  | 'Payroll.RunCompleted'
+  | 'Payroll.PayslipsExported'
+  | 'HR.TimesheetApproved'
+  | 'HR.LeaveRequested'
+  | 'Accounting.BankFeedImported'
+  | 'Accounting.TransactionsMatched'
+  | 'Accounting.VendorPaymentsScheduled'
+  | 'Accounting.AgingExported'
+  | 'Invoice.Posted'
+  | 'Payment.Received'
+  | 'BankReconciliation.Completed'
+  | 'Report.Opened'
+  | 'Report.Scheduled'
+  | 'Analytics.ActionClicked'
+  | 'HK.RoomStatusChanged'
+  | 'HK.TaskCreated'
+  | 'HK.TaskAssigned'
+  | 'HK.TaskStatusUpdated'
+  | 'HK.MaintenanceRequestCreated'
+  | 'HK.MaintenanceStatusUpdated'
+  | 'HK.InspectionCompleted'
+  | 'Stores.ItemCreated'
+  | 'Stores.StockUpdated'
+  | 'Stores.StockMovementCreated'
+  | 'Stores.PurchaseOrderCreated'
+  | 'Stores.PurchaseOrderStatusUpdated'
+  | 'Stores.SupplierCreated'
+  | 'Security.IncidentReported'
+  | 'Security.IncidentStatusUpdated'
+  | 'Security.VisitorCheckedIn'
+  | 'Security.VisitorCheckedOut'
+  | 'Security.PatrolScheduled'
+  | 'Security.PatrolStarted'
+  | 'Security.PatrolCompleted'
+  | 'Security.KeyAssigned'
+  | 'Security.KeyReturned'
+  | 'Template.Created'
+  | 'Template.Updated'
+  | 'Template.Deleted'
+  | 'Template.Activated'
+  | 'Template.Deactivated'
+  | 'Template.SetDefault'
+  | 'Integration.DataSync.Managed'
+  | 'Integration.PaymentGateways.Initialized'
+  | 'Integration.ThirdPartyServices.StatusChecked'
+  | 'Integration.Sync.Executed'
+  | 'Integration.Sync.Failed'
+  | 'Integration.Health.DegradedSystems'
+  | 'Integration.Health.OfflineSystems'
+  | 'Integration.Configuration.Updated'
+  | 'Integration.Configuration.Failed'
+  | 'Integration.Error.Handled'
+  | 'Integration.Error.RecoveryFailed'
+  | 'Integration.Recovery.Successful'
+  | 'Integration.Recovery.Failed'
+  | 'Analytics.PeriodChanged'
+  | 'Analytics.FiltersUpdated'
+  | 'Analytics.Refreshed'
+  | 'Analytics.RefreshError'
+  | 'Analytics.Exported'
+  | 'Analytics.ExportError';
+
+export interface DomainEventMeta {
+  tenantId?: string;
+  userId?: string;
+  sourceModule?: string;
+  tags?: string[];
+}
+
+export interface DomainEvent<TPayload = Record<string, unknown>> {
+  id: string;
+  type: DomainEventType;
+  timestamp: string; // ISO string
+  payload: TPayload;
+  meta?: DomainEventMeta;
+}
+
+export type AnyDomainEvent = DomainEvent<any>;
+
+

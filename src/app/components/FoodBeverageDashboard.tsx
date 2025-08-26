@@ -27,6 +27,8 @@ import {
   useDisclosure
 } from "@heroui/react";
 import OfflineIndicator from './OfflineIndicator';
+import { ordersStore } from '../lib/fb/ordersStore';
+import FBPOS from './FBPOS';
 
 interface KitchenOrder {
   id: string;
@@ -63,6 +65,22 @@ interface StaffPerformance {
 
 export default function FoodBeverageDashboard() {
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const [showPOS, setShowPOS] = useState(false);
+  const [activeOrdersCount, setActiveOrdersCount] = useState(0);
+  const [kitchenCount, setKitchenCount] = useState(0);
+  const [barCount, setBarCount] = useState(0);
+
+  React.useEffect(() => {
+    const recompute = () => {
+      const all = ordersStore.all();
+      setActiveOrdersCount(all.filter(o => o.status !== 'paid').length);
+      setKitchenCount(all.filter(o => o.items.some(i => i.route === 'kitchen') && o.status !== 'paid').length);
+      setBarCount(all.filter(o => o.items.some(i => i.route === 'bar') && o.status !== 'paid').length);
+    };
+    recompute();
+    const unsub = ordersStore.subscribe(recompute);
+    return () => unsub();
+  }, []);
 
   const kitchenOrders: KitchenOrder[] = [
     {
@@ -198,6 +216,10 @@ export default function FoodBeverageDashboard() {
     }
   };
 
+  if (showPOS) {
+    return <FBPOS onClose={() => setShowPOS(false)} />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -250,8 +272,8 @@ export default function FoodBeverageDashboard() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Active Orders</p>
-                  <p className="text-2xl font-bold text-ghana-black">18</p>
-                  <p className="text-sm text-blue-600">Kitchen: 12, Bar: 6</p>
+                  <p className="text-2xl font-bold text-ghana-black">{activeOrdersCount}</p>
+                  <p className="text-sm text-blue-600">Kitchen: {kitchenCount}, Bar: {barCount}</p>
                 </div>
                 <div className="h-12 w-12 bg-blue-100 rounded-full flex items-center justify-center">
                   <span className="text-2xl text-blue-600">📋</span>
@@ -305,6 +327,7 @@ export default function FoodBeverageDashboard() {
                   variant="flat"
                   className="w-full justify-start bg-ghana-green/10 text-ghana-green border border-ghana-green/20"
                   size="lg"
+                  onClick={() => setShowPOS(true)}
                 >
                   <span className="mr-3">🛒</span>
                   Open POS Terminal
