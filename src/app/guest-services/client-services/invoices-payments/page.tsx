@@ -22,11 +22,6 @@ import {
   useDisclosure,
   Badge,
   Chip,
-  Dropdown,
-  DropdownTrigger,
-  DropdownMenu,
-  DropdownItem,
-  Pagination,
   Divider
 } from '@heroui/react';
 
@@ -886,10 +881,10 @@ export default function InvoicesPaymentsPage() {
                         value={item.category}
                         onChange={(e) => updateInvoiceItem(item.id, 'category', e.target.value)}
                       >
-                        <SelectItem key="room" value="room">Room</SelectItem>
-                        <SelectItem key="food" value="food">Food</SelectItem>
-                        <SelectItem key="service" value="service">Service</SelectItem>
-                        <SelectItem key="amenity" value="amenity">Amenity</SelectItem>
+                        <SelectItem key="room">Room</SelectItem>
+                        <SelectItem key="food">Food</SelectItem>
+                        <SelectItem key="service">Service</SelectItem>
+                        <SelectItem key="amenity">Amenity</SelectItem>
                       </Select>
                       <Button 
                         size="sm" 

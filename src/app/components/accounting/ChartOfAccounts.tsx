@@ -34,7 +34,7 @@ export default function ChartOfAccountsPage() {
 
   // Filter and sort accounts
   const filteredAndSortedAccounts = useMemo(() => {
-    let filtered = chartOfAccounts.filter(account => {
+    const filtered = chartOfAccounts.filter(account => {
       const matchesSearch = account.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            account.code.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesType = filterType === 'all' || account.type === filterType;

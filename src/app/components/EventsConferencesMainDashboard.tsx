@@ -2088,7 +2088,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
   // Get events for a specific date range
   const getEventsForDateRange = (startDate: string, endDate: string, venue?: string) => {
-    let filteredEvents = allEvents.filter(event => {
+    const filteredEvents = allEvents.filter(event => {
       const eventStart = new Date(event.arrivalDate);
       const eventEnd = new Date(event.departureDate);
       const rangeStart = new Date(startDate);

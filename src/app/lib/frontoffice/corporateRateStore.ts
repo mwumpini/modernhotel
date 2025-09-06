@@ -727,7 +727,7 @@ export class CorporateRateStore {
     const end = new Date(endDate);
     const days = Math.ceil((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
     
-    let baseCost = eventPackage.basePrice * attendees * days;
+    const baseCost = eventPackage.basePrice * attendees * days;
     let finalCost = baseCost;
     let corporateDiscount = 0;
     let seasonalAdjustment = 0;
@@ -805,7 +805,7 @@ export class CorporateRateStore {
     let dinner = 0;
     let shuttle = 0;
     let equipment = 0;
-    let other = 0;
+    const other = 0;
     
     // Calculate dinner costs
     if (serviceRates.dinner === 'included') {

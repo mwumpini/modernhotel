@@ -1,3 +1,38 @@
+// Inventory types
+export interface InventoryItem {
+  id: string;
+  name: string;
+  category: string;
+  currentStock: number;
+  reorderPoint: number;
+  supplierName: string;
+  lastOrderDate?: Date;
+  urgency: 'low' | 'medium' | 'high' | 'critical';
+}
+
+export interface ItemCategory {
+  id: string;
+  name: string;
+  description?: string;
+}
+
+export interface PurchaseOrder {
+  id: string;
+  supplierId: string;
+  orderDate: Date;
+  status: 'draft' | 'sent' | 'received' | 'cancelled';
+  totalAmount: number;
+  lines: PurchaseOrderLine[];
+}
+
+export interface PurchaseOrderLine {
+  id: string;
+  itemId: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+}
+
 // Country tax rule definition
 export interface TaxRule {
   id: string;

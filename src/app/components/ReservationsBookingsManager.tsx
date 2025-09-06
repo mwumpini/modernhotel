@@ -555,7 +555,7 @@ export default function ReservationsBookingsManager() {
           // Create reservation with personal details from each guest
       const reservation = frontOfficeStore.createReservation({
         guestId: guest.id,
-        guestName: guest.name,
+        guestName: (guest as any).name || `${(guest as any).firstName || ''} ${(guest as any).lastName || ''}`.trim() || 'Guest',
             roomTypeId: bulkGuest.roomTypeId,
         ratePlanId: formData.ratePlanId || undefined,
             arrival: bulkGuest.arrival,
@@ -574,8 +574,7 @@ export default function ReservationsBookingsManager() {
         companyName: formData.companyName,
         projectCode: formData.projectCode,
             costCenter: formData.costCenter,
-            roomId: bulkGuest.roomId,
-            customRate: bulkGuest.customRate // Add custom rate if specified
+            roomId: bulkGuest.roomId
           });
 
           createdReservations.push(reservation);

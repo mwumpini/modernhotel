@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { TaxRule } from '@/app/lib/models';
 
 // Mock database (replace with real DB calls)
-let taxRulesDB: TaxRule[] = [
+const taxRulesDB: TaxRule[] = [
   // Ghana Tax Rules (2024 Structure)
   { id: '1', countryCode: 'GH', name: 'NHIL', rate: 2.5, glCode: '2101', appliesTo: ['ALL'] },
   { id: '2', countryCode: 'GH', name: 'GETFund Levy', rate: 2.5, glCode: '2102', appliesTo: ['ALL'] },

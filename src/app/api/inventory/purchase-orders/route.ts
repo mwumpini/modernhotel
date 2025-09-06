@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { PurchaseOrder, PurchaseOrderLine } from '@/app/lib/models';
 
 // Mock database (replace with real DB calls)
-let purchaseOrdersDB: PurchaseOrder[] = [
+const purchaseOrdersDB: PurchaseOrder[] = [
   {
     id: '1',
     orderNumber: 'PO-2024-001',

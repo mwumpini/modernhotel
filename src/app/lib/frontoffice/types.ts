@@ -1,12 +1,12 @@
 export type ReservationStatus = 'pending' | 'confirmed' | 'cancelled' | 'checked-in' | 'checked-out' | 'no-show';
 
-export type StayReason = 'personal' | 'business' | 'corporate' | 'conference' | 'training' | 'medical' | 'tourism' | 'other';
+export type StayReason = 'personal' | 'business' | 'corporate' | 'conference' | 'training' | 'medical' | 'tourism' | 'leisure' | 'other';
 
 export type BillingRelationship = 'self' | 'company' | 'third_party' | 'travel_agent' | 'corporate_account';
 
 export type Nationality = 
   | 'ghanaian' | 'nigerian' | 'kenyan' | 'south_african' | 'egyptian' | 'moroccan' | 'ethiopian' | 'ugandan'
-  | 'tanzanian' | 'ghanaian' | 'ivorian' | 'senegalese' | 'cameroonian' | 'ghanaian' | 'ghanaian' | 'ghanaian'
+  | 'tanzanian' | 'rwandan' | 'ivorian' | 'senegalese' | 'cameroonian' | 'ghanaian' | 'ghanaian' | 'ghanaian'
   | 'american' | 'british' | 'canadian' | 'australian' | 'german' | 'french' | 'italian' | 'spanish'
   | 'dutch' | 'swiss' | 'swedish' | 'norwegian' | 'danish' | 'finnish' | 'russian' | 'chinese'
   | 'japanese' | 'indian' | 'pakistani' | 'bangladeshi' | 'thai' | 'vietnamese' | 'filipino' | 'indonesian'
@@ -64,6 +64,7 @@ export interface RatePlan {
   name: string; // BAR, Corporate, Event Conference
   roomTypeId: string;
   basePrice: number; // nightly override (changed from price to match settings store)
+  price?: number; // backward compatibility alias for basePrice
   isActive: boolean;
   marketSegment: string;
   
@@ -320,6 +321,12 @@ export interface GuestProfile {
   updatedAt?: string;
   preferences?: GuestPreferences;
   
+  // Additional properties for client management
+  address?: string;
+  city?: string;
+  country?: string;
+  notes?: string;
+  
   // Emergency contact
   emergencyContact: EmergencyContact;
   
@@ -363,6 +370,11 @@ export interface Reservation {
   companyName?: string; // Company name if business/corporate stay
   projectCode?: string; // Project code for corporate bookings
   costCenter?: string; // Cost center for accounting purposes
+  // Group booking
+  groupId?: string;
+  groupSize?: number;
+  isGroupLeader?: boolean;
+  linkedReservationId?: string;
   
   // Self-reservation tracking
   isSelfReservation?: boolean;
@@ -413,6 +425,10 @@ export interface Folio {
   charges: FolioCharge[];
   payments: FolioPayment[];
   currency: string;
+  status?: 'active' | 'closed' | 'void';
+  type?: 'main' | 'split';
+  description?: string;
+  responsibleParty?: string;
 }
 
 // Utility functions for GuestProfile

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import PageLayout from '../../../components/PageLayout';
 import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Avatar, Badge, Switch, Tooltip } from '@heroui/react';
@@ -94,7 +94,7 @@ interface ReservationHistory {
 	notes?: string;
 }
 
-export default function ClientsServicesPage() {
+function ClientsServicesContent() {
 	const [rows, setRows] = useState<ClientRow[]>([]);
 	const [searchTerm, setSearchTerm] = useState('');
 	const [typeFilter, setTypeFilter] = useState<'all' | 'individual' | 'corporate'>('all');
@@ -272,6 +272,7 @@ export default function ClientsServicesPage() {
 			const reservations = frontOfficeStore.reservations || [];
 			const services = frontOfficeStore.clientServices || [];
         
+        
         // Update client services if changed
         if (JSON.stringify(services) !== JSON.stringify(clientServices)) {
 			setClientServices(services);
@@ -404,37 +405,15 @@ export default function ClientsServicesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams, isNewOpen]);
 
-    // Simple persistence - load from localStorage on mount
-    useEffect(() => {
-        try {
-            const stored = localStorage.getItem('fo.guests');
-            if (stored && (!frontOfficeStore.guests || frontOfficeStore.guests.length === 0)) {
-                const parsed = JSON.parse(stored);
-                if (Array.isArray(parsed) && parsed.length > 0) {
-                    frontOfficeStore.guests = parsed;
-                    frontOfficeStore.notify();
-                }
-            }
-        } catch (e) {
-            // Failed to load from localStorage
-        }
-    }, []);
+    // Note: localStorage loading is now handled by the store constructor to avoid race conditions
 
-    // Save to localStorage whenever guests change
-    useEffect(() => {
-        if (frontOfficeStore.guests && frontOfficeStore.guests.length > 0) {
-            try {
-                localStorage.setItem('fo.guests', JSON.stringify(frontOfficeStore.guests));
-            } catch (e) {
-                // Failed to save to localStorage
-            }
-        }
-    }, [frontOfficeStore.guests]);
+    // Note: localStorage saving is now handled automatically by the store's notify() method
 
     // (Removed debounced search and virtual scrolling)
 
 	const filtered = useMemo(() => {
 		let list = [...rows];
+		
 		
 		// Early return if no filters applied
 		if (!searchTerm && typeFilter === 'all' && countryFilter === 'all' && 
@@ -983,29 +962,9 @@ export default function ClientsServicesPage() {
 	const endIndex = startIndex + itemsPerPage;
 	const paginatedData = sorted.slice(startIndex, endIndex);
 	
+	
 	// Debug logging
 	// Debug logging removed for production
-
-    const handleColumnResize = (columnKey: string, newWidth: number) => {
-        const idx = columnsOrder.indexOf(columnKey as any);
-        const nextKey = idx >= 0 && idx < columnsOrder.length - 1 ? columnsOrder[idx + 1] : null;
-        
-        setColWidths(prev => {
-            const currentWidth = prev[columnKey] || 120;
-            const delta = newWidth - currentWidth;
-            
-            return {
-                ...prev,
-                [columnKey]: Math.max(50, newWidth),
-                ...(nextKey ? { 
-                    [nextKey]: Math.max(50, (prev[nextKey] || 120) - delta) 
-                } : {})
-            };
-        });
-    };
-
-
-
     const HeaderCell = ({ colKey, title }: { colKey: string; title: string }) => {
         const isSortable = !['index', 'actions'].includes(colKey);
         const isActive = sortState.column === colKey;
@@ -2790,5 +2749,13 @@ export default function ClientsServicesPage() {
                 </ModalContent>
             </Modal>
 		</PageLayout>
+	);
+}
+
+export default function ClientsServicesPage() {
+	return (
+		<Suspense fallback={<div>Loading client services...</div>}>
+			<ClientsServicesContent />
+		</Suspense>
 	);
 }

@@ -9,11 +9,16 @@ interface OfflineIndicatorProps {
 }
 
 export default function OfflineIndicator({ className = '' }: OfflineIndicatorProps) {
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isOnline, setIsOnline] = useState(true); // Default to true for SSR
   const [pendingItems, setPendingItems] = useState(0);
+  const [isHydrated, setIsHydrated] = useState(false);
   const { isRegistered, hasUpdate } = useServiceWorker();
 
   useEffect(() => {
+    // Set hydrated flag and initial state after mount
+    setIsHydrated(true);
+    setIsOnline(navigator.onLine);
+
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
 
@@ -64,6 +69,18 @@ export default function OfflineIndicator({ className = '' }: OfflineIndicatorPro
     if (hasUpdate) return '🔄';
     return '✅';
   };
+
+  // Show loading state during hydration to prevent mismatch
+  if (!isHydrated) {
+    return (
+      <div className={`flex items-center space-x-2 ${className}`}>
+        <Badge color="default" variant="flat" className="cursor-pointer">
+          <span className="mr-1">⏳</span>
+          Loading...
+        </Badge>
+      </div>
+    );
+  }
 
   return (
     <div className={`flex items-center space-x-2 ${className}`}>

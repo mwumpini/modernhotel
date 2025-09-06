@@ -9,12 +9,6 @@ import {
   Input,
   Select,
   SelectItem,
-  Textarea,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
   Table,
   TableHeader,
   TableColumn,
@@ -24,18 +18,14 @@ import {
   Chip,
   Badge,
   Avatar,
-  Tooltip,
   Dropdown,
   DropdownTrigger,
   DropdownMenu,
   DropdownItem,
-  Tabs,
-  Tab,
-  Divider,
   Pagination
 } from "@heroui/react";
 import { frontOfficeStore } from '../lib/frontoffice/store';
-import { GuestProfile, Nationality, IdType, Reservation } from '../lib/frontoffice/types';
+import { GuestProfile, Nationality, IdType, Reservation, EmergencyContact } from '../lib/frontoffice/types';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import PageLayout from '../components/PageLayout';
 import { useRouter } from 'next/navigation';
@@ -50,13 +40,8 @@ interface ClientFormData {
   idType: IdType;
   idNumber: string;
   dateOfBirth: string;
-  gender: 'male' | 'female' | 'other';
-  emergencyContact: {
-    name: string;
-    relationship: string;
-    phone: string;
-    email: string;
-  };
+  gender: 'male' | 'female' | 'other' | 'prefer_not_to_say';
+  emergencyContact: EmergencyContact;
   address: string;
   city: string;
   country: string;
@@ -70,7 +55,7 @@ interface ClientWithReservations extends GuestProfile {
   totalSpent: number;
   lastVisit: string;
   averageStay: number;
-  preferences: string[];
+  stayReasons?: string[]; // Renamed to avoid conflict with GuestProfile.preferences
 }
 
 export default function ManageClientsPage() {
@@ -92,7 +77,7 @@ export default function ManageClientsPage() {
     gender: 'male',
     emergencyContact: {
       name: '',
-      relationship: '',
+      relationship: 'other',
       phone: '',
       email: ''
     },
@@ -145,7 +130,7 @@ export default function ManageClientsPage() {
         totalSpent,
         lastVisit: lastVisit ? new Date(lastVisit).toISOString() : '',
         averageStay: Math.round(averageStay),
-        preferences: guestReservations
+        stayReasons: guestReservations
           .filter(r => r.stayReason)
           .map(r => r.stayReason!)
           .filter((value, index, self) => self.indexOf(value) === index)
@@ -199,7 +184,7 @@ export default function ManageClientsPage() {
       gender: client.gender || 'male',
       emergencyContact: {
         name: client.emergencyContact?.name || '',
-        relationship: client.emergencyContact?.relationship || '',
+        relationship: client.emergencyContact?.relationship || 'other',
         phone: client.emergencyContact?.phone || '',
         email: client.emergencyContact?.email || ''
       },
@@ -334,7 +319,6 @@ export default function ManageClientsPage() {
       ugandan: '🇺🇬',
       tanzanian: '🇹🇿',
       rwandan: '🇷🇼',
-      ghanaian_diaspora: '🇬🇭',
       other: '🌍'
     };
     return flags[nationality] || '🌍';
@@ -642,9 +626,9 @@ export default function ManageClientsPage() {
                           <p className="text-xs text-gray-500">
                             Avg stay: {client.averageStay} days
                           </p>
-                          {client.preferences.length > 0 && (
+                          {client.stayReasons && client.stayReasons.length > 0 && (
                             <div className="flex flex-wrap gap-1">
-                              {client.preferences.slice(0, 2).map((pref, idx) => (
+                              {client.stayReasons.slice(0, 2).map((pref, idx) => (
                                 <Chip key={idx} size="sm" variant="flat" color="secondary">
                                   {pref}
                                 </Chip>
@@ -683,19 +667,19 @@ export default function ManageClientsPage() {
                             </Button>
                           </DropdownTrigger>
                           <DropdownMenu>
-                            <DropdownItem onClick={() => handleEditClient(client)}>
+                            <DropdownItem key="edit" onClick={() => handleEditClient(client)}>
                               ✏️ Edit
                             </DropdownItem>
-                            <DropdownItem onClick={() => handleDeleteClient(client)}>
+                            <DropdownItem key="delete" onClick={() => handleDeleteClient(client)}>
                               🗑️ Delete
                             </DropdownItem>
-                            <DropdownItem>
+                            <DropdownItem key="history">
                               📊 View History
                             </DropdownItem>
-                            <DropdownItem>
+                            <DropdownItem key="checkin">
                               🔑 Generate Check-in Link
                             </DropdownItem>
-                            <DropdownItem>
+                            <DropdownItem key="billing">
                               💳 View Billing
                             </DropdownItem>
                           </DropdownMenu>

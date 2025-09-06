@@ -53,7 +53,7 @@ export default function ComplianceReports() {
 
   const getNextDueDate = (frequency: string, dueDay: number) => {
     const now = new Date();
-    let nextDue = new Date();
+    const nextDue = new Date();
     
     switch (frequency) {
       case 'Monthly':
@@ -82,7 +82,7 @@ export default function ComplianceReports() {
 
   const getDaysUntilDue = (frequency: string, dueDay: number) => {
     const now = new Date();
-    let nextDue = new Date();
+    const nextDue = new Date();
     
     switch (frequency) {
       case 'Monthly':

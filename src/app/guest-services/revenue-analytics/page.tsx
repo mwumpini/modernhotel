@@ -6,7 +6,7 @@ import {
   Badge, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure, Textarea, Pagination,
   Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Progress, Divider
 } from '@heroui/react';
-import { SearchIcon, FilterIcon, SortIcon, DownloadIcon, ChartIcon, TrendingUpIcon, TrendingDownIcon } from '@heroui/react';
+// Icons removed - not available in @heroui/react
 
 interface RevenueData {
   id: string;
@@ -231,11 +231,11 @@ export default function RevenueAnalyticsPage() {
   const getTrendIcon = (trend: string) => {
     switch (trend) {
       case 'up':
-        return <TrendingUpIcon className="text-green-500" />;
+        return <span className="text-green-500">↗</span>;
       case 'down':
-        return <TrendingDownIcon className="text-red-500" />;
+        return <span className="text-red-500">↘</span>;
       default:
-        return <ChartIcon className="text-gray-500" />;
+        return <span className="text-gray-500">→</span>;
     }
   };
 
@@ -275,7 +275,7 @@ export default function RevenueAnalyticsPage() {
           <Button 
             color="primary" 
             variant="flat"
-            startContent={<DownloadIcon />}
+            startContent="📥"
             onPress={handleExport}
             isLoading={isLoading}
           >
@@ -393,7 +393,7 @@ export default function RevenueAnalyticsPage() {
                     <span className="text-sm text-gray-600">{source.percentage}%</span>
                   </div>
                   <div className="flex items-center gap-1 mt-1">
-                    <TrendingUpIcon className="text-green-500 w-4 h-4" />
+                    <span className="text-green-500">↗</span>
                     <span className="text-sm text-green-600">+{source.growth}%</span>
                   </div>
                 </div>
@@ -439,7 +439,7 @@ export default function RevenueAnalyticsPage() {
               placeholder="Search by date..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              startContent={<SearchIcon />}
+              startContent="🔍"
               className="md:w-64"
             />
             <Select
@@ -448,14 +448,14 @@ export default function RevenueAnalyticsPage() {
               onChange={(e) => setCategoryFilter(e.target.value)}
               className="md:w-32"
             >
-              <SelectItem key="all" value="all">All</SelectItem>
-              <SelectItem key="daily" value="daily">Daily</SelectItem>
-              <SelectItem key="weekly" value="weekly">Weekly</SelectItem>
-              <SelectItem key="monthly" value="monthly">Monthly</SelectItem>
+              <SelectItem key="all">All</SelectItem>
+              <SelectItem key="daily">Daily</SelectItem>
+              <SelectItem key="weekly">Weekly</SelectItem>
+              <SelectItem key="monthly">Monthly</SelectItem>
             </Select>
             <Dropdown>
               <DropdownTrigger>
-                <Button variant="flat" startContent={<SortIcon />}>
+                <Button variant="flat" startContent="🔄">
                   Sort
                 </Button>
               </DropdownTrigger>
@@ -548,7 +548,7 @@ export default function RevenueAnalyticsPage() {
               <p className="text-2xl font-bold text-blue-600">₵450,000</p>
               <p className="text-sm text-gray-600">Next Month</p>
               <div className="flex items-center justify-center gap-1 mt-1">
-                <TrendingUpIcon className="text-green-500 w-4 h-4" />
+                <span className="text-green-500">↗</span>
                 <span className="text-sm text-green-600">+8.5%</span>
               </div>
             </div>
@@ -556,7 +556,7 @@ export default function RevenueAnalyticsPage() {
               <p className="text-2xl font-bold text-green-600">₵1,350,000</p>
               <p className="text-sm text-gray-600">Next Quarter</p>
               <div className="flex items-center justify-center gap-1 mt-1">
-                <TrendingUpIcon className="text-green-500 w-4 h-4" />
+                <span className="text-green-500">↗</span>
                 <span className="text-sm text-green-600">+12.2%</span>
               </div>
             </div>
@@ -564,7 +564,7 @@ export default function RevenueAnalyticsPage() {
               <p className="text-2xl font-bold text-purple-600">₵5,200,000</p>
               <p className="text-sm text-gray-600">Next Year</p>
               <div className="flex items-center justify-center gap-1 mt-1">
-                <TrendingUpIcon className="text-green-500 w-4 h-4" />
+                <span className="text-green-500">↗</span>
                 <span className="text-sm text-green-600">+15.8%</span>
               </div>
             </div>
@@ -609,11 +609,11 @@ export default function RevenueAnalyticsPage() {
                   value={reportConfig.dateRange}
                   onChange={(e) => setReportConfig({...reportConfig, dateRange: e.target.value})}
                 >
-                  <SelectItem key="week" value="week">This Week</SelectItem>
-                  <SelectItem key="month" value="month">This Month</SelectItem>
-                  <SelectItem key="quarter" value="quarter">This Quarter</SelectItem>
-                  <SelectItem key="year" value="year">This Year</SelectItem>
-                  <SelectItem key="custom" value="custom">Custom Range</SelectItem>
+                  <SelectItem key="week">This Week</SelectItem>
+                  <SelectItem key="month">This Month</SelectItem>
+                  <SelectItem key="quarter">This Quarter</SelectItem>
+                  <SelectItem key="year">This Year</SelectItem>
+                  <SelectItem key="custom">Custom Range</SelectItem>
                 </Select>
               </div>
 

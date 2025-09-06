@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { Suspense } from 'react';
 import PageLayout from '../components/PageLayout';
 import HousekeepingMainDashboard from '../components/HousekeepingMainDashboard';
 
@@ -28,7 +28,9 @@ export default function HousekeepingTestPage() {
           </div>
 
           {/* Main Housekeeping Dashboard */}
-          <HousekeepingMainDashboard />
+          <Suspense fallback={<div>Loading housekeeping dashboard...</div>}>
+            <HousekeepingMainDashboard />
+          </Suspense>
         </div>
       </div>
     </PageLayout>

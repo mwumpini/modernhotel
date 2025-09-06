@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { InventoryItem, ItemCategory } from '@/app/lib/models';
 
 // Mock database (replace with real DB calls)
-let inventoryItemsDB: InventoryItem[] = [
+const inventoryItemsDB: InventoryItem[] = [
   {
     id: '1',
     itemCode: 'F&B-001',

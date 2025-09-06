@@ -468,7 +468,7 @@ export class HotelBizAnalytics {
     position: string
   ): PricingRecommendation {
     let recommendedRate = ourRate;
-    let factors: string[] = ['competition'];
+    const factors: string[] = ['competition'];
     
     if (position === 'lagging') {
       recommendedRate = Math.round(competitorRate * 0.95); // 5% below competitor

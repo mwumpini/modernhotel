@@ -4,7 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "predev": "node scripts/ensure-tailwind.cjs",
     "dev": "next dev",
+    "dev:safe": "npm run kill:node && npm run clean && npm run dev",
+    "clean": "node scripts/clean-next.js",
+    "kill:node": "powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\"",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -43,7 +47,7 @@
     "@types/react-dom": "^18",
     "eslint": "^9",
     "eslint-config-next": "15.4.6",
-    "tailwindcss": "^4.1.13",
+    "tailwindcss": "4.1.13",
     "tsx": "^4.20.4",
     "typescript": "^5"
   }

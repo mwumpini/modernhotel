@@ -986,7 +986,6 @@ interface SettingsStore extends SystemSettings {
   getNextProformaInvoiceNumber: () => string;
   getNextClientNumber: () => string;
   getNextReservationNumber: () => string;
-  getNextReservationNumber: () => string;
   
   // Authorization
   hasPermission: (permission: string) => boolean;
@@ -1952,9 +1951,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   // Module Management Methods
   toggleModule: (module: keyof ModuleSettings) => {
     const state = get();
-    const currentModuleSettings = state.moduleSettings[module];
-    const updatedModuleSettings = { ...currentModuleSettings, isActive: !currentModuleSettings.isActive };
-    const newModuleSettings = { ...state.moduleSettings, [module]: updatedModuleSettings };
+    const current = state.moduleSettings;
+    const newModuleSettings = { ...current, [module]: !current[module] } as ModuleSettings;
     set({ moduleSettings: newModuleSettings });
     get().saveSettings();
     get().publish();

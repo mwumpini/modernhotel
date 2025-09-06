@@ -196,7 +196,7 @@ export default function ActivityLog() {
 
   // Filter logs based on current filters
   useEffect(() => {
-    let filtered = logs.filter(log => {
+    const filtered = logs.filter(log => {
       const matchesSearch = !filters.search || 
         log.action.toLowerCase().includes(filters.search.toLowerCase()) ||
         log.details.toLowerCase().includes(filters.search.toLowerCase()) ||

@@ -189,7 +189,7 @@ export class EnhancedFrontOfficeStore {
     const baseRoomRate = ratePlan.basePrice;
     
     // Apply seasonal rates (existing logic)
-    const seasonalAdjustment = this.calculateSeasonalAdjustment(ratePlan, startDate);
+    const seasonalAdjustment = this.calculateRatePlanSeasonalAdjustment(ratePlan, startDate);
     const adjustedRoomRate = baseRoomRate * (1 + seasonalAdjustment);
     
     // Apply event-specific pricing
@@ -310,7 +310,7 @@ export class EnhancedFrontOfficeStore {
   /**
    * Calculate seasonal adjustment for rate plans (existing logic)
    */
-  private calculateSeasonalAdjustment(ratePlan: RatePlan, date: string): number {
+  private calculateRatePlanSeasonalAdjustment(ratePlan: RatePlan, date: string): number {
     const targetDate = new Date(date);
     const seasonalRate = ratePlan.seasonalRates?.find(sr => {
       const start = new Date(sr.startDate);
@@ -352,7 +352,7 @@ export class EnhancedFrontOfficeStore {
 
     // VIP guests get higher floors
     if (preferences.highFloor) {
-      score += parseInt(room.floor) * 10;
+      score += parseInt(room.floor || '0', 10) * 10;
     }
 
     // Prefer rooms away from elevators for quiet guests
@@ -366,7 +366,7 @@ export class EnhancedFrontOfficeStore {
     }
 
     // Floor preference
-    if (preferences.highFloor && parseInt(room.floor) >= 3) {
+    if (preferences.highFloor && parseInt(room.floor || '0', 10) >= 3) {
       score += 20;
     }
 
@@ -579,7 +579,9 @@ export class EnhancedFrontOfficeStore {
       guestName: groupLeader.name || `${groupLeader.firstName} ${groupLeader.lastName}`,
       groupId: `GRP-${Date.now()}`,
       groupSize: groupMembers.length + 1,
-      isGroupLeader: true
+      isGroupLeader: true,
+      stayReason: 'group' as any,
+      stayReasonDetails: 'Group booking'
     });
     
     reservations.push(groupReservation);
@@ -594,7 +596,9 @@ export class EnhancedFrontOfficeStore {
         groupId: groupReservation.groupId,
         groupSize: groupMembers.length + 1,
         isGroupLeader: false,
-        linkedReservationId: groupReservation.id
+        linkedReservationId: groupReservation.id,
+        stayReason: 'group' as any,
+        stayReasonDetails: 'Group booking'
       });
       
       reservations.push(memberReservation);

@@ -20,7 +20,7 @@ export default function OfflinePage() {
             <span className="text-4xl">🏨</span>
           </div>
           <h1 className="text-2xl font-bold text-ghana-black">Ghana Hotel Management</h1>
-          <p className="text-gray-600">You're currently offline</p>
+          <p className="text-gray-600">You&apos;re currently offline</p>
         </CardHeader>
         
         <CardBody className="text-center space-y-6">

@@ -268,7 +268,7 @@ export default function SelfCheckinPage({ params }: { params: { token: string } 
 
                   {/* Terms */}
                   <div className="text-xs text-gray-500 text-center">
-                    <p>By submitting this form, you confirm your arrival and agree to the hotel's terms and conditions.</p>
+                    <p>By submitting this form, you confirm your arrival and agree to the hotel&apos;s terms and conditions.</p>
                     <p>Your room access will be provided upon successful check-in.</p>
                   </div>
                 </form>
