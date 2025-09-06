@@ -398,6 +398,43 @@ class FrontOfficeStore {
     return null;
   }
 
+  // Client Services management
+  addClientService(service: {
+    id: string;
+    clientId: string;
+    serviceName: string;
+    serviceType: 'amenity' | 'package' | 'contract';
+    rate: number;
+    notes?: string;
+    contractStart?: string;
+    contractEnd?: string;
+    status: 'active' | 'inactive' | 'expired';
+    isActive: boolean;
+    createdAt: string;
+  }) {
+    this.clientServices.push(service);
+    this.notify();
+    trackEvent('FO.ClientService.Added', { clientId: service.clientId, serviceName: service.serviceName, type: service.serviceType });
+    return service;
+  }
+
+  updateClientService(serviceId: string, updates: Partial<{ serviceName: string; serviceType: 'amenity'|'package'|'contract'; rate: number; notes?: string; contractStart?: string; contractEnd?: string; status: 'active'|'inactive'|'expired'; isActive: boolean; }>) {
+    const idx = this.clientServices.findIndex(s => s.id === serviceId);
+    if (idx === -1) return null;
+    this.clientServices[idx] = { ...this.clientServices[idx], ...updates };
+    this.notify();
+    trackEvent('FO.ClientService.Updated', { id: serviceId });
+    return this.clientServices[idx];
+  }
+
+  deleteClientServicesForClient(clientId: string) {
+    const before = this.clientServices.length;
+    this.clientServices = (this.clientServices || []).filter(s => s.clientId !== clientId);
+    const removed = before - this.clientServices.length;
+    this.notify();
+    if (removed > 0) trackEvent('FO.ClientService.DeletedForClient', { clientId, removed });
+  }
+
   getNextClientNumber(): string {
     const settings = useSettingsStore.getState();
     return settings.getNextClientNumber();

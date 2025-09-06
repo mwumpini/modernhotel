@@ -95,11 +95,19 @@ export default function ManageClientsPage() {
 
   useEffect(() => {
     loadClients();
+    // Subscribe to store updates so the table reflects new clients immediately
+    const unsubscribe = frontOfficeStore.subscribe(loadClients);
+    return unsubscribe;
   }, []);
 
   useEffect(() => {
     filterClients();
   }, [searchTerm, clients]);
+
+  // Reset to first page whenever the filtered list changes size
+  useEffect(() => {
+    setPage(1);
+  }, [filteredClients.length]);
 
   const loadClients = () => {
     const guests = frontOfficeStore.guests;
@@ -161,6 +169,25 @@ export default function ManageClientsPage() {
 
   const handleCreateClient = () => {
     router.push('/guest-services/client-services/clients-services?new=1&type=individual');
+  };
+
+  const handleClearAllClients = () => {
+    if (confirm('This will permanently delete ALL clients. Continue?')) {
+      try {
+        // Clear in-memory list
+        (frontOfficeStore as any).guests = [];
+        // Clear persisted storage
+        try { localStorage.removeItem('fo.guests'); } catch {}
+        try { sessionStorage.removeItem('fo.guests'); } catch {}
+        // Notify subscribers and refresh
+        ;(frontOfficeStore as any).notify();
+        loadClients();
+        alert('All clients have been deleted.');
+      } catch (e) {
+        console.error('Failed to clear clients', e);
+        alert('Failed to clear clients.');
+      }
+    }
   };
 
   const handleCreateFromReservation = (reservation: Reservation) => {
@@ -306,9 +333,8 @@ export default function ManageClientsPage() {
       }
     }
   };
-
   const getNationalityFlag = (nationality: Nationality) => {
-    const flags: Record<Nationality, string> = {
+    const flags: Partial<Record<Nationality, string>> = {
       ghanaian: '🇬🇭',
       nigerian: '🇳🇬',
       kenyan: '🇰🇪',
@@ -379,6 +405,14 @@ export default function ManageClientsPage() {
               className="text-sm sm:text-base px-3 sm:px-4 py-2 sm:py-3"
             >
               📥 Import Clients
+            </Button>
+            <Button
+              color="danger"
+              variant="bordered"
+              onClick={handleClearAllClients}
+              className="text-sm sm:text-base px-3 sm:px-4 py-2 sm:py-3"
+            >
+              🗑️ Clear All
             </Button>
           </div>
         </div>

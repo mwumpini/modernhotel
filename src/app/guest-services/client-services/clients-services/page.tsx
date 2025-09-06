@@ -568,35 +568,16 @@ function ClientsServicesContent() {
             return;
         }
         
-        // Generate client ID
+        // Generate a unique client ID independent of display numbering to avoid collisions
         const settingsState = useSettingsStore.getState();
-        const clientCfg = settingsState.clientSettings;
-        const basePrefix = clientCfg?.prefix || 'C';
-        const corpPrefix = `${basePrefix}CORP`;
-        const indPrefix = `${basePrefix}IND`;
-        const format = clientCfg?.numberFormat || '{PREFIX}-{NUMBER:000000}';
-        const nextNumber = clientCfg?.nextNumber ?? 1;
-        const pad = (n: number, w: number) => n.toString().padStart(w, '0');
-        const numMatch = /\{NUMBER:(\d+)\}/.exec(format);
-        const width = numMatch ? parseInt(numMatch[1], 10) : 6;
-        const chosenPrefix = newClient.type === 'corporate' ? corpPrefix : indPrefix;
-        const clientId = editClientId || format
-            .replace('{PREFIX}', chosenPrefix)
-            .replace(/\{NUMBER:(\d+)\}/, pad(nextNumber, width));
-        
-        // Update settings for next number
-        if (!editClientId) {
-            try { 
-                settingsState.updateClientSettings({ nextNumber: nextNumber + 1 }); 
-            } catch (e) {}
-        }
+        const clientId = editClientId || `G-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*1000).toString().padStart(3,'0')}`;
         
         const nationality = countryCodeToNationalityAdjective(newClient.countryCode) as Nationality;
         
         // Create guest profile
         const newGuest: GuestProfile = {
             id: clientId,
-            serialNumber: `C${String((frontOfficeStore.guests?.length || 0) + 1).padStart(3, '0')}`,
+            serialNumber: frontOfficeStore.getNextClientNumber(),
             firstName: newClient.type === 'corporate' ? 
                 (newClient.contactPersonName?.split(' ')[0] || newClient.companyName) : 
                 newClient.firstName,
@@ -675,21 +656,28 @@ function ClientsServicesContent() {
         }
         
         // Update store
-        if (!frontOfficeStore.guests) {
-            frontOfficeStore.guests = [];
+        // Use store APIs to avoid accidental array truncation or ID collisions
+        const updated = frontOfficeStore.updateGuest(clientId, newGuest as any);
+        if (!updated) {
+            frontOfficeStore.createGuest({
+                firstName: newGuest.firstName,
+                lastName: newGuest.lastName,
+                middleName: newGuest.middleName,
+                phone: newGuest.phone,
+                email: newGuest.email,
+                nationality: newGuest.nationality,
+                idType: newGuest.idType,
+                idNumber: newGuest.idNumber,
+                dateOfBirth: newGuest.dateOfBirth,
+                gender: newGuest.gender,
+                emergencyContact: newGuest.emergencyContact,
+                address: undefined,
+                city: newGuest.city as any,
+                country: undefined,
+                notes: undefined,
+                source: 'walkin'
+            });
         }
-        
-        const existingIdx = frontOfficeStore.guests.findIndex(g => g.id === clientId);
-        if (existingIdx >= 0) {
-            // Update existing guest
-            frontOfficeStore.guests[existingIdx] = newGuest;
-        } else {
-            // Add new guest
-        frontOfficeStore.guests.push(newGuest);
-        }
-        
-        // Notify store change
-        frontOfficeStore.notify();
         
         // Reset form
         setNewClient({
@@ -806,12 +794,8 @@ function ClientsServicesContent() {
             createdAt: new Date().toISOString(),
         };
         
-        // Add to store
-        if (!frontOfficeStore.clientServices) {
-            frontOfficeStore.clientServices = [];
-        }
-        frontOfficeStore.clientServices.push(newService);
-        frontOfficeStore.notify();
+        // Add to store via API
+        frontOfficeStore.addClientService(newService);
         
         onClose();
         setSelected(null);
@@ -909,9 +893,8 @@ function ClientsServicesContent() {
     const handleDelete = (row: ClientRow) => {
         if (!confirm('Delete this client? This cannot be undone.')) return;
         frontOfficeStore.deleteGuest(row.id);
-        // Also remove associated client services
-        frontOfficeStore.clientServices = (frontOfficeStore.clientServices || []).filter(s=>s.clientId!==row.id);
-        frontOfficeStore.notify();
+        // Also remove associated client services via API
+        frontOfficeStore.deleteClientServicesForClient(row.id);
     };
 
     const getSortableValue = (row: ClientRow, key: string) => {
