@@ -106,6 +106,8 @@ export default function CheckOutsPage() {
   const [filteredCheckOuts, setFilteredCheckOuts] = useState<CheckOutData[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
+  const [rowsPerPage] = useState(10);
   const [selectedCheckOut, setSelectedCheckOut] = useState<CheckOutData | null>(null);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [isProcessing, setIsProcessing] = useState(false);
@@ -120,6 +122,11 @@ export default function CheckOutsPage() {
   useEffect(() => {
     filterCheckOuts();
   }, [checkOuts, searchTerm, statusFilter]);
+
+  // Reset to first page whenever the filtered list changes size
+  useEffect(() => {
+    setPage(1);
+  }, [filteredCheckOuts.length]);
 
   const loadCheckOuts = () => {
     const reservations = frontOfficeStore.reservations;

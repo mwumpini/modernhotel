@@ -71,12 +71,21 @@ const InfoIcon = ({ description }: { description: string }) => {
 
 export default function FrontdeskDashboard() {
   const [selectedTab, setSelectedTab] = useState("overview");
+  const [refreshTrigger, setRefreshTrigger] = useState(0);
   const router = useRouter();
 
   const settings = useSettingsStore();
   const reservations = frontOfficeStore.reservations;
   const rooms = frontOfficeStore.rooms;
   const hkAllRooms = housekeepingStore.getAllRooms();
+
+  // Subscribe to store changes to update client count
+  useEffect(() => {
+    const unsubscribe = frontOfficeStore.subscribe(() => {
+      setRefreshTrigger(prev => prev + 1);
+    });
+    return unsubscribe;
+  }, []);
   const settingsRoomsCount = (settings as any)?.roomManagement?.rooms?.length || 0;
   const totalRooms = settingsRoomsCount || rooms.length || hkAllRooms.length;
   const availableTotal = hkAllRooms.filter(r => ['vacant', 'clean', 'inspected'].includes(r.status as any)).length;
@@ -100,15 +109,15 @@ export default function FrontdeskDashboard() {
         { title: 'Reservations', icon: '📅', description: 'Manage room reservations and bookings', status: 'active', count: reservations.length },
         { title: 'Rooms & Bookings', icon: '🏠', description: 'View and manage room assignments', status: 'active', count: totalRooms },
         { title: 'Room Management', icon: '📋', description: 'Room status and maintenance tracking', status: 'active', count: totalRooms },
-        { title: 'Client Management', icon: '👥', description: 'Manage client profiles, search, and preferences', status: 'active', count: 0 },
+        { title: 'Client Management', icon: '👥', description: 'Manage client profiles, search, and preferences', status: 'active', count: frontOfficeStore.guests.length },
       ]
     },
     {
       category: 'Guest Services',
       items: [
-        { title: 'Check-ins', icon: '✅', description: 'Guest check-in processing', status: 'active', count: 0 }, // Clean slate - no check-ins
+        { title: 'Check-ins', icon: '✅', description: 'Guest check-in processing', status: 'active', count: todayCheckIns },
         { title: 'In-House', icon: '🏠', description: 'Current guest management', status: 'active', count: occupiedTotal },
-        { title: 'Check-outs', icon: '🚪', description: 'Guest check-out processing', status: 'active', count: 0 }, // Clean slate - no check-outs
+        { title: 'Check-outs', icon: '🚪', description: 'Guest check-out processing', status: 'active', count: todayCheckOuts },
         { title: 'Invoices & Payments', icon: '📄', description: 'Billing and payment processing', status: 'active', count: 0 }, // Clean slate - no invoices
         { title: 'Guest Experience Manager', icon: '👥', description: 'Guest satisfaction and services', status: 'active', count: occupiedTotal },
         { title: 'Mobile Guest Services', icon: '📱', description: 'Mobile app guest services', status: 'active', count: 0 }, // Clean slate - no mobile services

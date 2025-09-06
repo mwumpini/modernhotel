@@ -126,6 +126,8 @@ export default function CheckInsPage() {
   const [filteredCheckIns, setFilteredCheckIns] = useState<CheckInData[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
+  const [rowsPerPage] = useState(10);
   const [selectedCheckIn, setSelectedCheckIn] = useState<CheckInData | null>(null);
   const [selectedTab, setSelectedTab] = useState(checkInType === 'walkin' ? 'walkin' : 'reservations');
   
@@ -162,6 +164,11 @@ export default function CheckInsPage() {
   useEffect(() => {
     filterCheckIns();
   }, [checkIns, searchTerm, statusFilter]);
+
+  // Reset to first page whenever the filtered list changes size
+  useEffect(() => {
+    setPage(1);
+  }, [filteredCheckIns.length]);
 
   const loadCheckIns = () => {
     const reservations = frontOfficeStore.reservations;

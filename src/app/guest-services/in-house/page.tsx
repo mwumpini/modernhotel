@@ -108,6 +108,8 @@ export default function InHousePage() {
   const [filteredGuests, setFilteredGuests] = useState<InHouseGuest[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
+  const [rowsPerPage] = useState(10);
   const [selectedGuest, setSelectedGuest] = useState<InHouseGuest | null>(null);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [activeTab, setActiveTab] = useState('overview');
@@ -142,6 +144,11 @@ export default function InHousePage() {
   useEffect(() => {
     filterGuests();
   }, [guests, searchTerm, statusFilter]);
+
+  // Reset to first page whenever the filtered list changes size
+  useEffect(() => {
+    setPage(1);
+  }, [filteredGuests.length]);
 
   const loadInHouseGuests = () => {
     const reservations = frontOfficeStore.reservations;

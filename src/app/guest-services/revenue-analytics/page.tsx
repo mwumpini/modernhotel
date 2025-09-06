@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
   Badge, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure, Textarea, Pagination,
@@ -205,6 +205,11 @@ export default function RevenueAnalyticsPage() {
 
     return data;
   }, [searchTerm, categoryFilter, sortBy, sortOrder, revenueData]);
+
+  // Reset to first page whenever the filtered list changes size
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filteredData.length]);
 
   // Pagination
   const totalPages = Math.ceil(filteredData.length / itemsPerPage);

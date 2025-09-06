@@ -57,6 +57,8 @@ export default function BillingPersonsPage() {
   const [filteredBillingPersons, setFilteredBillingPersons] = useState<BillingPerson[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [relationshipFilter, setRelationshipFilter] = useState<string>('all');
+  const [page, setPage] = useState(1);
+  const [rowsPerPage] = useState(10);
   const [selectedBillingPerson, setSelectedBillingPerson] = useState<BillingPerson | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -89,6 +91,11 @@ export default function BillingPersonsPage() {
   useEffect(() => {
     filterBillingPersons();
   }, [billingPersons, searchTerm, relationshipFilter]);
+
+  // Reset to first page whenever the filtered list changes size
+  useEffect(() => {
+    setPage(1);
+  }, [filteredBillingPersons.length]);
 
   const loadBillingPersons = () => {
     setBillingPersons([...frontOfficeStore.billingPersons]);
