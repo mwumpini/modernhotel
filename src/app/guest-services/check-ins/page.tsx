@@ -28,7 +28,7 @@
  * - Link to guest profiles for repeat visits
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import PageLayout from '../../components/PageLayout';
 import { 
   Card, 
@@ -109,7 +109,7 @@ interface WalkInData {
   source: string;
 }
 
-export default function CheckInsPage() {
+function CheckInsContent() {
   const searchParams = useSearchParams();
   const checkInType = searchParams.get('type') || 'reservation';
   const isQuickMode = searchParams.get('quick') === 'true';
@@ -849,5 +849,20 @@ export default function CheckInsPage() {
         </Modal>
       </div>
     </PageLayout>
+  );
+}
+
+export default function CheckInsPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 mb-4">Loading Check-In System...</h1>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+        </div>
+      </div>
+    }>
+      <CheckInsContent />
+    </Suspense>
   );
 }

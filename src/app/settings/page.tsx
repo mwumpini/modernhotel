@@ -1,13 +1,13 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { Tabs, Tab, Button, Modal, ModalContent, ModalHeader, ModalBody } from '@heroui/react';
 import { useSearchParams } from 'next/navigation';
 import PaymentMethodsSettings from '../components/settings/PaymentMethodsSettings';
 import TaxManagementSettings from '../components/settings/TaxManagementSettings';
 import ClientSettingsPanel from '../components/settings/ClientSettingsPanel';
 
-export default function SettingsPage() {
+function SettingsContent() {
   const [activeTab, setActiveTab] = useState('general');
   const searchParams = useSearchParams();
   
@@ -66,5 +66,20 @@ export default function SettingsPage() {
         </Tab>
       </Tabs>
     </div>
+  );
+}
+
+export default function SettingsPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 mb-4">Loading Settings...</h1>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+        </div>
+      </div>
+    }>
+      <SettingsContent />
+    </Suspense>
   );
 }
