@@ -129,9 +129,9 @@ export class HotelBizAnalytics {
 
   private calculateOccupancy(dateRange: DateRange): number {
     // Mock calculation - in real system, this would query actual data
-    const totalRooms = 156;
-    const occupiedRooms = 142;
-    return occupiedRooms / totalRooms;
+    const totalRooms = 0; // Clean slate - no rooms configured
+    const occupiedRooms = 0; // Clean slate - no rooms occupied
+    return totalRooms > 0 ? occupiedRooms / totalRooms : 0;
   }
 
   private calculateAverageDailyRate(dateRange: DateRange): number {

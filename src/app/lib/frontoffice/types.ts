@@ -55,13 +55,243 @@ export interface RoomEntity {
   id: string; // room number
   roomTypeId: string;
   floor?: string;
+  accessible?: boolean;
+  nearElevator?: boolean;
 }
 
 export interface RatePlan {
   id: string;
-  name: string; // BAR, Corporate
+  name: string; // BAR, Corporate, Event Conference
   roomTypeId: string;
-  price: number; // nightly override
+  basePrice: number; // nightly override (changed from price to match settings store)
+  isActive: boolean;
+  marketSegment: string;
+  
+  // NEW: Event & Conference Rate Management
+  rateType?: 'standard' | 'corporate' | 'event_conference' | 'package' | 'fixed_price';
+  eventSpecific?: {
+    isEventRate: boolean;
+    eventTypes: string[]; // ['conference', 'training', 'wedding', 'corporate_meeting']
+    packagePrice?: number; // Per person per day for conference facilities
+    includesVenue: boolean;
+    includesCatering: boolean;
+    includesEquipment: boolean;
+    minAttendees: number;
+    maxAttendees: number;
+    advanceBookingDays: number;
+    cancellationPolicy: string;
+    depositPercentage: number;
+  };
+  
+  restrictions?: {
+    minStay: number;
+    maxStay: number;
+    advanceBooking: number;
+    cancellationPolicy: string;
+  };
+  seasonalRates?: Array<{
+    id: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+    multiplier: number;
+    description: string;
+  }>;
+  dayOfWeekRates?: {
+    monday: number;
+    tuesday: number;
+    wednesday: number;
+    thursday: number;
+    friday: number;
+    saturday: number;
+    sunday: number;
+  };
+}
+
+// Add missing interfaces
+export interface Charge {
+  id: string;
+  description: string;
+  amount: number;
+  category: string;
+  taxable: boolean;
+  timestamp: string;
+  date: string; // Add date field to match FolioCharge
+}
+
+export interface Payment {
+  id: string;
+  method: string;
+  amount: number;
+  timestamp: string;
+}
+
+// NEW: Event Resources Management
+export interface EventResource {
+  id: string;
+  name: string;
+  type: 'venue' | 'equipment' | 'service' | 'package';
+  category: string;
+  description: string;
+  capacity?: number;
+  basePrice: number;
+  isActive: boolean;
+  availability: {
+    monday: boolean;
+    tuesday: boolean;
+    wednesday: boolean;
+    thursday: boolean;
+    friday: boolean;
+    saturday: boolean;
+    sunday: boolean;
+    startTime: string;
+    endTime: string;
+  };
+  seasonalPricing: Array<{
+    id: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+    multiplier: number;
+    description: string;
+  }>;
+  includedInPackages: string[]; // Package IDs that include this resource
+  setupTime: number; // Minutes required for setup
+  cleanupTime: number; // Minutes required for cleanup
+  notes: string;
+}
+
+// NEW: Event Packages Management
+export interface EventPackage {
+  id: string;
+  name: string;
+  description: string;
+  category: 'conference' | 'training' | 'wedding' | 'corporate' | 'social';
+  isActive: boolean;
+  basePrice: number; // Per person per day
+  minAttendees: number;
+  maxAttendees: number;
+  duration: number; // Days
+  
+  // NEW: Corporate rate integration
+  corporateRateTiers?: Array<{
+    clientId: string;
+    organizationName: string;
+    rateType: 'percentage' | 'flat_rate' | 'hybrid';
+    percentageDiscount?: number; // e.g., 15% off for corporate clients
+    flatRate?: number; // Fixed rate for this client
+    hybridRate?: {
+      percentage: number;
+      flatAdjustment: number;
+    };
+    minAttendees?: number; // Minimum attendees for this rate
+    maxAttendees?: number; // Maximum attendees for this rate
+    validFrom: string;
+    validTo: string;
+  }>;
+  
+  resources: Array<{
+    resourceId: string;
+    quantity: number;
+    priceOverride?: number; // Override base price if different
+  }>;
+  inclusions: string[]; // What's included in the package
+  exclusions: string[]; // What's NOT included
+  terms: string;
+  cancellationPolicy: string;
+  depositPercentage: number;
+  seasonalPricing: Array<{
+    id: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+    multiplier: number;
+    description: string;
+  }>;
+}
+
+// NEW: Event Booking Interface
+export interface EventBooking {
+  id: string;
+  eventName: string;
+  eventType: 'conference' | 'training' | 'wedding' | 'corporate' | 'social';
+  startDate: string;
+  endDate: string;
+  attendees: number;
+  packageId?: string;
+  ratePlanId?: string;
+  
+  // NEW: Corporate client integration
+  corporateClientId?: string;
+  corporateClientName?: string;
+  rateAgreementId?: string;
+  appliedRateType?: 'corporate' | 'standard' | 'negotiated';
+  
+  resources: Array<{
+    resourceId: string;
+    quantity: number;
+    startTime: string;
+    endTime: string;
+  }>;
+  rooms: Array<{
+    roomId: string;
+    guestId: string;
+    checkIn: string;
+    checkOut: string;
+    roomTypeId: string;
+    appliedRate: number;
+    rateType: 'corporate' | 'standard' | 'negotiated';
+  }>;
+  
+  // Enhanced cost breakdown
+  costBreakdown: {
+    accommodation: {
+      baseCost: number;
+      corporateDiscount: number;
+      seasonalAdjustment: number;
+      finalCost: number;
+    };
+    package: {
+      baseCost: number;
+      corporateDiscount: number;
+      seasonalAdjustment: number;
+      finalCost: number;
+    };
+    services: {
+      dinner: number;
+      shuttle: number;
+      equipment: number;
+      other: number;
+    };
+    taxes: number;
+    totalCost: number;
+  };
+  
+  totalCost: number;
+  depositPaid: number;
+  status: 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled';
+  clientId: string;
+  clientName: string;
+  contactPhone: string;
+  contactEmail: string;
+  specialRequirements: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GuestPreferences {
+  preferredRoomType?: 'standard' | 'deluxe' | 'suite';
+  preferredFloor?: 'low' | 'middle' | 'high';
+  allergies?: string[];
+  dietaryRestrictions?: string[];
+  roomService?: boolean;
+  housekeepingFrequency?: 'daily' | 'every_other_day' | 'weekly';
+  checkInTime?: 'early' | 'standard' | 'late';
+  checkOutTime?: 'early' | 'standard' | 'late';
+  specialRequests?: string[];
+  newsletter?: boolean;
+  marketingEmails?: boolean;
+  disability?: string; // Accessibility needs or disability description
 }
 
 export interface GuestProfile {
@@ -70,13 +300,25 @@ export interface GuestProfile {
   firstName: string;
   lastName: string;
   middleName?: string;
+  name?: string; // Computed name for convenience
   phone?: string;
+  secondaryPhone?: string;
   email?: string;
   nationality: Nationality;
   idType: IdType;
   idNumber: string;
   dateOfBirth?: string;
   gender?: 'male' | 'female' | 'other' | 'prefer_not_to_say';
+  employerCompany?: string;
+  companyPhone?: string;
+  jobTitle?: string;
+  // Corporate billing contact (compat for existing data usage in UI)
+  billingContactName?: string;
+  billingContactEmail?: string;
+  billingContactPhone?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  preferences?: GuestPreferences;
   
   // Emergency contact
   emergencyContact: EmergencyContact;
@@ -96,6 +338,7 @@ export interface GuestProfile {
 
 export interface Reservation {
   id: string;
+  resId?: string; // Human-friendly ResID
   guestId: string;
   guestName: string;
   roomTypeId: string;
@@ -183,5 +426,154 @@ export const getDisplayName = (guest: GuestProfile): string => {
   }
   return `${guest.firstName} ${guest.lastName}`;
 };
+
+// NEW: Corporate Rate Management System
+export interface CorporateClient {
+  id: string;
+  organizationName: string;
+  industry: string;
+  contactPerson: {
+    name: string;
+    position: string;
+    phone: string;
+    email: string;
+    whatsapp?: boolean;
+  };
+  billingInfo: {
+    address: string;
+    city: string;
+    country: string;
+    taxId?: string;
+    vatNumber?: string;
+    paymentTerms: string; // "Net 30", "Immediate", etc.
+    creditLimit?: number;
+    preferredPaymentMethod: 'corporate_billing' | 'bank_transfer' | 'mobile_money' | 'credit_card';
+  };
+  contractDetails: {
+    startDate: string;
+    endDate: string;
+    status: 'active' | 'pending' | 'expired' | 'suspended';
+    specialTerms?: string;
+    notes?: string;
+  };
+  rateAgreements: CorporateRateAgreement[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CorporateRateAgreement {
+  id: string;
+  clientId: string; // Link to CorporateClient
+  name: string; // e.g., "SNV Ghana - Accommodation Only", "SNV Ghana - Workshop Rate"
+  description: string;
+  isActive: boolean;
+  priority: number; // Higher priority agreements override lower ones
+  
+  // Rate Strategy
+  rateStrategy: 'percentage' | 'flat_rate' | 'hybrid' | 'negotiated';
+  
+  // Percentage-based rates (e.g., 80% of standard rate)
+  percentageRates?: {
+    standardRoom: number; // 80 = 80% of standard rate
+    deluxeRoom: number;   // 75 = 75% of deluxe rate
+    suiteRoom: number;    // 70 = 70% of suite rate
+    presidentialRoom: number; // 65 = 65% of presidential rate
+  };
+  
+  // Flat rates (e.g., fixed 500 GHS for all room types)
+  flatRates?: {
+    standardRoom: number;
+    deluxeRoom: number;
+    suiteRoom: number;
+    presidentialRoom: number;
+  };
+  
+  // Hybrid rates (combination of percentage and flat)
+  hybridRates?: {
+    standardRoom: { percentage: number; flatAdjustment: number };
+    deluxeRoom: { percentage: number; flatAdjustment: number };
+    suiteRoom: { percentage: number; flatAdjustment: number };
+    presidentialRoom: { percentage: number; flatAdjustment: number };
+  };
+  
+  // Negotiated rates (special case-by-case pricing)
+  negotiatedRates?: {
+    [roomTypeId: string]: number;
+  };
+  
+  // Event-specific pricing
+  eventRates?: {
+    conference: {
+      accommodationDiscount: number; // Additional discount for conference attendees
+      packagePricing: 'included' | 'discounted' | 'separate';
+      packageDiscount?: number; // Percentage discount on conference packages
+    };
+    training: {
+      accommodationDiscount: number;
+      packagePricing: 'included' | 'discounted' | 'separate';
+      packageDiscount?: number;
+    };
+    workshop: {
+      accommodationDiscount: number;
+      packagePricing: 'included' | 'discounted' | 'separate';
+      packageDiscount?: number;
+    };
+  };
+  
+  // Service add-ons
+  serviceRates?: {
+    dinner: 'included' | 'discounted' | 'standard';
+    dinnerDiscount?: number; // Percentage discount if discounted
+    shuttle: 'included' | 'discounted' | 'standard';
+    shuttleDiscount?: number;
+    equipment: 'included' | 'discounted' | 'standard';
+    equipmentDiscount?: number;
+  };
+  
+  // Restrictions and conditions
+  restrictions: {
+    minStay: number;
+    maxStay: number;
+    advanceBooking: number;
+    cancellationPolicy: string;
+    blackoutDates?: string[]; // Dates when rates don't apply
+    dayOfWeekRestrictions?: {
+      monday: boolean;
+      tuesday: boolean;
+      wednesday: boolean;
+      thursday: boolean;
+      friday: boolean;
+      saturday: boolean;
+      sunday: boolean;
+    };
+  };
+  
+  // Seasonal adjustments
+  seasonalAdjustments?: Array<{
+    id: string;
+    name: string;
+    startDate: string;
+    endDate: string;
+    multiplier: number; // 1.2 = 20% increase, 0.8 = 20% decrease
+    description: string;
+  }>;
+  
+  // Volume discounts
+  volumeDiscounts?: Array<{
+    minNights: number;
+    discountPercentage: number;
+    description: string;
+  }>;
+  
+  // Group size discounts
+  groupDiscounts?: Array<{
+    minAttendees: number;
+    discountPercentage: number;
+    description: string;
+  }>;
+  
+  createdAt: string;
+  updatedAt: string;
+}
 
 

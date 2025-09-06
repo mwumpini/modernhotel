@@ -687,6 +687,90 @@ export default function FoodBeverageAnalyticsDashboard() {
             </Card>
           </div>
         </Tab>
+
+        <Tab key="performance" title="📊 Performance Metrics">
+          <div className="space-y-6 mt-6">
+            {/* Performance KPIs */}
+            <Card className="border-0 shadow-lg">
+              <CardHeader className="flex items-center justify-between">
+                <h3 className="text-xl font-semibold text-ghana-black">Key Performance Indicators</h3>
+                <Button size="sm" variant="flat" onClick={() => exportReport('performance-metrics', {})}>
+                  Export
+                </Button>
+              </CardHeader>
+              <CardBody>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+                  {/* Today's Orders */}
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">📊</span>
+                      <span className="text-sm font-medium text-gray-600">Today's Orders</span>
+                    </div>
+                    <div className="text-2xl font-bold text-ghana-black mb-2">0</div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>Target: 50</span>
+                    </div>
+                    <Progress value={0} color="success" size="sm" />
+                  </div>
+
+                  {/* Active Orders */}
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">🔄</span>
+                      <span className="text-sm font-medium text-gray-600">Active Orders</span>
+                    </div>
+                    <div className="text-2xl font-bold text-ghana-black mb-2">0</div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>Target: 20</span>
+                    </div>
+                    <Progress value={0} color="primary" size="sm" />
+                  </div>
+
+                  {/* Today's Revenue */}
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">💰</span>
+                      <span className="text-sm font-medium text-gray-600">Today's Revenue</span>
+                    </div>
+                    <div className="text-2xl font-bold text-ghana-black mb-2">₵0.00</div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>Target: ₵2,500</span>
+                    </div>
+                    <Progress value={0} color="secondary" size="sm" />
+                  </div>
+
+                  {/* Avg Order Value */}
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">📈</span>
+                      <span className="text-sm font-medium text-gray-600">Avg Order Value</span>
+                    </div>
+                    <div className="text-2xl font-bold text-ghana-black mb-2">₵0.00</div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>Target: ₵50</span>
+                    </div>
+                    <Progress value={0} color="warning" size="sm" />
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            {/* Performance Trends */}
+            <Card className="border-0 shadow-lg">
+              <CardHeader>
+                <h3 className="text-xl font-semibold text-ghana-black">Performance Trends</h3>
+              </CardHeader>
+              <CardBody>
+                <div className="text-center py-12 text-gray-500">
+                  <div className="text-4xl mb-4">📊</div>
+                  <h4 className="text-lg font-medium mb-2">Performance Trends</h4>
+                  <p className="text-sm">Historical performance data and trend analysis will be displayed here.</p>
+                  <p className="text-xs mt-2">Connect to live data sources to see real-time trends</p>
+                </div>
+              </CardBody>
+            </Card>
+          </div>
+        </Tab>
       </Tabs>
     </div>
   );

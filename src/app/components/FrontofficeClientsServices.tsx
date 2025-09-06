@@ -29,7 +29,7 @@ import {
   Tab
 } from "@heroui/react";
 import OfflineIndicator from './OfflineIndicator';
-import GuestForm, { GuestFormValues } from './GuestForm';
+// GuestForm removed in favor of canonical client form redirect
 import { frontOfficeStore } from '../lib/frontoffice/store';
 
 interface Client {
@@ -518,35 +518,12 @@ export default function FrontofficeClientsServices() {
           </CardBody>
         </Card>
 
-        {/* New Client Modal */}
-        <Modal isOpen={isOpen} onClose={onClose} size="5xl" scrollBehavior="inside">
-          <ModalContent>
-            <ModalHeader>👤 Add New Client</ModalHeader>
-            <ModalBody className="p-0">
-              <div className="max-h-[80vh] overflow-y-auto">
-                <GuestForm onSubmit={(form: GuestFormValues) => {
-                  const name = form.isBusiness ? (form.companyName || 'Company Client') : `${form.firstName || ''} ${form.otherNames || ''} ${form.surname || ''}`.trim();
-                  const guest = frontOfficeStore.createGuest({ 
-                    name, 
-                    phone: form.isBusiness ? form.companyPhone : form.phone, 
-                    email: form.isBusiness ? form.companyEmail : form.email, 
-                    nationality: form.nationality,
-                    source: (form.marketingSource as any) || undefined,
-                    referralGuestId: form.referralGuestId,
-                    referralName: form.referralName,
-                    socialPlatform: form.socialPlatform,
-                    socialHandle: form.socialHandle,
-                    campaignCode: form.campaignCode,
-                  });
-                  // Optionally attach marketing source or notes via analytics
-                  onClose();
-                }} onCancel={onClose} />
+        {/* New Client → use canonical form */}
+        <div className="fixed bottom-6 right-6 z-20">
+          <Button color="primary" onPress={() => {
+            window.location.href = '/guest-services/client-services/clients-services?new=1';
+          }}>➕ New Client</Button>
               </div>
-            </ModalBody>
-            <ModalFooter>
-            </ModalFooter>
-          </ModalContent>
-        </Modal>
       </div>
     </div>
   );

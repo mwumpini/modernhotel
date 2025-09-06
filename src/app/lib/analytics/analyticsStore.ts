@@ -97,7 +97,7 @@ const defaultFilters: AnalyticsFilter = {
   period: 'monthly',
   startDate: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
   endDate: new Date().toISOString().split('T')[0],
-  departments: ['front-office', 'housekeeping', 'food-beverage'],
+  departments: ['guest-services', 'housekeeping', 'food-beverage'],
   metrics: ['occupancy-rate', 'adr', 'revpar', 'guest-satisfaction', 'profit-margin'],
   includeHistorical: true
 };

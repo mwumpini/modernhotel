@@ -12,6 +12,8 @@ import {
   TaskStatus 
 } from './types';
 import { trackEvent } from '../analytics/trackEvent';
+import { useSettingsStore } from '../settings/store';
+import { frontOfficeStore } from '../frontoffice/store';
 
 interface RoomStatusData {
   roomNumber: string;
@@ -36,7 +38,20 @@ class HousekeepingStore {
   private listeners: Array<() => void> = [];
 
   constructor() {
-    this.initializeDemoData();
+    // Start empty; will sync from Settings
+    // this.initializeDemoData();
+    // Sync rooms from Settings so overview reflects configured rooms
+    try {
+      this.syncRoomsFromSettings();
+      // Subscribe to settings changes so rooms reflect Settings in real-time
+      useSettingsStore.subscribe((state) => {
+        if (state.roomManagement.rooms) {
+          this.syncRoomsFromSettings();
+        }
+      });
+    } catch (e) {
+      console.warn('HK: Room sync subscription failed', e);
+    }
   }
 
   private initializeDemoData() {
@@ -132,6 +147,28 @@ class HousekeepingStore {
 
   getRoomsByStatus(status: RoomStatus): RoomStatusData[] {
     return Array.from(this.rooms.values()).filter(room => room.status === status);
+  }
+
+  // Mirror Settings rooms -> housekeeping room status map (non-destructive)
+  private syncRoomsFromSettings() {
+    try {
+      const settings = useSettingsStore.getState();
+      const cfgRooms = settings.roomManagement.rooms || [];
+      for (const r of cfgRooms) {
+        if (!this.rooms.has(r.number)) {
+          this.rooms.set(r.number, {
+            roomNumber: r.number,
+            roomTypeId: r.typeId,
+            status: 'vacant',
+            lastUpdated: new Date().toISOString()
+          });
+        }
+      }
+      this.notify();
+      trackEvent('HK.Rooms.SyncedFromSettings', { count: cfgRooms.length });
+    } catch (e) {
+      console.error('HK: Failed to sync rooms from settings', e);
+    }
   }
 
   // Task Management
@@ -369,6 +406,62 @@ class HousekeepingStore {
 
   private notify() {
     this.listeners.forEach(listener => listener());
+  }
+
+  // Communication with Front Office Store
+  syncWithFrontOffice() {
+    try {
+      // Get current reservations from front office
+      const reservations = frontOfficeStore.reservations;
+      
+      // Update room statuses based on reservations
+      reservations.forEach(reservation => {
+        if (reservation.roomId) {
+          const room = this.rooms.get(reservation.roomId);
+          if (room) {
+            if (reservation.status === 'checked-in') {
+              this.updateRoomStatus(reservation.roomId, 'occupied', 'Front Office', 'Guest checked in');
+            } else if (reservation.status === 'checked-out') {
+              this.updateRoomStatus(reservation.roomId, 'dirty', 'Front Office', 'Guest checked out');
+            }
+          }
+        }
+      });
+
+      // Notify listeners of changes
+      this.notify();
+      trackEvent('HK.SyncedWithFrontOffice', { reservationCount: reservations.length });
+    } catch (e) {
+      console.error('HK: Failed to sync with front office', e);
+    }
+  }
+
+  // Get rooms that need attention for front office
+  getRoomsNeedingAttention() {
+    return {
+      dirty: this.getRoomsByStatus('dirty'),
+      maintenance: this.getRoomsByStatus('maintenance'),
+      outOfOrder: this.getRoomsByStatus('out-of-order'),
+      readyForInspection: this.getRoomsByStatus('clean'),
+      total: this.getAllRooms().length
+    };
+  }
+
+  // Update room status from front office
+  updateRoomStatusFromFrontOffice(roomNumber: string, status: RoomStatus, reason: string) {
+    this.updateRoomStatus(roomNumber, status, 'Front Office', reason);
+    
+    // If room is marked as dirty (check-out), create cleaning task
+    if (status === 'dirty') {
+      this.createTask({
+        roomNumber,
+        roomTypeId: this.rooms.get(roomNumber)?.roomTypeId || 'standard',
+        taskType: 'turnover',
+        priority: 'high',
+        estimatedMinutes: 45,
+        checklist: ['Change linens', 'Clean bathroom', 'Vacuum floor', 'Restock amenities', 'Check appliances']
+      });
+    }
   }
 }
 

@@ -36,9 +36,10 @@ import {
   DropdownItem
 } from "@heroui/react";
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { useSettingsStore } from '../lib/settings/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
-import { Reservation, GuestProfile, RoomType, RatePlan, BillingPerson, StayReason, Nationality, IdType } from '../lib/frontoffice/types';
+import { Reservation, GuestProfile, RoomType, RatePlan, StayReason, Nationality, IdType } from '../lib/frontoffice/types';
 
 interface ReservationFormData {
   guestName: string;
@@ -86,20 +87,40 @@ export default function ReservationsBookingsManager() {
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const [tabKey, setTabKey] = useState<string>('guest');
   
-  // New state for guest selection
-  const [useExistingGuest, setUseExistingGuest] = useState(false);
+  // New state for guest selection (default to existing guest search)
+  const [useExistingGuest, setUseExistingGuest] = useState(true);
   const [guestSearchTerm, setGuestSearchTerm] = useState('');
   const [filteredGuests, setFilteredGuests] = useState<GuestProfile[]>([]);
   const [selectedGuest, setSelectedGuest] = useState<GuestProfile | null>(null);
   const [showGuestSearch, setShowGuestSearch] = useState(false);
+  const [isGuestSearching, setIsGuestSearching] = useState(false);
+  const [guestSearchError, setGuestSearchError] = useState<string | null>(null);
   
   // New state for billing person selection
   const [useBillingPerson, setUseBillingPerson] = useState(false);
   const [billingPersonSearchTerm, setBillingPersonSearchTerm] = useState('');
-  const [filteredBillingPersons, setFilteredBillingPersons] = useState<BillingPerson[]>([]);
-  const [selectedBillingPerson, setSelectedBillingPerson] = useState<BillingPerson | null>(null);
+  const [filteredBillingPersons, setFilteredBillingPersons] = useState<GuestProfile[]>([]);
+  const [selectedBillingPerson, setSelectedBillingPerson] = useState<GuestProfile | null>(null);
   const [showBillingPersonSearch, setShowBillingPersonSearch] = useState(false);
+  const [isBillingPersonSearching, setIsBillingPersonSearching] = useState(false);
+  const [billingPersonSearchError, setBillingPersonSearchError] = useState<string | null>(null);
+  
+  // Bulk reservation state
+  const [isBulkReservation, setIsBulkReservation] = useState(false);
+  const [bulkGuests, setBulkGuests] = useState<Array<{
+    id: string;
+    guest: GuestProfile;
+    roomTypeId: string;
+    roomId?: string;
+    customRate?: number;
+    specialRequests?: string;
+    adults: number;
+    children: number;
+    arrival: string;
+    departure: string;
+  }>>([]);
   
   const [formData, setFormData] = useState<ReservationFormData>({
     guestName: '',
@@ -144,33 +165,161 @@ export default function ReservationsBookingsManager() {
     filterReservations();
   }, [reservations, searchTerm, statusFilter]);
 
-  // Filter guests based on search term
+  // Filter guests based on search term with enhanced validation
   useEffect(() => {
     if (guestSearchTerm.trim()) {
-      const filtered = frontOfficeStore.guests.filter(guest =>
-        guest.name.toLowerCase().includes(guestSearchTerm.toLowerCase()) ||
-        guest.phone?.toLowerCase().includes(guestSearchTerm.toLowerCase()) ||
-        guest.email?.toLowerCase().includes(guestSearchTerm.toLowerCase()) ||
-        guest.ghanaCard?.toLowerCase().includes(guestSearchTerm.toLowerCase())
-      );
-      setFilteredGuests(filtered);
+      const term = guestSearchTerm.toLowerCase().trim();
+      
+      // Validate search term length
+      if (term.length < 2) {
+        setFilteredGuests([]);
+        setGuestSearchError('Please enter at least 2 characters to search');
+        setIsGuestSearching(false);
+        return;
+      }
+      
+      setIsGuestSearching(true);
+      setGuestSearchError(null);
+      
+      // Add small delay to prevent excessive filtering
+      const timeoutId = setTimeout(() => {
+        try {
+      const filtered = frontOfficeStore.guests.filter((guest: any) => {
+            // Ensure guest has required fields
+            if (!guest || !guest.id) return false;
+            
+            const name = guest.name || `${guest.firstName || ''} ${guest.lastName || ''}`.trim();
+        const phone = guest.phone || '';
+        const email = guest.email || '';
+        const idNum = guest.idNumber || '';
+            const serialNum = guest.serialNumber || '';
+            
+            // Enhanced search criteria
+        return (
+          (name && String(name).toLowerCase().includes(term)) ||
+              (phone && String(phone).replace(/\s+/g, '').includes(term.replace(/\s+/g, ''))) ||
+          (email && String(email).toLowerCase().includes(term)) ||
+              (idNum && String(idNum).toLowerCase().includes(term)) ||
+              (serialNum && String(serialNum).toLowerCase().includes(term))
+        );
+      });
+          
+          // Sort by relevance (exact matches first, then partial matches)
+          const sortedFiltered = filtered.sort((a, b) => {
+            const aName = (a as any).name || `${(a as any).firstName || ''} ${(a as any).lastName || ''}`.trim();
+            const bName = (b as any).name || `${(b as any).firstName || ''} ${(b as any).lastName || ''}`.trim();
+            
+            const aExactMatch = aName.toLowerCase().startsWith(term);
+            const bExactMatch = bName.toLowerCase().startsWith(term);
+            
+            if (aExactMatch && !bExactMatch) return -1;
+            if (!aExactMatch && bExactMatch) return 1;
+            return aName.localeCompare(bName);
+          });
+          
+          setFilteredGuests(sortedFiltered);
+          setIsGuestSearching(false);
+          
+          if (sortedFiltered.length === 0) {
+            setGuestSearchError('No guests found matching your search');
+          }
+        } catch (error) {
+          console.error('Error filtering guests:', error);
+          setFilteredGuests([]);
+          setGuestSearchError('Error searching guests. Please try again.');
+          setIsGuestSearching(false);
+        }
+      }, 300); // 300ms debounce
+      
+      return () => clearTimeout(timeoutId);
     } else {
       setFilteredGuests([]);
+      setGuestSearchError(null);
+      setIsGuestSearching(false);
     }
   }, [guestSearchTerm]);
 
-  // Filter billing persons based on search term
+  // Filter billing persons based on search term with enhanced validation
   useEffect(() => {
     if (billingPersonSearchTerm.trim()) {
-      const filtered = frontOfficeStore.billingPersons.filter(bp =>
-        bp.name.toLowerCase().includes(billingPersonSearchTerm.toLowerCase()) ||
-        bp.company?.toLowerCase().includes(billingPersonSearchTerm.toLowerCase()) ||
-        bp.email?.toLowerCase().includes(billingPersonSearchTerm.toLowerCase()) ||
-        bp.phone?.toLowerCase().includes(billingPersonSearchTerm.toLowerCase())
-      );
-      setFilteredBillingPersons(filtered);
+      const term = billingPersonSearchTerm.toLowerCase().trim();
+      
+      // Validate search term length
+      if (term.length < 2) {
+        setFilteredBillingPersons([]);
+        setBillingPersonSearchError('Please enter at least 2 characters to search');
+        setIsBillingPersonSearching(false);
+        return;
+      }
+      
+      setIsBillingPersonSearching(true);
+      setBillingPersonSearchError(null);
+      
+      // Add small delay to prevent excessive filtering
+      const timeoutId = setTimeout(() => {
+        try {
+          const filtered = frontOfficeStore.guests.filter((g: any) => {
+            // Ensure guest has required fields
+            if (!g || !g.id) return false;
+            
+            const name = g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
+            const company = g.employerCompany || g.companyName || '';
+            const email = g.email || '';
+            const phone = g.phone || '';
+            const jobTitle = g.jobTitle || '';
+            const serialNum = g.serialNumber || '';
+            
+            // Enhanced search criteria for billing persons
+        return (
+          (name && String(name).toLowerCase().includes(term)) ||
+          (company && String(company).toLowerCase().includes(term)) ||
+          (email && String(email).toLowerCase().includes(term)) ||
+              (phone && String(phone).replace(/\s+/g, '').includes(term.replace(/\s+/g, ''))) ||
+              (jobTitle && String(jobTitle).toLowerCase().includes(term)) ||
+              (serialNum && String(serialNum).toLowerCase().includes(term))
+        );
+      });
+          
+          // Sort by relevance (company matches first, then name matches)
+          const sortedFiltered = filtered.sort((a, b) => {
+            const aName = (a as any).name || `${(a as any).firstName || ''} ${(a as any).lastName || ''}`.trim();
+            const bName = (b as any).name || `${(b as any).firstName || ''} ${(b as any).lastName || ''}`.trim();
+            const aCompany = (a as any).employerCompany || (a as any).companyName || '';
+            const bCompany = (b as any).employerCompany || (b as any).companyName || '';
+            
+            const aCompanyMatch = aCompany.toLowerCase().includes(term);
+            const bCompanyMatch = bCompany.toLowerCase().includes(term);
+            const aNameMatch = aName.toLowerCase().startsWith(term);
+            const bNameMatch = bName.toLowerCase().startsWith(term);
+            
+            // Prioritize company matches, then name matches
+            if (aCompanyMatch && !bCompanyMatch) return -1;
+            if (!aCompanyMatch && bCompanyMatch) return 1;
+            if (aNameMatch && !bNameMatch) return -1;
+            if (!aNameMatch && bNameMatch) return 1;
+            
+            return aName.localeCompare(bName);
+          });
+          
+          setFilteredBillingPersons(sortedFiltered);
+          setIsBillingPersonSearching(false);
+          
+          if (sortedFiltered.length === 0) {
+            setBillingPersonSearchError('No billing persons found matching your search');
+          }
+        } catch (error) {
+          console.error('Error filtering billing persons:', error);
+          setFilteredBillingPersons([]);
+          setBillingPersonSearchError('Error searching billing persons. Please try again.');
+          setIsBillingPersonSearching(false);
+        }
+      }, 300); // 300ms debounce
+      
+      return () => clearTimeout(timeoutId);
     } else {
       setFilteredBillingPersons([]);
+      setBillingPersonSearchError(null);
+      setIsBillingPersonSearching(false);
     }
   }, [billingPersonSearchTerm]);
 
@@ -216,12 +365,14 @@ export default function ReservationsBookingsManager() {
 
   const handleCreateReservation = () => {
     setIsCreatingNew(true);
+    setIsBulkReservation(true); // Always use bulk form - it can handle single guests too
     setUseExistingGuest(false);
     setSelectedGuest(null);
     setGuestSearchTerm('');
-    setUseBillingPerson(false);
+    setUseBillingPerson(false); // Let user choose billing person
     setSelectedBillingPerson(null);
     setBillingPersonSearchTerm('');
+    setBulkGuests([]);
     setFormData({
       guestName: '',
       phone: '',
@@ -255,6 +406,47 @@ export default function ReservationsBookingsManager() {
       costCenter: ''
     });
     onOpen();
+  };
+
+  const addGuestToBulk = (guest: GuestProfile) => {
+    // Check if guest is already added
+    if (bulkGuests.some(bg => bg.guest.id === guest.id)) {
+      alert('This guest is already added to the bulk reservation');
+      return;
+    }
+
+    const newId = (bulkGuests.length + 1).toString();
+    const roomTypeId = formData.roomTypeId || useSettingsStore.getState().roomManagement.roomTypes[0]?.id || '';
+    const roomType = useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === roomTypeId);
+    const baseRate = roomType?.baseRate || 0;
+
+    setBulkGuests([...bulkGuests, {
+      id: newId,
+      guest: guest,
+      roomTypeId: roomTypeId,
+      roomId: '',
+      customRate: baseRate,
+      specialRequests: '',
+      adults: 1,
+      children: 0,
+      arrival: formData.arrival || '',
+      departure: formData.departure || ''
+    }]);
+
+    // Clear search
+    setGuestSearchTerm('');
+    setFilteredGuests([]);
+    setShowGuestSearch(false);
+  };
+
+  const removeBulkGuest = (id: string) => {
+    setBulkGuests(bulkGuests.filter(guest => guest.id !== id));
+  };
+
+  const updateBulkGuest = (id: string, field: string, value: string | number) => {
+    setBulkGuests(bulkGuests.map(guest => 
+      guest.id === id ? { ...guest, [field]: value } : guest
+    ));
   };
 
   const handleEditReservation = (reservation: Reservation) => {
@@ -304,7 +496,7 @@ export default function ReservationsBookingsManager() {
     setSelectedGuest(guest);
     setFormData(prev => ({
       ...prev,
-      guestName: guest.name,
+      guestName: guest.name || '',
       phone: guest.phone || '',
       email: guest.email || '',
       nationality: guest.nationality || 'ghanaian',
@@ -322,84 +514,57 @@ export default function ReservationsBookingsManager() {
     setGuestSearchTerm('');
   };
 
-  const handleBillingPersonSelection = (billingPerson: BillingPerson) => {
+  const handleBillingPersonSelection = (billingPerson: GuestProfile) => {
     setSelectedBillingPerson(billingPerson);
     setFormData(prev => ({
       ...prev,
       billingPersonId: billingPerson.id,
-      companyName: billingPerson.company || ''
+      companyName: (billingPerson as any).employerCompany || prev.companyName || ''
     }));
     setShowBillingPersonSearch(false);
     setBillingPersonSearchTerm('');
     
-    console.log(`[FO.Reservation] Billing person selected: ${billingPerson.name} (${billingPerson.company}) for reservation`);
+    console.log(`[FO.Reservation] Billing person selected: ${(billingPerson as any).name} for reservation`);
     trackEvent('FO.Reservation.BillingPersonSelected', {
-      billingPersonId: billingPerson.id,
-      billingPersonName: billingPerson.name,
-      company: billingPerson.company,
-      relationship: billingPerson.billingRelationship
+      billingPersonId: (billingPerson as any).id,
+      billingPersonName: (billingPerson as any).name,
+      company: (billingPerson as any).employerCompany
     });
   };
 
   const handleSaveReservation = () => {
     if (isCreatingNew) {
-      let guest: GuestProfile;
-      
-      // Validate required fields
-      if (!formData.guestName.trim()) {
-        alert('Guest name is required');
+      // Handle reservation (single or multiple guests)
+      if (bulkGuests.length === 0) {
+        alert('Please add at least one guest to the reservation');
         return;
       }
       
-      if (useExistingGuest && selectedGuest) {
-        // Use existing guest
-        guest = selectedGuest;
-        console.log(`[FO.Reservation] Using existing guest profile: ${guest.name} (ID: ${guest.id})`);
-        trackEvent('FO.Reservation.ExistingGuestUsed', {
-          guestId: guest.id,
-          guestName: guest.name
-        });
-      } else {
-        // Create new guest profile
-        guest = frontOfficeStore.createGuest({
-          name: formData.guestName,
-          phone: formData.phone,
-          email: formData.email,
-          nationality: formData.nationality,
-          idType: formData.idType,
-          idNumber: formData.idNumber,
-          dateOfBirth: formData.dateOfBirth,
-          gender: formData.gender,
-          emergencyContact: {
-            name: formData.emergencyContactName,
-            relationship: formData.emergencyContactRelationship,
-            phone: formData.emergencyContactPhone,
-            email: formData.emergencyContactEmail,
-            address: formData.emergencyContactAddress
-          },
-          source: formData.source as any
-        });
-        
-        console.log(`[FO.Reservation] Created new guest profile: ${guest.name} (ID: ${guest.id})`);
-        trackEvent('FO.Reservation.NewGuestCreated', {
-          guestId: guest.id,
-          guestName: guest.name
-        });
+      // Validate billing person for multiple guests
+      if (bulkGuests.length > 1 && !selectedBillingPerson) {
+        alert('Please select a billing person for multiple guest reservations');
+        return;
       }
 
-      // Create new reservation
+        // Create reservations for each guest
+        const createdReservations = [];
+        for (const bulkGuest of bulkGuests) {
+          // Use the selected guest (already exists in system)
+          const guest = bulkGuest.guest;
+
+          // Create reservation with personal details from each guest
       const reservation = frontOfficeStore.createReservation({
         guestId: guest.id,
         guestName: guest.name,
-        roomTypeId: formData.roomTypeId,
+            roomTypeId: bulkGuest.roomTypeId,
         ratePlanId: formData.ratePlanId || undefined,
-        arrival: formData.arrival,
-        departure: formData.departure,
-        adults: formData.adults,
-        children: formData.children,
+            arrival: bulkGuest.arrival,
+            departure: bulkGuest.departure,
+            adults: bulkGuest.adults,
+            children: bulkGuest.children,
         source: formData.source,
         isGuaranteed: formData.isGuaranteed,
-        remarksToGuest: formData.remarksToGuest,
+            remarksToGuest: bulkGuest.specialRequests || formData.remarksToGuest,
         internalNotes: formData.internalNotes,
         marketCodes: formData.marketCodes,
         status: 'confirmed',
@@ -408,19 +573,22 @@ export default function ReservationsBookingsManager() {
         billingPersonId: formData.billingPersonId,
         companyName: formData.companyName,
         projectCode: formData.projectCode,
-        costCenter: formData.costCenter
-      });
+            costCenter: formData.costCenter,
+            roomId: bulkGuest.roomId,
+            customRate: bulkGuest.customRate // Add custom rate if specified
+          });
 
-      trackEvent('FO.Reservation.Created', {
-        id: reservation.id,
-        guest: reservation.guestName,
-        arrival: reservation.arrival,
-        departure: reservation.departure,
-        usedExistingGuest: useExistingGuest,
-        stayReason: reservation.stayReason,
-        hasBillingPerson: !!reservation.billingPersonId,
-        companyName: reservation.companyName
-      });
+          createdReservations.push(reservation);
+        }
+
+        trackEvent('FO.Reservation.BulkCreated', {
+          count: createdReservations.length,
+          companyName: formData.companyName,
+          billingPersonId: formData.billingPersonId,
+          stayReason: formData.stayReason
+        });
+
+        alert(`Successfully created ${createdReservations.length} reservation${createdReservations.length !== 1 ? 's' : ''}${formData.companyName ? ` for ${formData.companyName}` : ''}`);
     } else if (selectedReservation) {
       // Update existing reservation
       const updatedReservation = {
@@ -707,7 +875,7 @@ export default function ReservationsBookingsManager() {
         <CardBody className="p-0 overflow-x-auto">
           <Table aria-label="Reservations table">
             <TableHeader>
-              <TableColumn className="hidden sm:table-cell">Reservation ID</TableColumn>
+              <TableColumn className="hidden sm:table-cell">ResID</TableColumn>
               <TableColumn>Guest</TableColumn>
               <TableColumn className="hidden lg:table-cell">Room Type</TableColumn>
               <TableColumn className="hidden md:table-cell">Dates</TableColumn>
@@ -727,7 +895,7 @@ export default function ReservationsBookingsManager() {
                 >
                   <TableCell className="hidden sm:table-cell">
                     <div className="flex items-center space-x-2">
-                      <span className="font-semibold text-ghana-black">{reservation.id}</span>
+                      <span className="font-semibold text-ghana-black">{reservation.resId || reservation.id}</span>
                       <Chip size="sm" variant="flat" color="secondary">
                         {reservation.source || 'Direct'}
                       </Chip>
@@ -882,69 +1050,44 @@ export default function ReservationsBookingsManager() {
             {isCreatingNew ? 'Create New Reservation' : 'Edit Reservation'}
           </ModalHeader>
           <ModalBody>
-            <Tabs aria-label="Reservation details">
-              <Tab key="guest" title="👤 Guest Information">
+            <Tabs aria-label="Reservation details" selectedKey={tabKey} onSelectionChange={(key)=> setTabKey(key as string)}>
+              <Tab key="guest" title="👤 Guest & Reservation Details">
                 <div className="space-y-4 pt-4">
-                  {/* Guest Selection Toggle */}
+                  {/* Guest Management - Unified for Single and Multiple */}
                   {isCreatingNew && (
-                    <div className="bg-gray-50 p-4 rounded-lg border">
-                      <div className="flex items-center justify-between mb-3">
-                        <h4 className="font-medium text-gray-900">Guest Selection</h4>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm text-gray-600">New Guest</span>
-                          <input
-                            type="checkbox"
-                            id="useExistingGuest"
-                            checked={useExistingGuest}
-                            onChange={(e) => {
-                              setUseExistingGuest(e.target.checked);
-                              if (e.target.checked) {
-                                setSelectedGuest(null);
-                                setFormData(prev => ({
-                                  ...prev,
-                                  guestName: '',
-                                  phone: '',
-                                  email: '',
-                                  nationality: 'ghanaian',
-                                  idType: 'ghana_card',
-                                  idNumber: '',
-                                  dateOfBirth: '',
-                                  gender: 'prefer_not_to_say',
-                                  emergencyContactName: '',
-                                  emergencyContactRelationship: 'other',
-                                  emergencyContactPhone: '',
-                                  emergencyContactEmail: '',
-                                  emergencyContactAddress: '',
-                                }));
-                              }
-                            }}
-                            className="rounded border-gray-300"
-                          />
-                          <span className="text-sm text-gray-600">Existing Guest</span>
+                    <div className="bg-purple-50 p-4 rounded-lg border">
+                      <div className="flex items-center justify-between mb-4">
+                        <h4 className="font-medium text-purple-900">👥 Guest List ({bulkGuests.length} guest{bulkGuests.length !== 1 ? 's' : ''})</h4>
+                        <div className="text-sm text-purple-700">
+                          Search and add guests from the system
                         </div>
                       </div>
                       
-                      <p className="text-sm text-gray-600 mb-3">
-                        {useExistingGuest 
-                          ? "Search for an existing guest to use their profile information. This will auto-fill the guest details below."
-                          : "Create a new guest profile for this reservation."
-                        }
-                      </p>
-                      
-                      {useExistingGuest && (
-                        <div className="space-y-3">
-                          <div>
+                      {/* Guest Search for Bulk */}
+                      <div className="mb-4">
                             <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Search for Existing Guest
+                          Search and Add Guests
                             </label>
                             <div className="relative guest-search-container">
                               <div className="flex">
                                 <Input
                                   value={guestSearchTerm}
-                                  onChange={(e) => setGuestSearchTerm(e.target.value)}
-                                  placeholder="Search by name, phone, email, or Ghana Card"
+                              onChange={(e) => {
+                                setGuestSearchTerm(e.target.value);
+                                setGuestSearchError(null);
+                              }}
+                              placeholder="Search for existing guests by name, phone, email, or Ghana Card"
                                   onFocus={() => setShowGuestSearch(true)}
                                   className="flex-1"
+                              isInvalid={!!guestSearchError && guestSearchTerm.length >= 2}
+                              errorMessage={guestSearchError && guestSearchTerm.length >= 2 ? guestSearchError : undefined}
+                              startContent={
+                                isGuestSearching ? (
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
+                                ) : (
+                                  <span className="text-gray-400">🔍</span>
+                                )
+                              }
                                 />
                                 {guestSearchTerm && (
                                   <Button
@@ -963,438 +1106,191 @@ export default function ReservationsBookingsManager() {
                               </div>
                               {showGuestSearch && guestSearchTerm.trim() && (
                                 <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                                  {filteredGuests.length > 0 ? (
+                              {isGuestSearching ? (
+                                <div className="p-4 text-center">
+                                  <div className="flex items-center justify-center space-x-2">
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
+                                    <span className="text-sm text-gray-600">Searching guests...</span>
+                                  </div>
+                                </div>
+                              ) : guestSearchError ? (
+                                <div className="p-3 text-center">
+                                  <div className="text-red-600 text-sm mb-2">⚠️ {guestSearchError}</div>
+                                </div>
+                              ) : filteredGuests.length > 0 ? (
                                     filteredGuests.map(guest => (
                                       <div
                                         key={guest.id}
                                         className="p-3 hover:bg-gray-100 cursor-pointer border-b border-gray-200 last:border-b-0"
-                                        onClick={() => handleGuestSelection(guest)}
-                                      >
-                                        <div className="font-medium text-gray-900">{guest.name}</div>
-                                        <div className="text-sm text-gray-600">
-                                          {guest.phone && `📱 ${guest.phone}`}
-                                          {guest.email && ` 📧 ${guest.email}`}
-                                          {guest.ghanaCard && ` 🆔 ${guest.ghanaCard}`}
-                                        </div>
-                                      </div>
-                                    ))
-                                  ) : (
-                                    <div className="p-3 text-gray-500 text-center">
-                                      No guests found
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          
-                          {selectedGuest && (
-                            <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                              <div className="flex items-center justify-between mb-2">
+                                    onClick={() => addGuestToBulk(guest)}
+                                  >
+                                    <div className="flex items-center justify-between">
                                 <div>
-                                  <div className="font-medium text-green-900">✅ Guest Selected</div>
-                                  <div className="text-sm text-green-700">
-                                    {selectedGuest.name} - {selectedGuest.phone || 'No phone'}
+                                        <div className="font-medium text-gray-900">
+                                          {(guest as any).name || `${(guest as any).firstName || ''} ${(guest as any).lastName || ''}`.trim() || 'Unknown guest'}
+                                        </div>
+                                        <div className="text-sm text-gray-600">
+                                          {(guest as any).phone && `📱 ${(guest as any).phone}`}
+                                          {(guest as any).email && ` 📧 ${(guest as any).email}`}
                                   </div>
                                 </div>
                                 <Button
                                   size="sm"
-                                  color="danger"
-                                  variant="light"
-                                  onClick={() => {
-                                    setSelectedGuest(null);
-                                    setFormData(prev => ({
-                                      ...prev,
-                                      guestName: '',
-                                      phone: '',
-                                      email: '',
-                                      nationality: 'ghanaian',
-                                      idType: 'ghana_card',
-                                      idNumber: '',
-                                      dateOfBirth: '',
-                                      gender: 'prefer_not_to_say',
-                                      emergencyContactName: '',
-                                      emergencyContactRelationship: 'other',
-                                      emergencyContactPhone: '',
-                                      emergencyContactEmail: '',
-                                      emergencyContactAddress: '',
-                                    }));
-                                  }}
-                                >
-                                  Change
+                                        color="primary"
+                                        variant="flat"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          addGuestToBulk(guest);
+                                        }}
+                                      >
+                                        ➕ Add
                                 </Button>
                               </div>
-                              
-                              {/* Show guest history */}
-                              <div className="text-xs text-green-600">
-                                <div>📅 Previous stays: {reservations.filter(r => r.guestName === selectedGuest.name).length}</div>
-                                <div>🏨 Last visit: {
-                                  (() => {
-                                    const guestReservations = reservations.filter(r => r.guestName === selectedGuest.name);
-                                    if (guestReservations.length > 0) {
-                                      const lastReservation = guestReservations.sort((a, b) => 
-                                        new Date(b.departure).getTime() - new Date(a.departure).getTime()
-                                      )[0];
-                                      return new Date(lastReservation.departure).toLocaleDateString();
-                                    }
-                                    return 'No previous stays';
-                                  })()
-                                }</div>
                               </div>
+                                ))
+                              ) : (
+                                <div className="p-3 text-gray-500 text-center">
+                                  <div className="text-sm">No guests found</div>
+                                  <div className="text-xs mt-1">Try searching by name, phone, email, or ID number</div>
                             </div>
                           )}
                         </div>
                       )}
                     </div>
-                  )}
-                  
-                  {/* Guest Information Form */}
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Guest Name * {selectedGuest && <span className="text-green-600">(from existing profile)</span>}
-                      </label>
+                    </div>
+                      
+                      {/* Selected Guests List */}
+                      {bulkGuests.length > 0 && (
+                        <div className="space-y-3">
+                          {bulkGuests.map((bulkGuest, index) => {
+                            const roomType = useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === bulkGuest.roomTypeId);
+                            const baseRate = roomType?.baseRate || 0;
+                            const finalRate = bulkGuest.customRate || baseRate;
+                            
+                            return (
+                              <div key={bulkGuest.id} className="bg-white p-4 rounded-lg border border-purple-200">
+                                <div className="flex items-center justify-between mb-3">
+                                  <div className="flex items-center space-x-3">
+                                    <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center text-sm font-medium text-purple-700">
+                                      {index + 1}
+                    </div>
+                      <div>
+                                      <h5 className="font-medium text-gray-900">{bulkGuest.guest.name}</h5>
+                                      <div className="text-sm text-gray-600">
+                                        {bulkGuest.guest.phone && `📱 ${bulkGuest.guest.phone}`}
+                                        {bulkGuest.guest.email && ` 📧 ${bulkGuest.guest.email}`}
+                      </div>
+                      </div>
+                      </div>
+                                  <Button
+                          size="sm"
+                                    color="danger"
+                                    variant="light"
+                                    onClick={() => removeBulkGuest(bulkGuest.id)}
+                                  >
+                                    🗑️ Remove
+                                  </Button>
+                      </div>
+                                
+                                {/* Personal Details */}
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 p-3 bg-gray-50 rounded-lg">
+                        <Input
+                                    label="Adults"
+                                    type="number"
+                                    min="1"
+                                    max="10"
+                                    value={bulkGuest.adults.toString()}
+                                    onChange={(e) => updateBulkGuest(bulkGuest.id, 'adults', parseInt(e.target.value) || 1)}
+                          size="sm"
+                                  />
+                        <Input
+                                    label="Children"
+                                    type="number"
+                                    min="0"
+                                    max="10"
+                                    value={bulkGuest.children.toString()}
+                                    onChange={(e) => updateBulkGuest(bulkGuest.id, 'children', parseInt(e.target.value) || 0)}
+                          size="sm"
+                        />
+                        <Input
+                                    label="Arrival Date"
+                                    type="date"
+                                    value={bulkGuest.arrival}
+                                    onChange={(e) => updateBulkGuest(bulkGuest.id, 'arrival', e.target.value)}
+                          size="sm"
+                                  />
                       <Input
-                        value={formData.guestName}
-                        onChange={(e) => setFormData({...formData, guestName: e.target.value})}
-                        placeholder="Full name"
-                        isRequired
-                        isReadOnly={!!(useExistingGuest && selectedGuest)}
-                        className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Phone</label>
-                      <Input
-                        value={formData.phone}
-                        onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                        placeholder="Phone number"
-                        isReadOnly={!!(useExistingGuest && selectedGuest)}
-                        className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                      <Input
-                        type="email"
-                        value={formData.email}
-                        onChange={(e) => setFormData({...formData, email: e.target.value})}
-                        placeholder="Email address"
-                        isReadOnly={!!(useExistingGuest && selectedGuest)}
-                        className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Nationality</label>
-                      <Select
-                        value={formData.nationality}
-                        onChange={(e) => setFormData({...formData, nationality: e.target.value as Nationality})}
-                        placeholder="Nationality"
-                        isReadOnly={useExistingGuest && selectedGuest}
-                        className={useExistingGuest && selectedGuest ? 'bg-gray-100' : ''}
-                                             >
-                         {/* African Countries */}
-                         <SelectItem key="ghanaian">🇬🇭 Ghanaian</SelectItem>
-                         <SelectItem key="nigerian">🇳🇬 Nigerian</SelectItem>
-                         <SelectItem key="kenyan">🇰🇪 Kenyan</SelectItem>
-                         <SelectItem key="south_african">🇿🇦 South African</SelectItem>
-                         <SelectItem key="egyptian">🇪🇬 Egyptian</SelectItem>
-                         <SelectItem key="moroccan">🇲🇦 Moroccan</SelectItem>
-                         <SelectItem key="ethiopian">🇪🇹 Ethiopian</SelectItem>
-                         <SelectItem key="ugandan">🇺🇬 Ugandan</SelectItem>
-                         <SelectItem key="tanzanian">🇹🇿 Tanzanian</SelectItem>
-                         <SelectItem key="ivorian">🇨🇮 Ivorian</SelectItem>
-                         <SelectItem key="senegalese">🇸🇳 Senegalese</SelectItem>
-                         <SelectItem key="cameroonian">🇨🇲 Cameroonian</SelectItem>
-                         
-                         {/* European Countries */}
-                         <SelectItem key="british">🇬🇧 British</SelectItem>
-                         <SelectItem key="german">🇩🇪 German</SelectItem>
-                         <SelectItem key="french">🇫🇷 French</SelectItem>
-                         <SelectItem key="italian">🇮🇹 Italian</SelectItem>
-                         <SelectItem key="spanish">🇪🇸 Spanish</SelectItem>
-                         <SelectItem key="dutch">🇳🇱 Dutch</SelectItem>
-                         <SelectItem key="swiss">🇨🇭 Swiss</SelectItem>
-                         <SelectItem key="swedish">🇸🇪 Swedish</SelectItem>
-                         <SelectItem key="norwegian">🇳🇴 Norwegian</SelectItem>
-                         <SelectItem key="danish">🇩🇰 Danish</SelectItem>
-                         <SelectItem key="finnish">🇫🇮 Finnish</SelectItem>
-                         <SelectItem key="russian">🇷🇺 Russian</SelectItem>
-                         
-                         {/* North American Countries */}
-                         <SelectItem key="american">🇺🇸 American</SelectItem>
-                         <SelectItem key="canadian">🇨🇦 Canadian</SelectItem>
-                         <SelectItem key="mexican">🇲🇽 Mexican</SelectItem>
-                         
-                         {/* Asian Countries */}
-                         <SelectItem key="chinese">🇨🇳 Chinese</SelectItem>
-                         <SelectItem key="japanese">🇯🇵 Japanese</SelectItem>
-                         <SelectItem key="indian">🇮🇳 Indian</SelectItem>
-                         <SelectItem key="pakistani">🇵🇰 Pakistani</SelectItem>
-                         <SelectItem key="bangladeshi">🇧🇩 Bangladeshi</SelectItem>
-                         <SelectItem key="thai">🇹🇭 Thai</SelectItem>
-                         <SelectItem key="vietnamese">🇻🇳 Vietnamese</SelectItem>
-                         <SelectItem key="filipino">🇵🇭 Filipino</SelectItem>
-                         <SelectItem key="indonesian">🇮🇩 Indonesian</SelectItem>
-                         <SelectItem key="malaysian">🇲🇾 Malaysian</SelectItem>
-                         <SelectItem key="singaporean">🇸🇬 Singaporean</SelectItem>
-                         <SelectItem key="korean">🇰🇷 Korean</SelectItem>
-                         
-                         {/* South American Countries */}
-                         <SelectItem key="brazilian">🇧🇷 Brazilian</SelectItem>
-                         <SelectItem key="argentine">🇦🇷 Argentine</SelectItem>
-                         <SelectItem key="chilean">🇨🇱 Chilean</SelectItem>
-                         <SelectItem key="colombian">🇨🇴 Colombian</SelectItem>
-                         <SelectItem key="peruvian">🇵🇪 Peruvian</SelectItem>
-                         <SelectItem key="venezuelan">🇻🇪 Venezuelan</SelectItem>
-                         <SelectItem key="ecuadorian">🇪🇨 Ecuadorian</SelectItem>
-                         <SelectItem key="bolivian">🇧🇴 Bolivian</SelectItem>
-                         <SelectItem key="paraguayan">🇵🇾 Paraguayan</SelectItem>
-                         <SelectItem key="uruguayan">🇺🇾 Uruguayan</SelectItem>
-                         
-                         {/* Oceania */}
-                         <SelectItem key="australian">🇦🇺 Australian</SelectItem>
-                         <SelectItem key="new_zealander">🇳🇿 New Zealander</SelectItem>
-                         
-                         <SelectItem key="other">🌍 Other</SelectItem>
-                       </Select>
-                    </div>
-                  </div>
-                  {/* ID & Personal Details - Compact Layout */}
-                  <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
-                    <h4 className="font-medium text-blue-900 mb-3 text-sm">🆔 ID & Personal Details</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">ID Type</label>
-                        <Select
-                          size="sm"
-                          value={formData.idType}
-                          onChange={(e) => setFormData({...formData, idType: e.target.value as IdType})}
-                          placeholder="Select ID type"
-                          isReadOnly={!!(useExistingGuest && selectedGuest)}
-                          className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                        >
-                          <SelectItem key="ghana_card">Ghana Card</SelectItem>
-                          <SelectItem key="passport">Passport</SelectItem>
-                          <SelectItem key="drivers_license">Driver's License</SelectItem>
-                          <SelectItem key="national_id">National ID</SelectItem>
-                          <SelectItem key="voters_id">Voter's ID</SelectItem>
-                          <SelectItem key="nhis_card">NHIS Card</SelectItem>
-                          <SelectItem key="other">Other</SelectItem>
-                        </Select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">ID Number</label>
-                        <Input
-                          size="sm"
-                          value={formData.idNumber}
-                          onChange={(e) => setFormData({...formData, idNumber: e.target.value})}
-                          placeholder="ID number"
-                          isReadOnly={!!(useExistingGuest && selectedGuest)}
-                          className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Date of Birth</label>
-                        <Input
-                          size="sm"
-                          type="date"
-                          value={formData.dateOfBirth}
-                          onChange={(e) => setFormData({...formData, dateOfBirth: e.target.value})}
-                          isReadOnly={!!(useExistingGuest && selectedGuest)}
-                          className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Gender</label>
-                        <Select
-                          size="sm"
-                          value={formData.gender}
-                          onChange={(e) => setFormData({...formData, gender: e.target.value as 'male' | 'female' | 'other' | 'prefer_not_to_say'})}
-                          placeholder="Select gender"
-                          isReadOnly={!!(useExistingGuest && selectedGuest)}
-                          className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                        >
-                          <SelectItem key="male">Male</SelectItem>
-                          <SelectItem key="female">Female</SelectItem>
-                          <SelectItem key="other">Other</SelectItem>
-                          <SelectItem key="prefer_not_to_say">Prefer not to say</SelectItem>
-                        </Select>
-                      </div>
-                    </div>
-                  </div>
-                  {/* Emergency Contact Section - Compact Layout */}
-                  <div className="bg-yellow-50 p-3 rounded-lg border border-yellow-200">
-                    <h4 className="font-medium text-yellow-900 mb-3 text-sm">🚨 Emergency Contact</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Name *</label>
-                        <Input
-                          size="sm"
-                          value={formData.emergencyContactName}
-                          onChange={(e) => setFormData({...formData, emergencyContactName: e.target.value})}
-                          placeholder="Contact name"
-                          isReadOnly={!!(useExistingGuest && selectedGuest)}
-                          className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Relationship</label>
-                        <Select
-                          size="sm"
-                          value={formData.emergencyContactRelationship}
-                          onChange={(e) => setFormData({...formData, emergencyContactRelationship: e.target.value as 'spouse' | 'parent' | 'child' | 'sibling' | 'friend' | 'colleague' | 'other'})}
-                          placeholder="Relationship"
-                          isReadOnly={!!(useExistingGuest && selectedGuest)}
-                          className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                        >
-                          <SelectItem key="spouse">Spouse</SelectItem>
-                          <SelectItem key="parent">Parent</SelectItem>
-                          <SelectItem key="child">Child</SelectItem>
-                          <SelectItem key="sibling">Sibling</SelectItem>
-                          <SelectItem key="friend">Friend</SelectItem>
-                          <SelectItem key="colleague">Colleague</SelectItem>
-                          <SelectItem key="other">Other</SelectItem>
-                        </Select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Phone *</label>
-                        <Input
-                          size="sm"
-                          value={formData.emergencyContactPhone}
-                          onChange={(e) => setFormData({...formData, emergencyContactPhone: e.target.value})}
-                          placeholder="Phone number"
-                          isReadOnly={!!(useExistingGuest && selectedGuest)}
-                          className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-gray-700 mb-1">Email</label>
-                        <Input
-                          size="sm"
-                          type="email"
-                          value={formData.emergencyContactEmail}
-                          onChange={(e) => setFormData({...formData, emergencyContactEmail: e.target.value})}
-                          placeholder="Email (optional)"
-                          isReadOnly={!!(useExistingGuest && selectedGuest)}
-                          className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
-                        />
-                      </div>
-                    </div>
-                    <div className="mt-3">
-                      <label className="block text-xs font-medium text-gray-700 mb-1">Address</label>
-                      <Input
+                                    label="Departure Date"
+                                    type="date"
+                                    value={bulkGuest.departure}
+                                    onChange={(e) => updateBulkGuest(bulkGuest.id, 'departure', e.target.value)}
                         size="sm"
-                        value={formData.emergencyContactAddress}
-                        onChange={(e) => setFormData({...formData, emergencyContactAddress: e.target.value})}
-                        placeholder="Full address (optional)"
-                        isReadOnly={!!(useExistingGuest && selectedGuest)}
-                        className={!!(useExistingGuest && selectedGuest) ? 'bg-gray-100' : ''}
                       />
                     </div>
-                  </div>
-                </div>
-              </Tab>
-              
-              <Tab key="reservation" title="🏨 Reservation Details">
-                <div className="space-y-4 pt-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Room Type *</label>
+
+                                {/* Room Configuration */}
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <Select
-                        value={formData.roomTypeId}
-                        onChange={(e) => setFormData({...formData, roomTypeId: e.target.value})}
+                                    label="Room Type"
+                                    selectedKeys={bulkGuest.roomTypeId ? new Set([bulkGuest.roomTypeId]) : new Set()}
+                                    onSelectionChange={(keys) => {
+                                      const id = Array.from(keys as Set<string>)[0] || '';
+                                      const newRoomType = useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === id);
+                                      updateBulkGuest(bulkGuest.id, 'roomTypeId', id);
+                                      updateBulkGuest(bulkGuest.id, 'customRate', newRoomType?.baseRate || 0);
+                                    }}
                         placeholder="Select room type"
-                        isRequired
-                      >
-                        {frontOfficeStore.roomTypes.map(roomType => (
-                          <SelectItem key={roomType.id}>
-                            {roomType.name} - ₵{roomType.baseRate}/night
+                                  >
+                                    {useSettingsStore.getState().roomManagement.roomTypes.map(rt => (
+                                      <SelectItem key={rt.id}>
+                                        {rt.name} - ₵{rt.baseRate}/night
                           </SelectItem>
                         ))}
                       </Select>
+                                  
+                      <Input
+                                    label="Custom Rate (₵)"
+                                    type="number"
+                                    placeholder="Override rate"
+                                    value={bulkGuest.customRate?.toString() || ''}
+                                    onChange={(e) => updateBulkGuest(bulkGuest.id, 'customRate', parseFloat(e.target.value) || baseRate)}
+                                    startContent="₵"
+                                  />
+                                  
+                                  <div className="flex items-end">
+                                    <div className="w-full p-3 bg-gray-50 rounded-lg">
+                                      <div className="text-sm text-gray-600">Final Rate</div>
+                                      <div className="text-lg font-semibold text-gray-900">₵{finalRate.toFixed(2)}/night</div>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Rate Plan</label>
-                      <Select
-                        value={formData.ratePlanId}
-                        onChange={(e) => setFormData({...formData, ratePlanId: e.target.value})}
-                        placeholder="Select rate plan"
-                      >
-                        {frontOfficeStore.ratePlans
-                          .filter(rp => !formData.roomTypeId || rp.roomTypeId === formData.roomTypeId)
-                          .map(ratePlan => (
-                            <SelectItem key={ratePlan.id}>
-                              {ratePlan.name} - ₵{ratePlan.price}/night
-                            </SelectItem>
-                          ))}
-                      </Select>
                     </div>
                   </div>
                   
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Arrival Date *</label>
-                      <Input
-                        type="date"
-                        value={formData.arrival}
-                        onChange={(e) => setFormData({...formData, arrival: e.target.value})}
-                        isRequired
+                                <div className="mt-3">
+                                  <Textarea
+                                    label="Special Requests"
+                                    placeholder="Any special requests for this guest"
+                                    value={bulkGuest.specialRequests || ''}
+                                    onChange={(e) => updateBulkGuest(bulkGuest.id, 'specialRequests', e.target.value)}
+                                    rows={2}
                       />
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Departure Date *</label>
-                      <Input
-                        type="date"
-                        value={formData.departure}
-                        onChange={(e) => setFormData({...formData, departure: e.target.value})}
-                        isRequired
-                      />
                     </div>
+                            );
+                          })}
                   </div>
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Adults *</label>
-                      <Input
-                        type="number"
-                        min="1"
-                        value={formData.adults}
-                        onChange={(e) => setFormData({...formData, adults: parseInt(e.target.value) || 1})}
-                        isRequired
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Children</label>
-                      <Input
-                        type="number"
-                        min="0"
-                        value={formData.children}
-                        onChange={(e) => setFormData({...formData, children: parseInt(e.target.value) || 0})}
-                      />
-                    </div>
+                      )}
+                      
+                      {bulkGuests.length === 0 && (
+                        <div className="text-center py-8 text-gray-500">
+                          <div className="text-4xl mb-2">👥</div>
+                          <div className="text-lg font-medium">No guests added yet</div>
+                          <div className="text-sm">Search for guests above and click "Add" to include them</div>
                   </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Source</label>
-                    <Select
-                      value={formData.source}
-                      onChange={(e) => setFormData({...formData, source: e.target.value})}
-                    >
-                      <SelectItem key="walkin" value="walkin">🚶 Walk-in</SelectItem>
-                      <SelectItem key="online" value="online">🌐 Online</SelectItem>
-                      <SelectItem key="booking" value="booking">📱 Booking.com</SelectItem>
-                      <SelectItem key="corporate" value="corporate">🏢 Corporate</SelectItem>
-                      <SelectItem key="referral" value="referral">👥 Referral</SelectItem>
-                    </Select>
-                  </div>
+                      )}
                 </div>
-              </Tab>
+                  )}
               
-              <Tab key="purpose-billing" title="🎯 Stay Purpose & Billing">
-                <div className="space-y-4 pt-4">
+                  {/* Stay Purpose & Billing moved here from the separate tab */}
                   {/* Stay Purpose Section */}
                   <div className="bg-blue-50 p-4 rounded-lg border">
                     <h4 className="font-medium text-blue-900 mb-3">Purpose of Stay</h4>
@@ -1408,7 +1304,7 @@ export default function ReservationsBookingsManager() {
                         >
                           <SelectItem key="personal">👤 Personal</SelectItem>
                           <SelectItem key="business">💼 Business</SelectItem>
-                          <SelectItem key="business">🏢 Corporate</SelectItem>
+                          <SelectItem key="corporate">🏢 Corporate</SelectItem>
                           <SelectItem key="conference">🎤 Conference</SelectItem>
                           <SelectItem key="training">📚 Training</SelectItem>
                           <SelectItem key="medical">🏥 Medical</SelectItem>
@@ -1425,7 +1321,6 @@ export default function ReservationsBookingsManager() {
                         />
                       </div>
                     </div>
-                    
                     {/* Business/Corporate specific fields */}
                     {['business', 'corporate', 'conference', 'training'].includes(formData.stayReason) && (
                       <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
@@ -1493,10 +1388,22 @@ export default function ReservationsBookingsManager() {
                             <div className="flex">
                               <Input
                                 value={billingPersonSearchTerm}
-                                onChange={(e) => setBillingPersonSearchTerm(e.target.value)}
+                                onChange={(e) => {
+                                  setBillingPersonSearchTerm(e.target.value);
+                                  setBillingPersonSearchError(null);
+                                }}
                                 placeholder="Search by name, company, or email"
                                 onFocus={() => setShowBillingPersonSearch(true)}
                                 className="flex-1"
+                                isInvalid={!!billingPersonSearchError && billingPersonSearchTerm.length >= 2}
+                                errorMessage={billingPersonSearchError && billingPersonSearchTerm.length >= 2 ? billingPersonSearchError : undefined}
+                                startContent={
+                                  isBillingPersonSearching ? (
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div>
+                                  ) : (
+                                    <span className="text-gray-400">🔍</span>
+                                  )
+                                }
                               />
                               {billingPersonSearchTerm && (
                                 <Button
@@ -1515,34 +1422,47 @@ export default function ReservationsBookingsManager() {
                             </div>
                             {showBillingPersonSearch && billingPersonSearchTerm.trim() && (
                               <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                                {filteredBillingPersons.length > 0 ? (
-                                  filteredBillingPersons.map(bp => (
+                                {isBillingPersonSearching ? (
+                                  <div className="p-4 text-center">
+                                    <div className="flex items-center justify-center space-x-2">
+                                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div>
+                                      <span className="text-sm text-gray-600">Searching billing persons...</span>
+                                    </div>
+                                  </div>
+                                ) : billingPersonSearchError ? (
+                                  <div className="p-3 text-center">
+                                    <div className="text-red-600 text-sm mb-2">⚠️ {billingPersonSearchError}</div>
+                                    {billingPersonSearchTerm.length < 2 && (
+                                      <div className="text-xs text-gray-500">
+                                        Enter at least 2 characters to search
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : filteredBillingPersons.length > 0 ? (
+                                  (filteredBillingPersons as any[]).map((bp: any) => (
                                     <div
                                       key={bp.id}
                                       className="p-3 hover:bg-gray-100 cursor-pointer border-b border-gray-200 last:border-b-0"
                                       onClick={() => handleBillingPersonSelection(bp)}
                                     >
-                                      <div className="font-medium text-gray-900">{bp.name}</div>
+                                      <div className="font-medium text-gray-900">
+                                        {bp.name || `${bp.firstName || ''} ${bp.lastName || ''}`}
+                                      </div>
                                       <div className="text-sm text-gray-600">
-                                        {bp.company && `🏢 ${bp.company}`}
-                                        {bp.position && ` 👤 ${bp.position}`}
+                                        {bp.employerCompany && `🏢 ${bp.employerCompany}`}
+                                        {bp.jobTitle && ` 👤 ${bp.jobTitle}`}
                                         {bp.phone && ` 📱 ${bp.phone}`}
+                                        {bp.email && ` 📧 ${bp.email}`}
                                       </div>
                                       <div className="text-xs text-gray-500 mt-1">
-                                        <Chip size="sm" variant="flat" color="secondary">
-                                          {bp.billingRelationship.replace('_', ' ')}
-                                        </Chip>
-                                        {bp.isCorporateAccount && (
-                                          <Chip size="sm" variant="flat" color="success" className="ml-1">
-                                            Corporate Account
-                                          </Chip>
-                                        )}
+                                        Serial: {bp.serialNumber || 'N/A'}
                                       </div>
                                     </div>
                                   ))
                                 ) : (
                                   <div className="p-3 text-gray-500 text-center">
-                                    No billing persons found
+                                    <div className="text-sm">No billing persons found</div>
+                                    <div className="text-xs mt-1">Try searching by name, company, or email</div>
                                   </div>
                                 )}
                               </div>
@@ -1556,11 +1476,15 @@ export default function ReservationsBookingsManager() {
                               <div>
                                 <div className="font-medium text-green-900">✅ Billing Person Selected</div>
                                 <div className="text-sm text-green-700">
-                                  {selectedBillingPerson.name} - {selectedBillingPerson.company || 'No company'}
+                                  {(selectedBillingPerson as any).name || `${(selectedBillingPerson as any).firstName || ''} ${(selectedBillingPerson as any).lastName || ''}`.trim()}
+                                </div>
+                                <div className="text-xs text-green-700">
+                                  {(selectedBillingPerson as any).employerCompany || formData.companyName || '—'}
+                                  {((selectedBillingPerson as any).jobTitle ? ` • ${(selectedBillingPerson as any).jobTitle}` : '')}
                                 </div>
                                 <div className="text-xs text-green-600">
-                                  {selectedBillingPerson.billingRelationship.replace('_', ' ')} • 
-                                  {selectedBillingPerson.paymentTerms ? ` ${selectedBillingPerson.paymentTerms}` : ' Immediate payment'}
+                                  {((selectedBillingPerson as any).email || '—')}
+                                  {((selectedBillingPerson as any).phone ? ` • ${(selectedBillingPerson as any).phone}` : '')}
                                 </div>
                               </div>
                               <Button
@@ -1599,96 +1523,30 @@ export default function ReservationsBookingsManager() {
                       </div>
                     )}
                   </div>
-                </div>
-              </Tab>
-              
-              <Tab key="self-checkin" title="🔑 Self-Check-in Link">
-                <div className="space-y-4 pt-4">
-                  <div className="bg-green-50 p-4 rounded-lg border border-green-200">
-                    <h4 className="font-medium text-green-900 mb-3">Self-Check-in Link</h4>
-                    <p className="text-sm text-green-700 mb-3">
-                      Generate a secure link that your client can use to check themselves in when they arrive. 
-                      This provides contactless, queue-free check-in experience.
-                    </p>
-                    
-                    {selectedGuest && selectedGuest.selfReservationToken ? (
-                      <div className="space-y-3">
-                        <div className="bg-white p-3 rounded border">
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Self-Check-in Link</label>
-                          <div className="flex">
-                            <Input
-                              value={`${window.location.origin}/self-checkin/${selectedGuest.selfReservationToken}`}
-                              isReadOnly
-                              className="flex-1"
-                            />
-                            <Button
-                              size="sm"
-                              color="primary"
-                              variant="flat"
-                              onClick={() => {
-                                navigator.clipboard.writeText(`${window.location.origin}/self-checkin/${selectedGuest.selfReservationToken}`);
-                                alert('Link copied to clipboard!');
-                              }}
-                              className="ml-2"
-                            >
-                              📋 Copy
-                            </Button>
-                          </div>
-                          <p className="text-xs text-gray-500 mt-1">
-                            Expires: {new Date(selectedGuest.selfReservationExpiry || '').toLocaleDateString()}
-                          </p>
-                        </div>
-                        
-                        <div className="flex space-x-2">
-                          <Button
-                            size="sm"
-                            color="success"
-                            variant="flat"
-                            onClick={() => {
-                              // Send via email (would integrate with email service)
-                              alert('Feature: Send via email - Coming soon!');
-                            }}
-                          >
-                            📧 Send via Email
-                          </Button>
-                          <Button
-                            size="sm"
-                            color="primary"
-                            variant="flat"
-                            onClick={() => {
-                              // Send via WhatsApp (would integrate with WhatsApp Business API)
-                              alert('Feature: Send via WhatsApp - Coming soon!');
-                            }}
-                          >
-                            💬 Send via WhatsApp
-                          </Button>
-                          <Button
-                            size="sm"
-                            color="warning"
-                            variant="flat"
-                            onClick={() => {
-                              // Generate new token
-                              const newToken = frontOfficeStore.generateSelfCheckinToken();
-                              selectedGuest.selfReservationToken = newToken;
-                              selectedGuest.selfReservationExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-                              alert('New link generated!');
-                            }}
-                          >
-                            🔄 Regenerate Link
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-center py-4">
-                        <p className="text-gray-500 mb-3">No self-check-in link available yet.</p>
-                        <p className="text-sm text-gray-400">
-                          Create a reservation first to generate a self-check-in link for this guest.
-                        </p>
-                      </div>
-                    )}
+
+                  {/* Source */}
+                  <div className="mb-4 p-3 bg-yellow-50 rounded-lg">
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Source
+                    </label>
+                    <Select
+                      value={formData.source}
+                      onChange={(e) => setFormData(prev => ({ ...prev, source: e.target.value }))}
+                    >
+                      <SelectItem key="walkin">🚶 Walk-in</SelectItem>
+                      <SelectItem key="online">🌐 Online</SelectItem>
+                      <SelectItem key="booking">📱 Booking.com</SelectItem>
+                      <SelectItem key="corporate">🏢 Corporate</SelectItem>
+                      <SelectItem key="referral">👥 Referral</SelectItem>
+                    </Select>
                   </div>
                 </div>
               </Tab>
+              
+              
+              {/* Removed separate Stay Purpose & Billing tab (merged into Guest Information) */}
+              
+              
               
               <Tab key="additional" title="📝 Additional Information">
                 <div className="space-y-4 pt-4">
@@ -1751,24 +1609,26 @@ export default function ReservationsBookingsManager() {
             </Tabs>
           </ModalBody>
           <ModalFooter className="flex flex-col sm:flex-row gap-2 sm:gap-0 sm:justify-end">
-            <Button color="primary" onClick={handleSaveReservation} className="w-full sm:w-auto">
+            <Button 
+              color="primary" 
+              onClick={handleSaveReservation} 
+              className="w-full sm:w-auto"
+              isDisabled={isCreatingNew && bulkGuests.length === 0}
+            >
               {isCreatingNew 
-                ? (useExistingGuest && selectedGuest 
-                    ? `💾 Create Reservation for ${selectedGuest.name}` 
-                    : '💾 Create Reservation')
+                ? (bulkGuests.length > 0 
+                    ? `💾 Create ${bulkGuests.length} Reservation${bulkGuests.length !== 1 ? 's' : ''}`
+                    : '💾 Add Guest First')
                 : '💾 Update Reservation'
               }
             </Button>
             <Button 
               color="secondary" 
               variant="flat" 
-              onClick={() => {
-                // Navigate to next step or show next form
-                console.log('Next step clicked');
-              }}
+              onClick={() => setTabKey(prev => (prev === 'guest' ? 'additional' : 'guest'))}
               className="w-full sm:w-auto"
             >
-              ➡️ Next
+              {tabKey === 'guest' ? 'Next: Additional Info' : 'Previous: Guest Info'}
             </Button>
             <Button variant="light" onClick={onClose} className="w-full sm:w-auto">
               Cancel

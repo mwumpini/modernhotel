@@ -41,8 +41,8 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       icon: '📊',
       items: [
         { title: 'Arrival/Departure Board', href: '/dashboard/arrivals', badge: 'Live' },
-        { title: 'Room Status Overview', href: '/dashboard/rooms', badge: '156' },
-        { title: 'Revenue Snapshot', href: '/dashboard/revenue', badge: '₵45,230' },
+        { title: 'Room Status Overview', href: '/dashboard/rooms', badge: '0' }, // Clean slate - no rooms configured
+                 { title: 'Revenue Snapshot', href: '/dashboard/revenue', badge: '₵0' }, // Clean slate - no revenue configured
       ]
     },
     {

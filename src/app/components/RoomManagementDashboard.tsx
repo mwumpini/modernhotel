@@ -56,83 +56,10 @@ export default function RoomManagementDashboard() {
     return unsubscribe;
   }, []);
 
-  // Sample data - in real app, this would come from the stores
-  const rooms: Room[] = [
-    {
-      id: '101',
-      number: '101',
-      type: 'Standard',
-      floor: '1',
-      status: 'occupied',
-      housekeepingStatus: 'dirty',
-      currentGuest: 'Kwame Asante',
-      checkInDate: '2024-01-15',
-      checkOutDate: '2024-01-17',
-      lastCleaned: '2024-01-14',
-      nextCleaning: '2024-01-17',
-      notes: 'Guest requested extra towels',
-      priority: 'medium'
-    },
-    {
-      id: '102',
-      number: '102',
-      type: 'Standard',
-      floor: '1',
-      status: 'clean',
-      housekeepingStatus: 'clean',
-      lastCleaned: '2024-01-16',
-      nextCleaning: '2024-01-17',
-      notes: 'Ready for next guest',
-      priority: 'low'
-    },
-    {
-      id: '201',
-      number: '201',
-      type: 'Deluxe',
-      floor: '2',
-      status: 'maintenance',
-      housekeepingStatus: 'out-of-order',
-      notes: 'AC unit needs repair',
-      priority: 'high'
-    },
-    {
-      id: '202',
-      number: '202',
-      type: 'Deluxe',
-      floor: '2',
-      status: 'clean',
-      housekeepingStatus: 'inspected',
-      lastCleaned: '2024-01-16',
-      nextCleaning: '2024-01-17',
-      notes: 'Quality checked and approved',
-      priority: 'low'
-    }
-  ];
+  // Clean slate - no sample rooms configured
+  const rooms: Room[] = [];
 
-  const roomActions: RoomAction[] = [
-    {
-      id: '1',
-      roomId: '101',
-      action: 'cleaning',
-      status: 'pending',
-      assignedTo: 'Efua Addo',
-      priority: 'medium',
-      createdAt: '2024-01-16T10:00:00Z',
-      dueDate: '2024-01-16T14:00:00Z',
-      notes: 'Standard turnover cleaning'
-    },
-    {
-      id: '2',
-      roomId: '201',
-      action: 'maintenance',
-      status: 'in-progress',
-      assignedTo: 'Kofi Mensah',
-      priority: 'high',
-      createdAt: '2024-01-16T08:00:00Z',
-      dueDate: '2024-01-16T16:00:00Z',
-      notes: 'AC unit repair in progress'
-    }
-  ];
+  const roomActions: RoomAction[] = []; // Clean slate - no room actions configured
 
   const getStatusColor = (status: string) => {
     const statusConfig = settings.roomManagement.roomStatuses.find(s => s.id === status);

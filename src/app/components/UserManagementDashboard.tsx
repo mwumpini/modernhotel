@@ -70,7 +70,7 @@ export default function UserManagementDashboard() {
       department: 'Front Office',
       status: 'active',
       lastLogin: '2024-01-16T12:15:00Z',
-      permissions: ['front-office', 'guest-management', 'reservations', 'billing']
+      permissions: ['guest-services', 'guest-management', 'reservations', 'billing']
     }
   ];
 

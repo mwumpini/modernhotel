@@ -10,7 +10,7 @@ import { trackEvent } from '../lib/analytics/trackEvent';
 
 interface SyncStatus {
   id: string;
-  module: 'front-office' | 'housekeeping' | 'f&b' | 'accounting' | 'hr' | 'inventory' | 'reports';
+  module: 'guest-services' | 'housekeeping' | 'f&b' | 'accounting' | 'hr' | 'inventory' | 'reports';
   lastSync: string;
   status: 'synced' | 'pending' | 'conflict' | 'error' | 'offline';
   pendingChanges: number;
@@ -73,7 +73,7 @@ export default function OfflineManagementDashboard() {
     const mockSyncStatuses: SyncStatus[] = [
       {
         id: '1',
-        module: 'front-office',
+        module: 'guest-services',
         lastSync: '2024-01-16T14:30:00Z',
         status: 'synced',
         pendingChanges: 0,

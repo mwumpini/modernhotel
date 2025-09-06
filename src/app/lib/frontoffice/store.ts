@@ -2,6 +2,7 @@
 
 import { Reservation, GuestProfile, RoomType, RoomEntity, RatePlan, Folio, BillingPerson, StayReason } from './types';
 import { trackEvent } from '../analytics/trackEvent';
+import { logAudit } from '../analytics/auditLogStore';
 import { postRoomRevenue, postPayment } from '../accounting/journal';
 import { housekeepingStore } from '../housekeeping/store';
 import { useSettingsStore } from '../settings/store';
@@ -10,6 +11,7 @@ class FrontOfficeStore {
   reservations: Reservation[] = [];
   guests: GuestProfile[] = [];
   billingPersons: BillingPerson[] = [];
+  private hydratedGuests: boolean = false;
   clientServices: Array<{
     id: string;
     clientId: string;
@@ -23,23 +25,9 @@ class FrontOfficeStore {
     isActive: boolean;
     createdAt: string;
   }> = [];
-  roomTypes: RoomType[] = [
-    { id: 'rt-standard', name: 'Standard', baseRate: 600 },
-    { id: 'rt-deluxe', name: 'Deluxe', baseRate: 800 },
-    { id: 'rt-suite', name: 'Suite', baseRate: 1200 },
-  ];
-  rooms: RoomEntity[] = [
-    { id: '101', roomTypeId: 'rt-standard', floor: '1' },
-    { id: '102', roomTypeId: 'rt-standard', floor: '1' },
-    { id: '201', roomTypeId: 'rt-deluxe', floor: '2' },
-    { id: '202', roomTypeId: 'rt-deluxe', floor: '2' },
-    { id: '301', roomTypeId: 'rt-suite', floor: '3' },
-  ];
-  ratePlans: RatePlan[] = [
-    { id: 'rp-bar', name: 'BAR', roomTypeId: 'rt-standard', price: 600 },
-    { id: 'rp-bar-deluxe', name: 'BAR', roomTypeId: 'rt-deluxe', price: 800 },
-    { id: 'rp-bar-suite', name: 'BAR', roomTypeId: 'rt-suite', price: 1200 },
-  ];
+  roomTypes: RoomType[] = [];
+  rooms: RoomEntity[] = [];
+  ratePlans: RatePlan[] = [];
   marketCodes: string[] = ['INTERNET', 'BOOKING.COM', 'EXPEDIA', 'DIRECTINN', 'WALK IN'];
   folios: Folio[] = [];
   private listeners: Array<() => void> = [];
@@ -109,10 +97,193 @@ class FrontOfficeStore {
         updatedAt: new Date().toISOString()
       }
     ];
+
+    // Load persisted guests from storage to prevent data loss on refresh
+    try {
+      const rawGuests = (typeof window !== 'undefined') ? (localStorage.getItem('fo.guests') || sessionStorage.getItem('fo.guests')) : null;
+      if (rawGuests) {
+        const parsed: GuestProfile[] = JSON.parse(rawGuests);
+        if (Array.isArray(parsed)) {
+          // Normalize legacy records for corporate company phone/email display
+          this.guests = parsed.map((g: any) => {
+            const isCorp = !!(g?.companyName || g?.isCorporate);
+            if (isCorp) {
+              const corpMeta = g.corporateMeta || {};
+              const contact = corpMeta.contactPerson || {};
+              if (!g.companyPhone && contact.phone) {
+                g.companyPhone = contact.phone;
+              }
+              if (!g.companyEmail && corpMeta.terms?.accountsEmail) {
+                g.companyEmail = corpMeta.terms.accountsEmail;
+              }
+            }
+            return g as GuestProfile;
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('FO: Failed to load guests from storage', e);
+    } finally {
+      // Mark guests as hydrated before any store notifications fire
+      this.hydratedGuests = true;
+    }
+
+    // Initial rooms sync from settings
+    try {
+      this.syncRoomsFromSettings();
+      // Subscribe to settings changes so rooms reflect Settings in real-time
+      useSettingsStore.subscribe((state) => state.roomManagement.rooms, () => {
+        this.syncRoomsFromSettings();
+      });
+    } catch (e) {
+      console.warn('FO: Room sync subscription failed', e);
+    }
   }
 
   subscribe(l: () => void) { this.listeners.push(l); return () => { this.listeners = this.listeners.filter(x => x !== l); }; }
-  notify() { this.listeners.forEach(l => l()); }
+  notify() {
+    // Only persist after initial hydration to avoid overwriting stored data with empty arrays
+    if (this.hydratedGuests) {
+      try { this.persistGuests(); } catch {}
+    }
+    this.listeners.forEach(l => l());
+  }
+
+  private persistGuests() {
+    try {
+      if (typeof window !== 'undefined') {
+        const serialized = JSON.stringify(this.guests);
+        const existing = localStorage.getItem('fo.guests');
+        // Avoid overwriting non-empty storage with empty in edge cases
+        if (this.guests.length === 0 && existing) {
+          const parsed = JSON.parse(existing);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            return;
+          }
+        }
+        localStorage.setItem('fo.guests', serialized);
+        try { sessionStorage.setItem('fo.guests', serialized); } catch {}
+      }
+    } catch (e) {
+      console.warn('FO: Failed to persist guests', e);
+    }
+  }
+
+  // Mirror rooms from Settings -> Front Office
+  syncRoomsFromSettings() {
+    try {
+      const settings = useSettingsStore.getState();
+      const cfgRooms = settings.roomManagement.rooms || [];
+      const mapped = cfgRooms.map(r => ({
+        id: r.number,
+        roomTypeId: r.typeId,
+        floor: r.floor || ''
+      }));
+      this.rooms = mapped;
+      this.notify();
+      trackEvent('FO.Rooms.SyncedFromSettings', { count: mapped.length });
+    } catch (e) {
+      console.error('FO: Failed to sync rooms from settings', e);
+    }
+  }
+
+  // Room management (in-memory for now)
+  addRoom(room: { id: string; roomTypeId: string; floor?: string }) {
+    // Prevent duplicates by id
+    if (this.rooms.some(r => r.id === room.id)) {
+      return;
+    }
+    this.rooms = [...this.rooms, { id: room.id, roomTypeId: room.roomTypeId, floor: room.floor }];
+    this.notify();
+    trackEvent('FO.Room.Created', { id: room.id, roomTypeId: room.roomTypeId, floor: room.floor });
+  }
+
+  // Load reservations from API and map to local model
+  async syncReservationsFromApi(tenantSubdomain: string) {
+    try {
+      const res = await fetch('/api/reservations', {
+        headers: { 'x-tenant-subdomain': tenantSubdomain }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const mapped: Reservation[] = (data.reservations || []).map((r: any) => ({
+        id: r.id,
+        guestId: r.guestId,
+        guestName: r.guest?.name || 'Guest',
+        roomTypeId: 'rt-standard',
+        ratePlanId: undefined,
+        arrival: new Date(r.checkInDate).toISOString(),
+        departure: new Date(r.checkOutDate).toISOString(),
+        status: (r.status as any) || 'pending',
+        source: r.source || 'Direct',
+        roomId: r.roomId || undefined,
+        adults: r.adults ?? 1,
+        children: r.children ?? 0,
+        isGuaranteed: false,
+        remarksToGuest: undefined,
+        marketCodes: [],
+        internalNotes: undefined,
+        stayReason: 'personal',
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt
+      }));
+      this.reservations = mapped;
+      this.notify();
+    } catch (e) {
+      console.error('Failed to sync reservations from API', e);
+    }
+  }
+
+  // Create reservation via API helpers
+  async createGuestAndReservationViaApi(tenantSubdomain: string, payload: {
+    guestName: string;
+    guestPhone?: string;
+    guestEmail?: string;
+    arrival: string;
+    departure: string;
+    adults?: number;
+    children?: number;
+    source?: string;
+  }) {
+    try {
+      const guestResp = await fetch('/api/guests', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-tenant-subdomain': tenantSubdomain
+        },
+        body: JSON.stringify({
+          name: payload.guestName,
+          phone: payload.guestPhone,
+          email: payload.guestEmail,
+          nationality: 'Ghana'
+        })
+      });
+      if (!guestResp.ok) throw new Error('Failed to create guest');
+      const guest = await guestResp.json();
+
+      const resResp = await fetch('/api/reservations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-tenant-subdomain': tenantSubdomain
+        },
+        body: JSON.stringify({
+          guestId: guest.id,
+          checkInDate: payload.arrival,
+          checkOutDate: payload.departure,
+          adults: payload.adults ?? 1,
+          children: payload.children ?? 0,
+          status: 'confirmed',
+          source: payload.source || 'Direct'
+        })
+      });
+      if (!resResp.ok) throw new Error('Failed to create reservation');
+      await this.syncReservationsFromApi(tenantSubdomain);
+    } catch (e) {
+      console.error('Failed to create reservation via API', e);
+    }
+  }
 
   createGuest(g: Omit<GuestProfile,'id'|'serialNumber'>) {
     const settings = useSettingsStore.getState();
@@ -125,13 +296,25 @@ class FrontOfficeStore {
       selfReservationToken: this.generateSelfCheckinToken(),
       selfReservationExpiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days
     };
-    this.guests.push(guest); 
-    this.notify(); 
+    this.guests.push(guest);
+    this.persistGuests();
+    this.notify();
     trackEvent('FO.Guest.Created', { 
       id: guest.id, 
       serialNumber: guest.serialNumber, 
       name: `${guest.firstName} ${guest.lastName}` 
     });
+    try {
+      logAudit({
+        area: 'frontdesk',
+        action: 'create',
+        entity: 'Client',
+        entityId: guest.id,
+        details: `Created client ${guest.firstName} ${guest.lastName}`,
+        severity: 'low',
+        meta: { serialNumber: guest.serialNumber, nationality: guest.nationality }
+      });
+    } catch {}
     return guest;
   }
 
@@ -222,9 +405,11 @@ class FrontOfficeStore {
 
   createReservation(r: Omit<Reservation,'id'|'createdAt'|'updatedAt'|'status'> & { status?: Reservation['status'] }) {
     // Ensure required fields have default values
+    const settings = useSettingsStore.getState();
     const reservation: Reservation = { 
       ...r, 
       id: `R-${Date.now().toString().slice(-6)}`, 
+      resId: settings.getNextReservationNumber(),
       createdAt: new Date().toISOString(), 
       updatedAt: new Date().toISOString(), 
       status: r.status || 'pending',
@@ -350,12 +535,24 @@ class FrontOfficeStore {
         ...updatedFields,
         updatedAt: new Date().toISOString()
       };
+      this.persistGuests();
       this.notify();
       trackEvent('FO.Guest.Updated', {
         id: id,
         name: `${this.guests[index].firstName} ${this.guests[index].lastName}`,
         nationality: this.guests[index].nationality
       });
+      try {
+        logAudit({
+          area: 'frontdesk',
+          action: 'update',
+          entity: 'Client',
+          entityId: id,
+          details: 'Updated client profile',
+          severity: 'low',
+          meta: { fields: Object.keys(updatedFields || {}) }
+        });
+      } catch {}
       return this.guests[index];
     }
     return null;
@@ -365,11 +562,23 @@ class FrontOfficeStore {
     const index = this.guests.findIndex(g => g.id === id);
     if (index !== -1) {
       const deleted = this.guests.splice(index, 1)[0];
+      this.persistGuests();
       this.notify();
       trackEvent('FO.Guest.Deleted', { 
         id: deleted.id, 
         name: `${deleted.firstName} ${deleted.lastName}` 
       });
+      try {
+        logAudit({
+          area: 'frontdesk',
+          action: 'delete',
+          entity: 'Client',
+          entityId: deleted.id,
+          details: 'Deleted client profile',
+          severity: 'medium',
+          meta: { name: `${deleted.firstName} ${deleted.lastName}` }
+        });
+      } catch {}
       return deleted;
     }
     return null;

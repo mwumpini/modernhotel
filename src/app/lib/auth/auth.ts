@@ -107,21 +107,26 @@ export const authOptions: NextAuthOptions = {
         tenantId: { label: 'Tenant ID', type: 'text' }
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password || !credentials?.tenantId) {
+        try {
+          if (!credentials?.email || !credentials?.password || !credentials?.tenantId) {
+            return null
+          }
+
+          // For development, accept any password if email and tenant match
+          const user = mockUsers.find(u => 
+            u.email === credentials.email && 
+            u.tenantId === credentials.tenantId
+          )
+
+          if (user) {
+            return user
+          }
+
+          return null
+        } catch (error) {
+          console.error('Auth error:', error)
           return null
         }
-
-        // For development, accept any password if email and tenant match
-        const user = mockUsers.find(u => 
-          u.email === credentials.email && 
-          u.tenantId === credentials.tenantId
-        )
-
-        if (user) {
-          return user
-        }
-
-        return null
       }
     })
   ],
@@ -130,26 +135,37 @@ export const authOptions: NextAuthOptions = {
   },
   callbacks: {
     async jwt({ token, user }) {
-      if (user) {
-        token.tenantId = user.tenantId
-        token.role = user.role
-        token.tenant = user.tenant
+      try {
+        if (user) {
+          token.tenantId = user.tenantId
+          token.role = user.role
+          token.tenant = user.tenant
+        }
+        return token
+      } catch (error) {
+        console.error('JWT callback error:', error)
+        return token
       }
-      return token
     },
     async session({ session, token }) {
-      if (token) {
-        session.user.id = token.sub!
-        session.user.tenantId = token.tenantId as string
-        session.user.role = token.role as string
-        session.user.tenant = token.tenant as any
+      try {
+        if (token) {
+          session.user.id = token.sub!
+          session.user.tenantId = token.tenantId as string
+          session.user.role = token.role as string
+          session.user.tenant = token.tenant as any
+        }
+        return session
+      } catch (error) {
+        console.error('Session callback error:', error)
+        return session
       }
-      return session
     }
   },
   pages: {
     signIn: '/auth/signin',
     error: '/auth/error'
   },
-  secret: process.env.NEXTAUTH_SECRET
+  secret: process.env.NEXTAUTH_SECRET,
+  debug: process.env.NODE_ENV === 'development'
 }

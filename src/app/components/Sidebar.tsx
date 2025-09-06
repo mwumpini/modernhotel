@@ -102,26 +102,32 @@ const navigationItems: NavItem[] = [
     description: 'Mobile app guest services'
   },
   {
+    title: 'Client Services',
+    href: '/guest-services/client-services/clients-services',
+    icon: UsersIcon,
+    description: 'Manage clients and corporate accounts'
+  },
+  {
     title: 'Invoices & Payments',
-    href: '/financial-operations/invoices-payments',
+    href: '/guest-services/client-services/invoices-payments',
     icon: CreditCardIcon,
     description: 'Billing and payment processing'
   },
   {
     title: 'Revenue Analytics',
-    href: '/financial-operations/revenue-analytics',
+    href: '/guest-services/revenue-analytics',
     icon: ChartBarIcon,
     description: 'Financial reporting and analysis'
   },
   {
     title: 'Payment Methods',
-    href: '/financial-operations/payment-methods',
+    href: '/settings?tab=payment-methods',
     icon: CreditCardIcon,
     description: 'Payment options and methods'
   },
   {
     title: 'Tax Management',
-    href: '/financial-operations/tax-management',
+    href: '/settings?tab=tax-management',
     icon: CalculatorIcon,
     description: 'VAT and tax compliance'
   },

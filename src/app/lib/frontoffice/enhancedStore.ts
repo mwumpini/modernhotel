@@ -1,6 +1,6 @@
 'use client';
 
-import { Reservation, GuestProfile, RoomType, RoomEntity, RatePlan, Folio, Charge, Payment } from './types';
+import { Reservation, GuestProfile, RoomType, RoomEntity, RatePlan, Folio, Charge, Payment, BillingPerson, StayReason, EventResource, EventPackage, EventBooking } from './types';
 import { trackEvent } from '../analytics/trackEvent';
 import { postRoomRevenue, postPayment } from '../accounting/journal';
 import { housekeepingStore } from '../housekeeping/store';
@@ -61,18 +61,24 @@ export class EnhancedFrontOfficeStore {
     { id: '401', roomTypeId: 'rt-presidential', floor: '4', accessible: true, nearElevator: false },
   ];
   ratePlans: RatePlan[] = [
-    { id: 'rp-bar', name: 'BAR', roomTypeId: 'rt-standard', price: 600 },
-    { id: 'rp-bar-deluxe', name: 'BAR', roomTypeId: 'rt-deluxe', price: 800 },
-    { id: 'rp-bar-suite', name: 'BAR', roomTypeId: 'rt-suite', price: 1200 },
-    { id: 'rp-bar-presidential', name: 'BAR', roomTypeId: 'rt-presidential', price: 2500 },
+    { id: 'rp-bar', name: 'BAR', roomTypeId: 'rt-standard', basePrice: 600, isActive: true, marketSegment: 'general' },
+    { id: 'rp-bar-deluxe', name: 'BAR', roomTypeId: 'rt-deluxe', basePrice: 800, isActive: true, marketSegment: 'general' },
+    { id: 'rp-bar-suite', name: 'BAR', roomTypeId: 'rt-suite', basePrice: 1200, isActive: true, marketSegment: 'general' },
+    { id: 'rp-bar-presidential', name: 'BAR', roomTypeId: 'rt-presidential', basePrice: 2500, isActive: true, marketSegment: 'general' },
   ];
   marketCodes: string[] = ['INTERNET', 'BOOKING.COM', 'EXPEDIA', 'DIRECTINN', 'WALK IN', 'CORPORATE', 'TRAVEL AGENT'];
   folios: Folio[] = [];
   guestPreferences: Map<string, GuestPreferences> = new Map();
   private listeners: Array<() => void> = [];
 
+  // NEW: Event Management
+  eventResources: EventResource[] = [];
+  eventPackages: EventPackage[] = [];
+  eventBookings: EventBooking[] = [];
+
   constructor() {
-    this.initializeDemoData();
+    // Clean slate - no demo data initialization
+    // this.initializeDemoData();
   }
 
   private initializeDemoData() {
@@ -149,6 +155,196 @@ export class EnhancedFrontOfficeStore {
     return scoredRooms.sort((a, b) => b.score - a.score)[0]?.room || null;
   }
 
+  // NEW: Event Rate Management Methods
+  
+  /**
+   * Calculate event conference rate with package pricing
+   * Integrates with existing seasonal rates and applies event-specific discounts
+   */
+  calculateEventRate(
+    ratePlanId: string,
+    eventType: string,
+    attendees: number,
+    duration: number,
+    startDate: string,
+    packageId?: string
+  ): {
+    roomRate: number;
+    packageCost: number;
+    totalCost: number;
+    breakdown: {
+      baseRoomRate: number;
+      seasonalAdjustment: number;
+      eventDiscount: number;
+      packagePrice: number;
+      taxes: number;
+    };
+  } {
+    const ratePlan = this.ratePlans.find(rp => rp.id === ratePlanId);
+    if (!ratePlan || ratePlan.rateType !== 'event_conference') {
+      throw new Error('Invalid event conference rate plan');
+    }
+
+    const settings = useSettingsStore.getState();
+    const baseRoomRate = ratePlan.basePrice;
+    
+    // Apply seasonal rates (existing logic)
+    const seasonalAdjustment = this.calculateSeasonalAdjustment(ratePlan, startDate);
+    const adjustedRoomRate = baseRoomRate * (1 + seasonalAdjustment);
+    
+    // Apply event-specific pricing
+    let eventDiscount = 0;
+    if (ratePlan.eventSpecific?.isEventRate) {
+      // Example: Corporate conference gets 15% discount
+      eventDiscount = adjustedRoomRate * 0.15;
+    }
+    
+    const finalRoomRate = adjustedRoomRate - eventDiscount;
+    const totalRoomCost = finalRoomRate * duration * attendees;
+    
+    // Calculate package cost if applicable
+    let packageCost = 0;
+    if (packageId) {
+      const eventPackage = this.eventPackages.find(ep => ep.id === packageId);
+      if (eventPackage) {
+        packageCost = eventPackage.basePrice * attendees * duration;
+        
+        // Apply seasonal pricing to package
+        const packageSeasonalAdjustment = this.calculatePackageSeasonalAdjustment(eventPackage, startDate);
+        packageCost *= (1 + packageSeasonalAdjustment);
+      }
+    }
+    
+    // Calculate taxes (using existing compliance settings)
+    const compliance = settings.getCurrentCountryCompliance();
+    const taxRate = (compliance?.taxRates.vat || 0) / 100;
+    const taxes = (totalRoomCost + packageCost) * taxRate;
+    
+    const totalCost = totalRoomCost + packageCost + taxes;
+    
+    return {
+      roomRate: finalRoomRate,
+      packageCost,
+      totalCost,
+      breakdown: {
+        baseRoomRate,
+        seasonalAdjustment,
+        eventDiscount,
+        packagePrice: packageCost,
+        taxes
+      }
+    };
+  }
+
+  /**
+   * Create event booking with integrated rate management
+   */
+  createEventBooking(bookingData: Omit<EventBooking, 'id' | 'createdAt' | 'updatedAt'>): EventBooking {
+    const eventBooking: EventBooking = {
+      ...bookingData,
+      id: `event_${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // Calculate total cost using event rate management
+    if (bookingData.ratePlanId) {
+      const rateCalculation = this.calculateEventRate(
+        bookingData.ratePlanId,
+        bookingData.eventType,
+        bookingData.attendees,
+        this.calculateDuration(bookingData.startDate, bookingData.endDate),
+        bookingData.startDate,
+        bookingData.packageId
+      );
+      
+      eventBooking.totalCost = rateCalculation.totalCost;
+    }
+
+    this.eventBookings.push(eventBooking);
+    this.notify();
+    
+    trackEvent('FO.EventBooking.Created', {
+      id: eventBooking.id,
+      eventType: eventBooking.eventType,
+      attendees: eventBooking.attendees,
+      totalCost: eventBooking.totalCost
+    });
+    
+    return eventBooking;
+  }
+
+  /**
+   * Get available event resources for a specific date range
+   */
+  getAvailableEventResources(
+    startDate: string,
+    endDate: string,
+    resourceType?: EventResource['type']
+  ): EventResource[] {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    
+    return this.eventResources.filter(resource => {
+      if (!resource.isActive) return false;
+      if (resourceType && resource.type !== resourceType) return false;
+      
+      // Check if resource is available for the requested dates
+      const dayOfWeek = start.getDay();
+      const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const dayName = dayNames[dayOfWeek];
+      
+      return resource.availability[dayName as keyof typeof resource.availability];
+    });
+  }
+
+  /**
+   * Get event packages by category with pricing
+   */
+  getEventPackagesByCategory(category: EventPackage['category']): EventPackage[] {
+    return this.eventPackages.filter(pkg => 
+      pkg.category === category && pkg.isActive
+    );
+  }
+
+  /**
+   * Calculate seasonal adjustment for rate plans (existing logic)
+   */
+  private calculateSeasonalAdjustment(ratePlan: RatePlan, date: string): number {
+    const targetDate = new Date(date);
+    const seasonalRate = ratePlan.seasonalRates?.find(sr => {
+      const start = new Date(sr.startDate);
+      const end = new Date(sr.endDate);
+      return targetDate >= start && targetDate <= end;
+    });
+    
+    return seasonalRate ? seasonalRate.multiplier : 0;
+  }
+
+  /**
+   * Calculate seasonal adjustment for event packages
+   */
+  private calculatePackageSeasonalAdjustment(pkg: EventPackage, date: string): number {
+    const targetDate = new Date(date);
+    const seasonalPricing = pkg.seasonalPricing.find(sp => {
+      const start = new Date(sp.startDate);
+      const end = new Date(sp.endDate);
+      return targetDate >= start && targetDate <= end;
+    });
+    
+    return seasonalPricing ? seasonalPricing.multiplier : 0;
+  }
+
+  /**
+   * Calculate duration between two dates
+   */
+  private calculateDuration(startDate: string, endDate: string): number {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  }
+
   private calculateRoomScore(room: RoomEntity, preferences?: RoomPreferences): number {
     if (!preferences) return 50; // Default score
 
@@ -190,9 +386,11 @@ export class EnhancedFrontOfficeStore {
     status?: Reservation['status'];
     preferences?: RoomPreferences;
   }) {
+    const settings = useSettingsStore.getState();
     const res: Reservation = { 
       ...r, 
       id: `R-${Date.now().toString().slice(-6)}`, 
+      resId: settings.getNextReservationNumber(),
       createdAt: new Date().toISOString(), 
       updatedAt: new Date().toISOString(), 
       status: r.status || 'pending' 
@@ -299,7 +497,7 @@ export class EnhancedFrontOfficeStore {
     const month = new Date(date).getMonth();
     
     // Ghana tourism seasons
-    const seasonalRates = {
+    const seasonalRates: { [key: number]: number } = {
       0: 1.2,   // January - Peak season
       1: 1.1,   // February - Peak season
       2: 1.0,   // March - Regular season
@@ -378,7 +576,7 @@ export class EnhancedFrontOfficeStore {
     const groupReservation = this.createReservation({
       ...groupDetails,
       guestId: groupLeader.id,
-      guestName: groupLeader.name,
+      guestName: groupLeader.name || `${groupLeader.firstName} ${groupLeader.lastName}`,
       groupId: `GRP-${Date.now()}`,
       groupSize: groupMembers.length + 1,
       isGroupLeader: true
@@ -392,7 +590,7 @@ export class EnhancedFrontOfficeStore {
       const memberReservation = this.createReservation({
         ...groupDetails,
         guestId: memberGuest.id,
-        guestName: memberGuest.name,
+        guestName: memberGuest.name || `${memberGuest.firstName} ${memberGuest.lastName}`,
         groupId: groupReservation.groupId,
         groupSize: groupMembers.length + 1,
         isGroupLeader: false,
@@ -428,7 +626,8 @@ export class EnhancedFrontOfficeStore {
       amount: service.amount,
       category: service.category,
       taxable: true,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      date: new Date().toISOString().split('T')[0]
     };
     
     folio.charges.push(charge);
@@ -536,6 +735,27 @@ export class EnhancedFrontOfficeStore {
       description 
     });
     trackEvent('FO.Maintenance.Reported', { roomId, category });
+  }
+
+  // Rate Plan Management
+  addRatePlan(ratePlan: RatePlan) {
+    this.ratePlans.push(ratePlan);
+    this.notify();
+    trackEvent('FO.RatePlan.Created', { id: ratePlan.id, name: ratePlan.name });
+  }
+
+  updateRatePlan(id: string, updates: Partial<RatePlan>) {
+    this.ratePlans = this.ratePlans.map(rp => 
+      rp.id === id ? { ...rp, ...updates, updatedAt: new Date().toISOString() } : rp
+    );
+    this.notify();
+    trackEvent('FO.RatePlan.Updated', { id });
+  }
+
+  deleteRatePlan(id: string) {
+    this.ratePlans = this.ratePlans.filter(rp => rp.id !== id);
+    this.notify();
+    trackEvent('FO.RatePlan.Deleted', { id });
   }
 }
 

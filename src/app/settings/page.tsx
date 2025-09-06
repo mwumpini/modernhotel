@@ -1,36 +1,70 @@
 'use client';
 
-import React from 'react';
-import PageLayout from '../components/PageLayout';
-import { Card, CardBody, CardHeader, Button } from '@heroui/react';
+import React, { useState, useEffect } from 'react';
+import { Tabs, Tab, Button, Modal, ModalContent, ModalHeader, ModalBody } from '@heroui/react';
+import { useSearchParams } from 'next/navigation';
+import PaymentMethodsSettings from '../components/settings/PaymentMethodsSettings';
+import TaxManagementSettings from '../components/settings/TaxManagementSettings';
+import ClientSettingsPanel from '../components/settings/ClientSettingsPanel';
 
 export default function SettingsPage() {
+  const [activeTab, setActiveTab] = useState('general');
+  const searchParams = useSearchParams();
+  
+  useEffect(() => {
+    const tabParam = searchParams.get('tab');
+    if (tabParam && ['general', 'room-configuration', 'payment-methods', 'tax-management', 'client-settings', 'system-health'].includes(tabParam)) {
+      setActiveTab(tabParam);
+    }
+  }, [searchParams]);
+  
   return (
-    <PageLayout>
-      <div className="py-8 px-6">
-        <div className="max-w-7xl mx-auto">
-          {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">⚙️ Settings</h1>
-            <p className="text-gray-600">Configure system settings and preferences</p>
-          </div>
-
-          {/* Content */}
-          <Card>
-            <CardHeader>
-              <h2 className="text-xl font-semibold">System Configuration</h2>
-            </CardHeader>
-            <CardBody>
-              <p className="text-gray-600 mb-4">
-                This page will contain system configuration and settings management.
-              </p>
-              <Button color="primary" variant="flat">
-                🔧 Configure
-              </Button>
-            </CardBody>
-          </Card>
-        </div>
+    <div className="w-full max-w-7xl mx-auto p-6 space-y-6">
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-bold text-gray-900">System Settings</h1>
       </div>
-    </PageLayout>
+      
+      <Tabs selectedKey={activeTab} onSelectionChange={(key) => setActiveTab(key as string)}>
+        <Tab key="general" title="General Settings">
+          <div className="p-4">
+            <p>General system settings go here...</p>
+          </div>
+        </Tab>
+        
+        <Tab key="room-configuration" title="Room Configuration">
+          <div className="p-4">
+            <h3 className="text-xl font-semibold mb-4">Room Management</h3>
+            <p>Configure room types, numbering, and availability...</p>
+            {/* Your existing room configuration content */}
+          </div>
+        </Tab>
+        
+        <Tab key="payment-methods" title="Payment Methods">
+          <div className="p-4">
+            <PaymentMethodsSettings />
+          </div>
+        </Tab>
+        
+        <Tab key="tax-management" title="Tax Management">
+          <div className="p-4">
+            <TaxManagementSettings />
+          </div>
+        </Tab>
+        
+        <Tab key="client-settings" title="Client Settings">
+          <div className="p-4">
+            <ClientSettingsPanel />
+          </div>
+        </Tab>
+        
+        <Tab key="system-health" title="System Health">
+          <div className="p-4">
+            <h3 className="text-xl font-semibold mb-4">System Health</h3>
+            <p>Monitor system performance, database status, and logs...</p>
+            {/* Your existing system health content */}
+          </div>
+        </Tab>
+      </Tabs>
+    </div>
   );
 }

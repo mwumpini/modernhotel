@@ -19,8 +19,8 @@ model Tenant {
   maxUsers    Int      @default(5)
   maxRooms    Int      @default(20)
   maxProperties Int    @default(1)
-  features    Json     @default("[]")
-  metadata    Json     @default("[]")
+  features    Json
+  metadata    Json
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -29,6 +29,8 @@ model Tenant {
   properties  Property[]
   settings    SystemSettings[]
   guests      Guest[]
+  reservations Reservation[]
+  auditLogs   AuditLog[]
 
   @@map("tenants")
 }
@@ -88,6 +90,9 @@ model Guest {
   nationality String?
   ghanaCard   String?
   
+  // Relations
+  reservations Reservation[]
+  
   // Marketing attribution
   source      String?
   referralGuestId String?
@@ -106,27 +111,73 @@ model Guest {
   @@map("guests")
 }
 
+model Reservation {
+  id            String   @id @default(cuid())
+  tenantId      String
+  guestId       String
+  roomType      String?
+  roomId        String?
+  status        String   @default("pending")
+  source        String?
+  checkInDate   DateTime
+  checkOutDate  DateTime
+  adults        Int      @default(1)
+  children      Int      @default(0)
+  specialRequests String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  guest         Guest    @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, checkInDate])
+  @@index([tenantId, guestId])
+  @@map("reservations")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  userId     String?
+  action     String
+  entity     String
+  entityId   String?
+  oldValues  String?
+  newValues  String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  // Relations
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, action])
+  @@map("audit_logs")
+}
+
 model SystemSettings {
   id          String   @id @default(cuid())
   tenantId    String   @unique
   
   // General settings
-  generalSettings Json @default("{}")
+  generalSettings Json
   
   // Hotel settings
-  hotelSettings Json @default("{}")
+  hotelSettings Json
   
   // Room settings
-  roomSettings Json @default("{}")
+  roomSettings Json
   
   // Financial settings
-  financialSettings Json @default("{}")
+  financialSettings Json
   
   // Client settings
-  clientSettings Json @default("{}")
+  clientSettings Json
   
   // SaaS settings
-  saasSettings Json @default("{}")
+  saasSettings Json
   
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

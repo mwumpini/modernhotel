@@ -297,6 +297,82 @@ export default function HRAnalyticsDashboard() {
                 </div>
               </div>
             </Tab>
+
+            <Tab key="performance" title="📊 Performance Metrics">
+              <div className="p-6">
+                <h3 className="text-lg font-semibold mb-4">Key Performance Indicators</h3>
+                
+                {/* Performance KPIs */}
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+                  {/* Employee Turnover */}
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">👥</span>
+                      <span className="text-sm font-medium text-gray-600">Employee Turnover</span>
+                    </div>
+                    <div className="text-2xl font-bold text-ghana-black mb-2">0%</div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>Target: &lt;5%</span>
+                    </div>
+                    <Progress value={0} color="success" size="sm" />
+                  </div>
+
+                  {/* Payroll Accuracy */}
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">💰</span>
+                      <span className="text-sm font-medium text-gray-600">Payroll Accuracy</span>
+                    </div>
+                    <div className="text-2xl font-bold text-ghana-black mb-2">0%</div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>Target: 99%</span>
+                    </div>
+                    <Progress value={0} color="primary" size="sm" />
+                  </div>
+
+                  {/* Compliance Score */}
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">📋</span>
+                      <span className="text-sm font-medium text-gray-600">Compliance Score</span>
+                    </div>
+                    <div className="text-2xl font-bold text-ghana-black mb-2">0%</div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>Target: 95%</span>
+                    </div>
+                    <Progress value={0} color="secondary" size="sm" />
+                  </div>
+
+                  {/* Training Completion */}
+                  <div className="text-center p-4 bg-gray-50 rounded-lg">
+                    <div className="flex items-center justify-center gap-2 mb-2">
+                      <span className="text-2xl">🎓</span>
+                      <span className="text-sm font-medium text-gray-600">Training Completion</span>
+                    </div>
+                    <div className="text-2xl font-bold text-ghana-black mb-2">0%</div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>Target: 90%</span>
+                    </div>
+                    <Progress value={0} color="warning" size="sm" />
+                  </div>
+                </div>
+
+                {/* Performance Trends */}
+                <Card className="border-0 shadow-lg">
+                  <CardHeader>
+                    <h3 className="text-xl font-semibold text-ghana-black">Performance Trends</h3>
+                  </CardHeader>
+                  <CardBody>
+                    <div className="text-center py-12 text-gray-500">
+                      <div className="text-4xl mb-4">📊</div>
+                      <h4 className="text-lg font-medium mb-2">Performance Trends</h4>
+                      <p className="text-sm">Historical performance data and trend analysis will be displayed here.</p>
+                      <p className="text-xs mt-2">Connect to live data sources to see real-time trends</p>
+                    </div>
+                  </CardBody>
+                </Card>
+              </div>
+            </Tab>
           </Tabs>
         </CardBody>
       </Card>

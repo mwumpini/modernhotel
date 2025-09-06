@@ -1,72 +1,70 @@
 'use client';
 
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { Button, Link, Accordion, AccordionItem, Badge, Divider, Card, CardBody, CardHeader, Progress, Avatar, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from "@heroui/react";
-import FrontdeskDashboard from './FrontdeskDashboard';
-import HousekeepingDashboard from './HousekeepingDashboard';
-import FoodBeverageDashboard from './FoodBeverageDashboard';
-import FBPOS from './FBPOS';
-import RestaurantManagement from './RestaurantManagement';
-import BarManagement from './BarManagement';
-import KitchenDisplay from './KitchenDisplay';
-import SecurityDashboard from './SecurityDashboard';
-import HRPayrollDashboard from './HRPayrollDashboard';
-import OfflineIndicator from './OfflineIndicator';
-import OfflineManager from './OfflineManager';
-import ActivityLog from './ActivityLog';
-import SettingsDashboard from './SettingsDashboard';
-import StoresManagement from './StoresManagement';
-import UserPreferences from './UserPreferences';
-import AutoComplianceDashboard from './AutoComplianceDashboard';
-import InventoryDashboard from './InventoryDashboard';
-import AccountingDashboard from './AccountingDashboard';
-import UserManagement from './UserManagement';
-import UserManagementUnified from './UserManagementUnified';
-import ThemeTest from './ThemeTest';
-import FrontofficeRoomsBookings from './FrontofficeRoomsBookings';
-import FrontofficeInvoicesPayments from './FrontofficeInvoicesPayments';
-import FrontofficeClientsServices from './FrontofficeClientsServices';
-import FrontofficeEventsConferences from './FrontofficeEventsConferences';
-// duplicate import removed
-import RoomManagementDashboard from './RoomManagementDashboard';
-import GuestExperienceManager from './GuestExperienceManager';
-import MobileGuestServices from './MobileGuestServices';
-import FoodBeverageManagementDashboard from './FoodBeverageManagementDashboard';
-import AccountingManagementDashboard from './AccountingManagementDashboard';
-import HRPayrollManagementDashboard from './HRPayrollManagementDashboard';
-import SecurityComplianceDashboard from './SecurityComplianceDashboard';
-import InventorySupplyChainDashboard from './InventorySupplyChainDashboard';
-// Removed unused import
-import UserManagementDashboard from './UserManagementDashboard';
-import OfflineManagementDashboard from './OfflineManagementDashboard';
-import APIIntegrationDashboard from './APIIntegrationDashboard';
-import PerformanceOptimizationDashboard from './PerformanceOptimizationDashboard';
-import TemplateBuilder from './TemplateBuilder';
-import FoodBeverageRestaurantBar from './FoodBeverageRestaurantBar';
-import FoodBeverageKitchen from './FoodBeverageKitchen';
-import FoodBeverageMenuInventory from './FoodBeverageMenuInventory';
-import FoodBeverageStaffReports from './FoodBeverageStaffReports';
-import FoodBeverageAnalyticsDashboard from './FoodBeverageAnalyticsDashboard';
-import HousekeepingAnalyticsDashboard from './HousekeepingAnalyticsDashboard';
-import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
-import SecurityAnalyticsDashboard from './SecurityAnalyticsDashboard';
-import HRAnalyticsDashboard from './HRAnalyticsDashboard';
-import DepartmentActivityLog from './DepartmentActivityLog';
-import { 
-  ChartOfAccountsPage,
-  BankCashReceivablesPage,
-  AccountsPayablePage,
-  InventoryFixedAssetsPage,
-  FinancialReportsPage,
-  AuditControlsPage,
-  AccountingViewActivitiesPage
-} from './accounting';
+
+// Lazy load heavy components to prevent chunk loading errors
+const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
+const HousekeepingMainDashboard = lazy(() => import('./HousekeepingMainDashboard'));
+const FBPOS = lazy(() => import('./FBPOS').then(module => ({ default: module.default })));
+const RestaurantManagement = lazy(() => import('./RestaurantManagement'));
+const BarManagement = lazy(() => import('./BarManagement'));
+const KitchenDisplay = lazy(() => import('./KitchenDisplay'));
+const OfflineIndicator = lazy(() => import('./OfflineIndicator'));
+const OfflineManager = lazy(() => import('./OfflineManager'));
+const ActivityLog = lazy(() => import('./ActivityLog'));
+const SystemSettingsMainDashboard = lazy(() => import('./SystemSettingsMainDashboard'));
+const UnifiedRateManagement = lazy(() => import('./UnifiedRateManagement'));
+const UserPreferences = lazy(() => import('./UserPreferences'));
+const AutoComplianceMainDashboard = lazy(() => import('./AutoComplianceMainDashboard'));
+const AccountingMainDashboard = lazy(() => import('./AccountingMainDashboard'));
+const UserManagement = lazy(() => import('./UserManagement'));
+const UserManagementUnified = lazy(() => import('./UserManagementUnified'));
+const ThemeTest = lazy(() => import('./ThemeTest'));
+const FrontofficeRoomsBookings = lazy(() => import('./FrontofficeRoomsBookings'));
+const FrontofficeClientsServices = lazy(() => import('./FrontofficeClientsServices'));
+const FrontofficeEventsConferences = lazy(() => import('./FrontofficeEventsConferences'));
+const EventsConferencesMainDashboard = lazy(() => import('./EventsConferencesMainDashboard'));
+const RoomManagementDashboard = lazy(() => import('./RoomManagementDashboard'));
+const GuestExperienceManager = lazy(() => import('./GuestExperienceManager'));
+const MobileGuestServices = lazy(() => import('./MobileGuestServices'));
+const HRMainDashboard = lazy(() => import('./HRMainDashboard'));
+const SecurityMainDashboard = lazy(() => import('./SecurityMainDashboard'));
+const SecurityComplianceDashboard = lazy(() => import('./SecurityComplianceDashboard'));
+const StoresMainDashboard = lazy(() => import('./StoresMainDashboard'));
+const UserManagementDashboard = lazy(() => import('./UserManagementDashboard'));
+const OfflineManagementDashboard = lazy(() => import('./OfflineManagementDashboard'));
+const APIIntegrationDashboard = lazy(() => import('./APIIntegrationDashboard'));
+const PerformanceOptimizationDashboard = lazy(() => import('./PerformanceOptimizationDashboard'));
+const TemplateBuilder = lazy(() => import('./TemplateBuilder'));
+const FoodBeverageMainDashboard = lazy(() => import('./FoodBeverageMainDashboard'));
+const FoodBeverageRestaurantBar = lazy(() => import('./FoodBeverageRestaurantBar'));
+const FoodBeverageKitchen = lazy(() => import('./FoodBeverageKitchen'));
+const FoodBeverageMenuInventory = lazy(() => import('./FoodBeverageMenuInventory'));
+const FoodBeverageStaffReports = lazy(() => import('./FoodBeverageStaffReports'));
+const FoodBeverageAnalyticsDashboard = lazy(() => import('./FoodBeverageAnalyticsDashboard'));
+const HousekeepingAnalyticsDashboard = lazy(() => import('./HousekeepingAnalyticsDashboard'));
+const InventoryAnalyticsDashboard = lazy(() => import('./InventoryAnalyticsDashboard'));
+const SecurityAnalyticsDashboard = lazy(() => import('./SecurityAnalyticsDashboard'));
+const HRAnalyticsDashboard = lazy(() => import('./HRAnalyticsDashboard'));
+const DepartmentActivityLog = lazy(() => import('./DepartmentActivityLog').then(module => ({ default: module.default })));
+const RoomConfigurationDashboard = lazy(() => import('./RoomConfigurationDashboard'));
+const FrontOfficeReportsAnalysis = lazy(() => import('./FrontOfficeReportsAnalysis'));
+
+// Lazy load accounting components
+const ChartOfAccountsPage = lazy(() => import('./accounting/ChartOfAccounts'));
+const BankCashReceivablesPage = lazy(() => import('./accounting/BankCashReceivables'));
+const AccountsPayablePage = lazy(() => import('./accounting/AccountsPayable'));
+const InventoryFixedAssetsPage = lazy(() => import('./accounting/InventoryFixedAssets'));
+const FinancialReportsPage = lazy(() => import('./accounting/FinancialReports'));
+const AuditControlsPage = lazy(() => import('./accounting/AuditControls'));
+const AccountingViewActivitiesPage = lazy(() => import('./accounting/ViewActivities'));
 
 interface NavigationProps {
   onLogout: () => void;
 }
 
-type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'user-preferences' | 'compliance' | 'inventory' | 'user-management' | 'user-management-dashboard' | 'user-management-unified' | 'theme-test' | 'offline-management' | 'api-integration' | 'performance-optimization' | 'template-builder' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'room-management' | 'front-office-operations' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-receivables' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs';
+type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'user-preferences' | 'compliance' | 'inventory' | 'user-management' | 'user-management-dashboard' | 'user-management-unified' | 'theme-test' | 'offline-management' | 'api-integration' | 'performance-optimization' | 'template-builder' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'room-management' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-receivables' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'room-configuration' | 'rate-management';
 export default function Navigation({ onLogout }: NavigationProps) {
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
@@ -133,9 +131,14 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🛏️ Housekeeping & Maintenance',
       icon: '🛏️',
       items: [
-        { title: '📊 Operations', href: '#' },
-        { title: '📈 Reports & Analysis', href: '#' },
-        { title: '⚙️ User Preferences', href: '#' },
+        { title: '🏠 Main Dashboard', href: '/housekeeping' },
+        { title: '🛏️ Room Management', href: '/housekeeping?tab=rooms' },
+        { title: '📋 Task Management', href: '/housekeeping?tab=tasks' },
+        { title: '👥 Staff Management', href: '/housekeeping?tab=staff' },
+        { title: '🔧 Maintenance', href: '/housekeeping?tab=maintenance' },
+        { title: '✅ Room Inspections', href: '/housekeeping?tab=inspections' },
+        { title: '📦 Supplies & Inventory', href: '/housekeeping?tab=supplies' },
+        { title: '🧪 Test System', href: '/housekeeping-test' },
       ]
     },
     {
@@ -169,6 +172,18 @@ export default function Navigation({ onLogout }: NavigationProps) {
       ]
     },
     {
+      key: 'room-configuration',
+      title: '🏠 Room Configuration',
+      icon: '🏠',
+      items: [
+        { title: 'Room Types & Categories', href: '#' },
+        { title: 'Room Amenities', href: '#' },
+        { title: 'Rate Configuration', href: '#' },
+        { title: '🎯 Event & Conference Rates', href: '#' },
+        { title: 'Bulk Room Creation', href: '#' },
+      ]
+    },
+    {
       key: 'accounting',
       title: '🧾 Complete Accounting System',
       icon: '🧾',
@@ -199,6 +214,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '⚙️ System Settings',
       icon: '⚙️',
       items: [
+        { title: 'Rate Management', href: '#' },
         { title: 'Reports & Analytics', href: '#' },
         { title: 'User Management & Preferences', href: '#' },
         { title: 'Theme Test', href: '#' },
@@ -252,7 +268,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
     // Handle Front Office sub-items
     if (sectionKey === 'frontdesk' && itemTitle) {
               if (itemTitle === '📊 Operations') {
-          setActiveSection('front-office-operations');
+          setActiveSection('frontdesk');
         } else if (itemTitle === '📈 Reports & Analysis') {
           setActiveSection('reports-analytics');
         } else if (itemTitle === '⚙️ User Preferences') {
@@ -328,6 +344,20 @@ export default function Navigation({ onLogout }: NavigationProps) {
       } else {
         setActiveSection('hr');
       }
+    } else if (sectionKey === 'room-configuration' && itemTitle) {
+      if (itemTitle === 'Room Types & Categories') {
+        setActiveSection('room-configuration');
+      } else if (itemTitle === 'Room Amenities') {
+        setActiveSection('room-configuration');
+      } else if (itemTitle === 'Rate Configuration') {
+        setActiveSection('room-configuration');
+      } else if (itemTitle === '🎯 Event & Conference Rates') {
+        setActiveSection('room-configuration');
+      } else if (itemTitle === 'Bulk Room Creation') {
+        setActiveSection('room-configuration');
+      } else {
+        setActiveSection('room-configuration');
+      }
     } else if (sectionKey === 'compliance') {
       setActiveSection('compliance');
     } else if (sectionKey === 'accounting' && itemTitle) {
@@ -367,10 +397,14 @@ export default function Navigation({ onLogout }: NavigationProps) {
         setActiveSection('inventory');
       }
     } else if (sectionKey === 'settings' && itemTitle) {
-      if (itemTitle === 'Reports & Analytics') {
+      if (itemTitle === 'Rate Management') {
+        setActiveSection('rate-management');
+      } else if (itemTitle === 'Reports & Analytics') {
         setActiveSection('reports-analytics');
       } else if (itemTitle === 'User Management & Preferences') {
         setActiveSection('user-management-unified');
+      } else if (itemTitle === 'Room Configuration') {
+        setActiveSection('room-configuration');
       } else if (itemTitle === 'Theme Test') {
         setActiveSection('theme-test');
       } else if (itemTitle === 'Offline Management & Sync') {
@@ -392,132 +426,144 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const renderDashboardContent = () => {
     switch (activeSection) {
       case 'frontdesk':
-        return <FrontdeskDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Front Desk Dashboard...</div>}><FrontdeskDashboard /></Suspense>;
       case 'frontdesk-activities':
-        return <DepartmentActivityLog area="frontdesk" title="Front Office - View Activities" />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Front Desk Activities...</div>}><DepartmentActivityLog area="frontdesk" title="Front Office - View Activities" /></Suspense>;
       case 'rooms-bookings':
-        return <FrontofficeRoomsBookings />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Rooms & Bookings...</div>}><FrontofficeRoomsBookings /></Suspense>;
       case 'invoices-payments':
-        return <FrontofficeInvoicesPayments />;
+        return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
+          <div className="p-6 text-center">
+            <p>Redirecting to Invoices & Payments...</p>
+            <Button color="primary" onPress={() => window.location.href = '/guest-services/client-services/invoices-payments'}>
+              Go to Invoices & Payments
+            </Button>
+          </div>
+        </Suspense>;
       case 'clients-services':
-        return <FrontofficeClientsServices />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Clients & Services...</div>}><FrontofficeClientsServices /></Suspense>;
       case 'events-conferences':
-        return <FrontofficeEventsConferences />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Events & Conferences...</div>}><EventsConferencesMainDashboard /></Suspense>;
       case 'events-conferences-standalone':
-        return <FrontofficeEventsConferences />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Events & Conferences...</div>}><EventsConferencesMainDashboard /></Suspense>;
       case 'room-management':
-        return <RoomManagementDashboard />;
-              case 'front-office-operations':
-          return <FrontdeskDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Room Management...</div>}><RoomManagementDashboard /></Suspense>;
+
       case 'check-ins':
       case 'in-house':
       case 'check-outs':
-        return <FrontdeskDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Front Desk Dashboard...</div>}><FrontdeskDashboard /></Suspense>;
       case 'guest-experience-manager':
-        return <GuestExperienceManager />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Guest Experience Manager...</div>}><GuestExperienceManager /></Suspense>;
       case 'mobile-guest-services':
-        return <MobileGuestServices />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Mobile Guest Services...</div>}><MobileGuestServices /></Suspense>;
       case 'food-beverage':
-        return <FoodBeverageManagementDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Dashboard...</div>}><FoodBeverageMainDashboard /></Suspense>;
       case 'accounting-management':
-        return <AccountingManagementDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;
       case 'hr-payroll-management':
-        return <HRPayrollManagementDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading HR Dashboard...</div>}><HRMainDashboard /></Suspense>;
       case 'security-compliance':
-        return <SecurityComplianceDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Security Dashboard...</div>}><SecurityComplianceDashboard /></Suspense>;
       case 'inventory-supply-chain':
-        return <InventorySupplyChainDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}><StoresMainDashboard /></Suspense>;
       case 'reports-analytics':
-        return <FrontOfficeReportsAnalysis />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Reports & Analytics...</div>}><FrontOfficeReportsAnalysis /></Suspense>;
       case 'user-management-dashboard':
-        return <UserManagementDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading User Management Dashboard...</div>}><UserManagementDashboard /></Suspense>;
       case 'user-management-unified':
-        return <UserManagementUnified />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading User Management...</div>}><UserManagementUnified /></Suspense>;
       case 'theme-test':
-        return <ThemeTest />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Theme Test...</div>}><ThemeTest /></Suspense>;
       case 'offline-management':
-        return <OfflineManagementDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Offline Management...</div>}><OfflineManagementDashboard /></Suspense>;
       case 'api-integration':
-        return <APIIntegrationDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading API Integration...</div>}><APIIntegrationDashboard /></Suspense>;
       case 'performance-optimization':
-        return <PerformanceOptimizationDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Performance Optimization...</div>}><PerformanceOptimizationDashboard /></Suspense>;
       case 'template-builder':
-        return <TemplateBuilder />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Template Builder...</div>}><TemplateBuilder /></Suspense>;
       case 'housekeeping':
-        return <HousekeepingDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Dashboard...</div>}><HousekeepingMainDashboard /></Suspense>;
       case 'housekeeping-analytics':
-        return <HousekeepingAnalyticsDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Analytics...</div>}><HousekeepingAnalyticsDashboard /></Suspense>;
       case 'f&b':
-        return <FoodBeverageDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Dashboard...</div>}><FoodBeverageMainDashboard /></Suspense>;
       case 'fb-activities':
-        return <DepartmentActivityLog area="f&b" title="Food & Beverage - View Activities" />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Activities...</div>}><DepartmentActivityLog area="f&b" title="Food & Beverage - View Activities" /></Suspense>;
       case 'fb-pos':
-        return <FBPOS onClose={() => setActiveSection('f&b')} />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading POS Terminal...</div>}><FBPOS onClose={() => setActiveSection('f&b')} /></Suspense>;
       case 'fb-restaurant-bar':
-        return <FoodBeverageRestaurantBar />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar...</div>}><FoodBeverageRestaurantBar /></Suspense>;
       case 'fb-kitchen':
-        return <FoodBeverageKitchen />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Kitchen Display...</div>}><FoodBeverageKitchen /></Suspense>;
       case 'fb-menu-inventory':
-        return <FoodBeverageMenuInventory />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Menu & Inventory...</div>}><FoodBeverageMenuInventory /></Suspense>;
       case 'fb-staff-reports':
-        return <FoodBeverageStaffReports />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Staff Reports...</div>}><FoodBeverageStaffReports /></Suspense>;
       case 'fb-analytics':
-        return <FoodBeverageAnalyticsDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Analytics...</div>}><FoodBeverageAnalyticsDashboard /></Suspense>;
       case 'pos':
-        return <FBPOS onClose={() => setActiveSection('f&b')} />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading POS Terminal...</div>}><FBPOS onClose={() => setActiveSection('f&b')} /></Suspense>;
       case 'restaurant':
-        return <RestaurantManagement />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant Management...</div>}><RestaurantManagement /></Suspense>;
       case 'kitchen':
-        return <KitchenDisplay />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Kitchen Display...</div>}><KitchenDisplay /></Suspense>;
       case 'security':
-        return <SecurityDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Security Dashboard...</div>}><SecurityMainDashboard /></Suspense>;
       case 'security-analytics':
-        return <SecurityAnalyticsDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Security Analytics...</div>}><SecurityAnalyticsDashboard /></Suspense>;
       case 'security-activities':
-        return <DepartmentActivityLog area="security" title="Security - View Activities" />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Security Activities...</div>}><DepartmentActivityLog area="security" title="Security - View Activities" /></Suspense>;
       case 'hr':
-        return <HRPayrollDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading HR Dashboard...</div>}><HRMainDashboard /></Suspense>;
       case 'hr-analytics':
-        return <HRAnalyticsDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading HR Analytics...</div>}><HRAnalyticsDashboard /></Suspense>;
       case 'hr-activities':
-        return <DepartmentActivityLog area="hr" title="HR & Payroll - View Activities" />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading HR Activities...</div>}><DepartmentActivityLog area="hr" title="HR & Payroll - View Activities" /></Suspense>;
+      case 'room-configuration':
+        return <Suspense fallback={<div className="p-6 text-center">Loading Room Configuration...</div>}><RoomConfigurationDashboard /></Suspense>;
       case 'accounting':
-        return <AccountingDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;
       case 'chart-of-accounts':
-        return <ChartOfAccountsPage />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Chart of Accounts...</div>}><ChartOfAccountsPage /></Suspense>;
       case 'bank-cash-receivables':
-        return <BankCashReceivablesPage />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Bank & Cash Receivables...</div>}><BankCashReceivablesPage /></Suspense>;
       case 'accounts-payable':
-        return <AccountsPayablePage />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Accounts Payable...</div>}><AccountsPayablePage /></Suspense>;
       case 'inventory-fixed-assets':
-        return <InventoryFixedAssetsPage />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Inventory & Fixed Assets...</div>}><InventoryFixedAssetsPage /></Suspense>;
       case 'financial-reports':
-        return <FinancialReportsPage />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Financial Reports...</div>}><FinancialReportsPage /></Suspense>;
       case 'audit-controls':
-        return <AuditControlsPage />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Audit Controls...</div>}><AuditControlsPage /></Suspense>;
       case 'accounting-activities':
-        return <DepartmentActivityLog area="accounting" title="Accounting - View Activities" />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Activities...</div>}><DepartmentActivityLog area="accounting" title="Accounting - View Activities" /></Suspense>;
+      case 'rate-management':
+        return <Suspense fallback={<div className="p-6 text-center">Loading Rate Management...</div>}><UnifiedRateManagement onClose={() => setActiveSection('settings')} /></Suspense>;
       case 'settings':
-        return <SettingsDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading System Settings...</div>}><SystemSettingsMainDashboard /></Suspense>;
       case 'user-preferences':
-        return <UserPreferences />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading User Preferences...</div>}><UserPreferences /></Suspense>;
       case 'user-management':
-        return <UserManagement />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading User Management...</div>}><UserManagement /></Suspense>;
       case 'compliance':
-        return <AutoComplianceDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Compliance Dashboard...</div>}><AutoComplianceMainDashboard /></Suspense>;
       case 'inventory':
-        return <InventoryDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}><StoresMainDashboard /></Suspense>;
       case 'inventory-analytics':
-        return <InventoryAnalyticsDashboard />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Analytics...</div>}><InventoryAnalyticsDashboard /></Suspense>;
       case 'inventory-activities':
-        return <DepartmentActivityLog area="inventory" title="Inventory - View Activities" />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Activities...</div>}><DepartmentActivityLog area="inventory" title="Inventory - View Activities" /></Suspense>;
       case 'dashboard':
       default:
         return (
           <div className="p-6">
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-ghana-black">📊 Live Dashboard</h2>
-              <OfflineIndicator />
+              <Suspense fallback={<div className="w-4 h-4 bg-gray-300 rounded-full animate-pulse"></div>}>
+                <OfflineIndicator />
+              </Suspense>
             </div>
             
             {/* Quick Stats */}
@@ -527,8 +573,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-gray-600">Total Rooms</p>
-                      <p className="text-2xl font-bold text-ghana-black">156</p>
-                      <p className="text-sm text-green-600">+2 from yesterday</p>
+                      <p className="text-2xl font-bold text-ghana-black">0</p>
+                      <p className="text-sm text-gray-600">Clean slate - no rooms configured</p>
                     </div>
                     <div className="text-3xl">🏠</div>
                   </div>
@@ -540,8 +586,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-gray-600">Occupied</p>
-                      <p className="text-2xl font-bold text-ghana-black">142</p>
-                      <p className="text-sm text-green-600">+5 from yesterday</p>
+                      <p className="text-2xl font-bold text-ghana-black">0</p>
+                      <p className="text-sm text-gray-600">Clean slate - no rooms occupied</p>
                     </div>
                     <div className="text-3xl">✅</div>
                   </div>
@@ -553,8 +599,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-medium text-gray-600">Available</p>
-                      <p className="text-2xl font-bold text-ghana-black">14</p>
-                      <p className="text-sm text-red-600">-3 from yesterday</p>
+                      <p className="text-2xl font-bold text-ghana-black">0</p>
+                      <p className="text-sm text-gray-600">Clean slate - no rooms available</p>
                     </div>
                     <div className="text-3xl">🆓</div>
                   </div>

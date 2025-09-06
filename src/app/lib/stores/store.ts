@@ -29,7 +29,8 @@ class StoresStore {
   private listeners: Array<() => void> = [];
 
   constructor() {
-    this.initializeDemoData();
+    // Clean slate - no demo data initialization
+    // this.initializeDemoData();
   }
 
   private initializeDemoData() {

@@ -59,16 +59,7 @@ export default function FrontofficeRoomsBookings() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [selectedTab, setSelectedTab] = useState("rooms");
 
-  const rooms: Room[] = [
-    { number: '101', type: 'Standard', status: 'available', rate: '₵600', floor: '1st' },
-    { number: '102', type: 'Standard', status: 'occupied', guest: 'John Doe', checkIn: '2024-01-15', checkOut: '2024-01-18', rate: '₵600', floor: '1st' },
-    { number: '103', type: 'Standard', status: 'cleaning', rate: '₵600', floor: '1st' },
-    { number: '201', type: 'Deluxe', status: 'available', rate: '₵800', floor: '2nd' },
-    { number: '202', type: 'Deluxe', status: 'reserved', rate: '₵800', floor: '2nd' },
-    { number: '203', type: 'Deluxe', status: 'maintenance', rate: '₵800', floor: '2nd' },
-    { number: '301', type: 'Suite', status: 'occupied', guest: 'Kwame Asante', checkIn: '2024-01-10', checkOut: '2024-01-25', rate: '₵1,200', floor: '3rd' },
-    { number: '302', type: 'Suite', status: 'available', rate: '₵1,200', floor: '3rd' }
-  ];
+  const rooms: Room[] = []; // Clean slate - no rooms configured
 
   const bookings: Booking[] = [
     {
@@ -181,25 +172,25 @@ export default function FrontofficeRoomsBookings() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
               <div className="text-center p-4 bg-green-50 rounded-lg border border-green-200">
                 <div className="text-3xl mb-2">🟢</div>
-                <p className="text-2xl font-bold text-green-600">28</p>
+                <p className="text-2xl font-bold text-green-600">0</p>
                 <p className="text-sm text-green-700">Available</p>
               </div>
               
-              <div className="text-center p-4 bg-red-50 rounded-lg border border-red-200">
+              <div className="text-center p-2 bg-red-50 rounded-lg border border-red-200">
                 <div className="text-3xl mb-2">🔴</div>
-                <p className="text-2xl font-bold text-red-600">20</p>
+                <p className="text-2xl font-bold text-red-600">0</p>
                 <p className="text-sm text-red-700">Occupied</p>
               </div>
               
               <div className="text-center p-4 bg-yellow-50 rounded-lg border border-yellow-200">
                 <div className="text-3xl mb-2">🟡</div>
-                <p className="text-2xl font-bold text-yellow-600">2</p>
+                <p className="text-2xl font-bold text-yellow-600">0</p>
                 <p className="text-sm text-yellow-700">Maintenance</p>
               </div>
 
               <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <div className="text-3xl mb-2">🔵</div>
-                <p className="text-2xl font-bold text-blue-600">5</p>
+                <p className="text-2xl font-bold text-blue-600">0</p>
                 <p className="text-sm text-blue-700">Today's Check-ins</p>
               </div>
             </div>

@@ -262,6 +262,14 @@ export interface ClientSettings {
   optionalFields: string[];
 }
 
+export interface ReservationSettings {
+  // Numbering
+  prefix: string;
+  suffix: string;
+  nextNumber: number;
+  numberFormat: string; // e.g., "RES-{YEAR}-{NUMBER}" or "RES{NUMBER}"
+}
+
 export interface DocumentTemplateSettings {
   // Template Management
   templates: DocumentTemplate[];
@@ -480,6 +488,7 @@ export interface SystemSettings {
   proformaInvoiceSettings: ProformaInvoiceSettings;
   itemSettings: ItemSettings;
   clientSettings: ClientSettings;
+  reservationSettings: ReservationSettings;
   documentTemplates: DocumentTemplateSettings;
   
   // Integration Settings
@@ -775,6 +784,23 @@ export interface RoomManagementSettings {
     basePrice: number;
     isActive: boolean;
     marketSegment: string;
+    
+    // NEW: Event & Conference Rate Management
+    rateType: 'standard' | 'corporate' | 'event_conference' | 'package' | 'fixed_price';
+    eventSpecific?: {
+      isEventRate: boolean;
+      eventTypes: string[]; // ['conference', 'training', 'wedding', 'corporate_meeting']
+      packagePrice?: number; // Per person per day for conference facilities
+      includesVenue: boolean;
+      includesCatering: boolean;
+      includesEquipment: boolean;
+      minAttendees: number;
+      maxAttendees: number;
+      advanceBookingDays: number;
+      cancellationPolicy: string;
+      depositPercentage: number;
+    };
+    
     restrictions: {
       minStay: number;
       maxStay: number;
@@ -798,6 +824,72 @@ export interface RoomManagementSettings {
       saturday: number;
       sunday: number;
     };
+  }>;
+  
+  // NEW: Event Resources Management
+  eventResources: Array<{
+    id: string;
+    name: string;
+    type: 'venue' | 'equipment' | 'service' | 'package';
+    category: string;
+    description: string;
+    capacity?: number;
+    basePrice: number;
+    isActive: boolean;
+    availability: {
+      monday: boolean;
+      tuesday: boolean;
+      wednesday: boolean;
+      thursday: boolean;
+      friday: boolean;
+      saturday: boolean;
+      sunday: boolean;
+      startTime: string;
+      endTime: string;
+    };
+    seasonalPricing: Array<{
+      id: string;
+      name: string;
+      startDate: string;
+      endDate: string;
+      multiplier: number;
+      description: string;
+    }>;
+    includedInPackages: string[]; // Package IDs that include this resource
+    setupTime: number; // Minutes required for setup
+    cleanupTime: number; // Minutes required for cleanup
+    notes: string;
+  }>;
+  
+  // NEW: Event Packages Management
+  eventPackages: Array<{
+    id: string;
+    name: string;
+    description: string;
+    category: 'conference' | 'training' | 'wedding' | 'corporate' | 'social';
+    isActive: boolean;
+    basePrice: number; // Per person per day
+    minAttendees: number;
+    maxAttendees: number;
+    duration: number; // Days
+    resources: Array<{
+      resourceId: string;
+      quantity: number;
+      priceOverride?: number; // Override base price if different
+    }>;
+    inclusions: string[]; // What's included in the package
+    exclusions: string[]; // What's NOT included
+    terms: string;
+    cancellationPolicy: string;
+    depositPercentage: number;
+    seasonalPricing: Array<{
+      id: string;
+      name: string;
+      startDate: string;
+      endDate: string;
+      multiplier: number;
+      description: string;
+    }>;
   }>;
   
   // Status Change Rules
@@ -870,6 +962,7 @@ interface SettingsStore extends SystemSettings {
   updateProformaInvoiceSettings: (settings: Partial<ProformaInvoiceSettings>) => void;
   updateItemSettings: (settings: Partial<ItemSettings>) => void;
   updateClientSettings: (settings: Partial<ClientSettings>) => void;
+  updateReservationSettings: (settings: Partial<ReservationSettings>) => void;
   updateDocumentTemplates: (settings: Partial<DocumentTemplateSettings>) => void;
   
   // Additional Settings Management
@@ -892,6 +985,8 @@ interface SettingsStore extends SystemSettings {
   getNextPurchaseOrderNumber: () => string;
   getNextProformaInvoiceNumber: () => string;
   getNextClientNumber: () => string;
+  getNextReservationNumber: () => string;
+  getNextReservationNumber: () => string;
   
   // Authorization
   hasPermission: (permission: string) => boolean;
@@ -917,6 +1012,7 @@ interface SettingsStore extends SystemSettings {
   
   addRoomType: (roomType: RoomManagementSettings['roomTypes'][0]) => void;
   updateRoomType: (id: string, updates: Partial<RoomManagementSettings['roomTypes'][0]>) => void;
+  deleteRoomType: (id: string) => void;
   addRoomStatus: (status: RoomManagementSettings['roomStatuses'][0]) => void;
   updateRoomStatus: (id: string, updates: Partial<RoomManagementSettings['roomStatuses'][0]>) => void;
   addRoom: (room: RoomManagementSettings['rooms'][0]) => void;
@@ -930,6 +1026,22 @@ interface SettingsStore extends SystemSettings {
   addSeasonalRate: (ratePlanId: string, seasonalRate: RoomManagementSettings['ratePlans'][0]['seasonalRates'][0]) => void;
   updateSeasonalRate: (ratePlanId: string, seasonalRateId: string, updates: Partial<RoomManagementSettings['ratePlans'][0]['seasonalRates'][0]>) => void;
   deleteSeasonalRate: (ratePlanId: string, seasonalRateId: string) => void;
+  
+  // NEW: Event Resources Management
+  addEventResource: (resource: RoomManagementSettings['eventResources'][0]) => void;
+  updateEventResource: (id: string, updates: Partial<RoomManagementSettings['eventResources'][0]>) => void;
+  deleteEventResource: (id: string) => void;
+  addEventResourceSeasonalPricing: (resourceId: string, pricing: RoomManagementSettings['eventResources'][0]['seasonalPricing'][0]) => void;
+  updateEventResourceSeasonalPricing: (resourceId: string, pricingId: string, updates: Partial<RoomManagementSettings['eventResources'][0]['seasonalPricing'][0]>) => void;
+  deleteEventResourceSeasonalPricing: (resourceId: string, pricingId: string) => void;
+  
+  // NEW: Event Packages Management
+  addEventPackage: (pkg: RoomManagementSettings['eventPackages'][0]) => void;
+  updateEventPackage: (id: string, updates: Partial<RoomManagementSettings['eventPackages'][0]>) => void;
+  deleteEventPackage: (id: string) => void;
+  addEventPackageSeasonalPricing: (packageId: string, pricing: RoomManagementSettings['eventPackages'][0]['seasonalPricing'][0]) => void;
+  updateEventPackageSeasonalPricing: (packageId: string, pricingId: string, updates: Partial<RoomManagementSettings['eventPackages'][0]['seasonalPricing'][0]>) => void;
+  deleteEventPackageSeasonalPricing: (packageId: string, pricingId: string) => void;
   
   // Template Management Methods
   addTemplate: (template: Omit<DocumentTemplate, 'id' | 'createdAt' | 'updatedAt'>) => void;
@@ -1327,6 +1439,12 @@ const defaultSettings: SystemSettings = {
     requiredFields: ['name', 'phone', 'email'],
     optionalFields: ['address', 'nationality', 'ghanaCard', 'passport', 'companyName'],
   },
+  reservationSettings: {
+    prefix: 'RES',
+    suffix: '',
+    nextNumber: 1,
+    numberFormat: 'RES-{YEAR}-{NUMBER}'
+  },
   
   documentTemplates: {
     // Template Management
@@ -1697,6 +1815,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         set(parsed);
       }
       
+      // Load room management settings
+      const roomManagement = localStorage.getItem('room.management');
+      if (roomManagement) {
+        const parsed = JSON.parse(roomManagement);
+        set({ roomManagement: { ...get().roomManagement, ...parsed } });
+      }
+      
       // Load POS settings
       const posSettings = {
         managerPin: localStorage.getItem('manager.pin') || defaultSettings.posSettings.managerPin,
@@ -1747,6 +1872,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         integrations: state.integrations,
         backup: state.backup,
       }));
+      
+      // Save room management settings
+      localStorage.setItem('room.management', JSON.stringify(state.roomManagement));
       
       // Save POS settings
       localStorage.setItem('manager.pin', state.posSettings.managerPin);
@@ -1819,6 +1947,426 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   getCurrentCountryCompliance: () => {
     const state = get();
     return state.countryCompliance[state.defaultCountry];
+  },
+
+  // Module Management Methods
+  toggleModule: (module: keyof ModuleSettings) => {
+    const state = get();
+    const currentModuleSettings = state.moduleSettings[module];
+    const updatedModuleSettings = { ...currentModuleSettings, isActive: !currentModuleSettings.isActive };
+    const newModuleSettings = { ...state.moduleSettings, [module]: updatedModuleSettings };
+    set({ moduleSettings: newModuleSettings });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateModuleSettings: (settings: Partial<ModuleSettings>) => {
+    const state = get();
+    const newModuleSettings = { ...state.moduleSettings, ...settings };
+    set({ moduleSettings: newModuleSettings });
+    get().saveSettings();
+    get().publish();
+  },
+
+  // Room Management Methods
+  updateRoomManagement: (settings: Partial<RoomManagementSettings>) => {
+    const state = get();
+    const newRoomManagement = { ...state.roomManagement, ...settings };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  addRoomType: (roomType: RoomManagementSettings['roomTypes'][0]) => {
+    const state = get();
+    const newRoomTypes = [...state.roomManagement.roomTypes, roomType];
+    const newRoomManagement = { ...state.roomManagement, roomTypes: newRoomTypes };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateRoomType: (id: string, updates: Partial<RoomManagementSettings['roomTypes'][0]>) => {
+    const state = get();
+    const newRoomTypes = state.roomManagement.roomTypes.map(rt => 
+      rt.id === id ? { ...rt, ...updates } : rt
+    );
+    const newRoomManagement = { ...state.roomManagement, roomTypes: newRoomTypes };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteRoomType: (id: string) => {
+    const state = get();
+    const newRoomTypes = state.roomManagement.roomTypes.filter(rt => rt.id !== id);
+    const newRoomManagement = { ...state.roomManagement, roomTypes: newRoomTypes };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  addRoomStatus: (status: RoomManagementSettings['roomStatuses'][0]) => {
+    const state = get();
+    const newRoomStatuses = [...state.roomManagement.roomStatuses, status];
+    const newRoomManagement = { ...state.roomManagement, roomStatuses: newRoomStatuses };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateRoomStatus: (id: string, updates: Partial<RoomManagementSettings['roomStatuses'][0]>) => {
+    const state = get();
+    const newRoomStatuses = state.roomManagement.roomStatuses.map(rs => 
+      rs.id === id ? { ...rs, ...updates } : rs
+    );
+    const newRoomManagement = { ...state.roomManagement, roomStatuses: newRoomStatuses };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  addRoom: (room: RoomManagementSettings['rooms'][0]) => {
+    const state = get();
+    const newRooms = [...state.roomManagement.rooms, room];
+    const newRoomManagement = { ...state.roomManagement, rooms: newRooms };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateRoom: (id: string, updates: Partial<RoomManagementSettings['rooms'][0]>) => {
+    const state = get();
+    const newRooms = state.roomManagement.rooms.map(r => 
+      r.id === id ? { ...r, ...updates } : r
+    );
+    const newRoomManagement = { ...state.roomManagement, rooms: newRooms };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteRoom: (id: string) => {
+    const state = get();
+    const newRooms = state.roomManagement.rooms.filter(r => r.id !== id);
+    const newRoomManagement = { ...state.roomManagement, rooms: newRooms };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  // Rate Plan Management
+  addRatePlan: (ratePlan: RoomManagementSettings['ratePlans'][0]) => {
+    const state = get();
+    const newRatePlans = [...state.roomManagement.ratePlans, ratePlan];
+    const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateRatePlan: (id: string, updates: Partial<RoomManagementSettings['ratePlans'][0]>) => {
+    const state = get();
+    const newRatePlans = state.roomManagement.ratePlans.map(rp => 
+      rp.id === id ? { ...rp, ...updates } : rp
+    );
+    const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteRatePlan: (id: string) => {
+    const state = get();
+    const newRatePlans = state.roomManagement.ratePlans.filter(rp => rp.id !== id);
+    const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  addSeasonalRate: (ratePlanId: string, seasonalRate: RoomManagementSettings['ratePlans'][0]['seasonalRates'][0]) => {
+    const state = get();
+    const newRatePlans = state.roomManagement.ratePlans.map(rp => 
+      rp.id === ratePlanId 
+        ? { ...rp, seasonalRates: [...rp.seasonalRates, seasonalRate] }
+        : rp
+    );
+    const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateSeasonalRate: (ratePlanId: string, seasonalRateId: string, updates: Partial<RoomManagementSettings['ratePlans'][0]['seasonalRates'][0]>) => {
+    const state = get();
+    const newRatePlans = state.roomManagement.ratePlans.map(rp => 
+      rp.id === ratePlanId 
+        ? { 
+            ...rp, 
+            seasonalRates: rp.seasonalRates.map(sr => 
+              sr.id === seasonalRateId ? { ...sr, ...updates } : sr
+            )
+          }
+        : rp
+    );
+    const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteSeasonalRate: (ratePlanId: string, seasonalRateId: string) => {
+    const state = get();
+    const newRatePlans = state.roomManagement.ratePlans.map(rp => 
+      rp.id === ratePlanId 
+        ? { ...rp, seasonalRates: rp.seasonalRates.filter(sr => sr.id !== seasonalRateId) }
+        : rp
+    );
+    const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+  
+  // NEW: Event Resources Management
+  addEventResource: (resource: RoomManagementSettings['eventResources'][0]) => {
+    const state = get();
+    const newResources = [...state.roomManagement.eventResources, resource];
+    const newRoomManagement = { ...state.roomManagement, eventResources: newResources };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateEventResource: (id: string, updates: Partial<RoomManagementSettings['eventResources'][0]>) => {
+    const state = get();
+    const newResources = state.roomManagement.eventResources.map(r => 
+      r.id === id ? { ...r, ...updates } : r
+    );
+    const newRoomManagement = { ...state.roomManagement, eventResources: newResources };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteEventResource: (id: string) => {
+    const state = get();
+    const newResources = state.roomManagement.eventResources.filter(r => r.id !== id);
+    const newRoomManagement = { ...state.roomManagement, eventResources: newResources };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  addEventResourceSeasonalPricing: (resourceId: string, pricing: RoomManagementSettings['eventResources'][0]['seasonalPricing'][0]) => {
+    const state = get();
+    const newResources = state.roomManagement.eventResources.map(r => 
+      r.id === resourceId 
+        ? { ...r, seasonalPricing: [...r.seasonalPricing, pricing] }
+        : r
+    );
+    const newRoomManagement = { ...state.roomManagement, eventResources: newResources };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateEventResourceSeasonalPricing: (resourceId: string, pricingId: string, updates: Partial<RoomManagementSettings['eventResources'][0]['seasonalPricing'][0]>) => {
+    const state = get();
+    const newResources = state.roomManagement.eventResources.map(r => 
+      r.id === resourceId 
+        ? { 
+            ...r, 
+            seasonalPricing: r.seasonalPricing.map(sp => 
+              sp.id === pricingId ? { ...sp, ...updates } : sp
+            )
+          }
+        : r
+    );
+    const newRoomManagement = { ...state.roomManagement, eventResources: newResources };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteEventResourceSeasonalPricing: (resourceId: string, pricingId: string) => {
+    const state = get();
+    const newResources = state.roomManagement.eventResources.map(r => 
+      r.id === resourceId 
+        ? { ...r, seasonalPricing: r.seasonalPricing.filter(sp => sp.id !== pricingId) }
+        : r
+    );
+    const newRoomManagement = { ...state.roomManagement, eventResources: newResources };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+  
+  // NEW: Event Packages Management
+  addEventPackage: (pkg: RoomManagementSettings['eventPackages'][0]) => {
+    const state = get();
+    const newPackages = [...state.roomManagement.eventPackages, pkg];
+    const newRoomManagement = { ...state.roomManagement, eventPackages: newPackages };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateEventPackage: (id: string, updates: Partial<RoomManagementSettings['eventPackages'][0]>) => {
+    const state = get();
+    const newPackages = state.roomManagement.eventPackages.map(p => 
+      p.id === id ? { ...p, ...updates } : p
+    );
+    const newRoomManagement = { ...state.roomManagement, eventPackages: newPackages };
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteEventPackage: (id: string) => {
+    const state = get();
+    const newPackages = state.roomManagement.eventPackages.filter(p => p.id !== id);
+    const newRoomManagement = { ...state.roomManagement, eventPackages: newPackages };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  addEventPackageSeasonalPricing: (packageId: string, pricing: RoomManagementSettings['eventPackages'][0]['seasonalPricing'][0]) => {
+    const state = get();
+    const newPackages = state.roomManagement.eventPackages.map(p => 
+      p.id === packageId 
+        ? { ...p, seasonalPricing: [...p.seasonalPricing, pricing] }
+        : p
+    );
+    const newRoomManagement = { ...state.roomManagement, eventPackages: newPackages };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateEventPackageSeasonalPricing: (packageId: string, pricingId: string, updates: Partial<RoomManagementSettings['eventPackages'][0]['seasonalPricing'][0]>) => {
+    const state = get();
+    const newPackages = state.roomManagement.eventPackages.map(p => 
+      p.id === packageId 
+        ? { 
+            ...p, 
+            seasonalPricing: p.seasonalPricing.map(sp => 
+              sp.id === pricingId ? { ...sp, ...updates } : sp
+            )
+          }
+        : p
+    );
+    const newRoomManagement = { ...state.roomManagement, eventPackages: newPackages };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteEventPackageSeasonalPricing: (packageId: string, pricingId: string) => {
+    const state = get();
+    const newPackages = state.roomManagement.eventPackages.map(p => 
+      p.id === packageId 
+        ? { ...p, seasonalPricing: p.seasonalPricing.filter(sp => sp.id !== pricingId) }
+        : p
+    );
+    const newRoomManagement = { ...state.roomManagement, eventPackages: newPackages };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+  
+  // Template Management Methods
+  addTemplate: (template: Omit<DocumentTemplate, 'id' | 'createdAt' | 'updatedAt'>) => {
+    const state = get();
+    const newTemplate: DocumentTemplate = {
+      ...template,
+      id: `template_${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const newTemplates = [...state.documentTemplates.templates, newTemplate];
+    const newDocumentTemplates = { ...state.documentTemplates, templates: newTemplates };
+    set({ documentTemplates: newDocumentTemplates });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateTemplate: (id: string, updates: Partial<DocumentTemplate>) => {
+    const state = get();
+    const newTemplates = state.documentTemplates.templates.map(t => 
+      t.id === id ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t
+    );
+    const newDocumentTemplates = { ...state.documentTemplates, templates: newTemplates };
+    set({ documentTemplates: newDocumentTemplates });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteTemplate: (id: string) => {
+    const state = get();
+    const newTemplates = state.documentTemplates.templates.filter(t => t.id !== id);
+    const newDocumentTemplates = { ...state.documentTemplates, templates: newTemplates };
+    set({ documentTemplates: newDocumentTemplates });
+    get().saveSettings();
+    get().publish();
+  },
+
+  activateTemplate: (id: string) => {
+    const state = get();
+    const newTemplates = state.documentTemplates.templates.map(t => ({
+      ...t,
+      isActive: t.id === id,
+      updatedAt: new Date().toISOString()
+    }));
+    const newDocumentTemplates = { ...state.documentTemplates, templates: newTemplates };
+    set({ documentTemplates: newDocumentTemplates });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deactivateTemplate: (id: string) => {
+    const state = get();
+    const newTemplates = state.documentTemplates.templates.map(t => 
+      t.id === id ? { ...t, isActive: false, updatedAt: new Date().toISOString() } : t
+    );
+    const newDocumentTemplates = { ...state.documentTemplates, templates: newTemplates };
+    set({ documentTemplates: newDocumentTemplates });
+    get().saveSettings();
+    get().publish();
+  },
+
+  setDefaultTemplate: (documentType: string, templateId: string) => {
+    const state = get();
+    const newTemplates = state.documentTemplates.templates.map(t => ({
+      ...t,
+      isDefault: t.type === documentType && t.id === templateId,
+      updatedAt: new Date().toISOString()
+    }));
+    const newDocumentTemplates = { ...state.documentTemplates, templates: newTemplates };
+    set({ documentTemplates: newDocumentTemplates });
+    get().saveSettings();
+    get().publish();
+  },
+
+  getTemplate: (id: string) => {
+    const state = get();
+    return state.documentTemplates.templates.find(t => t.id === id);
+  },
+
+  getTemplatesByType: (type: DocumentTemplate['type']) => {
+    const state = get();
+    return state.documentTemplates.templates.filter(t => t.type === type);
+  },
+
+  getActiveTemplate: (documentType: string) => {
+    const state = get();
+    return state.documentTemplates.templates.find(t => t.type === documentType && t.isActive);
+  },
+
+  getDefaultTemplate: (documentType: string) => {
+    const state = get();
+    return state.documentTemplates.templates.find(t => t.type === documentType && t.isDefault);
   },
   
     // User Management
@@ -2088,6 +2636,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     get().saveSettings();
     get().publish();
   },
+
+  updateReservationSettings: (settings) => {
+    const state = get();
+    const updatedSettings = { ...state.reservationSettings, ...settings } as any;
+    set({ reservationSettings: updatedSettings });
+    get().saveSettings();
+    get().publish();
+  },
   
   updateItemSettings: (settings) => {
     const state = get();
@@ -2177,6 +2733,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     // Format the number according to the pattern
     return settings.numberFormat
       .replace('{NUMBER}', number.toString().padStart(3, '0'));
+  },
+
+  getNextReservationNumber: () => {
+    const state = get();
+    const settings = state.reservationSettings;
+    const year = new Date().getFullYear();
+    const number = settings.nextNumber;
+    state.updateReservationSettings({ nextNumber: number + 1 });
+    return settings.numberFormat
+      .replace('{YEAR}', year.toString())
+      .replace('{NUMBER}', number.toString().padStart(5, '0'));
   },
   
   // Additional Settings Management Methods
@@ -2290,406 +2857,36 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     analytics: true,
   },
   
-  // Room Management
+  // Room Management - Clean Slate Configuration
+  // All sample data has been removed. Configure your rooms from scratch.
   roomManagement: {
     roomNumberingFormat: 'sequential',
     floorSeparator: '-',
-    roomTypes: [
-      { id: 'standard', name: 'Standard Room', baseRate: 600, capacity: 2, amenities: ['AC', 'TV', 'WiFi'], isActive: true, category: 'standard', description: 'A standard room with AC, TV, and WiFi', images: [], policies: { cancellation: 'flexible', deposit: false, smoking: false, pets: false } },
-      { id: 'deluxe', name: 'Deluxe Room', baseRate: 800, capacity: 2, amenities: ['AC', 'TV', 'WiFi', 'Mini Bar'], isActive: true, category: 'deluxe', description: 'A deluxe room with AC, TV, WiFi, and mini bar', images: [], policies: { cancellation: 'flexible', deposit: false, smoking: false, pets: false } },
-      { id: 'suite', name: 'Suite', baseRate: 1200, capacity: 4, amenities: ['AC', 'TV', 'WiFi', 'Mini Bar', 'Living Room'], isActive: true, category: 'suite', description: 'A suite with AC, TV, WiFi, mini bar, and living room', images: [], policies: { cancellation: 'flexible', deposit: false, smoking: false, pets: false } },
-      { id: 'presidential', name: 'Presidential Suite', baseRate: 2500, capacity: 6, amenities: ['AC', 'TV', 'WiFi', 'Mini Bar', 'Living Room', 'Kitchen', 'Balcony'], isActive: true, category: 'luxury', description: 'A presidential suite with AC, TV, WiFi, mini bar, living room, kitchen, and balcony', images: [], policies: { cancellation: 'flexible', deposit: false, smoking: false, pets: false } },
-    ],
-    rooms: [
-      { id: 'room1', number: '1001', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: ['WiFi', 'AC'], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room2', number: '1002', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: ['WiFi', 'AC', 'TV'], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room3', number: '1003', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: ['WiFi'], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room4', number: '1004', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room5', number: '1005', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room6', number: '1006', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room7', number: '1007', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room8', number: '1008', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room9', number: '1009', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room10', number: '1010', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room11', number: '1011', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room12', number: '1012', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room13', number: '1013', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room14', number: '1014', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room15', number: '1015', typeId: 'standard', floor: '1', status: 'clean', isActive: true, notes: '', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room16', number: '1016', typeId: 'deluxe', floor: '1', status: 'occupied', isActive: true, notes: 'Guest has checked in', features: ['WiFi', 'AC', 'TV', 'Mini Bar'], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room17', number: '1017', typeId: 'deluxe', floor: '1', status: 'occupied', isActive: true, notes: 'Guest has checked in', features: ['WiFi', 'AC', 'TV', 'Balcony'], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room18', number: '1018', typeId: 'deluxe', floor: '1', status: 'occupied', isActive: true, notes: 'Guest has checked in', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room19', number: '1019', typeId: 'deluxe', floor: '1', status: 'occupied', isActive: true, notes: 'Guest has checked in', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room20', number: '2001', typeId: 'suite', floor: '2', status: 'dirty', isActive: true, notes: 'Needs cleaning', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-      { id: 'room21', number: '2002', typeId: 'suite', floor: '2', status: 'maintenance', isActive: true, notes: 'Under maintenance', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: ['AC not working'] } },
-      { id: 'room22', number: '4001', typeId: 'presidential', floor: '4', status: 'clean', isActive: true, notes: 'Cleaned and inspected', features: [], maintenance: { lastInspection: new Date().toISOString(), nextInspection: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), issues: [] } },
-    ],
-    roomStatuses: [
-      { id: 'clean', name: 'Clean', color: 'success', description: 'Room is clean and ready for occupancy', isActive: true, canBook: true, requiresAction: false },
-      { id: 'occupied', name: 'Occupied', color: 'warning', description: 'Room is currently occupied by a guest', isActive: true, canBook: false, requiresAction: false },
-      { id: 'dirty', name: 'Dirty', color: 'danger', description: 'Room needs cleaning after guest departure', isActive: true, canBook: false, requiresAction: true },
-      { id: 'inspected', name: 'Inspected', color: 'primary', description: 'Room has been cleaned and inspected', isActive: true, canBook: true, requiresAction: false },
-      { id: 'out-of-order', name: 'Out of Order', color: 'danger', description: 'Room is not available due to maintenance', isActive: true, canBook: false, requiresAction: true },
-      { id: 'maintenance', name: 'Maintenance', color: 'secondary', description: 'Room is under maintenance', isActive: true, canBook: false, requiresAction: true },
-      { id: 'reserved', name: 'Reserved', color: 'primary', description: 'Room is reserved for future guest', isActive: true, canBook: false, requiresAction: false },
-    ],
-    statusChangeRules: [
-      { fromStatus: 'clean', toStatus: 'occupied', allowedRoles: ['frontdesk', 'manager'], requiresApproval: false, autoActions: ['create-folio', 'update-availability'] },
-      { fromStatus: 'occupied', toStatus: 'dirty', allowedRoles: ['frontdesk', 'manager'], requiresApproval: false, autoActions: ['close-folio', 'create-cleaning-task'] },
-      { fromStatus: 'dirty', toStatus: 'clean', allowedRoles: ['housekeeping', 'supervisor'], requiresApproval: false, autoActions: ['update-room-status', 'notify-frontdesk'] },
-      { fromStatus: 'clean', toStatus: 'inspected', allowedRoles: ['supervisor', 'manager'], requiresApproval: false, autoActions: ['quality-check', 'update-inventory'] },
-      { fromStatus: 'clean', toStatus: 'out-of-order', allowedRoles: ['maintenance', 'manager'], requiresApproval: true, autoActions: ['block-booking', 'create-maintenance-request'] },
-      { fromStatus: 'out-of-order', toStatus: 'dirty', allowedRoles: ['maintenance', 'manager'], requiresApproval: false, autoActions: ['unblock-booking', 'create-cleaning-task'] },
-    ],
-    housekeepingEnabled: true,
+    roomTypes: [],
+    rooms: [],
+    roomStatuses: [],
+    ratePlans: [],
+    statusChangeRules: [],
+    housekeepingEnabled: false,
     cleaningSchedules: {
-      dailyCleaning: true,
-      turnoverCleaning: true,
-      deepCleaning: true,
-      maintenanceCleaning: true,
+      dailyCleaning: false,
+      turnoverCleaning: false,
+      deepCleaning: false,
+      maintenanceCleaning: false,
     },
-    maintenanceEnabled: true,
-    maintenanceCategories: ['Plumbing', 'Electrical', 'HVAC', 'Furniture', 'Appliances', 'Structural'],
-    autoOOOSetup: true,
+    maintenanceEnabled: false,
+    maintenanceCategories: [],
+    autoOOOSetup: false,
     assignmentRules: {
       allowOverbooking: false,
-      maxOverbookingPercentage: 5,
-      priorityRooms: ['suite', 'presidential'],
+      maxOverbookingPercentage: 0,
+      priorityRooms: [],
       restrictedRooms: [],
     },
-    ratePlans: [
-      {
-        id: 'bar-standard',
-        name: 'BAR - Standard',
-        roomTypeId: 'standard',
-        basePrice: 600,
-        isActive: true,
-        marketSegment: 'BAR',
-        restrictions: {
-          minStay: 1,
-          maxStay: 30,
-          advanceBooking: 0,
-          cancellationPolicy: 'flexible'
-        },
-        seasonalRates: [],
-        dayOfWeekRates: {
-          monday: 1.0,
-          tuesday: 1.0,
-          wednesday: 1.0,
-          thursday: 1.0,
-          friday: 1.1,
-          saturday: 1.2,
-          sunday: 1.0
-        }
-      },
-      {
-        id: 'corporate-standard',
-        name: 'Corporate - Standard',
-        roomTypeId: 'standard',
-        basePrice: 550,
-        isActive: true,
-        marketSegment: 'corporate',
-        restrictions: {
-          minStay: 1,
-          maxStay: 30,
-          advanceBooking: 0,
-          cancellationPolicy: 'moderate'
-        },
-        seasonalRates: [],
-        dayOfWeekRates: {
-          monday: 1.0,
-          tuesday: 1.0,
-          wednesday: 1.0,
-          thursday: 1.0,
-          friday: 1.0,
-          saturday: 1.0,
-          sunday: 1.0
-        }
-      }
-    ]
-  },
-  
-  // Module Management Methods
-  toggleModule: (module: keyof ModuleSettings) => {
-    const current = get().moduleSettings;
-    set({
-      moduleSettings: {
-        ...current,
-        [module]: !current[module]
-      }
-    });
-  },
-  
-  updateModuleSettings: (settings: Partial<ModuleSettings>) => {
-    set({
-      moduleSettings: {
-        ...get().moduleSettings,
-        ...settings
-      }
-    });
-  },
-  
-  // Room Management Methods
-  updateRoomManagement: (settings: Partial<RoomManagementSettings>) => {
-    set({
-      roomManagement: {
-        ...get().roomManagement,
-        ...settings
-      }
-    });
-  },
-  
-  addRoomType: (roomType: RoomManagementSettings['roomTypes'][0]) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        roomTypes: [...current.roomTypes, roomType]
-      }
-    });
-  },
-  
-  updateRoomType: (id: string, updates: Partial<RoomManagementSettings['roomTypes'][0]>) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        roomTypes: current.roomTypes.map(rt => 
-          rt.id === id ? { ...rt, ...updates } : rt
-        )
-      }
-    });
-  },
-  
-  addRoomStatus: (status: RoomManagementSettings['roomStatuses'][0]) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        roomStatuses: [...current.roomStatuses, status]
-      }
-    });
-  },
-  
-  updateRoomStatus: (id: string, updates: Partial<RoomManagementSettings['roomStatuses'][0]>) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        roomStatuses: current.roomStatuses.map(s => 
-          s.id === id ? { ...s, ...updates } : s
-        )
-      }
-    });
-  },
-  
-  addRoom: (room: RoomManagementSettings['rooms'][0]) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        rooms: [...(current.rooms || []), room]
-      }
-    });
-  },
-  
-  updateRoom: (id: string, updates: Partial<RoomManagementSettings['rooms'][0]>) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        rooms: (current.rooms || []).map(r => 
-          r.id === id ? { ...r, ...updates } : r
-        )
-      }
-    });
-  },
-  
-  deleteRoom: (id: string) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        rooms: (current.rooms || []).filter(r => r.id !== id)
-      }
-    });
-  },
-  
-  // Rate Plan Management
-  addRatePlan: (ratePlan: RoomManagementSettings['ratePlans'][0]) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        ratePlans: [...(current.ratePlans || []), ratePlan]
-      }
-    });
-  },
-  
-  updateRatePlan: (id: string, updates: Partial<RoomManagementSettings['ratePlans'][0]>) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        ratePlans: current.ratePlans.map(rp => 
-          rp.id === id ? { ...rp, ...updates } : rp
-        )
-      }
-    });
-  },
-  
-  deleteRatePlan: (id: string) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        ratePlans: current.ratePlans.filter(rp => rp.id !== id)
-      }
-    });
-  },
-  
-  addSeasonalRate: (ratePlanId: string, seasonalRate: RoomManagementSettings['ratePlans'][0]['seasonalRates'][0]) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        ratePlans: current.ratePlans.map(rp => 
-          rp.id === ratePlanId ? { ...rp, seasonalRates: [...(rp.seasonalRates || []), seasonalRate] } : rp
-        )
-      }
-    });
-  },
-  
-  updateSeasonalRate: (ratePlanId: string, seasonalRateId: string, updates: Partial<RoomManagementSettings['ratePlans'][0]['seasonalRates'][0]>) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        ratePlans: current.ratePlans.map(rp => 
-          rp.id === ratePlanId ? { ...rp, seasonalRates: rp.seasonalRates.map(sr => 
-            sr.id === seasonalRateId ? { ...sr, ...updates } : sr
-          ) } : rp
-        )
-      }
-    });
-  },
-  
-  deleteSeasonalRate: (ratePlanId: string, seasonalRateId: string) => {
-    const current = get().roomManagement;
-    set({
-      roomManagement: {
-        ...current,
-        ratePlans: current.ratePlans.map(rp => 
-          rp.id === ratePlanId ? { ...rp, seasonalRates: rp.seasonalRates.filter(sr => sr.id !== seasonalRateId) } : rp
-        )
-      }
-    });
-  },
-  
-  // Template Management Methods
-  addTemplate: (template) => {
-    const newTemplate: DocumentTemplate = {
-      ...template,
-      id: `template-${Date.now()}`,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    
-    const current = get().documentTemplates;
-    set({
-      documentTemplates: {
-        ...current,
-        templates: [...current.templates, newTemplate]
-      }
-    });
-  },
-  
-  updateTemplate: (id: string, updates: Partial<DocumentTemplate>) => {
-    const current = get().documentTemplates;
-    set({
-      documentTemplates: {
-        ...current,
-        templates: current.templates.map(t => 
-          t.id === id ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t
-        )
-      }
-    });
-  },
-  
-  deleteTemplate: (id: string) => {
-    const current = get().documentTemplates;
-    set({
-      documentTemplates: {
-        ...current,
-        templates: current.templates.filter(t => t.id !== id)
-      }
-    });
-  },
-  
-  activateTemplate: (id: string) => {
-    const current = get().documentTemplates;
-    set({
-      documentTemplates: {
-        ...current,
-        templates: current.templates.map(t => ({
-          ...t,
-          isActive: t.id === id ? true : t.isActive
-        }))
-      }
-    });
-  },
-  
-  deactivateTemplate: (id: string) => {
-    const current = get().documentTemplates;
-    set({
-      documentTemplates: {
-        ...current,
-        templates: current.templates.map(t => ({
-          ...t,
-          isActive: t.id === id ? false : t.isActive
-        }))
-      }
-    });
-  },
-  
-  setDefaultTemplate: (documentType: string, templateId: string) => {
-    const current = get().documentTemplates;
-    set({
-      documentTemplates: {
-        ...current,
-        defaultTemplates: {
-          ...current.defaultTemplates,
-          [documentType]: templateId
-        },
-        templates: current.templates.map(t => ({
-          ...t,
-          isDefault: t.type === documentType ? t.id === templateId : t.isDefault
-        }))
-      }
-    });
-  },
-  
-  getTemplate: (id: string) => {
-    const current = get().documentTemplates;
-    return current.templates.find(t => t.id === id);
-  },
-  
-  getTemplatesByType: (type: DocumentTemplate['type']) => {
-    const current = get().documentTemplates;
-    return current.templates.filter(t => t.type === type);
-  },
-  
-  getActiveTemplate: (documentType: string) => {
-    const current = get().documentTemplates;
-    const activeTemplateId = current.activeTemplates[documentType];
-    return activeTemplateId ? current.templates.find(t => t.id === activeTemplateId) : undefined;
-  },
-  
-  getDefaultTemplate: (documentType: string) => {
-    const current = get().documentTemplates;
-    const defaultTemplateId = current.defaultTemplates[documentType];
-    return defaultTemplateId ? current.templates.find(t => t.id === defaultTemplateId) : undefined;
-  },
+    // NEW: Event Resources & Packages
+    eventResources: [],
+    eventPackages: []
+  }
 }));
 
 // Initialize settings on store creation
