@@ -1349,7 +1349,7 @@ function ClientsServicesContent() {
 												case 'index':
 													return <TableCell style={colStyle('index')}>{startIndex + idx + 1}</TableCell>;
 												case 'id':
-													return <TableCell style={{ width: colWidths.id }}>{row.id}</TableCell>;
+													return <TableCell style={{ width: colWidths.id }}>{row.serialNumber}</TableCell>;
 												case 'name':
 													return (
 														<TableCell style={{ width: colWidths.name }}>
@@ -1808,13 +1808,13 @@ function ClientsServicesContent() {
                                 <label className="block text-sm font-medium text-gray-700 mb-1">First Name *</label>
                                 <Input placeholder="First name" value={newClient.firstName} onChange={(e)=>handleInputChange('firstName', e.target.value)} />
                             </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Middle Name</label>
-                                            <Input placeholder="Other name(s)" value={newClient.middleName} onChange={(e)=>handleInputChange('middleName', e.target.value)} />
-                            </div>
                             <div>
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Last Name *</label>
                                 <Input placeholder="Last name" value={newClient.lastName} onChange={(e)=>handleInputChange('lastName', e.target.value)} />
+                            </div>
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-1">Middle Name</label>
+                                            <Input placeholder="Other name(s)" value={newClient.middleName} onChange={(e)=>handleInputChange('middleName', e.target.value)} />
                             </div>
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Gender</label>
@@ -2161,95 +2161,7 @@ function ClientsServicesContent() {
                             </div>
                         ) : (
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                {newClient.type === 'corporate' ? (
-                                    <>
-                                        <div className="md:col-span-3">
-                                            <h4 className="font-semibold text-gray-800">Billing & Invoicing</h4>
-                                        </div>
-                                        <div className="flex items-center gap-2 md:col-span-3">
-                                            <Switch isSelected={newClient.billingSameAsCompany} onValueChange={(v)=>setNewClient({...newClient, billingSameAsCompany: v})}>
-                                                Billing person same as company
-                                            </Switch>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Billing Contact Name</label>
-                                            <Input placeholder="Full name" value={newClient.billingContactName} onChange={(e)=>setNewClient({...newClient, billingContactName: e.target.value})} isDisabled={newClient.billingSameAsCompany} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Billing Contact Email</label>
-                                            <Input type="email" placeholder="billing@company.com" value={newClient.billingContactEmail} onChange={(e)=>setNewClient({...newClient, billingContactEmail: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Billing Contact Phone</label>
-                                            <Input placeholder="Phone" value={newClient.billingContactPhone} onChange={(e)=>setNewClient({...newClient, billingContactPhone: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Accounts Email</label>
-                                            <Input type="email" placeholder="accounts@company.com" value={newClient.accountsEmail} onChange={(e)=>setNewClient({...newClient, accountsEmail: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Delivery</label>
-                                            <Select selectedKeys={[newClient.invoiceDelivery]} onSelectionChange={(k)=>setNewClient({...newClient, invoiceDelivery: Array.from(k as Set<string>)[0] as any})}>
-                                                <SelectItem key="email">Email</SelectItem>
-                                                <SelectItem key="paper">Paper</SelectItem>
-                                                <SelectItem key="portal">Portal</SelectItem>
-                                            </Select>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Invoice Currency</label>
-                                            <Select selectedKeys={[newClient.invoiceCurrency]} onSelectionChange={(k)=>setNewClient({...newClient, invoiceCurrency: Array.from(k as Set<string>)[0] as any})}>
-                                                <SelectItem key="GHS">GHS</SelectItem>
-                                                <SelectItem key="USD">USD</SelectItem>
-                                                <SelectItem key="EUR">EUR</SelectItem>
-                                                <SelectItem key="GBP">GBP</SelectItem>
-                                                <SelectItem key="NGN">NGN</SelectItem>
-                                                <SelectItem key="XOF">XOF</SelectItem>
-                                                <SelectItem key="XAF">XAF</SelectItem>
-                                            </Select>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <div className="flex items-center gap-1">
-                                                <label className="text-sm font-medium text-gray-700">Require PO</label>
-                                                <Tooltip content="If ON, invoices for this company must include a Purchase Order (PO) reference. Turn this on when the client requires PO numbers before payment.">
-                                                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-[10px] cursor-default">i</span>
-                                                </Tooltip>
-                                            </div>
-                                            <Switch isSelected={newClient.requirePO} onValueChange={(v)=>setNewClient({...newClient, requirePO: v})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">PO Requirement</label>
-                                            <Select selectedKeys={[newClient.poRequirement]} onSelectionChange={(k)=>setNewClient({...newClient, poRequirement: Array.from(k as Set<string>)[0] as any})}>
-                                                <SelectItem key="none">None</SelectItem>
-                                                <SelectItem key="number">PO Number</SelectItem>
-                                                <SelectItem key="attachment">Attachment</SelectItem>
-                                            </Select>
-                                        </div>
-                                        <div className="md:col-span-3">
-                                            <h4 className="font-semibold text-gray-800">Contract Details</h4>
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-                                            <Input type="date" value={newClient.contractStart} onChange={(e)=>setNewClient({...newClient, contractStart: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-                                            <Input type="date" value={newClient.contractEnd} onChange={(e)=>setNewClient({...newClient, contractEnd: e.target.value})} />
-                                        </div>
-                                        <div>
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Status</label>
-                                            <Select selectedKeys={[newClient.contractStatus]} onSelectionChange={(k)=>setNewClient({...newClient, contractStatus: Array.from(k as Set<string>)[0] as any})}>
-                                                <SelectItem key="active">Active</SelectItem>
-                                                <SelectItem key="pending">Pending</SelectItem>
-                                                <SelectItem key="expired">Expired</SelectItem>
-                                                <SelectItem key="suspended">Suspended</SelectItem>
-                                            </Select>
-                                        </div>
-                                        <div className="md:col-span-3">
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                                            <Textarea rows={3} placeholder="Contract or invoicing notes" value={newClient.contractNotes} onChange={(e)=>setNewClient({...newClient, contractNotes: e.target.value})} />
-                                        </div>
-                                    </>
-                                ) : (
+                                {newClient.type === 'corporate' ? null : (
                                     <>
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-1">Blood Group</label>

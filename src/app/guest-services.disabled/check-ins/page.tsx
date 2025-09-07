@@ -109,7 +109,7 @@ interface WalkInData {
   source: string;
 }
 
-function CheckInsPageContent() {
+function CheckInsContent() {
   const searchParams = useSearchParams();
   const checkInType = searchParams.get('type') || 'reservation';
   const isQuickMode = searchParams.get('quick') === 'true';
@@ -171,9 +171,6 @@ function CheckInsPageContent() {
   }, [filteredCheckIns.length]);
 
   const loadCheckIns = () => {
-    // Prevent build-time errors by checking if we're in browser
-    if (typeof window === 'undefined') return;
-    
     const reservations = frontOfficeStore.reservations;
     const today = new Date().toISOString().split('T')[0];
     
@@ -857,8 +854,15 @@ function CheckInsPageContent() {
 
 export default function CheckInsPage() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
-      <CheckInsPageContent />
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold text-gray-900 mb-4">Loading Check-In System...</h1>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto"></div>
+        </div>
+      </div>
+    }>
+      <CheckInsContent />
     </Suspense>
   );
 }
