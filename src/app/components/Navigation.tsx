@@ -435,7 +435,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
           <div className="p-6 text-center">
             <p>Redirecting to Invoices & Payments...</p>
-            <Button color="primary" onPress={() => window.location.href = '/guest-services/client-services/invoices-payments'}>
+            <Button color="primary" onPress={() => window.location.href = '/guest-services/check-ins?tab=billing'}>
               Go to Invoices & Payments
             </Button>
           </div>
@@ -450,9 +450,32 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Room Management...</div>}><RoomManagementDashboard /></Suspense>;
 
       case 'check-ins':
+        return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
+          <div className="p-6 text-center">
+            <p>Redirecting to Check-ins & In-House Management...</p>
+            <Button color="primary" onPress={() => window.location.href = '/guest-services/check-ins'}>
+              Go to Check-ins
+            </Button>
+          </div>
+        </Suspense>;
       case 'in-house':
+        return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
+          <div className="p-6 text-center">
+            <p>Redirecting to Check-ins & In-House Management...</p>
+            <Button color="primary" onPress={() => window.location.href = '/guest-services/check-ins?tab=inhouse'}>
+              Go to In-House Management
+            </Button>
+          </div>
+        </Suspense>;
       case 'check-outs':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Front Desk Dashboard...</div>}><FrontdeskDashboard /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
+          <div className="p-6 text-center">
+            <p>Redirecting to Check-outs...</p>
+            <Button color="primary" onPress={() => window.location.href = '/guest-services/check-ins?tab=checkouts'}>
+              Go to Check-outs
+            </Button>
+          </div>
+        </Suspense>;
       case 'guest-experience-manager':
         return <Suspense fallback={<div className="p-6 text-center">Loading Guest Experience Manager...</div>}><GuestExperienceManager /></Suspense>;
       case 'mobile-guest-services':

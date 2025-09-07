@@ -2,33 +2,10 @@
 
 /**
  * Guest Check-Out Management Page
- * 
- * This component provides comprehensive checkout processing with enhanced folio management.
- * It implements the Payment/Final Settlement Table structure as per the relational database design:
- * 
- * ENHANCED DATA STRUCTURE:
- * - Folio ID: Links to the central folio system
- * - Financial Status: Total charges, payments, outstanding balance, discounts
- * - Checkout Details: Timestamps, room status, confirmation numbers
- * - Guest Profile: Links to repeat guest information
- * - Source Tracking: Origin of booking and checkout processing
- * 
- * LINKED COMPONENTS:
- * - Check-ins: Processes guests who have completed check-in
- * - In-House: Manages guests during their stay
- * - Folio System: Central financial tracking and settlement
- * - Housekeeping: Room status updates after checkout
- * 
- * OPERATIONS:
- * - Process checkouts with financial settlement
- * - Handle late checkouts and extensions
- * - Generate confirmation numbers and receipts
- * - Update room status for housekeeping
- * - Track payment methods and outstanding balances
+ * (Restored as an embeddable component for consolidated tabs)
  */
 
 import React, { useState, useEffect } from 'react';
-import PageLayout from '../../components/PageLayout';
 import { 
   Card, 
   CardBody, 
@@ -41,6 +18,7 @@ import {
   TableBody, 
   TableRow, 
   TableCell,
+  Pagination,
   Input,
   Select,
   SelectItem,
@@ -52,12 +30,13 @@ import {
   useDisclosure,
   Chip,
   Avatar,
-  Tooltip,
   Dropdown,
   DropdownTrigger,
   DropdownMenu,
   DropdownItem,
-  Textarea
+  Textarea,
+  Accordion,
+  AccordionItem
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
@@ -106,12 +85,14 @@ export default function CheckOutsPage() {
   const [filteredCheckOuts, setFilteredCheckOuts] = useState<CheckOutData[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [page, setPage] = useState(1);
+  // remove duplicate page declaration if present
   const [rowsPerPage] = useState(10);
+  const [page, setPage] = useState(1);
   const [selectedCheckOut, setSelectedCheckOut] = useState<CheckOutData | null>(null);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [isProcessing, setIsProcessing] = useState(false);
   const [checkoutNotes, setCheckoutNotes] = useState('');
+  const [quickSettlementMethod, setQuickSettlementMethod] = useState<'Cash'|'Card'|'Mobile Money'>('Cash');
 
   useEffect(() => {
     loadCheckOuts();
@@ -128,6 +109,13 @@ export default function CheckOutsPage() {
     setPage(1);
   }, [filteredCheckOuts.length]);
 
+  const getFolioTotals = (reservationId: string) => {
+    const folio = frontOfficeStore.getOrCreateFolio(reservationId);
+    const totalCharges = folio.charges.reduce((s, c) => s + c.amount + (c.tax || 0), 0);
+    const totalPayments = folio.payments.reduce((s, p) => s + p.amount, 0);
+    return { totalCharges, totalPayments, outstandingBalance: Math.max(0, totalCharges - totalPayments) };
+  };
+
   const loadCheckOuts = () => {
     const reservations = frontOfficeStore.reservations;
     const today = new Date();
@@ -141,45 +129,45 @@ export default function CheckOutsPage() {
         const checkInDate = new Date(reservation.arrival);
         const checkOutDate = new Date(reservation.departure);
         const nightsStayed = Math.ceil((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24));
-        const isLateCheckout = new Date(reservation.departure) < today;
+        const folioTotals = getFolioTotals(reservation.id);
         
         return {
           id: reservation.id,
-          uniqueCheckOutId: `checkout-${Date.now()}`, // Generate a unique ID
-          folioId: reservation.id, // Using reservation ID as folio ID for now
-          guestProfileId: undefined, // Will be added when guest profiles are implemented
+          uniqueCheckOutId: `checkout-${Date.now()}`,
+          folioId: reservation.id,
+          guestProfileId: undefined,
           guestName: reservation.guestName,
           roomNumber: reservation.roomId || 'TBD',
           roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Standard',
           roomRate: reservation.rateBreakdown?.[0]?.total || 0,
           checkInDate: reservation.arrival,
-          checkInDateTime: reservation.arrival, // Using arrival as check-in time
+          checkInDateTime: reservation.arrival,
           checkOutDate: reservation.departure,
-          checkoutDateTime: undefined, // Will be set when checkout is processed
-          status: 'pending' as const,
+          checkoutDateTime: undefined,
+          status: 'pending',
           nightsStayed: Math.ceil((new Date(reservation.departure).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24)),
-          totalCharges: reservation.rateBreakdown?.[0]?.total || 0,
-          totalPayments: 0, // Will be calculated from actual payments
-          outstandingBalance: reservation.rateBreakdown?.[0]?.total || 0,
-          discount: 0, // No discount by default
+          totalCharges: folioTotals.totalCharges,
+          totalPayments: folioTotals.totalPayments,
+          outstandingBalance: folioTotals.outstandingBalance,
+          discount: 0,
           finalPaymentMethod: reservation.paymentMethod || 'Not specified',
-          confirmationNumber: undefined, // Will be generated during checkout
-          roomStatus: 'Occupied', // Default room status
+          confirmationNumber: undefined,
+          roomStatus: 'Occupied',
           phone: reservation.guestPhone,
           email: reservation.guestEmail,
           specialRequests: reservation.remarksToGuest,
           billingPerson: reservation.billingPersonName,
-          lateCheckout: false, // Default to on-time checkout
+          lateCheckout: false,
           housekeepingStatus: 'pending',
           source: reservation.source || 'Front Office',
-          staffId: 'pending', // Will be set when checkout is processed
-          staffUsername: 'Pending', // Will be set when checkout is processed
+          staffId: 'pending',
+          staffUsername: 'Pending',
           adults: reservation.adults || 1,
           children: reservation.children || 0,
-          checkoutNotes: undefined, // Will be set when checkout is processed
+          checkoutNotes: undefined,
           createdAt: reservation.createdAt || new Date().toISOString(),
           updatedAt: reservation.updatedAt || new Date().toISOString(),
-          processedAt: undefined // Will be set when checkout is processed
+          processedAt: undefined
         };
       });
 
@@ -208,17 +196,16 @@ export default function CheckOutsPage() {
   const handleCheckOut = async (checkOut: CheckOutData) => {
     setIsProcessing(true);
     try {
-      // Update reservation status to checked-out
-      const updatedReservation = frontOfficeStore.reservations.find(r => r.id === checkOut.id);
-      if (updatedReservation) {
-        updatedReservation.status = 'checked-out';
-        updatedReservation.checkOutTime = new Date().toISOString();
-        updatedReservation.checkoutNotes = checkoutNotes;
-        frontOfficeStore.notify();
+      // Prevent checkout if there is an outstanding balance
+      const { outstandingBalance } = getFolioTotals(checkOut.id);
+      if (outstandingBalance > 0) {
+        const ok = confirm(`Outstanding balance ₵${outstandingBalance.toFixed(2)}. Settle before checkout?`);
+        if (!ok) { setIsProcessing(false); return; }
+        return; // user will settle via quick settlement UI
       }
 
-      // Create housekeeping task for room cleaning
-      // This would typically update the housekeeping store as well
+      // Use store API for checkout to ensure consistency
+      frontOfficeStore.processCheckout(checkOut.id, checkoutNotes);
 
       trackEvent('FO.Reservation.CheckedOut', {
         reservationId: checkOut.id,
@@ -235,6 +222,14 @@ export default function CheckOutsPage() {
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  // Quick settlement to clear outstanding balance before checkout
+  const handleQuickSettlement = (checkOut: CheckOutData) => {
+    const { outstandingBalance } = getFolioTotals(checkOut.id);
+    if (outstandingBalance <= 0) return;
+    frontOfficeStore.addPayment(checkOut.id, quickSettlementMethod, outstandingBalance);
+    setTimeout(() => loadCheckOuts(), 0);
   };
 
   const handleExtendStay = async (checkOut: CheckOutData, additionalNights: number) => {
@@ -297,35 +292,9 @@ export default function CheckOutsPage() {
 
   const checkoutStats = getCheckoutStats();
 
-  // Helper functions for date/time formatting
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-GH', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
-  };
+  const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('en-GH', { year: 'numeric', month: 'short', day: 'numeric' });
+  const formatTime = (dateString: string) => new Date(dateString).toLocaleTimeString('en-GH', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString('en-GH', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
-
-  const formatDateTime = (dateString: string) => {
-    return new Date(dateString).toLocaleString('en-GH', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
-
-  // Analytics-friendly data attributes
   const getAnalyticsData = (checkOut: CheckOutData) => ({
     'data-checkout-id': checkOut.uniqueCheckOutId,
     'data-reservation-id': checkOut.id,
@@ -339,16 +308,13 @@ export default function CheckOutsPage() {
   });
 
   return (
-    <PageLayout>
-      <div className="py-8 px-6">
-        <div className="max-w-7xl mx-auto">
-          {/* Header */}
+    <div className="pt-2">
+        <div>
           <div className="mb-8">
             <h1 className="text-3xl font-bold text-gray-900">🚪 Guest Check-outs</h1>
             <p className="text-gray-600">Process guest departures and manage checkout workflow</p>
           </div>
 
-          {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <Card className="border-0 shadow-lg">
               <CardBody className="p-4">
@@ -396,7 +362,6 @@ export default function CheckOutsPage() {
             </Card>
           </div>
 
-          {/* Filters and Search */}
           <Card className="mb-6">
             <CardBody className="p-4">
               <div className="flex flex-col sm:flex-row gap-4">
@@ -419,219 +384,69 @@ export default function CheckOutsPage() {
                   <SelectItem key="completed">Completed</SelectItem>
                   <SelectItem key="extended">Extended</SelectItem>
                 </Select>
+                <Select
+                  placeholder="Settlement"
+                  value={quickSettlementMethod}
+                  onChange={(e) => setQuickSettlementMethod(e.target.value as any)}
+                  className="w-full sm:w-48"
+                >
+                  <SelectItem key="Cash">Cash</SelectItem>
+                  <SelectItem key="Card">Card</SelectItem>
+                  <SelectItem key="Mobile Money">Mobile Money</SelectItem>
+                </Select>
               </div>
             </CardBody>
           </Card>
 
-          {/* Check-outs Table */}
           <Table aria-label="Check-outs table">
             <TableHeader>
-              <TableColumn>Unique ID</TableColumn>
-              <TableColumn>Guest Name</TableColumn>
-              <TableColumn>Guest Profile ID</TableColumn>
-              <TableColumn>Phone</TableColumn>
-              <TableColumn>Email</TableColumn>
-              <TableColumn>Room Number</TableColumn>
-              <TableColumn>Room Type</TableColumn>
-              <TableColumn>Room Rate</TableColumn>
-              <TableColumn>Check-in Date</TableColumn>
-              <TableColumn>Check-in Time</TableColumn>
-              <TableColumn>Check-out Date</TableColumn>
-              <TableColumn>Check-out Time</TableColumn>
-              <TableColumn>Nights Stayed</TableColumn>
-              <TableColumn>Adults</TableColumn>
-              <TableColumn>Children</TableColumn>
-              <TableColumn>Total Charges</TableColumn>
-              <TableColumn>Total Payments</TableColumn>
-              <TableColumn>Outstanding Balance</TableColumn>
-              <TableColumn>Discount</TableColumn>
-              <TableColumn>Final Payment Method</TableColumn>
-              <TableColumn>Confirmation Number</TableColumn>
-              <TableColumn>Room Status</TableColumn>
-              <TableColumn>Source</TableColumn>
-              <TableColumn>Staff ID</TableColumn>
-              <TableColumn>Staff Username</TableColumn>
-              <TableColumn>Folio ID</TableColumn>
-              <TableColumn>Late Checkout</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              <TableColumn>GUEST</TableColumn>
+              <TableColumn>ROOM</TableColumn>
+              <TableColumn>NIGHTS</TableColumn>
+              <TableColumn>CHARGES</TableColumn>
+              <TableColumn>PAYMENTS</TableColumn>
+              <TableColumn>BALANCE</TableColumn>
+              <TableColumn>STATUS</TableColumn>
+              <TableColumn>ACTIONS</TableColumn>
             </TableHeader>
             <TableBody>
-              {filteredCheckOuts.map((checkOut) => (
+              {filteredCheckOuts
+                .slice((page - 1) * rowsPerPage, page * rowsPerPage)
+                .map((checkOut) => (
                 <TableRow 
                   key={checkOut.id}
                   {...getAnalyticsData(checkOut)}
                 >
                   <TableCell>
-                    <div>
-                      <p className="font-medium text-purple-600">{checkOut.uniqueCheckOutId}</p>
-                      <p className="text-xs text-gray-500">Reservation: {checkOut.id}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
                     <div className="flex items-center space-x-3">
-                      <Avatar 
-                        name={checkOut.guestName} 
-                        size="sm"
-                        className="bg-ghana-gold text-white"
-                      />
+                      <Avatar name={checkOut.guestName} size="sm" className="bg-ghana-gold text-white" />
                       <div>
                         <p className="font-medium">{checkOut.guestName}</p>
+                        <p className="text-xs text-gray-500">Res: {checkOut.id}</p>
                       </div>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="text-center">
-                      {checkOut.guestProfileId ? (
-                        <p className="font-medium text-blue-600">{checkOut.guestProfileId}</p>
-                      ) : (
-                        <p className="text-sm text-gray-400">Not assigned</p>
-                      )}
+                    <div>
+                      <p className="font-medium text-center">{checkOut.roomNumber}</p>
+                      <p className="text-xs text-gray-500 text-center">{checkOut.roomType}</p>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{checkOut.phone}</p>
-                    </div>
+                    <p className="font-medium text-center">{checkOut.nightsStayed}</p>
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-medium text-red-600 text-center">₵{checkOut.totalCharges.toLocaleString()}</p>
+                  </TableCell>
+                  <TableCell>
+                    <p className="font-medium text-green-600 text-center">₵{checkOut.totalPayments.toLocaleString()}</p>
+                  </TableCell>
+                  <TableCell>
+                    <p className={`font-medium text-center ${checkOut.outstandingBalance > 0 ? 'text-red-600' : 'text-green-600'}`}>₵{checkOut.outstandingBalance.toLocaleString()}</p>
                   </TableCell>
                   <TableCell>
                     <div className="text-center">
-                      <p className="font-medium">{checkOut.email}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{checkOut.roomNumber}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{checkOut.roomType}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium text-green-600">₵{checkOut.roomRate}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{formatDate(checkOut.checkInDate)}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="text-sm text-gray-600">{formatTime(checkOut.checkInDate)}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{formatDate(checkOut.checkOutDate)}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="text-sm text-gray-600">{formatTime(checkOut.checkOutDate)}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{checkOut.nightsStayed}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{checkOut.adults}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{checkOut.children}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium text-red-600">₵{checkOut.totalCharges.toLocaleString()}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium text-green-600">₵{checkOut.totalPayments.toLocaleString()}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className={`font-medium ${checkOut.outstandingBalance > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        ₵{checkOut.outstandingBalance.toLocaleString()}
-                      </p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      {checkOut.discount && checkOut.discount > 0 ? (
-                        <p className="font-medium text-orange-600">₵{checkOut.discount.toLocaleString()}</p>
-                      ) : (
-                        <p className="text-sm text-gray-400">No discount</p>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{checkOut.finalPaymentMethod || 'Not specified'}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      {checkOut.confirmationNumber ? (
-                        <p className="font-medium text-purple-600">{checkOut.confirmationNumber}</p>
-                      ) : (
-                        <p className="text-sm text-gray-400">Not assigned</p>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{checkOut.roomStatus || 'Pending'}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium">{checkOut.source}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium text-blue-600">{checkOut.staffId}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-medium text-blue-600">{checkOut.staffUsername}</p>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      {checkOut.folioId ? (
-                        <p className="font-medium text-purple-600">{checkOut.folioId}</p>
-                      ) : (
-                        <p className="text-sm text-gray-400">Not assigned</p>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      {checkOut.lateCheckout ? (
-                        <Badge color="danger" variant="flat" size="sm">Late</Badge>
-                      ) : (
-                        <Badge color="success" variant="flat" size="sm">On Time</Badge>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <Badge color={getStatusColor(checkOut.status)} variant="flat">
-                        {getStatusText(checkOut.status)}
-                      </Badge>
+                      <Badge color={getStatusColor(checkOut.status)} variant="flat">{getStatusText(checkOut.status)}</Badge>
                     </div>
                   </TableCell>
                   <TableCell>
@@ -644,6 +459,11 @@ export default function CheckOutsPage() {
                       >
                         Process
                       </Button>
+                      {checkOut.outstandingBalance > 0 && (
+                        <Button size="sm" color="success" variant="flat" onClick={() => handleQuickSettlement(checkOut)}>
+                          Settle ₵{checkOut.outstandingBalance.toFixed(2)}
+                        </Button>
+                      )}
                       <Dropdown>
                         <DropdownTrigger>
                           <Button size="sm" variant="flat" isIconOnly>
@@ -668,9 +488,17 @@ export default function CheckOutsPage() {
               ))}
             </TableBody>
           </Table>
+          <div className="flex justify-end mt-3">
+            <Pagination 
+              page={page}
+              total={Math.max(1, Math.ceil(filteredCheckOuts.length / rowsPerPage))}
+              onChange={setPage}
+              showControls
+              size="sm"
+            />
+          </div>
         </div>
 
-        {/* Check-out Processing Modal */}
         <Modal isOpen={isOpen} onClose={onClose} size="2xl">
           <ModalContent>
             <ModalHeader>Process Check-out</ModalHeader>
@@ -736,6 +564,71 @@ export default function CheckOutsPage() {
                       rows={3}
                     />
                   </div>
+
+                  {/* Folio Details */}
+                  <div className="border-t pt-3">
+                    <h4 className="text-sm font-semibold text-gray-800 mb-2">Folio</h4>
+                    <Accordion>
+                      <AccordionItem key="charges" aria-label="Charges" title="View Folio Charges">
+                        <div className="space-y-2">
+                          {(() => {
+                            const folio = frontOfficeStore.getOrCreateFolio(selectedCheckOut.id);
+                            if (!folio.charges.length) {
+                              return <p className="text-sm text-gray-500">No charges posted.</p>;
+                            }
+                            return (
+                              <Table aria-label="Folio charges">
+                                <TableHeader>
+                                  <TableColumn>DATE</TableColumn>
+                                  <TableColumn>DESCRIPTION</TableColumn>
+                                  <TableColumn align="end">AMOUNT</TableColumn>
+                                  <TableColumn align="end">TAX</TableColumn>
+                                </TableHeader>
+                                <TableBody>
+                                  {folio.charges.map(c => (
+                                    <TableRow key={c.id}>
+                                      <TableCell>{new Date(c.date).toLocaleDateString()}</TableCell>
+                                      <TableCell>{c.description}</TableCell>
+                                      <TableCell>₵{c.amount.toFixed(2)}</TableCell>
+                                      <TableCell>₵{(c.tax || 0).toFixed(2)}</TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            );
+                          })()}
+                        </div>
+                      </AccordionItem>
+                      <AccordionItem key="payments" aria-label="Payments" title="View Payments">
+                        <div className="space-y-2">
+                          {(() => {
+                            const folio = frontOfficeStore.getOrCreateFolio(selectedCheckOut.id);
+                            if (!folio.payments.length) {
+                              return <p className="text-sm text-gray-500">No payments received.</p>;
+                            }
+                            return (
+                              <Table aria-label="Folio payments">
+                                <TableHeader>
+                                  <TableColumn>DATE</TableColumn>
+                                  <TableColumn>METHOD</TableColumn>
+                                  <TableColumn align="end">AMOUNT</TableColumn>
+                                </TableHeader>
+                                <TableBody>
+                                  {folio.payments.map(p => (
+                                    <TableRow key={p.id}>
+                                      <TableCell>{new Date(p.date).toLocaleDateString()}</TableCell>
+                                      <TableCell>{p.method}</TableCell>
+                                      <TableCell>₵{p.amount.toFixed(2)}</TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            );
+                          })()}
+                        </div>
+                      </AccordionItem>
+                    </Accordion>
+                  </div>
                 </div>
               )}
             </ModalBody>
@@ -754,6 +647,7 @@ export default function CheckOutsPage() {
           </ModalContent>
         </Modal>
       </div>
-    </PageLayout>
   );
 }
+
+

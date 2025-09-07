@@ -128,16 +128,100 @@ class FrontOfficeStore {
       this.hydratedGuests = true;
     }
 
+    // Initialize sample reservations for testing
+    this.initializeSampleReservations();
+
     // Initial rooms sync from settings
     try {
       this.syncRoomsFromSettings();
       // Subscribe to settings changes so rooms reflect Settings in real-time
-      useSettingsStore.subscribe((state) => state.roomManagement.rooms, () => {
+      useSettingsStore.subscribe(() => {
         this.syncRoomsFromSettings();
       });
     } catch (e) {
       console.warn('FO: Room sync subscription failed', e);
     }
+  }
+
+  // Initialize sample reservations for testing
+  private initializeSampleReservations() {
+    const today = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const dayAfter = new Date(today);
+    dayAfter.setDate(dayAfter.getDate() + 2);
+    const threeDaysLater = new Date(today);
+    threeDaysLater.setDate(threeDaysLater.getDate() + 3);
+
+    // Sample reservations for testing
+    this.reservations = [
+      {
+        id: 'R-001',
+        resId: 'RES-001',
+        guestId: 'guest-001',
+        guestName: 'John Mensah',
+        guestPhone: '+233 24 123 4567',
+        guestEmail: 'john.mensah@email.com',
+        roomTypeId: 'rt-standard',
+        roomId: '101',
+        arrival: today.toISOString().split('T')[0],
+        departure: tomorrow.toISOString().split('T')[0],
+        status: 'confirmed',
+        source: 'DIRECTINN',
+        adults: 2,
+        children: 0,
+        paymentMethod: 'Cash',
+        remarksToGuest: 'High floor preferred',
+        stayReason: 'leisure',
+        billingPersonName: 'John Mensah',
+        createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+      },
+      {
+        id: 'R-002',
+        resId: 'RES-002',
+        guestId: 'guest-002',
+        guestName: 'Ama Osei',
+        guestPhone: '+233 26 987 6543',
+        guestEmail: 'ama.osei@email.com',
+        roomTypeId: 'rt-deluxe',
+        roomId: '201',
+        arrival: today.toISOString().split('T')[0],
+        departure: dayAfter.toISOString().split('T')[0],
+        status: 'checked-in',
+        source: 'BOOKING.COM',
+        adults: 1,
+        children: 1,
+        paymentMethod: 'Credit Card',
+        remarksToGuest: 'Extra bed needed',
+        stayReason: 'business',
+        billingPersonName: 'Ama Osei',
+        createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
+      },
+      {
+        id: 'R-003',
+        resId: 'RES-003',
+        guestId: 'guest-003',
+        guestName: 'Kwame Asante',
+        guestPhone: '+233 20 555 1234',
+        guestEmail: 'kwame.asante@email.com',
+        roomTypeId: 'rt-suite',
+        roomId: '301',
+        arrival: tomorrow.toISOString().split('T')[0],
+        departure: threeDaysLater.toISOString().split('T')[0],
+        status: 'confirmed',
+        source: 'WALK IN',
+        adults: 2,
+        children: 2,
+        paymentMethod: 'Bank Transfer',
+        remarksToGuest: 'Anniversary celebration',
+        stayReason: 'leisure',
+        billingPersonName: 'Kwame Asante',
+        createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
+        updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
+      }
+    ];
   }
 
   subscribe(l: () => void) { this.listeners.push(l); return () => { this.listeners = this.listeners.filter(x => x !== l); }; }
@@ -414,7 +498,7 @@ class FrontOfficeStore {
   }) {
     this.clientServices.push(service);
     this.notify();
-    trackEvent('FO.ClientService.Added', { clientId: service.clientId, serviceName: service.serviceName, type: service.serviceType });
+    trackEvent('FO.ClientService.Added' as any, { clientId: service.clientId, serviceName: service.serviceName, type: service.serviceType });
     return service;
   }
 
@@ -423,7 +507,7 @@ class FrontOfficeStore {
     if (idx === -1) return null;
     this.clientServices[idx] = { ...this.clientServices[idx], ...updates };
     this.notify();
-    trackEvent('FO.ClientService.Updated', { id: serviceId });
+    trackEvent('FO.ClientService.Updated' as any, { id: serviceId });
     return this.clientServices[idx];
   }
 
@@ -432,7 +516,7 @@ class FrontOfficeStore {
     this.clientServices = (this.clientServices || []).filter(s => s.clientId !== clientId);
     const removed = before - this.clientServices.length;
     this.notify();
-    if (removed > 0) trackEvent('FO.ClientService.DeletedForClient', { clientId, removed });
+    if (removed > 0) trackEvent('FO.ClientService.DeletedForClient' as any, { clientId, removed });
   }
 
   getNextClientNumber(): string {
@@ -677,12 +761,12 @@ class FrontOfficeStore {
       guestName: reservationData.guestName,
       guestPhone: reservationData.guestPhone,
       guestEmail: reservationData.guestEmail,
-      roomType: reservationData.roomType,
+      roomTypeId: reservationData.roomType,
       arrival: reservationData.arrival,
       departure: reservationData.departure,
       adults: reservationData.adults,
       children: reservationData.children,
-      specialRequests: reservationData.specialRequests,
+      remarksToGuest: reservationData.specialRequests,
       status: reservationData.status as any,
       source: reservationData.source,
       createdAt: reservationData.createdAt || new Date().toISOString(),
@@ -708,7 +792,7 @@ class FrontOfficeStore {
       reservationId: newReservation.id,
       guestName: newReservation.guestName,
       source: newReservation.source,
-      roomType: newReservation.roomType
+      roomType: newReservation.roomTypeId
     });
 
     return newReservation;
