@@ -70,6 +70,7 @@ import dynamic from 'next/dynamic';
 // Embed existing pages via dynamic import to avoid module resolution issues
 const CheckOutsPage = dynamic(() => import('../check-outs/page'), { ssr: false });
 const InvoicesPaymentsPage = dynamic(() => import('../client-services/invoices-payments/page'), { ssr: false });
+const ReservationsBookingsManager = dynamic(() => import('../../components/ReservationsBookingsManager'), { ssr: false });
 
 interface CheckInData {
   id: string; // Reservation ID
@@ -139,11 +140,15 @@ function CheckInsPageContent() {
   const [selectedTab, setSelectedTab] = useState(() => {
     const tabParam = searchParams.get('tab');
     if (tabParam === 'inhouse') return 'inhouse';
-    if (tabParam === 'walkin') return 'walkin';
     if (tabParam === 'checkouts') return 'checkouts';
     if (tabParam === 'billing') return 'billing';
-    return checkInType === 'walkin' ? 'walkin' : 'reservations';
+    return 'reservations';
   });
+  const [reservationsSubTab, setReservationsSubTab] = useState<'search' | 'newcheckin'>(() => {
+    const sub = searchParams.get('subtab');
+    return sub === 'newcheckin' ? 'newcheckin' : 'search';
+  });
+  // Removed legacy local New Check-In form state in favor of embedded ReservationsBookingsManager
   
   // Room assignment state
   const [availableRooms, setAvailableRooms] = useState<any[]>([]);
@@ -695,13 +700,29 @@ Proceed with transfer?
           onSelectionChange={(key) => setSelectedTab(key as string)}
           className="w-full"
         >
-          <Tab key="reservations" title="📅 Check-In Reservations">
+          <Tab key="reservations-manager" title="📅 Reservations & Bookings Management">
+            <Card className="border-0 shadow-lg">
+              <CardBody>
+                <Suspense fallback={<div className="p-6 text-center">Loading Reservations & Bookings...</div>}>
+                  <ReservationsBookingsManager />
+                </Suspense>
+              </CardBody>
+            </Card>
+          </Tab>
+          <Tab key="reservations" title="📅 Check-In Guest">
             <Card className="border-0 shadow-lg">
               <CardHeader className="pb-3">
-                <h3 className="text-xl font-semibold text-ghana-black">Search & Process Reservations</h3>
+                <div className="flex items-center justify-between w-full">
+                  <h3 className="text-xl font-semibold text-ghana-black">Check-In Guest</h3>
+                  <div className="flex gap-2">
+                    <Button size="sm" variant="flat" onClick={() => setReservationsSubTab('search')}>🔎 Find Reservation</Button>
+                    <Button size="sm" color="primary" onClick={() => setReservationsSubTab('newcheckin')}>+ New Check-In</Button>
+                  </div>
+                </div>
               </CardHeader>
               <CardBody>
-                {/* Search Bar */}
+                {reservationsSubTab === 'search' ? (
+                  <div>
                 <div className="flex gap-4 mb-6">
                   <Input
                     placeholder="Search by guest name, phone, or confirmation number..."
@@ -710,16 +731,9 @@ Proceed with transfer?
                     className="flex-1"
                     onKeyPress={(e) => e.key === 'Enter' && searchReservations()}
                   />
-                  <Button
-                    color="primary"
-                    onClick={searchReservations}
-                    isLoading={isSearching}
-                  >
-                    🔍 Search
-                  </Button>
+                      <Button color="primary" onClick={searchReservations} isLoading={isSearching}>🔍 Search</Button>
                 </div>
 
-                {/* Search Results */}
                 {searchResults.length > 0 && (
                   <div className="mb-6">
                     <h4 className="text-lg font-semibold mb-3">Search Results</h4>
@@ -732,93 +746,15 @@ Proceed with transfer?
                                 <Avatar name={reservation.guestName} size="md" />
                   <div>
                                   <h5 className="font-semibold">{reservation.guestName}</h5>
-                                  <p className="text-sm text-gray-600">
-                                    {reservation.guestPhone} • {reservation.guestEmail}
-                                  </p>
-                                  <p className="text-sm text-gray-500">
-                                    {reservation.roomType} • {reservation.arrival} to {reservation.departure}
-                    </p>
+                                      <p className="text-sm text-gray-600">{reservation.guestPhone} • {reservation.guestEmail}</p>
+                                      <p className="text-sm text-gray-500">{reservation.roomType} • {reservation.arrival} to {reservation.departure}</p>
                   </div>
                 </div>
                               <div className="flex items-center space-x-2">
                                 <Badge color="success" variant="flat">Confirmed</Badge>
-                                <Button
-                                  size="sm"
-                                  color="primary"
-                                  onClick={() => processReservationCheckIn(reservation)}
-                                  isLoading={isProcessing}
-                                >
-                                  ✅ Check In
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  color="secondary"
-                                  variant="flat"
-                                  onClick={() => {
-                                    setSelectedCheckIn({
-                                      id: reservation.id,
-                                      uniqueCheckInId: `checkin-${reservation.id}`,
-                                      guestName: reservation.guestName,
-                                      roomNumber: reservation.roomId || 'TBD',
-                                      roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Standard',
-                                      roomRate: reservation.rateBreakdown?.[0]?.total || 0,
-                                      arrivalDate: reservation.arrival,
-                                      departureDate: reservation.departure,
-                                      status: 'pending',
-                                      adults: reservation.adults || 1,
-                                      children: reservation.children || 0,
-                                      paymentMethod: reservation.paymentMethod || 'Not specified',
-                                      specialRequests: reservation.remarksToGuest,
-                                      billingPerson: reservation.billingPersonName,
-                                      phone: reservation.guestPhone,
-                                      email: reservation.guestEmail,
-                                      source: reservation.source || 'reservation',
-                                      staffId: 'pending',
-                                      staffUsername: 'Pending',
-                                      folioId: reservation.id,
-                                      createdAt: reservation.createdAt || new Date().toISOString(),
-                                      updatedAt: reservation.updatedAt || new Date().toISOString()
-                                    });
-                                    onOpen();
-                                  }}
-                                >
-                                  🏠 Assign
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  color="default"
-                                  variant="flat"
-                                  onClick={() => {
-                                    setSelectedCheckIn({
-                                      id: reservation.id,
-                                      uniqueCheckInId: `checkin-${reservation.id}`,
-                                      guestName: reservation.guestName,
-                                      roomNumber: reservation.roomId || 'TBD',
-                                      roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Standard',
-                                      roomRate: reservation.rateBreakdown?.[0]?.total || 0,
-                                      arrivalDate: reservation.arrival,
-                                      departureDate: reservation.departure,
-                                      status: 'pending',
-                                      adults: reservation.adults || 1,
-                                      children: reservation.children || 0,
-                                      paymentMethod: reservation.paymentMethod || 'Not specified',
-                                      specialRequests: reservation.remarksToGuest,
-                                      billingPerson: reservation.billingPersonName,
-                                      phone: reservation.guestPhone,
-                                      email: reservation.guestEmail,
-                                      source: reservation.source || 'reservation',
-                                      staffId: 'pending',
-                                      staffUsername: 'Pending',
-                                      folioId: reservation.id,
-                                      createdAt: reservation.createdAt || new Date().toISOString(),
-                                      updatedAt: reservation.updatedAt || new Date().toISOString()
-                                    });
-                                    setIsEditing(true);
-                                    onOpen();
-                                  }}
-                                >
-                                  ✏️ Edit
-                                </Button>
+                                    <Button size="sm" color="primary" onClick={() => processReservationCheckIn(reservation)} isLoading={isProcessing}>✅ Check In</Button>
+                                    <Button size="sm" color="secondary" variant="flat" onClick={() => { setSelectedCheckIn({ id: reservation.id, uniqueCheckInId: `checkin-${reservation.id}`, guestName: reservation.guestName, roomNumber: reservation.roomId || 'TBD', roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Standard', roomRate: reservation.rateBreakdown?.[0]?.total || 0, arrivalDate: reservation.arrival, departureDate: reservation.departure, status: 'pending', adults: reservation.adults || 1, children: reservation.children || 0, paymentMethod: reservation.paymentMethod || 'Not specified', specialRequests: reservation.remarksToGuest, billingPerson: reservation.billingPersonName, phone: reservation.guestPhone, email: reservation.guestEmail, source: reservation.source || 'reservation', staffId: 'pending', staffUsername: 'Pending', folioId: reservation.id, createdAt: reservation.createdAt || new Date().toISOString(), updatedAt: reservation.updatedAt || new Date().toISOString() }); onOpen(); }}>🏠 Assign</Button>
+                                    <Button size="sm" color="default" variant="flat" onClick={() => { setSelectedCheckIn({ id: reservation.id, uniqueCheckInId: `checkin-${reservation.id}`, guestName: reservation.guestName, roomNumber: reservation.roomId || 'TBD', roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Standard', roomRate: reservation.rateBreakdown?.[0]?.total || 0, arrivalDate: reservation.arrival, departureDate: reservation.departure, status: 'pending', adults: reservation.adults || 1, children: reservation.children || 0, paymentMethod: reservation.paymentMethod || 'Not specified', specialRequests: reservation.remarksToGuest, billingPerson: reservation.billingPersonName, phone: reservation.guestPhone, email: reservation.guestEmail, source: reservation.source || 'reservation', staffId: 'pending', staffUsername: 'Pending', folioId: reservation.id, createdAt: reservation.createdAt || new Date().toISOString(), updatedAt: reservation.updatedAt || new Date().toISOString() }); setIsEditing(true); onOpen(); }}>✏️ Edit</Button>
                   </div>
                 </div>
               </CardBody>
@@ -828,176 +764,53 @@ Proceed with transfer?
               </div>
                 )}
 
-                {/* Today's Check-ins */}
                 <div>
                   <h4 className="text-lg font-semibold mb-3">Today's Pending Check-ins</h4>
                   <Table aria-label="Pending check-ins table">
                     <TableHeader>
-                      <TableColumn>Unique ID</TableColumn>
+                      <TableColumn>ID</TableColumn>
                       <TableColumn>Guest Name</TableColumn>
-                      <TableColumn>Contact</TableColumn>
+                          <TableColumn>Phone</TableColumn>
+                          <TableColumn>Email</TableColumn>
                       <TableColumn>Room</TableColumn>
+                          <TableColumn>Room Type</TableColumn>
                       <TableColumn>Rate</TableColumn>
-                      <TableColumn>Stay Details</TableColumn>
-                      <TableColumn>Payment & Source</TableColumn>
-                      <TableColumn>Staff ID</TableColumn>
-                      <TableColumn>Staff Username</TableColumn>
-                      <TableColumn>Created Date</TableColumn>
-                      <TableColumn>Created Time</TableColumn>
-                      <TableColumn>Updated Date</TableColumn>
-                      <TableColumn>Updated Time</TableColumn>
-                      <TableColumn>Processed Date</TableColumn>
-                      <TableColumn>Processed Time</TableColumn>
+                      <TableColumn>Arrival</TableColumn>
+                      <TableColumn>Departure</TableColumn>
+                          <TableColumn>Adults</TableColumn>
+                          <TableColumn>Children</TableColumn>
+                      <TableColumn>Payment</TableColumn>
                       <TableColumn>Status</TableColumn>
+                      <TableColumn>Staff</TableColumn>
+                      <TableColumn>Last Updated</TableColumn>
                       <TableColumn>Actions</TableColumn>
                     </TableHeader>
                     <TableBody>
-                          {filteredCheckIns
+                          {[...filteredCheckIns]
+                            .sort((a, b) => { const ad = new Date(a.processedAt || a.updatedAt || a.createdAt).getTime(); const bd = new Date(b.processedAt || b.updatedAt || b.createdAt).getTime(); return bd - ad; })
                             .slice((page - 1) * rowsPerPage, page * rowsPerPage)
                             .map((checkIn) => (
-                            <TableRow 
-                              key={checkIn.id}
-                              {...getAnalyticsData(checkIn)}
-                            >
-                              <TableCell>
-                                <div>
-                                  <p className="font-medium text-purple-600">{checkIn.uniqueCheckInId}</p>
-                                  <p className="text-xs text-gray-500">Reservation: {checkIn.id}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex items-center space-x-3">
-                                  <Avatar name={checkIn.guestName} size="sm" />
-                                  <div>
-                                    <p className="font-medium">{checkIn.guestName}</p>
-                                    {checkIn.guestProfileId && (
-                                      <p className="text-xs text-blue-600">Profile: {checkIn.guestProfileId}</p>
-                                    )}
-                                  </div>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div>
-                                  <p className="font-medium">{checkIn.phone}</p>
-                                  <p className="text-sm text-gray-600">{checkIn.email}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div>
-                                  <p className="font-medium">{checkIn.roomNumber}</p>
-                                  <p className="text-sm text-gray-600">{checkIn.roomType}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div>
-                                  <p className="font-medium text-green-600">₵{checkIn.roomRate}</p>
-                                  <p className="text-sm text-gray-600">per night</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div>
-                                  <p className="font-medium">{formatDate(checkIn.arrivalDate)} to {formatDate(checkIn.departureDate)}</p>
-                                  <p className="text-sm text-gray-600">{checkIn.adults} adults, {checkIn.children} children</p>
-                                  {checkIn.checkInDateTime && (
-                                    <p className="text-xs text-blue-600">Checked in: {formatDate(checkIn.checkInDateTime)}</p>
-                                  )}
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div>
-                                  <p className="font-medium">{checkIn.paymentMethod || 'Not specified'}</p>
-                                  <p className="text-sm text-gray-600">Source: {checkIn.source}</p>
-                                  {checkIn.folioId && (
-                                    <p className="text-xs text-purple-600">Folio: {checkIn.folioId}</p>
-                                  )}
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="text-center">
-                                  <p className="font-medium text-blue-600">{checkIn.staffId}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="text-center">
-                                  <p className="font-medium text-blue-600">{checkIn.staffUsername}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="text-center">
-                                  <p className="font-medium">{formatDate(checkIn.createdAt)}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="text-center">
-                                  <p className="text-sm text-gray-600">{formatTime(checkIn.createdAt)}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="text-center">
-                                  <p className="font-medium">{formatDate(checkIn.updatedAt)}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="text-center">
-                                  <p className="text-sm text-gray-600">{formatTime(checkIn.updatedAt)}</p>
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="text-center">
-                                  {checkIn.processedAt ? (
-                                    <p className="font-medium text-green-600">{formatDate(checkIn.processedAt)}</p>
-                                  ) : (
-                                    <p className="text-sm text-gray-400">Not processed</p>
-                                  )}
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <div className="text-center">
-                                  {checkIn.processedAt ? (
-                                    <p className="text-sm text-green-600">{formatTime(checkIn.processedAt)}</p>
-                                  ) : (
-                                    <p className="text-sm text-gray-400">-</p>
-                                  )}
-                                </div>
-                              </TableCell>
-                              <TableCell>
-                                <Badge color="warning" variant="flat">Pending</Badge>
-                              </TableCell>
+                              <TableRow key={checkIn.id} {...getAnalyticsData(checkIn)}>
+                                <TableCell><p className="font-medium text-purple-600">{checkIn.id}</p></TableCell>
+                                <TableCell><p className="font-medium">{checkIn.guestName}</p></TableCell>
+                                <TableCell><p className="font-medium">{checkIn.phone}</p></TableCell>
+                                <TableCell><p className="text-sm text-gray-600">{checkIn.email}</p></TableCell>
+                                <TableCell><p className="font-medium">{checkIn.roomNumber}</p></TableCell>
+                                <TableCell><p className="text-sm text-gray-600">{checkIn.roomType}</p></TableCell>
+                                <TableCell><p className="font-medium text-green-600">₵{checkIn.roomRate}</p></TableCell>
+                                <TableCell><p className="font-medium">{formatDate(checkIn.arrivalDate)}</p></TableCell>
+                                <TableCell><p className="font-medium">{formatDate(checkIn.departureDate)}</p></TableCell>
+                                <TableCell><p className="text-sm">{checkIn.adults}</p></TableCell>
+                                <TableCell><p className="text-sm">{checkIn.children}</p></TableCell>
+                                <TableCell><p className="font-medium">{checkIn.paymentMethod || 'Not specified'}</p></TableCell>
+                                <TableCell><Badge color="warning" variant="flat">Pending</Badge></TableCell>
+                                <TableCell><p className="text-sm text-blue-600">{checkIn.staffUsername}</p></TableCell>
+                                <TableCell><div><p className="text-sm">{formatDate(checkIn.updatedAt)}</p><p className="text-xs text-gray-500">{formatTime(checkIn.updatedAt)}</p></div></TableCell>
                               <TableCell>
                                 <div className="flex space-x-2">
-                                <Button
-                                  size="sm"
-                                  color="primary"
-                                  onClick={() => {
-                                    setSelectedCheckIn(checkIn);
-                                    onOpen();
-                                  }}
-                                >
-                                  Process
-                                </Button>
-                                  <Button
-                                    size="sm"
-                                    color="secondary"
-                                    variant="flat"
-                                    onClick={() => {
-                                      setSelectedCheckIn(checkIn);
-                                      onOpen();
-                                    }}
-                                  >
-                                    🏠 Assign
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    color="default"
-                                    variant="flat"
-                                    onClick={() => {
-                                      setSelectedCheckIn(checkIn);
-                                      setIsEditing(true);
-                                      onOpen();
-                                    }}
-                                  >
-                                    ✏️ Edit
-                                  </Button>
+                                    <Button size="sm" color="primary" onClick={() => { setSelectedCheckIn(checkIn); onOpen(); }}>Process</Button>
+                                    <Button size="sm" color="secondary" variant="flat" onClick={() => { setSelectedCheckIn(checkIn); onOpen(); }}>🏠 Assign</Button>
+                                    <Button size="sm" color="default" variant="flat" onClick={() => { setSelectedCheckIn(checkIn); setIsEditing(true); onOpen(); }}>✏️ Edit</Button>
                                 </div>
                               </TableCell>
                             </TableRow>
@@ -1005,138 +818,21 @@ Proceed with transfer?
                         </TableBody>
                   </Table>
                   <div className="flex justify-end mt-3">
-                    <Pagination 
-                      page={page}
-                      total={Math.max(1, Math.ceil(filteredCheckIns.length / rowsPerPage))}
-                      onChange={setPage}
-                      showControls
-                      size="sm"
-                    />
+                        <Pagination page={page} total={Math.max(1, Math.ceil(filteredCheckIns.length / rowsPerPage))} onChange={setPage} showControls size="sm" />
                   </div>
                 </div>
-            </CardBody>
-          </Card>
-          </Tab>
-
-          <Tab key="walkin" title="🚶‍♂️ Walk-In Check-In">
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="pb-3">
-                <h3 className="text-xl font-semibold text-ghana-black">Walk-In Guest Check-In</h3>
-                <p className="text-gray-600">Check in guests without prior reservations</p>
-              </CardHeader>
-              <CardBody>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Guest Information */}
-                  <div className="space-y-4">
-                    <h4 className="text-lg font-semibold">Guest Information</h4>
-                    
-                    <Input
-                      label="Full Name *"
-                      placeholder="Enter guest's full name"
-                      value={walkInForm.guestName}
-                      onChange={(e) => setWalkInForm({...walkInForm, guestName: e.target.value})}
-                      isRequired
-                    />
-                    
-                    <Input
-                      label="Phone Number *"
-                      placeholder="Enter phone number"
-                      value={walkInForm.phone}
-                      onChange={(e) => setWalkInForm({...walkInForm, phone: e.target.value})}
-                      isRequired
-                    />
-                    
-                    <Input
-                      label="Email (Optional)"
-                      placeholder="Enter email address"
-                      value={walkInForm.email}
-                      onChange={(e) => setWalkInForm({...walkInForm, email: e.target.value})}
-                      type="email"
-                    />
                   </div>
-
-                  {/* Stay Details */}
-                  <div className="space-y-4">
-                    <h4 className="text-lg font-semibold">Stay Details</h4>
-                    
-                    <Select
-                      label="Room Type"
-                      placeholder="Select room type"
-                      value={walkInForm.roomType}
-                      onChange={(e) => setWalkInForm({...walkInForm, roomType: e.target.value})}
-                    >
-                      <SelectItem key="Standard">Standard Room</SelectItem>
-                      <SelectItem key="Deluxe">Deluxe Room</SelectItem>
-                      <SelectItem key="Suite">Suite</SelectItem>
-                      <SelectItem key="Executive">Executive Room</SelectItem>
-                    </Select>
-                    
-                    <Input
-                      label="Arrival Date"
-                      type="date"
-                      value={walkInForm.arrivalDate}
-                      onChange={(e) => setWalkInForm({...walkInForm, arrivalDate: e.target.value})}
-                    />
-                    
-                    <Input
-                      label="Departure Date"
-                      type="date"
-                      value={walkInForm.departureDate}
-                      onChange={(e) => setWalkInForm({...walkInForm, departureDate: e.target.value})}
-                    />
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <Input
-                        label="Adults"
-                        type="number"
-                        min="1"
-                        value={walkInForm.adults.toString()}
-                        onChange={(e) => setWalkInForm({...walkInForm, adults: parseInt(e.target.value)})}
-                      />
-                      <Input
-                        label="Children"
-                        type="number"
-                        min="0"
-                        value={walkInForm.children.toString()}
-                        onChange={(e) => setWalkInForm({...walkInForm, children: parseInt(e.target.value)})}
-                      />
+                ) : (
+                  <div>
+                    <ReservationsBookingsManager mode="checkin" embed autoOpenNew />
                     </div>
-                  </div>
-                </div>
-
-                <Divider className="my-6" />
-
-                {/* Special Requests */}
-                <div className="space-y-4">
-                  <h4 className="text-lg font-semibold">Special Requests</h4>
-                  <Input
-                    label="Special Requests (Optional)"
-                    placeholder="Any special requests or notes..."
-                    value={walkInForm.specialRequests}
-                    onChange={(e) => setWalkInForm({...walkInForm, specialRequests: e.target.value})}
-                  />
-        </div>
-
-                {/* Action Buttons */}
-                <div className="flex justify-end space-x-4 mt-6">
-                  <Button
-                    variant="flat"
-                    onClick={() => setSelectedTab('reservations')}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    color="primary"
-                    onClick={processWalkInCheckIn}
-                    isLoading={isProcessing}
-                    isDisabled={!walkInForm.guestName || !walkInForm.phone}
-                  >
-                    ✅ Complete Check-In
-                  </Button>
-                </div>
+                )}
               </CardBody>
             </Card>
           </Tab>
+
+          
+          {/* removed: dedicated New Check-In tab; moved inside Check-In Guest */}
 
           <Tab key="inhouse" title="🏠 In-House Management">
             <Card className="border-0 shadow-lg">
@@ -1198,8 +894,10 @@ Proceed with transfer?
                   <h4 className="text-lg font-semibold mb-3">Currently Checked-In Guests</h4>
                   <Table aria-label="In-house guests table">
                     <TableHeader>
+                      <TableColumn>ID</TableColumn>
                       <TableColumn>Guest Name</TableColumn>
                       <TableColumn>Room</TableColumn>
+                      <TableColumn>Room Type</TableColumn>
                       <TableColumn>Check-in Date</TableColumn>
                       <TableColumn>Departure Date</TableColumn>
                       <TableColumn>Rate</TableColumn>
@@ -1207,25 +905,27 @@ Proceed with transfer?
                       <TableColumn>Actions</TableColumn>
                     </TableHeader>
                     <TableBody>
-                      {checkIns
+                      {[...checkIns]
                         .filter(checkIn => checkIn.status === 'checked-in')
+                        .sort((a, b) => {
+                          const ad = new Date(a.checkInDateTime || a.updatedAt || a.createdAt).getTime();
+                          const bd = new Date(b.checkInDateTime || b.updatedAt || b.createdAt).getTime();
+                          return bd - ad;
+                        })
                         .slice((inhousePage - 1) * rowsPerPage, inhousePage * rowsPerPage)
                         .map((checkIn) => (
                           <TableRow key={checkIn.id}>
                             <TableCell>
-                              <div className="flex items-center space-x-3">
-                                <Avatar name={checkIn.guestName} size="sm" />
-                                <div>
-                                  <p className="font-medium">{checkIn.guestName}</p>
-                                  <p className="text-sm text-gray-600">{checkIn.phone}</p>
-                                </div>
-                              </div>
+                              <p className="text-xs text-gray-600">{checkIn.id}</p>
                             </TableCell>
                             <TableCell>
-                              <div>
+                              <p className="font-medium">{checkIn.guestName}</p>
+                            </TableCell>
+                            <TableCell>
                                 <p className="font-medium">{checkIn.roomNumber}</p>
+                            </TableCell>
+                            <TableCell>
                                 <p className="text-sm text-gray-600">{checkIn.roomType}</p>
-                              </div>
                             </TableCell>
                             <TableCell>
                               <div>
@@ -1236,16 +936,10 @@ Proceed with transfer?
                               </div>
                             </TableCell>
                             <TableCell>
-                              <div>
-                                <p className="font-medium">{formatDate(checkIn.departureDate)}</p>
-                                <p className="text-sm text-gray-600">{checkIn.adults} adults, {checkIn.children} children</p>
-                              </div>
+                              <p className="font-medium">{formatDate(checkIn.departureDate)}</p>
                             </TableCell>
                             <TableCell>
-                              <div>
-                                <p className="font-medium text-green-600">₵{checkIn.roomRate}</p>
-                                <p className="text-sm text-gray-600">per night</p>
-                              </div>
+                              <p className="font-medium text-green-600">₵{checkIn.roomRate}</p>
                             </TableCell>
                             <TableCell>
                               <Badge color="success" variant="flat">Checked In</Badge>

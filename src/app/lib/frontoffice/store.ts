@@ -1,6 +1,6 @@
 'use client';
 
-import { Reservation, GuestProfile, RoomType, RoomEntity, RatePlan, Folio, BillingPerson, StayReason } from './types';
+import { Reservation, GuestProfile, RoomType, RoomEntity, RatePlan, Folio, FolioPayment, BillingPerson, StayReason } from './types';
 import { trackEvent } from '../analytics/trackEvent';
 import { logAudit } from '../analytics/auditLogStore';
 import { postRoomRevenue, postPayment } from '../accounting/journal';
@@ -31,6 +31,27 @@ class FrontOfficeStore {
   marketCodes: string[] = ['INTERNET', 'BOOKING.COM', 'EXPEDIA', 'DIRECTINN', 'WALK IN'];
   folios: Folio[] = [];
   private listeners: Array<() => void> = [];
+  
+  // Simple global sequential ID generator persisted in localStorage for human-friendly IDs
+  private nextSequence(): number {
+    try {
+      const raw = (typeof localStorage !== 'undefined') ? localStorage.getItem('global.seq') : null;
+      const n = raw ? parseInt(raw, 10) : 0;
+      const next = isNaN(n) ? 1 : n + 1;
+      if (typeof localStorage !== 'undefined') localStorage.setItem('global.seq', String(next));
+      return next;
+    } catch {
+      return Number(String(Date.now()).slice(-6));
+    }
+  }
+
+  private makeId(prefix: 'RES'|'CI'|'IH'|'CO'|'INV'|'PAY'|'CHG'): string {
+    const seq = this.nextSequence();
+    return `${prefix}-${seq.toString().padStart(6,'0')}`;
+  }
+
+  // Public helper for UI/other modules
+  generateId(prefix: 'RES'|'CI'|'IH'|'CO'|'INV'|'PAY'|'CHG') { return this.makeId(prefix); }
 
   constructor() {
     // Settings are now managed centrally via useSettingsStore
@@ -567,6 +588,17 @@ class FrontOfficeStore {
       housekeepingStore.updateRoomStatus(res.roomId, 'occupied', 'FrontDesk', `Guest ${res.guestName} checked in`);
     }
     trackEvent('FO.Reservation.CheckedIn', { id });
+    try {
+      const checkInEventId = `EVT-CI-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*100)}`;
+      logAudit({
+        area: 'frontdesk',
+        action: 'status',
+        entity: 'Reservation',
+        entityId: id,
+        details: 'Reservation checked in',
+        meta: { eventId: checkInEventId, eventType: 'check-in' }
+      });
+    } catch {}
   }
   checkOut(id: string) {
     const res = this.reservations.find(r => r.id === id);
@@ -577,16 +609,64 @@ class FrontOfficeStore {
       housekeepingStore.createTask({ roomNumber: res.roomId, roomTypeId: res.roomTypeId, taskType: 'turnover', priority: 'high', estimatedMinutes: 45, checklist: ['Change linens', 'Clean bathroom', 'Vacuum floor', 'Restock amenities'] });
     }
     trackEvent('FO.Reservation.CheckedOut', { id });
+    try {
+      const checkOutEventId = `EVT-CO-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*100)}`;
+      logAudit({
+        area: 'frontdesk',
+        action: 'status',
+        entity: 'Reservation',
+        entityId: id,
+        details: 'Reservation checked out',
+        meta: { eventId: checkOutEventId, eventType: 'check-out' }
+      });
+    } catch {}
   }
 
   // Folio helpers
   getOrCreateFolio(reservationId: string): Folio {
     let f = this.folios.find(x => x.reservationId === reservationId);
     if (!f) {
-      f = { id: `F-${Date.now().toString().slice(-6)}`, reservationId, charges: [], payments: [], currency: 'GHS' };
-      this.folios.unshift(f); this.notify();
+      f = { 
+        id: `F-${Date.now().toString().slice(-6)}`, 
+        reservationId, 
+        charges: [], 
+        payments: [], 
+        currency: 'GHS',
+        status: 'active'
+      };
+      this.folios.unshift(f); 
+      this.updateFolioBalances(f);
+      this.notify();
     }
     return f;
+  }
+
+  updateFolioBalances(folio: Folio) {
+    const totalCharges = folio.charges.reduce((sum, charge) => sum + charge.amount + (charge.tax || 0), 0);
+    const totalPayments = folio.payments
+      .filter(p => p.status === 'completed')
+      .reduce((sum, payment) => sum + payment.amount, 0);
+    const balance = totalCharges - totalPayments;
+    
+    folio.totalCharges = totalCharges;
+    folio.totalPayments = totalPayments;
+    folio.balance = Math.max(0, balance);
+    
+    // Update guest credit balance if credit was applied
+    const creditUsed = folio.payments
+      .filter(p => p.method === 'Credit' && p.status === 'completed')
+      .reduce((sum, payment) => sum + (payment.creditApplied || 0), 0);
+    
+    if (creditUsed > 0) {
+      const reservation = this.reservations.find(r => r.id === folio.reservationId);
+      if (reservation) {
+        const guest = this.guests.find(g => g.id === reservation.guestId);
+        if (guest) {
+          guest.creditBalance = (guest.creditBalance || 0) - creditUsed;
+          guest.lastCreditUpdate = new Date().toISOString();
+        }
+      }
+    }
   }
 
   // Maintenance flow
@@ -614,12 +694,97 @@ class FrontOfficeStore {
     }
   }
 
-  addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money', amount: number) {
+  addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: {
+    invoiceId?: string;
+    creditApplied?: number;
+    notes?: string;
+    processedBy?: string;
+    ref?: string;
+  }) {
     const f = this.getOrCreateFolio(reservationId);
-    f.payments.push({ id: `P-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), method, amount });
+    const payment: FolioPayment = {
+      id: `P-${Date.now().toString().slice(-6)}`,
+      date: new Date().toISOString(),
+      method,
+      amount,
+      status: 'completed',
+      processedBy: options?.processedBy || 'Front Desk',
+      ...options
+    };
+    f.payments.push(payment);
+    this.updateFolioBalances(f);
     this.notify();
-    trackEvent('FO.Folio.PaymentReceived', { reservationId, method, amount });
-    postPayment(reservationId, method, amount);
+    trackEvent('FO.Folio.PaymentReceived', { reservationId, method, amount, invoiceId: options?.invoiceId });
+    // Map to supported payment methods for accounting
+    const accountingMethod = method === 'Credit' || method === 'Corporate Account' || method === 'Bank Transfer' || method === 'Check' 
+      ? 'Cash' : method;
+    postPayment(reservationId, accountingMethod as 'Cash'|'Card'|'Mobile Money', amount);
+  }
+
+  // Credit management methods
+  addCreditToGuest(guestId: string, amount: number, reason: string, processedBy: string = 'Front Desk') {
+    const guest = this.guests.find(g => g.id === guestId);
+    if (!guest) return false;
+    
+    const currentBalance = guest.creditBalance || 0;
+    const newBalance = currentBalance + amount;
+    
+    // Check if new balance exceeds credit limit
+    if (guest.creditLimit && newBalance > guest.creditLimit) {
+      return false; // Credit limit exceeded
+    }
+    
+    guest.creditBalance = newBalance;
+    guest.lastCreditUpdate = new Date().toISOString();
+    guest.creditStatus = guest.creditStatus || 'active';
+    
+    this.notify();
+    trackEvent('FO.Guest.Updated', { 
+      guestId, 
+      action: 'credit_added',
+      amount, 
+      newBalance, 
+      reason,
+      processedBy 
+    });
+    
+    try {
+      logAudit({
+        area: 'frontdesk',
+        action: 'update',
+        entity: 'Guest',
+        entityId: guestId,
+        details: `Added ₵${amount} credit. Reason: ${reason}`,
+        severity: 'medium',
+        meta: { amount, reason, newBalance, action_type: 'credit_add' }
+      });
+    } catch {}
+    
+    return true;
+  }
+
+  applyCreditPayment(reservationId: string, amount: number, notes?: string) {
+    const reservation = this.reservations.find(r => r.id === reservationId);
+    if (!reservation) return false;
+    
+    const guest = this.guests.find(g => g.id === reservation.guestId);
+    if (!guest || !guest.creditBalance || guest.creditBalance < amount) {
+      return false; // Insufficient credit
+    }
+    
+    // Apply credit payment
+    this.addPayment(reservationId, 'Credit', amount, {
+      creditApplied: amount,
+      notes: notes || 'Credit payment applied',
+      processedBy: 'Front Desk'
+    });
+    
+    return true;
+  }
+
+  getGuestCreditBalance(guestId: string): number {
+    const guest = this.guests.find(g => g.id === guestId);
+    return guest?.creditBalance || 0;
   }
 
   // Reservation financial helpers
@@ -743,7 +908,7 @@ class FrontOfficeStore {
         reservations.some(r => r.guestId === c.id)
       ).length,
       newClientsThisMonth: clients.filter(c => {
-        const createdAt = new Date(c.createdAt);
+        const createdAt = new Date(c.createdAt || new Date().toISOString());
         const now = new Date();
         return createdAt.getMonth() === now.getMonth() && 
                createdAt.getFullYear() === now.getFullYear();
@@ -757,29 +922,23 @@ class FrontOfficeStore {
   // Add new reservation (for walk-ins)
   addReservation(reservationData: Partial<Reservation> & { guestName: string; guestPhone: string; guestEmail?: string; roomType: string; arrival: string; departure: string; adults: number; children: number; status: string; source: string }) {
     const newReservation: Reservation = {
-      id: reservationData.id || `res-${Date.now()}`,
+      id: reservationData.id || this.makeId('RES'),
+      guestId: (reservationData as any).guestId || undefined,
       guestName: reservationData.guestName,
       guestPhone: reservationData.guestPhone,
       guestEmail: reservationData.guestEmail,
-      roomTypeId: reservationData.roomType,
+      roomTypeId: this.roomTypes.find(rt => rt.name === reservationData.roomType)?.id || reservationData.roomType,
       arrival: reservationData.arrival,
       departure: reservationData.departure,
       adults: reservationData.adults,
       children: reservationData.children,
-      remarksToGuest: reservationData.specialRequests,
+      remarksToGuest: (reservationData as any).specialRequests,
       status: reservationData.status as any,
       source: reservationData.source,
       createdAt: reservationData.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      // Set default values for required fields
-      nationality: 'Ghana',
-      idType: 'passport',
-      idNumber: `WALKIN-${Date.now()}`,
-      emergencyContactName: reservationData.guestName,
-      emergencyContactRelationship: 'self',
-      emergencyContactPhone: reservationData.guestPhone,
-      roomTypeId: this.roomTypes.find(rt => rt.name === reservationData.roomType)?.id || 'rt-standard',
-      ratePlanId: this.ratePlans.find(rp => rp.roomTypeId === (this.roomTypes.find(rt => rt.name === reservationData.roomType)?.id || 'rt-standard'))?.id,
+      // Minimal required defaults
+      ratePlanId: this.ratePlans.find(rp => rp.roomTypeId === (this.roomTypes.find(rt => rt.name === reservationData.roomType)?.id || reservationData.roomType))?.id || undefined,
       isGuaranteed: false,
       stayReason: 'leisure',
       marketCodes: ['WALK IN']
@@ -808,11 +967,33 @@ class FrontOfficeStore {
       // If checking in, add check-in time
       if (newStatus === 'checked-in') {
         (reservation as any).checkInTime = new Date().toISOString();
+        try {
+          const checkInEventId = `EVT-CI-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*100)}`;
+          logAudit({
+            area: 'frontdesk',
+            action: 'status',
+            entity: 'Reservation',
+            entityId: reservationId,
+            details: 'Reservation checked in',
+            meta: { eventId: checkInEventId, eventType: 'check-in' }
+          });
+        } catch {}
       }
       
       // If checking out, add check-out time
       if (newStatus === 'checked-out') {
         (reservation as any).checkOutTime = new Date().toISOString();
+        try {
+          const checkOutEventId = `EVT-CO-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*100)}`;
+          logAudit({
+            area: 'frontdesk',
+            action: 'status',
+            entity: 'Reservation',
+            entityId: reservationId,
+            details: 'Reservation checked out',
+            meta: { eventId: checkOutEventId, eventType: 'check-out' }
+          });
+        } catch {}
       }
       
       this.notify();
@@ -845,6 +1026,18 @@ class FrontOfficeStore {
         guestName: reservation.guestName,
         checkoutNotes
       });
+
+      try {
+        const checkOutEventId = `EVT-CO-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*100)}`;
+        logAudit({
+          area: 'frontdesk',
+          action: 'status',
+          entity: 'Reservation',
+          entityId: reservationId,
+          details: 'Reservation checked out',
+          meta: { eventId: checkOutEventId, eventType: 'check-out' }
+        });
+      } catch {}
 
       return reservation;
     }

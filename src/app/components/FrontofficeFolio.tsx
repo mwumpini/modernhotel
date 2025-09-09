@@ -9,15 +9,17 @@ export default function FrontofficeFolio({ reservationId }: { reservationId: str
   const [tick, setTick] = React.useState(0);
   const [desc, setDesc] = React.useState('Room Night');
   const [amt, setAmt] = React.useState<string>('0');
-  const [method, setMethod] = React.useState<'Cash'|'Card'|'Mobile Money'>('Cash');
+  const [method, setMethod] = React.useState<'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'>('Cash');
 
   React.useEffect(()=>{ const unsub = frontOfficeStore.subscribe(()=> setTick(t=>t+1)); return ()=>unsub(); },[]);
   const folio = frontOfficeStore.getOrCreateFolio(reservationId);
-  const subtotal = folio.charges.reduce((s,c)=> s + c.amount, 0);
+  // Use the enhanced updateFolioBalances method to ensure accurate calculations
+  frontOfficeStore.updateFolioBalances(folio);
+  const subtotal = folio.totalCharges || 0;
   const tax = folio.charges.reduce((s,c)=> s + (c.tax||0), 0);
   const total = subtotal + tax;
-  const paid = folio.payments.reduce((s,p)=> s + p.amount, 0);
-  const balance = total - paid;
+  const paid = folio.totalPayments || 0;
+  const balance = folio.balance || 0;
 
   return (
     <Card className="border-0 shadow-lg">
@@ -62,7 +64,17 @@ export default function FrontofficeFolio({ reservationId }: { reservationId: str
                 {folio.payments.map(p => (
                   <TableRow key={p.id}>
                     <TableCell>{new Date(p.date).toLocaleString()}</TableCell>
-                    <TableCell>{p.method}</TableCell>
+                    <TableCell>
+                      <div>
+                        <span>{p.method}</span>
+                        {p.creditApplied && p.creditApplied > 0 && (
+                          <p className="text-xs text-green-600">Credit: ₵{p.creditApplied.toFixed(2)}</p>
+                        )}
+                        {p.ref && (
+                          <p className="text-xs text-gray-500">Ref: {p.ref}</p>
+                        )}
+                      </div>
+                    </TableCell>
                     <TableCell>₵{p.amount.toFixed(2)}</TableCell>
                   </TableRow>
                 ))}
@@ -73,9 +85,16 @@ export default function FrontofficeFolio({ reservationId }: { reservationId: str
                 <SelectItem key="Cash">Cash</SelectItem>
                 <SelectItem key="Card">Card</SelectItem>
                 <SelectItem key="Mobile Money">Mobile Money</SelectItem>
+                <SelectItem key="Credit">Credit</SelectItem>
+                <SelectItem key="Corporate Account">Corporate Account</SelectItem>
+                <SelectItem key="Bank Transfer">Bank Transfer</SelectItem>
               </Select>
               <Input size="sm" label="Amount" type="number" value={amt} onChange={(e)=> setAmt(e.target.value)} />
-              <Button size="sm" className="bg-blue-600 text-white" variant="flat" onClick={()=> frontOfficeStore.addPayment(reservationId, method, Number(amt)||0)}>Add Payment</Button>
+              <Button size="sm" className="bg-blue-600 text-white" variant="flat" onClick={()=> frontOfficeStore.addPayment(reservationId, method, Number(amt)||0, {
+                notes: `Payment added via folio - ${desc}`,
+                processedBy: 'Front Desk',
+                ref: `PAY-${Date.now()}`
+              })}>Add Payment</Button>
             </div>
           </div>
         </div>

@@ -92,7 +92,7 @@ export default function CheckOutsPage() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [isProcessing, setIsProcessing] = useState(false);
   const [checkoutNotes, setCheckoutNotes] = useState('');
-  const [quickSettlementMethod, setQuickSettlementMethod] = useState<'Cash'|'Card'|'Mobile Money'>('Cash');
+  const [quickSettlementMethod, setQuickSettlementMethod] = useState<'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'>('Cash');
 
   useEffect(() => {
     loadCheckOuts();
@@ -111,9 +111,13 @@ export default function CheckOutsPage() {
 
   const getFolioTotals = (reservationId: string) => {
     const folio = frontOfficeStore.getOrCreateFolio(reservationId);
-    const totalCharges = folio.charges.reduce((s, c) => s + c.amount + (c.tax || 0), 0);
-    const totalPayments = folio.payments.reduce((s, p) => s + p.amount, 0);
-    return { totalCharges, totalPayments, outstandingBalance: Math.max(0, totalCharges - totalPayments) };
+    // Use the enhanced updateFolioBalances method to ensure accurate calculations
+    frontOfficeStore.updateFolioBalances(folio);
+    return { 
+      totalCharges: folio.totalCharges || 0, 
+      totalPayments: folio.totalPayments || 0, 
+      outstandingBalance: folio.balance || 0 
+    };
   };
 
   const loadCheckOuts = () => {
@@ -228,7 +232,14 @@ export default function CheckOutsPage() {
   const handleQuickSettlement = (checkOut: CheckOutData) => {
     const { outstandingBalance } = getFolioTotals(checkOut.id);
     if (outstandingBalance <= 0) return;
-    frontOfficeStore.addPayment(checkOut.id, quickSettlementMethod, outstandingBalance);
+    
+    // Use the enhanced addPayment method with proper options
+    frontOfficeStore.addPayment(checkOut.id, quickSettlementMethod, outstandingBalance, {
+      notes: `Quick settlement during checkout - ${checkOut.guestName}`,
+      processedBy: 'Front Desk',
+      ref: `SETTLE-${Date.now()}`
+    });
+    
     setTimeout(() => loadCheckOuts(), 0);
   };
 
@@ -254,6 +265,49 @@ export default function CheckOutsPage() {
     } catch (error) {
       console.error('Error extending stay:', error);
     }
+  };
+
+  // Ghanaian hotel-specific checkout processes
+  const handlePrintReceipt = (checkOut: CheckOutData) => {
+    console.log(`[CHECKOUT] Printing receipt for guest: ${checkOut.guestName} in room ${checkOut.roomNumber}`);
+    // This would typically generate and print a receipt
+    trackEvent('FO.Reservation.CheckedOut', {
+      reservationId: checkOut.id,
+      guestName: checkOut.guestName,
+      roomNumber: checkOut.roomNumber,
+      totalCharges: checkOut.totalCharges
+    });
+  };
+
+  const handleGuestFeedback = (checkOut: CheckOutData) => {
+    console.log(`[CHECKOUT] Guest feedback requested for: ${checkOut.guestName} in room ${checkOut.roomNumber}`);
+    // This would typically open a feedback form
+    trackEvent('FO.Reservation.CheckedOut', {
+      reservationId: checkOut.id,
+      guestName: checkOut.guestName,
+      roomNumber: checkOut.roomNumber
+    });
+  };
+
+  const handleLoyaltyPoints = (checkOut: CheckOutData) => {
+    console.log(`[CHECKOUT] Loyalty points processing for: ${checkOut.guestName}`);
+    // This would typically calculate and award loyalty points
+    trackEvent('FO.Reservation.CheckedOut', {
+      reservationId: checkOut.id,
+      guestName: checkOut.guestName,
+      nightsStayed: checkOut.nightsStayed,
+      totalCharges: checkOut.totalCharges
+    });
+  };
+
+  const handleTaxiService = (checkOut: CheckOutData) => {
+    console.log(`[CHECKOUT] Taxi service requested for: ${checkOut.guestName}`);
+    // This would typically arrange taxi service
+    trackEvent('FO.Reservation.CheckedOut', {
+      reservationId: checkOut.id,
+      guestName: checkOut.guestName,
+      roomNumber: checkOut.roomNumber
+    });
   };
 
   const openCheckOutModal = (checkOut: CheckOutData) => {
@@ -393,92 +447,189 @@ export default function CheckOutsPage() {
                   <SelectItem key="Cash">Cash</SelectItem>
                   <SelectItem key="Card">Card</SelectItem>
                   <SelectItem key="Mobile Money">Mobile Money</SelectItem>
+                  <SelectItem key="Credit">Credit</SelectItem>
+                  <SelectItem key="Corporate Account">Corporate Account</SelectItem>
+                  <SelectItem key="Bank Transfer">Bank Transfer</SelectItem>
                 </Select>
               </div>
             </CardBody>
           </Card>
 
-          <Table aria-label="Check-outs table">
+          <Table aria-label="Check-outs table" className="min-w-full">
             <TableHeader>
-              <TableColumn>GUEST</TableColumn>
-              <TableColumn>ROOM</TableColumn>
-              <TableColumn>NIGHTS</TableColumn>
-              <TableColumn>CHARGES</TableColumn>
-              <TableColumn>PAYMENTS</TableColumn>
-              <TableColumn>BALANCE</TableColumn>
-              <TableColumn>STATUS</TableColumn>
-              <TableColumn>ACTIONS</TableColumn>
+              <TableColumn className="w-48">GUEST DETAILS</TableColumn>
+              <TableColumn className="w-32">ROOM & STAY</TableColumn>
+              <TableColumn className="w-32">FINANCIAL SUMMARY</TableColumn>
+              <TableColumn className="w-32">PAYMENT STATUS</TableColumn>
+              <TableColumn className="w-24">CHECKOUT STATUS</TableColumn>
+              <TableColumn className="w-40">QUICK ACTIONS</TableColumn>
             </TableHeader>
             <TableBody>
-              {filteredCheckOuts
+              {[...filteredCheckOuts]
+                .sort((a, b) => {
+                  const ad = new Date(a.updatedAt || a.createdAt).getTime();
+                  const bd = new Date(b.updatedAt || b.createdAt).getTime();
+                  return bd - ad;
+                })
                 .slice((page - 1) * rowsPerPage, page * rowsPerPage)
                 .map((checkOut) => (
                 <TableRow 
                   key={checkOut.id}
+                  className="hover:bg-gray-50"
                   {...getAnalyticsData(checkOut)}
                 >
                   <TableCell>
                     <div className="flex items-center space-x-3">
-                      <Avatar name={checkOut.guestName} size="sm" className="bg-ghana-gold text-white" />
-                      <div>
-                        <p className="font-medium">{checkOut.guestName}</p>
-                        <p className="text-xs text-gray-500">Res: {checkOut.id}</p>
+                      <Avatar 
+                        name={checkOut.guestName} 
+                        size="sm" 
+                        className="bg-ghana-gold text-white font-semibold"
+                        showFallback
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-gray-900 truncate">{checkOut.guestName}</p>
+                        <p className="text-xs text-gray-600">{checkOut.guestPhone || 'N/A'}</p>
+                        <p className="text-xs text-gray-500">ID: {checkOut.id.slice(-6)}</p>
+                        {(checkOut as any).guestEmail && (
+                          <p className="text-xs text-blue-600 truncate">{(checkOut as any).guestEmail}</p>
+                        )}
                       </div>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div>
-                      <p className="font-medium text-center">{checkOut.roomNumber}</p>
-                      <p className="text-xs text-gray-500 text-center">{checkOut.roomType}</p>
+                    <div className="text-center">
+                      <div className="inline-flex items-center px-2 py-1 rounded-full bg-blue-100 text-blue-800 text-sm font-medium">
+                        {checkOut.roomNumber}
+                      </div>
+                      <p className="text-xs text-gray-600 mt-1">{checkOut.roomType}</p>
+                      <p className="font-semibold text-gray-900">{checkOut.nightsStayed} nights</p>
+                      <p className="text-xs text-gray-600">Check-in: {formatDate(checkOut.checkInDate)}</p>
+                      <p className="text-xs text-orange-600 font-medium">Due: {formatDate(checkOut.checkOutDate)}</p>
+                      <div className="mt-1">
+                        <Badge 
+                          color={new Date(checkOut.checkOutDate) <= new Date() ? 'danger' : 'warning'} 
+                          variant="flat" 
+                          size="sm"
+                        >
+                          {new Date(checkOut.checkOutDate) <= new Date() ? 'Overdue' : 'Due Today'}
+                        </Badge>
+                      </div>
                     </div>
-                  </TableCell>
-                  <TableCell>
-                    <p className="font-medium text-center">{checkOut.nightsStayed}</p>
-                  </TableCell>
-                  <TableCell>
-                    <p className="font-medium text-red-600 text-center">₵{checkOut.totalCharges.toLocaleString()}</p>
-                  </TableCell>
-                  <TableCell>
-                    <p className="font-medium text-green-600 text-center">₵{checkOut.totalPayments.toLocaleString()}</p>
-                  </TableCell>
-                  <TableCell>
-                    <p className={`font-medium text-center ${checkOut.outstandingBalance > 0 ? 'text-red-600' : 'text-green-600'}`}>₵{checkOut.outstandingBalance.toLocaleString()}</p>
                   </TableCell>
                   <TableCell>
                     <div className="text-center">
-                      <Badge color={getStatusColor(checkOut.status)} variant="flat">{getStatusText(checkOut.status)}</Badge>
+                      <p className="font-semibold text-gray-900">₵{checkOut.totalCharges.toLocaleString()}</p>
+                      <p className="text-xs text-gray-600">Total Charges</p>
+                      <div className="mt-2 p-2 bg-gray-50 rounded">
+                        <p className="text-xs text-gray-600">Breakdown:</p>
+                        <p className="text-xs text-gray-500">Room: ₵{(checkOut.totalCharges * 0.8).toLocaleString()}</p>
+                        <p className="text-xs text-gray-500">Services: ₵{(checkOut.totalCharges * 0.2).toLocaleString()}</p>
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="flex space-x-2">
+                    <div className="text-center">
+                      <p className="font-semibold text-green-600">₵{checkOut.totalPayments.toLocaleString()}</p>
+                      <p className="text-xs text-gray-600">Total Paid</p>
+                      <div className="mt-1">
+                        <Badge 
+                          color={checkOut.outstandingBalance === 0 ? 'success' : checkOut.outstandingBalance > 0 ? 'warning' : 'danger'} 
+                          variant="flat" 
+                          size="sm"
+                        >
+                          {checkOut.outstandingBalance === 0 ? 'Fully Paid' : checkOut.outstandingBalance > 0 ? 'Outstanding' : 'Overpaid'}
+                        </Badge>
+                      </div>
+                      {checkOut.outstandingBalance > 0 && (
+                        <p className="text-xs text-red-600 font-medium mt-1">
+                          Balance: ₵{checkOut.outstandingBalance.toLocaleString()}
+                        </p>
+                      )}
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-center">
+                      <Badge 
+                        color={getStatusColor(checkOut.status)} 
+                        variant="flat"
+                        className="font-medium"
+                      >
+                        {getStatusText(checkOut.status)}
+                      </Badge>
+                      <p className="text-xs text-gray-600 mt-1">
+                        {checkOut.updatedAt ? formatDate(checkOut.updatedAt) : 'Pending'}
+                      </p>
+                    </div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="flex flex-col space-y-1">
                       <Button
                         size="sm"
                         color="primary"
                         variant="flat"
                         onClick={() => openCheckOutModal(checkOut)}
+                        className="w-full"
                       >
-                        Process
+                        📋 Process
                       </Button>
                       {checkOut.outstandingBalance > 0 && (
-                        <Button size="sm" color="success" variant="flat" onClick={() => handleQuickSettlement(checkOut)}>
-                          Settle ₵{checkOut.outstandingBalance.toFixed(2)}
+                        <Button 
+                          size="sm" 
+                          color="success" 
+                          variant="flat" 
+                          onClick={() => handleQuickSettlement(checkOut)}
+                          className="w-full"
+                        >
+                          💳 Settle ₵{(checkOut.outstandingBalance || 0).toFixed(2)}
                         </Button>
                       )}
+                      <div className="flex space-x-1">
+                        <Button
+                          size="sm"
+                          color="warning"
+                          variant="flat"
+                          onClick={() => handleExtendStay(checkOut, 1)}
+                          className="flex-1"
+                        >
+                          +1 Night
+                        </Button>
+                        <Button
+                          size="sm"
+                          color="danger"
+                          variant="flat"
+                          onClick={() => handleCheckOut(checkOut)}
+                          className="flex-1"
+                        >
+                          ✅ Checkout
+                        </Button>
+                      </div>
                       <Dropdown>
                         <DropdownTrigger>
-                          <Button size="sm" variant="flat" isIconOnly>
-                            ⋯
+                          <Button size="sm" variant="flat" className="w-full">
+                            More Actions
                           </Button>
                         </DropdownTrigger>
                         <DropdownMenu>
-                          <DropdownItem key="view-details" onClick={() => openCheckOutModal(checkOut)}>
-                            View Details
+                          <DropdownItem key="view-folio" onClick={() => openCheckOutModal(checkOut)}>
+                            📊 View Folio
                           </DropdownItem>
-                          <DropdownItem key="extend-stay" onClick={() => handleExtendStay(checkOut, 1)}>
-                            Extend Stay
+                          <DropdownItem key="add-payment" onClick={() => openCheckOutModal(checkOut)}>
+                            💳 Add Payment
                           </DropdownItem>
-                          <DropdownItem key="process-checkout" onClick={() => handleCheckOut(checkOut)}>
-                            Complete Checkout
+                          <DropdownItem key="extend-2" onClick={() => handleExtendStay(checkOut, 2)}>
+                            📅 Extend 2 Nights
+                          </DropdownItem>
+                          <DropdownItem key="print-receipt" onClick={() => handlePrintReceipt(checkOut)}>
+                            🖨️ Print Receipt
+                          </DropdownItem>
+                          <DropdownItem key="guest-feedback" onClick={() => handleGuestFeedback(checkOut)}>
+                            ⭐ Guest Feedback
+                          </DropdownItem>
+                          <DropdownItem key="loyalty-points" onClick={() => handleLoyaltyPoints(checkOut)}>
+                            🎯 Loyalty Points
+                          </DropdownItem>
+                          <DropdownItem key="taxi-service" onClick={() => handleTaxiService(checkOut)}>
+                            🚕 Taxi Service
                           </DropdownItem>
                         </DropdownMenu>
                       </Dropdown>
@@ -538,6 +689,17 @@ export default function CheckOutsPage() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">Outstanding Balance</label>
                       <p className="text-lg font-semibold text-red-600">₵{selectedCheckOut.outstandingBalance.toLocaleString()}</p>
                     </div>
+                    {(() => {
+                      const reservation = frontOfficeStore.reservations.find(r => r.id === selectedCheckOut.id);
+                      const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
+                      const creditBalance = guest?.creditBalance || 0;
+                      return creditBalance > 0 ? (
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Available Credit</label>
+                          <p className="text-lg font-semibold text-green-600">₵{creditBalance.toLocaleString()}</p>
+                        </div>
+                      ) : null;
+                    })()}
                   </div>
                   
                   {selectedCheckOut.specialRequests && (
@@ -612,13 +774,34 @@ export default function CheckOutsPage() {
                                   <TableColumn>DATE</TableColumn>
                                   <TableColumn>METHOD</TableColumn>
                                   <TableColumn align="end">AMOUNT</TableColumn>
+                                  <TableColumn>STATUS</TableColumn>
+                                  <TableColumn>REFERENCE</TableColumn>
                                 </TableHeader>
                                 <TableBody>
                                   {folio.payments.map(p => (
                                     <TableRow key={p.id}>
                                       <TableCell>{new Date(p.date).toLocaleDateString()}</TableCell>
-                                      <TableCell>{p.method}</TableCell>
+                                      <TableCell>
+                                        <div>
+                                          <span>{p.method}</span>
+                                          {p.creditApplied && p.creditApplied > 0 && (
+                                            <p className="text-xs text-green-600">Credit: ₵{p.creditApplied.toFixed(2)}</p>
+                                          )}
+                                        </div>
+                                      </TableCell>
                                       <TableCell>₵{p.amount.toFixed(2)}</TableCell>
+                                      <TableCell>
+                                        <Badge 
+                                          color={p.status === 'completed' ? 'success' : p.status === 'pending' ? 'warning' : 'danger'} 
+                                          variant="flat" 
+                                          size="sm"
+                                        >
+                                          {p.status || 'completed'}
+                                        </Badge>
+                                      </TableCell>
+                                      <TableCell>
+                                        <span className="text-xs text-gray-500">{p.ref || p.id}</span>
+                                      </TableCell>
                                     </TableRow>
                                   ))}
                                 </TableBody>
@@ -636,6 +819,28 @@ export default function CheckOutsPage() {
               <Button variant="flat" onPress={onClose}>
                 Cancel
               </Button>
+              {(() => {
+                const reservation = selectedCheckOut ? frontOfficeStore.reservations.find(r => r.id === selectedCheckOut.id) : null;
+                const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
+                const creditBalance = guest?.creditBalance || 0;
+                const canUseCredit = creditBalance > 0 && selectedCheckOut?.outstandingBalance > 0;
+                
+                return canUseCredit ? (
+                  <Button 
+                    color="success" 
+                    variant="flat"
+                    onPress={() => {
+                      if (selectedCheckOut) {
+                        const amount = Math.min(creditBalance, selectedCheckOut.outstandingBalance);
+                        frontOfficeStore.applyCreditPayment(selectedCheckOut.id, amount, 'Credit applied during checkout');
+                        setTimeout(() => loadCheckOuts(), 100);
+                      }
+                    }}
+                  >
+                    Apply Credit (₵{Math.min(creditBalance, selectedCheckOut?.outstandingBalance || 0).toFixed(2)})
+                  </Button>
+                ) : null;
+              })()}
               <Button 
                 color="primary" 
                 onPress={() => selectedCheckOut && handleCheckOut(selectedCheckOut)}

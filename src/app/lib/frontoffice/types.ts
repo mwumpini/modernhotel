@@ -341,6 +341,12 @@ export interface GuestProfile {
   // Self-reservation link
   selfReservationToken?: string;
   selfReservationExpiry?: string;
+  
+  // Credit system
+  creditBalance?: number; // Available credit balance
+  creditLimit?: number; // Maximum credit allowed
+  creditStatus?: 'active' | 'suspended' | 'closed';
+  lastCreditUpdate?: string;
 }
 
 export interface Reservation {
@@ -414,9 +420,14 @@ export interface FolioCharge {
 export interface FolioPayment {
   id: string;
   date: string;
-  method: 'Cash' | 'Card' | 'Mobile Money';
+  method: 'Cash' | 'Card' | 'Mobile Money' | 'Credit' | 'Corporate Account' | 'Bank Transfer' | 'Check';
   amount: number;
   ref?: string;
+  invoiceId?: string; // Link to specific invoice
+  creditApplied?: number; // Amount applied from credit balance
+  notes?: string;
+  processedBy?: string;
+  status: 'pending' | 'completed' | 'failed' | 'refunded';
 }
 
 export interface Folio {
@@ -429,6 +440,10 @@ export interface Folio {
   type?: 'main' | 'split';
   description?: string;
   responsibleParty?: string;
+  creditBalance?: number; // Available credit for this folio
+  totalCharges?: number; // Total charges on this folio
+  totalPayments?: number; // Total payments received
+  balance?: number; // Current balance (charges - payments)
 }
 
 // Utility functions for GuestProfile

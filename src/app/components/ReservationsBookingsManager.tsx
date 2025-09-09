@@ -39,6 +39,7 @@ import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
+import { logProformaDownloaded, logProformaPrinted } from '../lib/audit/auditLogger';
 import { Reservation, GuestProfile, RoomType, RatePlan, StayReason, Nationality, IdType } from '../lib/frontoffice/types';
 
 interface ReservationFormData {
@@ -79,7 +80,105 @@ interface ReservationFormData {
   costCenter?: string;
 }
 
-export default function ReservationsBookingsManager() {
+interface ReservationsManagerProps {
+  mode?: 'reservation' | 'checkin';
+  embed?: boolean; // when true, hide lists and auto-open modal if requested
+  autoOpenNew?: boolean; // when embed, auto-open new form
+}
+
+// Audit Log Section Component
+const AuditLogSection = ({ reservationId }: { reservationId: string }) => {
+  const [auditLogs, setAuditLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchAuditLogs = async () => {
+      try {
+        const response = await fetch(`/api/audit/reservation/${reservationId}`);
+        if (response.ok) {
+          const data = await response.json();
+          setAuditLogs(data.logs || []);
+        }
+      } catch (error) {
+        console.error('Error fetching audit logs:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchAuditLogs();
+  }, [reservationId]);
+
+  if (loading) {
+    return <div className="py-8 text-center text-gray-500">Loading audit logs...</div>;
+  }
+
+  if (auditLogs.length === 0) {
+    return <div className="py-8 text-center text-gray-500">No audit logs found for this reservation.</div>;
+  }
+
+  return (
+    <div className="space-y-4 pt-4">
+      <div className="text-sm text-gray-600 mb-4">
+        Showing {auditLogs.length} proforma-related activity logs
+      </div>
+      
+      <div className="space-y-3">
+        {auditLogs.map((log, index) => (
+          <Card key={log.id || index}>
+            <CardBody>
+              <div className="flex justify-between items-start">
+                <div className="flex-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Badge 
+                      color={
+                        log.action === 'proforma_sent' ? 'success' :
+                        log.action === 'proforma_generated' ? 'primary' :
+                        log.action === 'proforma_downloaded' ? 'warning' :
+                        log.action === 'proforma_printed' ? 'secondary' : 'default'
+                      }
+                      variant="flat"
+                    >
+                      {log.action.replace('proforma_', '').replace('_', ' ').toUpperCase()}
+                    </Badge>
+                    <span className="text-sm text-gray-500">
+                      {log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Unknown time'}
+                    </span>
+                  </div>
+                  
+                  {log.details && (
+                    <div className="text-sm text-gray-700 space-y-1">
+                      {log.details.guestEmail && (
+                        <div>Guest: {log.details.guestEmail}</div>
+                      )}
+                      {log.details.guestName && (
+                        <div>Guest Name: {log.details.guestName}</div>
+                      )}
+                      {log.details.messageId && (
+                        <div>Email ID: {log.details.messageId}</div>
+                      )}
+                      {log.details.filename && (
+                        <div>File: {log.details.filename}</div>
+                      )}
+                      {log.details.pdfSize && (
+                        <div>PDF Size: {(log.details.pdfSize / 1024).toFixed(1)} KB</div>
+                      )}
+                      {log.details.fallbackToPrint && (
+                        <div className="text-orange-600">Fallback to print due to PDF generation error</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+export default function ReservationsBookingsManager({ mode = 'reservation', embed = false, autoOpenNew = false }: ReservationsManagerProps) {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [filteredReservations, setFilteredReservations] = useState<Reservation[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -88,6 +187,37 @@ export default function ReservationsBookingsManager() {
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [tabKey, setTabKey] = useState<string>('guest');
+  // Assign room modal state
+  const [isAssignOpen, setIsAssignOpen] = useState(false);
+  const [assignReservation, setAssignReservation] = useState<Reservation | null>(null);
+  const [assignRoomId, setAssignRoomId] = useState<string>('');
+  
+  // Derived pricing helpers
+  const getSelectedRoomType = (roomTypeId: string) =>
+    useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === roomTypeId);
+  const getNightlyRate = (roomTypeId: string) => getSelectedRoomType(roomTypeId)?.baseRate || 0;
+  const getTaxRate = () => {
+    // Try reading tax from settings; fall back to 15% if not configured
+    try {
+      const settings = useSettingsStore.getState();
+      const vat = (settings as any)?.accounting?.taxRates?.vat || 0;
+      const nhil = (settings as any)?.accounting?.taxRates?.nhil || 0;
+      const levy = (settings as any)?.accounting?.taxRates?.tourismLevy || 0;
+      const total = [vat, nhil, levy].filter(Boolean).reduce((a: number, b: number) => a + b, 0);
+      return total > 0 ? total : 0.15;
+    } catch {
+      return 0.15;
+    }
+  };
+  const getComputedTotals = (arrival: string, departure: string, roomTypeId: string) => {
+    const nights = calculateNights(arrival, departure) || 1;
+    const nightly = getNightlyRate(roomTypeId);
+    const subtotal = nightly * nights;
+    const taxRate = getTaxRate();
+    const tax = Math.round(subtotal * taxRate);
+    const grandTotal = subtotal + tax;
+    return { nights, nightly, subtotal, taxRate, tax, grandTotal };
+  };
   
   // New state for guest selection (default to existing guest search)
   const [useExistingGuest, setUseExistingGuest] = useState(true);
@@ -160,6 +290,14 @@ export default function ReservationsBookingsManager() {
     const unsubscribe = frontOfficeStore.subscribe(loadReservations);
     return unsubscribe;
   }, []);
+
+  // When embedded as a New Check-In form, auto-open the modal in create mode
+  useEffect(() => {
+    if (embed && autoOpenNew) {
+      handleCreateReservation();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embed, autoOpenNew]);
 
   useEffect(() => {
     filterReservations();
@@ -489,7 +627,14 @@ export default function ReservationsBookingsManager() {
         costCenter: reservation.costCenter || ''
       });
     
+    setTabKey('guest');
     onOpen();
+  };
+
+  const handleViewReservation = (reservation: Reservation) => {
+    // Load into form then switch to summary tab for printable view
+    handleEditReservation(reservation);
+    setTabKey('summary');
   };
 
   const handleGuestSelection = (guest: GuestProfile) => {
@@ -547,7 +692,7 @@ export default function ReservationsBookingsManager() {
       }
 
         // Create reservations for each guest
-        const createdReservations = [];
+        const createdReservations: any[] = [];
         for (const bulkGuest of bulkGuests) {
           // Use the selected guest (already exists in system)
           const guest = bulkGuest.guest;
@@ -587,7 +732,15 @@ export default function ReservationsBookingsManager() {
           stayReason: formData.stayReason
         });
 
+        // If in check-in mode, immediately check-in each created reservation
+        if (mode === 'checkin') {
+          createdReservations.forEach((r) => {
+            try { frontOfficeStore.checkIn(r.id); } catch {}
+          });
+          alert(`Created & checked in ${createdReservations.length} guest${createdReservations.length !== 1 ? 's' : ''}.`);
+        } else {
         alert(`Successfully created ${createdReservations.length} reservation${createdReservations.length !== 1 ? 's' : ''}${formData.companyName ? ` for ${formData.companyName}` : ''}`);
+        }
     } else if (selectedReservation) {
       // Update existing reservation
       const updatedReservation = {
@@ -636,7 +789,11 @@ export default function ReservationsBookingsManager() {
         frontOfficeStore.cancelReservation(reservation.id);
         break;
       case 'assign':
-        // This would open a room assignment modal
+        setAssignReservation(reservation);
+        // Prefill first available room
+        const avail = getAvailableRooms(reservation.roomTypeId);
+        setAssignRoomId(avail[0] || '');
+        setIsAssignOpen(true);
         break;
     }
     
@@ -877,7 +1034,9 @@ export default function ReservationsBookingsManager() {
               <TableColumn className="hidden sm:table-cell">ResID</TableColumn>
               <TableColumn>Guest</TableColumn>
               <TableColumn className="hidden lg:table-cell">Room Type</TableColumn>
-              <TableColumn className="hidden md:table-cell">Dates</TableColumn>
+              <TableColumn className="hidden md:table-cell">Check-in Date</TableColumn>
+              <TableColumn className="hidden md:table-cell">Check-out Date</TableColumn>
+              <TableColumn className="hidden md:table-cell">Nights</TableColumn>
               <TableColumn className="hidden xl:table-cell">Purpose</TableColumn>
               <TableColumn className="hidden xl:table-cell">Billing</TableColumn>
               <TableColumn>Status</TableColumn>
@@ -916,11 +1075,17 @@ export default function ReservationsBookingsManager() {
                   </TableCell>
                   <TableCell className="hidden md:table-cell">
                     <div className="text-sm">
-                      <p>📅 {new Date(reservation.arrival).toLocaleDateString()}</p>
-                      <p>📤 {new Date(reservation.departure).toLocaleDateString()}</p>
-                      <p className="text-xs text-gray-500">
-                        {calculateNights(reservation.arrival, reservation.departure)} night{calculateNights(reservation.arrival, reservation.departure) !== 1 ? 's' : ''}
-                      </p>
+                      {new Date(reservation.arrival).toLocaleDateString()}
+                    </div>
+                  </TableCell>
+                  <TableCell className="hidden md:table-cell">
+                    <div className="text-sm">
+                      {new Date(reservation.departure).toLocaleDateString()}
+                    </div>
+                  </TableCell>
+                  <TableCell className="hidden md:table-cell">
+                    <div className="text-sm">
+                      {calculateNights(reservation.arrival, reservation.departure)}
                     </div>
                   </TableCell>
                   <TableCell className="hidden xl:table-cell">
@@ -981,6 +1146,17 @@ export default function ReservationsBookingsManager() {
                   </TableCell>
                   <TableCell>
                     <div className="flex space-x-1">
+                      <Button
+                        size="sm"
+                        color="secondary"
+                        variant="flat"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleViewReservation(reservation);
+                        }}
+                      >
+                        🧾 View
+                      </Button>
                       {reservation.status === 'confirmed' && !reservation.roomId && (
                         <Button
                           size="sm"
@@ -992,6 +1168,20 @@ export default function ReservationsBookingsManager() {
                           }}
                         >
                           🏠 Assign
+                        </Button>
+                      )}
+                      {reservation.roomId && reservation.status !== 'checked-in' && (
+                        <Button
+                          size="sm"
+                          color="danger"
+                          variant="flat"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            frontOfficeStore.assignRoom(reservation.id, '');
+                            loadReservations();
+                          }}
+                        >
+                          🗑️ Unassign
                         </Button>
                       )}
                       {reservation.status === 'confirmed' && (
@@ -1046,12 +1236,286 @@ export default function ReservationsBookingsManager() {
       <Modal isOpen={isOpen} onClose={onClose} size="4xl" className="mx-2 sm:mx-4">
         <ModalContent>
           <ModalHeader>
-            {isCreatingNew ? 'Create New Reservation' : 'Edit Reservation'}
+            {isCreatingNew ? 'Create New Reservation' : 'View / Edit Reservation'}
           </ModalHeader>
           <ModalBody>
             <Tabs aria-label="Reservation details" selectedKey={tabKey} onSelectionChange={(key)=> setTabKey(key as string)}>
-              <Tab key="guest" title="👤 Guest & Reservation Details">
+              <Tab key="summary" title="🧾 Summary / Print">
+                {selectedReservation ? (
+                  <div className="space-y-4 pt-4" id="reservation-summary">
+                    {/* Hotel Header */}
+                    <div className="text-center border-b pb-4 mb-6">
+                      {useSettingsStore.getState().saasSettings.customBranding.logoUrl && (
+                        <div className="mb-4">
+                          <img 
+                            src={useSettingsStore.getState().saasSettings.customBranding.logoUrl} 
+                            alt="Hotel Logo" 
+                            className="h-16 mx-auto object-contain"
+                          />
+                        </div>
+                      )}
+                      <h1 className="text-2xl font-bold text-gray-900 mb-2">
+                        {useSettingsStore.getState().saasSettings.customBranding.companyName || 'Ghana Hotel Management'}
+                      </h1>
+                      <div className="text-sm text-gray-600 space-y-1">
+                        <div>{useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.address || '123 Hotel Street, Accra, Ghana'}</div>
+                        <div>Phone: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.phone || '+233 20 123 4567'}</div>
+                        <div>Email: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.email || 'info@ghana-hotel.com'}</div>
+                        {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.website && (
+                          <div>Website: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.website}</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Reservation Details */}
+                    <div className="mb-6">
+                      <h2 className="text-lg font-semibold text-gray-900 mb-4">Reservation Details</h2>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <Card><CardBody>
+                        <div className="text-sm text-gray-600">Reservation ID</div>
+                        <div className="font-semibold text-ghana-black">{selectedReservation.resId || selectedReservation.id}</div>
+                      </CardBody></Card>
+                      <Card><CardBody>
+                        <div className="text-sm text-gray-600">Guest</div>
+                        <div className="font-semibold text-ghana-black">{selectedReservation.guestName}</div>
+                      </CardBody></Card>
+                      <Card><CardBody>
+                        <div className="text-sm text-gray-600">Room Type</div>
+                        <div className="font-semibold text-ghana-black">{frontOfficeStore.roomTypes.find(rt => rt.id === selectedReservation.roomTypeId)?.name || 'Unknown'}</div>
+                      </CardBody></Card>
+                      <Card><CardBody>
+                        <div className="text-sm text-gray-600">Check-in</div>
+                        <div className="font-semibold text-ghana-black">{new Date(selectedReservation.arrival).toLocaleDateString()}</div>
+                      </CardBody></Card>
+                      <Card><CardBody>
+                        <div className="text-sm text-gray-600">Check-out</div>
+                        <div className="font-semibold text-ghana-black">{new Date(selectedReservation.departure).toLocaleDateString()}</div>
+                      </CardBody></Card>
+                      <Card><CardBody>
+                        <div className="text-sm text-gray-600">Nights</div>
+                        <div className="font-semibold text-ghana-black">{calculateNights(selectedReservation.arrival, selectedReservation.departure)}</div>
+                      </CardBody></Card>
+                    </div>
+                    </div>
+                    {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotals(selectedReservation.arrival, selectedReservation.departure, selectedReservation.roomTypeId); return (
+                      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                        <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toLocaleString()}</div></CardBody></Card>
+                        <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
+                        <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toLocaleString()}</div></CardBody></Card>
+                        <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toLocaleString()}</div></CardBody></Card>
+                        <Card><CardBody><div className="text-xs text-gray-600">Grand Total</div><div className="text-lg font-semibold">₵{grandTotal.toLocaleString()}</div></CardBody></Card>
+                      </div>
+                    ); })()}
+
+                    {(selectedReservation.remarksToGuest || selectedReservation.internalNotes) && (
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        {selectedReservation.remarksToGuest && (
+                          <Card><CardBody>
+                            <div className="text-sm text-gray-600">Remarks to Guest</div>
+                            <div className="text-ghana-black">{selectedReservation.remarksToGuest}</div>
+                          </CardBody></Card>
+                        )}
+                        {selectedReservation.internalNotes && (
+                          <Card><CardBody>
+                            <div className="text-sm text-gray-600">Internal Notes</div>
+                            <div className="text-ghana-black">{selectedReservation.internalNotes}</div>
+                          </CardBody></Card>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Hotel Footer */}
+                    <div className="mt-8 pt-4 border-t text-center text-xs text-gray-500">
+                      <div className="mb-2">
+                        <strong>{useSettingsStore.getState().saasSettings.customBranding.companyName || 'Ghana Hotel Management'}</strong>
+                      </div>
+                      <div className="space-y-1">
+                        <div>{useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.address || '123 Hotel Street, Accra, Ghana'}</div>
+                        <div>Phone: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.phone || '+233 20 123 4567'} | Email: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.email || 'info@ghana-hotel.com'}</div>
+                        {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.website && (
+                          <div>Website: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.website}</div>
+                        )}
+                        {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.taxId && (
+                          <div>Tax ID: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.taxId}</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 justify-end pt-4">
+                      <Button variant="flat" onClick={() => {
+                        logProformaPrinted(selectedReservation?.id || '', {
+                          guestName: selectedReservation?.guestName,
+                          reservationId: selectedReservation?.resId || selectedReservation?.id
+                        });
+                        window.print();
+                      }}>🖨️ Print</Button>
+                      <Button variant="flat" onClick={async () => {
+                        try {
+                          const el = document.getElementById('reservation-summary');
+                          if (!el) return;
+                          // lazy load html2pdf.js
+                          // @ts-ignore
+                          const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); }); 
+                          // @ts-ignore
+                          const h2p = await ensure();
+                          const filename = `reservation-${selectedReservation?.resId || selectedReservation?.id || 'summary'}.pdf`;
+                          h2p().set({ filename, jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).save();
+                          
+                          // Log PDF download
+                          logProformaDownloaded(selectedReservation?.id || '', {
+                            guestName: selectedReservation?.guestName,
+                            reservationId: selectedReservation?.resId || selectedReservation?.id,
+                            filename
+                          });
+                        } catch { 
+                          logProformaPrinted(selectedReservation?.id || '', {
+                            guestName: selectedReservation?.guestName,
+                            reservationId: selectedReservation?.resId || selectedReservation?.id,
+                            fallbackToPrint: true
+                          });
+                          window.print(); 
+                        }
+                      }}>⬇️ Download PDF</Button>
+                      <Button color="primary" onClick={async () => {
+                        try {
+                          const el = document.getElementById('reservation-summary');
+                          if (!el) return;
+                          
+                          // Generate PDF
+                          // @ts-ignore
+                          const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); }); 
+                          // @ts-ignore
+                          const h2p = await ensure();
+                          const pdfBuffer = await h2p().set({ jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).outputPdf('datauristring');
+                          
+                          // Send via API
+                          const response = await fetch('/api/email/send-proforma', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                              reservationId: selectedReservation?.resId || selectedReservation?.id,
+                              guestEmail: frontOfficeStore.guests.find(g => g.id === selectedReservation?.guestId)?.email || '',
+                              guestName: selectedReservation?.guestName || '',
+                              pdfBuffer: pdfBuffer.split(',')[1], // Remove data:application/pdf;base64, prefix
+                              hotelName: useSettingsStore.getState().saasSettings.customBranding.companyName || 'Ghana Hotel Management',
+                              reservationDetails: {
+                                checkIn: selectedReservation ? new Date(selectedReservation.arrival).toLocaleDateString() : '',
+                                checkOut: selectedReservation ? new Date(selectedReservation.departure).toLocaleDateString() : '',
+                                roomType: frontOfficeStore.roomTypes.find(rt => rt.id === selectedReservation?.roomTypeId)?.name || 'Unknown',
+                                totalAmount: (() => {
+                                  const { grandTotal } = getComputedTotals(selectedReservation?.arrival || '', selectedReservation?.departure || '', selectedReservation?.roomTypeId || '');
+                                  return grandTotal;
+                                })(),
+                                currency: 'GHS'
+                              }
+                            })
+                          });
+                          
+                          if (response.ok) {
+                            alert('Proforma sent successfully to guest email!');
+                          } else {
+                            const error = await response.json();
+                            alert(`Failed to send proforma: ${error.error || 'Unknown error'}`);
+                          }
+                        } catch (error) {
+                          console.error('Error sending proforma:', error);
+                          alert('Failed to send proforma. Please try again.');
+                        }
+                      }}>📧 Send to Client</Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="py-8 text-center text-gray-500">Select a reservation to view</div>
+                )}
+              </Tab>
+              
+              {/* Audit Log Tab - only show when viewing existing reservation */}
+              {!isCreatingNew && selectedReservation && (
+                <Tab key="audit" title="📋 Audit Log">
+                  <AuditLogSection reservationId={selectedReservation.id} />
+                </Tab>
+              )}
+              
+              <Tab key="guest" title={isCreatingNew ? '👤 Guest & Reservation Details' : '✏️'}>
                 <div className="space-y-4 pt-4">
+                  {!isCreatingNew && selectedReservation && (
+                    <div className="bg-gray-50 p-4 rounded-lg border">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Input
+                          label="Guest Name"
+                          value={formData.guestName}
+                          onChange={(e) => setFormData({...formData, guestName: e.target.value})}
+                        />
+                        <Input
+                          label="Phone"
+                          value={formData.phone}
+                          onChange={(e) => setFormData({...formData, phone: e.target.value})}
+                        />
+                        <Input
+                          label="Email"
+                          type="email"
+                          value={formData.email}
+                          onChange={(e) => setFormData({...formData, email: e.target.value})}
+                        />
+                        <Select
+                          label="Room Type"
+                          selectedKeys={formData.roomTypeId ? new Set([formData.roomTypeId]) : new Set()}
+                          onSelectionChange={(keys) => setFormData({...formData, roomTypeId: Array.from(keys as Set<string>)[0] || ''})}
+                        >
+                          {useSettingsStore.getState().roomManagement.roomTypes.map(rt => (
+                            <SelectItem key={rt.id}>{rt.name}</SelectItem>
+                          ))}
+                        </Select>
+                        {/* Rate Plan (optional) */}
+                        {/* Optional: Rate plan dropdown (fallback empty if not configured) */}
+                        <Select
+                          label="Rate Plan (optional)"
+                          selectedKeys={formData.ratePlanId ? new Set([formData.ratePlanId]) : new Set()}
+                          onSelectionChange={(keys) => setFormData({...formData, ratePlanId: Array.from(keys as Set<string>)[0] || ''})}
+                        >
+                          {(useSettingsStore.getState()?.roomManagement?.ratePlans || []).map((rp: any) => (
+                            <SelectItem key={rp.id}>{rp.name || rp.code || rp.id}</SelectItem>
+                          ))}
+                        </Select>
+                        <Input
+                          label="Arrival"
+                          type="date"
+                          value={formData.arrival}
+                          onChange={(e) => setFormData({...formData, arrival: e.target.value})}
+                        />
+                        <Input
+                          label="Departure"
+                          type="date"
+                          value={formData.departure}
+                          onChange={(e) => setFormData({...formData, departure: e.target.value})}
+                        />
+                        <Input
+                          label="Adults"
+                          type="number"
+                          value={String(formData.adults)}
+                          onChange={(e) => setFormData({...formData, adults: parseInt(e.target.value) || 1})}
+                        />
+                        <Input
+                          label="Children"
+                          type="number"
+                          value={String(formData.children)}
+                          onChange={(e) => setFormData({...formData, children: parseInt(e.target.value) || 0})}
+                        />
+                      </div>
+                      {/* Pricing Summary */}
+                      <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
+                        {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotals(formData.arrival, formData.departure, formData.roomTypeId || ''); return (
+                          <>
+                            <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toLocaleString()}</div></CardBody></Card>
+                            <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
+                            <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toLocaleString()}</div></CardBody></Card>
+                            <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toLocaleString()}</div></CardBody></Card>
+                            <Card><CardBody><div className="text-xs text-gray-600">Grand Total</div><div className="text-lg font-semibold">₵{grandTotal.toLocaleString()}</div></CardBody></Card>
+                          </>
+                        ); })()}
+                      </div>
+                    </div>
+                  )}
                   {/* Guest Management - Unified for Single and Multiple */}
                   {isCreatingNew && (
                     <div className="bg-purple-50 p-4 rounded-lg border">
@@ -1632,6 +2096,64 @@ export default function ReservationsBookingsManager() {
             <Button variant="light" onClick={onClose} className="w-full sm:w-auto">
               Cancel
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Assign Room Modal */}
+      <Modal isOpen={isAssignOpen} onClose={() => setIsAssignOpen(false)}>
+        <ModalContent>
+          <ModalHeader>Assign Room</ModalHeader>
+          <ModalBody>
+            {assignReservation ? (
+              <div className="space-y-3">
+                <div className="text-sm text-gray-600">Reservation</div>
+                <div className="font-medium">{assignReservation.guestName} • {assignReservation.resId || assignReservation.id}</div>
+                <Select
+                  label="Available Rooms"
+                  selectedKeys={assignRoomId ? new Set([assignRoomId]) : new Set()}
+                  onSelectionChange={(keys) => setAssignRoomId(Array.from(keys as Set<string>)[0] || '')}
+                >
+                  {getAvailableRooms(assignReservation.roomTypeId).map((num) => (
+                    <SelectItem key={num}>{num}</SelectItem>
+                  ))}
+                </Select>
+              </div>
+            ) : (
+              <div className="text-gray-500">No reservation selected.</div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onClick={() => setIsAssignOpen(false)}>Cancel</Button>
+            <Button
+              color="primary"
+              isDisabled={!assignReservation || !assignRoomId}
+              onClick={() => {
+                if (!assignReservation || !assignRoomId) return;
+                frontOfficeStore.assignRoom(assignReservation.id, assignRoomId);
+                setIsAssignOpen(false);
+                loadReservations();
+              }}
+            >
+              Assign
+            </Button>
+            {assignReservation?.roomId && assignReservation?.status !== 'checked-in' && (
+              <Button
+                color="danger"
+                variant="flat"
+                onClick={() => {
+                  // Unassign the room if assigned wrongly
+                  frontOfficeStore.assignRoom(assignReservation!.id, '');
+                  loadReservations();
+                  setIsAssignOpen(false);
+                }}
+              >
+                Unassign
+              </Button>
+            )}
+            {assignReservation?.status === 'checked-in' && (
+              <Button isDisabled variant="flat">Unassign (not allowed while checked-in)</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>

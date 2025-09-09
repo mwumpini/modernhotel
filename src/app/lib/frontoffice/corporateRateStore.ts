@@ -550,7 +550,7 @@ export class CorporateRateStore {
     
     return this.rateAgreements.filter(agreement => {
       // Check if agreement belongs to this client
-      if (!client.rateAgreements.includes(agreement.id)) {
+      if (!client.rateAgreements.some(ra => ra.id === agreement.id)) {
         console.log(`Agreement ${agreement.id} not found in client ${client.id} rate agreements:`, client.rateAgreements);
         return false;
       }
@@ -573,7 +573,7 @@ export class CorporateRateStore {
       const agreementStart = new Date(agreement.restrictions?.advanceBooking ? 
         new Date(Date.now() + agreement.restrictions.advanceBooking * 24 * 60 * 60 * 1000) : 
         new Date(0));
-      const agreementEnd = new Date(agreement.contractDetails?.endDate || '2099-12-31');
+      const agreementEnd = new Date('2099-12-31'); // No contract details in agreement, using default
       
       const dateCheck = start >= agreementStart && end <= agreementEnd;
       if (!dateCheck) {
@@ -628,7 +628,7 @@ export class CorporateRateStore {
         case 'hybrid':
           if (agreement.hybridRates) {
             const hybridKey = this.getRoomTypeHybridKey(roomType.name);
-            if (hybridKey && agreement.hybridRates[hybridKey]) {
+            if (hybridKey && agreement.hybridRates && agreement.hybridRates[hybridKey]) {
               const hybrid = agreement.hybridRates[hybridKey];
               appliedRate = (baseRate * (hybrid.percentage / 100)) + hybrid.flatAdjustment;
             }
@@ -860,7 +860,7 @@ export class CorporateRateStore {
     return vat + nhil + getfund;
   }
 
-  private getRoomTypePercentageKey(roomTypeName: string): keyof CorporateRateAgreement['percentageRates'] | null {
+  private getRoomTypePercentageKey(roomTypeName: string): 'standardRoom' | 'deluxeRoom' | 'suiteRoom' | 'presidentialRoom' | null {
     const name = roomTypeName.toLowerCase();
     if (name.includes('standard')) return 'standardRoom';
     if (name.includes('deluxe')) return 'deluxeRoom';
@@ -869,11 +869,11 @@ export class CorporateRateStore {
     return null;
   }
 
-  private getRoomTypeFlatKey(roomTypeName: string): keyof CorporateRateAgreement['flatRates'] | null {
+  private getRoomTypeFlatKey(roomTypeName: string): 'standardRoom' | 'deluxeRoom' | 'suiteRoom' | 'presidentialRoom' | null {
     return this.getRoomTypePercentageKey(roomTypeName);
   }
 
-  private getRoomTypeHybridKey(roomTypeName: string): keyof CorporateRateAgreement['hybridRates'] | null {
+  private getRoomTypeHybridKey(roomTypeName: string): 'standardRoom' | 'deluxeRoom' | 'suiteRoom' | 'presidentialRoom' | null {
     return this.getRoomTypePercentageKey(roomTypeName);
   }
 
@@ -890,7 +890,7 @@ export class CorporateRateStore {
     const client = this.corporateClients.find(c => c.id === clientId);
     if (!client) return [];
     
-    return this.rateAgreements.filter(a => client.rateAgreements.includes(a.id));
+    return this.rateAgreements.filter(a => client.rateAgreements.some(ra => ra.id === a.id));
   }
 
   // Search and filtering

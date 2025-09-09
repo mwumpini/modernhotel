@@ -45,7 +45,7 @@ interface Payment {
   id: string;
   invoiceId: string;
   amount: number;
-  paymentMethod: 'cash' | 'credit_card' | 'debit_card' | 'bank_transfer' | 'mobile_money' | 'check' | 'voucher' | 'corporate_account';
+  paymentMethod: 'cash' | 'credit_card' | 'debit_card' | 'bank_transfer' | 'mobile_money' | 'check' | 'voucher' | 'corporate_account' | 'credit';
   transactionId: string;
   status: 'pending' | 'completed' | 'failed' | 'refunded' | 'cancelled';
   processedAt: string;
@@ -53,6 +53,7 @@ interface Payment {
   reference?: string;
   notes?: string;
   receiptUrl?: string;
+  creditApplied?: number; // Amount applied from credit balance
 }
 
 interface Invoice {
@@ -99,6 +100,15 @@ export default function InvoicesPaymentsPage() {
   const { isOpen: isViewOpen, onOpen: onViewOpen, onClose: onViewClose } = useDisclosure();
   const { isOpen: isPaymentOpen, onOpen: onPaymentOpen, onClose: onPaymentClose } = useDisclosure();
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure();
+  const { isOpen: isAddPaymentOpen, onOpen: onAddPaymentOpen, onClose: onAddPaymentClose } = useDisclosure();
+
+  // Payment form state
+  const [paymentForm, setPaymentForm] = useState({
+    amount: '',
+    method: 'cash',
+    notes: '',
+    reference: ''
+  });
 
   // Create Invoice Form State
   const [newInvoice, setNewInvoice] = useState<{
@@ -141,13 +151,54 @@ export default function InvoicesPaymentsPage() {
   const recomputeBillingFromStore = () => {
     const invs: Invoice[] = [];
     const pmts: Payment[] = [];
+    
+    console.log('[INVOICE-PAYMENT] Recomputing billing from store...');
+    console.log('[INVOICE-PAYMENT] Total reservations:', frontOfficeStore.reservations.length);
+    
     frontOfficeStore.reservations.forEach(res => {
       const folio = frontOfficeStore.getOrCreateFolio(res.id);
-      const subtotal = folio.charges.reduce((s, c) => s + c.amount, 0);
+      const guest = frontOfficeStore.guests.find(g => g.id === res.guestId);
+      
+      // Update folio balances
+      frontOfficeStore.updateFolioBalances(folio);
+      
+      const subtotal = folio.totalCharges || 0;
       const taxAmount = folio.charges.reduce((s, c) => s + (c.tax || 0), 0);
       const totalAmount = subtotal + taxAmount;
-      const paid = folio.payments.reduce((s, p) => s + p.amount, 0);
-      const balance = Math.max(0, totalAmount - paid);
+      const paid = folio.totalPayments || 0;
+      const balance = folio.balance || Math.max(0, totalAmount - paid);
+      
+      console.log(`[INVOICE-PAYMENT] Reservation ${res.id}: total=${totalAmount}, paid=${paid}, balance=${balance}, payments=${folio.payments.length}`);
+      
+      // Map payment methods properly
+      const mapPaymentMethod = (method: string): string => {
+        switch (method) {
+          case 'Cash': return 'cash';
+          case 'Card': return 'credit_card';
+          case 'Mobile Money': return 'mobile_money';
+          case 'Credit': return 'credit';
+          case 'Corporate Account': return 'corporate_account';
+          case 'Bank Transfer': return 'bank_transfer';
+          case 'Check': return 'check';
+          default: return 'cash';
+        }
+      };
+      
+      // Create invoice payments array
+      const invoicePayments = folio.payments.map(p => ({ 
+        id: p.id, 
+        invoiceId: res.id, 
+        amount: p.amount, 
+        paymentMethod: mapPaymentMethod(p.method) as any, 
+        transactionId: p.id, 
+        status: p.status || 'completed', 
+        processedAt: p.date, 
+        processedBy: p.processedBy || 'Front Desk',
+        creditApplied: p.creditApplied || 0,
+        notes: p.notes,
+        reference: p.ref
+      }));
+      
       invs.push({
         id: res.id,
         invoiceNumber: `INV-${res.id}`,
@@ -169,29 +220,58 @@ export default function InvoicesPaymentsPage() {
         createdAt: res.createdAt || new Date().toISOString(),
         updatedAt: res.updatedAt || new Date().toISOString(),
         notes: res.remarksToGuest,
-        items: folio.charges.map(c => ({ id: c.id, description: c.description, quantity: 1, unitPrice: c.amount, totalPrice: c.amount, category: 'room' as const, isTaxable: !!c.tax, taxRate: 15 })),
-        payments: folio.payments.map(p => ({ id: p.id, invoiceId: res.id, amount: p.amount, paymentMethod: (p.method === 'Cash' ? 'cash' : p.method === 'Card' ? 'credit_card' : 'mobile_money'), transactionId: p.id, status: 'completed', processedAt: p.date, processedBy: 'Front Desk' } as any)),
+        items: folio.charges.map(c => ({ 
+          id: c.id, 
+          description: c.description, 
+          quantity: 1, 
+          unitPrice: c.amount, 
+          totalPrice: c.amount, 
+          category: 'room' as const, 
+          isTaxable: !!c.tax, 
+          taxRate: 15 
+        })),
+        payments: invoicePayments,
         balance
       });
-      folio.payments.forEach(p => pmts.push({
-        id: p.id,
-        invoiceId: res.id,
-        amount: p.amount,
-        paymentMethod: (p.method === 'Cash' ? 'cash' : p.method === 'Card' ? 'credit_card' : 'mobile_money') as any,
-        transactionId: p.id,
-        status: 'completed',
-        processedAt: p.date,
-        processedBy: 'Front Desk'
-      }));
+      
+      // Add payments to the payments array
+      folio.payments.forEach(p => {
+        const payment: Payment = {
+          id: p.id,
+          invoiceId: res.id,
+          amount: p.amount,
+          paymentMethod: mapPaymentMethod(p.method) as any,
+          transactionId: p.id,
+          status: p.status || 'completed',
+          processedAt: p.date,
+          processedBy: p.processedBy || 'Front Desk',
+          creditApplied: p.creditApplied || 0,
+          notes: p.notes,
+          reference: p.ref
+        };
+        pmts.push(payment);
+        console.log(`[INVOICE-PAYMENT] Added payment: ${payment.id} for invoice ${payment.invoiceId}, amount: ₵${payment.amount}`);
+      });
     });
+    
+    console.log(`[INVOICE-PAYMENT] Final results: ${invs.length} invoices, ${pmts.length} payments`);
+    console.log('[INVOICE-PAYMENT] Payments:', pmts.map(p => ({ id: p.id, invoiceId: p.invoiceId, amount: p.amount, status: p.status })));
+    
     setInvoices(invs);
     setPayments(pmts);
   };
 
   useEffect(() => {
+    console.log('[INVOICE-PAYMENT] Component mounted, initializing...');
     recomputeBillingFromStore();
-    const unsub = frontOfficeStore.subscribe(recomputeBillingFromStore);
-    return unsub;
+    const unsub = frontOfficeStore.subscribe(() => {
+      console.log('[INVOICE-PAYMENT] Store changed, recomputing...');
+      recomputeBillingFromStore();
+    });
+    return () => {
+      console.log('[INVOICE-PAYMENT] Component unmounting, unsubscribing...');
+      unsub();
+    };
   }, []);
 
   const stats = useMemo(() => {
@@ -239,6 +319,7 @@ export default function InvoicesPaymentsPage() {
       case 'check': return 'Check';
       case 'voucher': return 'Voucher';
       case 'corporate_account': return 'Corporate Account';
+      case 'credit': return 'Credit';
       default: return method;
     }
   };
@@ -251,6 +332,54 @@ export default function InvoicesPaymentsPage() {
   const handleViewPayment = (payment: Payment) => {
     setSelectedPayment(payment);
     onPaymentOpen();
+  };
+
+  // Add payment to specific invoice
+  const handleAddPaymentToInvoice = (invoice: Invoice, amount: number, method: string, notes?: string) => {
+    // Find the reservation for this invoice
+    const reservation = frontOfficeStore.reservations.find(r => r.id === invoice.id);
+    if (!reservation) return;
+
+    // Map payment method to store format
+    const mapToStoreMethod = (method: string): 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check' => {
+      switch (method) {
+        case 'cash': return 'Cash';
+        case 'credit_card': return 'Card';
+        case 'mobile_money': return 'Mobile Money';
+        case 'credit': return 'Credit';
+        case 'corporate_account': return 'Corporate Account';
+        case 'bank_transfer': return 'Bank Transfer';
+        case 'check': return 'Check';
+        default: return 'Cash';
+      }
+    };
+
+    // Add payment using the enhanced store method
+    frontOfficeStore.addPayment(reservation.id, mapToStoreMethod(method), amount, {
+      notes: notes || `Payment added to invoice ${invoice.invoiceNumber}`,
+      processedBy: 'Front Desk',
+      ref: `PAY-${Date.now()}`,
+      invoiceId: invoice.id
+    });
+
+    // Refresh the data
+    setTimeout(() => recomputeBillingFromStore(), 100);
+  };
+
+  // Apply credit payment to invoice
+  const handleApplyCreditToInvoice = (invoice: Invoice) => {
+    const reservation = frontOfficeStore.reservations.find(r => r.id === invoice.id);
+    if (!reservation) return;
+
+    const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
+    if (!guest || !guest.creditBalance || guest.creditBalance <= 0) return;
+
+    const amount = Math.min(guest.creditBalance, invoice.balance);
+    const success = frontOfficeStore.applyCreditPayment(reservation.id, amount, `Credit applied to invoice ${invoice.invoiceNumber}`);
+    
+    if (success) {
+      setTimeout(() => recomputeBillingFromStore(), 100);
+    }
   };
 
   const addInvoiceItem = () => {
@@ -331,7 +460,7 @@ export default function InvoicesPaymentsPage() {
       notes: '',
       items: [{ id: '1', description: '', quantity: 1, unitPrice: 0, totalPrice: 0, category: 'room', isTaxable: true, taxRate: 15 } as InvoiceItem]
     });
-
+    
     onCreateClose();
   };
 
@@ -345,12 +474,59 @@ export default function InvoicesPaymentsPage() {
         <Button color="primary" onPress={onCreateOpen}>+ Create Invoice</Button>
       </div>
 
+      {/* Debug Information Panel */}
+      <Card className="border-2 border-blue-200 bg-blue-50">
+        <CardBody className="p-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-lg font-semibold text-blue-800 mb-2">🔍 Debug Information</h3>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <p className="font-medium text-blue-700">Total Invoices:</p>
+                  <p className="text-blue-900">{invoices.length}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-blue-700">Total Payments:</p>
+                  <p className="text-blue-900">{payments.length}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-blue-700">Store Reservations:</p>
+                  <p className="text-blue-900">{frontOfficeStore.reservations.length}</p>
+                </div>
+                <div>
+                  <p className="font-medium text-blue-700">Store Folios:</p>
+                  <p className="text-blue-900">{frontOfficeStore.folios.length}</p>
+                </div>
+              </div>
+              {payments.length > 0 && (
+                <div className="mt-2">
+                  <p className="text-xs text-blue-600">
+                    Payment IDs: {payments.map(p => p.id).join(', ')}
+                  </p>
+                </div>
+              )}
+            </div>
+            <Button 
+              size="sm" 
+              color="primary" 
+              variant="solid"
+              onPress={() => {
+                console.log('[INVOICE-PAYMENT] Manual refresh triggered from debug panel');
+                recomputeBillingFromStore();
+              }}
+            >
+              🔄 Refresh Data
+            </Button>
+          </div>
+        </CardBody>
+      </Card>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="border-l-4 border-l-blue-500">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Total Invoices</p>
+            <p className="text-sm text-gray-600">Total Invoices</p>
                 <p className="text-2xl font-bold text-gray-900">{invoices.length}</p>
               </div>
               <div className="text-blue-500 text-2xl">📄</div>
@@ -389,15 +565,69 @@ export default function InvoicesPaymentsPage() {
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Overdue</p>
+            <p className="text-sm text-gray-600">Overdue</p>
                 <p className="text-2xl font-bold text-red-600">₵{(invoices.filter(i => i.status === 'overdue').reduce((s, i) => s + i.balance, 0)).toLocaleString()}</p>
-              </div>
+      </div>
               <div className="text-red-500 text-2xl">🚨</div>
             </div>
             <p className="text-xs text-gray-500 mt-1">{invoices.filter(i => i.status === 'overdue').length} invoices</p>
           </CardBody>
         </Card>
       </div>
+
+      {/* Credit Management Section */}
+      <Card>
+        <CardBody>
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Credit Management</h2>
+              <p className="text-gray-600">Manage guest credit balances and applications</p>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-blue-50 p-4 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-blue-600">Total Credit Issued</p>
+                  <p className="text-2xl font-bold text-blue-700">
+                    ₵{frontOfficeStore.guests.reduce((sum, guest) => sum + (guest.creditBalance || 0), 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="text-blue-500 text-2xl">💳</div>
+              </div>
+            </div>
+            
+            <div className="bg-green-50 p-4 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-green-600">Active Credit Accounts</p>
+                  <p className="text-2xl font-bold text-green-700">
+                    {frontOfficeStore.guests.filter(g => (g.creditBalance || 0) > 0).length}
+                  </p>
+                </div>
+                <div className="text-green-500 text-2xl">👥</div>
+              </div>
+            </div>
+            
+            <div className="bg-orange-50 p-4 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-orange-600">Credit Limit Utilization</p>
+                  <p className="text-2xl font-bold text-orange-700">
+                    {(() => {
+                      const totalCredit = frontOfficeStore.guests.reduce((sum, guest) => sum + (guest.creditBalance || 0), 0);
+                      const totalLimit = frontOfficeStore.guests.reduce((sum, guest) => sum + (guest.creditLimit || 0), 0);
+                      return totalLimit > 0 ? ((totalCredit / totalLimit) * 100).toFixed(1) : '0.0';
+                    })()}%
+                  </p>
+                </div>
+                <div className="text-orange-500 text-2xl">📊</div>
+              </div>
+            </div>
+          </div>
+        </CardBody>
+      </Card>
 
       <Card>
         <CardBody>
@@ -431,7 +661,8 @@ export default function InvoicesPaymentsPage() {
                 <TableColumn>ACTIONS</TableColumn>
               </TableHeader>
               <TableBody>
-                {invoices
+                {[...invoices]
+                  .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
                   .slice((invoicePage - 1) * itemsPerPage, invoicePage * itemsPerPage)
                   .map((invoice) => (
                   <TableRow key={invoice.id}>
@@ -439,17 +670,18 @@ export default function InvoicesPaymentsPage() {
                       <div>
                         <p className="font-medium">{invoice.invoiceNumber}</p>
                         <p className="text-sm text-gray-500">{invoice.checkInDate} - {invoice.checkOutDate}</p>
+                        <p className="text-xs text-gray-400">Res: {invoice.id}</p>
                       </div>
                     </TableCell>
                     <TableCell>
                       <div>
-                        <span className="font-medium">{invoice.guestName}</span>
+                      <span className="font-medium">{invoice.guestName}</span>
                         <p className="text-sm text-gray-500">{invoice.guestEmail}</p>
                       </div>
                     </TableCell>
                     <TableCell>
                       <div>
-                        <span className="font-medium">{invoice.roomNumber}</span>
+                      <span className="font-medium">{invoice.roomNumber}</span>
                         <p className="text-sm text-gray-500">{invoice.roomType}</p>
                       </div>
                     </TableCell>
@@ -475,6 +707,36 @@ export default function InvoicesPaymentsPage() {
                         <Button size="sm" variant="light" onPress={() => handleViewInvoice(invoice)}>
                           View
                         </Button>
+                        {invoice.balance > 0 && (
+                          <Button 
+                            size="sm" 
+                            color="success" 
+                            variant="flat"
+                            onPress={() => {
+                              setSelectedInvoice(invoice);
+                              onPaymentOpen();
+                            }}
+                          >
+                            Add Payment
+                          </Button>
+                        )}
+                        {(() => {
+                          const reservation = frontOfficeStore.reservations.find(r => r.id === invoice.id);
+                          const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
+                          const creditBalance = guest?.creditBalance || 0;
+                          const canUseCredit = creditBalance > 0 && invoice.balance > 0;
+                          
+                          return canUseCredit ? (
+                            <Button 
+                              size="sm" 
+                              color="primary" 
+                              variant="flat"
+                              onPress={() => handleApplyCreditToInvoice(invoice)}
+                            >
+                              Apply Credit
+                            </Button>
+                          ) : null;
+                        })()}
                         <Button size="sm" variant="light">Print</Button>
                       </div>
                     </TableCell>
@@ -494,6 +756,33 @@ export default function InvoicesPaymentsPage() {
             </>
           ) : (
             <>
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg">
+              <div className="flex justify-between items-center">
+                <div>
+                  <p className="text-sm text-blue-700">
+                    <strong>Debug Info:</strong> Total payments: {payments.length} | 
+                    Showing page {paymentPage} of {Math.max(1, Math.ceil(payments.length / itemsPerPage))} | 
+                    Items per page: {itemsPerPage}
+                  </p>
+                  {payments.length > 0 && (
+                    <p className="text-xs text-blue-600 mt-1">
+                      Payment IDs: {payments.map(p => p.id).join(', ')}
+                    </p>
+                  )}
+                </div>
+                <Button 
+                  size="sm" 
+                  color="primary" 
+                  variant="flat"
+                  onPress={() => {
+                    console.log('[INVOICE-PAYMENT] Manual refresh triggered');
+                    recomputeBillingFromStore();
+                  }}
+                >
+                  🔄 Refresh
+                </Button>
+              </div>
+            </div>
             <Table aria-label="Payments table">
               <TableHeader>
                 <TableColumn>TRANSACTION</TableColumn>
@@ -505,21 +794,38 @@ export default function InvoicesPaymentsPage() {
                 <TableColumn>ACTIONS</TableColumn>
               </TableHeader>
               <TableBody>
-                {payments
-                  .slice((paymentPage - 1) * itemsPerPage, paymentPage * itemsPerPage)
-                  .map((payment) => (
+                {payments.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="text-center py-8">
+                      <div className="text-gray-500">
+                        <p className="text-lg">No payments found</p>
+                        <p className="text-sm">Payments will appear here when they are added to invoices</p>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  [...payments]
+                    .sort((a, b) => new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime())
+                    .slice((paymentPage - 1) * itemsPerPage, paymentPage * itemsPerPage)
+                    .map((payment) => (
                   <TableRow key={payment.id}>
                     <TableCell>
                       <div>
-                        <span className="font-medium">{payment.transactionId}</span>
+                      <span className="font-medium">{payment.transactionId}</span>
                         <p className="text-sm text-gray-500">Ref: {payment.reference}</p>
+                        <p className="text-xs text-gray-400">Res: {payment.invoiceId}</p>
                       </div>
                     </TableCell>
                     <TableCell>
                       <span className="font-medium">{payment.invoiceId}</span>
                     </TableCell>
                     <TableCell>
-                      <span className="font-medium">₵{payment.amount.toFixed(2)}</span>
+                      <div>
+                        <span className="font-medium">₵{payment.amount.toFixed(2)}</span>
+                        {payment.creditApplied && payment.creditApplied > 0 && (
+                          <p className="text-xs text-green-600">Credit: ₵{payment.creditApplied.toFixed(2)}</p>
+                        )}
+                      </div>
                     </TableCell>
                     <TableCell>
                       <Chip size="sm" variant="flat">{getPaymentMethodLabel(payment.paymentMethod)}</Chip>
@@ -540,7 +846,8 @@ export default function InvoicesPaymentsPage() {
                       </div>
                     </TableCell>
                   </TableRow>
-                ))}
+                    ))
+                )}
               </TableBody>
             </Table>
             <div className="flex justify-end mt-3">
@@ -618,7 +925,99 @@ export default function InvoicesPaymentsPage() {
                     <p className="text-lg font-bold"><strong>Total:</strong> ₵{selectedInvoice.totalAmount.toFixed(2)}</p>
                     <p><strong>Balance:</strong> ₵{selectedInvoice.balance.toFixed(2)}</p>
                   </div>
+                  <div>
+                    <h4 className="font-semibold mb-2">Payment Actions</h4>
+                    {selectedInvoice.balance > 0 ? (
+                      <div className="space-y-2">
+                        <Button
+                          size="sm"
+                          color="success"
+                          variant="flat"
+                          onPress={() => {
+                            setSelectedInvoice(selectedInvoice);
+                            onAddPaymentOpen();
+                          }}
+                          className="w-full"
+                        >
+                          Add Payment
+                        </Button>
+                        {(() => {
+                          const reservation = frontOfficeStore.reservations.find(r => r.id === selectedInvoice.id);
+                          const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
+                          const creditBalance = guest?.creditBalance || 0;
+                          const canUseCredit = creditBalance > 0 && selectedInvoice.balance > 0;
+                          
+                          return canUseCredit ? (
+                            <Button
+                              size="sm"
+                              color="primary"
+                              variant="flat"
+                              onPress={() => handleApplyCreditToInvoice(selectedInvoice)}
+                              className="w-full"
+                            >
+                              Apply Credit (₵{Math.min(creditBalance, selectedInvoice.balance).toFixed(2)})
+                            </Button>
+                          ) : null;
+                        })()}
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <Badge color="success" variant="flat" className="text-sm">
+                          Fully Paid
+                        </Badge>
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {selectedInvoice.payments && selectedInvoice.payments.length > 0 && (
+                  <>
+                    <Divider />
+                    <div>
+                      <h4 className="font-semibold mb-2">Payment History</h4>
+                      <Table aria-label="Payment history">
+                        <TableHeader>
+                          <TableColumn>DATE</TableColumn>
+                          <TableColumn>METHOD</TableColumn>
+                          <TableColumn>AMOUNT</TableColumn>
+                          <TableColumn>STATUS</TableColumn>
+                          <TableColumn>REFERENCE</TableColumn>
+                        </TableHeader>
+                        <TableBody>
+                          {selectedInvoice.payments.map((payment) => (
+                            <TableRow key={payment.id}>
+                              <TableCell>
+                                <div>
+                                  <p className="text-sm">{new Date(payment.processedAt).toLocaleDateString()}</p>
+                                  <p className="text-xs text-gray-500">{payment.processedBy}</p>
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <div>
+                                  <span className="text-sm">{getPaymentMethodLabel(payment.paymentMethod)}</span>
+                                  {payment.creditApplied && payment.creditApplied > 0 && (
+                                    <p className="text-xs text-green-600">Credit: ₵{payment.creditApplied.toFixed(2)}</p>
+                                  )}
+                                </div>
+                              </TableCell>
+                              <TableCell>
+                                <span className="font-medium">₵{payment.amount.toFixed(2)}</span>
+                              </TableCell>
+                              <TableCell>
+                                <Badge color={getPaymentStatusColor(payment.status)} variant="flat" size="sm">
+                                  {payment.status}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <span className="text-xs text-gray-500">{payment.reference || payment.transactionId}</span>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </ModalBody>
@@ -642,6 +1041,12 @@ export default function InvoicesPaymentsPage() {
                     <p><strong>Invoice:</strong> {selectedPayment.invoiceId}</p>
                     <p><strong>Amount:</strong> ₵{selectedPayment.amount.toFixed(2)}</p>
                     <p><strong>Method:</strong> {getPaymentMethodLabel(selectedPayment.paymentMethod)}</p>
+                    {selectedPayment.creditApplied && selectedPayment.creditApplied > 0 && (
+                      <p><strong>Credit Applied:</strong> ₵{selectedPayment.creditApplied.toFixed(2)}</p>
+                    )}
+                    {selectedPayment.reference && (
+                      <p><strong>Reference:</strong> {selectedPayment.reference}</p>
+                    )}
                   </div>
                   <div>
                     <h4 className="font-semibold mb-2">Status</h4>
@@ -729,6 +1134,139 @@ export default function InvoicesPaymentsPage() {
           <ModalFooter>
             <Button variant="light" onPress={onCreateClose}>Cancel</Button>
             <Button color="primary" onPress={handleCreateInvoice} isDisabled={!newInvoice.guestName || !newInvoice.roomNumber || newInvoice.items.some(item => !item.description || item.unitPrice <= 0)}>Create Invoice</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Add Payment Modal */}
+      <Modal isOpen={isAddPaymentOpen} onClose={onAddPaymentClose} size="lg">
+        <ModalContent>
+          <ModalHeader>Add Payment - {selectedInvoice?.invoiceNumber}</ModalHeader>
+          <ModalBody>
+            {selectedInvoice && (
+              <div className="space-y-4">
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h4 className="font-semibold mb-2">Invoice Summary</h4>
+                  <div className="space-y-1">
+                    <div className="flex justify-between">
+                      <span>Total Amount:</span>
+                      <span className="font-medium">₵{selectedInvoice.totalAmount.toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Amount Paid:</span>
+                      <span className="font-medium text-green-600">₵{(selectedInvoice.totalAmount - selectedInvoice.balance).toFixed(2)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Outstanding Balance:</span>
+                      <span className="font-medium text-orange-600">₵{selectedInvoice.balance.toFixed(2)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <Input
+                    label="Payment Amount"
+                    type="number"
+                    min="0.01"
+                    max={selectedInvoice.balance}
+                    step="0.01"
+                    placeholder="0.00"
+                    value={paymentForm.amount}
+                    onChange={(e) => setPaymentForm(prev => ({ ...prev, amount: e.target.value }))}
+                    startContent="₵"
+                    isRequired
+                  />
+                  <Select
+                    label="Payment Method"
+                    value={paymentForm.method}
+                    onChange={(e) => setPaymentForm(prev => ({ ...prev, method: e.target.value }))}
+                    isRequired
+                  >
+                    <SelectItem key="cash">Cash</SelectItem>
+                    <SelectItem key="credit_card">Credit Card</SelectItem>
+                    <SelectItem key="mobile_money">Mobile Money</SelectItem>
+                    <SelectItem key="bank_transfer">Bank Transfer</SelectItem>
+                    <SelectItem key="check">Check</SelectItem>
+                    <SelectItem key="corporate_account">Corporate Account</SelectItem>
+                    <SelectItem key="credit">Credit</SelectItem>
+                  </Select>
+                </div>
+
+                <Input
+                  label="Reference/Transaction ID"
+                  placeholder="Enter transaction reference"
+                  value={paymentForm.reference}
+                  onChange={(e) => setPaymentForm(prev => ({ ...prev, reference: e.target.value }))}
+                />
+
+                <Input
+                  label="Notes"
+                  placeholder="Payment notes (optional)"
+                  value={paymentForm.notes}
+                  onChange={(e) => setPaymentForm(prev => ({ ...prev, notes: e.target.value }))}
+                />
+
+                {(() => {
+                  const reservation = frontOfficeStore.reservations.find(r => r.id === selectedInvoice.id);
+                  const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
+                  const creditBalance = guest?.creditBalance || 0;
+                  const canUseCredit = creditBalance > 0 && selectedInvoice.balance > 0;
+                  
+                  return canUseCredit ? (
+                    <div className="bg-blue-50 p-4 rounded-lg">
+                      <h4 className="font-semibold mb-2 text-blue-800">Available Credit</h4>
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <p className="text-sm text-blue-600">Guest has ₵{creditBalance.toFixed(2)} credit available</p>
+                          <p className="text-xs text-blue-500">Can apply up to ₵{Math.min(creditBalance, selectedInvoice.balance).toFixed(2)}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          color="primary"
+                          variant="flat"
+                          onPress={() => {
+                            const amount = Math.min(creditBalance, selectedInvoice.balance);
+                            setPaymentForm(prev => ({ 
+                              ...prev, 
+                              amount: amount.toString(),
+                              method: 'credit'
+                            }));
+                          }}
+                        >
+                          Use Credit
+                        </Button>
+                      </div>
+                    </div>
+                  ) : null;
+                })()}
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={onAddPaymentClose}>
+              Cancel
+            </Button>
+            <Button
+              color="success"
+              onPress={() => {
+                if (selectedInvoice && paymentForm.amount) {
+                  const amount = parseFloat(paymentForm.amount);
+                  if (amount > 0 && amount <= selectedInvoice.balance) {
+                    handleAddPaymentToInvoice(
+                      selectedInvoice,
+                      amount,
+                      paymentForm.method,
+                      paymentForm.notes || undefined
+                    );
+                    setPaymentForm({ amount: '', method: 'cash', notes: '', reference: '' });
+                    onAddPaymentClose();
+                  }
+                }
+              }}
+              isDisabled={!paymentForm.amount || parseFloat(paymentForm.amount) <= 0 || parseFloat(paymentForm.amount) > (selectedInvoice?.balance || 0)}
+            >
+              Add Payment
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
