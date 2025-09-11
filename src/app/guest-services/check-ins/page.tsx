@@ -1,40 +1,27 @@
-'use client';
+"use client";
 
-/**
- * Guest Check-In Management Page
- * 
- * This component provides comprehensive check-in processing with enhanced reservation management.
- * It implements the Check-in (Reservation/Guest Table) structure as per the relational database design:
- * 
- * ENHANCED DATA STRUCTURE:
- * - Reservation ID: Unique identifier for the booking
- * - Guest Profile ID: Links to repeat guest information
- * - Room & Rate: Comprehensive room assignment and pricing
- * - Stay Details: Arrival/departure dates, guest count, duration
- * - Payment & Source: Payment methods and booking origin
- * - Folio Integration: Links to central financial tracking
- * 
- * LINKED COMPONENTS:
- * - Reservations: Processes existing confirmed bookings
- * - Walk-ins: Creates new reservations for immediate check-in
- * - In-House: Automatically appears in guest management
- * - Folio System: Initiates financial tracking for the stay
- * 
- * OPERATIONS:
- * - Process reservation check-ins
- * - Handle walk-in guest check-ins
- * - Assign rooms and generate folios
- * - Update guest status and timestamps
- * - Link to guest profiles for repeat visits
- */
-
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
 import PageLayout from '../../components/PageLayout';
 import { 
   Card, 
   CardBody, 
   CardHeader, 
   Button, 
+  Tabs,
+  Tab
+} from "@heroui/react";
+import dynamic from 'next/dynamic';
+import { useSearchParams } from 'next/navigation';
+
+// Lazy sections to keep the page responsive
+const CheckOutsPage = dynamic(() => import('../check-outs/page'), { ssr: false });
+const InvoicesPaymentsPage = dynamic(() => import('../client-services/invoices-payments/page'), { ssr: false });
+const ServiceChargesPage = dynamic(() => import('../service-charges/page'), { ssr: false });
+const ReservationsBookingsManager = dynamic(() => import('../../components/ReservationsBookingsManager'), { ssr: false });
+const QuickCheckInManager = dynamic(() => import('../../components/QuickCheckInManager'), { ssr: false });
+
+// --- Check-ins section (existing logic) ---
+import {
   Badge, 
   Table, 
   TableHeader, 
@@ -45,1330 +32,1162 @@ import {
   Input,
   Select,
   SelectItem,
-  Pagination,
   Modal,
   ModalContent,
   ModalHeader,
   ModalBody,
   ModalFooter,
   useDisclosure,
-  Chip,
   Avatar,
-  Tooltip,
   Dropdown,
   DropdownTrigger,
   DropdownMenu,
   DropdownItem,
-  Tabs,
-  Tab,
-  Divider
+  Textarea,
+  Chip
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
-import { useSearchParams } from 'next/navigation';
-import dynamic from 'next/dynamic';
-// Embed existing pages via dynamic import to avoid module resolution issues
-const CheckOutsPage = dynamic(() => import('../check-outs/page'), { ssr: false });
-const InvoicesPaymentsPage = dynamic(() => import('../client-services/invoices-payments/page'), { ssr: false });
-const ReservationsBookingsManager = dynamic(() => import('../../components/ReservationsBookingsManager'), { ssr: false });
 
-interface CheckInData {
-  id: string; // Reservation ID
-  uniqueCheckInId: string; // Unique check-in identifier
-  guestProfileId?: string; // Guest Profile ID for repeat visits
+interface CheckInGuest {
+  id: string;
+  guestProfileId?: string;
   guestName: string;
   roomNumber: string;
   roomType: string;
   roomRate: number;
-  arrivalDate: string;
-  departureDate: string;
-  checkInDateTime?: string;
-  status: 'pending' | 'checked-in' | 'no-show';
+  checkInDate: string;
+  checkInDateTime: string;
+  checkOutDate: string;
+  status: 'checked-in' | 'extended' | 'early-checkout';
+  nightsStayed: number;
+  phone?: string;
+  email?: string;
+  specialRequests?: string;
+  billingPerson?: string;
+  lastActivity?: string;
+  source: string;
+  staffId?: string;
   adults: number;
   children: number;
   paymentMethod?: string;
-  specialRequests?: string;
-  billingPerson?: string;
-  phone?: string;
-  email?: string;
-  source: string; // Source of booking
-  staffId: string; // Front desk agent ID
-  staffUsername: string; // Staff username for accountability
-  folioId?: string; // Links to folio/transaction table
-  createdAt: string; // When the check-in record was created
-  updatedAt: string; // When the check-in record was last updated
-  processedAt?: string; // When the check-in was actually processed
+  creditBalance?: number;
+  // Folio data
+  totalCharges?: number;
+  totalPayments?: number;
+  balance?: number;
+  serviceCharges?: number;
+  otherCharges?: number;
+  taxTotal?: number;
 }
 
-interface WalkInData {
-  guestName: string;
-  phone: string;
-  email?: string;
-  roomType: string;
-  roomRate: number;
-  arrivalDate: string;
-  departureDate: string;
-  adults: number;
-  children: number;
-  paymentMethod: string;
-  specialRequests?: string;
-  source: string;
+function formatDate(dateString: string) {
+  return new Date(dateString).toLocaleDateString('en-GH', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+function formatTime(dateString: string) {
+  return new Date(dateString).toLocaleTimeString('en-GH', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
 
-function CheckInsPageContent() {
-  const searchParams = useSearchParams();
-  const checkInType = searchParams.get('type') || 'reservation';
-  const isQuickMode = searchParams.get('quick') === 'true';
-  
-  // Staff authentication state
-  const [currentStaff, setCurrentStaff] = useState({
-    id: 'staff-001',
-    username: 'john.doe',
-    name: 'John Doe',
-    role: 'Front Desk Agent'
-  });
-  
-  const [checkIns, setCheckIns] = useState<CheckInData[]>([]);
-  const [filteredCheckIns, setFilteredCheckIns] = useState<CheckInData[]>([]);
+function CheckInsSection() {
+  const [guests, setGuests] = useState<CheckInGuest[]>([]);
+  const [filteredGuests, setFilteredGuests] = useState<CheckInGuest[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  // Pagination states per table
-  const [page, setPage] = useState(1); // pending check-ins
-  const [inhousePage, setInhousePage] = useState(1);
+  const [page, setPage] = useState(1);
   const [rowsPerPage] = useState(10);
-  const [selectedCheckIn, setSelectedCheckIn] = useState<CheckInData | null>(null);
-  const [selectedTab, setSelectedTab] = useState(() => {
-    const tabParam = searchParams.get('tab');
-    if (tabParam === 'inhouse') return 'inhouse';
-    if (tabParam === 'checkouts') return 'checkouts';
-    if (tabParam === 'billing') return 'billing';
-    return 'reservations';
+  const [selectedGuest, setSelectedGuest] = useState<CheckInGuest | null>(null);
+  const { isOpen, onOpen, onClose } = useDisclosure();
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [quickModalOpen, setQuickModalOpen] = useState(false);
+  const [preExistingReservationIds, setPreExistingReservationIds] = useState<string[]>([]);
+  const [isFolioModalOpen, setIsFolioModalOpen] = useState(false);
+  const [selectedFolioGuest, setSelectedFolioGuest] = useState<CheckInGuest | null>(null);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentData, setPaymentData] = useState({
+    amount: 0,
+    paymentMethod: 'cash',
+    reference: '',
+    notes: '',
+    type: 'deposit' // 'deposit', 'payment', 'prepayment'
   });
-  const [reservationsSubTab, setReservationsSubTab] = useState<'search' | 'newcheckin'>(() => {
-    const sub = searchParams.get('subtab');
-    return sub === 'newcheckin' ? 'newcheckin' : 'search';
-  });
-  // Removed legacy local New Check-In form state in favor of embedded ReservationsBookingsManager
-  
-  // Room assignment state
-  const [availableRooms, setAvailableRooms] = useState<any[]>([]);
-  const [selectedRoom, setSelectedRoom] = useState<string>('');
-  const [isEditing, setIsEditing] = useState(false);
-  
-  // Room transfer state
-  const [selectedGuestForTransfer, setSelectedGuestForTransfer] = useState<string>('');
-  const [selectedNewRoom, setSelectedNewRoom] = useState<string>('');
-  const [transferReason, setTransferReason] = useState<string>('');
-  const [transferNotes, setTransferNotes] = useState<string>('');
-  
-  // Walk-in form state
-  const [walkInForm, setWalkInForm] = useState<WalkInData>({
+  const [transferModalOpen, setTransferModalOpen] = useState(false);
+
+  // Quick intake state (Reservation search + Walk-in form)
+  const [reservationSearchTerm, setReservationSearchTerm] = useState('');
+  const [searchResults, setSearchResults] = useState<any[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [walkInForm, setWalkInForm] = useState({
     guestName: '',
     phone: '',
     email: '',
-    roomType: 'Standard',
-    roomRate: 0,
+    roomTypeId: '',
     arrivalDate: new Date().toISOString().split('T')[0],
     departureDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     adults: 1,
     children: 0,
-    paymentMethod: 'Cash',
-    specialRequests: '',
-    source: 'walk-in'
+    paymentMethod: 'Cash'
   });
-  
-  // Reservation search state
-  const [reservationSearchTerm, setReservationSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  
-  const { isOpen, onOpen, onClose } = useDisclosure();
-  const [isProcessing, setIsProcessing] = useState(false);
+  // Guest picker & purpose/billing/source (mirror)
+  const [guestSearchTerm, setGuestSearchTerm] = useState('');
+  const [guestResults, setGuestResults] = useState<any[]>([]);
+  const [quickSelectedGuest, setQuickSelectedGuest] = useState<any | null>(null);
+  const [stayReason, setStayReason] = useState('');
+  const [stayReasonDetails, setStayReasonDetails] = useState('');
+  const [payerType, setPayerType] = useState<'guest' | 'thirdparty'>('guest');
+  const [source, setSource] = useState('Direct');
+
+  // Handle Quick Check-In tab selection
+  useEffect(() => {
+    if (activeTab === 'quick') {
+      setPreExistingReservationIds(frontOfficeStore.reservations.map(r => r.id));
+      setQuickModalOpen(true);
+    } else {
+      setQuickModalOpen(false);
+    }
+  }, [activeTab]);
+
+  // Load guests function
+  const loadGuests = () => {
+    const reservations = frontOfficeStore.reservations;
+    const today = new Date();
+    const data: CheckInGuest[] = reservations
+      .filter(r => r.status === 'checked-in' && new Date(r.departure) >= today && r.roomId && r.roomId !== 'TBD')
+      .map(reservation => {
+        const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
+        const creditBalance = guest?.creditBalance || 0;
+        const nightsStayed = Math.max(0, Math.ceil((today.getTime() - new Date(reservation.arrival).getTime()) / (1000*60*60*24)));
+        
+        // Get the correct room rate from rate breakdown or fallback to room type rate
+        const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
+        const roomRate = reservation.rateBreakdown?.[0]?.base || roomType?.baseRate || 0;
+        
+        // Get folio data for this reservation
+        const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
+        const roomTotal = roomRate * (nightsStayed + 1);
+        // Identify service charges by common keywords
+        const serviceKeywords = ['service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar', 'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'drink', 'food', 'meal'];
+        const serviceCharges = folio.charges?.filter(charge => {
+          const desc = charge.description?.toLowerCase() || '';
+          return serviceKeywords.some(keyword => desc.includes(keyword));
+        }).reduce((sum, charge) => sum + (charge.amount || 0), 0) || 0;
+        
+        const otherCharges = folio.charges?.filter(charge => {
+          const desc = charge.description?.toLowerCase() || '';
+          return !serviceKeywords.some(keyword => desc.includes(keyword));
+        }).reduce((sum, charge) => sum + (charge.amount || 0), 0) || 0;
+        
+        // Calculate taxes from all charges
+        const taxTotal = folio.charges?.reduce((sum, charge) => sum + (charge.tax || 0), 0) || 0;
+        
+        const totalCharges = roomTotal + serviceCharges + otherCharges + taxTotal;
+        const totalPayments = folio.payments?.reduce((sum, payment) => sum + (payment.amount || 0), 0) || 0;
+        const balance = totalCharges - totalPayments;
+        
+        return {
+        id: reservation.id,
+          guestProfileId: reservation.guestId,
+        guestName: reservation.guestName,
+        roomNumber: reservation.roomId || 'TBD',
+        roomType: roomType?.name || 'Standard',
+          roomRate: roomRate,
+          checkInDate: reservation.arrival,
+          checkInDateTime: reservation.arrival,
+          checkOutDate: reservation.departure,
+          status: 'checked-in',
+          nightsStayed,
+        phone: reservation.guestPhone,
+        email: reservation.guestEmail,
+          specialRequests: reservation.remarksToGuest,
+          billingPerson: reservation.billingPersonName,
+          lastActivity: 'Check-in',
+          source: reservation.source || 'Direct',
+          staffId: 'Front Desk',
+          adults: reservation.adults || 1,
+          children: reservation.children || 0,
+          paymentMethod: reservation.paymentMethod,
+          creditBalance,
+          // Add folio data
+          totalCharges,
+          totalPayments,
+          balance,
+          serviceCharges,
+          otherCharges,
+          taxTotal
+        } as CheckInGuest;
+      });
+    setGuests(data);
+    setFilteredGuests(data);
+  };
+
+  // Handle Quick Check-In completion
+  const handleQuickCheckInComplete = (reservationId: string) => {
+    // Close modal and return to overview
+    setQuickModalOpen(false);
+    setActiveTab('overview');
+    loadGuests(); // Refresh the guest list
+    
+    // Show success message
+    trackEvent('FO.Reservation.CheckedIn', {
+      reservationId,
+      source: 'QuickCheckInManager'
+    });
+  };
 
   useEffect(() => {
-    loadCheckIns();
-    loadAvailableRooms();
-    const unsubscribe = frontOfficeStore.subscribe(loadCheckIns);
-    return unsubscribe;
+    loadGuests();
+    const unsub = frontOfficeStore.subscribe(loadGuests);
+    return () => unsub();
   }, []);
 
   useEffect(() => {
-    filterCheckIns();
-  }, [checkIns, searchTerm, statusFilter]);
-
-  // Reset to first page whenever the filtered list changes size
-  useEffect(() => { setPage(1); }, [filteredCheckIns.length]);
-  useEffect(() => { setInhousePage(1); }, [checkIns.filter(ci => ci.status === 'checked-in').length]);
-
-  const loadCheckIns = () => {
-    // Prevent build-time errors by checking if we're in browser
-    if (typeof window === 'undefined') return;
-    
-    const reservations = frontOfficeStore.reservations;
-    const today = new Date().toISOString().split('T')[0];
-    
-    const checkInsData: CheckInData[] = reservations
-      .filter(reservation => {
-        // Include confirmed reservations for today (pending check-ins)
-        const isTodayArrival = reservation.arrival === today && reservation.status === 'confirmed';
-        // Include already checked-in reservations (for in-house management)
-        const isCheckedIn = reservation.status === 'checked-in';
-        return isTodayArrival || isCheckedIn;
-      })
-      .map(reservation => {
-        const isCheckedIn = reservation.status === 'checked-in';
-        return {
-        id: reservation.id,
-          uniqueCheckInId: `checkin-${reservation.id}`, // Use reservation ID for consistency
-        guestProfileId: undefined, // Will be added when guest profiles are implemented
-        guestName: reservation.guestName,
-        roomNumber: reservation.roomId || 'TBD',
-        roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Standard',
-        roomRate: reservation.rateBreakdown?.[0]?.total || 0,
-        arrivalDate: reservation.arrival,
-        departureDate: reservation.departure,
-          checkInDateTime: isCheckedIn ? reservation.updatedAt : undefined, // Set check-in time if already checked in
-          status: isCheckedIn ? 'checked-in' as const : 'pending' as const,
-        adults: reservation.adults || 1,
-        children: reservation.children || 0,
-        paymentMethod: reservation.paymentMethod || 'Not specified',
-        specialRequests: reservation.remarksToGuest,
-        billingPerson: reservation.billingPersonName,
-        phone: reservation.guestPhone,
-        email: reservation.guestEmail,
-        source: reservation.source || 'reservation',
-          staffId: isCheckedIn ? 'staff-001' : 'pending', // Set staff ID if checked in
-          staffUsername: isCheckedIn ? 'john.doe' : 'Pending', // Set staff username if checked in
-        folioId: reservation.id, // Using reservation ID as folio ID for now
-        createdAt: reservation.createdAt || new Date().toISOString(),
-        updatedAt: reservation.updatedAt || new Date().toISOString(),
-          processedAt: isCheckedIn ? reservation.updatedAt : undefined
-        };
-      });
-
-    setCheckIns(checkInsData);
-  };
-
-  const loadAvailableRooms = () => {
-    // Load available rooms from the store
-    const rooms = frontOfficeStore.rooms || [];
-    const roomTypes = frontOfficeStore.roomTypes || [];
-    
-    // Get rooms that are not currently occupied
-    const availableRoomsData = rooms.map(room => {
-      const roomType = roomTypes.find(rt => rt.id === room.roomTypeId);
-      return {
-        id: room.id,
-        roomNumber: room.id,
-        roomType: roomType?.name || 'Standard',
-        roomTypeId: room.roomTypeId,
-        floor: room.floor,
-        rate: roomType?.baseRate || 0,
-        isAvailable: true // For now, assume all rooms are available
-      };
-    });
-    
-    setAvailableRooms(availableRoomsData);
-  };
-
-  const filterCheckIns = () => {
-    let filtered = checkIns;
-
+    let filtered = guests;
     if (searchTerm) {
-      filtered = filtered.filter(checkIn => 
-        checkIn.guestName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        checkIn.phone?.includes(searchTerm) ||
-        checkIn.email?.toLowerCase().includes(searchTerm.toLowerCase())
+      filtered = filtered.filter(g =>
+        g.guestName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        g.roomNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        g.phone?.includes(searchTerm) ||
+        g.email?.toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
+    if (statusFilter !== 'all') filtered = filtered.filter(g => g.status === statusFilter);
+    setFilteredGuests(filtered);
+    setPage(1);
+  }, [guests, searchTerm, statusFilter]);
 
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(checkIn => checkIn.status === statusFilter);
+  const totalRoomRevenue = useMemo(() => guests.reduce((s,g) => s + (g.roomRate || 0), 0), [guests]);
+  const totalRoomAmount = useMemo(() => guests.reduce((s,g) => s + ((g.roomRate || 0) * ((g.nightsStayed || 0) + 1)), 0), [guests]);
+  const totalServiceCharges = useMemo(() => guests.reduce((s,g) => s + (g.serviceCharges || 0), 0), [guests]);
+  const totalCharges = useMemo(() => guests.reduce((s,g) => s + (g.totalCharges || 0), 0), [guests]);
+  const totalPayments = useMemo(() => guests.reduce((s,g) => s + (g.totalPayments || 0), 0), [guests]);
+  const totalOutstanding = useMemo(() => guests.reduce((s,g) => s + (g.balance || 0), 0), [guests]);
+  const avgNights = useMemo(() => guests.length ? (guests.reduce((s,g)=>s+g.nightsStayed,0)/guests.length).toFixed(1) : '0.0', [guests]);
+
+  const handleEarlyCheckout = async (guest: CheckInGuest) => {
+    setIsProcessing(true);
+    try {
+      frontOfficeStore.processCheckout(guest.id, 'Early checkout from unified Check-Ins');
+      trackEvent('FO.Reservation.CheckedOut', { reservationId: guest.id, guestName: guest.guestName, roomNumber: guest.roomNumber, source: 'check-ins' });
+      onClose();
+      setSelectedGuest(null);
+    } finally {
+      setIsProcessing(false);
     }
-
-    setFilteredCheckIns(filtered);
   };
 
+  const handleExtendStay = async (guest: CheckInGuest, nights: number) => {
+    const r = frontOfficeStore.reservations.find(r => r.id === guest.id);
+    if (r) {
+      const dep = new Date(r.departure); dep.setDate(dep.getDate() + nights); r.departure = dep.toISOString(); r.status = 'checked-in';
+      frontOfficeStore.notify();
+      trackEvent('FO.Reservation.Updated', { reservationId: guest.id, guestName: guest.guestName, additionalNights: nights, source: 'check-ins' });
+    }
+      onClose();
+    setSelectedGuest(null);
+  };
+
+  const handleApplyCredit = (guest: CheckInGuest) => {
+    if (!guest.creditBalance || guest.creditBalance <= 0) return;
+    const amount = guest.creditBalance; // Simplified - apply full credit balance
+    const ok = frontOfficeStore.applyCreditPayment(guest.id, amount, 'Credit applied from unified Check-Ins');
+    if (ok) setTimeout(() => {
+      // Credit applied successfully
+    }, 50);
+  };
+
+  const handleViewFolio = (guest: CheckInGuest) => {
+    setSelectedFolioGuest(guest);
+    setIsFolioModalOpen(true);
+  };
+
+  const handlePaymentClick = (guest: CheckInGuest, paymentType: 'deposit' | 'payment' | 'prepayment' = 'payment') => {
+    setSelectedFolioGuest(guest);
+    setPaymentData({
+      amount: paymentType === 'deposit' ? (guest.roomRate || 0) * 0.5 : (guest.balance || 0), // 50% deposit or full balance
+      paymentMethod: 'cash',
+      reference: '',
+      notes: '',
+      type: paymentType
+    });
+    setIsPaymentModalOpen(true);
+  };
+
+  const handlePaymentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedFolioGuest || paymentData.amount <= 0) return;
+
+    try {
+      setIsProcessing(true);
+      
+      // Use the store's addPayment method
+      frontOfficeStore.addPayment(
+        selectedFolioGuest.id,
+        paymentData.paymentMethod as 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Check' | 'Corporate Account',
+        paymentData.amount,
+        {
+          notes: `${paymentData.type === 'deposit' ? 'Deposit' : paymentData.type === 'prepayment' ? 'Prepayment' : 'Payment'} - ${paymentData.notes || 'Guest payment'}`,
+          processedBy: 'Front Desk',
+          ref: paymentData.reference || undefined
+        }
+      );
+
+      // Track event
+      trackEvent('FO.Payment.Processed' as any, {
+        reservationId: selectedFolioGuest.id,
+        guestName: selectedFolioGuest.guestName,
+        amount: paymentData.amount,
+        method: paymentData.paymentMethod,
+        type: paymentData.type
+      }, { sourceModule: 'Check-Ins' });
+
+      // Reset and close
+      setPaymentData({ amount: 0, paymentMethod: 'cash', reference: '', notes: '', type: 'deposit' });
+      setIsPaymentModalOpen(false);
+
+      // Refresh data
+      loadGuests();
+      
+      // Show success message
+      alert(`Payment of ₵${paymentData.amount.toLocaleString()} processed successfully!`);
+      
+    } catch (error) {
+      console.error('Payment processing error:', error);
+      alert('Payment processing failed. Please try again.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Quick intake actions
   const searchReservations = async () => {
-    if (!reservationSearchTerm.trim()) return;
-    
+    if (!reservationSearchTerm.trim()) { setSearchResults([]); return; }
     setIsSearching(true);
     try {
-      console.log(`[CHECK-IN] Searching reservations for: "${reservationSearchTerm}"`);
-      
-      // Search in reservations store
       const reservations = frontOfficeStore.reservations;
-      const results = reservations.filter(reservation => 
-        reservation.guestName.toLowerCase().includes(reservationSearchTerm.toLowerCase()) ||
-        reservation.guestPhone?.includes(reservationSearchTerm) ||
-        reservation.id.includes(reservationSearchTerm)
+      const results = reservations.filter(r =>
+        r.guestName.toLowerCase().includes(reservationSearchTerm.toLowerCase()) ||
+        r.guestPhone?.includes(reservationSearchTerm) ||
+        r.id.includes(reservationSearchTerm)
       );
-      
-      console.log(`[CHECK-IN] Search results: ${results.length} reservations found`);
-      console.log('[CHECK-IN] Search results:', results);
-      
       setSearchResults(results);
-      trackEvent('FO.Reservation.Updated', { query: reservationSearchTerm, results: results.length });
-    } catch (error) {
-      console.error('[CHECK-IN] Error searching reservations:', error);
     } finally {
       setIsSearching(false);
     }
   };
 
-  const processWalkInCheckIn = async () => {
-    setIsProcessing(true);
-    try {
-      console.log('[CHECK-IN] Processing walk-in check-in for:', walkInForm.guestName);
-      console.log('[CHECK-IN] Walk-in form data:', walkInForm);
-      console.log('[CHECK-IN] Processing staff:', currentStaff.username);
-      
-      // Create a new reservation for walk-in
+  const checkInReservation = (reservation: any) => {
+    frontOfficeStore.updateReservationStatus(reservation.id, 'checked-in');
+    trackEvent('FO.Reservation.CheckedIn', { reservationId: reservation.id, guestName: reservation.guestName, roomType: reservation.roomType, source: 'quick-intake' });
+    // refresh
+    loadGuests();
+  };
+
+  const submitWalkIn = () => {
+    const fallbackRoomType = (frontOfficeStore.roomTypes || [])[0];
+    const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === walkInForm.roomTypeId) || fallbackRoomType;
       const walkInReservation = {
         id: `walkin-${Date.now()}`,
-        guestName: walkInForm.guestName,
-        guestPhone: walkInForm.phone,
-        guestEmail: walkInForm.email,
-        roomType: walkInForm.roomType,
+      guestName: quickSelectedGuest?.name || walkInForm.guestName,
+      guestPhone: quickSelectedGuest?.phone || walkInForm.phone,
+      guestEmail: quickSelectedGuest?.email || walkInForm.email,
+      roomType: roomType?.name || 'Standard',
+      roomTypeId: roomType?.id,
         arrival: walkInForm.arrivalDate,
         departure: walkInForm.departureDate,
         adults: walkInForm.adults,
         children: walkInForm.children,
         paymentMethod: walkInForm.paymentMethod,
-        specialRequests: walkInForm.specialRequests,
+      remarksToGuest: stayReasonDetails,
+      billingPersonName: payerType === 'thirdparty' ? 'Third Party' : undefined,
         status: 'checked-in' as const,
-        source: 'walk-in',
+      source,
         createdAt: new Date().toISOString()
       };
-
-      console.log('[CHECK-IN] Created walk-in reservation object:', walkInReservation);
-
-      // Add to store and process check-in
-      const addedReservation = frontOfficeStore.addReservation(walkInReservation);
-      console.log('[CHECK-IN] Reservation added to store:', addedReservation);
-      
-      // Reload check-ins to reflect the new reservation
-      loadCheckIns();
-      
-      trackEvent('FO.Reservation.CheckedIn', { 
-        guestName: walkInForm.guestName,
-        roomType: walkInForm.roomType,
-        duration: Math.ceil((new Date(walkInForm.departureDate).getTime() - new Date(walkInForm.arrivalDate).getTime()) / (1000 * 60 * 60 * 24)),
-        staffId: currentStaff.id,
-        staffUsername: currentStaff.username,
-        timestamp: new Date().toISOString()
-      });
-
-      // Reset form
+    frontOfficeStore.addReservation(walkInReservation);
+    trackEvent('FO.Reservation.CheckedIn', { guestName: walkInReservation.guestName, roomType: walkInReservation.roomType, source });
       setWalkInForm({
-        guestName: '',
-        phone: '',
-        email: '',
-        roomType: 'Standard',
-        roomRate: 0,
+      guestName: '', phone: '', email: '', roomTypeId: '',
         arrivalDate: new Date().toISOString().split('T')[0],
-        departureDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        adults: 1,
-        children: 0,
-        paymentMethod: 'Cash',
-        specialRequests: '',
-        source: 'walk-in'
-      });
-
-      console.log('[CHECK-IN] Walk-in check-in completed successfully');
-      alert('Walk-in check-in completed successfully!');
-    } catch (error) {
-      console.error('[CHECK-IN] Error processing walk-in check-in:', error);
-      alert('Error processing check-in. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const processReservationCheckIn = async (reservation: any) => {
-    setIsProcessing(true);
-    try {
-      console.log('[CHECK-IN] Processing reservation check-in for:', reservation.guestName);
-      console.log('[CHECK-IN] Reservation details:', reservation);
-      console.log('[CHECK-IN] Processing staff:', currentStaff.username);
-      
-      // Update reservation status to checked-in
-      const updatedReservation = frontOfficeStore.updateReservationStatus(reservation.id, 'checked-in');
-      console.log('[CHECK-IN] Reservation status updated:', updatedReservation);
-      
-      // Reload check-ins to reflect the status change
-      loadCheckIns();
-      
-      trackEvent('FO.Reservation.CheckedIn', { 
-        reservationId: reservation.id,
-        guestName: reservation.guestName,
-        roomType: reservation.roomType,
-        staffId: currentStaff.id,
-        staffUsername: currentStaff.username,
-        timestamp: new Date().toISOString()
-      });
-
-      console.log('[CHECK-IN] Reservation check-in completed successfully');
-      alert('Check-in completed successfully!');
-      onClose();
-    } catch (error) {
-      console.error('[CHECK-IN] Error processing check-in:', error);
-      alert('Error processing check-in. Please try again.');
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  // Enhanced early checkout with proper status update
-  const handleEarlyCheckout = async (checkIn: CheckInData) => {
-    try {
-      console.log(`[CHECK-IN] Processing early checkout for guest: ${checkIn.guestName}`);
-      
-      // Use the store method for checkout
-      const result = frontOfficeStore.processCheckout(checkIn.id, 'Early checkout processed from check-in management');
-      
-      if (result) {
-        console.log(`[CHECK-IN] Guest ${checkIn.guestName} checked out successfully`);
-        alert('Guest checked out successfully!');
-        // Reload check-ins to reflect the status change
-        loadCheckIns();
-      } else {
-        console.error(`[CHECK-IN] Failed to process checkout for guest: ${checkIn.guestName}`);
-        alert('Failed to process checkout. Please try again.');
-      }
-
-      onClose();
-      setSelectedCheckIn(null);
-    } catch (error) {
-      console.error('[CHECK-IN] Error processing early checkout:', error);
-      alert('Error processing early checkout. Please try again.');
-    }
-  };
-
-  // Enhanced extend stay with proper date update
-  const handleExtendStay = async (checkIn: CheckInData, additionalNights: number) => {
-    try {
-      console.log(`[CHECK-IN] Extending stay for guest: ${checkIn.guestName} by ${additionalNights} nights`);
-      
-      // Use the store method for extending stay
-      const result = frontOfficeStore.extendStay(checkIn.id, additionalNights);
-      
-      if (result) {
-        console.log(`[CHECK-IN] Guest ${checkIn.guestName} stay extended successfully`);
-        alert(`Stay extended by ${additionalNights} night(s) successfully!`);
-        // Reload check-ins to reflect the date change
-        loadCheckIns();
-      } else {
-        console.error(`[CHECK-IN] Failed to extend stay for guest: ${checkIn.guestName}`);
-        alert('Failed to extend stay. Please try again.');
-      }
-
-      onClose();
-      setSelectedCheckIn(null);
-    } catch (error) {
-      console.error('[CHECK-IN] Error extending stay:', error);
-      alert('Error extending stay. Please try again.');
-    }
-  };
-
-  // Room assignment function
-  const handleRoomAssignment = async (checkIn: CheckInData, roomId: string) => {
-    try {
-      console.log(`[CHECK-IN] Assigning room ${roomId} to guest: ${checkIn.guestName}`);
-      
-      // Update the reservation with the assigned room
-      const reservation = frontOfficeStore.reservations.find(r => r.id === checkIn.id);
-      if (reservation) {
-        reservation.roomId = roomId;
-        frontOfficeStore.updateReservation(reservation);
-        console.log(`[CHECK-IN] Room ${roomId} assigned successfully`);
-        alert(`Room ${roomId} assigned successfully!`);
-        loadCheckIns();
-      }
-    } catch (error) {
-      console.error('[CHECK-IN] Error assigning room:', error);
-      alert('Error assigning room. Please try again.');
-    }
-  };
-
-  // Edit check-in function
-  const handleEditCheckIn = (checkIn: CheckInData) => {
-    setSelectedCheckIn(checkIn);
-    setIsEditing(true);
-    onOpen();
-  };
-
-  // Complete check-in with room assignment
-  const handleCompleteCheckIn = async (checkIn: CheckInData, roomId?: string) => {
-    try {
-      console.log(`[CHECK-IN] Completing check-in for guest: ${checkIn.guestName}`);
-      
-      // Update reservation status to checked-in
-      const updatedReservation = frontOfficeStore.updateReservationStatus(checkIn.id, 'checked-in');
-      
-      // Assign room if provided
-      if (roomId) {
-        const reservation = frontOfficeStore.reservations.find(r => r.id === checkIn.id);
-        if (reservation) {
-          reservation.roomId = roomId;
-          frontOfficeStore.updateReservation(reservation);
-        }
-      }
-      
-      // Reload check-ins to reflect the status change
-      loadCheckIns();
-      
-      trackEvent('FO.Reservation.CheckedIn', { 
-        reservationId: checkIn.id,
-        guestName: checkIn.guestName,
-        roomId: roomId || checkIn.roomNumber,
-        staffId: currentStaff.id,
-        staffUsername: currentStaff.username,
-        timestamp: new Date().toISOString()
-      });
-
-      console.log('[CHECK-IN] Check-in completed successfully');
-      alert('Check-in completed successfully!');
-      onClose();
-      setSelectedCheckIn(null);
-      setIsEditing(false);
-    } catch (error) {
-      console.error('[CHECK-IN] Error completing check-in:', error);
-      alert('Error completing check-in. Please try again.');
-    }
-  };
-
-  // Room transfer functions
-  const handleRoomTransfer = async () => {
-    if (!selectedGuestForTransfer || !selectedNewRoom || !transferReason) {
-      alert('Please select a guest, new room, and transfer reason.');
-      return;
-    }
-
-    try {
-      console.log(`[ROOM-TRANSFER] Initiating transfer for guest: ${selectedGuestForTransfer} to room: ${selectedNewRoom}`);
-      
-      const guest = checkIns.find(c => c.id === selectedGuestForTransfer);
-      const newRoom = availableRooms.find(r => r.id === selectedNewRoom);
-      
-      if (!guest || !newRoom) {
-        alert('Guest or room not found. Please refresh and try again.');
-        return;
-      }
-
-      // Update the reservation with new room
-      frontOfficeStore.assignRoom(guest.id, selectedNewRoom);
-
-      // Track the transfer event
-      trackEvent('FO.RoomTransfer.Completed' as any, {
-        guestId: guest.id,
-        guestName: guest.guestName,
-        fromRoom: guest.roomNumber,
-        toRoom: newRoom.roomNumber,
-        reason: transferReason,
-        notes: transferNotes,
-        timestamp: new Date().toISOString()
-      });
-
-      // Refresh data
-      loadCheckIns();
-      loadAvailableRooms();
-
-      // Reset form
-      setSelectedGuestForTransfer('');
-      setSelectedNewRoom('');
-      setTransferReason('');
-      setTransferNotes('');
-
-      alert(`✅ Room transfer completed! ${guest.guestName} moved from Room ${guest.roomNumber} to Room ${newRoom.roomNumber}.`);
-      
-    } catch (error) {
-      console.error('[ROOM-TRANSFER] Error processing transfer:', error);
-      alert('Error processing room transfer. Please try again.');
-    }
-  };
-
-  const handleTransferPreview = () => {
-    if (!selectedGuestForTransfer || !selectedNewRoom) {
-      alert('Please select both a guest and new room to preview the transfer.');
-      return;
-    }
-
-    const guest = checkIns.find(c => c.id === selectedGuestForTransfer);
-    const newRoom = availableRooms.find(r => r.id === selectedNewRoom);
-    
-    if (!guest || !newRoom) {
-      alert('Guest or room not found. Please refresh and try again.');
-      return;
-    }
-
-    const previewMessage = `
-🔄 ROOM TRANSFER PREVIEW
-
-Guest: ${guest.guestName}
-Current Room: ${guest.roomNumber}
-New Room: ${newRoom.roomNumber} (${newRoom.roomType})
-Rate: ₵${newRoom.rate}/night
-Transfer Reason: ${transferReason || 'Not specified'}
-Notes: ${transferNotes || 'None'}
-
-This transfer will:
-• Update the guest's room assignment
-• Add transfer details to guest remarks
-• Log the transfer for audit purposes
-
-Proceed with transfer?
-    `;
-
-    if (confirm(previewMessage)) {
-      handleRoomTransfer();
-    }
-  };
-
-  // Helper functions for date/time formatting
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-GH', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
+      departureDate: new Date(Date.now() + 24*60*60*1000).toISOString().split('T')[0],
+      adults: 1, children: 0, paymentMethod: 'Cash'
     });
+    setQuickSelectedGuest(null);
+    setStayReason(''); setStayReasonDetails(''); setPayerType('guest'); setSource('Direct');
   };
-
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString('en-GH', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
-
-  const formatDateTime = (dateString: string) => {
-    return new Date(dateString).toLocaleString('en-GH', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true
-    });
-  };
-
-  // Analytics-friendly data attributes
-  const getAnalyticsData = (checkIn: CheckInData) => ({
-    'data-checkin-id': checkIn.uniqueCheckInId,
-    'data-reservation-id': checkIn.id,
-    'data-staff-id': checkIn.staffId,
-    'data-staff-username': checkIn.staffUsername,
-    'data-created-date': checkIn.createdAt,
-    'data-processed-date': checkIn.processedAt,
-    'data-status': checkIn.status,
-    'data-room-type': checkIn.roomType,
-    'data-source': checkIn.source
-  });
 
   return (
-    <PageLayout>
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold text-ghana-black">
-              🔑 Guest Check-In & In-House Management
-            </h1>
-            <p className="text-gray-600 mt-2">
-              Process check-ins for reservations and walk-ins, then manage guests during their stay
-            </p>
-          </div>
-          <div className="flex items-center space-x-4">
-            {/* Staff Authentication Display */}
-            <div className="text-right">
-              <p className="text-sm font-medium text-gray-600">Logged in as:</p>
-              <p className="font-semibold text-ghana-black">{currentStaff.name}</p>
-              <p className="text-xs text-gray-500">{currentStaff.role} • {currentStaff.username}</p>
-            </div>
-            <Button
-              color="primary"
-              variant="flat"
-              onClick={() => window.history.back()}
-            >
-              ← Back
-            </Button>
-          </div>
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Guests</p><p className="text-2xl font-bold text-ghana-black">{guests.length}</p></div><div className="text-2xl">👥</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Avg Rate/Night</p><p className="text-2xl font-bold text-ghana-black">₵{guests.length > 0 ? Math.round(totalRoomRevenue / guests.length).toLocaleString() : '0'}</p></div><div className="text-2xl">💰</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Room Total</p><p className="text-2xl font-bold text-purple-600">₵{totalRoomAmount.toLocaleString()}</p></div><div className="text-2xl">🏨</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Service Charges</p><p className="text-2xl font-bold text-orange-600">₵{totalServiceCharges.toLocaleString()}</p></div><div className="text-2xl">🏊</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Amount</p><p className="text-2xl font-bold text-blue-600">₵{totalCharges.toLocaleString()}</p></div><div className="text-2xl">📊</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Payments</p><p className="text-2xl font-bold text-green-600">₵{totalPayments.toLocaleString()}</p></div><div className="text-2xl">💳</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Outstanding</p><p className="text-2xl font-bold text-red-600">₵{totalOutstanding.toLocaleString()}</p></div><div className="text-2xl">⏰</div></div></CardBody></Card>
         </div>
 
-        <Tabs 
-          selectedKey={selectedTab} 
-          onSelectionChange={(key) => setSelectedTab(key as string)}
-          className="w-full"
-        >
-          <Tab key="reservations-manager" title="📅 Reservations & Bookings Management">
-            <Card className="border-0 shadow-lg">
-              <CardBody>
-                <Suspense fallback={<div className="p-6 text-center">Loading Reservations & Bookings...</div>}>
-                  <ReservationsBookingsManager />
-                </Suspense>
-              </CardBody>
-            </Card>
-          </Tab>
-          <Tab key="reservations" title="📅 Check-In Guest">
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between w-full">
-                  <h3 className="text-xl font-semibold text-ghana-black">Check-In Guest</h3>
-                  <div className="flex gap-2">
-                    <Button size="sm" variant="flat" onClick={() => setReservationsSubTab('search')}>🔎 Find Reservation</Button>
-                    <Button size="sm" color="primary" onClick={() => setReservationsSubTab('newcheckin')}>+ New Check-In</Button>
+      <Card className="mb-2"><CardBody className="p-4"><div className="flex flex-col sm:flex-row gap-4"><Input placeholder="Search by guest name, room number, phone, or email..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1" startContent={<span className="text-gray-400">🔍</span>} /><Select placeholder="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full sm:w-48"><SelectItem key="all">All Statuses</SelectItem><SelectItem key="checked-in">Checked In</SelectItem><SelectItem key="extended">Extended</SelectItem><SelectItem key="early-checkout">Early Checkout</SelectItem></Select><Button color="primary" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white" onPress={() => setTransferModalOpen(true)}>🔄 Room Transfer</Button></div></CardBody></Card>
+
+      <Card><CardBody>
+        <Tabs selectedKey={activeTab} onSelectionChange={(k)=>setActiveTab(k as string)} className="mb-4"><Tab key="quick" title="⚡ Quick Check-In" /><Tab key="overview" title="📊 Overview" /><Tab key="analytics" title="📈 Analytics" /></Tabs>
+
+        {activeTab === 'quick' && (
+          <Modal isOpen={quickModalOpen} onClose={() => setActiveTab('overview')} size="4xl">
+            <ModalContent>
+              <ModalHeader>⚡ Quick Check-In</ModalHeader>
+              <ModalBody>
+                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-sm text-blue-800">
+                    <strong>Auto-Processing:</strong> When you submit the form, we'll automatically assign an available room and check the guest in.
+            </p>
                   </div>
+                <Suspense fallback={<div className="p-6 text-center">Loading form...</div>}>
+                  <QuickCheckInManager 
+                    onCheckInComplete={handleQuickCheckInComplete}
+                    onClose={() => setActiveTab('overview')}
+                  />
+                </Suspense>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="flat" onClick={() => setActiveTab('overview')}>Close</Button>
+              </ModalFooter>
+            </ModalContent>
+          </Modal>
+        )}
+        {false && (
+          <div className="space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <div>
+              <h4 className="font-semibold mb-2">Find Reservation</h4>
+              <div className="flex gap-2 mb-3">
+                <Input placeholder="Name / Phone / Reservation ID" value={reservationSearchTerm} onChange={(e)=>setReservationSearchTerm(e.target.value)} onKeyPress={(e)=> e.key==='Enter' && searchReservations()} className="flex-1" />
+                <Button color="primary" onClick={searchReservations} isLoading={isSearching}>Search</Button>
+                </div>
+              <div className="space-y-2 max-h-64 overflow-auto">
+                {searchResults.map((r) => (
+                  <Card key={r.id} className="border border-gray-200"><CardBody className="p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                        <p className="font-medium">{r.guestName}</p>
+                        <p className="text-xs text-gray-600">{r.guestPhone} • {r.roomType} • {r.arrival} → {r.departure}</p>
+                  </div>
+                      <Button size="sm" color="primary" onClick={() => checkInReservation(r)}>✅ Check In</Button>
+                </div>
+                  </CardBody></Card>
+                ))}
+                {!searchResults.length && <p className="text-sm text-gray-500">No results yet. Search to find a reservation.</p>}
+                  </div>
+
+              {/* Guest List (mirror of reservation UI) */}
+              <Card className="mt-6 bg-purple-50 border border-purple-200">
+                <CardHeader className="pb-2">
+                <div className="flex items-center justify-between w-full">
+                    <span className="font-semibold">Guest List {quickSelectedGuest ? '(1 guest)' : '(0 guests)'}</span>
+                    <span className="text-xs text-purple-600">Search and add guests from the system</span>
                 </div>
               </CardHeader>
-              <CardBody>
-                {reservationsSubTab === 'search' ? (
-                  <div>
-                <div className="flex gap-4 mb-6">
-                  <Input
-                    placeholder="Search by guest name, phone, or confirmation number..."
-                    value={reservationSearchTerm}
-                    onChange={(e) => setReservationSearchTerm(e.target.value)}
-                    className="flex-1"
-                    onKeyPress={(e) => e.key === 'Enter' && searchReservations()}
-                  />
-                      <Button color="primary" onClick={searchReservations} isLoading={isSearching}>🔍 Search</Button>
-                </div>
-
-                {searchResults.length > 0 && (
-                  <div className="mb-6">
-                    <h4 className="text-lg font-semibold mb-3">Search Results</h4>
-                    <div className="space-y-3">
-                      {searchResults.map((reservation) => (
-                        <Card key={reservation.id} className="border border-gray-200">
-              <CardBody className="p-4">
-                <div className="flex items-center justify-between">
-                              <div className="flex items-center space-x-4">
-                                <Avatar name={reservation.guestName} size="md" />
-                  <div>
-                                  <h5 className="font-semibold">{reservation.guestName}</h5>
-                                      <p className="text-sm text-gray-600">{reservation.guestPhone} • {reservation.guestEmail}</p>
-                                      <p className="text-sm text-gray-500">{reservation.roomType} • {reservation.arrival} to {reservation.departure}</p>
-                  </div>
-                </div>
-                              <div className="flex items-center space-x-2">
-                                <Badge color="success" variant="flat">Confirmed</Badge>
-                                    <Button size="sm" color="primary" onClick={() => processReservationCheckIn(reservation)} isLoading={isProcessing}>✅ Check In</Button>
-                                    <Button size="sm" color="secondary" variant="flat" onClick={() => { setSelectedCheckIn({ id: reservation.id, uniqueCheckInId: `checkin-${reservation.id}`, guestName: reservation.guestName, roomNumber: reservation.roomId || 'TBD', roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Standard', roomRate: reservation.rateBreakdown?.[0]?.total || 0, arrivalDate: reservation.arrival, departureDate: reservation.departure, status: 'pending', adults: reservation.adults || 1, children: reservation.children || 0, paymentMethod: reservation.paymentMethod || 'Not specified', specialRequests: reservation.remarksToGuest, billingPerson: reservation.billingPersonName, phone: reservation.guestPhone, email: reservation.guestEmail, source: reservation.source || 'reservation', staffId: 'pending', staffUsername: 'Pending', folioId: reservation.id, createdAt: reservation.createdAt || new Date().toISOString(), updatedAt: reservation.updatedAt || new Date().toISOString() }); onOpen(); }}>🏠 Assign</Button>
-                                    <Button size="sm" color="default" variant="flat" onClick={() => { setSelectedCheckIn({ id: reservation.id, uniqueCheckInId: `checkin-${reservation.id}`, guestName: reservation.guestName, roomNumber: reservation.roomId || 'TBD', roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Standard', roomRate: reservation.rateBreakdown?.[0]?.total || 0, arrivalDate: reservation.arrival, departureDate: reservation.departure, status: 'pending', adults: reservation.adults || 1, children: reservation.children || 0, paymentMethod: reservation.paymentMethod || 'Not specified', specialRequests: reservation.remarksToGuest, billingPerson: reservation.billingPersonName, phone: reservation.guestPhone, email: reservation.guestEmail, source: reservation.source || 'reservation', staffId: 'pending', staffUsername: 'Pending', folioId: reservation.id, createdAt: reservation.createdAt || new Date().toISOString(), updatedAt: reservation.updatedAt || new Date().toISOString() }); setIsEditing(true); onOpen(); }}>✏️ Edit</Button>
-                  </div>
-                </div>
-              </CardBody>
-            </Card>
-                      ))}
+                <CardBody className="space-y-3">
+                  <Input placeholder="Search for existing guests by name, phone, email, or Ghana Card" value={guestSearchTerm} onChange={(e)=>{ setGuestSearchTerm(e.target.value); const q=e.target.value.toLowerCase(); const results=(frontOfficeStore.guests||[]).filter((g:any)=> (g.name||'').toLowerCase().includes(q) || (g.phone||'').includes(q) || (g.email||'').toLowerCase().includes(q)); setGuestResults(results.slice(0,10)); }} />
+                  <div className="min-h-16 p-4 rounded-lg border border-dashed border-purple-300 text-center text-sm text-purple-700 bg-white">
+                    {quickSelectedGuest ? (
+                      <div className="flex items-center justify-center gap-2">
+                        <Chip color="primary" variant="flat">{quickSelectedGuest.name} • {quickSelectedGuest.phone}</Chip>
+                        <Button size="sm" variant="light" onClick={()=>setQuickSelectedGuest(null)}>Remove</Button>
           </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="text-2xl">👥</div>
+                        <div>No guests added yet</div>
+                        <div className="text-xs">Search for guests above and click "Add" to include them</div>
               </div>
                 )}
-
-                <div>
-                  <h4 className="text-lg font-semibold mb-3">Today's Pending Check-ins</h4>
-                  <Table aria-label="Pending check-ins table">
-                    <TableHeader>
-                      <TableColumn>ID</TableColumn>
-                      <TableColumn>Guest Name</TableColumn>
-                          <TableColumn>Phone</TableColumn>
-                          <TableColumn>Email</TableColumn>
-                      <TableColumn>Room</TableColumn>
-                          <TableColumn>Room Type</TableColumn>
-                      <TableColumn>Rate</TableColumn>
-                      <TableColumn>Arrival</TableColumn>
-                      <TableColumn>Departure</TableColumn>
-                          <TableColumn>Adults</TableColumn>
-                          <TableColumn>Children</TableColumn>
-                      <TableColumn>Payment</TableColumn>
-                      <TableColumn>Status</TableColumn>
-                      <TableColumn>Staff</TableColumn>
-                      <TableColumn>Last Updated</TableColumn>
-                      <TableColumn>Actions</TableColumn>
-                    </TableHeader>
-                    <TableBody>
-                          {[...filteredCheckIns]
-                            .sort((a, b) => { const ad = new Date(a.processedAt || a.updatedAt || a.createdAt).getTime(); const bd = new Date(b.processedAt || b.updatedAt || b.createdAt).getTime(); return bd - ad; })
-                            .slice((page - 1) * rowsPerPage, page * rowsPerPage)
-                            .map((checkIn) => (
-                              <TableRow key={checkIn.id} {...getAnalyticsData(checkIn)}>
-                                <TableCell><p className="font-medium text-purple-600">{checkIn.id}</p></TableCell>
-                                <TableCell><p className="font-medium">{checkIn.guestName}</p></TableCell>
-                                <TableCell><p className="font-medium">{checkIn.phone}</p></TableCell>
-                                <TableCell><p className="text-sm text-gray-600">{checkIn.email}</p></TableCell>
-                                <TableCell><p className="font-medium">{checkIn.roomNumber}</p></TableCell>
-                                <TableCell><p className="text-sm text-gray-600">{checkIn.roomType}</p></TableCell>
-                                <TableCell><p className="font-medium text-green-600">₵{checkIn.roomRate}</p></TableCell>
-                                <TableCell><p className="font-medium">{formatDate(checkIn.arrivalDate)}</p></TableCell>
-                                <TableCell><p className="font-medium">{formatDate(checkIn.departureDate)}</p></TableCell>
-                                <TableCell><p className="text-sm">{checkIn.adults}</p></TableCell>
-                                <TableCell><p className="text-sm">{checkIn.children}</p></TableCell>
-                                <TableCell><p className="font-medium">{checkIn.paymentMethod || 'Not specified'}</p></TableCell>
-                                <TableCell><Badge color="warning" variant="flat">Pending</Badge></TableCell>
-                                <TableCell><p className="text-sm text-blue-600">{checkIn.staffUsername}</p></TableCell>
-                                <TableCell><div><p className="text-sm">{formatDate(checkIn.updatedAt)}</p><p className="text-xs text-gray-500">{formatTime(checkIn.updatedAt)}</p></div></TableCell>
-                              <TableCell>
-                                <div className="flex space-x-2">
-                                    <Button size="sm" color="primary" onClick={() => { setSelectedCheckIn(checkIn); onOpen(); }}>Process</Button>
-                                    <Button size="sm" color="secondary" variant="flat" onClick={() => { setSelectedCheckIn(checkIn); onOpen(); }}>🏠 Assign</Button>
-                                    <Button size="sm" color="default" variant="flat" onClick={() => { setSelectedCheckIn(checkIn); setIsEditing(true); onOpen(); }}>✏️ Edit</Button>
                                 </div>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                        </TableBody>
-                  </Table>
-                  <div className="flex justify-end mt-3">
-                        <Pagination page={page} total={Math.max(1, Math.ceil(filteredCheckIns.length / rowsPerPage))} onChange={setPage} showControls size="sm" />
-                  </div>
-                </div>
-                  </div>
-                ) : (
-                  <div>
-                    <ReservationsBookingsManager mode="checkin" embed autoOpenNew />
+                  {guestSearchTerm && guestResults.length > 0 && (
+                    <div className="space-y-2">
+                      {guestResults.map((g:any)=> (
+                        <Card key={g.id} className="border border-gray-200"><CardBody className="p-3"><div className="flex items-center justify-between"><div><p className="font-medium">{g.name}</p><p className="text-xs text-gray-600">{g.phone} • {g.email}</p></div><Button size="sm" onClick={()=>setQuickSelectedGuest(g)}>Add</Button></div></CardBody></Card>
+                      ))}
                     </div>
                 )}
               </CardBody>
             </Card>
-          </Tab>
+          </div>
 
-          
-          {/* removed: dedicated New Check-In tab; moved inside Check-In Guest */}
-
-          <Tab key="inhouse" title="🏠 In-House Management">
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="pb-3">
-                <h3 className="text-xl font-semibold text-ghana-black">Manage Current Guests</h3>
-                <p className="text-gray-600">View and manage guests who are currently checked in</p>
-              </CardHeader>
+                        <div>
+              <h4 className="font-semibold mb-2">Walk-In Guest</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Input label="Guest Name" placeholder="e.g., Ama Kofi" value={walkInForm.guestName} onChange={(e)=>setWalkInForm({ ...walkInForm, guestName: e.target.value })} />
+                <Input label="Phone" placeholder="e.g., +233..." value={walkInForm.phone} onChange={(e)=>setWalkInForm({ ...walkInForm, phone: e.target.value })} />
+                <Input label="Email" placeholder="guest@example.com" value={walkInForm.email} onChange={(e)=>setWalkInForm({ ...walkInForm, email: e.target.value })} />
+                <Select label="Room Type" selectedKeys={walkInForm.roomTypeId ? [walkInForm.roomTypeId] : []} onSelectionChange={(keys)=>{ const id = Array.from(keys)[0] as string; setWalkInForm({ ...walkInForm, roomTypeId: id }); }}>
+                  {(frontOfficeStore.roomTypes || []).map((rt: any) => (<SelectItem key={rt.id}>{rt.name}</SelectItem>))}
+                </Select>
+                <Input type="date" label="Arrival" value={walkInForm.arrivalDate} onChange={(e)=>setWalkInForm({ ...walkInForm, arrivalDate: e.target.value })} />
+                <Input type="date" label="Departure" value={walkInForm.departureDate} onChange={(e)=>setWalkInForm({ ...walkInForm, departureDate: e.target.value })} />
+                <Input type="number" min={1} label="Adults" value={String(walkInForm.adults)} onChange={(e)=>setWalkInForm({ ...walkInForm, adults: Number(e.target.value || 1) })} />
+                <Input type="number" min={0} label="Children" value={String(walkInForm.children)} onChange={(e)=>setWalkInForm({ ...walkInForm, children: Number(e.target.value || 0) })} />
+                <Select label="Payment Method" selectedKeys={[walkInForm.paymentMethod]} onSelectionChange={(keys)=>{ const pm = Array.from(keys)[0] as string; setWalkInForm({ ...walkInForm, paymentMethod: pm }); }}>
+                  <SelectItem key="Cash">Cash</SelectItem>
+                  <SelectItem key="Card">Card</SelectItem>
+                  <SelectItem key="Transfer">Transfer</SelectItem>
+                </Select>
+                <div className="md:col-span-2">
+                  <Button color="primary" onClick={submitWalkIn} isDisabled={!walkInForm.guestName || !walkInForm.roomTypeId}>Create & Check In</Button>
+                        </div>
+                      </div>
+                        </div>
+                  </div>
+          {/* Purpose of Stay / Billing / Source sections */}
+          <div className="grid grid-cols-1 gap-4 mt-6">
+            <Card className="bg-blue-50 border border-blue-200">
+              <CardHeader className="pb-2"><span className="font-semibold">Purpose of Stay</span></CardHeader>
               <CardBody>
-                {/* In-House Stats */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                  <Card className="border-0 shadow-md">
-                    <CardBody className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Total Guests</p>
-                          <p className="text-2xl font-bold text-ghana-black">{checkIns.filter(ci => ci.status === 'checked-in').length}</p>
-                        </div>
-                        <div className="text-2xl">👥</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Select label="Reason for Stay" selectedKeys={stayReason ? [stayReason] : []} onSelectionChange={(keys)=>setStayReason(Array.from(keys)[0] as string)}>
+                    <SelectItem key="business">Business</SelectItem>
+                    <SelectItem key="leisure">Leisure</SelectItem>
+                    <SelectItem key="conference">Conference</SelectItem>
+                    <SelectItem key="medical">Medical</SelectItem>
+                    <SelectItem key="other">Other</SelectItem>
+                  </Select>
+                  <Textarea label="Additional Details" placeholder="More details about the purpose" value={stayReasonDetails} onChange={(e)=>setStayReasonDetails(e.target.value)} />
                       </div>
                     </CardBody>
                   </Card>
-                  <Card className="border-0 shadow-md">
-                    <CardBody className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                          <p className="text-2xl font-bold text-ghana-black">₵{checkIns.filter(ci => ci.status === 'checked-in').reduce((sum, ci) => sum + ci.roomRate, 0).toLocaleString()}</p>
-                        </div>
-                        <div className="text-2xl">💰</div>
+
+            <Card className="bg-green-50 border border-green-200">
+              <CardHeader className="pb-2"><span className="font-semibold">Billing Information</span></CardHeader>
+              <CardBody>
+                <div className="flex items-center gap-4 text-sm">
+                  <Button size="sm" variant={payerType==='guest'?'solid':'flat'} color={payerType==='guest'?'success':'default'} onClick={()=>setPayerType('guest')}>Guest Pays</Button>
+                  <Button size="sm" variant={payerType==='thirdparty'?'solid':'flat'} color={payerType==='thirdparty'?'success':'default'} onClick={()=>setPayerType('thirdparty')}>Third Party Pays</Button>
+                  <span className="text-gray-600">{payerType==='guest' ? 'Guest will be responsible for their own payment.' : 'A third party will handle payment.'}</span>
                       </div>
                     </CardBody>
                   </Card>
-                  <Card className="border-0 shadow-md">
-                    <CardBody className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Avg Revenue/Guest</p>
-                          <p className="text-2xl font-bold text-ghana-black">₵{checkIns.filter(ci => ci.status === 'checked-in').length > 0 ? Math.round(checkIns.filter(ci => ci.status === 'checked-in').reduce((sum, ci) => sum + ci.roomRate, 0) / checkIns.filter(ci => ci.status === 'checked-in').length) : 0}</p>
-                        </div>
-                        <div className="text-2xl">📊</div>
-                      </div>
-                    </CardBody>
-                  </Card>
-                  <Card className="border-0 shadow-md">
-                    <CardBody className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium text-gray-600">Pending Check-ins</p>
-                          <p className="text-2xl font-bold text-ghana-black">{checkIns.filter(ci => ci.status === 'pending').length}</p>
-                        </div>
-                        <div className="text-2xl">⏳</div>
-                      </div>
+
+            <Card className="bg-yellow-50 border border-yellow-200">
+              <CardHeader className="pb-2"><span className="font-semibold">Source</span></CardHeader>
+              <CardBody>
+                <Select placeholder="Select booking source" selectedKeys={[source]} onSelectionChange={(keys)=>setSource(Array.from(keys)[0] as string)} className="max-w-md">
+                  <SelectItem key="Direct">Direct</SelectItem>
+                  <SelectItem key="Walk-in">Walk-in</SelectItem>
+                  <SelectItem key="OTA">OTA</SelectItem>
+                  <SelectItem key="Corporate">Corporate</SelectItem>
+                  <SelectItem key="Referral">Referral</SelectItem>
+                </Select>
                     </CardBody>
                   </Card>
                 </div>
+                      </div>
+        )}
 
-                {/* In-House Guests Table */}
-                <div>
-                  <h4 className="text-lg font-semibold mb-3">Currently Checked-In Guests</h4>
-                  <Table aria-label="In-house guests table">
+        {activeTab === 'overview' && (
+          <div className="space-y-4">
+            <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
+              <strong>Column Guide:</strong> 
+              <span className="ml-2">RATE/NIGHT = Per night room rate</span>
+              <span className="ml-4">ROOM TOTAL = Rate × (Nights + 1)</span>
+              <span className="ml-4">SERVICE CHARGES = Swimming pool, laundry, etc.</span>
+              <span className="ml-4">AMOUNT = Total charges (room + services + other + taxes)</span>
+              <span className="ml-4">PAYMENTS = Total payments received</span>
+              <span className="ml-4">BALANCE = Amount - Payments</span>
+            </div>
+            <Table aria-label="In-house guests table" className="min-w-full">
                     <TableHeader>
-                      <TableColumn>ID</TableColumn>
-                      <TableColumn>Guest Name</TableColumn>
-                      <TableColumn>Room</TableColumn>
-                      <TableColumn>Room Type</TableColumn>
-                      <TableColumn>Check-in Date</TableColumn>
-                      <TableColumn>Departure Date</TableColumn>
-                      <TableColumn>Rate</TableColumn>
-                      <TableColumn>Status</TableColumn>
-                      <TableColumn>Actions</TableColumn>
+              <TableColumn className="w-40">GUEST</TableColumn>
+              <TableColumn className="w-20">ROOM</TableColumn>
+              <TableColumn className="w-28">ROOM TYPE</TableColumn>
+              <TableColumn className="w-20">ADULTS</TableColumn>
+              <TableColumn className="w-20">CHILDREN</TableColumn>
+              <TableColumn className="w-28">ARRIVAL</TableColumn>
+              <TableColumn className="w-28">DEPARTURE</TableColumn>
+              <TableColumn className="w-20">NIGHTS</TableColumn>
+              <TableColumn className="w-24">RATE/NIGHT</TableColumn>
+              <TableColumn className="w-28">ROOM TOTAL</TableColumn>
+              <TableColumn className="w-28">SERVICE CHARGES</TableColumn>
+              <TableColumn className="w-28">AMOUNT</TableColumn>
+              <TableColumn className="w-28">PAYMENTS</TableColumn>
+              <TableColumn className="w-28">BALANCE</TableColumn>
+              <TableColumn className="w-24">STATUS</TableColumn>
+              <TableColumn className="w-36">ACTIONS</TableColumn>
                     </TableHeader>
                     <TableBody>
-                      {[...checkIns]
-                        .filter(checkIn => checkIn.status === 'checked-in')
-                        .sort((a, b) => {
-                          const ad = new Date(a.checkInDateTime || a.updatedAt || a.createdAt).getTime();
-                          const bd = new Date(b.checkInDateTime || b.updatedAt || b.createdAt).getTime();
-                          return bd - ad;
-                        })
-                        .slice((inhousePage - 1) * rowsPerPage, inhousePage * rowsPerPage)
-                        .map((checkIn) => (
-                          <TableRow key={checkIn.id}>
+              {filteredGuests
+                .sort((a, b) => new Date(b.checkInDate).getTime() - new Date(a.checkInDate).getTime())
+                .slice((page - 1) * rowsPerPage, page * rowsPerPage)
+                .map((guest) => (
+                <TableRow key={guest.id} className="hover:bg-gray-50">
                             <TableCell>
-                              <p className="text-xs text-gray-600">{checkIn.id}</p>
-                            </TableCell>
-                            <TableCell>
-                              <p className="font-medium">{checkIn.guestName}</p>
-                            </TableCell>
-                            <TableCell>
-                                <p className="font-medium">{checkIn.roomNumber}</p>
-                            </TableCell>
-                            <TableCell>
-                                <p className="text-sm text-gray-600">{checkIn.roomType}</p>
-                            </TableCell>
-                            <TableCell>
-                              <div>
-                                <p className="font-medium">{formatDate(checkIn.arrivalDate)}</p>
-                                {checkIn.checkInDateTime && (
-                                  <p className="text-sm text-gray-600">{formatTime(checkIn.checkInDateTime)}</p>
-                                )}
+                    <div className="flex items-center space-x-3">
+                      <Avatar name={guest.guestName} size="sm" className="bg-ghana-gold text-white font-semibold" showFallback />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-gray-900 truncate">{guest.guestName}</p>
+                        <p className="text-xs text-gray-600">{guest.phone}</p>
+                        {guest.email && (<p className="text-xs text-blue-600 truncate">{guest.email}</p>)}
+                      </div>
                               </div>
                             </TableCell>
-                            <TableCell>
-                              <p className="font-medium">{formatDate(checkIn.departureDate)}</p>
+                  <TableCell className="font-semibold text-center">{guest.roomNumber}</TableCell>
+                  <TableCell className="text-center">{guest.roomType}</TableCell>
+                  <TableCell className="text-center">{guest.adults}</TableCell>
+                  <TableCell className="text-center">{guest.children}</TableCell>
+                  <TableCell className="text-center">{formatDate(guest.checkInDate)}<br/><span className="text-xs text-gray-500">{formatTime(guest.checkInDateTime)}</span></TableCell>
+                  <TableCell className="text-center">{formatDate(guest.checkOutDate)}</TableCell>
+                  <TableCell className="text-center">{guest.nightsStayed}</TableCell>
+                  <TableCell className="text-center font-semibold">₵{guest.roomRate.toLocaleString()}</TableCell>
+                  <TableCell className="text-center font-semibold text-purple-600">₵{(guest.roomRate * (guest.nightsStayed + 1)).toLocaleString()}</TableCell>
+                  <TableCell className="text-center font-semibold text-orange-600">₵{(guest.serviceCharges || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-center font-semibold text-blue-600">₵{(guest.totalCharges || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-center text-green-600 font-semibold">₵{(guest.totalPayments || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-center">
+                    <span className={`font-semibold ${(guest.balance || 0) > 0 ? 'text-red-600' : (guest.balance || 0) < 0 ? 'text-green-600' : 'text-gray-500'}`}>
+                      ₵{(guest.balance || 0).toLocaleString()}
+                    </span>
                             </TableCell>
+                  <TableCell className="text-center"><Badge color="success" variant="flat">Checked In</Badge></TableCell>
                             <TableCell>
-                              <p className="font-medium text-green-600">₵{checkIn.roomRate}</p>
-                            </TableCell>
-                            <TableCell>
-                              <Badge color="success" variant="flat">Checked In</Badge>
-                            </TableCell>
-                            <TableCell>
-                              <Dropdown>
-                                <DropdownTrigger>
-                                  <Button size="sm" variant="flat">
-                                    Manage
+                    <div className="flex gap-1 justify-center">
+                      <Button 
+                        size="sm" 
+                        color="primary" 
+                        variant="solid"
+                        className="bg-blue-600 text-white font-semibold px-3 py-1"
+                        onClick={() => handleViewFolio(guest)}
+                      >
+                        📊 Folio
                                   </Button>
-                                </DropdownTrigger>
-                                <DropdownMenu aria-label="Guest management actions">
-                                  <DropdownItem key="view-details" onClick={() => {
-                                    setSelectedCheckIn(checkIn);
-                                    onOpen();
-                                  }}>
-                                    View Details
-                                  </DropdownItem>
-                                  <DropdownItem key="extend-1" onClick={() => handleExtendStay(checkIn, 1)}>
-                                    Extend 1 Night
-                                  </DropdownItem>
-                                  <DropdownItem key="extend-2" onClick={() => handleExtendStay(checkIn, 2)}>
-                                    Extend 2 Nights
-                                  </DropdownItem>
-                                  <DropdownItem key="early-checkout" onClick={() => handleEarlyCheckout(checkIn)}>
-                                    Early Checkout
-                                  </DropdownItem>
-                                </DropdownMenu>
-                              </Dropdown>
+                      <Button 
+                        size="sm" 
+                        color="success" 
+                        variant="solid"
+                        className="bg-green-600 text-white font-semibold px-3 py-1"
+                        onClick={() => handleExtendStay(guest, 1)}
+                      >
+                        +1 Night
+                      </Button>
+                      <Button 
+                        size="sm" 
+                        color="danger" 
+                        variant="solid"
+                        className="bg-red-600 text-white font-semibold px-3 py-1"
+                        onClick={() => handleEarlyCheckout(guest)}
+                      >
+                        Check Out
+                      </Button>
+                    </div>
                             </TableCell>
                           </TableRow>
                         ))}
                     </TableBody>
                   </Table>
-                  <div className="flex justify-end mt-3">
-                    <Pagination 
-                      page={inhousePage}
-                      total={Math.max(1, Math.ceil(checkIns.filter(ci => ci.status === 'checked-in').length / rowsPerPage))}
-                      onChange={setInhousePage}
-                      showControls
-                      size="sm"
-                    />
                   </div>
-                </div>
-              </CardBody>
-            </Card>
-          </Tab>
+        )}
 
-          <Tab key="roomtransfer" title="🔄 Room Transfer">
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="pb-3">
-                <h3 className="text-xl font-semibold text-ghana-black">Room Transfer Management</h3>
-                <p className="text-gray-600">Transfer guests between rooms during their stay</p>
-              </CardHeader>
-              <CardBody>
+
+        {activeTab === 'analytics' && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-2">
+            <Card><CardHeader><h3 className="text-lg font-semibold">Room Rate Distribution</h3></CardHeader><CardBody>{guests.map(g => (<div key={g.id} className="flex justify-between text-sm mb-2"><span>{g.guestName}</span><span className="font-medium">₵{(g.roomRate || 0).toLocaleString()}</span></div>))}</CardBody></Card>
+            <Card><CardHeader><h3 className="text-lg font-semibold">Stay Duration</h3></CardHeader><CardBody>{guests.map(g => (<div key={g.id} className="flex justify-between text-sm mb-2"><span>{g.guestName}</span><span className="font-medium">{g.nightsStayed + 1} nights</span></div>))}</CardBody></Card>
+                </div>
+        )}
+      </CardBody></Card>
+
+      <Modal isOpen={isOpen} onClose={onClose} size="2xl"><ModalContent><ModalHeader>Manage Guest - {selectedGuest?.guestName}</ModalHeader><ModalBody>{selectedGuest && (<div className="grid grid-cols-2 gap-4"><div><p className="text-sm text-gray-600">Room</p><p className="text-lg font-semibold">{selectedGuest.roomNumber}</p></div><div><p className="text-sm text-gray-600">Check-in</p><p className="text-lg">{formatDate(selectedGuest.checkInDate)}</p></div><div><p className="text-sm text-gray-600">Check-out</p><p className="text-lg">{formatDate(selectedGuest.checkOutDate)}</p></div><div><p className="text-sm text-gray-600">Status</p><p className="text-lg font-semibold text-green-600">{selectedGuest.status}</p></div></div>)}</ModalBody><ModalFooter><Button variant="flat" onPress={onClose}>Close</Button><Button color="primary" onPress={() => selectedGuest && handleExtendStay(selectedGuest, 1)}>Extend Stay</Button><Button color="danger" variant="flat" onPress={() => selectedGuest && handleEarlyCheckout(selectedGuest)} isLoading={isProcessing}>Early Checkout</Button></ModalFooter></ModalContent></Modal>
+
+      {/* Folio Modal */}
+      <Modal isOpen={isFolioModalOpen} onClose={() => setIsFolioModalOpen(false)} size="5xl">
+        <ModalContent>
+          <ModalHeader className="bg-gradient-to-r from-blue-600 to-purple-600 text-white">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                <span className="text-xl">📊</span>
+                          </div>
+                          <div>
+                <h2 className="text-xl font-bold">Guest Folio</h2>
+                <p className="text-blue-100 text-sm">{selectedFolioGuest?.guestName} • Room {selectedFolioGuest?.roomNumber}</p>
+                          </div>
+                        </div>
+          </ModalHeader>
+          <ModalBody className="p-6">
+            {selectedFolioGuest && (() => {
+              const folio = frontOfficeStore.getOrCreateFolio(selectedFolioGuest.id);
+              const roomTotal = (selectedFolioGuest.roomRate || 0) * ((selectedFolioGuest.nightsStayed || 0) + 1);
+              const serviceCharges = folio.charges?.filter(charge => {
+                const desc = charge.description?.toLowerCase() || '';
+                const serviceKeywords = ['service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar', 'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'drink', 'food', 'meal'];
+                return serviceKeywords.some(keyword => desc.includes(keyword));
+              }).reduce((sum, charge) => sum + (charge.amount || 0), 0) || 0;
+              const otherCharges = folio.charges?.filter(charge => {
+                const desc = charge.description?.toLowerCase() || '';
+                const serviceKeywords = ['service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar', 'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'drink', 'food', 'meal'];
+                return !serviceKeywords.some(keyword => desc.includes(keyword));
+              }).reduce((sum, charge) => sum + (charge.amount || 0), 0) || 0;
+              
+              // Calculate total taxes from all charges
+              const taxTotal = folio.charges?.reduce((sum, charge) => sum + (charge.tax || 0), 0) || 0;
+              
+              return (
                 <div className="space-y-6">
-                  {/* Room Transfer Statistics */}
+                  {/* Financial Summary Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <Card className="bg-blue-50 border-blue-200">
-                      <CardBody className="p-4">
-                        <div className="flex items-center space-x-3">
-                          <div className="p-2 bg-blue-100 rounded-lg">
-                            <span className="text-2xl">🔄</span>
+                    <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
+                      <CardBody className="text-center p-4">
+                        <div className="text-3xl font-bold text-blue-600">₵{roomTotal.toLocaleString()}</div>
+                        <div className="text-sm text-blue-700 font-medium">Room Charges</div>
+                        <div className="text-xs text-blue-600 mt-1">{(selectedFolioGuest.nightsStayed || 0) + 1} nights × ₵{(selectedFolioGuest.roomRate || 0).toLocaleString()}</div>
+                      </CardBody>
+                    </Card>
+                    <Card className="bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200">
+                      <CardBody className="text-center p-4">
+                        <div className="text-3xl font-bold text-orange-600">₵{serviceCharges.toLocaleString()}</div>
+                        <div className="text-sm text-orange-700 font-medium">Service Charges</div>
+                        <div className="text-xs text-orange-600 mt-1">Pool, laundry, dining, etc.</div>
+                      </CardBody>
+                    </Card>
+                    <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
+                      <CardBody className="text-center p-4">
+                        <div className="text-3xl font-bold text-green-600">₵{(selectedFolioGuest.totalPayments || 0).toLocaleString()}</div>
+                        <div className="text-sm text-green-700 font-medium">Payments Received</div>
+                        <div className="text-xs text-green-600 mt-1">{folio.payments?.length || 0} transactions</div>
+                      </CardBody>
+                    </Card>
+                    <Card className={`${(selectedFolioGuest.balance || 0) > 0 ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' : 'bg-gradient-to-br from-gray-50 to-gray-100 border-gray-200'}`}>
+                      <CardBody className="text-center p-4">
+                        <div className={`text-3xl font-bold ${(selectedFolioGuest.balance || 0) > 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                          ₵{(selectedFolioGuest.balance || 0).toLocaleString()}
                           </div>
-                          <div>
-                            <p className="text-sm text-blue-600 font-medium">Transfer Requests</p>
-                            <p className="text-2xl font-bold text-blue-800">0</p>
+                        <div className={`text-sm font-medium ${(selectedFolioGuest.balance || 0) > 0 ? 'text-red-700' : 'text-gray-700'}`}>
+                          {(selectedFolioGuest.balance || 0) > 0 ? 'Outstanding' : 'Balance'}
+                          </div>
+                        <div className={`text-xs mt-1 ${(selectedFolioGuest.balance || 0) > 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                          {(selectedFolioGuest.balance || 0) > 0 ? 'Amount owed' : 'Fully paid'}
+                        </div>
+                      </CardBody>
+                    </Card>
+                  </div>
+
+                  {/* Detailed Breakdown */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Charges Breakdown */}
+                    <Card className="border-0 shadow-lg">
+                      <CardHeader className="bg-gray-50">
+                        <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                          <span className="text-blue-600">💰</span>
+                          Charges Breakdown
+                        </h3>
+                    </CardHeader>
+                      <CardBody className="p-0">
+                        <div className="space-y-3 p-4">
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-gray-600">Room Charges</span>
+                            <span className="font-semibold text-blue-600">₵{roomTotal.toLocaleString()}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-gray-600">Service Charges</span>
+                            <span className="font-semibold text-orange-600">₵{serviceCharges.toLocaleString()}</span>
+                        </div>
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-gray-600">Other Charges</span>
+                            <span className="font-semibold text-purple-600">₵{otherCharges.toLocaleString()}</span>
+                        </div>
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-gray-600">Taxes (VAT + NHIL + Tourism)</span>
+                            <span className="font-semibold text-red-600">₵{taxTotal.toLocaleString()}</span>
+                        </div>
+                          <div className="flex justify-between items-center py-3 bg-gray-50 rounded-lg px-3">
+                            <span className="font-bold text-gray-800">Total Charges (Incl. Tax)</span>
+                            <span className="font-bold text-lg text-gray-800">₵{(selectedFolioGuest.totalCharges || 0).toLocaleString()}</span>
                           </div>
                         </div>
                       </CardBody>
                     </Card>
                     
-                    <Card className="bg-green-50 border-green-200">
-                      <CardBody className="p-4">
-                        <div className="flex items-center space-x-3">
-                          <div className="p-2 bg-green-100 rounded-lg">
-                            <span className="text-2xl">✅</span>
+                    {/* Payment Summary */}
+                    <Card className="border-0 shadow-lg">
+                      <CardHeader className="bg-gray-50">
+                        <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                          <span className="text-green-600">💳</span>
+                          Payment Summary
+                        </h3>
+                    </CardHeader>
+                      <CardBody className="p-0">
+                        <div className="space-y-3 p-4">
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-gray-600">Total Payments</span>
+                            <span className="font-semibold text-green-600">₵{(selectedFolioGuest.totalPayments || 0).toLocaleString()}</span>
                           </div>
-                          <div>
-                            <p className="text-sm text-green-600 font-medium">Completed Today</p>
-                            <p className="text-2xl font-bold text-green-800">0</p>
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-gray-600">Payment Methods</span>
+                            <span className="text-sm text-gray-500">
+                              {folio.payments?.map(p => p.method).join(', ') || 'None'}
+                            </span>
                           </div>
-                        </div>
-                      </CardBody>
-                    </Card>
-                    
-                    <Card className="bg-yellow-50 border-yellow-200">
-                      <CardBody className="p-4">
-                        <div className="flex items-center space-x-3">
-                          <div className="p-2 bg-yellow-100 rounded-lg">
-                            <span className="text-2xl">⏳</span>
-                          </div>
-                          <div>
-                            <p className="text-sm text-yellow-600 font-medium">Pending</p>
-                            <p className="text-2xl font-bold text-yellow-800">0</p>
-                          </div>
-                        </div>
-                      </CardBody>
-                    </Card>
-                    
-                    <Card className="bg-purple-50 border-purple-200">
-                      <CardBody className="p-4">
-                        <div className="flex items-center space-x-3">
-                          <div className="p-2 bg-purple-100 rounded-lg">
-                            <span className="text-2xl">🏠</span>
-                          </div>
-                          <div>
-                            <p className="text-sm text-purple-600 font-medium">Available Rooms</p>
-                            <p className="text-2xl font-bold text-purple-800">{availableRooms.length}</p>
+                          <div className="flex justify-between items-center py-3 bg-gray-50 rounded-lg px-3">
+                            <span className="font-bold text-gray-800">Current Balance</span>
+                            <span className={`font-bold text-lg ${(selectedFolioGuest.balance || 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              ₵{(selectedFolioGuest.balance || 0).toLocaleString()}
+                            </span>
                           </div>
                         </div>
                       </CardBody>
                     </Card>
                   </div>
 
-                  {/* Room Transfer Form */}
-                  <Card className="bg-gray-50">
-                    <CardHeader>
-                      <h4 className="text-lg font-semibold">Initiate Room Transfer</h4>
+                  {/* Recent Transactions */}
+                  <Card className="border-0 shadow-lg">
+                    <CardHeader className="bg-gray-50">
+                      <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                        <span className="text-purple-600">📋</span>
+                        Recent Transactions
+                      </h3>
                     </CardHeader>
-                    <CardBody>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        {/* Guest Selection */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Select Guest</label>
-                          <Select
-                            placeholder="Choose a guest to transfer"
-                            className="w-full"
-                            selectedKeys={selectedGuestForTransfer ? [selectedGuestForTransfer] : []}
-                            onSelectionChange={(keys) => {
-                              const selectedKey = Array.from(keys)[0] as string;
-                              setSelectedGuestForTransfer(selectedKey);
-                            }}
-                          >
-                            {checkIns
-                              .filter(checkIn => checkIn.status === 'checked-in')
-                              .map((checkIn) => (
-                                <SelectItem key={checkIn.id}>
-                                  {checkIn.guestName} - Room {checkIn.roomNumber}
-                                </SelectItem>
-                              ))}
-                          </Select>
+                    <CardBody className="p-0">
+                      <div className="max-h-64 overflow-y-auto">
+                        {folio.charges && folio.charges.length > 0 ? (
+                          <div className="space-y-2 p-4">
+                            {folio.charges.slice(0, 10).map((charge, index) => (
+                              <div key={index} className="flex justify-between items-center py-2 px-3 bg-gray-50 rounded-lg">
+                                <div className="flex items-center gap-3">
+                                  <div className="w-8 h-8 bg-blue-100 rounded-full flex items-center justify-center">
+                                    <span className="text-blue-600 text-sm">💰</span>
                         </div>
-
-                        {/* Current Room Display */}
                         <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Current Room</label>
-                          <Input
-                            placeholder="Current room will appear here"
-                            readOnly
-                            className="bg-gray-100"
-                            value={selectedGuestForTransfer ? 
-                              checkIns.find(c => c.id === selectedGuestForTransfer)?.roomNumber || '' 
-                              : ''}
-                          />
+                                    <div className="font-medium text-gray-800">{charge.description}</div>
+                                    <div className="text-xs text-gray-500">{new Date(charge.date).toLocaleDateString()}</div>
                         </div>
-
-                        {/* New Room Selection */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Transfer To Room</label>
-                          <Select
-                            placeholder="Select new room"
-                            className="w-full"
-                            selectedKeys={selectedNewRoom ? [selectedNewRoom] : []}
-                            onSelectionChange={(keys) => {
-                              const selectedKey = Array.from(keys)[0] as string;
-                              setSelectedNewRoom(selectedKey);
-                            }}
-                          >
-                            {availableRooms.map((room) => (
-                              <SelectItem key={room.id}>
-                                {room.roomNumber} - {room.roomType} (₵{room.rate}/night)
-                              </SelectItem>
+                  </div>
+                                <div className="text-right">
+                                  <div className="font-semibold text-gray-800">₵{charge.amount.toLocaleString()}</div>
+                                  {charge.tax && (
+                                    <div className="text-xs text-gray-500">+₵{charge.tax.toLocaleString()} tax</div>
+                                  )}
+                    </div>
+                    </div>
                             ))}
-                          </Select>
                         </div>
-
-                        {/* Transfer Reason */}
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Transfer Reason</label>
-                          <Select
-                            placeholder="Select reason"
-                            className="w-full"
-                            selectedKeys={transferReason ? [transferReason] : []}
-                            onSelectionChange={(keys) => {
-                              const selectedKey = Array.from(keys)[0] as string;
-                              setTransferReason(selectedKey);
-                            }}
-                          >
-                            <SelectItem key="maintenance">Maintenance Required</SelectItem>
-                            <SelectItem key="upgrade">Room Upgrade</SelectItem>
-                            <SelectItem key="downgrade">Room Downgrade</SelectItem>
-                            <SelectItem key="guest-request">Guest Request</SelectItem>
-                            <SelectItem key="overbooking">Overbooking Resolution</SelectItem>
-                            <SelectItem key="other">Other</SelectItem>
-                          </Select>
+                        ) : (
+                          <div className="text-center py-8 text-gray-500">
+                            <div className="text-4xl mb-2">📝</div>
+                            <div>No charges recorded yet</div>
                         </div>
-                      </div>
-
-                      {/* Transfer Notes */}
-                      <div className="mt-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Transfer Notes</label>
-                        <textarea
-                          className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                          rows={3}
-                          placeholder="Add any additional notes about the transfer..."
-                          value={transferNotes}
-                          onChange={(e) => setTransferNotes(e.target.value)}
-                        />
-                      </div>
-
-                      {/* Transfer Actions */}
-                      <div className="flex space-x-3 mt-6">
-                        <Button
-                          color="primary"
-                          className="flex-1"
-                          onClick={handleRoomTransfer}
-                          isDisabled={!selectedGuestForTransfer || !selectedNewRoom || !transferReason}
-                        >
-                          🔄 Initiate Transfer
-                        </Button>
-                        <Button
-                          color="secondary"
-                          variant="flat"
-                          onClick={handleTransferPreview}
-                          isDisabled={!selectedGuestForTransfer || !selectedNewRoom}
-                        >
-                          👁️ Preview Transfer
-                        </Button>
+                  )}
                       </div>
                     </CardBody>
                   </Card>
-
-                  {/* Recent Transfers */}
-                  <Card>
-                    <CardHeader>
-                      <h4 className="text-lg font-semibold">Recent Room Transfers</h4>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="text-center py-8 text-gray-500">
-                        <span className="text-4xl mb-4 block">🔄</span>
-                        <p className="text-lg font-medium">No recent transfers</p>
-                        <p className="text-sm">Room transfer history will appear here</p>
                       </div>
-                    </CardBody>
-                  </Card>
-                </div>
-              </CardBody>
-            </Card>
-          </Tab>
-          
-          <Tab key="checkouts" title="🚪 Check-outs">
-            {/* Embed existing Check-outs page inside tab for consolidated workflow */}
-            <div className="pt-2">
-              <CheckOutsPage />
-            </div>
-          </Tab>
-          
-          <Tab key="billing" title="💳 Invoices & Payments">
-            {/* Embed existing Invoices & Payments page inside tab for consolidated workflow */}
-            <div className="pt-2">
-              <InvoicesPaymentsPage />
-            </div>
-          </Tab>
-        </Tabs>
+              );
+            })()}
+            </ModalBody>
+          <ModalFooter className="bg-gray-50">
+            <div className="flex justify-between items-center w-full">
+              <div className="text-sm text-gray-600">
+                Last updated: {new Date().toLocaleString()}
+              </div>
+              <div className="flex gap-2">
+                        <Button
+                  variant="light" 
+                  onPress={() => setIsFolioModalOpen(false)}
+                  className="px-6"
+                >
+                  Close
+                        </Button>
+                        <Button
+                  color="primary" 
+                  className="bg-blue-600 text-white px-6"
+                  onPress={() => handlePaymentClick(selectedFolioGuest!, 'payment')}
+                >
+                  💳 Process Payment
+                        </Button>
+                      </div>
+                      </div>
+            </ModalFooter>
+        </ModalContent>
+      </Modal>
 
-        {/* Enhanced Check-in Processing Modal */}
-        <Modal isOpen={isOpen} onClose={() => {
-          onClose();
-          setIsEditing(false);
-          setSelectedRoom('');
-        }} size="3xl">
-          <ModalContent>
-            <ModalHeader>
-              {isEditing ? 'Edit Check-In' : selectedCheckIn?.status === 'checked-in' ? 'Manage Guest' : 'Process Check-In'}
+      {/* Room Transfer Modal */}
+      <Modal isOpen={transferModalOpen} onClose={() => setTransferModalOpen(false)} size="2xl">
+        <ModalContent>
+          <ModalHeader className="bg-gradient-to-r from-blue-600 to-purple-600 text-white">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                <span className="text-xl">🔄</span>
+              </div>
+              <div>
+                <h2 className="text-xl font-bold">Room Transfer</h2>
+                <p className="text-blue-100 text-sm">Transfer guest to a different room</p>
+              </div>
+            </div>
+          </ModalHeader>
+          <ModalBody className="p-6">
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Select
+                  label="Select Guest"
+                  placeholder="Choose guest to transfer"
+                >
+                  {guests.map(guest => (
+                    <SelectItem key={guest.id} value={guest.id}>
+                      {guest.guestName} - Room {guest.roomNumber}
+                    </SelectItem>
+                  ))}
+                </Select>
+                
+                <Select
+                  label="Room Type"
+                  placeholder="Select room type first"
+                >
+                  {frontOfficeStore.roomTypes.map(roomType => (
+                    <SelectItem key={roomType.id} value={roomType.id}>
+                      {roomType.name} - ₵{roomType.baseRate.toLocaleString()}/night
+                    </SelectItem>
+                  ))}
+                </Select>
+              </div>
+              
+              <Select
+                label="New Room"
+                placeholder="Select new room"
+              >
+                {frontOfficeStore.rooms
+                  .filter(room => room.status === 'available')
+                  .map(room => (
+                    <SelectItem key={room.id} value={room.id}>
+                      {room.number} - {room.type}
+                    </SelectItem>
+                  ))}
+              </Select>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Select
+                  label="Transfer Reason"
+                  placeholder="Why is this transfer needed?"
+                >
+                  <SelectItem key="maintenance">🔧 Maintenance Required</SelectItem>
+                  <SelectItem key="guest_request">🙋 Guest Request</SelectItem>
+                  <SelectItem key="upgrade">⬆️ Room Upgrade</SelectItem>
+                  <SelectItem key="downgrade">⬇️ Room Downgrade</SelectItem>
+                  <SelectItem key="noise_complaint">🔇 Noise Complaint</SelectItem>
+                  <SelectItem key="room_issue">🚫 Room Issue</SelectItem>
+                  <SelectItem key="group_consolidation">👥 Group Consolidation</SelectItem>
+                  <SelectItem key="overbooking">📋 Overbooking Resolution</SelectItem>
+                  <SelectItem key="special_needs">♿ Special Needs</SelectItem>
+                  <SelectItem key="other">📝 Other</SelectItem>
+                </Select>
+                
+                <Textarea
+                  label="Additional Comments"
+                  placeholder="Enter additional details..."
+                  rows={3}
+                />
+              </div>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={() => setTransferModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button color="primary" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white">
+              🔄 Process Transfer
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Payment Modal */}
+      <Modal isOpen={isPaymentModalOpen} onClose={() => setIsPaymentModalOpen(false)} size="2xl">
+        <ModalContent>
+          <ModalHeader className="bg-gradient-to-r from-green-600 to-blue-600 text-white">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                <span className="text-xl">💳</span>
+            </div>
+              <div>
+                <h2 className="text-xl font-bold">
+                  {paymentData.type === 'deposit' ? 'Process Deposit' : 
+                   paymentData.type === 'prepayment' ? 'Process Prepayment' : 'Process Payment'}
+                </h2>
+                <p className="text-green-100 text-sm">{selectedFolioGuest?.guestName} • Room {selectedFolioGuest?.roomNumber}</p>
+            </div>
+            </div>
             </ModalHeader>
-            <ModalBody>
-              {selectedCheckIn && (
-                <div className="space-y-6">
-                  <div className="flex items-center space-x-4">
-                    <Avatar name={selectedCheckIn.guestName} size="lg" />
+          <ModalBody className="p-6">
+            <form onSubmit={handlePaymentSubmit} className="space-y-6">
+              {/* Payment Summary */}
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h3 className="font-semibold text-gray-900 mb-3">Payment Details</h3>
+                <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>
-                      <h3 className="text-xl font-semibold">{selectedCheckIn.guestName}</h3>
-                      <p className="text-gray-600">{selectedCheckIn.phone}</p>
-                      <p className="text-gray-600">{selectedCheckIn.email}</p>
-                      <Badge 
-                        color={selectedCheckIn.status === 'checked-in' ? 'success' : 'warning'} 
-                        variant="flat"
-                        className="mt-2"
-                      >
-                        {selectedCheckIn.status === 'checked-in' ? 'Checked In' : 'Pending Check-in'}
-                      </Badge>
+                    <span className="text-gray-600">Guest:</span>
+                    <div className="font-medium">{selectedFolioGuest?.guestName}</div>
                     </div>
+                  <div>
+                    <span className="text-gray-600">Room:</span>
+                    <div className="font-medium">{selectedFolioGuest?.roomNumber}</div>
                   </div>
-                  
-                  {/* Room Assignment Section */}
-                  <div className="border-t pt-4">
-                    <h4 className="text-lg font-semibold mb-3">Room Assignment</h4>
-                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                        <p className="text-sm text-gray-600">Current Room</p>
-                        <p className="font-medium">{selectedCheckIn.roomNumber === 'TBD' ? 'Not Assigned' : selectedCheckIn.roomNumber}</p>
+                    <span className="text-gray-600">Current Balance:</span>
+                    <div className="font-medium text-red-600">₵{(selectedFolioGuest?.balance || 0).toLocaleString()}</div>
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Room Type</p>
-                      <p className="font-medium">{selectedCheckIn.roomType}</p>
+                    <span className="text-gray-600">Payment Type:</span>
+                    <div className="font-medium capitalize">{paymentData.type}</div>
+                  </div>
                     </div>
                     </div>
                     
-                    {/* Room Selection */}
-                    <div className="mt-4">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Assign Room</label>
+              {/* Payment Form */}
+              <div className="grid grid-cols-3 gap-4">
                       <Select
-                        placeholder="Select a room"
-                        value={selectedRoom}
-                        onChange={(e) => setSelectedRoom(e.target.value)}
-                        className="w-full"
-                      >
-                        {availableRooms
-                          .filter(room => room.roomTypeId === frontOfficeStore.roomTypes.find(rt => rt.name === selectedCheckIn.roomType)?.id)
-                          .map((room) => (
-                            <SelectItem key={room.id}>
-                              {room.roomNumber} - {room.roomType} (₵{room.rate}/night)
-                            </SelectItem>
-                          ))}
+                  label="Payment Type"
+                  value={paymentData.type}
+                  onChange={(e) => {
+                    const newType = e.target.value as 'deposit' | 'payment' | 'prepayment';
+                    setPaymentData(prev => ({ 
+                      ...prev, 
+                      type: newType,
+                      amount: newType === 'deposit' ? (selectedFolioGuest?.roomRate || 0) * 0.5 : 
+                              newType === 'prepayment' ? (selectedFolioGuest?.balance || 0) : 
+                              (selectedFolioGuest?.balance || 0)
+                    }));
+                  }}
+                  isRequired
+                >
+                  <SelectItem key="deposit">💰 Deposit (50% of room rate)</SelectItem>
+                  <SelectItem key="prepayment">⚡ Prepayment (Full balance)</SelectItem>
+                  <SelectItem key="payment">💳 Payment (Custom amount)</SelectItem>
                       </Select>
-                      {selectedRoom && (
-                        <Button
-                          size="sm"
-                          color="secondary"
-                          className="mt-2"
-                          onClick={() => selectedCheckIn && handleRoomAssignment(selectedCheckIn, selectedRoom)}
-                        >
-                          Assign Room
-                        </Button>
-                      )}
-                    </div>
+                <Input
+                  label="Payment Amount (GHS)"
+                  type="number"
+                  value={paymentData.amount.toString()}
+                  onChange={(e) => setPaymentData(prev => ({ 
+                    ...prev, 
+                    amount: parseFloat(e.target.value) || 0 
+                  }))}
+                  isRequired
+                  description={paymentData.type === 'deposit' ? 'Suggested: 50% of room rate' : 
+                             paymentData.type === 'prepayment' ? 'Full balance amount' : 
+                             'Enter payment amount'}
+                />
+                <Select
+                  label="Payment Method"
+                  value={paymentData.paymentMethod}
+                  onChange={(e) => setPaymentData(prev => ({ 
+                    ...prev, 
+                    paymentMethod: e.target.value 
+                  }))}
+                  isRequired
+                >
+                  <SelectItem key="cash">💵 Cash</SelectItem>
+                  <SelectItem key="card">💳 Card</SelectItem>
+                  <SelectItem key="mobile_money">📱 Mobile Money</SelectItem>
+                  <SelectItem key="bank_transfer">🏦 Bank Transfer</SelectItem>
+                  <SelectItem key="check">📝 Check</SelectItem>
+                  <SelectItem key="corporate_account">🏢 Corporate Account</SelectItem>
+                </Select>
                   </div>
                   
-                  {/* Guest Details */}
-                  <div className="border-t pt-4">
-                    <h4 className="text-lg font-semibold mb-3">Stay Details</h4>
-                    <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="text-sm text-gray-600">Arrival</p>
-                        <p className="font-medium">{formatDate(selectedCheckIn.arrivalDate)}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-gray-600">Departure</p>
-                        <p className="font-medium">{formatDate(selectedCheckIn.departureDate)}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-600">Rate</p>
-                        <p className="font-medium text-green-600">₵{selectedCheckIn.roomRate}</p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-gray-600">Guests</p>
-                        <p className="font-medium">{selectedCheckIn.adults} adults, {selectedCheckIn.children} children</p>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Special Requests */}
-                  {selectedCheckIn.specialRequests && (
-                    <div className="border-t pt-4">
-                      <h4 className="text-lg font-semibold mb-3">Special Requests</h4>
-                      <p className="text-gray-600">{selectedCheckIn.specialRequests}</p>
-                    </div>
-                  )}
+              <Input
+                label="Reference/Transaction ID"
+                value={paymentData.reference}
+                onChange={(e) => setPaymentData(prev => ({ 
+                  ...prev, 
+                  reference: e.target.value 
+                }))}
+                placeholder="Enter transaction reference or check number"
+              />
 
-                  {/* Check-in Time */}
-                  {selectedCheckIn.status === 'checked-in' && selectedCheckIn.checkInDateTime && (
-                    <div className="border-t pt-4">
-                      <h4 className="text-lg font-semibold mb-3">Check-in Information</h4>
-                      <p className="text-gray-600">Checked in at: {formatDateTime(selectedCheckIn.checkInDateTime)}</p>
+              <Textarea
+                label="Payment Notes (Optional)"
+                value={paymentData.notes}
+                onChange={(e) => setPaymentData(prev => ({ 
+                  ...prev, 
+                  notes: e.target.value 
+                }))}
+                placeholder="Additional notes about this payment..."
+                rows={3}
+              />
+
+              {/* Payment Summary */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex justify-between items-center">
+                  <span className="font-medium text-blue-900">Payment Amount:</span>
+                  <span className="text-xl font-bold text-blue-900">
+                    ₵{paymentData.amount.toLocaleString()}
+                  </span>
+                </div>
+                {paymentData.amount < (selectedFolioGuest?.balance || 0) && (
+                  <div className="text-sm text-orange-600 mt-1">
+                    ⚠️ Partial payment - Remaining: ₵{((selectedFolioGuest?.balance || 0) - paymentData.amount).toLocaleString()}
                     </div>
                   )}
+                {paymentData.amount > (selectedFolioGuest?.balance || 0) && (
+                  <div className="text-sm text-green-600 mt-1">
+                    💰 Overpayment - Change: ₵{(paymentData.amount - (selectedFolioGuest?.balance || 0)).toLocaleString()}
                 </div>
               )}
+              </div>
+            </form>
             </ModalBody>
-            <ModalFooter>
-              <Button variant="flat" onClick={() => {
-                onClose();
-                setIsEditing(false);
-                setSelectedRoom('');
-              }}>
-                Cancel
-              </Button>
-              {selectedCheckIn?.status === 'checked-in' ? (
-                <div className="flex space-x-2">
+          <ModalFooter className="bg-gray-50">
+            <div className="flex justify-between items-center w-full">
               <Button 
-                color="primary" 
-                    variant="flat"
-                    onClick={() => selectedCheckIn && handleExtendStay(selectedCheckIn, 1)}
-                  >
-                    Extend 1 Night
+                variant="light" 
+                onPress={() => setIsPaymentModalOpen(false)}
+                className="px-6"
+              >
+                Cancel
                   </Button>
                   <Button 
-                    color="danger" 
-                    variant="flat"
-                    onClick={() => selectedCheckIn && handleEarlyCheckout(selectedCheckIn)}
-                  >
-                    Early Checkout
-                  </Button>
-                </div>
-              ) : (
-                <div className="flex space-x-2">
-                  <Button 
-                    color="primary" 
-                    onClick={() => selectedCheckIn && handleCompleteCheckIn(selectedCheckIn, selectedRoom)}
+                color="success" 
+                className="bg-green-600 text-white px-6"
+                onPress={() => handlePaymentSubmit(new Event('submit') as any)}
+                isDisabled={paymentData.amount <= 0 || isProcessing}
                 isLoading={isProcessing}
               >
-                ✅ Complete Check-In
+                {isProcessing ? 'Processing...' : '💳 Process Payment'}
               </Button>
-                  {selectedRoom && (
-                    <Button 
-                      color="secondary" 
-                      variant="flat"
-                      onClick={() => selectedCheckIn && handleCompleteCheckIn(selectedCheckIn, selectedRoom)}
-                      isLoading={isProcessing}
-                    >
-                      🏠 Assign & Check-In
-                    </Button>
-                  )}
                 </div>
-              )}
             </ModalFooter>
           </ModalContent>
         </Modal>
+      </div>
+  );
+}
+
+// --- Unified Page Wrapper ---
+function CheckInsPageInner() {
+  const params = useSearchParams();
+  const initialTab = params.get('tab') || 'reservations';
+  const [selectedTab, setSelectedTab] = useState(initialTab);
+
+  return (
+    <PageLayout>
+      <div className="p-6">
+        <div className="mb-6">
+          <h1 className="text-3xl font-bold text-ghana-black">🔑 Guest Check-In & Check-Ins Management</h1>
+          <p className="text-gray-600 mt-2">Process check-ins for reservations and walk-ins, then manage guests during their stay</p>
+                      </div>
+
+        <Tabs selectedKey={selectedTab} onSelectionChange={(key) => setSelectedTab(key as string)} className="w-full">
+          <Tab key="reservations" title="📅 Reservations & Bookings Management">
+            <Card className="border-0 shadow-lg"><CardBody><Suspense fallback={<div className="p-6 text-center">Loading Reservations & Bookings...</div>}><ReservationsBookingsManager /></Suspense></CardBody></Card>
+          </Tab>
+          <Tab key="checkins" title="🏠 Check-Ins Management">
+            <CheckInsSection />
+          </Tab>
+          <Tab key="checkouts" title="🚪 Check-outs">
+            <div className="pt-2"><CheckOutsPage /></div>
+          </Tab>
+          <Tab key="servicecharges" title="🏊 Service Charges">
+            <div className="pt-2"><ServiceChargesPage /></div>
+          </Tab>
+          <Tab key="billing" title="💳 Invoices & Payments">
+            <div className="pt-2"><InvoicesPaymentsPage /></div>
+          </Tab>
+        </Tabs>
       </div>
     </PageLayout>
   );
@@ -1376,8 +1195,8 @@ Proceed with transfer?
 
 export default function CheckInsPage() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
-      <CheckInsPageContent />
+    <Suspense fallback={null}>
+      <CheckInsPageInner />
     </Suspense>
   );
 }

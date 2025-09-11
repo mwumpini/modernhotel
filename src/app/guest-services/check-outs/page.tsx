@@ -94,6 +94,11 @@ export default function CheckOutsPage() {
   const [checkoutNotes, setCheckoutNotes] = useState('');
   const [quickSettlementMethod, setQuickSettlementMethod] = useState<'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'>('Cash');
 
+  // Payment processing state
+  const [paymentAmount, setPaymentAmount] = useState<number>(0);
+  const [paymentMethod, setPaymentMethod] = useState<string>('cash');
+  const [paymentReference, setPaymentReference] = useState<string>('');
+
   useEffect(() => {
     loadCheckOuts();
     const unsubscribe = frontOfficeStore.subscribe(loadCheckOuts);
@@ -109,14 +114,12 @@ export default function CheckOutsPage() {
     setPage(1);
   }, [filteredCheckOuts.length]);
 
+  // Simplified - no folio tracking in check-outs page
   const getFolioTotals = (reservationId: string) => {
-    const folio = frontOfficeStore.getOrCreateFolio(reservationId);
-    // Use the enhanced updateFolioBalances method to ensure accurate calculations
-    frontOfficeStore.updateFolioBalances(folio);
     return { 
-      totalCharges: folio.totalCharges || 0, 
-      totalPayments: folio.totalPayments || 0, 
-      outstandingBalance: folio.balance || 0 
+      totalCharges: 0, 
+      totalPayments: 0, 
+      outstandingBalance: 0 
     };
   };
 
@@ -196,6 +199,14 @@ export default function CheckOutsPage() {
 
     setFilteredCheckOuts(filtered);
   };
+
+  // Simplified payment processing - redirect to invoices & payments for detailed folio management
+  const handleManageFolio = (checkOut: CheckOutData) => {
+    // Redirect to invoices & payments page for comprehensive folio management
+    window.location.href = '/guest-services/client-services/invoices-payments?tab=folios';
+  };
+
+  // Payment processing removed - handled in invoices & payments page
 
   const handleCheckOut = async (checkOut: CheckOutData) => {
     setIsProcessing(true);
@@ -488,7 +499,7 @@ export default function CheckOutsPage() {
                       />
                       <div className="min-w-0 flex-1">
                         <p className="font-semibold text-gray-900 truncate">{checkOut.guestName}</p>
-                        <p className="text-xs text-gray-600">{checkOut.guestPhone || 'N/A'}</p>
+                        <p className="text-xs text-gray-600">{(checkOut as any).guestPhone || 'N/A'}</p>
                         <p className="text-xs text-gray-500">ID: {checkOut.id.slice(-6)}</p>
                         {(checkOut as any).guestEmail && (
                           <p className="text-xs text-blue-600 truncate">{(checkOut as any).guestEmail}</p>
@@ -610,10 +621,10 @@ export default function CheckOutsPage() {
                           </Button>
                         </DropdownTrigger>
                         <DropdownMenu>
-                          <DropdownItem key="view-folio" onClick={() => openCheckOutModal(checkOut)}>
-                            📊 View Folio
+                          <DropdownItem key="manage-folio" onClick={() => handleManageFolio(checkOut)}>
+                            📊 Manage Folio
                           </DropdownItem>
-                          <DropdownItem key="add-payment" onClick={() => openCheckOutModal(checkOut)}>
+                          <DropdownItem key="add-payment" onClick={() => handleManageFolio(checkOut)}>
                             💳 Add Payment
                           </DropdownItem>
                           <DropdownItem key="extend-2" onClick={() => handleExtendStay(checkOut, 2)}>
@@ -823,7 +834,7 @@ export default function CheckOutsPage() {
                 const reservation = selectedCheckOut ? frontOfficeStore.reservations.find(r => r.id === selectedCheckOut.id) : null;
                 const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
                 const creditBalance = guest?.creditBalance || 0;
-                const canUseCredit = creditBalance > 0 && selectedCheckOut?.outstandingBalance > 0;
+                const canUseCredit = creditBalance > 0 && (selectedCheckOut?.outstandingBalance || 0) > 0;
                 
                 return canUseCredit ? (
                   <Button 
@@ -851,6 +862,8 @@ export default function CheckOutsPage() {
             </ModalFooter>
           </ModalContent>
         </Modal>
+
+        {/* Folio Management Modal removed - handled in Invoices & Payments page */}
       </div>
   );
 }

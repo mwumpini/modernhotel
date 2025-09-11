@@ -362,14 +362,14 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
     const { currentPeriod } = get();
     
     const dailyFlashReport = reportingStore.generateDailyFlashReport(currentPeriod.endDate);
-    const inHouseGuests = reportingStore.generateInHouseGuestReport(currentPeriod.endDate);
+    const checkInGuests = reportingStore.generateCheckInGuestReport(currentPeriod.endDate);
     
     // Calculate base values
     const totalRevenue = dailyFlashReport.revenue.totalRevenue;
     const roomRevenue = dailyFlashReport.revenue.roomRevenue;
     const occupiedRooms = dailyFlashReport.occupancy.occupiedRooms;
     const totalRooms = dailyFlashReport.occupancy.totalRooms;
-    const totalGuests = inHouseGuests.length;
+    const totalGuests = checkInGuests.length;
     
     // Calculate metrics with historical comparison (simplified)
     const metrics: AnalyticsMetric[] = [
@@ -601,11 +601,11 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
     const reportingStore = useReportingStore.getState();
     const { currentPeriod } = get();
     
-    const inHouseGuests = reportingStore.generateInHouseGuestReport(currentPeriod.endDate);
-    const totalGuests = inHouseGuests.length;
+    const checkInGuests = reportingStore.generateCheckInGuestReport(currentPeriod.endDate);
+    const totalGuests = checkInGuests.length;
     const newGuests = Math.floor(totalGuests * 0.7);
     const returningGuests = totalGuests - newGuests;
-    const vipGuests = inHouseGuests.filter(guest => guest.vipStatus !== 'regular').length;
+    const vipGuests = checkInGuests.filter(guest => guest.vipStatus !== 'regular').length;
     
     return {
       totalGuests,

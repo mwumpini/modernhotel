@@ -9,7 +9,6 @@ const nextConfig: NextConfig = {
     // Allow build to continue with TypeScript errors
     ignoreBuildErrors: true,
   },
-  output: 'standalone',
 };
 
 export default nextConfig;

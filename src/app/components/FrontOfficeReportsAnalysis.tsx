@@ -37,8 +37,8 @@ export default function FrontOfficeReportsAnalysis() {
     return reportingStore.generateRoomStatusReport(selectedDate);
   }, [selectedDate, reportingStore]);
 
-  const generateInHouseGuestReport = useMemo(() => {
-    return reportingStore.generateInHouseGuestReport(selectedDate);
+  const generateCheckInGuestReport = useMemo(() => {
+    return reportingStore.generateCheckInGuestReport(selectedDate);
   }, [selectedDate, reportingStore]);
 
   const generateDailyFlashReport = useMemo(() => {
@@ -80,8 +80,8 @@ export default function FrontOfficeReportsAnalysis() {
         return generateDeparturesReport;
       case 'room-status':
         return generateRoomStatusReport;
-      case 'in-house':
-        return generateInHouseGuestReport;
+      case 'check-ins':
+        return generateCheckInGuestReport;
       case 'daily-flash':
         return generateDailyFlashReport;
       case 'discount-request':
@@ -224,7 +224,7 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="arrivals">Arrivals Report</SelectItem>
                   <SelectItem key="departures">Departures Report</SelectItem>
                   <SelectItem key="room-status">Room Status Report</SelectItem>
-                  <SelectItem key="in-house">In-House Guest List</SelectItem>
+                  <SelectItem key="check-ins">Check-In Guest List</SelectItem>
                   <SelectItem key="high-balance">High Balance Report</SelectItem>
                   <SelectItem key="wake-up-calls">Wake-up Call Sheet</SelectItem>
                 </Select>

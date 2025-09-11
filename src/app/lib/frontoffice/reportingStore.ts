@@ -75,7 +75,7 @@ interface ReportingStore {
   generateArrivalsReport: (date: string) => any[];
   generateDeparturesReport: (date: string) => any[];
   generateRoomStatusReport: (date: string) => any[];
-  generateInHouseGuestReport: (date: string) => any[];
+  generateCheckInGuestReport: (date: string) => any[];
   generateHighBalanceReport: (date: string) => any[];
   generateWakeUpCallReport: (date: string) => any[];
   generateDailyTransactionReport: (date: string) => any[];
@@ -135,8 +135,8 @@ const defaultReportConfigs: ReportConfig[] = [
     exportFormats: ['pdf', 'excel', 'csv']
   },
   {
-    id: 'in-house-guest-list',
-    name: 'In-House Guest List',
+    id: 'check-in-guest-list',
+    name: 'Check-In Guest List',
     category: 'daily-operations',
     description: 'Complete list of all guests currently staying at the hotel',
     schedule: 'daily',
@@ -400,8 +400,8 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         case 'room-status-report':
           data = get().generateRoomStatusReport(date);
           break;
-        case 'in-house-guest-list':
-          data = get().generateInHouseGuestReport(date);
+        case 'check-in-guest-list':
+          data = get().generateCheckInGuestReport(date);
           break;
         case 'high-balance-report':
           data = get().generateHighBalanceReport(date);
@@ -637,8 +637,8 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     });
   },
 
-  generateInHouseGuestReport: (date) => {
-    console.log(`[REPORTS] Generating in-house guest report for ${date}`);
+  generateCheckInGuestReport: (date) => {
+    console.log(`[REPORTS] Generating check-in guest report for ${date}`);
     
     return frontOfficeStore.reservations
       .filter(reservation => 

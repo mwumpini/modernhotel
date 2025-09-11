@@ -195,7 +195,25 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   // Derived pricing helpers
   const getSelectedRoomType = (roomTypeId: string) =>
     useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === roomTypeId);
-  const getNightlyRate = (roomTypeId: string) => getSelectedRoomType(roomTypeId)?.baseRate || 0;
+  const getNightlyRate = (roomTypeId: string) => {
+    // First try to get rate from selected rate plan
+    if (formData.ratePlanId) {
+      const ratePlan = useSettingsStore.getState().roomManagement.ratePlans.find(rp => rp.id === formData.ratePlanId);
+      if (ratePlan) {
+        return ratePlan.basePrice || 0;
+      }
+    }
+    
+    // Fallback to room type base rate or first available rate plan for this room type
+    const roomType = getSelectedRoomType(roomTypeId);
+    if (roomType?.baseRate) {
+      return roomType.baseRate;
+    }
+    
+    // Try to find any rate plan for this room type
+    const ratePlan = useSettingsStore.getState().roomManagement.ratePlans.find(rp => rp.roomTypeId === roomTypeId);
+    return ratePlan?.basePrice || 0;
+  };
   const getTaxRate = () => {
     // Try reading tax from settings; fall back to 15% if not configured
     try {
@@ -556,7 +574,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     const newId = (bulkGuests.length + 1).toString();
     const roomTypeId = formData.roomTypeId || useSettingsStore.getState().roomManagement.roomTypes[0]?.id || '';
     const roomType = useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === roomTypeId);
-    const baseRate = roomType?.baseRate || 0;
+    const baseRate = getNightlyRate(roomTypeId);
 
     setBulkGuests([...bulkGuests, {
       id: newId,
@@ -1141,7 +1159,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   </TableCell>
                   <TableCell className="hidden xl:table-cell">
                     <span className="font-medium">
-                      ₵{frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.baseRate.toLocaleString() || '0'}
+                      ₵{getNightlyRate(reservation.roomTypeId).toLocaleString()}
                     </span>
                   </TableCell>
                   <TableCell>
@@ -1627,7 +1645,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                         <div className="space-y-3">
                           {bulkGuests.map((bulkGuest, index) => {
                             const roomType = useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === bulkGuest.roomTypeId);
-                            const baseRate = roomType?.baseRate || 0;
+                            const baseRate = getNightlyRate(bulkGuest.roomTypeId);
                             const finalRate = bulkGuest.customRate || baseRate;
                             
                             return (
@@ -1700,13 +1718,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                       const id = Array.from(keys as Set<string>)[0] || '';
                                       const newRoomType = useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === id);
                                       updateBulkGuest(bulkGuest.id, 'roomTypeId', id);
-                                      updateBulkGuest(bulkGuest.id, 'customRate', newRoomType?.baseRate || 0);
+                                      updateBulkGuest(bulkGuest.id, 'customRate', getNightlyRate(id));
                                     }}
                         placeholder="Select room type"
                                   >
                                     {useSettingsStore.getState().roomManagement.roomTypes.map(rt => (
                                       <SelectItem key={rt.id}>
-                                        {rt.name} - ₵{rt.baseRate}/night
+                                        {rt.name} - ₵{getNightlyRate(rt.id)}/night
                           </SelectItem>
                         ))}
                       </Select>

@@ -187,3 +187,24 @@ model SystemSettings {
 
   @@map("system_settings")
 }
+
+model Room {
+  id          String   @id @default(cuid())
+  tenantId    String
+  propertyId  String
+  roomNumber  String
+  roomType    String
+  floor       Int
+  features    Json
+  status      String   @default("clean")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, propertyId, roomNumber])
+  @@map("rooms")
+}

@@ -11,5 +11,201 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Copy all your existing models here when ready to deploy
-// For now, keep using your existing schema.prisma for local development
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String
+  subdomain   String   @unique
+  plan        String   @default("starter")
+  status      String   @default("active")
+  maxUsers    Int      @default(5)
+  maxRooms    Int      @default(20)
+  maxProperties Int    @default(1)
+  features    Json
+  metadata    Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  users       User[]
+  properties  Property[]
+  settings    SystemSettings[]
+  guests      Guest[]
+  reservations Reservation[]
+  auditLogs   AuditLog[]
+
+  @@map("tenants")
+}
+
+model User {
+  id          String   @id @default(cuid())
+  tenantId    String
+  email       String
+  name        String
+  password    String?
+  role        String   @default("user")
+  permissions Json     @default("[]")
+  isActive    Boolean  @default(true)
+  lastLoginAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+model Property {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  address     String
+  city        String
+  state       String
+  country     String   @default("Ghana")
+  postalCode  String?
+  phone       String?
+  email       String?
+  website     String?
+  timezone    String   @default("Africa/Accra")
+  currency    String   @default("GHS")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@map("properties")
+}
+
+model Guest {
+  id          String   @id @default(cuid())
+  tenantId    String
+  serialNumber String  @unique
+  name        String
+  email       String?
+  phone       String?
+  nationality String?
+  ghanaCard   String?
+  
+  // Relations
+  reservations Reservation[]
+  
+  // Marketing attribution
+  source      String?
+  referralGuestId String?
+  referralName String?
+  socialPlatform String?
+  socialHandle String?
+  campaignCode String?
+  
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("guests")
+}
+
+model Reservation {
+  id            String   @id @default(cuid())
+  tenantId      String
+  guestId       String
+  roomType      String?
+  roomId        String?
+  status        String   @default("pending")
+  source        String?
+  checkInDate   DateTime
+  checkOutDate  DateTime
+  adults        Int      @default(1)
+  children      Int      @default(0)
+  specialRequests String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  guest         Guest    @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, checkInDate])
+  @@index([tenantId, guestId])
+  @@map("reservations")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  userId     String?
+  action     String
+  entity     String
+  entityId   String?
+  oldValues  String?
+  newValues  String?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  // Relations
+  tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, action])
+  @@map("audit_logs")
+}
+
+model SystemSettings {
+  id          String   @id @default(cuid())
+  tenantId    String   @unique
+  
+  // General settings
+  generalSettings Json
+  
+  // Hotel settings
+  hotelSettings Json
+  
+  // Room settings
+  roomSettings Json
+  
+  // Financial settings
+  financialSettings Json
+  
+  // Client settings
+  clientSettings Json
+  
+  // SaaS settings
+  saasSettings Json
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("system_settings")
+}
+
+model Room {
+  id          String   @id @default(cuid())
+  tenantId    String
+  propertyId  String
+  roomNumber  String
+  roomType    String
+  floor       Int
+  features    Json
+  status      String   @default("clean")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, propertyId, roomNumber])
+  @@map("rooms")
+}

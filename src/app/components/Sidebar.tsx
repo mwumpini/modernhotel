@@ -75,13 +75,7 @@ const navigationItems: NavItem[] = [
     title: 'Check-ins',
     href: '/guest-services/check-ins',
     icon: CalendarIcon,
-    description: 'Guest check-in processing'
-  },
-  {
-    title: 'In-House',
-    href: '/guest-services/in-house',
-    icon: HomeIcon,
-    description: 'Current guest management'
+    description: 'Guest check-in and check-ins management'
   },
   {
     title: 'Check-outs',

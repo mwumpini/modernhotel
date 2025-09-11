@@ -5,6 +5,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Card,
   CardBody,
+  CardHeader,
   Button,
   Input,
   Select,
@@ -89,6 +90,15 @@ export default function InvoicesPaymentsPage() {
   const [dateFilter, setDateFilter] = useState('all');
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  
+  // Folio management state
+  const [selectedFolio, setSelectedFolio] = useState<any>(null);
+  const [folioSearchTerm, setFolioSearchTerm] = useState('');
+  const [folioStatusFilter, setFolioStatusFilter] = useState('all');
+  const { isOpen: isFolioModalOpen, onOpen: onFolioModalOpen, onClose: onFolioModalClose } = useDisclosure();
+  const [adjustmentAmount, setAdjustmentAmount] = useState<number>(0);
+  const [adjustmentReason, setAdjustmentReason] = useState<string>('');
+  const [adjustmentType, setAdjustmentType] = useState<'charge' | 'credit' | 'discount'>('charge');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
   const [invoicePage, setInvoicePage] = useState(1);
@@ -416,6 +426,68 @@ export default function InvoicesPaymentsPage() {
     return { subtotal, taxAmount, totalAmount };
   };
 
+  // Folio management functions
+  const handleManageFolio = (reservation: any) => {
+    setSelectedFolio(reservation);
+    setAdjustmentAmount(0);
+    setAdjustmentReason('');
+    setAdjustmentType('charge');
+    onFolioModalOpen();
+  };
+
+  const handleProcessAdjustment = async () => {
+    if (!selectedFolio || adjustmentAmount <= 0 || !adjustmentReason.trim()) {
+      alert('Please enter valid adjustment details');
+      return;
+    }
+
+    try {
+      const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
+      
+      if (adjustmentType === 'charge') {
+        // Add charge
+        folio.charges.push({
+          id: Date.now().toString(),
+          date: new Date().toISOString(),
+          description: adjustmentReason,
+          amount: adjustmentAmount,
+          tax: 0
+        });
+      } else if (adjustmentType === 'credit') {
+        // Add credit payment
+        folio.payments.push({
+          id: Date.now().toString(),
+          date: new Date().toISOString(),
+          method: 'Credit',
+          amount: adjustmentAmount,
+          status: 'completed'
+        });
+      } else if (adjustmentType === 'discount') {
+        // Add discount as negative charge
+        folio.charges.push({
+          id: Date.now().toString(),
+          date: new Date().toISOString(),
+          description: `Discount: ${adjustmentReason}`,
+          amount: -adjustmentAmount,
+          tax: 0
+        });
+      }
+
+      // Update folio balances
+      frontOfficeStore.updateFolioBalances(folio);
+      
+      // Refresh data
+      recomputeBillingFromStore();
+      
+      alert('Adjustment processed successfully');
+      setAdjustmentAmount(0);
+      setAdjustmentReason('');
+    } catch (error) {
+      console.error('Adjustment processing error:', error);
+      alert('Adjustment failed. Please try again.');
+    }
+  };
+
   const handleCreateInvoice = () => {
     const { subtotal, taxAmount, totalAmount } = calculateInvoiceTotals();
     const invoice: Invoice = {
@@ -646,6 +718,13 @@ export default function InvoicesPaymentsPage() {
             >
               Payments ({payments.length})
             </Button>
+            <Button
+              variant={activeTab === 'folios' ? 'solid' : 'light'}
+              color="secondary"
+              onPress={() => setActiveTab('folios')}
+            >
+              📊 Folio Management ({frontOfficeStore.reservations.length})
+            </Button>
           </div>
 
           {activeTab === 'invoices' ? (
@@ -754,7 +833,7 @@ export default function InvoicesPaymentsPage() {
               />
             </div>
             </>
-          ) : (
+          ) : activeTab === 'payments' ? (
             <>
             <div className="mb-4 p-3 bg-blue-50 rounded-lg">
               <div className="flex justify-between items-center">
@@ -860,7 +939,151 @@ export default function InvoicesPaymentsPage() {
               />
             </div>
             </>
-          )}
+          ) : activeTab === 'folios' ? (
+            <>
+            <div className="mb-4 p-3 bg-purple-50 rounded-lg">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-semibold text-purple-800">📊 Folio Management</h3>
+                  <p className="text-sm text-purple-600">Manage guest folios, adjustments, and bulk operations</p>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Search folios..."
+                    value={folioSearchTerm}
+                    onChange={(e) => setFolioSearchTerm(e.target.value)}
+                    className="w-64"
+                    startContent={<span>🔍</span>}
+                  />
+                  <Select
+                    placeholder="Filter by status"
+                    selectedKeys={new Set([folioStatusFilter])}
+                    onSelectionChange={(keys) => setFolioStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
+                    className="w-48"
+                  >
+                    <SelectItem key="all">All Status</SelectItem>
+                    <SelectItem key="checked-in">Checked In</SelectItem>
+                    <SelectItem key="checked-out">Checked Out</SelectItem>
+                    <SelectItem key="confirmed">Confirmed</SelectItem>
+                  </Select>
+                </div>
+              </div>
+            </div>
+
+            <Table aria-label="Folio management table">
+              <TableHeader>
+                <TableColumn>GUEST</TableColumn>
+                <TableColumn>ROOM & STAY</TableColumn>
+                <TableColumn>FINANCIAL STATUS</TableColumn>
+                <TableColumn>FOLIO SUMMARY</TableColumn>
+                <TableColumn>ACTIONS</TableColumn>
+              </TableHeader>
+              <TableBody>
+                {frontOfficeStore.reservations
+                  .filter(reservation => {
+                    const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
+                    const guestName = guest?.name || reservation.guestName || 'Unknown';
+                    const matchesSearch = guestName.toLowerCase().includes(folioSearchTerm.toLowerCase()) ||
+                                        reservation.guestPhone?.includes(folioSearchTerm) ||
+                                        reservation.guestEmail?.includes(folioSearchTerm);
+                    const matchesStatus = folioStatusFilter === 'all' || reservation.status === folioStatusFilter;
+                    return matchesSearch && matchesStatus;
+                  })
+                  .map((reservation) => {
+                    const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
+                    const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
+                    const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
+                    const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
+                    
+                    return (
+                      <TableRow key={reservation.id}>
+                        <TableCell>
+                          <div className="flex items-center space-x-3">
+                            <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
+                              <span className="text-purple-600 font-semibold text-sm">
+                                {(guest?.name || reservation.guestName || 'U').charAt(0).toUpperCase()}
+                              </span>
+                            </div>
+                            <div>
+                              <p className="font-semibold text-gray-900">{guest?.name || reservation.guestName || 'Unknown Guest'}</p>
+                              <p className="text-xs text-gray-500">{reservation.guestPhone || 'N/A'}</p>
+                              <p className="text-xs text-blue-600">{reservation.guestEmail || 'N/A'}</p>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <p className="font-medium">Room {room?.id || 'TBD'}</p>
+                            <p className="text-sm text-gray-600">{roomType?.name || 'Standard'}</p>
+                            <p className="text-xs text-gray-500">
+                              {new Date(reservation.arrival).toLocaleDateString()} - {new Date(reservation.departure).toLocaleDateString()}
+                            </p>
+                            <Badge 
+                              color={reservation.status === 'checked-in' ? 'success' : reservation.status === 'checked-out' ? 'default' : 'warning'} 
+                              variant="flat" 
+                              size="sm"
+                            >
+                              {reservation.status}
+                            </Badge>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <div className="flex justify-between text-sm">
+                              <span>Charges:</span>
+                              <span className="font-medium">₵{(folio.totalCharges || 0).toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-sm">
+                              <span>Payments:</span>
+                              <span className="font-medium text-green-600">₵{(folio.totalPayments || 0).toLocaleString()}</span>
+                            </div>
+                            <div className="flex justify-between text-sm font-semibold">
+                              <span>Balance:</span>
+                              <span className={((folio.balance || 0) > 0) ? 'text-red-600' : 'text-green-600'}>
+                                ₵{(folio.balance || 0).toLocaleString()}
+                              </span>
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <div className="text-xs text-gray-600">
+                              {folio.charges.length} charges, {folio.payments.length} payments
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              Last updated: {new Date((reservation as any).updatedAt).toLocaleDateString()}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex space-x-1">
+                            <Button
+                              size="sm"
+                              color="primary"
+                              variant="flat"
+                              onClick={() => handleManageFolio(reservation)}
+                              startContent={<span>📊</span>}
+                            >
+                              Manage
+                            </Button>
+                            <Button
+                              size="sm"
+                              color="secondary"
+                              variant="flat"
+                              onClick={() => window.print()}
+                              startContent={<span>🖨️</span>}
+                            >
+                              Print
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+              </TableBody>
+            </Table>
+            </>
+          ) : null}
         </CardBody>
       </Card>
 
@@ -1266,6 +1489,229 @@ export default function InvoicesPaymentsPage() {
               isDisabled={!paymentForm.amount || parseFloat(paymentForm.amount) <= 0 || parseFloat(paymentForm.amount) > (selectedInvoice?.balance || 0)}
             >
               Add Payment
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Folio Management Modal */}
+        <Modal isOpen={isFolioModalOpen} onClose={onFolioModalClose} size="5xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>
+            <div className="flex items-center justify-between w-full">
+              <h3 className="text-xl font-semibold">📊 Folio Management</h3>
+              <Badge color="primary" variant="flat">
+                {selectedFolio?.guestName || 'Unknown Guest'} - Room {selectedFolio?.roomId || 'TBD'}
+              </Badge>
+            </div>
+          </ModalHeader>
+          <ModalBody>
+            {selectedFolio && (
+              <div className="space-y-6">
+                {/* Guest Information */}
+                <Card>
+                  <CardHeader>
+                    <h4 className="text-lg font-semibold">Guest Information</h4>
+                  </CardHeader>
+                  <CardBody>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <div className="text-sm text-gray-600">Guest Name</div>
+                        <div className="font-medium">{selectedFolio.guestName || 'Unknown'}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-600">Room Number</div>
+                        <div className="font-medium">{selectedFolio.roomId || 'TBD'}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-600">Status</div>
+                        <Badge color={selectedFolio.status === 'checked-in' ? 'success' : 'warning'} variant="flat">
+                          {selectedFolio.status}
+                        </Badge>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-600">Arrival</div>
+                        <div className="font-medium">{new Date(selectedFolio.arrival).toLocaleDateString()}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-600">Departure</div>
+                        <div className="font-medium">{new Date(selectedFolio.departure).toLocaleDateString()}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-gray-600">Nights</div>
+                        <div className="font-medium">
+                          {Math.ceil((new Date(selectedFolio.departure).getTime() - new Date(selectedFolio.arrival).getTime()) / (1000 * 60 * 60 * 24))}
+                        </div>
+                      </div>
+                    </div>
+                  </CardBody>
+                </Card>
+
+                {/* Financial Summary */}
+                <Card>
+                  <CardHeader>
+                    <h4 className="text-lg font-semibold">Financial Summary</h4>
+                  </CardHeader>
+                  <CardBody>
+                    {(() => {
+                      const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
+                      return (
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div className="text-center p-4 bg-blue-50 rounded-lg">
+                            <div className="text-sm text-blue-600">Total Charges</div>
+                            <div className="text-2xl font-bold text-blue-700">₵{(folio.totalCharges || 0).toLocaleString()}</div>
+                          </div>
+                          <div className="text-center p-4 bg-green-50 rounded-lg">
+                            <div className="text-sm text-green-600">Total Payments</div>
+                            <div className="text-2xl font-bold text-green-700">₵{(folio.totalPayments || 0).toLocaleString()}</div>
+                          </div>
+                          <div className="text-center p-4 bg-orange-50 rounded-lg">
+                            <div className="text-sm text-orange-600">Outstanding Balance</div>
+                            <div className="text-2xl font-bold text-orange-700">₵{(folio.balance || 0).toLocaleString()}</div>
+                          </div>
+                          <div className="text-center p-4 bg-purple-50 rounded-lg">
+                            <div className="text-sm text-purple-600">Transactions</div>
+                            <div className="text-2xl font-bold text-purple-700">{folio.charges.length + folio.payments.length}</div>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </CardBody>
+                </Card>
+
+                {/* Detailed Folio */}
+                <Card>
+                  <CardHeader>
+                    <h4 className="text-lg font-semibold">Detailed Folio</h4>
+                  </CardHeader>
+                  <CardBody>
+                    <div className="space-y-4">
+                      {/* Charges */}
+                      <div>
+                        <h5 className="font-semibold mb-2 text-gray-700">Charges & Services</h5>
+                        <Table aria-label="Folio charges">
+                          <TableHeader>
+                            <TableColumn>Date</TableColumn>
+                            <TableColumn>Description</TableColumn>
+                            <TableColumn align="end">Amount</TableColumn>
+                            <TableColumn align="end">Tax</TableColumn>
+                          </TableHeader>
+                          <TableBody>
+                            {(() => {
+                              const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
+                              return folio.charges.map((charge, index) => (
+                                <TableRow key={index}>
+                                  <TableCell>{new Date(charge.date).toLocaleDateString()}</TableCell>
+                                  <TableCell>{charge.description}</TableCell>
+                                  <TableCell className="text-right">₵{charge.amount.toLocaleString()}</TableCell>
+                                  <TableCell className="text-right">₵{(charge.tax || 0).toLocaleString()}</TableCell>
+                                </TableRow>
+                              ));
+                            })()}
+                          </TableBody>
+                        </Table>
+                      </div>
+
+                      {/* Payments */}
+                      <div>
+                        <h5 className="font-semibold mb-2 text-gray-700">Payments & Credits</h5>
+                        <Table aria-label="Folio payments">
+                          <TableHeader>
+                            <TableColumn>Date</TableColumn>
+                            <TableColumn>Method</TableColumn>
+                            <TableColumn align="end">Amount</TableColumn>
+                            <TableColumn>Status</TableColumn>
+                            <TableColumn>Reference</TableColumn>
+                          </TableHeader>
+                          <TableBody>
+                            {(() => {
+                              const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
+                              return folio.payments.map((payment, index) => (
+                                <TableRow key={index}>
+                                  <TableCell>{new Date(payment.date).toLocaleDateString()}</TableCell>
+                                  <TableCell>{payment.method}</TableCell>
+                                  <TableCell className="text-right">₵{payment.amount.toLocaleString()}</TableCell>
+                                  <TableCell>
+                                    <Badge color={payment.status === 'completed' ? 'success' : 'warning'} variant="flat">
+                                      {payment.status}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell>{(payment as any).reference || '-'}</TableCell>
+                                </TableRow>
+                              ));
+                            })()}
+                          </TableBody>
+                        </Table>
+                      </div>
+                    </div>
+                  </CardBody>
+                </Card>
+
+                {/* Folio Adjustments */}
+                <Card>
+                  <CardHeader>
+                    <h4 className="text-lg font-semibold">Folio Adjustments</h4>
+                  </CardHeader>
+                  <CardBody>
+                    <div className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <Input
+                          label="Adjustment Amount"
+                          type="number"
+                          value={adjustmentAmount.toString()}
+                          onChange={(e) => setAdjustmentAmount(Number(e.target.value))}
+                          placeholder="0"
+                          startContent={<span className="text-gray-400">₵</span>}
+                        />
+                        <Select
+                          label="Adjustment Type"
+                          selectedKeys={new Set([adjustmentType])}
+                          onSelectionChange={(keys) => setAdjustmentType(Array.from(keys as Set<string>)[0] as 'charge' | 'credit' | 'discount' || 'charge')}
+                        >
+                          <SelectItem key="charge">Add Charge</SelectItem>
+                          <SelectItem key="credit">Add Credit</SelectItem>
+                          <SelectItem key="discount">Apply Discount</SelectItem>
+                        </Select>
+                        <Input
+                          label="Reason/Description"
+                          value={adjustmentReason}
+                          onChange={(e) => setAdjustmentReason(e.target.value)}
+                          placeholder="Enter reason for adjustment"
+                        />
+                      </div>
+                      {adjustmentAmount > 0 && adjustmentReason.trim() && (
+                        <div className="p-3 bg-blue-50 rounded-lg">
+                          <div className="text-sm text-blue-600">
+                            {adjustmentType === 'charge' && `Will add ₵${adjustmentAmount.toLocaleString()} charge: ${adjustmentReason}`}
+                            {adjustmentType === 'credit' && `Will add ₵${adjustmentAmount.toLocaleString()} credit: ${adjustmentReason}`}
+                            {adjustmentType === 'discount' && `Will apply ₵${adjustmentAmount.toLocaleString()} discount: ${adjustmentReason}`}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </CardBody>
+                </Card>
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onClick={onFolioModalClose}>
+              Close
+            </Button>
+            <Button 
+              color="secondary" 
+              onClick={() => window.print()}
+              startContent={<span>🖨️</span>}
+            >
+              Print Folio
+            </Button>
+            <Button 
+              color="primary" 
+              onClick={handleProcessAdjustment}
+              isDisabled={adjustmentAmount <= 0 || !adjustmentReason.trim()}
+              startContent={<span>⚡</span>}
+            >
+              Process Adjustment
             </Button>
           </ModalFooter>
         </ModalContent>

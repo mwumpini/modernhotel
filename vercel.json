@@ -1,7 +1,10 @@
 {
-  "buildCommand": "npm run build",
   "installCommand": "npm ci",
+  "buildCommand": "npm run vercel-build",
   "framework": "nextjs",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "env": {
+    "DATABASE_URL": "@database_url"
+  }
 }
 

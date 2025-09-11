@@ -33,6 +33,7 @@ import { buildReceiptHtml, printReceipt, printKOTDoc, buildKOTHtml, printHtml, p
 import { storesIssueBus } from '../lib/fb/stores';
 import { storesStore } from '../lib/stores/store';
 import { useAccountingStore } from '../lib/accounting/store';
+import { frontOfficeStore } from '../lib/frontoffice/store';
 
 type CustomerType = 'In-house' | 'Walk-in' | 'Takeout';
 type VenueMode = 'Restaurant' | 'Bar';
@@ -81,6 +82,9 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [customerType, setCustomerType] = useState<CustomerType>('Walk-in');
   const [roomNumber, setRoomNumber] = useState('');
   const [guestName, setGuestName] = useState('');
+  const [roomSearchTerm, setRoomSearchTerm] = useState('');
+  const [guestSearchTerm, setGuestSearchTerm] = useState('');
+  const [selectedGuest, setSelectedGuest] = useState<any>(null);
   const [tableNumber, setTableNumber] = useState('T01');
   const [waiterId, setWaiterId] = useState('W1');
   const [search, setSearch] = useState('');
@@ -121,6 +125,106 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [activityWaiter, setActivityWaiter] = useState<string>('');
 
   const accountingStore = useAccountingStore();
+
+  // Get available rooms (checked-in guests only)
+  const availableRooms = useMemo(() => {
+    return frontOfficeStore.reservations
+      .filter(r => r.status === 'checked-in' && r.roomId && r.roomId !== 'TBD')
+      .map(r => ({
+        roomId: r.roomId,
+        guestName: r.guestName,
+        guestId: r.guestId,
+        roomType: frontOfficeStore.roomTypes.find(rt => rt.id === r.roomTypeId)?.name || 'Unknown'
+      }))
+      .filter((room, index, self) => 
+        index === self.findIndex(r => r.roomId === room.roomId)
+      );
+  }, []);
+
+  // Get filtered rooms based on search
+  const filteredRooms = useMemo(() => {
+    if (!roomSearchTerm) return availableRooms;
+    return availableRooms.filter(room => 
+      room.roomId.toLowerCase().includes(roomSearchTerm.toLowerCase()) ||
+      room.guestName.toLowerCase().includes(roomSearchTerm.toLowerCase())
+    );
+  }, [availableRooms, roomSearchTerm]);
+
+  // Get filtered guests based on search
+  const filteredGuests = useMemo(() => {
+    if (!guestSearchTerm) return frontOfficeStore.guests.slice(0, 20);
+    return frontOfficeStore.guests.filter(guest => 
+      guest.name.toLowerCase().includes(guestSearchTerm.toLowerCase()) ||
+      guest.phone?.includes(guestSearchTerm) ||
+      guest.email?.toLowerCase().includes(guestSearchTerm.toLowerCase())
+    ).slice(0, 20);
+  }, [guestSearchTerm]);
+
+  // Handle room selection
+  const handleRoomSelect = (room: any) => {
+    setRoomNumber(room.roomId);
+    setGuestName(room.guestName);
+    setSelectedGuest(room);
+    setRoomSearchTerm('');
+  };
+
+  // Handle guest selection
+  const handleGuestSelect = (guest: any) => {
+    setGuestName(guest.name);
+    setSelectedGuest(guest);
+    setGuestSearchTerm('');
+  };
+
+  // Handle customer type change
+  const handleCustomerTypeChange = (newType: CustomerType) => {
+    setCustomerType(newType);
+    if (newType !== 'In-house') {
+      setRoomNumber('');
+      setGuestName('');
+      setSelectedGuest(null);
+      setRoomSearchTerm('');
+      setGuestSearchTerm('');
+    }
+  };
+
+  // Add charges to guest folio
+  const addToGuestFolio = (orderId: string, total: number, items: any[]) => {
+    if (customerType !== 'In-house' || !selectedGuest) return;
+
+    // Find the reservation for this guest
+    const reservation = frontOfficeStore.reservations.find(r => 
+      r.guestId === selectedGuest.guestId && r.status === 'checked-in'
+    );
+
+    if (reservation) {
+      // Create folio charges
+      const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
+      
+      // Add F&B charges
+      items.forEach(item => {
+        frontOfficeStore.addFolioCharge(folio.id, {
+          id: `charge-${Date.now()}-${Math.random()}`,
+          description: `${item.name} (${item.qty}x)`,
+          amount: item.price * item.qty,
+          category: 'F&B',
+          date: new Date().toISOString(),
+          reference: orderId
+        });
+      });
+
+      // Update folio balances
+      frontOfficeStore.updateFolioBalances(folio.id);
+      
+      // Track the event
+      trackEvent('FB.RoomCharge', { 
+        orderId, 
+        roomNumber, 
+        guestName, 
+        total, 
+        itemCount: items.length 
+      }, { sourceModule: 'F&B' });
+    }
+  };
 
   React.useEffect(() => {
     try {
@@ -366,6 +470,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   const sendOrder = () => {
     if (cart.length === 0) return;
+    
+    // Validate in-house customer selection
+    if (customerType === 'In-house' && (!roomNumber || !guestName)) {
+      alert('Please select a room and guest for in-house orders');
+      return;
+    }
     const id = `ORD-${Date.now().toString().slice(-6)}`;
     const newOrder: PendingOrder = {
       id,
@@ -420,6 +530,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   const handlePayment = async (paymentMethod: PaymentMethod, amount: number) => {
     if (cart.length === 0) return;
+    
+    // Validate in-house customer selection
+    if (customerType === 'In-house' && (!roomNumber || !guestName)) {
+      alert('Please select a room and guest for in-house orders');
+      return;
+    }
 
     try {
       // Calculate totals with Ghanaian taxes
@@ -472,6 +588,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           costCenter: venue === 'Restaurant' ? 'REST' : 'BAR'
         });
       });
+
+      // Add to guest folio if room charge
+      if (paymentMethod === 'Room Charge' && customerType === 'In-house') {
+        addToGuestFolio(newId, total, cart);
+      }
 
       // Track payment received
       trackEvent('Payment.Received', { orderId: newId, venue, customerType, total, itemCount: cart.length }, { sourceModule: 'F&B' });
@@ -646,16 +767,88 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                   <SelectItem key="Restaurant">Restaurant</SelectItem>
                   <SelectItem key="Bar">Bar</SelectItem>
                 </Select>
-                <Select label="Customer Type" selectedKeys={[customerType]} onSelectionChange={(k) => setCustomerType(Array.from(k as Set<string>)[0] as CustomerType)}>
+                <Select label="Customer Type" selectedKeys={[customerType]} onSelectionChange={(k) => handleCustomerTypeChange(Array.from(k as Set<string>)[0] as CustomerType)}>
                   <SelectItem key="In-house">In-house</SelectItem>
                   <SelectItem key="Walk-in">Walk-in</SelectItem>
                   <SelectItem key="Takeout">Takeout</SelectItem>
                 </Select>
 
                 {customerType === 'In-house' && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input label="Room Number" value={roomNumber} onChange={(e) => setRoomNumber(e.target.value)} />
-                    <Input label="Guest Name" value={guestName} onChange={(e) => setGuestName(e.target.value)} />
+                  <div className="space-y-3">
+                    <div>
+                      <Input 
+                        label="Room Number" 
+                        placeholder="Search by room number or guest name..."
+                        value={roomSearchTerm || roomNumber}
+                        onChange={(e) => {
+                          setRoomSearchTerm(e.target.value);
+                          if (!e.target.value) {
+                            setRoomNumber('');
+                            setGuestName('');
+                            setSelectedGuest(null);
+                          }
+                        }}
+                        onFocus={() => setRoomSearchTerm(roomNumber)}
+                        startContent={<span>🏨</span>}
+                      />
+                      {roomSearchTerm && filteredRooms.length > 0 && (
+                        <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg z-10">
+                          {filteredRooms.map((room) => (
+                            <div
+                              key={room.roomId}
+                              className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                              onClick={() => handleRoomSelect(room)}
+                            >
+                              <div className="font-medium">Room {room.roomId}</div>
+                              <div className="text-sm text-gray-600">{room.guestName} • {room.roomType}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    
+                    <div>
+                      <Input 
+                        label="Guest Name" 
+                        placeholder="Search by name, phone, or email..."
+                        value={guestSearchTerm || guestName}
+                        onChange={(e) => {
+                          setGuestSearchTerm(e.target.value);
+                          if (!e.target.value) {
+                            setGuestName('');
+                            setSelectedGuest(null);
+                          }
+                        }}
+                        onFocus={() => setGuestSearchTerm(guestName)}
+                        startContent={<span>👤</span>}
+                      />
+                      {guestSearchTerm && filteredGuests.length > 0 && (
+                        <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg z-10">
+                          {filteredGuests.map((guest) => (
+                            <div
+                              key={guest.id}
+                              className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                              onClick={() => handleGuestSelect(guest)}
+                            >
+                              <div className="font-medium">{guest.name}</div>
+                              <div className="text-sm text-gray-600">
+                                {guest.phone && `📞 ${guest.phone}`}
+                                {guest.email && ` • ✉️ ${guest.email}`}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {selectedGuest && (
+                      <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <div className="text-sm text-green-800">
+                          <div className="font-medium">✓ Guest Selected</div>
+                          <div>Room: {roomNumber} • Guest: {guestName}</div>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

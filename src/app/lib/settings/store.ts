@@ -861,6 +861,29 @@ export interface RoomManagementSettings {
     notes: string;
   }>;
   
+  // Service Charges Management
+  serviceCharges: Array<{
+    id: string;
+    name: string;
+    category: string;
+    icon: string;
+    basePrice: number;
+    isActive: boolean;
+    description: string;
+    requiresApproval: boolean;
+    maxDiscountPercent: number;
+    taxIncluded: boolean;
+            unit: 'per_item' | 'per_hour' | 'per_day' | 'per_person' | 'per_order' | 'per_session' | 'per_trip' | 'fixed';
+    seasonalPricing: Array<{
+      id: string;
+      name: string;
+      startDate: string;
+      endDate: string;
+      multiplier: number;
+      description: string;
+    }>;
+  }>;
+
   // NEW: Event Packages Management
   eventPackages: Array<{
     id: string;
@@ -1041,6 +1064,14 @@ interface SettingsStore extends SystemSettings {
   addEventPackageSeasonalPricing: (packageId: string, pricing: RoomManagementSettings['eventPackages'][0]['seasonalPricing'][0]) => void;
   updateEventPackageSeasonalPricing: (packageId: string, pricingId: string, updates: Partial<RoomManagementSettings['eventPackages'][0]['seasonalPricing'][0]>) => void;
   deleteEventPackageSeasonalPricing: (packageId: string, pricingId: string) => void;
+  
+  // Service Charges Management
+  addServiceCharge: (charge: RoomManagementSettings['serviceCharges'][0]) => void;
+  updateServiceCharge: (id: string, updates: Partial<RoomManagementSettings['serviceCharges'][0]>) => void;
+  deleteServiceCharge: (id: string) => void;
+  addServiceChargeSeasonalPricing: (chargeId: string, pricing: RoomManagementSettings['serviceCharges'][0]['seasonalPricing'][0]) => void;
+  updateServiceChargeSeasonalPricing: (chargeId: string, pricingId: string, updates: Partial<RoomManagementSettings['serviceCharges'][0]['seasonalPricing'][0]>) => void;
+  deleteServiceChargeSeasonalPricing: (chargeId: string, pricingId: string) => void;
   
   // Template Management Methods
   addTemplate: (template: Omit<DocumentTemplate, 'id' | 'createdAt' | 'updatedAt'>) => void;
@@ -2274,6 +2305,80 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     get().publish();
   },
   
+  // Service Charges Management
+  addServiceCharge: (charge: RoomManagementSettings['serviceCharges'][0]) => {
+    const state = get();
+    const newCharges = [...state.roomManagement.serviceCharges, charge];
+    const newRoomManagement = { ...state.roomManagement, serviceCharges: newCharges };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateServiceCharge: (id: string, updates: Partial<RoomManagementSettings['serviceCharges'][0]>) => {
+    const state = get();
+    const newCharges = state.roomManagement.serviceCharges.map(c => 
+      c.id === id ? { ...c, ...updates } : c
+    );
+    const newRoomManagement = { ...state.roomManagement, serviceCharges: newCharges };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteServiceCharge: (id: string) => {
+    const state = get();
+    const newCharges = state.roomManagement.serviceCharges.filter(c => c.id !== id);
+    const newRoomManagement = { ...state.roomManagement, serviceCharges: newCharges };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  addServiceChargeSeasonalPricing: (chargeId: string, pricing: RoomManagementSettings['serviceCharges'][0]['seasonalPricing'][0]) => {
+    const state = get();
+    const newCharges = state.roomManagement.serviceCharges.map(c => 
+      c.id === chargeId 
+        ? { ...c, seasonalPricing: [...c.seasonalPricing, pricing] }
+        : c
+    );
+    const newRoomManagement = { ...state.roomManagement, serviceCharges: newCharges };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  updateServiceChargeSeasonalPricing: (chargeId: string, pricingId: string, updates: Partial<RoomManagementSettings['serviceCharges'][0]['seasonalPricing'][0]>) => {
+    const state = get();
+    const newCharges = state.roomManagement.serviceCharges.map(c => 
+      c.id === chargeId 
+        ? { 
+            ...c, 
+            seasonalPricing: c.seasonalPricing.map(sp => 
+              sp.id === pricingId ? { ...sp, ...updates } : sp
+            )
+          }
+        : c
+    );
+    const newRoomManagement = { ...state.roomManagement, serviceCharges: newCharges };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+
+  deleteServiceChargeSeasonalPricing: (chargeId: string, pricingId: string) => {
+    const state = get();
+    const newCharges = state.roomManagement.serviceCharges.map(c => 
+      c.id === chargeId 
+        ? { ...c, seasonalPricing: c.seasonalPricing.filter(sp => sp.id !== pricingId) }
+        : c
+    );
+    const newRoomManagement = { ...state.roomManagement, serviceCharges: newCharges };
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+  
   // Template Management Methods
   addTemplate: (template: Omit<DocumentTemplate, 'id' | 'createdAt' | 'updatedAt'>) => {
     const state = get();
@@ -2883,7 +2988,95 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     },
     // NEW: Event Resources & Packages
     eventResources: [],
-    eventPackages: []
+    eventPackages: [],
+    
+    // Service Charges Management
+    serviceCharges: [
+      {
+        id: 'swimming-pool',
+        name: 'Swimming Pool Access',
+        category: 'Recreation',
+        icon: '🏊',
+        basePrice: 50.00,
+        isActive: true,
+        description: 'Daily access to swimming pool facilities',
+        requiresApproval: false,
+        maxDiscountPercent: 20,
+        taxIncluded: true,
+        unit: 'per_person',
+        seasonalPricing: []
+      },
+      {
+        id: 'laundry-service',
+        name: 'Laundry Service',
+        category: 'Housekeeping',
+        icon: '👕',
+        basePrice: 25.00,
+        isActive: true,
+        description: 'Professional laundry and dry cleaning service',
+        requiresApproval: false,
+        maxDiscountPercent: 15,
+        taxIncluded: true,
+        unit: 'per_item',
+        seasonalPricing: []
+      },
+      {
+        id: 'room-service',
+        name: 'Room Service',
+        category: 'Food & Beverage',
+        icon: '🍽️',
+        basePrice: 15.00,
+        isActive: true,
+        description: 'In-room dining service charge',
+        requiresApproval: false,
+        maxDiscountPercent: 10,
+        taxIncluded: true,
+        unit: 'per_order',
+        seasonalPricing: []
+      },
+      {
+        id: 'spa-services',
+        name: 'Spa & Wellness',
+        category: 'Wellness',
+        icon: '🧘',
+        basePrice: 120.00,
+        isActive: true,
+        description: 'Spa treatments and wellness services',
+        requiresApproval: true,
+        maxDiscountPercent: 25,
+        taxIncluded: true,
+        unit: 'per_session',
+        seasonalPricing: []
+      },
+      {
+        id: 'conference-room',
+        name: 'Conference Room Rental',
+        category: 'Business',
+        icon: '🏢',
+        basePrice: 200.00,
+        isActive: true,
+        description: 'Conference room and meeting facilities',
+        requiresApproval: true,
+        maxDiscountPercent: 30,
+        taxIncluded: true,
+        unit: 'per_hour',
+        seasonalPricing: []
+      },
+      {
+        id: 'airport-transfer',
+        name: 'Airport Transfer',
+        category: 'Transportation',
+        icon: '✈️',
+        basePrice: 80.00,
+        isActive: true,
+        description: 'Airport pickup and drop-off service',
+        requiresApproval: false,
+        maxDiscountPercent: 15,
+        taxIncluded: true,
+        unit: 'per_trip',
+        seasonalPricing: []
+      }
+    ]
   }
 }));
 

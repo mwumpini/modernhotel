@@ -115,8 +115,7 @@ export default function FrontdeskDashboard() {
     {
       category: 'Guest Services',
       items: [
-        { title: 'Check-ins', icon: '✅', description: 'Guest check-in processing', status: 'active', count: todayCheckIns },
-        { title: 'In-House', icon: '🏠', description: 'Current guest management', status: 'active', count: occupiedTotal },
+        { title: 'Check-ins', icon: '✅', description: 'Guest check-in and check-ins management', status: 'active', count: todayCheckIns + occupiedTotal },
         { title: 'Check-outs', icon: '🚪', description: 'Guest check-out processing', status: 'active', count: todayCheckOuts },
         { title: 'Invoices & Payments', icon: '📄', description: 'Billing and payment processing', status: 'active', count: 0 }, // Clean slate - no invoices
         { title: 'Guest Experience Manager', icon: '👥', description: 'Guest satisfaction and services', status: 'active', count: occupiedTotal },
@@ -307,8 +306,6 @@ export default function FrontdeskDashboard() {
                                 router.push('/room-status');
                               } else if (item.title.includes('Check-ins')) {
                                 router.push('/guest-services/check-ins');
-                              } else if (item.title.includes('In-House')) {
-                                router.push('/guest-services/in-house');
                               } else if (item.title.includes('Check-outs')) {
                                 router.push('/guest-services/check-outs');
                               } else if (item.title.includes('Guest Experience Manager')) {
@@ -447,7 +444,7 @@ export default function FrontdeskDashboard() {
                     </CardBody>
                   </Card>
 
-                  {/* 2. In-House */}
+                  {/* 2. Check-ins */}
                   <Card className="border border-gray-200">
                     <CardBody className="p-4">
                       <div className="flex items-center space-x-3 mb-3">
@@ -455,7 +452,7 @@ export default function FrontdeskDashboard() {
                         <div>
                           <div className="flex items-center">
                             <InfoIcon description="Manage guests during their stay" />
-                            <h4 className="font-semibold text-ghana-black">In-House</h4>
+                            <h4 className="font-semibold text-ghana-black">Check-ins</h4>
                           </div>
                         </div>
                       </div>
@@ -469,7 +466,7 @@ export default function FrontdeskDashboard() {
                           color="primary"
                           variant="flat"
                           className="w-full"
-                          onClick={() => router.push('/guest-services/in-house')}
+                          onClick={() => router.push('/guest-services/check-ins')}
                         >
                           🏠 Manage Guests
                         </Button>
