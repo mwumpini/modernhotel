@@ -9,6 +9,7 @@
     "dev:safe": "npm run kill:node && npm run clean && npm run dev",
     "clean": "node scripts/clean-next.js",
     "kill:node": "powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\"",
+    "prebuild": "prisma generate --schema=prisma/schema.production.prisma",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",

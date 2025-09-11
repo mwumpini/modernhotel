@@ -31,6 +31,7 @@ model Tenant {
   guests      Guest[]
   reservations Reservation[]
   auditLogs   AuditLog[]
+  rooms       Room[]
 
   @@map("tenants")
 }
@@ -75,6 +76,7 @@ model Property {
 
   // Relations
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rooms       Room[]
 
   @@unique([tenantId, name])
   @@map("properties")
