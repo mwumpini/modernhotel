@@ -10,7 +10,7 @@
     "clean": "node scripts/clean-next.js",
     "kill:node": "powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\"",
     "prebuild": "prisma generate --schema=prisma/schema.production.prisma",
-    "build": "next build",
+    "build": "prisma generate --schema=prisma/schema.production.prisma && next build",
     "start": "next start",
     "lint": "next lint",
     "db:generate": "prisma generate",
