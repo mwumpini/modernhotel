@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import PageLayout from '../../../components/PageLayout';
-import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Avatar, Badge, Switch, Tooltip } from '@heroui/react';
+import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Avatar, Badge, Switch, Tooltip, Pagination } from '@heroui/react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Textarea, useDisclosure, Tabs, Tab } from '@heroui/react';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
@@ -142,10 +142,10 @@ function ClientsServicesContent() {
     const [sortState, setSortState] = useState<{ column: string; direction: 'asc'|'desc' }>({ column: 'name', direction: 'asc' });
     const [showAllColumns, setShowAllColumns] = useState(false);
     const defaultColWidths: Record<string, number> = { 
-        index: 50, id: 100, name: 250, email: 180, phone: 120, secondaryPhone: 120, 
-        gender: 80, nationality: 100, dob: 100, company: 180, jobTitle: 130, 
-        industry: 130, contactPerson: 160, address: 180, city: 100, 
-        type: 80, reservations: 100, services: 80, dateJoined: 100, actions: 120 
+        index: 40, id: 90, name: 200, email: 150, phone: 110, secondaryPhone: 110, 
+        gender: 70, nationality: 90, dob: 90, company: 150, jobTitle: 120, 
+        industry: 120, contactPerson: 140, address: 160, city: 90, 
+        type: 70, reservations: 90, services: 80, dateJoined: 100, actions: 110 
     };
     const [colWidths, setColWidths] = useState<Record<string, number>>(defaultColWidths);
     const columnsOrder: Array<keyof typeof colWidths> = [
@@ -156,7 +156,7 @@ function ClientsServicesContent() {
     
     // Define which columns are visible by default
     const defaultVisibleColumns: Array<keyof typeof colWidths> = [
-        'index', 'id', 'name', 'email', 'phone', 'gender', 'company', 'type', 'actions'
+        'index', 'id', 'name', 'email', 'phone', 'type', 'actions'
     ];
     
     // Get visible columns based on showAllColumns state
@@ -295,13 +295,16 @@ function ClientsServicesContent() {
         });
 
 			const rowsData: ClientRow[] = guests.map((g: GuestProfile) => {
-            const isCorp = (g as any).type === 'corporate' || (g as any).isCorporate === true;
+            const lastIsCorporate = String((g as any).lastName || '').toLowerCase() === 'corporate';
+            const isCorp = (g as any).type === 'corporate' || (g as any).isCorporate === true || lastIsCorporate;
             const corpMeta: any = (g as any).corporateMeta || {};
             const corpContact = corpMeta.contactPerson || {};
             
             // Name logic
             const defaultFullName = [g.firstName, g.middleName, g.lastName].filter(Boolean).join(' ').trim() || 'Unknown';
-            const fullName = isCorp ? ((g as any).companyName || corpMeta.companyName || 'Unknown Company') : defaultFullName;
+            const inferredCompany = lastIsCorporate ? (g as any).firstName : undefined;
+            const companyName = (g as any).companyName || corpMeta.companyName || inferredCompany;
+            const fullName = isCorp ? (companyName || 'Unknown Company') : defaultFullName;
             
             // Contact info
             const companyEmail = (g as any).companyEmail || corpMeta.terms?.accountsEmail || g.email;
@@ -312,13 +315,13 @@ function ClientsServicesContent() {
             const clientServicesCount = serviceMap.get(g.id) || 0;
             const totalSpent = clientReservations.reduce((sum: number, r: Reservation) => 
                 sum + (r.rateBreakdown?.reduce((s: number, d) => s + d.total, 0) || 0), 0);
-				const lastVisit = clientReservations.length > 0 ? 
-					clientReservations.sort((a, b) => new Date(b.departure).getTime() - new Date(a.departure).getTime())[0]?.departure : undefined;
-				
-				return {
-					id: g.id,
+                const lastVisit = clientReservations.length > 0 ? 
+                    clientReservations.sort((a, b) => new Date(b.departure).getTime() - new Date(a.departure).getTime())[0]?.departure : undefined;
+                
+                return {
+                    id: g.id,
                 serialNumber: g.serialNumber,
-					name: fullName,
+                    name: fullName,
                 email: isCorp ? companyEmail : g.email,
                 phone: isCorp ? companyPhone : g.phone,
                 secondaryPhone: g.secondaryPhone,
@@ -326,7 +329,7 @@ function ClientsServicesContent() {
                 gender: isCorp ? 'N/A' : g.gender,
                 nationality: g.nationality,
                 dateOfBirth: g.dateOfBirth,
-                company: isCorp ? (g as any).companyName : g.employerCompany,
+                company: isCorp ? (companyName || (g as any).companyName) : g.employerCompany,
                 jobTitle: g.jobTitle,
                 industry: corpMeta.industry,
                 contactPerson: corpContact.name,
@@ -336,9 +339,9 @@ function ClientsServicesContent() {
                 address: isCorp ? `${corpMeta.address?.line1 || ''} ${corpMeta.address?.line2 || ''}`.trim() : '',
                 city: isCorp ? corpMeta.address?.city : '',
                 country: isCorp ? corpMeta.address?.countryCode : '',
-					services: clientServicesCount,
-					totalSpent,
-					lastVisit,
+                    services: clientServicesCount,
+                    totalSpent,
+                    lastVisit,
                 preferences: {
                     preferredRoomType: (g as any).preferences?.preferredRoomType || 'standard',
                     preferredFloor: (g as any).preferences?.preferredFloor || 'middle',
@@ -353,9 +356,9 @@ function ClientsServicesContent() {
                     marketingEmails: (g as any).preferences?.marketingEmails ?? false
                 },
                 createdAt: (g as any).createdAt || new Date().toISOString(),
-					reservationCount: clientReservations.length
-				};
-			});
+                    reservationCount: clientReservations.length
+                };
+            });
         
         // Update rows immediately
 			setRows(rowsData);
@@ -379,6 +382,29 @@ function ClientsServicesContent() {
         return unsubscribe;
     }, [computeRows]);
     
+    // One-time normalization: ensure corporate clients are labeled and shaped correctly
+    useEffect(() => {
+        try {
+            for (const g of frontOfficeStore.guests as any[]) {
+                const lastIsCorporate = String(g?.lastName || '').toLowerCase() === 'corporate';
+                const inferredCompany = lastIsCorporate ? g?.firstName : undefined;
+                const companyName: string | undefined = g?.companyName || g?.corporateMeta?.companyName || inferredCompany;
+                const looksCorporate = !!(g?.isCorporate || g?.type === 'corporate' || lastIsCorporate || companyName);
+                if (looksCorporate) {
+                    const updates: any = {};
+                    if (!g.isCorporate) updates.isCorporate = true;
+                    if (!g.companyName && companyName) updates.companyName = companyName;
+                    if (g.lastName && g.lastName.toLowerCase() === 'corporate') updates.lastName = '';
+                    // Ensure display name uses company
+                    if (companyName && g.firstName !== companyName) updates.firstName = companyName;
+                    if (Object.keys(updates).length > 0) {
+                        frontOfficeStore.updateGuest(g.id, updates as any);
+                    }
+                }
+            }
+        } catch {}
+    }, []);
+
     // Cleanup on unmount
     useEffect(() => {
         return () => {
@@ -578,12 +604,12 @@ function ClientsServicesContent() {
         const newGuest: GuestProfile = {
             id: clientId,
             serialNumber: frontOfficeStore.getNextClientNumber(),
-            firstName: newClient.type === 'corporate' ? 
-                (newClient.contactPersonName?.split(' ')[0] || newClient.companyName) : 
-                newClient.firstName,
-            lastName: newClient.type === 'corporate' ? 
-                (newClient.contactPersonName?.split(' ').slice(1).join(' ') || 'Corporate') : 
-                newClient.lastName,
+            firstName: newClient.type === 'corporate' 
+                ? newClient.companyName 
+                : newClient.firstName,
+            lastName: newClient.type === 'corporate' 
+                ? '' 
+                : newClient.lastName,
             middleName: newClient.middleName || undefined,
             phone: newClient.phone || undefined,
             secondaryPhone: newClient.secondaryPhone || undefined,
@@ -1289,16 +1315,16 @@ function ClientsServicesContent() {
 								</Button>
 							</div>
 							<div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-								<div className="max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+								<div className="max-h-[600px] overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
 									<Table 
 										aria-label="Clients and services table"
 										classNames={{
 											base: "min-h-[300px]",
-											table: "min-h-[300px]",
+											table: "min-h-[300px] table-fixed",
 											thead: "[&>tr]:first:shadow-none sticky top-0 z-10 bg-gray-50",
 											tbody: "[&>tr]:border-b [&>tr]:border-gray-200",
 											tr: "hover:bg-gray-50 transition-colors",
-											td: "py-1.5 px-3 border-r border-gray-100 last:border-r-0 text-sm",
+											td: "py-1.5 px-3 border-r border-gray-100 last:border-r-0 text-sm truncate",
 											th: "py-2 px-3 border-r border-gray-200 last:border-r-0 bg-gray-50 text-sm font-medium"
 										}}
 									>
@@ -1648,6 +1674,11 @@ function ClientsServicesContent() {
 											aria-label="Jump to page number"
 										/>
 									</div>
+							</div>
+							)}
+							{totalPages > 1 && (
+								<div className="flex justify-center py-3">
+									<Pagination total={totalPages} page={currentPage} onChange={setCurrentPage} showControls size="sm" color="primary" />
 								</div>
 							)}
 						</>

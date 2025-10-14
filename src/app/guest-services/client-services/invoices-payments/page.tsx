@@ -28,6 +28,11 @@ import {
   Divider
 } from '@heroui/react';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
+import { useSettingsStore } from '../../../lib/settings/store';
+import { openPrintPreview } from '../../../lib/print/engine';
+import { listTemplates } from '../../../lib/print/templates';
+import { trackEvent } from '../../../lib/analytics/trackEvent';
+import { logAudit } from '../../../lib/analytics/auditLogStore';
 
 interface InvoiceItem {
   id: string;
@@ -84,17 +89,22 @@ interface Invoice {
 }
 
 export default function InvoicesPaymentsPage() {
-  const [activeTab, setActiveTab] = useState('invoices');
+  const [activeTab, setActiveTab] = useState('payments');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateFilter, setDateFilter] = useState('all');
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+  const settings = useSettingsStore();
   
   // Folio management state
   const [selectedFolio, setSelectedFolio] = useState<any>(null);
   const [folioSearchTerm, setFolioSearchTerm] = useState('');
   const [folioStatusFilter, setFolioStatusFilter] = useState('all');
+  const [payerFilter, setPayerFilter] = useState<'all'|'guest'|'company'>('all');
+  const [balanceFilter, setBalanceFilter] = useState<'all'|'zero'|'positive'>('all');
+  const [folioSortBy, setFolioSortBy] = useState<'balance'|'updatedAt'>('balance');
+  const [folioSortOrder, setFolioSortOrder] = useState<'asc'|'desc'>('desc');
   const { isOpen: isFolioModalOpen, onOpen: onFolioModalOpen, onClose: onFolioModalClose } = useDisclosure();
   const [adjustmentAmount, setAdjustmentAmount] = useState<number>(0);
   const [adjustmentReason, setAdjustmentReason] = useState<string>('');
@@ -103,6 +113,7 @@ export default function InvoicesPaymentsPage() {
   const [itemsPerPage] = useState(10);
   const [invoicePage, setInvoicePage] = useState(1);
   const [paymentPage, setPaymentPage] = useState(1);
+  const [folioPage, setFolioPage] = useState(1);
   const [selectedInvoice, setSelectedInvoice] = useState<Invoice | null>(null);
   const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
 
@@ -111,6 +122,7 @@ export default function InvoicesPaymentsPage() {
   const { isOpen: isPaymentOpen, onOpen: onPaymentOpen, onClose: onPaymentClose } = useDisclosure();
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure();
   const { isOpen: isAddPaymentOpen, onOpen: onAddPaymentOpen, onClose: onAddPaymentClose } = useDisclosure();
+  const { isOpen: isCorpOpen, onOpen: onCorpOpen, onClose: onCorpClose } = useDisclosure();
 
   // Payment form state
   const [paymentForm, setPaymentForm] = useState({
@@ -153,6 +165,33 @@ export default function InvoicesPaymentsPage() {
       } as InvoiceItem
     ]
   });
+
+  // Folio filters matcher reused for count and slicing
+  const matchesFolioFilters = React.useCallback((reservation: any) => {
+    const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
+    const guestName = guest?.name || reservation.guestName || 'Unknown';
+    const matchesSearch = guestName.toLowerCase().includes(folioSearchTerm.toLowerCase()) ||
+                          (reservation.guestPhone?.includes(folioSearchTerm) ?? false) ||
+                          (reservation.guestEmail?.includes(folioSearchTerm) ?? false);
+    const matchesStatus = folioStatusFilter === 'all' || reservation.status === folioStatusFilter;
+    // Payer filter: company if billing/company present
+    const isCompany = !!(reservation.billingPersonName || reservation.companyName);
+    const matchesPayer = payerFilter === 'all' || (payerFilter === 'company' ? isCompany : !isCompany);
+    // Balance filter
+    const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
+    const bal = folio.balance || 0;
+    const matchesBalance = balanceFilter === 'all' || (balanceFilter === 'zero' ? bal === 0 : bal > 0);
+    return matchesSearch && matchesStatus && matchesPayer && matchesBalance;
+  }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter]);
+
+  // Reset folio page when filters change
+  useEffect(() => {
+    setFolioPage(1);
+  }, [folioSearchTerm, folioStatusFilter]);
+
+  const totalFolioPages = Math.max(1, Math.ceil(
+    frontOfficeStore.reservations.filter(matchesFolioFilters).length / itemsPerPage
+  ));
 
   // Live folio-backed invoices & payments derived from frontOfficeStore
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -334,6 +373,99 @@ export default function InvoicesPaymentsPage() {
     }
   };
 
+  const handlePrintInvoice = (invoice: Invoice) => {
+    const org = (() => {
+      const biz = settings.countryCompliance[settings.defaultCountry]?.businessInfo;
+      return {
+        name: biz?.name || settings.systemName,
+        address: biz?.address,
+        phone: biz?.phone,
+        email: biz?.email,
+        taxId: biz?.taxId,
+        logoUrl: undefined
+      };
+    })();
+
+    const data = {
+      org,
+      guest: {
+        name: invoice.guestName,
+        roomNumber: invoice.roomNumber,
+        roomType: invoice.roomType,
+        arrivalDate: invoice.checkInDate,
+        departureDate: invoice.checkOutDate,
+        nights: invoice.nights
+      },
+      docNumber: invoice.invoiceNumber,
+      docDate: invoice.createdAt,
+      title: 'Invoice',
+      items: invoice.items.map(it => ({
+        description: it.description,
+        qty: it.quantity,
+        unitPrice: it.unitPrice,
+        amount: it.totalPrice,
+        date: it.date
+      })),
+      totals: {
+        subTotal: invoice.subtotal,
+        taxes: { vat: invoice.taxAmount },
+        payments: invoice.totalAmount - invoice.balance,
+        balance: invoice.balance,
+        discount: invoice.discountAmount,
+        grandTotal: invoice.totalAmount
+      },
+      footerNotes: [settings.invoiceSettings.footerText.replace('{TERMS}', String(settings.invoiceSettings.defaultPaymentTerms))],
+      currency: settings.countryCompliance[settings.defaultCountry]?.currencySymbol || '₵'
+    } as any;
+
+    openPrintPreview('invoice', settings.printing.invoice, data);
+    try { trackEvent('Print.Invoice' as any, { invoiceId: invoice.id, amount: invoice.totalAmount }); } catch {}
+    try { logAudit({ area: 'accounting', action: 'print', entity: 'Invoice', entityId: invoice.id, details: `Printed ${invoice.invoiceNumber}`, severity: 'low' }); } catch {}
+  };
+
+  const handlePrintReceipt = (payment: Payment) => {
+    const inv = invoices.find(i => i.id === payment.invoiceId);
+    const org = (() => {
+      const biz = settings.countryCompliance[settings.defaultCountry]?.businessInfo;
+      return {
+        name: biz?.name || settings.systemName,
+        address: biz?.address,
+        phone: biz?.phone,
+        email: biz?.email,
+        taxId: biz?.taxId,
+        logoUrl: undefined
+      };
+    })();
+    const data = {
+      org,
+      guest: {
+        name: inv?.guestName || '',
+        roomNumber: inv?.roomNumber,
+        roomType: inv?.roomType,
+        arrivalDate: inv?.checkInDate,
+        departureDate: inv?.checkOutDate,
+        nights: inv?.nights
+      },
+      docNumber: settings.getNextReceiptNumber(),
+      docDate: payment.processedAt,
+      title: 'Receipt',
+      items: [
+        { description: `Payment (${getPaymentMethodLabel(payment.paymentMethod)})`, amount: payment.amount, date: payment.processedAt }
+      ],
+      totals: {
+        subTotal: payment.amount,
+        payments: payment.amount,
+        balance: 0,
+        grandTotal: payment.amount
+      },
+      currency: settings.countryCompliance[settings.defaultCountry]?.currencySymbol || '₵'
+    } as any;
+
+    openPrintPreview('receipt', settings.printing.receipt, data);
+    try { trackEvent('Print.Receipt' as any, { paymentId: payment.id, amount: payment.amount }); } catch {}
+    try { logAudit({ area: 'accounting', action: 'print', entity: 'Payment', entityId: payment.id, details: `Printed receipt for ${payment.transactionId}`, severity: 'low' }); } catch {}
+  };
+
   const handleViewInvoice = (invoice: Invoice) => {
     setSelectedInvoice(invoice);
     onViewOpen();
@@ -372,6 +504,9 @@ export default function InvoicesPaymentsPage() {
       invoiceId: invoice.id
     });
 
+    try { trackEvent('Invoice.PaymentAdded' as any, { reservationId: reservation.id, invoiceId: invoice.id, amount, method }); } catch {}
+    try { logAudit({ area: 'frontdesk', action: 'create', entity: 'Payment', entityId: invoice.id, details: `Added payment ₵${amount} (${method}) to ${invoice.invoiceNumber}`, severity: 'low' }); } catch {}
+
     // Refresh the data
     setTimeout(() => recomputeBillingFromStore(), 100);
   };
@@ -388,6 +523,8 @@ export default function InvoicesPaymentsPage() {
     const success = frontOfficeStore.applyCreditPayment(reservation.id, amount, `Credit applied to invoice ${invoice.invoiceNumber}`);
     
     if (success) {
+      try { trackEvent('Invoice.CreditApplied' as any, { reservationId: reservation.id, invoiceId: invoice.id, amount }); } catch {}
+      try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Invoice', entityId: invoice.id, details: `Applied credit ₵${amount}`, severity: 'low' }); } catch {}
       setTimeout(() => recomputeBillingFromStore(), 100);
     }
   };
@@ -442,43 +579,18 @@ export default function InvoicesPaymentsPage() {
     }
 
     try {
-      const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
-      
       if (adjustmentType === 'charge') {
-        // Add charge
-        folio.charges.push({
-          id: Date.now().toString(),
-          date: new Date().toISOString(),
-          description: adjustmentReason,
-          amount: adjustmentAmount,
-          tax: 0
-        });
+        frontOfficeStore.addCharge(selectedFolio.id, adjustmentReason, adjustmentAmount);
       } else if (adjustmentType === 'credit') {
-        // Add credit payment
-        folio.payments.push({
-          id: Date.now().toString(),
-          date: new Date().toISOString(),
-          method: 'Credit',
-          amount: adjustmentAmount,
-          status: 'completed'
-        });
+        frontOfficeStore.addPayment(selectedFolio.id, 'Credit', adjustmentAmount, { notes: adjustmentReason, processedBy: 'Front Desk' });
       } else if (adjustmentType === 'discount') {
-        // Add discount as negative charge
-        folio.charges.push({
-          id: Date.now().toString(),
-          date: new Date().toISOString(),
-          description: `Discount: ${adjustmentReason}`,
-          amount: -adjustmentAmount,
-          tax: 0
-        });
+        frontOfficeStore.addCharge(selectedFolio.id, `Discount: ${adjustmentReason}`, -adjustmentAmount);
       }
 
-      // Update folio balances
-      frontOfficeStore.updateFolioBalances(folio);
-      
-      // Refresh data
+      try { trackEvent('Folio.AdjustmentProcessed' as any, { reservationId: selectedFolio.id, type: adjustmentType, amount: adjustmentAmount }); } catch {}
+      try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: selectedFolio.id, details: `Adjustment (${adjustmentType}) ₵${adjustmentAmount} - ${adjustmentReason}`, severity: 'low' }); } catch {}
+
       recomputeBillingFromStore();
-      
       alert('Adjustment processed successfully');
       setAdjustmentAmount(0);
       setAdjustmentReason('');
@@ -490,13 +602,27 @@ export default function InvoicesPaymentsPage() {
 
   const handleCreateInvoice = () => {
     const { subtotal, taxAmount, totalAmount } = calculateInvoiceTotals();
+    // Create or link a reservation so folio/invoice stays consistent
+    const reservation = frontOfficeStore.addReservation({
+      guestName: newInvoice.guestName || 'Walk-in',
+      guestPhone: newInvoice.guestPhone || '',
+      guestEmail: newInvoice.guestEmail || '',
+      roomType: newInvoice.roomType || 'Standard',
+      arrival: newInvoice.checkInDate,
+      departure: newInvoice.checkOutDate,
+      adults: 1,
+      children: 0,
+      status: 'confirmed',
+      source: 'Direct'
+    } as any);
+
     const invoice: Invoice = {
-      id: Date.now().toString(),
-      invoiceNumber: `INV-${Date.now()}`,
+      id: reservation.id,
+      invoiceNumber: settings.getNextInvoiceNumber(),
       guestName: newInvoice.guestName,
       guestEmail: newInvoice.guestEmail,
       guestPhone: newInvoice.guestPhone,
-      roomNumber: newInvoice.roomNumber,
+      roomNumber: reservation.roomId || newInvoice.roomNumber,
       roomType: newInvoice.roomType,
       checkInDate: newInvoice.checkInDate,
       checkOutDate: newInvoice.checkOutDate,
@@ -506,7 +632,7 @@ export default function InvoicesPaymentsPage() {
       discountAmount: 0,
       totalAmount,
       status: 'draft',
-      dueDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      dueDate: new Date(Date.now() + settings.invoiceSettings.defaultPaymentTerms * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       notes: newInvoice.notes,
@@ -515,11 +641,15 @@ export default function InvoicesPaymentsPage() {
       balance: totalAmount
     };
 
-    // Convert items into store folio charges
+    // Convert items into store folio charges for the reservation
     newInvoice.items.forEach(i => {
-      frontOfficeStore.addCharge(invoice.id, i.description || 'Custom Item', i.totalPrice || (i.quantity * i.unitPrice));
+      const amt = i.totalPrice || (i.quantity * i.unitPrice);
+      if (amt && amt !== 0) frontOfficeStore.addCharge(reservation.id, i.description || 'Custom Item', amt);
     });
     recomputeBillingFromStore();
+
+    try { trackEvent('Invoice.Created' as any, { reservationId: reservation.id, invoiceNumber: invoice.invoiceNumber, amount: totalAmount }); } catch {}
+    try { logAudit({ area: 'accounting', action: 'create', entity: 'Invoice', entityId: invoice.id, details: `Created ${invoice.invoiceNumber} for ${invoice.guestName}`, severity: 'medium' }); } catch {}
 
     setNewInvoice({
       guestName: '',
@@ -545,60 +675,13 @@ export default function InvoicesPaymentsPage() {
         </div>
         <Button color="primary" onPress={onCreateOpen}>+ Create Invoice</Button>
       </div>
-
-      {/* Debug Information Panel */}
-      <Card className="border-2 border-blue-200 bg-blue-50">
-        <CardBody className="p-4">
-          <div className="flex justify-between items-center">
-            <div>
-              <h3 className="text-lg font-semibold text-blue-800 mb-2">🔍 Debug Information</h3>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                  <p className="font-medium text-blue-700">Total Invoices:</p>
-                  <p className="text-blue-900">{invoices.length}</p>
-                </div>
-                <div>
-                  <p className="font-medium text-blue-700">Total Payments:</p>
-                  <p className="text-blue-900">{payments.length}</p>
-                </div>
-                <div>
-                  <p className="font-medium text-blue-700">Store Reservations:</p>
-                  <p className="text-blue-900">{frontOfficeStore.reservations.length}</p>
-                </div>
-                <div>
-                  <p className="font-medium text-blue-700">Store Folios:</p>
-                  <p className="text-blue-900">{frontOfficeStore.folios.length}</p>
-                </div>
-              </div>
-              {payments.length > 0 && (
-                <div className="mt-2">
-                  <p className="text-xs text-blue-600">
-                    Payment IDs: {payments.map(p => p.id).join(', ')}
-                  </p>
-                </div>
-              )}
-            </div>
-            <Button 
-              size="sm" 
-              color="primary" 
-              variant="solid"
-              onPress={() => {
-                console.log('[INVOICE-PAYMENT] Manual refresh triggered from debug panel');
-                recomputeBillingFromStore();
-              }}
-            >
-              🔄 Refresh Data
-            </Button>
-          </div>
-        </CardBody>
-      </Card>
-
+      
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="border-l-4 border-l-blue-500">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
               <div>
-            <p className="text-sm text-gray-600">Total Invoices</p>
+                <p className="text-sm text-gray-600">Total Invoices</p>
                 <p className="text-2xl font-bold text-gray-900">{invoices.length}</p>
               </div>
               <div className="text-blue-500 text-2xl">📄</div>
@@ -637,9 +720,9 @@ export default function InvoicesPaymentsPage() {
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
               <div>
-            <p className="text-sm text-gray-600">Overdue</p>
+                <p className="text-sm text-gray-600">Overdue</p>
                 <p className="text-2xl font-bold text-red-600">₵{(invoices.filter(i => i.status === 'overdue').reduce((s, i) => s + i.balance, 0)).toLocaleString()}</p>
-      </div>
+              </div>
               <div className="text-red-500 text-2xl">🚨</div>
             </div>
             <p className="text-xs text-gray-500 mt-1">{invoices.filter(i => i.status === 'overdue').length} invoices</p>
@@ -648,69 +731,12 @@ export default function InvoicesPaymentsPage() {
       </div>
 
       {/* Credit Management Section */}
-      <Card>
-        <CardBody>
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900">Credit Management</h2>
-              <p className="text-gray-600">Manage guest credit balances and applications</p>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-blue-50 p-4 rounded-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-blue-600">Total Credit Issued</p>
-                  <p className="text-2xl font-bold text-blue-700">
-                    ₵{frontOfficeStore.guests.reduce((sum, guest) => sum + (guest.creditBalance || 0), 0).toLocaleString()}
-                  </p>
-                </div>
-                <div className="text-blue-500 text-2xl">💳</div>
-              </div>
-            </div>
-            
-            <div className="bg-green-50 p-4 rounded-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-green-600">Active Credit Accounts</p>
-                  <p className="text-2xl font-bold text-green-700">
-                    {frontOfficeStore.guests.filter(g => (g.creditBalance || 0) > 0).length}
-                  </p>
-                </div>
-                <div className="text-green-500 text-2xl">👥</div>
-              </div>
-            </div>
-            
-            <div className="bg-orange-50 p-4 rounded-lg">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-orange-600">Credit Limit Utilization</p>
-                  <p className="text-2xl font-bold text-orange-700">
-                    {(() => {
-                      const totalCredit = frontOfficeStore.guests.reduce((sum, guest) => sum + (guest.creditBalance || 0), 0);
-                      const totalLimit = frontOfficeStore.guests.reduce((sum, guest) => sum + (guest.creditLimit || 0), 0);
-                      return totalLimit > 0 ? ((totalCredit / totalLimit) * 100).toFixed(1) : '0.0';
-                    })()}%
-                  </p>
-                </div>
-                <div className="text-orange-500 text-2xl">📊</div>
-              </div>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+      {/* Removed per user request */}
 
       <Card>
         <CardBody>
-          <div className="flex gap-4 mb-4">
-            <Button
-              variant={activeTab === 'invoices' ? 'solid' : 'light'}
-              color="primary"
-              onPress={() => setActiveTab('invoices')}
-            >
-              Invoices ({invoices.length})
-            </Button>
+            <div className="flex gap-4 mb-4 items-center">
+            {/* Keep Payments default */}
             <Button
               variant={activeTab === 'payments' ? 'solid' : 'light'}
               color="primary"
@@ -725,13 +751,63 @@ export default function InvoicesPaymentsPage() {
             >
               📊 Folio Management ({frontOfficeStore.reservations.length})
             </Button>
+              <Button
+                variant={activeTab === 'print' ? 'solid' : 'light'}
+                color="secondary"
+                onPress={() => setActiveTab('print')}
+              >
+                🧾 Print Invoice
+              </Button>
+            <div className="ml-auto">
+              <Button size="sm" variant="light" onPress={() => setActiveTab('invoices')}>
+                View Invoices ({invoices.length})
+              </Button>
+              <Button size="sm" color="secondary" variant="flat" className="ml-2" onPress={onCorpOpen}>
+                Post Corporate Receipt
+              </Button>
+            </div>
           </div>
 
           {activeTab === 'invoices' ? (
             <>
+            <div className="flex items-center gap-3 mb-3">
+              <Input
+                placeholder="Search guest or room..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-64"
+                startContent={<span>🔎</span>}
+              />
+              <Select
+                selectedKeys={new Set([statusFilter])}
+                onSelectionChange={(keys) => setStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
+                className="w-52"
+                aria-label="Filter status"
+              >
+                <SelectItem key="all">All statuses</SelectItem>
+                <SelectItem key="draft">Draft</SelectItem>
+                <SelectItem key="pending">Pending</SelectItem>
+                <SelectItem key="partially_paid">Partially Paid</SelectItem>
+                <SelectItem key="paid">Paid</SelectItem>
+                <SelectItem key="overdue">Overdue</SelectItem>
+                <SelectItem key="cancelled">Cancelled</SelectItem>
+                <SelectItem key="refunded">Refunded</SelectItem>
+              </Select>
+            </div>
             <Table aria-label="Invoices table">
               <TableHeader>
                 <TableColumn>INVOICE</TableColumn>
+                <TableColumn>
+                  <button
+                    className="font-semibold"
+                    onClick={() => {
+                      setSortBy('createdAt');
+                      setSortOrder(prev => (sortBy === 'createdAt' && prev === 'desc') ? 'asc' : (sortBy === 'createdAt' && prev === 'asc') ? 'desc' : 'desc');
+                    }}
+                  >
+                    DATE {sortBy === 'createdAt' ? (sortOrder === 'asc' ? '▲' : '▼') : ''}
+                  </button>
+                </TableColumn>
                 <TableColumn>GUEST</TableColumn>
                 <TableColumn>ROOM</TableColumn>
                 <TableColumn>AMOUNT</TableColumn>
@@ -741,7 +817,19 @@ export default function InvoicesPaymentsPage() {
               </TableHeader>
               <TableBody>
                 {[...invoices]
-                  .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+                  .filter(inv => (statusFilter === 'all' ? true : inv.status === statusFilter))
+                  .filter(inv => {
+                    if (!searchTerm.trim()) return true;
+                    const hay = `${inv.guestName} ${inv.roomNumber} ${inv.invoiceNumber}`.toLowerCase();
+                    return hay.includes(searchTerm.toLowerCase());
+                  })
+                  .sort((a, b) => {
+                    const keyA = sortBy === 'createdAt' ? a.createdAt : a.updatedAt;
+                    const keyB = sortBy === 'createdAt' ? b.createdAt : b.updatedAt;
+                    const av = new Date(keyA).getTime();
+                    const bv = new Date(keyB).getTime();
+                    return sortOrder === 'asc' ? av - bv : bv - av;
+                  })
                   .slice((invoicePage - 1) * itemsPerPage, invoicePage * itemsPerPage)
                   .map((invoice) => (
                   <TableRow key={invoice.id}>
@@ -751,6 +839,9 @@ export default function InvoicesPaymentsPage() {
                         <p className="text-sm text-gray-500">{invoice.checkInDate} - {invoice.checkOutDate}</p>
                         <p className="text-xs text-gray-400">Res: {invoice.id}</p>
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm">{new Date(invoice.createdAt).toLocaleDateString()}</span>
                     </TableCell>
                     <TableCell>
                       <div>
@@ -816,7 +907,7 @@ export default function InvoicesPaymentsPage() {
                             </Button>
                           ) : null;
                         })()}
-                        <Button size="sm" variant="light">Print</Button>
+                        <Button size="sm" variant="light" onPress={() => handlePrintInvoice(invoice)}>Print</Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -921,7 +1012,7 @@ export default function InvoicesPaymentsPage() {
                     <TableCell>
                       <div className="flex gap-1">
                         <Button size="sm" variant="light" onPress={() => handleViewPayment(payment)}>View</Button>
-                        <Button size="sm" variant="light">Receipt</Button>
+                        <Button size="sm" variant="light" onPress={() => handlePrintReceipt(payment)}>Receipt</Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -966,6 +1057,26 @@ export default function InvoicesPaymentsPage() {
                     <SelectItem key="checked-out">Checked Out</SelectItem>
                     <SelectItem key="confirmed">Confirmed</SelectItem>
                   </Select>
+                  <Select
+                    placeholder="Payer"
+                    selectedKeys={new Set([payerFilter])}
+                    onSelectionChange={(keys) => setPayerFilter((Array.from(keys as Set<string>)[0] as any) || 'all')}
+                    className="w-40"
+                  >
+                    <SelectItem key="all">All Payers</SelectItem>
+                    <SelectItem key="guest">Guest</SelectItem>
+                    <SelectItem key="company">Company</SelectItem>
+                  </Select>
+                  <Select
+                    placeholder="Balance"
+                    selectedKeys={new Set([balanceFilter])}
+                    onSelectionChange={(keys) => setBalanceFilter((Array.from(keys as Set<string>)[0] as any) || 'all')}
+                    className="w-40"
+                  >
+                    <SelectItem key="all">All Balances</SelectItem>
+                    <SelectItem key="positive">Outstanding</SelectItem>
+                    <SelectItem key="zero">Zero</SelectItem>
+                  </Select>
                 </div>
               </div>
             </div>
@@ -973,27 +1084,39 @@ export default function InvoicesPaymentsPage() {
             <Table aria-label="Folio management table">
               <TableHeader>
                 <TableColumn>GUEST</TableColumn>
-                <TableColumn>ROOM & STAY</TableColumn>
-                <TableColumn>FINANCIAL STATUS</TableColumn>
+                <TableColumn>FOLIO</TableColumn>
+                <TableColumn>PAYER</TableColumn>
+                <TableColumn>
+                  <button
+                    className="font-semibold"
+                    onClick={() => {
+                      setFolioSortBy('balance');
+                      setFolioSortOrder(prev => (folioSortBy === 'balance' && prev === 'desc') ? 'asc' : (folioSortBy === 'balance' && prev === 'asc') ? 'desc' : 'desc');
+                    }}
+                  >
+                    FINANCIAL STATUS {folioSortBy === 'balance' ? (folioSortOrder === 'asc' ? '▲' : '▼') : ''}
+                  </button>
+                </TableColumn>
                 <TableColumn>FOLIO SUMMARY</TableColumn>
                 <TableColumn>ACTIONS</TableColumn>
               </TableHeader>
               <TableBody>
                 {frontOfficeStore.reservations
-                  .filter(reservation => {
-                    const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
-                    const guestName = guest?.name || reservation.guestName || 'Unknown';
-                    const matchesSearch = guestName.toLowerCase().includes(folioSearchTerm.toLowerCase()) ||
-                                        reservation.guestPhone?.includes(folioSearchTerm) ||
-                                        reservation.guestEmail?.includes(folioSearchTerm);
-                    const matchesStatus = folioStatusFilter === 'all' || reservation.status === folioStatusFilter;
-                    return matchesSearch && matchesStatus;
+                  .filter(matchesFolioFilters)
+                  .sort((a, b) => {
+                    const fa = frontOfficeStore.getOrCreateFolio(a.id);
+                    const fb = frontOfficeStore.getOrCreateFolio(b.id);
+                    const av = (fa.balance || 0);
+                    const bv = (fb.balance || 0);
+                    return folioSortOrder === 'asc' ? av - bv : bv - av;
                   })
+                  .slice((folioPage - 1) * itemsPerPage, folioPage * itemsPerPage)
                   .map((reservation) => {
                     const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
                     const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
                     const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
                     const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
+                    const isCompany = !!(reservation.billingPersonName || reservation.companyName);
                     
                     return (
                       <TableRow key={reservation.id}>
@@ -1004,27 +1127,39 @@ export default function InvoicesPaymentsPage() {
                                 {(guest?.name || reservation.guestName || 'U').charAt(0).toUpperCase()}
                               </span>
                             </div>
-                            <div>
+                            <div title={`Room ${room?.id || 'TBD'} • ${roomType?.name || 'Standard'} • ${new Date(reservation.arrival).toLocaleDateString()} - ${new Date(reservation.departure).toLocaleDateString()} • ${reservation.status}`}>
                               <p className="font-semibold text-gray-900">{guest?.name || reservation.guestName || 'Unknown Guest'}</p>
                               <p className="text-xs text-gray-500">{reservation.guestPhone || 'N/A'}</p>
                               <p className="text-xs text-blue-600">{reservation.guestEmail || 'N/A'}</p>
+                              <div className="mt-1 text-[11px] text-gray-500">
+                                Room {room?.id || 'TBD'} • {roomType?.name || 'Standard'} •
+                                <span className="ml-1">{new Date(reservation.arrival).toLocaleDateString()} - {new Date(reservation.departure).toLocaleDateString()}</span>
+                                <Badge className="ml-2" size="sm" color={reservation.status === 'checked-in' ? 'success' : reservation.status === 'checked-out' ? 'default' : 'warning'} variant="flat">
+                                  {reservation.status}
+                                </Badge>
+                              </div>
                             </div>
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div>
-                            <p className="font-medium">Room {room?.id || 'TBD'}</p>
-                            <p className="text-sm text-gray-600">{roomType?.name || 'Standard'}</p>
-                            <p className="text-xs text-gray-500">
-                              {new Date(reservation.arrival).toLocaleDateString()} - {new Date(reservation.departure).toLocaleDateString()}
-                            </p>
-                            <Badge 
-                              color={reservation.status === 'checked-in' ? 'success' : reservation.status === 'checked-out' ? 'default' : 'warning'} 
-                              variant="flat" 
-                              size="sm"
-                            >
-                              {reservation.status}
-                            </Badge>
+                          <div className="text-sm">
+                            <div className="font-medium">{reservation.resId || reservation.id}</div>
+                            <div className="text-xs text-gray-500">{(folio.type || 'main').toString().toUpperCase()}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            {isCompany ? (
+                              <>
+                                <div className="font-medium">Company</div>
+                                <div className="text-xs text-gray-500">{reservation.companyName || reservation.billingPersonName || 'Corporate'}</div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="font-medium">Guest</div>
+                                <div className="text-xs text-gray-500">Self-paying</div>
+                              </>
+                            )}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -1082,6 +1217,50 @@ export default function InvoicesPaymentsPage() {
                   })}
               </TableBody>
             </Table>
+            <div className="flex justify-end mt-3">
+              <Pagination 
+                page={folioPage}
+                total={totalFolioPages}
+                onChange={setFolioPage}
+                showControls
+                size="sm"
+              />
+            </div>
+            </>
+          ) : activeTab === 'print' ? (
+            <>
+              <div className="p-4 bg-blue-50 rounded-md mb-3 text-sm text-blue-700">Select an invoice and template, then click Print.</div>
+              <div className="flex items-center gap-3 mb-3">
+                <Select
+                  aria-label="Choose invoice"
+                  selectedKeys={new Set([selectedInvoice?.id || invoices[0]?.id || ''])}
+                  onSelectionChange={(keys) => {
+                    const id = Array.from(keys as Set<string>)[0];
+                    const inv = invoices.find(i => i.id === id);
+                    if (inv) setSelectedInvoice(inv);
+                  }}
+                  className="w-72"
+                >
+                  {invoices.map(inv => (
+                    <SelectItem key={inv.id}>{inv.invoiceNumber} • {inv.guestName}</SelectItem>
+                  ))}
+                </Select>
+                <Select
+                  aria-label="Template"
+                  selectedKeys={new Set([settings.printing.invoice || 'ghana-top-class-invoice'])}
+                  onSelectionChange={(keys) => {
+                    const key = Array.from(keys as Set<string>)[0];
+                    settings.printing.invoice = key as any;
+                  }}
+                  className="w-80"
+                >
+                  {listTemplates('invoice').map(t => (
+                    <SelectItem key={t.key}>{t.name}</SelectItem>
+                  ))}
+                </Select>
+                <Button color="primary" onPress={() => { if (selectedInvoice) handlePrintInvoice(selectedInvoice); }}>Print</Button>
+              </div>
+              <div className="text-sm text-gray-600">Tip: Use the new template “Ghana Top Class Invoice” for a premium layout with signatures.</div>
             </>
           ) : null}
         </CardBody>
@@ -1246,7 +1425,52 @@ export default function InvoicesPaymentsPage() {
           </ModalBody>
           <ModalFooter>
             <Button variant="light" onPress={onViewClose}>Close</Button>
-            <Button color="primary">Print Invoice</Button>
+            <Button color="primary" onPress={() => selectedInvoice && handlePrintInvoice(selectedInvoice)}>Print Invoice</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Corporate Receipt Modal */}
+      <Modal isOpen={isCorpOpen} onClose={onCorpClose} size="lg">
+        <ModalContent>
+          <ModalHeader>Post Corporate Receipt</ModalHeader>
+          <ModalBody>
+            <div className="space-y-4">
+              <Input label="Payer (Company)" placeholder="e.g., Ghana Telecom Ltd" value={paymentForm.notes}
+                onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })} />
+              <Input label="Amount" type="number" startContent={<span>₵</span>} value={paymentForm.amount}
+                onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} />
+              <Input label="Reference" placeholder="e.g., BANK-REF-123" value={paymentForm.reference}
+                onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })} />
+              <div className="text-sm text-gray-600">The payment will be auto-allocated to selected outstanding folios by highest balance.</div>
+              <div className="max-h-56 overflow-auto border rounded-md p-2">
+                {[...frontOfficeStore.reservations]
+                  .filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0)
+                  .map(r => (
+                    <div key={r.id} className="flex items-center justify-between py-1 text-sm">
+                      <div>
+                        <span className="font-medium mr-2">{r.guestName}</span>
+                        <span className="text-gray-500">Room {r.roomId || 'TBD'}</span>
+                      </div>
+                      <div className="text-right">₵{(frontOfficeStore.getOrCreateFolio(r.id).balance || 0).toLocaleString()}</div>
+                    </div>
+                ))}
+              </div>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onClick={onCorpClose}>Cancel</Button>
+            <Button color="primary" onClick={() => {
+              const payer = paymentForm.notes || 'Corporate Payer';
+              const amount = Number(paymentForm.amount || 0);
+              if (amount <= 0) return;
+              const outstanding = frontOfficeStore.reservations
+                .filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0)
+                .map(r => r.id);
+              const result = frontOfficeStore.postCorporateReceipt(payer, outstanding, amount, paymentForm.reference);
+              try { trackEvent('Invoice.CorporateReceipt' as any, { payer, amount, appliedTo: result.allocations?.length || 0 }); } catch {}
+              onCorpClose();
+            }}>Post Receipt</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -1595,16 +1819,26 @@ export default function InvoicesPaymentsPage() {
                             <TableColumn>Description</TableColumn>
                             <TableColumn align="end">Amount</TableColumn>
                             <TableColumn align="end">Tax</TableColumn>
+                            <TableColumn>Actions</TableColumn>
                           </TableHeader>
                           <TableBody>
                             {(() => {
                               const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
+                              const reservations = frontOfficeStore.reservations.filter(r => r.id !== selectedFolio.id);
                               return folio.charges.map((charge, index) => (
                                 <TableRow key={index}>
                                   <TableCell>{new Date(charge.date).toLocaleDateString()}</TableCell>
                                   <TableCell>{charge.description}</TableCell>
                                   <TableCell className="text-right">₵{charge.amount.toLocaleString()}</TableCell>
                                   <TableCell className="text-right">₵{(charge.tax || 0).toLocaleString()}</TableCell>
+                                  <TableCell>
+                                    <div className="flex gap-2">
+                                      <Button size="sm" variant="light" onPress={() => frontOfficeStore.voidCharge(selectedFolio.id, charge.id, 'User action')}>Void</Button>
+                                      {reservations.length > 0 && (
+                                        <Button size="sm" variant="light" onPress={() => frontOfficeStore.transferCharge(selectedFolio.id, charge.id, reservations[0].id, 'User action')}>Transfer</Button>
+                                      )}
+                                    </div>
+                                  </TableCell>
                                 </TableRow>
                               ));
                             })()}
@@ -1622,6 +1856,7 @@ export default function InvoicesPaymentsPage() {
                             <TableColumn align="end">Amount</TableColumn>
                             <TableColumn>Status</TableColumn>
                             <TableColumn>Reference</TableColumn>
+                            <TableColumn>Actions</TableColumn>
                           </TableHeader>
                           <TableBody>
                             {(() => {
@@ -1637,6 +1872,11 @@ export default function InvoicesPaymentsPage() {
                                     </Badge>
                                   </TableCell>
                                   <TableCell>{(payment as any).reference || '-'}</TableCell>
+                                  <TableCell>
+                                    {payment.amount > 0 && (
+                                      <Button size="sm" variant="light" onPress={() => frontOfficeStore.refundPayment(selectedFolio.id, payment.id, payment.amount, 'Guest refund')}>Refund</Button>
+                                    )}
+                                  </TableCell>
                                 </TableRow>
                               ));
                             })()}

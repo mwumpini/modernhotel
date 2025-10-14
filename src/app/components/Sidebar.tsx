@@ -49,7 +49,7 @@ const navigationItems: NavItem[] = [
   },
   {
     title: 'Reservations',
-    href: '/reservations',
+    href: '/guest-services/check-ins?tab=reservations',
     icon: CalendarIcon,
     description: 'Manage bookings and reservations'
   },
@@ -79,7 +79,7 @@ const navigationItems: NavItem[] = [
   },
   {
     title: 'Check-outs',
-    href: '/guest-services/check-outs',
+    href: '/guest-services/check-ins?tab=checkouts',
     icon: ArrowRightOnRectangleIcon,
     description: 'Guest check-out processing'
   },
@@ -103,7 +103,7 @@ const navigationItems: NavItem[] = [
   },
   {
     title: 'Invoices & Payments',
-    href: '/guest-services/client-services/invoices-payments',
+    href: '/guest-services/check-ins?tab=billing',
     icon: CreditCardIcon,
     description: 'Billing and payment processing'
   },

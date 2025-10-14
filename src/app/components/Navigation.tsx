@@ -435,7 +435,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
           <div className="p-6 text-center">
             <p>Redirecting to Invoices & Payments...</p>
-            <Button color="primary" onPress={() => window.location.href = '/guest-services/client-services/invoices-payments'}>
+            <Button color="primary" onPress={() => window.location.href = '/guest-services/check-ins?tab=billing'}>
               Go to Invoices & Payments
             </Button>
           </div>
@@ -449,15 +449,6 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'room-management':
         return <Suspense fallback={<div className="p-6 text-center">Loading Room Management...</div>}><RoomManagementDashboard /></Suspense>;
 
-      case 'check-ins':
-        return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
-          <div className="p-6 text-center">
-            <p>Redirecting to Check-ins & Check-Ins Management...</p>
-            <Button color="primary" onPress={() => window.location.href = '/guest-services/check-ins'}>
-              Go to Check-ins
-            </Button>
-          </div>
-        </Suspense>;
       case 'check-ins':
         return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
           <div className="p-6 text-center">

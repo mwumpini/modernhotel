@@ -5,7 +5,7 @@
  * (Restored as an embeddable component for consolidated tabs)
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Card, 
   CardBody, 
@@ -39,6 +39,9 @@ import {
   AccordionItem
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
+import { openPrintPreview } from '../../lib/print/engine';
+import { listTemplates } from '../../lib/print/templates';
+import { useSettingsStore } from '../../lib/settings/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 
 interface CheckOutData {
@@ -78,6 +81,11 @@ interface CheckOutData {
   createdAt: string; // When the check-out record was created
   updatedAt: string; // When the check-out record was last updated
   processedAt?: string; // When the check-out was actually processed
+  // UI-only computed fields for display parity with Check-ins
+  serviceCharges?: number;
+  otherCharges?: number;
+  taxTotal?: number;
+  roomTotal?: number;
 }
 
 export default function CheckOutsPage() {
@@ -85,6 +93,10 @@ export default function CheckOutsPage() {
   const [filteredCheckOuts, setFilteredCheckOuts] = useState<CheckOutData[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [balanceFilter, setBalanceFilter] = useState<string>('all'); // all | zero | outstanding
+  const [billingFilter, setBillingFilter] = useState<string>('all'); // all | guest | corporate | credit
+  const [sourceFilter, setSourceFilter] = useState<string>('all'); // market/source
+  const [dateFilter, setDateFilter] = useState<{ from?: string; to?: string }>({});
   // remove duplicate page declaration if present
   const [rowsPerPage] = useState(10);
   const [page, setPage] = useState(1);
@@ -93,11 +105,23 @@ export default function CheckOutsPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [checkoutNotes, setCheckoutNotes] = useState('');
   const [quickSettlementMethod, setQuickSettlementMethod] = useState<'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'>('Cash');
+  // Folio settlement state (within modal)
+  const [settlementMethod, setSettlementMethod] = useState<'Cash'|'Card'|'Mobile Money'|'Corporate Account'|'Bank Transfer'|'Check'|'Credit'>('Cash');
+  const [settlementAmount, setSettlementAmount] = useState<number>(0);
+  const [settlementRef, setSettlementRef] = useState<string>('');
 
   // Payment processing state
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<string>('cash');
   const [paymentReference, setPaymentReference] = useState<string>('');
+  // Print templates
+  const receiptTemplates = useMemo(() => listTemplates('receipt'), []);
+  const invoiceTemplates = useMemo(() => listTemplates('invoice'), []);
+  const proformaTemplates = useMemo(() => listTemplates('proforma'), []);
+  const settings = useSettingsStore();
+  const [receiptTpl, setReceiptTpl] = useState<string>((settings as any)?.printing?.receipt || receiptTemplates[0]?.key || 'simple-receipt');
+  const [invoiceTpl, setInvoiceTpl] = useState<string>((settings as any)?.printing?.invoice || invoiceTemplates[0]?.key || 'corporate-invoice');
+  const [proformaTpl, setProformaTpl] = useState<string>((settings as any)?.printing?.proforma || proformaTemplates[0]?.key || 'conference-proforma-grid');
 
   useEffect(() => {
     loadCheckOuts();
@@ -107,20 +131,36 @@ export default function CheckOutsPage() {
 
   useEffect(() => {
     filterCheckOuts();
-  }, [checkOuts, searchTerm, statusFilter]);
+  }, [checkOuts, searchTerm, statusFilter, balanceFilter, billingFilter, sourceFilter, dateFilter.from, dateFilter.to]);
 
   // Reset to first page whenever the filtered list changes size
   useEffect(() => {
     setPage(1);
   }, [filteredCheckOuts.length]);
 
-  // Simplified - no folio tracking in check-outs page
+  // Prefill settlement amount when opening modal
+  useEffect(() => {
+    if (selectedCheckOut) {
+      const { outstandingBalance } = getFolioTotals(selectedCheckOut.id);
+      setSettlementAmount(outstandingBalance || 0);
+      setSettlementMethod('Cash');
+      setSettlementRef('');
+    }
+  }, [selectedCheckOut]);
+
+  // Compute accurate folio totals for a reservation
   const getFolioTotals = (reservationId: string) => {
-    return { 
-      totalCharges: 0, 
-      totalPayments: 0, 
-      outstandingBalance: 0 
-    };
+    const folio = frontOfficeStore.getOrCreateFolio(reservationId);
+    const serviceKeywords = ['service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar', 'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'drink', 'food', 'meal'];
+    const serviceCharges = folio.charges?.filter(c => serviceKeywords.some(k => (c.description || '').toLowerCase().includes(k)))
+      .reduce((s, c) => s + (c.amount || 0), 0) || 0;
+    const otherCharges = folio.charges?.filter(c => !serviceKeywords.some(k => (c.description || '').toLowerCase().includes(k)))
+      .reduce((s, c) => s + (c.amount || 0), 0) || 0;
+    const taxTotal = folio.charges?.reduce((s, c) => s + (c.tax || 0), 0) || 0;
+    const totalCharges = (folio.charges || []).reduce((s, c) => s + (c.amount || 0) + (c.tax || 0), 0);
+    const totalPayments = (folio.payments || []).filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
+    const outstandingBalance = Math.max(0, totalCharges - totalPayments);
+    return { totalCharges, totalPayments, outstandingBalance, serviceCharges, otherCharges, taxTotal };
   };
 
   const loadCheckOuts = () => {
@@ -137,6 +177,16 @@ export default function CheckOutsPage() {
         const checkOutDate = new Date(reservation.departure);
         const nightsStayed = Math.ceil((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24));
         const folioTotals = getFolioTotals(reservation.id);
+        const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
+        const roomRate = reservation.rateBreakdown?.[0]?.base || roomType?.baseRate || 0;
+        const roomTotal = roomRate * nightsStayed;
+        
+        const status: 'pending' | 'processing' | 'completed' | 'extended' =
+          reservation.status === 'checked-out'
+            ? 'completed'
+            : (folioTotals.outstandingBalance || 0) > 0
+            ? 'pending'
+            : 'processing';
         
         return {
           id: reservation.id,
@@ -145,17 +195,21 @@ export default function CheckOutsPage() {
           guestProfileId: undefined,
           guestName: reservation.guestName,
           roomNumber: reservation.roomId || 'TBD',
-          roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Standard',
-          roomRate: reservation.rateBreakdown?.[0]?.total || 0,
+          roomType: roomType?.name || 'Standard',
+          roomRate: roomRate,
           checkInDate: reservation.arrival,
           checkInDateTime: reservation.arrival,
           checkOutDate: reservation.departure,
           checkoutDateTime: undefined,
-          status: 'pending',
-          nightsStayed: Math.ceil((new Date(reservation.departure).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24)),
+          status,
+          nightsStayed,
           totalCharges: folioTotals.totalCharges,
           totalPayments: folioTotals.totalPayments,
           outstandingBalance: folioTotals.outstandingBalance,
+          serviceCharges: folioTotals.serviceCharges,
+          otherCharges: folioTotals.otherCharges,
+          taxTotal: folioTotals.taxTotal,
+          roomTotal,
           discount: 0,
           finalPaymentMethod: reservation.paymentMethod || 'Not specified',
           confirmationNumber: undefined,
@@ -197,13 +251,34 @@ export default function CheckOutsPage() {
       filtered = filtered.filter(checkOut => checkOut.status === statusFilter);
     }
 
+    if (balanceFilter !== 'all') {
+      filtered = filtered.filter(c => balanceFilter === 'zero' ? (c.outstandingBalance || 0) === 0 : (c.outstandingBalance || 0) > 0);
+    }
+
+    if (billingFilter !== 'all') {
+      filtered = filtered.filter(c => {
+        const type = (c.billingPerson ? 'corporate' : (c.finalPaymentMethod || '').toLowerCase().includes('credit') ? 'credit' : 'guest');
+        return type === billingFilter;
+      });
+    }
+
+    if (sourceFilter !== 'all') {
+      filtered = filtered.filter(c => (c.source || '').toUpperCase() === sourceFilter.toUpperCase());
+    }
+
+    if (dateFilter.from) {
+      filtered = filtered.filter(c => new Date(c.checkOutDate) >= new Date(dateFilter.from!));
+    }
+    if (dateFilter.to) {
+      filtered = filtered.filter(c => new Date(c.checkOutDate) <= new Date(dateFilter.to!));
+    }
+
     setFilteredCheckOuts(filtered);
   };
 
-  // Simplified payment processing - redirect to invoices & payments for detailed folio management
+  // Simplified payment processing - open billing tab for detailed folio management
   const handleManageFolio = (checkOut: CheckOutData) => {
-    // Redirect to invoices & payments page for comprehensive folio management
-    window.location.href = '/guest-services/client-services/invoices-payments?tab=folios';
+    window.location.href = '/guest-services/check-ins?tab=billing';
   };
 
   // Payment processing removed - handled in invoices & payments page
@@ -280,14 +355,13 @@ export default function CheckOutsPage() {
 
   // Ghanaian hotel-specific checkout processes
   const handlePrintReceipt = (checkOut: CheckOutData) => {
-    console.log(`[CHECKOUT] Printing receipt for guest: ${checkOut.guestName} in room ${checkOut.roomNumber}`);
-    // This would typically generate and print a receipt
-    trackEvent('FO.Reservation.CheckedOut', {
-      reservationId: checkOut.id,
-      guestName: checkOut.guestName,
-      roomNumber: checkOut.roomNumber,
-      totalCharges: checkOut.totalCharges
-    });
+    const data = buildPrintData(checkOut);
+    openPrintPreview('receipt', receiptTpl, data);
+  };
+
+  const handlePrintInvoice = (checkOut: CheckOutData) => {
+    const data = buildPrintData(checkOut);
+    openPrintPreview('invoice', invoiceTpl, data);
   };
 
   const handleGuestFeedback = (checkOut: CheckOutData) => {
@@ -371,6 +445,58 @@ export default function CheckOutsPage() {
     'data-room-type': checkOut.roomType,
     'data-source': checkOut.source
   });
+
+  // Build printable data from store folio/reservation
+  const buildPrintData = (checkOut: CheckOutData) => {
+    const settings = useSettingsStore.getState?.() as any;
+    const org = {
+      name: settings?.organization?.name || 'Hotel',
+      address: settings?.organization?.address || '',
+      phone: settings?.organization?.phone || '',
+      email: settings?.organization?.email || '',
+      taxId: settings?.organization?.taxId || '',
+      logoUrl: settings?.branding?.logoUrl || ''
+    };
+    const folio = frontOfficeStore.getOrCreateFolio(checkOut.id);
+    const items = (folio.charges || []).map((c) => ({ description: c.description || 'Charge', amount: (c.amount || 0) + (c.tax || 0), unitPrice: c.amount, qty: 1 }));
+    const baseSum = (folio.charges || []).reduce((s, c) => s + (c.amount || 0), 0);
+    const taxSum = (folio.charges || []).reduce((s, c) => s + (c.tax || 0), 0);
+    // Ghana tax split approximation using stored local rates
+    const vatRate = Number((typeof localStorage !== 'undefined' && localStorage.getItem('tax.vat')) || '12.5');
+    const nhilRate = Number((typeof localStorage !== 'undefined' && localStorage.getItem('tax.nhil')) || '2.5');
+    const levyRate = Number((typeof localStorage !== 'undefined' && localStorage.getItem('tax.tourism')) || '1.0');
+    const totalRate = vatRate + nhilRate + levyRate;
+    const taxes = totalRate > 0 ? {
+      vat: baseSum * (vatRate / 100),
+      nhil: baseSum * (nhilRate / 100),
+      levy: baseSum * (levyRate / 100)
+    } : { vat: 0, nhil: 0, levy: 0 };
+    const payments = (folio.payments || []).filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
+    const subTotal = baseSum;
+    const grandTotal = baseSum + taxSum;
+    const balance = Math.max(0, grandTotal - payments);
+    return {
+      org,
+      guest: {
+        name: checkOut.guestName,
+        company: checkOut.billingPerson,
+        roomNumber: checkOut.roomNumber,
+        roomType: checkOut.roomType,
+        arrivalDate: new Date(checkOut.checkInDate).toLocaleDateString(),
+        departureDate: new Date(checkOut.checkOutDate).toLocaleDateString(),
+        nights: checkOut.nightsStayed
+      },
+      docNumber: checkOut.id,
+      docDate: new Date().toISOString(),
+      items,
+      totals: { subTotal, taxes, payments, balance, grandTotal },
+      footerNotes: [
+        'Accounts must be settled before vacating room.',
+        'Please return key at Reception before departure.'
+      ],
+      currency: '₵'
+    } as any;
+  };
 
   return (
     <div className="pt-2">
@@ -463,17 +589,53 @@ export default function CheckOutsPage() {
                   <SelectItem key="Bank Transfer">Bank Transfer</SelectItem>
                 </Select>
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mt-3">
+                <Select placeholder="Balance" value={balanceFilter} onChange={(e)=> setBalanceFilter(e.target.value)}>
+                  <SelectItem key="all">All</SelectItem>
+                  <SelectItem key="zero">Zero</SelectItem>
+                  <SelectItem key="outstanding">Outstanding</SelectItem>
+                </Select>
+                <Select placeholder="Billing Type" value={billingFilter} onChange={(e)=> setBillingFilter(e.target.value)}>
+                  <SelectItem key="all">All</SelectItem>
+                  <SelectItem key="guest">Guest Pays</SelectItem>
+                  <SelectItem key="corporate">Corporate</SelectItem>
+                  <SelectItem key="credit">Credit</SelectItem>
+                </Select>
+                <Select 
+                  placeholder="Source"
+                  selectedKeys={[sourceFilter]}
+                  onSelectionChange={(keys)=> setSourceFilter(Array.from(keys)[0] as string)}
+                  items={[{ key: 'all', label: 'All' }, ...((frontOfficeStore.marketCodes || []).map((mc: any) => ({ key: String(mc), label: String(mc) })))] as any}
+                >
+                  {(item: any) => (<SelectItem key={item.key}>{item.label}</SelectItem>)}
+                </Select>
+                <div className="flex gap-2">
+                  <Input type="date" labelPlacement="outside" placeholder="From" value={dateFilter.from || ''} onChange={(e)=> setDateFilter(prev=>({ ...prev, from: e.target.value }))} />
+                  <Input type="date" labelPlacement="outside" placeholder="To" value={dateFilter.to || ''} onChange={(e)=> setDateFilter(prev=>({ ...prev, to: e.target.value }))} />
+                </div>
+              </div>
             </CardBody>
           </Card>
 
           <Table aria-label="Check-outs table" className="min-w-full">
             <TableHeader>
-              <TableColumn className="w-48">GUEST DETAILS</TableColumn>
-              <TableColumn className="w-32">ROOM & STAY</TableColumn>
-              <TableColumn className="w-32">FINANCIAL SUMMARY</TableColumn>
-              <TableColumn className="w-32">PAYMENT STATUS</TableColumn>
-              <TableColumn className="w-24">CHECKOUT STATUS</TableColumn>
-              <TableColumn className="w-40">QUICK ACTIONS</TableColumn>
+              <TableColumn className="w-40">GUEST</TableColumn>
+              <TableColumn className="w-36">BILLED TO</TableColumn>
+              <TableColumn className="w-20">ROOM</TableColumn>
+              <TableColumn className="w-28">ROOM TYPE</TableColumn>
+              <TableColumn className="w-20">ADULTS</TableColumn>
+              <TableColumn className="w-20">CHILDREN</TableColumn>
+              <TableColumn className="w-28">ARRIVAL</TableColumn>
+              <TableColumn className="w-28">DEPARTURE</TableColumn>
+              <TableColumn className="w-20">NIGHTS</TableColumn>
+              <TableColumn className="w-24">RATE/NIGHT</TableColumn>
+              <TableColumn className="w-28">ROOM TOTAL</TableColumn>
+              <TableColumn className="w-28">SERVICE CHARGES</TableColumn>
+              <TableColumn className="w-28">AMOUNT</TableColumn>
+              <TableColumn className="w-28">PAYMENTS</TableColumn>
+              <TableColumn className="w-28">BALANCE</TableColumn>
+              <TableColumn className="w-24">STATUS</TableColumn>
+              <TableColumn className="w-36">ACTIONS</TableColumn>
             </TableHeader>
             <TableBody>
               {[...filteredCheckOuts]
@@ -508,142 +670,84 @@ export default function CheckOutsPage() {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className="text-center">
-                      <div className="inline-flex items-center px-2 py-1 rounded-full bg-blue-100 text-blue-800 text-sm font-medium">
-                        {checkOut.roomNumber}
-                      </div>
-                      <p className="text-xs text-gray-600 mt-1">{checkOut.roomType}</p>
-                      <p className="font-semibold text-gray-900">{checkOut.nightsStayed} nights</p>
-                      <p className="text-xs text-gray-600">Check-in: {formatDate(checkOut.checkInDate)}</p>
-                      <p className="text-xs text-orange-600 font-medium">Due: {formatDate(checkOut.checkOutDate)}</p>
-                      <div className="mt-1">
-                        <Badge 
-                          color={new Date(checkOut.checkOutDate) <= new Date() ? 'danger' : 'warning'} 
-                          variant="flat" 
-                          size="sm"
-                        >
-                          {new Date(checkOut.checkOutDate) <= new Date() ? 'Overdue' : 'Due Today'}
-                        </Badge>
-                      </div>
+                    <div className="text-sm">
+                      {(() => {
+                        const res = frontOfficeStore.reservations.find(r => r.id === checkOut.id);
+                        const billed = res?.companyName || res?.billingPersonName || 'Self';
+                        return <span className="font-medium">{billed}</span>;
+                      })()}
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-semibold text-gray-900">₵{checkOut.totalCharges.toLocaleString()}</p>
-                      <p className="text-xs text-gray-600">Total Charges</p>
-                      <div className="mt-2 p-2 bg-gray-50 rounded">
-                        <p className="text-xs text-gray-600">Breakdown:</p>
-                        <p className="text-xs text-gray-500">Room: ₵{(checkOut.totalCharges * 0.8).toLocaleString()}</p>
-                        <p className="text-xs text-gray-500">Services: ₵{(checkOut.totalCharges * 0.2).toLocaleString()}</p>
-                      </div>
-                    </div>
+                  <TableCell className="text-center">{checkOut.roomNumber}</TableCell>
+                  <TableCell className="text-center">{checkOut.roomType}</TableCell>
+                  <TableCell className="text-center">{checkOut.adults}</TableCell>
+                  <TableCell className="text-center">{checkOut.children}</TableCell>
+                  <TableCell className="text-center">{formatDate(checkOut.checkInDate)}</TableCell>
+                  <TableCell className="text-center">{formatDate(checkOut.checkOutDate)}</TableCell>
+                  <TableCell className="text-center">{checkOut.nightsStayed}</TableCell>
+                  <TableCell className="text-center font-semibold">₵{checkOut.roomRate.toLocaleString()}</TableCell>
+                  <TableCell className="text-center font-semibold text-purple-600">₵{(checkOut.roomTotal || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-center font-semibold text-orange-600">₵{(checkOut.serviceCharges || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-center font-semibold text-blue-600">₵{(checkOut.totalCharges || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-center text-green-600 font-semibold">₵{(checkOut.totalPayments || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-center">
+                    <span className={`font-semibold ${(checkOut.outstandingBalance || 0) > 0 ? 'text-red-600' : (checkOut.outstandingBalance || 0) < 0 ? 'text-green-600' : 'text-gray-500'}`}>
+                      ₵{(checkOut.outstandingBalance || 0).toLocaleString()}
+                    </span>
                   </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <p className="font-semibold text-green-600">₵{checkOut.totalPayments.toLocaleString()}</p>
-                      <p className="text-xs text-gray-600">Total Paid</p>
-                      <div className="mt-1">
-                        <Badge 
-                          color={checkOut.outstandingBalance === 0 ? 'success' : checkOut.outstandingBalance > 0 ? 'warning' : 'danger'} 
-                          variant="flat" 
-                          size="sm"
-                        >
-                          {checkOut.outstandingBalance === 0 ? 'Fully Paid' : checkOut.outstandingBalance > 0 ? 'Outstanding' : 'Overpaid'}
-                        </Badge>
-                      </div>
-                      {checkOut.outstandingBalance > 0 && (
-                        <p className="text-xs text-red-600 font-medium mt-1">
-                          Balance: ₵{checkOut.outstandingBalance.toLocaleString()}
-                        </p>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="text-center">
-                      <Badge 
-                        color={getStatusColor(checkOut.status)} 
-                        variant="flat"
-                        className="font-medium"
-                      >
+                  <TableCell className="text-center">
+                    <Badge color={getStatusColor(checkOut.status)} variant="flat" className="font-medium">
                         {getStatusText(checkOut.status)}
                       </Badge>
-                      <p className="text-xs text-gray-600 mt-1">
-                        {checkOut.updatedAt ? formatDate(checkOut.updatedAt) : 'Pending'}
-                      </p>
-                    </div>
                   </TableCell>
                   <TableCell>
-                    <div className="flex flex-col space-y-1">
-                      <Button
-                        size="sm"
-                        color="primary"
-                        variant="flat"
-                        onClick={() => openCheckOutModal(checkOut)}
-                        className="w-full"
-                      >
-                        📋 Process
-                      </Button>
-                      {checkOut.outstandingBalance > 0 && (
-                        <Button 
-                          size="sm" 
-                          color="success" 
-                          variant="flat" 
-                          onClick={() => handleQuickSettlement(checkOut)}
-                          className="w-full"
-                        >
-                          💳 Settle ₵{(checkOut.outstandingBalance || 0).toFixed(2)}
-                        </Button>
+                    <div className="flex gap-1 justify-center">
+                      <Button size="sm" variant="light" onClick={() => openCheckOutModal(checkOut)}>View</Button>
+                      {(checkOut.outstandingBalance || 0) > 0 && (
+                        <Button size="sm" color="success" variant="flat" onClick={() => handleManageFolio(checkOut)}>Add Payment</Button>
                       )}
-                      <div className="flex space-x-1">
-                        <Button
-                          size="sm"
-                          color="warning"
-                          variant="flat"
-                          onClick={() => handleExtendStay(checkOut, 1)}
-                          className="flex-1"
-                        >
-                          +1 Night
-                        </Button>
-                        <Button
-                          size="sm"
-                          color="danger"
-                          variant="flat"
-                          onClick={() => handleCheckOut(checkOut)}
-                          className="flex-1"
-                        >
-                          ✅ Checkout
-                        </Button>
-                      </div>
-                      <Dropdown>
-                        <DropdownTrigger>
-                          <Button size="sm" variant="flat" className="w-full">
-                            More Actions
-                          </Button>
-                        </DropdownTrigger>
-                        <DropdownMenu>
-                          <DropdownItem key="manage-folio" onClick={() => handleManageFolio(checkOut)}>
-                            📊 Manage Folio
-                          </DropdownItem>
-                          <DropdownItem key="add-payment" onClick={() => handleManageFolio(checkOut)}>
-                            💳 Add Payment
-                          </DropdownItem>
-                          <DropdownItem key="extend-2" onClick={() => handleExtendStay(checkOut, 2)}>
-                            📅 Extend 2 Nights
-                          </DropdownItem>
-                          <DropdownItem key="print-receipt" onClick={() => handlePrintReceipt(checkOut)}>
-                            🖨️ Print Receipt
-                          </DropdownItem>
-                          <DropdownItem key="guest-feedback" onClick={() => handleGuestFeedback(checkOut)}>
-                            ⭐ Guest Feedback
-                          </DropdownItem>
-                          <DropdownItem key="loyalty-points" onClick={() => handleLoyaltyPoints(checkOut)}>
-                            🎯 Loyalty Points
-                          </DropdownItem>
-                          <DropdownItem key="taxi-service" onClick={() => handleTaxiService(checkOut)}>
-                            🚕 Taxi Service
-                          </DropdownItem>
-                        </DropdownMenu>
-                      </Dropdown>
+                      <Button size="sm" variant="light" onClick={() => {
+                        const inv = {
+                          id: checkOut.id,
+                          invoiceNumber: `INV-${checkOut.id}`,
+                          guestName: checkOut.guestName,
+                          guestEmail: (checkOut as any).guestEmail || '',
+                          guestPhone: (checkOut as any).guestPhone || '',
+                          roomNumber: String(checkOut.roomNumber || ''),
+                          roomType: String(checkOut.roomType || ''),
+                          checkInDate: checkOut.checkInDate,
+                          checkOutDate: checkOut.checkOutDate,
+                          nights: checkOut.nightsStayed,
+                          subtotal: (checkOut.totalCharges || 0) - ((frontOfficeStore.getOrCreateFolio(checkOut.id).charges || []).reduce((s,c)=> s + (c.tax || 0),0)),
+                          taxAmount: (frontOfficeStore.getOrCreateFolio(checkOut.id).charges || []).reduce((s,c)=> s + (c.tax || 0),0),
+                          discountAmount: 0,
+                          totalAmount: checkOut.totalCharges || 0,
+                          status: (checkOut.outstandingBalance || 0) === 0 ? 'paid' : 'pending',
+                          dueDate: checkOut.checkOutDate,
+                          createdAt: new Date().toISOString(),
+                          updatedAt: new Date().toISOString(),
+                          notes: '',
+                          items: [],
+                          payments: [],
+                          balance: checkOut.outstandingBalance || 0,
+                        } as any;
+                        // Reuse invoice print from payments page
+                        try {
+                          const settings = useSettingsStore.getState();
+                          const data = {
+                            org: { name: 'Hotel', address: '', phone: '', email: '' },
+                            guest: { name: inv.guestName, roomNumber: inv.roomNumber, roomType: inv.roomType, arrivalDate: inv.checkInDate, departureDate: inv.checkOutDate, nights: inv.nights },
+                            docNumber: inv.invoiceNumber,
+                            docDate: inv.createdAt,
+                            title: 'Invoice',
+                            items: (frontOfficeStore.getOrCreateFolio(checkOut.id).charges || []).map(c => ({ description: c.description, amount: c.amount + (c.tax || 0), date: c.date })),
+                            totals: { subTotal: inv.subtotal, taxes: { vat: undefined }, payments: (checkOut.totalPayments || 0), balance: inv.balance, grandTotal: inv.totalAmount },
+                            footerNotes: ['Thank you for staying with us.'],
+                            currency: '₵'
+                          } as any;
+                          openPrintPreview('invoice' as any, settings.printing.invoice || 'ghana-top-class-invoice', data);
+                        } catch {}
+                      }}>Print</Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -822,6 +926,56 @@ export default function CheckOutsPage() {
                         </div>
                       </AccordionItem>
                     </Accordion>
+                    {/* Settlement within Folio */}
+                    {(() => {
+                      const { outstandingBalance } = getFolioTotals(selectedCheckOut.id);
+                      return (
+                        <div className="mt-4 border rounded-lg p-3 bg-gray-50">
+                          <div className="flex items-center justify-between mb-3">
+                            <div className="text-sm text-gray-700">Outstanding Balance</div>
+                            <div className={`font-bold ${outstandingBalance > 0 ? 'text-red-600' : 'text-gray-600'}`}>₵{outstandingBalance.toLocaleString()}</div>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <Select label="Payment Method" selectedKeys={[settlementMethod]} onSelectionChange={(keys)=> setSettlementMethod(Array.from(keys)[0] as any)}>
+                              <SelectItem key="Cash">Cash</SelectItem>
+                              <SelectItem key="Card">Card</SelectItem>
+                              <SelectItem key="Mobile Money">Mobile Money</SelectItem>
+                              <SelectItem key="Bank Transfer">Bank Transfer</SelectItem>
+                              <SelectItem key="Check">Check</SelectItem>
+                              <SelectItem key="Corporate Account">Corporate Account</SelectItem>
+                              <SelectItem key="Credit">Credit</SelectItem>
+                            </Select>
+                            <Input label="Amount (GHS)" type="number" value={String(settlementAmount)} onChange={(e)=> setSettlementAmount(parseFloat(e.target.value || '0'))} />
+                            <Input label="Reference" value={settlementRef} onChange={(e)=> setSettlementRef(e.target.value)} />
+                          </div>
+                          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                            <div>
+                              <Select label="Receipt Template" selectedKeys={[receiptTpl]} onSelectionChange={(keys)=> setReceiptTpl(Array.from(keys)[0] as string)}>
+                                {receiptTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
+                              </Select>
+                            </div>
+                            <div>
+                              <Select label="Invoice Template" selectedKeys={[invoiceTpl]} onSelectionChange={(keys)=> setInvoiceTpl(Array.from(keys)[0] as string)}>
+                                {invoiceTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
+                              </Select>
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                              <Button variant="light" onPress={()=> handlePrintReceipt(selectedCheckOut)}>Print Receipt</Button>
+                              <Button variant="light" onPress={()=> handlePrintInvoice(selectedCheckOut)}>Print Invoice</Button>
+                            </div>
+                          </div>
+                            <Button color="success" className="bg-green-600 text-white"
+                              isDisabled={outstandingBalance <= 0 || settlementAmount <= 0}
+                              onPress={() => {
+                                frontOfficeStore.addPayment(selectedCheckOut.id, settlementMethod, settlementAmount, { notes: 'Folio settlement during checkout', processedBy: 'Front Desk', ref: settlementRef });
+                                setTimeout(() => loadCheckOuts(), 50);
+                              }}
+                            >
+                              Settle Balance
+                            </Button>
+                          </div>
+                      );
+                    })()}
                   </div>
                 </div>
               )}

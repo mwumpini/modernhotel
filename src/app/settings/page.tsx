@@ -6,6 +6,8 @@ import { useSearchParams } from 'next/navigation';
 import PaymentMethodsSettings from '../components/settings/PaymentMethodsSettings';
 import TaxManagementSettings from '../components/settings/TaxManagementSettings';
 import ClientSettingsPanel from '../components/settings/ClientSettingsPanel';
+import TemplateBuilder from '../components/TemplateBuilder';
+import DocumentTemplateSettings from '../components/settings/DocumentTemplateSettings';
 
 function SettingsPageContent() {
   const [activeTab, setActiveTab] = useState('general');
@@ -13,7 +15,7 @@ function SettingsPageContent() {
   
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam && ['general', 'room-configuration', 'payment-methods', 'tax-management', 'client-settings', 'system-health'].includes(tabParam)) {
+    if (tabParam && ['general', 'room-configuration', 'payment-methods', 'tax-management', 'client-settings', 'templates', 'system-health'].includes(tabParam)) {
       setActiveTab(tabParam);
     }
   }, [searchParams]);
@@ -25,17 +27,38 @@ function SettingsPageContent() {
       </div>
       
       <Tabs selectedKey={activeTab} onSelectionChange={(key) => setActiveTab(key as string)}>
-        <Tab key="general" title="General Settings">
+        <Tab key="general" title="📊 Overview">
           <div className="p-4">
             <p>General system settings go here...</p>
           </div>
         </Tab>
+        <Tab key="user-management" title="👥 User Management">
+          <div className="p-4">
+            <p>User management settings...</p>
+          </div>
+        </Tab>
+        <Tab key="templates" title="Document Templates">
+          <div className="p-4">
+            <DocumentTemplateSettings />
+          </div>
+        </Tab>
+        <Tab key="template-builder" title="Template Builder">
+          <div className="p-4">
+            <TemplateBuilder />
+          </div>
+        </Tab>
         
-        <Tab key="room-configuration" title="Room Configuration">
+        <Tab key="room-configuration" title="🏠 Room Configuration">
           <div className="p-4">
             <h3 className="text-xl font-semibold mb-4">Room Management</h3>
             <p>Configure room types, numbering, and availability...</p>
             {/* Your existing room configuration content */}
+          </div>
+        </Tab>
+        
+        <Tab key="rate-management" title="💰 Rate Management">
+          <div className="p-4">
+            <p>Rate management settings...</p>
           </div>
         </Tab>
         
@@ -57,11 +80,16 @@ function SettingsPageContent() {
           </div>
         </Tab>
         
-        <Tab key="system-health" title="System Health">
+        <Tab key="system-health" title="💚 System Health">
           <div className="p-4">
             <h3 className="text-xl font-semibold mb-4">System Health</h3>
             <p>Monitor system performance, database status, and logs...</p>
             {/* Your existing system health content */}
+          </div>
+        </Tab>
+        <Tab key="security-settings" title="🔒 Security Setting">
+          <div className="p-4">
+            <p>Security settings...</p>
           </div>
         </Tab>
       </Tabs>

@@ -11,7 +11,7 @@ import {
   Tab
 } from "@heroui/react";
 import dynamic from 'next/dynamic';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 
 // Lazy sections to keep the page responsive
 const CheckOutsPage = dynamic(() => import('../check-outs/page'), { ssr: false });
@@ -270,6 +270,7 @@ function CheckInsSection() {
       trackEvent('FO.Reservation.CheckedOut', { reservationId: guest.id, guestName: guest.guestName, roomNumber: guest.roomNumber, source: 'check-ins' });
       onClose();
       setSelectedGuest(null);
+      // Tab switch handled by user; Check-outs list will auto-refresh via store subscription
     } finally {
       setIsProcessing(false);
     }
@@ -597,6 +598,7 @@ function CheckInsSection() {
             <Table aria-label="In-house guests table" className="min-w-full">
                     <TableHeader>
               <TableColumn className="w-40">GUEST</TableColumn>
+              <TableColumn className="w-36">BILLED TO</TableColumn>
               <TableColumn className="w-20">ROOM</TableColumn>
               <TableColumn className="w-28">ROOM TYPE</TableColumn>
               <TableColumn className="w-20">ADULTS</TableColumn>
@@ -629,6 +631,15 @@ function CheckInsSection() {
                       </div>
                               </div>
                             </TableCell>
+                  <TableCell>
+                    <div className="text-sm">
+                      {(() => {
+                        const res = frontOfficeStore.reservations.find(r => r.id === guest.id);
+                        const billed = res?.companyName || res?.billingPersonName || 'Self';
+                        return <span className="font-medium">{billed}</span>;
+                      })()}
+                    </div>
+                  </TableCell>
                   <TableCell className="font-semibold text-center">{guest.roomNumber}</TableCell>
                   <TableCell className="text-center">{guest.roomType}</TableCell>
                   <TableCell className="text-center">{guest.adults}</TableCell>
@@ -1162,6 +1173,7 @@ function CheckInsPageInner() {
   const params = useSearchParams();
   const initialTab = params.get('tab') || 'reservations';
   const [selectedTab, setSelectedTab] = useState(initialTab);
+  const router = useRouter();
 
   return (
     <PageLayout>

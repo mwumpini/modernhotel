@@ -97,6 +97,8 @@ export interface DocumentTemplate {
   name: string;
   type: 'receipt' | 'invoice' | 'payment-order' | 'purchase-order' | 'proforma' | 'quotation' | 'contract' | 'report';
   category: 'financial' | 'operational' | 'legal' | 'marketing';
+  // Purpose-driven usage (activity/flow): e.g., 'checkout', 'conference', 'restaurant', 'accommodation', 'folio', 'quotation'
+  purpose?: string;
   description: string;
   preview: string;
   isActive: boolean;
@@ -948,6 +950,8 @@ export interface RoomManagementSettings {
 }
 
 interface SettingsStore extends SystemSettings {
+  // Printing defaults (house style)
+  printing: { receipt: string; invoice: string; proforma: string };
   // Actions
   updateSetting: <K extends keyof SystemSettings>(key: K, value: SystemSettings[K]) => void;
   updateNestedSetting: (path: string, value: any) => void;
@@ -1018,6 +1022,9 @@ interface SettingsStore extends SystemSettings {
   subscribers: Set<() => void>;
   subscribe: (callback: () => void) => () => void;
   publish: () => void;
+
+  // Printing defaults management
+  updatePrintingTemplates: (tpl: Partial<{ receipt: string; invoice: string; proforma: string }>) => void;
 
   // Module Settings (SaaS)
   moduleSettings: ModuleSettings;
@@ -1814,6 +1821,7 @@ const defaultSettings: SystemSettings = {
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   ...defaultSettings,
   subscribers: new Set(),
+  printing: { receipt: 'simple-receipt', invoice: 'corporate-invoice', proforma: 'conference-proforma-grid' },
   
   updateSetting: (key, value) => {
     set({ [key]: value });
@@ -2705,6 +2713,13 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   
   publish: () => {
     get().subscribers.forEach(callback => callback());
+  },
+
+  updatePrintingTemplates: (tpl) => {
+    const state = get();
+    const printing = { ...state.printing, ...tpl };
+    set({ printing });
+    try { localStorage.setItem('printing.defaults', JSON.stringify(printing)); } catch {}
   },
   
   // Business Entity Settings Management

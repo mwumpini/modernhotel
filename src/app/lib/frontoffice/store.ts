@@ -6,6 +6,7 @@ import { logAudit } from '../analytics/auditLogStore';
 import { postRoomRevenue, postPayment } from '../accounting/journal';
 import { housekeepingStore } from '../housekeeping/store';
 import { useSettingsStore } from '../settings/store';
+import { useAccountingStore } from '../accounting/store';
 
 class FrontOfficeStore {
   reservations: Reservation[] = [];
@@ -243,6 +244,102 @@ class FrontOfficeStore {
         updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
       }
     ];
+
+    // --- Seed demo check-outs scenarios (appear in Check-outs table) ---
+    const twoDaysAgo = new Date(today); twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+
+    const seedReservations: Reservation[] = [
+      // 1) Fully paid guest
+      {
+        id: 'R-004',
+        resId: 'RES-004',
+        guestId: 'guest-demo-004',
+        guestName: 'Kofi Boateng',
+        guestPhone: '+233 20 111 2222',
+        guestEmail: 'kofi.boateng@example.com',
+        roomTypeId: 'rt-standard',
+        roomId: '102',
+        arrival: twoDaysAgo.toISOString().split('T')[0],
+        departure: today.toISOString().split('T')[0],
+        status: 'checked-in',
+        source: 'DIRECTINN',
+        adults: 1,
+        children: 0,
+        paymentMethod: 'Card',
+        remarksToGuest: 'Near elevator',
+        stayReason: 'leisure',
+        billingPersonName: 'Self',
+        createdAt: twoDaysAgo.toISOString(),
+        updatedAt: new Date().toISOString()
+      },
+      // 2) Corporate credit billed (fully settled by corporate account)
+      {
+        id: 'R-005',
+        resId: 'RES-005',
+        guestId: 'guest-demo-005',
+        guestName: 'Abena Serwaa',
+        guestPhone: '+233 24 333 4444',
+        guestEmail: 'abena.serwaa@example.com',
+        roomTypeId: 'rt-deluxe',
+        roomId: '202',
+        arrival: yesterday.toISOString().split('T')[0],
+        departure: today.toISOString().split('T')[0],
+        status: 'checked-in',
+        source: 'BOOKING.COM',
+        adults: 1,
+        children: 0,
+        paymentMethod: 'Corporate Account',
+        remarksToGuest: 'Corporate stay',
+        stayReason: 'business',
+        billingPersonName: 'Ghana Telecom Ltd',
+        createdAt: yesterday.toISOString(),
+        updatedAt: new Date().toISOString()
+      },
+      // 3) Part payment (outstanding balance)
+      {
+        id: 'R-006',
+        resId: 'RES-006',
+        guestId: 'guest-demo-006',
+        guestName: 'Yaw Owusu',
+        guestPhone: '+233 27 555 6666',
+        guestEmail: 'yaw.owusu@example.com',
+        roomTypeId: 'rt-standard',
+        roomId: '103',
+        arrival: twoDaysAgo.toISOString().split('T')[0],
+        departure: today.toISOString().split('T')[0],
+        status: 'checked-in',
+        source: 'WALK IN',
+        adults: 2,
+        children: 0,
+        paymentMethod: 'Cash',
+        remarksToGuest: 'Late checkout if possible',
+        stayReason: 'leisure',
+        billingPersonName: 'Self',
+        createdAt: twoDaysAgo.toISOString(),
+        updatedAt: new Date().toISOString()
+      }
+    ];
+
+    this.reservations = [...this.reservations, ...seedReservations];
+
+    // Seed folio activity for the demo reservations so financials show up
+    const seedFolio = (reservationId: string, charges: number[], payments: Array<{ method: 'Cash'|'Card'|'Mobile Money'|'Corporate Account'|'Bank Transfer'|'Check'|'Credit'; amount?: number }>) => {
+      charges.forEach(amount => this.addCharge(reservationId, 'Room Charge', amount));
+      const f = this.getOrCreateFolio(reservationId);
+      this.updateFolioBalances(f);
+      payments.forEach(p => {
+        const val = typeof p.amount === 'number' ? p.amount : (this.getOrCreateFolio(reservationId).balance || 0);
+        if (val > 0) this.addPayment(reservationId, p.method, val);
+      });
+    };
+
+    // Fully paid ~ ₵900 (incl. taxes/services), pay by Card
+    seedFolio('R-004', [600, 150, 100], [ { method: 'Card' } ]);
+    // Corporate billed ~ ₵1200, paid by Corporate Account
+    seedFolio('R-005', [800, 250], [ { method: 'Corporate Account' } ]);
+    // Part payment: charges ~ ₵1500, paid ₵700 cash
+    seedFolio('R-006', [1000, 300, 100], [ { method: 'Cash', amount: 700 } ]);
   }
 
   subscribe(l: () => void) { this.listeners.push(l); return () => { this.listeners = this.listeners.filter(x => x !== l); }; }
@@ -620,6 +717,9 @@ class FrontOfficeStore {
         meta: { eventId: checkOutEventId, eventType: 'check-out' }
       });
     } catch {}
+
+    // Auto-generate accounting invoice at checkout
+    try { this.generateAccountingInvoiceForReservation(id); } catch (e) { console.warn('FO: Auto-invoice generation failed', e); }
   }
 
   // Folio helpers
@@ -675,11 +775,131 @@ class FrontOfficeStore {
     housekeepingStore.createMaintenanceRequest({ roomNumber: roomId, reportedBy: 'Front Desk', category, priority: 'high', description });
   }
 
+  // --- Folio advanced operations ---
+  transferCharge(fromReservationId: string, chargeId: string, toReservationId: string, note?: string) {
+    const fromFolio = this.getOrCreateFolio(fromReservationId);
+    const toFolio = this.getOrCreateFolio(toReservationId);
+    const idx = fromFolio.charges.findIndex(c => c.id === chargeId);
+    if (idx === -1) return false;
+    const charge = fromFolio.charges[idx];
+    // Remove and push to target
+    fromFolio.charges.splice(idx, 1);
+    toFolio.charges.push({ ...charge, id: `C-${Date.now().toString().slice(-6)}`, description: `${charge.description} (Transferred${note ? `: ${note}` : ''})` });
+    this.updateFolioBalances(fromFolio);
+    this.updateFolioBalances(toFolio);
+    this.notify();
+    trackEvent('FO.Folio.ChargeTransferred', { fromReservationId, toReservationId, amount: charge.amount });
+    try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: fromReservationId, details: `Transferred charge ${chargeId} to ${toReservationId}`, severity: 'medium' }); } catch {}
+    return true;
+  }
+
+  splitCharge(reservationId: string, chargeId: string, targetReservationId: string, amountToMove: number, note?: string) {
+    const source = this.getOrCreateFolio(reservationId);
+    const idx = source.charges.findIndex(c => c.id === chargeId);
+    if (idx === -1) return false;
+    const charge = source.charges[idx];
+    const move = Math.max(0, Math.min(amountToMove, charge.amount));
+    if (move === 0) return false;
+    const tax = charge.tax || 0;
+    const taxMove = tax * (move / (charge.amount || 1));
+    // Reduce original
+    source.charges[idx] = { ...charge, amount: charge.amount - move, tax: Math.max(0, tax - taxMove) } as any;
+    // Add to target
+    const target = this.getOrCreateFolio(targetReservationId);
+    target.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description: `${charge.description} (Split${note ? `: ${note}` : ''})`, amount: move, tax: taxMove });
+    this.updateFolioBalances(source);
+    this.updateFolioBalances(target);
+    this.notify();
+    trackEvent('FO.Folio.ChargeSplit', { reservationId, targetReservationId, move });
+    try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: reservationId, details: `Split charge ${chargeId}, moved ₵${move} to ${targetReservationId}`, severity: 'medium' }); } catch {}
+    return true;
+  }
+
+  voidCharge(reservationId: string, chargeId: string, reason: string) {
+    const folio = this.getOrCreateFolio(reservationId);
+    const ch = folio.charges.find(c => c.id === chargeId);
+    if (!ch) return false;
+    // Add reversal entry; keep original intact for audit
+    folio.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description: `VOID ${ch.description} - ${reason}`, amount: -Math.abs(ch.amount), tax: -(ch.tax || 0) });
+    this.updateFolioBalances(folio);
+    this.notify();
+    trackEvent('FO.Folio.ChargeVoided', { reservationId, amount: ch.amount });
+    try { logAudit({ area: 'frontdesk', action: 'void', entity: 'Folio', entityId: reservationId, details: `Voided charge ${chargeId}: ${reason}`, severity: 'high' }); } catch {}
+    return true;
+  }
+
+  refundPayment(reservationId: string, paymentId: string, amount: number, reason?: string) {
+    const folio = this.getOrCreateFolio(reservationId);
+    const payment = folio.payments.find(p => p.id === paymentId);
+    if (!payment) return false;
+    const val = Math.min(amount || payment.amount, payment.amount);
+    // Record refund as negative payment and a matching negative charge for revenue reversal
+    folio.payments.push({ id: `P-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), method: payment.method, amount: -Math.abs(val), status: 'completed', notes: `Refund: ${reason || ''}` } as any);
+    folio.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description: `Refund issued${reason ? ` - ${reason}` : ''}`, amount: -Math.abs(val), tax: 0 });
+    this.updateFolioBalances(folio);
+    this.notify();
+    trackEvent('FO.Folio.PaymentRefunded', { reservationId, amount: val });
+    try { logAudit({ area: 'frontdesk', action: 'refund', entity: 'Folio', entityId: reservationId, details: `Refunded ₵${val}: ${reason || ''}`, severity: 'high' }); } catch {}
+    return true;
+  }
+
+  // Allocate a single corporate/company receipt across multiple reservations' folios
+  postCorporateReceipt(payer: string, reservationIds: string[], totalAmount: number, reference?: string) {
+    let remaining = totalAmount || 0;
+    const allocations: Array<{ reservationId: string; applied: number }> = [];
+    // Order by highest balance first to clear largest balances, typical practice; adjust as needed
+    const ordered = [...reservationIds]
+      .map(id => ({ id, bal: (this.getOrCreateFolio(id).balance || 0) }))
+      .sort((a, b) => b.bal - a.bal)
+      .map(x => x.id);
+
+    for (const id of ordered) {
+      if (remaining <= 0) break;
+      const folio = this.getOrCreateFolio(id);
+      this.updateFolioBalances(folio);
+      const bal = Math.max(0, folio.balance || 0);
+      if (bal <= 0) continue;
+      const apply = Math.min(remaining, bal);
+      if (apply > 0) {
+        this.addPayment(id, 'Corporate Account', apply, {
+          notes: `Corporate receipt from ${payer}${reference ? ` (${reference})` : ''}`,
+          processedBy: 'Front Desk',
+          ref: reference
+        });
+        allocations.push({ reservationId: id, applied: apply });
+        remaining -= apply;
+      }
+    }
+
+    this.notify();
+    trackEvent('FO.Folio.CorporateReceiptAllocated', { payer, totalAmount, remaining, allocations: allocations.length });
+    try {
+      logAudit({
+        area: 'frontdesk',
+        action: 'create',
+        entity: 'Payment',
+        entityId: `CORP-${Date.now().toString().slice(-6)}`,
+        details: `Corporate receipt ₵${totalAmount} from ${payer} allocated to ${allocations.length} folios` ,
+        severity: 'medium',
+        meta: { allocations, reference, remaining }
+      });
+    } catch {}
+
+    return { allocations, remaining };
+  }
+
   private getTaxRates() {
-    const vat = Number(localStorage.getItem('tax.vat') || '12.5');
-    const nhil = Number(localStorage.getItem('tax.nhil') || '2.5');
-    const levy = Number(localStorage.getItem('tax.tourism') || '1.0');
-    return { vat, nhil, levy };
+    try {
+      if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
+        return { vat: 12.5, nhil: 2.5, levy: 1.0 };
+      }
+      const vat = Number(localStorage.getItem('tax.vat') || '12.5');
+      const nhil = Number(localStorage.getItem('tax.nhil') || '2.5');
+      const levy = Number(localStorage.getItem('tax.tourism') || '1.0');
+      return { vat, nhil, levy };
+    } catch {
+      return { vat: 12.5, nhil: 2.5, levy: 1.0 };
+    }
   }
 
   addCharge(reservationId: string, description: string, amount: number) {
@@ -1039,9 +1259,101 @@ class FrontOfficeStore {
         });
       } catch {}
 
+      // Auto-generate accounting invoice at checkout
+      try { this.generateAccountingInvoiceForReservation(reservationId); } catch (e) { console.warn('FO: Auto-invoice generation failed', e); }
+
       return reservation;
     }
     return null;
+  }
+
+  // Generate an accounting invoice from a reservation folio and mark reservation
+  private generateAccountingInvoiceForReservation(reservationId: string) {
+    const reservation = this.reservations.find(r => r.id === reservationId);
+    if (!reservation) return;
+
+    const folio = this.getOrCreateFolio(reservationId);
+    this.updateFolioBalances(folio);
+
+    // Compute financials
+    const subtotal = folio.charges.reduce((sum, c) => sum + c.amount, 0);
+    const taxAmount = folio.charges.reduce((sum, c) => sum + (c.tax || 0), 0);
+    const total = subtotal + taxAmount;
+    const paid = folio.totalPayments || 0;
+    const balance = Math.max(0, (folio.balance ?? (total - paid)));
+
+    // Build invoice lines
+    const lines = folio.charges.map((c, idx) => ({
+      id: `IL-${Date.now().toString().slice(-6)}-${idx}`,
+      invoiceId: 'pending',
+      description: c.description,
+      quantity: 1,
+      unitPrice: c.amount,
+      amount: c.amount,
+      taxAmount: c.tax || 0,
+      glAccountCode: c.description.toLowerCase().includes('room') ? '4100' : '4300'
+    }));
+
+    // Create invoice model
+    const settings = useSettingsStore.getState();
+    const accounting = useAccountingStore.getState();
+    const newId = `A-INV-${Date.now().toString().slice(-6)}`;
+    const invNumber = settings.getNextInvoiceNumber();
+    const dueDate = new Date(Date.now() + (settings.invoiceSettings.defaultPaymentTerms * 24 * 60 * 60 * 1000)).toISOString();
+
+    const invoice = {
+      id: newId,
+      invoiceNumber: invNumber,
+      type: 'Sales' as const,
+      date: new Date().toISOString(),
+      dueDate,
+      businessPartnerId: reservation.guestId || reservation.guestName,
+      reference: reservation.resId || reservation.id,
+      description: `Guest stay folio for ${reservation.guestName}`,
+      subtotal,
+      taxAmount,
+      total,
+      currency: 'GHS',
+      status: balance === 0 ? 'Paid' as const : 'Posted' as const,
+      paidAmount: Math.min(total, paid),
+      paidDate: balance === 0 ? new Date().toISOString() : undefined,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      lines
+    };
+
+    // Assign generated invoiceId to lines and persist
+    invoice.lines = invoice.lines.map(l => ({ ...l, invoiceId: newId }));
+    try { accounting.addInvoice(invoice as any); } catch (e) { console.warn('FO: addInvoice failed', e); }
+
+    // Optionally post matching payments
+    try {
+      (folio.payments || []).forEach(p => {
+        accounting.addPayment({
+          id: `A-PAY-${Date.now().toString().slice(-6)}`,
+          paymentNumber: `PAY-${Date.now().toString().slice(-6)}`,
+          date: p.date,
+          type: 'Receipt',
+          businessPartnerId: reservation.guestId || reservation.guestName,
+          invoiceId: newId,
+          reference: p.ref,
+          description: `Payment for ${invNumber}`,
+          amount: p.amount,
+          currency: 'GHS',
+          paymentMethod: (p.method === 'Card' || p.method === 'Mobile Money') ? (p.method as any) : 'Cash',
+          status: 'Posted',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        } as any);
+      });
+    } catch {}
+
+    // Mark reservation & close folio
+    (reservation as any).invoiceGenerated = true;
+    (reservation as any).invoiceGeneratedDate = new Date().toISOString();
+    (reservation as any).invoiceStatus = balance === 0 ? 'paid' : 'sent';
+    folio.status = 'closed';
+    this.notify();
   }
 
   // Extend stay for a reservation

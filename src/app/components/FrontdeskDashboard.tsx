@@ -299,21 +299,21 @@ export default function FrontdeskDashboard() {
                             onClick={() => {
                               // Handle navigation based on item type
                               if (item.title.includes('Reservations')) {
-                                router.push('/reservations');
+                                router.push('/guest-services/check-ins?tab=reservations');
                               } else if (item.title.includes('Rooms & Bookings')) {
                                 router.push('/room-assignments');
                               } else if (item.title.includes('Room Management')) {
                                 router.push('/room-status');
                               } else if (item.title.includes('Check-ins')) {
-                                router.push('/guest-services/check-ins');
+                                router.push('/guest-services/check-ins?tab=checkins');
                               } else if (item.title.includes('Check-outs')) {
-                                router.push('/guest-services/check-outs');
+                                router.push('/guest-services/check-ins?tab=checkouts');
                               } else if (item.title.includes('Guest Experience Manager')) {
                                 router.push('/guest-services/guest-experience');
                               } else if (item.title.includes('Mobile Guest Services')) {
                                 router.push('/guest-services/mobile-services');
                               } else if (item.title.includes('Invoices & Payments')) {
-                                router.push('/guest-services/client-services/invoices-payments');
+                                router.push('/guest-services/check-ins?tab=billing');
                               } else if (item.title.includes('Client Management')) {
                                 router.push('/guest-services/client-services/clients-services');
                               } else if (item.title.includes('Tools & Templates')) {
@@ -378,7 +378,7 @@ export default function FrontdeskDashboard() {
                             className="w-full"
                             onClick={() => {
                               if (item.title.includes('Reservations')) {
-                                router.push('/reservations');
+                                router.push('/guest-services/check-ins?tab=reservations');
                               } else if (item.title.includes('Rooms & Bookings')) {
                                 router.push('/room-assignments');
                               } else if (item.title.includes('Room Management')) {
@@ -427,7 +427,7 @@ export default function FrontdeskDashboard() {
                             color="primary"
                             variant="flat"
                             className="w-full"
-                          onClick={() => router.push('/guest-services/check-ins?type=walkin')}
+                          onClick={() => router.push('/guest-services/check-ins?tab=checkins&type=walkin')}
                         >
                           ✅ Process Check-ins
                           </Button>
@@ -436,7 +436,7 @@ export default function FrontdeskDashboard() {
                               color="secondary"
                               variant="flat"
                               className="w-full mt-2"
-                              onClick={() => router.push('/guest-services/check-ins?type=walkin&quick=true')}
+                              onClick={() => router.push('/guest-services/check-ins?tab=checkins&type=walkin&quick=true')}
                             >
                               🚶‍♂️ Quick Walk-In
                             </Button>
@@ -466,7 +466,7 @@ export default function FrontdeskDashboard() {
                           color="primary"
                           variant="flat"
                           className="w-full"
-                          onClick={() => router.push('/guest-services/check-ins')}
+                          onClick={() => router.push('/guest-services/check-ins?tab=checkins')}
                         >
                           🏠 Manage Guests
                         </Button>
@@ -496,7 +496,7 @@ export default function FrontdeskDashboard() {
                           color="primary"
                           variant="flat"
                           className="w-full"
-                          onClick={() => router.push('/guest-services/check-outs')}
+                          onClick={() => router.push('/guest-services/check-ins?tab=checkouts')}
                         >
                           🚪 Process Check-outs
                         </Button>
@@ -505,7 +505,7 @@ export default function FrontdeskDashboard() {
                   </Card>
 
                   {/* 4. Invoices & Payments */}
-                  <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/guest-services/client-services/invoices-payments')}>
+                  <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/guest-services/check-ins?tab=billing')}>
                   <CardBody className="p-4 text-center">
                     <div className="text-3xl mb-2">📄</div>
                     <h3 className="text-lg font-semibold text-gray-800">Invoices & Payments</h3>
@@ -515,7 +515,7 @@ export default function FrontdeskDashboard() {
                         variant="flat" 
                         size="sm" 
                         className="mt-3"
-                        onClick={() => router.push('/guest-services/client-services/invoices-payments')}
+                        onClick={() => router.push('/guest-services/check-ins?tab=billing')}
                       >
                         Manage
                       </Button>
