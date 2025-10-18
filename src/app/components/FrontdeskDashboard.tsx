@@ -1,6 +1,9 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import DeptNotices from './DeptNotices';
+import RecentActivities from './RecentActivities';
+import DeptMessenger from './DeptMessenger';
 import { 
   Card, 
   CardBody, 
@@ -145,6 +148,7 @@ export default function FrontdeskDashboard() {
 
   return (
     <div className="p-6">
+      <DeptMessenger from="frontdesk" mode="drawer" />
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🏨 Front Office Operations</h2>
         <OfflineIndicator />
@@ -688,59 +692,17 @@ export default function FrontdeskDashboard() {
               <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
             </CardHeader>
             <CardBody>
-              <div className="space-y-3">
-                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                  <span className="text-sm text-gray-800">Invoice #INV-001 sent (2 minutes ago)</span>
-                </div>
-                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="h-3 w-3 bg-blue-500 rounded-full"></div>
-                  <span className="text-sm text-gray-800">New booking from John Doe (5 minutes ago)</span>
-                </div>
-                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="h-3 w-3 bg-purple-500 rounded-full"></div>
-                  <span className="text-sm text-gray-800">Hall 1 booked for conference (10 minutes ago)</span>
-              </div>
-                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                  <span className="text-sm text-gray-800">Payment received (1 hour ago)</span>
-                </div>
-                <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="h-3 w-3 bg-orange-500 rounded-full"></div>
-                  <span className="text-sm text-gray-800">Room 205 marked for maintenance (2 hours ago)</span>
-                </div>
-              </div>
+              <RecentActivities area="frontdesk" />
             </CardBody>
           </Card>
 
-          {/* Notices & Alerts */}
+          {/* Front Desk Notices placed beside Recent Activities */}
           <Card className="border-0 shadow-lg">
             <CardHeader className="pb-3">
-              <h3 className="text-xl font-semibold text-ghana-black">🔔 Notices & Alerts</h3>
+              <h3 className="text-xl font-semibold text-ghana-black">🔔 Front Desk Notices</h3>
             </CardHeader>
             <CardBody>
-              <div className="space-y-3">
-                <div className="flex items-center space-x-3 p-3 bg-red-50 rounded-lg border border-red-200">
-                  <div className="h-3 w-3 bg-red-500 rounded-full"></div>
-                  <span className="text-sm text-red-800 font-medium">High occupancy alert: 95% rooms occupied</span>
-                </div>
-                <div className="flex items-center space-x-3 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
-                  <div className="h-3 w-3 bg-yellow-500 rounded-full"></div>
-                  <span className="text-sm text-yellow-800 font-medium">Maintenance scheduled: Room 203 tomorrow</span>
-                </div>
-                <div className="flex items-center space-x-3 p-3 bg-blue-50 rounded-lg border border-blue-200">
-                  <div className="h-3 w-3 bg-blue-500 rounded-full"></div>
-                  <span className="text-sm text-blue-800 font-medium">New policy update: Check-in time changed to 3 PM</span>
-                </div>
-                <div className="flex items-center space-x-3 p-3 bg-green-50 rounded-lg border border-green-200">
-                  <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                  <span className="text-sm text-green-800 font-medium">System maintenance: Tonight 2-4 AM</span>
-                </div>
-                <div className="flex items-center space-x-3 p-3 bg-purple-50 rounded-lg border border-purple-200">
-                  <div className="h-3 w-3 bg-purple-500 rounded-full"></div>
-                  <span className="text-sm text-purple-800 font-medium">Staff meeting: Tomorrow 9 AM in Conference Room</span>
-                </div>
-              </div>
+              <DeptNotices dept="frontdesk" title="" defaultTab="alerts" />
             </CardBody>
           </Card>
         </div>

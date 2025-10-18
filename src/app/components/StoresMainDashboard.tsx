@@ -21,6 +21,9 @@ import { useRouter } from 'next/navigation';
 // Import specialized Stores/Inventory components
 import InventorySupplyChainDashboard from './InventorySupplyChainDashboard';
 import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
+import DeptNotices from './DeptNotices';
+import DeptMessenger from './DeptMessenger';
+import RecentActivities from './RecentActivities';
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {
@@ -241,11 +244,12 @@ export default function StoresMainDashboard() {
 
   return (
     <div className="p-6">
+      <DeptMessenger from="inventory" mode="drawer" />
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">📦 Stores & Inventory Management</h2>
+        <h2 className="text-2xl font-bold text-ghana-black">📦 Inventory & Stores</h2>
         <div className="flex items-center gap-2">
-          <Badge color="success" variant="flat">System Online</Badge>
-          <Badge color="primary" variant="flat">Ghana Compliant</Badge>
+          <Badge color="success" variant="flat">Reorder System</Badge>
+          <Badge color="primary" variant="flat">Suppliers Active</Badge>
         </div>
       </div>
 
@@ -395,6 +399,8 @@ export default function StoresMainDashboard() {
         </CardBody>
       </Card>
 
+      
+
 
 
       {/* Main Operations Interface - Following Uniform Pattern */}
@@ -490,6 +496,31 @@ export default function StoresMainDashboard() {
           </Tabs>
         </CardBody>
       </Card>
+
+      {/* Recent Activities & Notices - directly under Operations Overview */}
+      <div className="mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Recent Activities */}
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3">
+              <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+            </CardHeader>
+            <CardBody>
+              <RecentActivities area="inventory" />
+            </CardBody>
+          </Card>
+
+          {/* Inventory Notices */}
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3">
+              <h3 className="text-xl font-semibold text-ghana-black">🔔 Inventory Notices</h3>
+            </CardHeader>
+            <CardBody>
+              <DeptNotices dept="inventory" title="" defaultTab="alerts" />
+            </CardBody>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

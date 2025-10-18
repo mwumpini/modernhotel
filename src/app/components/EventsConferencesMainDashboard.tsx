@@ -122,6 +122,9 @@ export default function EventsConferencesMainDashboard() {
   const [isClientViewModalOpen, setIsClientViewModalOpen] = useState(false);
   const [isContractModalOpen, setIsContractModalOpen] = useState(false);
   const [isClientEditModalOpen, setIsClientEditModalOpen] = useState(false);
+  const DeptNotices = require('./DeptNotices').default;
+  const DeptMessenger = require('./DeptMessenger').default;
+  const RecentActivities = require('./RecentActivities').default;
   
 
   // Sample events data - in real app, this would come from stores
@@ -2451,6 +2454,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
   return (
     <div className="p-6">
+      {/* Removed top notices; bottom section contains notices & activities */}
+      <DeptMessenger from="events" mode="drawer" />
+      
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🎉 Events & Conferences Management</h2>
         <div className="flex items-center gap-3">
@@ -4354,6 +4360,24 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           </Tabs>
         </CardBody>
       </Card>
+
+      {/* Bottom section: place directly under Operations Overview */}
+      <div className="mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="border-0 shadow-lg bg-white rounded-lg">
+            <div className="pb-3 px-4 pt-4"><h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3></div>
+            <div className="px-4 pb-4">
+              {RecentActivities({ area: 'events' })}
+            </div>
+          </div>
+          <div className="border-0 shadow-lg bg-white rounded-lg">
+            <div className="pb-3 px-4 pt-4"><h3 className="text-xl font-semibold text-ghana-black">🔔 Events Notices</h3></div>
+            <div className="px-4 pb-4">
+              {DeptNotices({ dept: 'events', title: '', defaultTab: 'alerts' })}
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* Event Modal - Ghanaian Business Process */}
       <Modal 

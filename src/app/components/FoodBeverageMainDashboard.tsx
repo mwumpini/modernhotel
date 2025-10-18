@@ -19,6 +19,9 @@ import { ordersStore } from '../lib/fb/ordersStore';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useRouter } from 'next/navigation';
 import OfflineIndicator from './OfflineIndicator';
+import DeptNotices from './DeptNotices';
+import DeptMessenger from './DeptMessenger';
+import RecentActivities from './RecentActivities';
 
 // Import specialized F&B components
 import FBPOS from './FBPOS';
@@ -246,6 +249,7 @@ export default function FoodBeverageMainDashboard() {
 
   return (
     <div className="p-6">
+      <DeptMessenger from="f&b" mode="drawer" />
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🍽️ Food & Beverage Operations</h2>
         <OfflineIndicator />
@@ -492,6 +496,24 @@ export default function FoodBeverageMainDashboard() {
           </Tabs>
         </CardBody>
       </Card>
+
+      {/* Bottom section: directly under Operations Overview */}
+      <div className="mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3"><h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3></CardHeader>
+            <CardBody>
+              <RecentActivities area="f&b" />
+            </CardBody>
+          </Card>
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3"><h3 className="text-xl font-semibold text-ghana-black">🔔 F&B Notices</h3></CardHeader>
+            <CardBody>
+              <DeptNotices dept="f&b" title="" defaultTab="alerts" />
+            </CardBody>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

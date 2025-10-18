@@ -22,6 +22,9 @@ import { useSettingsStore } from '../lib/settings/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useRouter } from 'next/navigation';
 import OfflineIndicator from './OfflineIndicator';
+import DeptNotices from './DeptNotices';
+import DeptMessenger from './DeptMessenger';
+import RecentActivities from './RecentActivities';
 
 // Import specialized components
 import RoomStatusGrid from './housekeeping/RoomStatusGrid';
@@ -275,6 +278,7 @@ export default function HousekeepingMainDashboard() {
 
   return (
     <div className="p-6">
+      <DeptMessenger from="housekeeping" mode="drawer" />
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🛏️ Housekeeping & Maintenance Operations</h2>
         <OfflineIndicator />
@@ -425,6 +429,8 @@ export default function HousekeepingMainDashboard() {
           </div>
         </CardBody>
       </Card>
+
+      
 
 
 
@@ -622,6 +628,24 @@ export default function HousekeepingMainDashboard() {
           </Tabs>
         </CardBody>
       </Card>
+
+      {/* Bottom section: directly under Operations Overview */}
+      <div className="mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3"><h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3></CardHeader>
+            <CardBody>
+              <RecentActivities area="housekeeping" />
+            </CardBody>
+          </Card>
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3"><h3 className="text-xl font-semibold text-ghana-black">🔔 Housekeeping Notices</h3></CardHeader>
+            <CardBody>
+              <DeptNotices dept="housekeeping" title="" defaultTab="alerts" />
+            </CardBody>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

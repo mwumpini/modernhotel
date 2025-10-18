@@ -55,7 +55,7 @@ if (typeof window !== 'undefined') {
 		details: 'Created new account: Cash at Bank - GCB',
 		severity: 'medium',
 		user: 'admin@hotel.com',
-		meta: { category: 'Assets', code: '1001' }
+		meta: { category: 'Assets', code: '1001', demo: true }
 	});
 
 	auditLogStore.add({
@@ -66,7 +66,7 @@ if (typeof window !== 'undefined') {
 		details: 'Updated journal entry for room revenue posting',
 		severity: 'high',
 		user: 'accountant@hotel.com',
-		meta: { amount: 2500.00, reference: 'ROOM-REV-001' }
+		meta: { amount: 2500.00, reference: 'ROOM-REV-001', demo: true }
 	});
 
 	auditLogStore.add({
@@ -77,7 +77,7 @@ if (typeof window !== 'undefined') {
 		details: 'Created sales invoice for corporate booking',
 		severity: 'medium',
 		user: 'billing@hotel.com',
-		meta: { customer: 'ABC Corp', amount: 15000.00, itemCode: 'ROOM-001' }
+		meta: { customer: 'ABC Corp', amount: 15000.00, itemCode: 'ROOM-001', demo: true }
 	});
 
 	auditLogStore.add({
@@ -88,7 +88,7 @@ if (typeof window !== 'undefined') {
 		details: 'New order created for Table 5',
 		severity: 'low',
 		user: 'waiter@hotel.com',
-		meta: { table: '5', itemCode: 'MAIN-001', category: 'Main Course', alias: 'JOLLOF' }
+		meta: { table: '5', itemCode: 'MAIN-001', category: 'Main Course', alias: 'JOLLOF', demo: true }
 	});
 
 	auditLogStore.add({
@@ -99,7 +99,7 @@ if (typeof window !== 'undefined') {
 		details: 'Updated room assignment for guest',
 		severity: 'medium',
 		user: 'receptionist@hotel.com',
-		meta: { room: '101', guest: 'John Doe' }
+		meta: { room: '101', guest: 'John Doe', demo: true }
 	});
 }
 

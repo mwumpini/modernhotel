@@ -17,9 +17,12 @@ import {
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useRouter } from 'next/navigation';
+import DeptNotices from './DeptNotices';
+import DeptMessenger from './DeptMessenger';
 
 // Import specialized HR components
 import HRAnalyticsDashboard from './HRAnalyticsDashboard';
+import RecentActivities from './RecentActivities';
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {
@@ -244,7 +247,7 @@ export default function HRMainDashboard() {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">👥 Human Resources & Payroll</h2>
+        <h2 className="text-2xl font-bold text-ghana-black">👥 HR & Payroll</h2>
         <div className="flex items-center gap-2">
           <Badge color="success" variant="flat">System Online</Badge>
           <Badge color="primary" variant="flat">Ghana Compliant</Badge>
@@ -713,6 +716,33 @@ export default function HRMainDashboard() {
           </Tabs>
         </CardBody>
       </Card>
+
+      <DeptMessenger from="hr" mode="drawer" />
+
+      {/* Recent Activities & Notices */}
+      <div className="mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Recent Activities */}
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3">
+              <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+            </CardHeader>
+            <CardBody>
+              <RecentActivities area="hr" />
+            </CardBody>
+          </Card>
+
+          {/* HR Notices */}
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3">
+              <h3 className="text-xl font-semibold text-ghana-black">🔔 HR Notices</h3>
+            </CardHeader>
+            <CardBody>
+              <DeptNotices dept="hr" title="" defaultTab="alerts" />
+            </CardBody>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

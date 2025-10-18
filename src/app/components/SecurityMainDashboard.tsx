@@ -17,6 +17,9 @@ import {
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useRouter } from 'next/navigation';
+import RecentActivities from './RecentActivities';
+import DeptNotices from './DeptNotices';
+import DeptMessenger from './DeptMessenger';
 
 // Import specialized Security components
 import SecurityComplianceDashboard from './SecurityComplianceDashboard';
@@ -149,7 +152,7 @@ export default function SecurityMainDashboard() {
 
   // Quick action handlers
   const handleQuickAction = (action: string) => {
-    trackEvent('Security.QuickAction', { action });
+    trackEvent('Security.IncidentReported', { action });
     
     switch (action) {
       case 'report-incident':
@@ -248,6 +251,8 @@ export default function SecurityMainDashboard() {
           <Badge color="warning" variant="flat">Active Monitoring</Badge>
         </div>
       </div>
+      {/* Notices moved to bottom alongside Recent Activities */}
+      <DeptMessenger from="security" mode="drawer" />
 
       {/* Security Status Overview - Following Uniform Pattern */}
       <div className="mb-8">
@@ -490,6 +495,30 @@ export default function SecurityMainDashboard() {
           </Tabs>
         </CardBody>
       </Card>
+      {/* Recent Activities & Notices */}
+      <div className="mt-8">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Recent Activities */}
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3">
+              <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+            </CardHeader>
+            <CardBody>
+              <RecentActivities area="security" />
+            </CardBody>
+          </Card>
+
+          {/* Security Notices */}
+          <Card className="border-0 shadow-lg">
+            <CardHeader className="pb-3">
+              <h3 className="text-xl font-semibold text-ghana-black">🔔 Security Notices</h3>
+            </CardHeader>
+            <CardBody>
+              <DeptNotices dept="security" title="" defaultTab="alerts" />
+            </CardBody>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { Button, Link, Accordion, AccordionItem, Badge, Divider, Card, CardBody,
 
 // Lazy load heavy components to prevent chunk loading errors
 const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
+const ExecutiveManagementDashboard = lazy(() => import('./ExecutiveManagementDashboard'));
 const HousekeepingMainDashboard = lazy(() => import('./HousekeepingMainDashboard'));
 const FBPOS = lazy(() => import('./FBPOS').then(module => ({ default: module.default })));
 const RestaurantManagement = lazy(() => import('./RestaurantManagement'));
@@ -83,20 +84,30 @@ export default function Navigation({ onLogout }: NavigationProps) {
   }, [expandedKeys]);
 
 
+  const getUnreadCount = (dept: string) => {
+    try {
+      const { announcementStore } = require('../lib/analytics/announcementStore');
+      const items = announcementStore.getForDepartment(dept as any, 50);
+      const last = localStorage.getItem(`ann.lastSeen.${dept}`);
+      if (!last) return items.length;
+      return items.filter((m: any) => m.at > last).length;
+    } catch {
+      return 0;
+    }
+  };
+
   const navigationSections = [
     {
       key: 'dashboard',
-      title: '📊 Live Dashboard',
+      title: '🏛️ Executive Management',
       icon: '📊',
       items: [
-        { title: 'Arrival/Departure Board', href: '#' },
-        { title: 'Room Status Overview', href: '#' },
-        { title: 'Revenue Snapshot', href: '#' },
+        { title: 'Main Dashboard', href: '#' }
       ]
     },
     {
       key: 'frontdesk',
-      title: '🏨 Front Office Operations',
+      title: `🏨 Front Office Operations${getUnreadCount('frontdesk') ? ` (${getUnreadCount('frontdesk')})` : ''}`,
       icon: '🏨',
                                                                items: [
                     { title: '📊 Operations', href: '#' },
@@ -128,22 +139,15 @@ export default function Navigation({ onLogout }: NavigationProps) {
     },
     {
       key: 'housekeeping',
-      title: '🛏️ Housekeeping & Maintenance',
+      title: `🛏️ Housekeeping & Maintenance${getUnreadCount('housekeeping') ? ` (${getUnreadCount('housekeeping')})` : ''}`,
       icon: '🛏️',
       items: [
         { title: '🏠 Main Dashboard', href: '/housekeeping' },
-        { title: '🛏️ Room Management', href: '/housekeeping?tab=rooms' },
-        { title: '📋 Task Management', href: '/housekeeping?tab=tasks' },
-        { title: '👥 Staff Management', href: '/housekeeping?tab=staff' },
-        { title: '🔧 Maintenance', href: '/housekeeping?tab=maintenance' },
-        { title: '✅ Room Inspections', href: '/housekeeping?tab=inspections' },
-        { title: '📦 Supplies & Inventory', href: '/housekeeping?tab=supplies' },
-        { title: '🧪 Test System', href: '/housekeeping-test' },
       ]
     },
     {
       key: 'inventory',
-      title: '📦 Inventory & Stores',
+      title: `📦 Inventory & Stores${getUnreadCount('inventory') ? ` (${getUnreadCount('inventory')})` : ''}`,
       icon: '📦',
       items: [
         { title: '📊 Operations', href: '#' },
@@ -153,7 +157,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
     },
     {
       key: 'security',
-      title: '🚨 Security Operations',
+      title: `🚨 Security Operations${getUnreadCount('security') ? ` (${getUnreadCount('security')})` : ''}`,
       icon: '🚨',
       items: [
         { title: '📊 Operations', href: '#' },
@@ -163,24 +167,12 @@ export default function Navigation({ onLogout }: NavigationProps) {
     },
     {
       key: 'hr',
-      title: '👥 HR & Payroll',
+      title: `👥 HR & Payroll${getUnreadCount('hr') ? ` (${getUnreadCount('hr')})` : ''}`,
       icon: '👥',
       items: [
         { title: '📊 Operations', href: '#' },
         { title: '📈 Reports & Analysis', href: '#' },
         { title: '⚙️ User Preferences', href: '#' },
-      ]
-    },
-    {
-      key: 'room-configuration',
-      title: '🏠 Room Configuration',
-      icon: '🏠',
-      items: [
-        { title: 'Room Types & Categories', href: '#' },
-        { title: 'Room Amenities', href: '#' },
-        { title: 'Rate Configuration', href: '#' },
-        { title: '🎯 Event & Conference Rates', href: '#' },
-        { title: 'Bulk Room Creation', href: '#' },
       ]
     },
     {
@@ -571,141 +563,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Activities...</div>}><DepartmentActivityLog area="inventory" title="Inventory - View Activities" /></Suspense>;
       case 'dashboard':
       default:
-        return (
-          <div className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-ghana-black">📊 Live Dashboard</h2>
-              <Suspense fallback={<div className="w-4 h-4 bg-gray-300 rounded-full animate-pulse"></div>}>
-                <OfflineIndicator />
-              </Suspense>
-            </div>
-            
-            {/* Quick Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-              <Card className="border-0 shadow-lg">
-                <CardBody className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Total Rooms</p>
-                      <p className="text-2xl font-bold text-ghana-black">0</p>
-                      <p className="text-sm text-gray-600">Clean slate - no rooms configured</p>
-                    </div>
-                    <div className="text-3xl">🏠</div>
-                  </div>
-                </CardBody>
-              </Card>
-              
-              <Card className="border-0 shadow-lg">
-                <CardBody className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Occupied</p>
-                      <p className="text-2xl font-bold text-ghana-black">0</p>
-                      <p className="text-sm text-gray-600">Clean slate - no rooms occupied</p>
-                    </div>
-                    <div className="text-3xl">✅</div>
-                  </div>
-                </CardBody>
-              </Card>
-              
-              <Card className="border-0 shadow-lg">
-                <CardBody className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Available</p>
-                      <p className="text-2xl font-bold text-ghana-black">0</p>
-                      <p className="text-sm text-gray-600">Clean slate - no rooms available</p>
-                    </div>
-                    <div className="text-3xl">🆓</div>
-                  </div>
-                </CardBody>
-              </Card>
-              
-              <Card className="border-0 shadow-lg">
-                <CardBody className="p-6">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-gray-600">Revenue Today</p>
-                      <p className="text-2xl font-bold text-ghana-black">₵45,230</p>
-                      <p className="text-sm text-green-600">+12% from yesterday</p>
-                    </div>
-                    <div className="text-3xl">💰</div>
-                  </div>
-                </CardBody>
-              </Card>
-            </div>
-
-            {/* Quick Actions */}
-            <Card className="border-0 shadow-lg mb-8">
-              <CardHeader className="pb-3">
-                <h3 className="text-xl font-semibold text-ghana-black">🚀 Quick Actions</h3>
-              </CardHeader>
-              <CardBody>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <Button
-                    variant="flat"
-                    className="bg-ghana-green text-white h-20 flex flex-col items-center justify-center space-y-2"
-                    size="lg"
-                  >
-                    <span className="text-2xl">📅</span>
-                    <span className="text-sm font-medium">New Booking</span>
-                  </Button>
-                  <Button
-                    variant="flat"
-                    className="bg-ghana-gold text-white h-20 flex flex-col items-center justify-center space-y-2"
-                    size="lg"
-                  >
-                    <span className="text-2xl">🔑</span>
-                    <span className="text-sm font-medium">Check In</span>
-                  </Button>
-                  <Button
-                    variant="flat"
-                    className="bg-ghana-red text-white h-20 flex flex-col items-center justify-center space-y-2"
-                    size="lg"
-                  >
-                    <span className="text-2xl">🚪</span>
-                    <span className="text-sm font-medium">Check Out</span>
-                  </Button>
-                  <Button
-                    variant="flat"
-                    className="bg-blue-500 text-white h-20 flex flex-col items-center justify-center space-y-2"
-                    size="lg"
-                  >
-                    <span className="text-2xl">👥</span>
-                    <span className="text-sm font-medium">Group Block</span>
-                  </Button>
-                </div>
-              </CardBody>
-            </Card>
-
-            {/* Recent Activity */}
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="pb-3">
-                <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activity</h3>
-              </CardHeader>
-              <CardBody>
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                    <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                    <span className="text-sm text-gray-800">Invoice #INV-001 sent (2 minutes ago)</span>
-                  </div>
-                  <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                    <div className="h-3 w-3 bg-blue-500 rounded-full"></div>
-                    <span className="text-sm text-gray-800">New booking from John Doe (5 minutes ago)</span>
-                  </div>
-                  <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                    <div className="h-3 w-3 bg-purple-500 rounded-full"></div>
-                    <span className="text-sm text-gray-800">Hall 1 booked for conference (10 minutes ago)</span>
-                  </div>
-                  <div className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-                    <div className="h-3 w-3 bg-green-500 rounded-full"></div>
-                    <span className="text-sm text-gray-800">Payment received (1 hour ago)</span>
-                  </div>
-                </div>
-              </CardBody>
-            </Card>
-          </div>
-        );
+        return <Suspense fallback={<div className="p-6 text-center">Loading Executive Dashboard...</div>}><ExecutiveManagementDashboard /></Suspense>;
     }
   };
 
@@ -722,6 +580,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
             <div>
               <h1 className="text-xl font-bold text-ghana-black">Ghana Hotel</h1>
               <p className="text-sm text-gray-600">Management System</p>
+              <Badge color="primary" variant="flat" size="sm" className="mt-1">Executive</Badge>
             </div>
           </div>
 
@@ -743,7 +602,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
                   >
                     <div className="flex items-center">
                       <span className="text-lg mr-3">{section.icon}</span>
-                      <span className="font-semibold text-ghana-black">
+                    <span className="font-semibold text-ghana-black mr-2">
                         {section.title.replace(/^[^\s]+\s/, '')}
                       </span>
                     </div>
@@ -807,6 +666,19 @@ export default function Navigation({ onLogout }: NavigationProps) {
               onClick={onLogout}
             >
               Sign Out
+            </Button>
+            <Button
+              variant="flat"
+              className="w-full mt-2 bg-ghana-green text-white"
+              size="sm"
+              onClick={() => {
+                try {
+                  const ev = new CustomEvent('open-messenger');
+                  window.dispatchEvent(ev);
+                } catch {}
+              }}
+            >
+              Open Messenger (Ctrl+M)
             </Button>
           </div>
         </div>
