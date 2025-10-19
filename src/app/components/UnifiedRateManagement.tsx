@@ -17,7 +17,7 @@ import {
   CogIcon
 } from '@heroicons/react/24/outline';
 // Temporarily comment out imports to isolate the issue
-import CorporateRateManagement from './CorporateRateManagement';
+// import CorporateRateManagement from './CorporateRateManagement';
 import RoomRateManagement from './RoomRateManagement';
 import RateCalculator from './RateCalculator';
 import RateSettings from './RateSettings';
@@ -69,7 +69,8 @@ export default function UnifiedRateManagement({ onClose }: UnifiedRateManagement
               </p>
             </CardHeader>
             <CardBody>
-              <CorporateRateManagement onClose={onClose} />
+              {/* CorporateRateManagement removed during cleanup */}
+              <div className="text-sm text-gray-500">Corporate rate module temporarily removed.</div>
             </CardBody>
           </Card>
         </Tab>

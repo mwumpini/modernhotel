@@ -80,6 +80,8 @@ export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultT
   const userId = (settings as any)?.currentUser?.username || (settings as any)?.currentUser?.email || (typeof window !== 'undefined' ? localStorage.getItem('app.username') : '') || '';
 
   const byFilter = messages.filter(m => {
+    // Enforce department visibility: only show if targeted to this dept or 'all'
+    if (!(m.departments || []).includes('all') && !(m.departments || []).includes(dept)) return false;
     if (filter === 'urgent') return m.level === 'urgent';
     if (filter === 'unread' && lastSeen) return m.at > lastSeen;
     return true;
@@ -128,10 +130,20 @@ export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultT
           <input placeholder="Search notices..." className="flex-1 border border-gray-300 rounded px-2 h-8 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         {byTab.map(m => (
-          <div key={m.id} className={`p-3 rounded ${levelStyles(m.level)} flex items-center`}>
-            <span className={`h-3 w-3 rounded-full ${dotColor(m.level)} mr-3`}></span>
-            <div className="flex-1 text-sm text-ghana-black">{m.message}</div>
-            <span className="text-xs text-gray-500 ml-3">{new Date(m.at).toLocaleTimeString()}</span>
+          <div key={m.id} className={`p-3 rounded ${levelStyles(m.level)} flex items-start gap-3`}>
+            <span className={`h-3 w-3 rounded-full ${dotColor(m.level)} mt-1`}></span>
+            <div className="flex-1">
+              <div className="text-sm text-ghana-black">{m.message}</div>
+              <div className="mt-1 flex items-center gap-2">
+                <Button size="sm" variant="flat" onPress={() => {
+                  const reply = prompt('Reply:');
+                  if (reply && reply.trim()) {
+                    announcementStore.publish({ level: 'info', message: reply.trim(), departments: m.departments, from: dept, userMentions: [], mentions: [], at: new Date().toISOString(), parentId: m.id } as any);
+                  }
+                }}>Reply</Button>
+                <span className="text-xs text-gray-500">{new Date(m.at).toLocaleTimeString()}</span>
+              </div>
+            </div>
           </div>
         ))}
         {byTab.length === 0 && <div className="text-gray-500">No notices</div>}

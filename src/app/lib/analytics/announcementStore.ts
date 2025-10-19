@@ -12,6 +12,7 @@ export interface Announcement {
   seenBy?: string[]; // dept keys or user ids that have seen it
   mentions?: DepartmentKey[]; // highlighted target departments
   userMentions?: string[]; // user ids or usernames
+  parentId?: string; // reply to another announcement
 }
 
 class AnnouncementStore {

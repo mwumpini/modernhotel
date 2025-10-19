@@ -429,26 +429,45 @@ export default function ExecutiveManagementDashboard() {
 			<Card className="border-0 shadow-md md:col-span-2">
             <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">System Alerts</h3></CardHeader>
             <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-              {(() => {
-                const live = buildLiveAlerts();
-                const blocks: Array<{ key: 'critical'|'warning'|'info'; title: string; cls: string; items: ExecAlert[] }> = [
-                  { key: 'critical', title: '🔴 CRITICAL', cls: 'border-red-200 bg-red-50', items: live.critical.filter(a => !ackIds.includes(a.id)) },
-                  { key: 'warning', title: '🟡 WARNING', cls: 'border-yellow-200 bg-yellow-50', items: live.warning.filter(a => !ackIds.includes(a.id)) },
-                  { key: 'info', title: '🔵 INFORMATIONAL', cls: 'border-blue-200 bg-blue-50', items: live.info.filter(a => !ackIds.includes(a.id)) }
-                ];
-                return blocks.map(b => (
-                  <div key={b.key} className={`p-3 rounded-lg border ${b.cls} space-y-2`}>
-                    <div className="font-semibold mb-1">{b.title}</div>
-                    {b.items.length === 0 && <div className="text-xs text-gray-500">No alerts</div>}
-                    {b.items.map(a => (
-                      <div key={a.id} className="flex items-start justify-between gap-2">
-                        <button onClick={() => a.nav && go(a.nav)} className="text-left hover:underline">{a.text}</button>
-                        <Button size="sm" variant="flat" onPress={() => acknowledgeAlert(a.id)}>Acknowledge</Button>
-                      </div>
-                    ))}
+              {!mounted ? (
+                <>
+                  <div className="p-3 rounded-lg border border-red-200 bg-red-50 space-y-2">
+                    <div className="font-semibold mb-1">🔴 CRITICAL</div>
+                    <div className="h-4 bg-white/60 rounded animate-pulse" />
+                    <div className="h-4 bg-white/60 rounded animate-pulse w-2/3" />
                   </div>
-                ));
-              })()}
+                  <div className="p-3 rounded-lg border border-yellow-200 bg-yellow-50 space-y-2">
+                    <div className="font-semibold mb-1">🟡 WARNING</div>
+                    <div className="h-4 bg-white/60 rounded animate-pulse" />
+                    <div className="h-4 bg-white/60 rounded animate-pulse w-1/2" />
+                  </div>
+                  <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 space-y-2">
+                    <div className="font-semibold mb-1">🔵 INFORMATIONAL</div>
+                    <div className="text-xs text-gray-500">No alerts</div>
+                  </div>
+                </>
+              ) : (
+                (() => {
+                  const live = buildLiveAlerts();
+                  const blocks: Array<{ key: 'critical'|'warning'|'info'; title: string; cls: string; items: ExecAlert[] }> = [
+                    { key: 'critical', title: '🔴 CRITICAL', cls: 'border-red-200 bg-red-50', items: live.critical.filter(a => !ackIds.includes(a.id)) },
+                    { key: 'warning', title: '🟡 WARNING', cls: 'border-yellow-200 bg-yellow-50', items: live.warning.filter(a => !ackIds.includes(a.id)) },
+                    { key: 'info', title: '🔵 INFORMATIONAL', cls: 'border-blue-200 bg-blue-50', items: live.info.filter(a => !ackIds.includes(a.id)) }
+                  ];
+                  return blocks.map(b => (
+                    <div key={b.key} className={`p-3 rounded-lg border ${b.cls} space-y-2`}>
+                      <div className="font-semibold mb-1">{b.title}</div>
+                      {b.items.length === 0 && <div className="text-xs text-gray-500">No alerts</div>}
+                      {b.items.map(a => (
+                        <div key={a.id} className="flex items-start justify-between gap-2">
+                          <button onClick={() => a.nav && go(a.nav)} className="text-left hover:underline">{a.text}</button>
+                          <Button size="sm" variant="flat" onPress={() => acknowledgeAlert(a.id)}>Acknowledge</Button>
+                        </div>
+                      ))}
+                    </div>
+                  ));
+                })()
+              )}
             </CardBody>
           </Card>
 

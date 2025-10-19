@@ -182,7 +182,7 @@ class HousekeepingStore {
     notes?: string;
   }): HousekeepingTask {
     const task: HousekeepingTask = {
-      id: `TASK-${Date.now().toString().slice(-6)}`,
+      id: `TASK-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*1000)}`,
       ...data,
       status: 'pending',
       completedItems: [],

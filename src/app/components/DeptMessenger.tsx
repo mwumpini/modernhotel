@@ -15,7 +15,7 @@ interface DeptMessengerProps {
 export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerProps) {
   const [text, setText] = React.useState('');
   const [level, setLevel] = React.useState<'urgent'|'normal'|'info'>('info');
-  const [targets, setTargets] = React.useState<DepartmentKey[]>(['all']);
+  const [targets, setTargets] = React.useState<DepartmentKey[]>([from]);
   const [history, setHistory] = React.useState(() => announcementStore.getForDepartment(from, 20));
   const [markReadOnSend, setMarkReadOnSend] = React.useState(true);
   const [isOpen, setIsOpen] = React.useState(false);
@@ -182,7 +182,12 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
               selectedKeys={new Set(targets as any)}
               onSelectionChange={(keys) => {
                 const arr = Array.from(keys as Set<any>) as DepartmentKey[];
-                setTargets(arr.length ? arr : ['all']);
+                // If 'all' is selected, it overrides specific departments
+                if (arr.includes('all')) {
+                  setTargets(['all']);
+                } else {
+                  setTargets(arr.length ? arr : [from]);
+                }
               }}
             >
       {(['all','master','gm','frontdesk','housekeeping','inventory','security','hr','accounting','f&b','events'] as DepartmentKey[]).map(d => (

@@ -21,7 +21,6 @@ const AutoComplianceMainDashboard = lazy(() => import('./AutoComplianceMainDashb
 const AccountingMainDashboard = lazy(() => import('./AccountingMainDashboard'));
 const UserManagement = lazy(() => import('./UserManagement'));
 const UserManagementUnified = lazy(() => import('./UserManagementUnified'));
-const ThemeTest = lazy(() => import('./ThemeTest'));
 const FrontofficeRoomsBookings = lazy(() => import('./FrontofficeRoomsBookings'));
 const FrontofficeClientsServices = lazy(() => import('./FrontofficeClientsServices'));
 const FrontofficeEventsConferences = lazy(() => import('./FrontofficeEventsConferences'));
@@ -480,7 +479,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'user-management-unified':
         return <Suspense fallback={<div className="p-6 text-center">Loading User Management...</div>}><UserManagementUnified /></Suspense>;
       case 'theme-test':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Theme Test...</div>}><ThemeTest /></Suspense>;
+        return <div className="p-6 text-center">Theme tester removed.</div>;
       case 'offline-management':
         return <Suspense fallback={<div className="p-6 text-center">Loading Offline Management...</div>}><OfflineManagementDashboard /></Suspense>;
       case 'api-integration':
