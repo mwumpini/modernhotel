@@ -1,7 +1,5 @@
 import { NextRequest } from 'next/server';
 
-export const runtime = 'edge';
-
 async function streamTextFromOpenAI(messages: Array<{ role: 'user'|'assistant'|'system'; content: string }>) {
   const apiKey = process.env.OPENAI_API_KEY;
   const baseUrl = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
