@@ -1,9 +1,72 @@
 import { create } from 'zustand';
-import { TaxRule, ReportingRule, ComplianceTransaction, ComplianceReport } from '../models';
+import { TaxRule, ReportingRule, ComplianceTransaction, ComplianceReport, TaxType } from '../models';
+
+function evalCondition(context: Record<string, any>, cond: NonNullable<TaxRule['condition']>): boolean {
+  const lhs = context?.[cond.field];
+  const rhs = cond.value;
+  switch (cond.op) {
+    case 'eq': return lhs === rhs;
+    case 'ne': return lhs !== rhs;
+    case 'gt': return Number(lhs) > Number(rhs);
+    case 'lt': return Number(lhs) < Number(rhs);
+    case 'gte': return Number(lhs) >= Number(rhs);
+    case 'lte': return Number(lhs) <= Number(rhs);
+    case 'in': return Array.isArray(rhs) ? rhs.includes(lhs) : false;
+    default: return true;
+  }
+}
+
+function computeBase(
+  baseType: NonNullable<TaxRule['calculationBase']> | undefined,
+  subtotal: number,
+  runningBase: number,
+  context: Record<string, any>
+): number {
+  switch (baseType) {
+    case 'subtotal_plus_applied':
+      return runningBase;
+    case 'per_person':
+      return subtotal * Number(context?.numPersons ?? 1);
+    case 'per_night':
+      return subtotal * Number(context?.numNights ?? 1);
+    case 'per_person_night':
+      return subtotal * Number(context?.numPersons ?? 1) * Number(context?.numNights ?? 1);
+    case 'subtotal':
+    default:
+      return subtotal;
+  }
+}
+
+function computeTiered(
+  base: number,
+  tiers: NonNullable<TaxRule['tiers']>,
+  rounding?: TaxRule['rounding'],
+  roundTo?: number
+): number {
+  let remaining = base;
+  let total = 0;
+  for (const tier of tiers) {
+    if (remaining <= 0) break;
+    const tierBase = tier.upto != null ? Math.min(remaining, tier.upto) : remaining;
+    let amt = 0;
+    if (tier.rate != null) amt += tierBase * (tier.rate / 100);
+    if (tier.fixed != null) amt += tier.fixed;
+    if (rounding && roundTo) {
+      const m = 1 / roundTo;
+      if (rounding === 'nearest') amt = Math.round(amt * m) / m;
+      if (rounding === 'down') amt = Math.floor(amt * m) / m;
+      if (rounding === 'up') amt = Math.ceil(amt * m) / m;
+    }
+    total += amt;
+    remaining -= tierBase;
+  }
+  return total;
+}
 
 interface ComplianceState {
   country: string;
   taxRules: TaxRule[];
+  taxTypes: TaxType[];
   reportingRules: ReportingRule[];
   transactions: ComplianceTransaction[];
   reports: ComplianceReport[];
@@ -13,16 +76,22 @@ interface ComplianceState {
   // Actions
   setCountry: (code: string) => Promise<void>;
   getActiveRules: () => TaxRule[];
+  getTaxTypesByContext: (domain?: TaxType['domain'], operation?: TaxType['operation']) => TaxType[];
   getActiveReports: () => ComplianceReport[];
   addTransaction: (transaction: Omit<ComplianceTransaction, 'id'>) => void;
   updateReport: (id: string, updates: Partial<ComplianceReport>) => void;
-  calculateTax: (amount: number, category?: string) => { taxes: Array<{ name: string; amount: number; glCode: string }>; total: number };
+  calculateTax: (
+    amount: number,
+    category?: string,
+    context?: Record<string, any>
+  ) => { taxes: Array<{ name: string; amount: number; glCode: string }>; total: number };
   getComplianceScore: () => number;
 }
 
 export const useComplianceStore = create<ComplianceState>((set, get) => ({
   country: 'GH', // Default to Ghana
   taxRules: [],
+  taxTypes: [],
   reportingRules: [],
   transactions: [],
   reports: [],
@@ -33,23 +102,26 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
     set({ isLoading: true, error: null });
     
     try {
-      const [taxRes, reportRes] = await Promise.all([
+      const [taxRes, typeRes, reportRes] = await Promise.all([
         fetch(`/api/compliance/taxes?country=${code}`),
+        fetch(`/api/compliance/tax-types?country=${code}`),
         fetch(`/api/compliance/reports?country=${code}`)
       ]);
       
-      if (!taxRes.ok || !reportRes.ok) {
+      if (!taxRes.ok || !typeRes.ok || !reportRes.ok) {
         throw new Error('Failed to fetch compliance data');
       }
       
-      const [taxRules, reportingRules] = await Promise.all([
+      const [taxRules, taxTypes, reportingRules] = await Promise.all([
         taxRes.json(),
+        typeRes.json(),
         reportRes.json()
       ]);
       
       set({
         country: code,
         taxRules,
+        taxTypes,
         reportingRules,
         isLoading: false
       });
@@ -67,6 +139,17 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
 
   getActiveReports: () => {
     return get().reports.filter(report => report.countryCode === get().country);
+  },
+
+  getTaxTypesByContext: (domain, operation) => {
+    const types = get().taxTypes.filter(t => t.countryCode === get().country);
+    return types.filter(t => {
+      const domainOk = !domain || !t.domain || t.domain === domain || t.domain === 'custom';
+      const opKind = operation || 'external';
+      const op = t.operation || 'both';
+      const operationOk = op === 'both' || op === opKind;
+      return domainOk && operationOk;
+    });
   },
 
   addTransaction: (transaction) => {
@@ -89,16 +172,41 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
     }));
   },
 
-  calculateTax: (amount, category = 'ALL') => {
+  calculateTax: (amount, category = 'ALL', context = {}) => {
     const rules = get().getActiveRules();
     const country = get().country;
+    
+    // Sort by priority; default to 100 if undefined
+    const sortedRules = [...rules].sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
+    
+    // Filter by enabled, time window, appliesTo, and optional condition
+    const now = new Date();
+    const isEffective = (r: TaxRule) => {
+      const fromOk = !r.effectiveFrom || new Date(r.effectiveFrom) <= now;
+      const toOk = !r.effectiveTo || new Date(r.effectiveTo) >= now;
+      return fromOk && toOk && (r.enabled !== false);
+    };
+    const inScope = (r: TaxRule) => {
+      const applies = !r.appliesTo || r.appliesTo.includes('ALL') || r.appliesTo.includes(category);
+      const roomOk = !r.scope?.roomTypes || !context.roomType || r.scope.roomTypes.includes(context.roomType);
+      const guestOk = !r.scope?.guestTypes || !context.guestType || r.scope.guestTypes.includes(context.guestType);
+      const domainOk = !r.domain || r.domain === (context.domain || 'sales') || r.domain === 'custom';
+      const op = (r.operation || 'both');
+      const opKind = (context.operation || 'external');
+      const operationOk = op === 'both' || op === opKind;
+      const typeOk = !context?.typeId || (r as any).typeId === context.typeId;
+      const condOk = !r.condition || evalCondition(context, r.condition);
+      return applies && roomOk && guestOk && domainOk && operationOk && typeOk && condOk;
+    };
+    
+    const activeRules = sortedRules.filter(r => isEffective(r) && inScope(r));
     
     if (country === 'GH') {
       // Ghana-specific calculation order
       const subtotal = amount;
       
       // Step 1: Calculate levies on subtotal (NHIL, GETFund, COVID-19)
-      const levyRules = rules.filter(rule => 
+      const levyRules = activeRules.filter(rule => 
         ['NHIL', 'GETFund Levy', 'COVID-19 Levy'].includes(rule.name)
       );
       
@@ -112,7 +220,7 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
       const amountAfterLevies = subtotal + totalLevies; // 106 for 100 subtotal
       
       // Step 2: Calculate VAT on amount after levies
-      const vatRule = rules.find(rule => rule.name === 'VAT (Standard Rate)');
+      const vatRule = activeRules.find(rule => rule.name === 'VAT (Standard Rate)');
       const vatAmount = vatRule ? amountAfterLevies * (vatRule.rate / 100) : 0;
       const vatTax = vatRule ? {
         name: vatRule.name,
@@ -121,7 +229,7 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
       } : null;
       
       // Step 3: Calculate Tourism Levy on original subtotal
-      const tourismRule = rules.find(rule => rule.name === 'Tourism Levy');
+      const tourismRule = activeRules.find(rule => rule.name === 'Tourism Levy');
       const tourismAmount = tourismRule ? subtotal * (tourismRule.rate / 100) : 0;
       const tourismTax = tourismRule ? {
         name: tourismRule.name,
@@ -139,19 +247,41 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
       
       return { taxes: allTaxes, total };
     } else {
-      // Standard calculation for other countries
-      const applicableRules = rules.filter(rule => 
-        !rule.appliesTo || rule.appliesTo.includes('ALL') || rule.appliesTo.includes(category)
-      );
-      
-      const taxes = applicableRules.map(rule => ({
-        name: rule.name,
-        amount: amount * (rule.rate / 100),
-        glCode: rule.glCode
-      }));
-
-      const totalTax = taxes.reduce((sum, tax) => sum + tax.amount, 0);
-      return { taxes, total: amount + totalTax };
+      // General rule engine: respects calculationBase, method, tiers, stacking, rounding, and effect
+      let runningBase = amount;
+      const taxes: Array<{ name: string; amount: number; glCode: string }> = [];
+      let addTotal = 0;
+      let subtractTotal = 0;
+      for (const rule of activeRules) {
+        const baseType = rule.calculationBase || 'subtotal';
+        const base = computeBase(baseType, amount, runningBase, context);
+        let raw = 0;
+        const method = rule.method || 'rate';
+        if (method === 'fixed') {
+          raw = rule.fixedAmount ?? 0;
+        } else if (method === 'tiered' && Array.isArray(rule.tiers) && rule.tiers.length) {
+          raw = computeTiered(base, rule.tiers, rule.rounding, rule.roundTo);
+        } else {
+          raw = base * ((rule.rate ?? 0) / 100);
+        }
+        // Optional rounding
+        if (rule.rounding && rule.roundTo) {
+          const m = 1 / rule.roundTo;
+          if (rule.rounding === 'nearest') raw = Math.round(raw * m) / m;
+          if (rule.rounding === 'down') raw = Math.floor(raw * m) / m;
+          if (rule.rounding === 'up') raw = Math.ceil(raw * m) / m;
+        }
+        taxes.push({ name: rule.name, amount: raw, glCode: rule.glCode });
+        const effect = rule.effect || 'add';
+        if (effect === 'add') addTotal += raw;
+        else if (effect === 'subtract') subtractTotal += raw;
+        // exclude_total and informational do not alter totals
+        if ((rule.stacking || 'additive') === 'compound' && effect === 'add') {
+          runningBase += raw;
+        }
+      }
+      const total = amount + addTotal - subtractTotal;
+      return { taxes, total };
     }
   },
 

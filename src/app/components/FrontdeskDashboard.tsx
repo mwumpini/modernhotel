@@ -657,13 +657,13 @@ export default function FrontdeskDashboard() {
                             className="w-full"
                             onClick={() => {
                               if (item.title.includes('System Settings')) {
-                                router.push('/settings');
+                                router.push('/?tab=overview');
                               } else if (item.title.includes('User Management')) {
                                 router.push('/user-management');
                               } else if (item.title.includes('Interface Customization')) {
-                                router.push('/settings/interface');
+                                router.push('/?tab=overview');
                               } else if (item.title.includes('Notification Settings')) {
-                                router.push('/settings/notifications');
+                                router.push('/?tab=overview');
                               }
                             }}
                           >

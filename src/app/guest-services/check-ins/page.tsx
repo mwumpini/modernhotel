@@ -8,7 +8,8 @@ import {
   CardHeader, 
   Button, 
   Tabs,
-  Tab
+  Tab,
+  Pagination
 } from "@heroui/react";
 import dynamic from 'next/dynamic';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -44,7 +45,8 @@ import {
   DropdownMenu,
   DropdownItem,
   Textarea,
-  Chip
+  Chip,
+  Pagination as Pagination2
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
@@ -160,7 +162,16 @@ function CheckInsSection() {
         
         // Get the correct room rate from rate breakdown or fallback to room type rate
         const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
-        const roomRate = reservation.rateBreakdown?.[0]?.base || roomType?.baseRate || 0;
+        // Prefer gross (tax-inclusive) nightly from reservation rate breakdown; otherwise convert base to gross via folio tax rates
+        const baseCandidate = reservation.rateBreakdown?.[0]?.base || roomType?.baseRate || 0;
+        const taxRates = (() => {
+          try {
+            const { vat, nhil, levy } = (frontOfficeStore as any).getTaxRates ? (frontOfficeStore as any).getTaxRates() : { vat: 12.5, nhil: 2.5, levy: 1.0 };
+            return { vat, nhil, levy };
+          } catch { return { vat: 12.5, nhil: 2.5, levy: 1.0 }; }
+        })();
+        const grossFactor = 1 + ((taxRates.vat + taxRates.nhil + taxRates.levy) / 100);
+        const roomRate = Math.max(0, Math.round((reservation.rateBreakdown?.[0]?.total || (baseCandidate * grossFactor)) * 100) / 100);
         
         // Get folio data for this reservation
         const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
@@ -179,8 +190,9 @@ function CheckInsSection() {
         
         // Calculate taxes from all charges
         const taxTotal = folio.charges?.reduce((sum, charge) => sum + (charge.tax || 0), 0) || 0;
-        
-        const totalCharges = roomTotal + serviceCharges + otherCharges + taxTotal;
+        // Use folio totals to ensure inclusive amounts: include posted taxes
+        const postedBase = folio.charges?.reduce((s, c) => s + (c.amount || 0), 0) || 0;
+        const totalCharges = postedBase + taxTotal;
         const totalPayments = folio.payments?.reduce((sum, payment) => sum + (payment.amount || 0), 0) || 0;
         const balance = totalCharges - totalPayments;
         
@@ -597,6 +609,7 @@ function CheckInsSection() {
             </div>
             <Table aria-label="In-house guests table" className="min-w-full">
                     <TableHeader>
+              <TableColumn className="w-28">ID</TableColumn>
               <TableColumn className="w-40">GUEST</TableColumn>
               <TableColumn className="w-36">BILLED TO</TableColumn>
               <TableColumn className="w-20">ROOM</TableColumn>
@@ -620,16 +633,12 @@ function CheckInsSection() {
                 .sort((a, b) => new Date(b.checkInDate).getTime() - new Date(a.checkInDate).getTime())
                 .slice((page - 1) * rowsPerPage, page * rowsPerPage)
                 .map((guest) => (
-                <TableRow key={guest.id} className="hover:bg-gray-50">
+              <TableRow key={guest.id} className="hover:bg-gray-50">
+                            <TableCell className="font-semibold">{guest.id}</TableCell>
                             <TableCell>
-                    <div className="flex items-center space-x-3">
-                      <Avatar name={guest.guestName} size="sm" className="bg-ghana-gold text-white font-semibold" showFallback />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-gray-900 truncate">{guest.guestName}</p>
-                        <p className="text-xs text-gray-600">{guest.phone}</p>
-                        {guest.email && (<p className="text-xs text-blue-600 truncate">{guest.email}</p>)}
-                      </div>
-                              </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-900 truncate">{guest.guestName}</p>
+                    </div>
                             </TableCell>
                   <TableCell>
                     <div className="text-sm">
@@ -692,8 +701,17 @@ function CheckInsSection() {
                           </TableRow>
                         ))}
                     </TableBody>
-                  </Table>
-                  </div>
+            </Table>
+            <div className="flex justify-end mt-3">
+              <Pagination 
+                page={page}
+                total={Math.max(1, Math.ceil(filteredGuests.length / rowsPerPage))}
+                onChange={setPage}
+                showControls
+                size="sm"
+              />
+            </div>
+            </div>
         )}
 
 
@@ -939,7 +957,7 @@ function CheckInsSection() {
                   placeholder="Choose guest to transfer"
                 >
                   {guests.map(guest => (
-                    <SelectItem key={guest.id} value={guest.id}>
+                    <SelectItem key={guest.id}>
                       {guest.guestName} - Room {guest.roomNumber}
                     </SelectItem>
                   ))}
@@ -950,25 +968,27 @@ function CheckInsSection() {
                   placeholder="Select room type first"
                 >
                   {frontOfficeStore.roomTypes.map(roomType => (
-                    <SelectItem key={roomType.id} value={roomType.id}>
+                    <SelectItem key={roomType.id}>
                       {roomType.name} - ₵{roomType.baseRate.toLocaleString()}/night
                     </SelectItem>
                   ))}
                 </Select>
               </div>
               
-              <Select
-                label="New Room"
-                placeholder="Select new room"
-              >
-                {frontOfficeStore.rooms
-                  .filter(room => room.status === 'available')
-                  .map(room => (
-                    <SelectItem key={room.id} value={room.id}>
-                      {room.number} - {room.type}
-                    </SelectItem>
-                  ))}
-              </Select>
+                <Select
+                  label="New Room"
+                  placeholder="Select new room"
+                >
+                  {frontOfficeStore.rooms
+                    .map(room => {
+                      const rt = frontOfficeStore.roomTypes.find(r => r.id === room.roomTypeId);
+                      return (
+                        <SelectItem key={room.id}>
+                          {room.id} - {rt?.name || room.roomTypeId}
+                        </SelectItem>
+                      );
+                    })}
+                </Select>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Select

@@ -22,6 +22,26 @@ import DeptMessenger from './DeptMessenger';
 
 // Import specialized HR components
 import HRAnalyticsDashboard from './HRAnalyticsDashboard';
+import EmployeeManagementDashboard from './hr/EmployeeManagementDashboard';
+import EmployeeRecordsPanel from './hr/EmployeeRecordsPanel';
+import NewHiresPanel from './hr/NewHiresPanel';
+import EmployeeChangesPanel from './hr/EmployeeChangesPanel';
+import PerformanceReviewsPanel from './hr/PerformanceReviewsPanel';
+import LeaveAttendanceDashboard from './hr/LeaveAttendanceDashboard';
+import LeaveManagementPanel from './hr/LeaveManagementPanel';
+import TimeTrackingPanel from './hr/TimeTrackingPanel';
+import ShiftSchedulingPanel from './hr/ShiftSchedulingPanel';
+import OvertimeManagementPanel from './hr/OvertimeManagementPanel';
+import ComplianceDashboard from './hr/ComplianceDashboard';
+import TaxCompliancePanel from './hr/TaxCompliancePanel';
+import TrainingProgramsPanel from './hr/TrainingProgramsPanel';
+import LaborCompliancePanel from './hr/LaborCompliancePanel';
+import ComplianceReportsPanel from './hr/ComplianceReportsPanel';
+import PayrollManagementDashboard from './hr/PayrollManagementDashboard';
+import PayrollProcessingPanel from './hr/PayrollProcessingPanel';
+import PayslipGenerationPanel from './hr/PayslipGenerationPanel';
+import BenefitsManagementPanel from './hr/BenefitsManagementPanel';
+import SalaryAnalyticsPanel from './hr/SalaryAnalyticsPanel';
 import RecentActivities from './RecentActivities';
 
 // Info Icon Component with Tooltip
@@ -77,6 +97,10 @@ const InfoIcon = ({ description }: { description: string }) => {
 
 export default function HRMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
+  const [employeeView, setEmployeeView] = useState<'dashboard' | 'records' | 'newHires' | 'changes' | 'reviews'>('dashboard');
+  const [leaveView, setLeaveView] = useState<'dashboard' | 'leave' | 'time' | 'shifts' | 'overtime'>('dashboard');
+  const [complianceView, setComplianceView] = useState<'dashboard' | 'tax' | 'training' | 'labor' | 'reports'>('dashboard');
+  const [payrollView, setPayrollView] = useState<'dashboard' | 'processing' | 'payslips' | 'benefits' | 'analytics'>('dashboard');
   const router = useRouter();
   
   // Sample HR data - in real app, this would come from stores
@@ -429,14 +453,32 @@ export default function HRMainDashboard() {
                             className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
                             onClick={() => {
                               // Handle navigation based on item type
-                              if (item.title.includes('Employee Records') || item.title.includes('New Hires')) {
+                              if (item.title.includes('Employee Records')) {
                                 setSelectedTab('employees');
-                              } else if (item.title.includes('Payroll Processing') || item.title.includes('Payslip')) {
+                                setEmployeeView('records');
+                              } else if (item.title.includes('New Hires')) {
+                                setSelectedTab('employees');
+                                setEmployeeView('newHires');
+                              } else if (item.title.includes('Employee Changes')) {
+                                setSelectedTab('employees');
+                                setEmployeeView('changes');
+                              } else if (item.title.includes('Performance Reviews')) {
+                                setSelectedTab('employees');
+                                setEmployeeView('reviews');
+                              } else if (item.title.includes('Payroll Processing')) {
                                 setSelectedTab('payroll');
+                                setPayrollView('processing');
+                              } else if (item.title.includes('Payslip')) {
+                                setSelectedTab('payroll');
+                                setPayrollView('payslips');
+                              } else if (item.title.includes('Benefits Management')) {
+                                setSelectedTab('payroll');
+                                setPayrollView('benefits');
+                              } else if (item.title.includes('Salary Analytics')) {
+                                setSelectedTab('payroll');
+                                setPayrollView('analytics');
                               } else if (item.title.includes('Leave Management') || item.title.includes('Time Tracking')) {
                                 setSelectedTab('leave');
-                              } else if (item.title.includes('Performance Reviews')) {
-                                setSelectedTab('performance');
                               } else if (item.title.includes('Tax Compliance') || item.title.includes('Labor Compliance')) {
                                 setSelectedTab('compliance');
                               }
@@ -472,143 +514,53 @@ export default function HRMainDashboard() {
             </Tab>
 
             <Tab key="employees" title="👥 Employee Management">
-              <div className="p-6">
-                <h4 className="text-lg font-semibold text-ghana-black mb-4">Employee Management Dashboard</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Quick Actions</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <Button color="primary" variant="flat" className="w-full">
-                          📝 Add New Employee
-                        </Button>
-                        <Button color="secondary" variant="flat" className="w-full">
-                          🔍 Search Employees
-                        </Button>
-                        <Button color="success" variant="flat" className="w-full">
-                          📊 Employee Reports
-                        </Button>
-                      </div>
-                    </CardBody>
-                  </Card>
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Employee Statistics</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <div className="flex justify-between">
-                          <span>Total Employees:</span>
-                          <Badge color="primary">{totalEmployees}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Active:</span>
-                          <Badge color="success">{activeEmployees}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>On Leave:</span>
-                          <Badge color="warning">{onLeaveEmployees}</Badge>
-                        </div>
-                      </div>
-                    </CardBody>
-                  </Card>
-                </div>
+              <div className="p-6 space-y-4">
+                {employeeView !== 'dashboard' && (
+                  <div className="flex items-center justify-between">
+                    <Button variant="flat" onPress={() => setEmployeeView('dashboard')}>← Back to Employee Dashboard</Button>
+                  </div>
+                )}
+                {employeeView === 'dashboard' && (
+                  <EmployeeManagementDashboard onSelect={(k) => setEmployeeView(k)} />
+                )}
+                {employeeView === 'records' && <EmployeeRecordsPanel />}
+                {employeeView === 'newHires' && <NewHiresPanel />}
+                {employeeView === 'changes' && <EmployeeChangesPanel />}
+                {employeeView === 'reviews' && <PerformanceReviewsPanel />}
               </div>
             </Tab>
 
             <Tab key="payroll" title="💰 Payroll Management">
-              <div className="p-6">
-                <h4 className="text-lg font-semibold text-ghana-black mb-4">Payroll Management Dashboard</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Payroll Status</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <div className="flex justify-between">
-                          <span>Monthly Payroll:</span>
-                          <Badge color="primary">₵{monthlyPayroll.toLocaleString()}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Pending:</span>
-                          <Badge color="warning">₵{pendingPayroll.toLocaleString()}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Processed:</span>
-                          <Badge color="success">₵{processedPayroll.toLocaleString()}</Badge>
-                        </div>
-                      </div>
-                    </CardBody>
-                  </Card>
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Quick Actions</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <Button color="primary" variant="flat" className="w-full">
-                          💰 Process Payroll
-                        </Button>
-                        <Button color="secondary" variant="flat" className="w-full">
-                          🧾 Generate Payslips
-                        </Button>
-                        <Button color="success" variant="flat" className="w-full">
-                          📊 Payroll Reports
-                        </Button>
-                      </div>
-                    </CardBody>
-                  </Card>
-                </div>
+              <div className="p-6 space-y-4">
+                {payrollView !== 'dashboard' && (
+                  <div className="flex items-center justify-between">
+                    <Button variant="flat" onPress={() => setPayrollView('dashboard')}>← Back to Payroll Dashboard</Button>
+                  </div>
+                )}
+                {payrollView === 'dashboard' && (
+                  <PayrollManagementDashboard onSelect={(k) => setPayrollView(k)} />
+                )}
+                {payrollView === 'processing' && <PayrollProcessingPanel />}
+                {payrollView === 'payslips' && <PayslipGenerationPanel />}
+                {payrollView === 'benefits' && <BenefitsManagementPanel />}
+                {payrollView === 'analytics' && <SalaryAnalyticsPanel />}
               </div>
             </Tab>
 
             <Tab key="leave" title="🌴 Leave Management">
-              <div className="p-6">
-                <h4 className="text-lg font-semibold text-ghana-black mb-4">Leave Management Dashboard</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Leave Requests</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <div className="flex justify-between">
-                          <span>Pending:</span>
-                          <Badge color="warning">{pendingLeaveRequests}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Approved:</span>
-                          <Badge color="success">{approvedLeaveRequests}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Rejected:</span>
-                          <Badge color="danger">{rejectedLeaveRequests}</Badge>
-                        </div>
-                      </div>
-                    </CardBody>
-                  </Card>
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Quick Actions</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <Button color="primary" variant="flat" className="w-full">
-                          🌴 New Leave Request
-                        </Button>
-                        <Button color="secondary" variant="flat" className="w-full">
-                          📅 Leave Calendar
-                        </Button>
-                        <Button color="success" variant="flat" className="w-full">
-                          📊 Leave Reports
-                        </Button>
-                      </div>
-                    </CardBody>
-                  </Card>
-                </div>
+              <div className="p-6 space-y-4">
+                {leaveView !== 'dashboard' && (
+                  <div className="flex items-center justify-between">
+                    <Button variant="flat" onPress={() => setLeaveView('dashboard')}>← Back to Leave & Attendance</Button>
+                  </div>
+                )}
+                {leaveView === 'dashboard' && (
+                  <LeaveAttendanceDashboard onSelect={(k) => setLeaveView(k)} />
+                )}
+                {leaveView === 'leave' && <LeaveManagementPanel />}
+                {leaveView === 'time' && <TimeTrackingPanel />}
+                {leaveView === 'shifts' && <ShiftSchedulingPanel />}
+                {leaveView === 'overtime' && <OvertimeManagementPanel />}
               </div>
             </Tab>
 
@@ -660,53 +612,19 @@ export default function HRMainDashboard() {
             </Tab>
 
             <Tab key="compliance" title="📋 Compliance & Training">
-              <div className="p-6">
-                <h4 className="text-lg font-semibold text-ghana-black mb-4">Compliance & Training Dashboard</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Compliance Scores</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <div className="flex justify-between">
-                          <span>Overall:</span>
-                          <Badge color="success">{complianceScore}%</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Tax:</span>
-                          <Badge color={taxCompliance >= 90 ? 'success' : taxCompliance >= 80 ? 'warning' : 'danger'}>{taxCompliance}%</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>SSNIT:</span>
-                          <Badge color={ssnitCompliance >= 90 ? 'success' : ssnitCompliance >= 80 ? 'warning' : 'danger'}>{ssnitCompliance}%</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Labor:</span>
-                          <Badge color={laborCompliance >= 90 ? 'success' : laborCompliance >= 80 ? 'warning' : 'danger'}>{laborCompliance}%</Badge>
-                        </div>
-                      </div>
-                    </CardBody>
-                  </Card>
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Quick Actions</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <Button color="primary" variant="flat" className="w-full">
-                          📋 Compliance Check
-                        </Button>
-                        <Button color="secondary" variant="flat" className="w-full">
-                          🎓 Training Programs
-                        </Button>
-                        <Button color="success" variant="flat" className="w-full">
-                          📊 Compliance Reports
-                        </Button>
-                      </div>
-                    </CardBody>
-                  </Card>
-                </div>
+              <div className="p-6 space-y-4">
+                {complianceView !== 'dashboard' && (
+                  <div className="flex items-center justify-between">
+                    <Button variant="flat" onPress={() => setComplianceView('dashboard')}>← Back to Compliance & Training</Button>
+                  </div>
+                )}
+                {complianceView === 'dashboard' && (
+                  <ComplianceDashboard onSelect={(k) => setComplianceView(k)} />
+                )}
+                {complianceView === 'tax' && <TaxCompliancePanel />}
+                {complianceView === 'training' && <TrainingProgramsPanel />}
+                {complianceView === 'labor' && <LaborCompliancePanel />}
+                {complianceView === 'reports' && <ComplianceReportsPanel />}
               </div>
             </Tab>
 

@@ -3,8 +3,8 @@ import { useComplianceStore } from '@/app/lib/compliance/store';
 export function useCalculateTax() {
   const { calculateTax } = useComplianceStore();
 
-  return (subtotal: number, category?: string) => {
-    return calculateTax(subtotal, category);
+  return (subtotal: number, category?: string, context?: Record<string, any>) => {
+    return calculateTax(subtotal, category, context);
   };
 }
 

@@ -5,7 +5,7 @@ import {
   Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip, Badge, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Tabs, Tab, Textarea, Divider, Spinner, Alert
+  Tabs, Tab, Textarea, Divider, Spinner, Alert, Pagination
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { ChartOfAccounts as ChartOfAccountsType } from '@/app/lib/accounting/models';
@@ -27,6 +27,8 @@ export default function ChartOfAccountsPage() {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [sortBy, setSortBy] = useState<string>('code');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
+  const [page, setPage] = useState(1);
+  const rowsPerPage = 10;
   
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [editingAccount, setEditingAccount] = useState<ChartOfAccountsType | null>(null);
@@ -62,6 +64,14 @@ export default function ChartOfAccountsPage() {
 
     return filtered;
   }, [chartOfAccounts, searchTerm, filterType, filterCategory, sortBy, sortOrder]);
+
+  // Pagination
+  const pages = Math.ceil(filteredAndSortedAccounts.length / rowsPerPage);
+  const paginatedAccounts = useMemo(() => {
+    const start = (page - 1) * rowsPerPage;
+    const end = start + rowsPerPage;
+    return filteredAndSortedAccounts.slice(start, end);
+  }, [filteredAndSortedAccounts, page]);
 
   // Get unique categories and types for filters
   const categories = useMemo(() => {
@@ -172,9 +182,11 @@ export default function ChartOfAccountsPage() {
               onSelectionChange={(keys) => setFilterType(Array.from(keys)[0] as string)}
             >
               <SelectItem key="all">All Types</SelectItem>
-              {types.map(type => (
-                <SelectItem key={type}>{type}</SelectItem>
-              ))}
+              <>
+                {types.map(type => (
+                  <SelectItem key={type}>{type}</SelectItem>
+                ))}
+              </>
             </Select>
 
             <Select
@@ -183,9 +195,11 @@ export default function ChartOfAccountsPage() {
               onSelectionChange={(keys) => setFilterCategory(Array.from(keys)[0] as string)}
             >
               <SelectItem key="all">All Categories</SelectItem>
-              {categories.map(category => (
-                <SelectItem key={category}>{category}</SelectItem>
-              ))}
+              <>
+                {categories.map(category => (
+                  <SelectItem key={category}>{category}</SelectItem>
+                ))}
+              </>
             </Select>
 
             <Select
@@ -261,7 +275,7 @@ export default function ChartOfAccountsPage() {
               <TableColumn>ACTIONS</TableColumn>
             </TableHeader>
             <TableBody emptyContent="No accounts found.">
-              {filteredAndSortedAccounts.map((account) => (
+              {paginatedAccounts.map((account) => (
                 <TableRow key={account.id}>
                   <TableCell>
                     <span className="font-mono font-medium">{account.code}</span>
@@ -323,6 +337,18 @@ export default function ChartOfAccountsPage() {
             </TableBody>
           </Table>
         </CardBody>
+        {pages > 1 && (
+          <CardBody>
+            <div className="flex justify-center">
+              <Pagination 
+                total={pages} 
+                page={page} 
+                onChange={setPage}
+                showControls
+              />
+            </div>
+          </CardBody>
+        )}
       </Card>
 
       {/* Add/Edit Account Modal */}

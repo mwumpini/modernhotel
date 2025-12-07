@@ -153,6 +153,11 @@ export interface BusinessPartner {
   countryCode: string;
   createdAt: string;
   updatedAt: string;
+  // Optional bank details for payments
+  bankName?: string;
+  bankAccountNumber?: string;
+  bankSwift?: string;
+  bankIban?: string;
 }
 
 // Invoice
@@ -177,6 +182,45 @@ export interface Invoice {
   createdAt: string;
   updatedAt: string;
   lines: InvoiceLine[];
+  // Extended AP/AR metadata
+  poNumber?: string;
+  receiptNumber?: string;
+  department?: string;
+  projectCode?: string;
+  location?: string;
+  preparedBy?: string;
+  checkedBy?: string;
+  approvedBy?: string;
+  authorizedBy?: string;
+  paymentApprovedBy?: string;
+  attachments?: string[];
+  discountAmount?: number;
+  shippingCharges?: number;
+  otherCharges?: number;
+  amountDue?: number;
+  paymentMethod?: string;
+  paymentTerms?: string;
+  discountTerms?: string;
+  paymentReference?: string;
+  workflowStatus?: 'New' | 'In Review' | 'Approved' | 'Rejected' | 'Paid';
+  rejectionReason?: string;
+  countryCode?: string;
+  taxBreakdown?: {
+    vat?: number;
+    nhil?: number;
+    getfund?: number;
+    covid?: number;
+    tourism?: number;
+    withholding?: number;
+    other?: number;
+    taxableAmount?: number;
+    nonTaxableAmount?: number;
+    reverseCharge?: boolean;
+    withholdingCertNo?: string;
+  };
+  // Tax scheme selection
+  taxScheme?: 'GH_STANDARD' | 'FLAT' | 'NONE';
+  flatRatePercent?: number;
 }
 
 // Invoice Line
@@ -193,6 +237,8 @@ export interface InvoiceLine {
   glAccountCode: string;
   costCenter?: string;
   project?: string;
+  uom?: string; // Unit of measure
+  taxRate?: number; // percent
 }
 
 // Payment
@@ -213,8 +259,80 @@ export interface Payment {
   checkNumber?: string;
   status: 'Draft' | 'Posted' | 'Void';
   journalEntryId?: string;
+  // Receipt acknowledgement & files
+  receivedBy?: string;
+  receiverContact?: string;
+  receiverIdType?: string;
+  receiverIdNumber?: string;
+  receivedDate?: string;
+  receiverSignature?: string;
+  attachments?: string[];
+  pdfUrl?: string;
+  pdfFileName?: string;
+  pdfGeneratedAt?: string;
+  pdfGeneratedBy?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+// Payment Voucher
+export interface PaymentVoucher {
+  id: string;
+  voucherNumber: string;
+  date: Date;
+  payTo: string; // Payee name/details
+  payToId?: string; // Business Partner ID if applicable
+  contact?: string; // Payee contact person or internal contact
+  lines: PaymentVoucherLine[];
+  totalDebit: number;
+  totalCredit: number;
+  bankAccountId?: string;
+  bankAccountName?: string;
+  chequeNumber?: string;
+  description?: string;
+  reference?: string;
+  status: 'Draft' | 'Prepared' | 'Approved' | 'Recorded' | 'Posted' | 'Cancelled';
+  currency: string;
+  // Authorization
+  preparedBy?: string;
+  preparedSignature?: string;
+  preparedDate?: Date;
+  approvedBy?: string;
+  approvedSignature?: string;
+  approvedDate?: Date;
+  recordedBy?: string;
+  recordedSignature?: string;
+  recordedDate?: Date;
+  // Receipt acknowledgement
+  receivedBy?: string; // Person who received the payment (payee rep)
+  receiverContact?: string; // Phone/email/notes
+  receiverIdType?: string; // e.g., Ghana Card, Passport
+  receiverIdNumber?: string;
+  receivedDate?: Date;
+  receiverSignature?: string; // base64 image data
+  // Files
+  attachments?: string[]; // arbitrary filenames
+  pdfUrl?: string; // link or data URL to generated voucher PDF
+  pdfFileName?: string;
+  pdfGeneratedAt?: Date;
+  pdfGeneratedBy?: string;
+  // Journal Entry linkage
+  journalEntryId?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Payment Voucher Line
+export interface PaymentVoucherLine {
+  id: string;
+  accountCode: string;
+  accountName?: string;
+  details: string;
+  debit: number;
+  credit: number;
+  costCenter?: string;
+  project?: string;
+  reference?: string;
 }
 
 // Fixed Asset
@@ -255,15 +373,38 @@ export interface DepreciationSchedule {
   createdAt: string;
 }
 
-// Cost Center
+// Cost Center - Tracks expenses by department
 export interface CostCenter {
   id: string;
   code: string;
   name: string;
   description?: string;
+  type: 'department' | 'operation' | 'project' | 'support';
+  department: 'front_office' | 'housekeeping' | 'food_beverage' | 'kitchen' | 'maintenance' | 'sales_marketing' | 'accounting' | 'hr' | 'security' | 'general' | 'other';
   parentCenter?: string;
   manager?: string;
   budget?: number;
+  actualExpenses: number; // Track actual expenses
+  variance?: number; // budget - actual
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Revenue Center - Tracks revenue by source
+export interface RevenueCenter {
+  id: string;
+  code: string;
+  name: string;
+  description?: string;
+  type: 'rooms' | 'food_beverage' | 'services' | 'conferences' | 'spa' | 'gift_shop' | 'other';
+  department: 'front_office' | 'restaurant' | 'bar' | 'room_service' | 'conference' | 'spa' | 'retail' | 'other';
+  glAccountCode: string; // Revenue account code
+  parentCenter?: string;
+  manager?: string;
+  budget?: number; // Revenue budget/target
+  actualRevenue: number; // Track actual revenue
+  variance?: number; // actual - budget
   isActive: boolean;
   createdAt: string;
   updatedAt: string;
@@ -373,10 +514,37 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '5200', name: 'Payroll Expenses', type: 'Expense', category: 'Expenses', level: 2 },
   { code: '5210', name: 'Salaries and Wages', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5220', name: 'Employee Benefits', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5215', name: 'Directors Remuneration', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5221', name: 'Social Security Fund (13%)', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5300', name: 'Utilities', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5310', name: 'Electricity, Water and Gas', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5315', name: 'Generator Fuel and Repairs', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5400', name: 'Maintenance and Repairs', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5410', name: 'Repairs - Equipment', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5415', name: 'Repairs and Renovation - Building', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5420', name: 'Vehicle Running Expenses', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5500', name: 'Marketing and Advertising', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5510', name: 'Advertisement', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5600', name: 'Administrative Expenses', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5610', name: 'Security Expenses', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5615', name: 'Insurance', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5620', name: 'Travelling and Transport', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5625', name: 'Postage and Telephone', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5630', name: 'Subscriptions', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5635', name: 'Newspaper and Periodicals', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5640', name: 'Medical Expenses', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5645', name: 'Printing and Stationery', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5650', name: 'Staff Uniform', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5655', name: 'Accommodation Outsourcing', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5660', name: 'Donation', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5665', name: 'Hiring Charges', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5670', name: 'Cleaning and Sanitation', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5675', name: 'Audit Fees', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5700', name: 'Depreciation Expense', type: 'Expense', category: 'Expenses', level: 2 },
-  { code: '5800', name: 'Tax Expenses', type: 'Expense', category: 'Expenses', level: 2 }
+  { code: '5710', name: 'Depreciation - Property & Equipment', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5800', name: 'Tax Expenses', type: 'Expense', category: 'Expenses', level: 2 },
+  { code: '5810', name: 'Property Rate', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5815', name: 'Registration and Council Levy', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5820', name: 'Assembly Rates & Levies', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5825', name: 'Ghana Tourist Authority Levy', type: 'Expense', category: 'Expenses', level: 3 }
 ];

@@ -109,6 +109,7 @@ export default function CheckOutsPage() {
   const [settlementMethod, setSettlementMethod] = useState<'Cash'|'Card'|'Mobile Money'|'Corporate Account'|'Bank Transfer'|'Check'|'Credit'>('Cash');
   const [settlementAmount, setSettlementAmount] = useState<number>(0);
   const [settlementRef, setSettlementRef] = useState<string>('');
+  const [usePayLater, setUsePayLater] = useState<boolean>(false);
 
   // Payment processing state
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
@@ -166,72 +167,86 @@ export default function CheckOutsPage() {
   const loadCheckOuts = () => {
     const reservations = frontOfficeStore.reservations;
     const today = new Date();
-    
-    const checkOutsData: CheckOutData[] = reservations
-      .filter(reservation => 
-        reservation.status === 'checked-in' &&
-        new Date(reservation.departure) <= today
-      )
-      .map(reservation => {
-        const checkInDate = new Date(reservation.arrival);
-        const checkOutDate = new Date(reservation.departure);
-        const nightsStayed = Math.ceil((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24));
-        const folioTotals = getFolioTotals(reservation.id);
-        const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
-        const roomRate = reservation.rateBreakdown?.[0]?.base || roomType?.baseRate || 0;
-        const roomTotal = roomRate * nightsStayed;
-        
-        const status: 'pending' | 'processing' | 'completed' | 'extended' =
-          reservation.status === 'checked-out'
-            ? 'completed'
-            : (folioTotals.outstandingBalance || 0) > 0
-            ? 'pending'
-            : 'processing';
-        
-        return {
-          id: reservation.id,
-          uniqueCheckOutId: `checkout-${Date.now()}`,
-          folioId: reservation.id,
-          guestProfileId: undefined,
-          guestName: reservation.guestName,
-          roomNumber: reservation.roomId || 'TBD',
-          roomType: roomType?.name || 'Standard',
-          roomRate: roomRate,
-          checkInDate: reservation.arrival,
-          checkInDateTime: reservation.arrival,
-          checkOutDate: reservation.departure,
-          checkoutDateTime: undefined,
-          status,
-          nightsStayed,
-          totalCharges: folioTotals.totalCharges,
-          totalPayments: folioTotals.totalPayments,
-          outstandingBalance: folioTotals.outstandingBalance,
-          serviceCharges: folioTotals.serviceCharges,
-          otherCharges: folioTotals.otherCharges,
-          taxTotal: folioTotals.taxTotal,
-          roomTotal,
-          discount: 0,
-          finalPaymentMethod: reservation.paymentMethod || 'Not specified',
-          confirmationNumber: undefined,
-          roomStatus: 'Occupied',
-          phone: reservation.guestPhone,
-          email: reservation.guestEmail,
-          specialRequests: reservation.remarksToGuest,
-          billingPerson: reservation.billingPersonName,
-          lateCheckout: false,
-          housekeepingStatus: 'pending',
-          source: reservation.source || 'Front Office',
-          staffId: 'pending',
-          staffUsername: 'Pending',
-          adults: reservation.adults || 1,
-          children: reservation.children || 0,
-          checkoutNotes: undefined,
-          createdAt: reservation.createdAt || new Date().toISOString(),
-          updatedAt: reservation.updatedAt || new Date().toISOString(),
-          processedAt: undefined
-        };
-      });
 
+    const mapToCheckOutData = (reservation: any): CheckOutData => {
+      const checkInDate = new Date(reservation.arrival);
+      const checkOutDate = new Date(reservation.departure);
+      const nightsStayed = Math.max(1, Math.ceil((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24)));
+      const folioTotals = getFolioTotals(reservation.id);
+      const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
+      // Prefer gross (tax-inclusive) nightly; fallback by applying current local tax rates
+      const baseCandidate = reservation.rateBreakdown?.[0]?.base || roomType?.baseRate || 0;
+      const taxRates = (() => {
+        try {
+          const fn = (frontOfficeStore as any).getTaxRates;
+          if (typeof fn === 'function') return fn();
+          return { vat: 12.5, nhil: 2.5, levy: 1.0 };
+        } catch { return { vat: 12.5, nhil: 2.5, levy: 1.0 }; }
+      })();
+      const grossFactor = 1 + ((taxRates.vat + taxRates.nhil + taxRates.levy) / 100);
+      const roomRate = Math.max(0, Math.round((reservation.rateBreakdown?.[0]?.total || (baseCandidate * grossFactor)) * 100) / 100);
+      const roomTotal = roomRate * nightsStayed;
+
+      const status: 'pending' | 'processing' | 'completed' | 'extended' =
+        reservation.status === 'checked-out'
+          ? 'completed'
+          : (folioTotals.outstandingBalance || 0) > 0
+          ? 'pending'
+          : 'processing';
+
+      return {
+        id: reservation.id,
+        uniqueCheckOutId: `checkout-${Date.now()}`,
+        folioId: reservation.id,
+        guestProfileId: undefined,
+        guestName: reservation.guestName,
+        roomNumber: reservation.roomId || 'TBD',
+        roomType: roomType?.name || 'Standard',
+        roomRate: roomRate,
+        checkInDate: reservation.arrival,
+        checkInDateTime: reservation.arrival,
+        checkOutDate: reservation.departure,
+        checkoutDateTime: (reservation as any).checkOutTime,
+        status,
+        nightsStayed,
+        totalCharges: folioTotals.totalCharges,
+        totalPayments: folioTotals.totalPayments,
+        outstandingBalance: folioTotals.outstandingBalance,
+        serviceCharges: folioTotals.serviceCharges,
+        otherCharges: folioTotals.otherCharges,
+        taxTotal: folioTotals.taxTotal,
+        roomTotal,
+        discount: 0,
+        finalPaymentMethod: reservation.paymentMethod || 'Not specified',
+        confirmationNumber: undefined,
+        roomStatus: reservation.status === 'checked-out' ? 'Dirty' : 'Occupied',
+        phone: reservation.guestPhone,
+        email: reservation.guestEmail,
+        specialRequests: reservation.remarksToGuest,
+        billingPerson: reservation.billingPersonName,
+        lateCheckout: false,
+        housekeepingStatus: reservation.status === 'checked-out' ? 'turnover' : 'pending',
+        source: reservation.source || 'Front Office',
+        staffId: 'pending',
+        staffUsername: 'Pending',
+        adults: reservation.adults || 1,
+        children: reservation.children || 0,
+        checkoutNotes: (reservation as any).checkoutNotes,
+        createdAt: reservation.createdAt || new Date().toISOString(),
+        updatedAt: reservation.updatedAt || new Date().toISOString(),
+        processedAt: (reservation as any).checkOutTime
+      };
+    };
+
+    const due = reservations
+      .filter(r => r.status === 'checked-in' && new Date(r.departure) <= today)
+      .map(mapToCheckOutData);
+
+    const completed = reservations
+      .filter(r => r.status === 'checked-out')
+      .map(mapToCheckOutData);
+
+    const checkOutsData: CheckOutData[] = [...due, ...completed];
     setCheckOuts(checkOutsData);
   };
 
@@ -286,12 +301,19 @@ export default function CheckOutsPage() {
   const handleCheckOut = async (checkOut: CheckOutData) => {
     setIsProcessing(true);
     try {
-      // Prevent checkout if there is an outstanding balance
+      // Respect Pay Later policy from settings
+      const settingsState = useSettingsStore.getState();
+      const policy = settingsState.roomManagement?.payLaterPolicy || 'both';
+      const res = frontOfficeStore.reservations.find(r => r.id === checkOut.id);
+      const isCorporate = !!(res?.companyName || res?.billingPersonName);
+      const payLaterAllowed = (policy === 'both') || (policy === 'corporate' && isCorporate) || (policy === 'individual' && !isCorporate);
+
+      // Prevent checkout if there is an outstanding balance and pay later is NOT allowed (or not selected)
       const { outstandingBalance } = getFolioTotals(checkOut.id);
-      if (outstandingBalance > 0) {
+      if (outstandingBalance > 0 && !(payLaterAllowed && usePayLater)) {
         const ok = confirm(`Outstanding balance ₵${outstandingBalance.toFixed(2)}. Settle before checkout?`);
         if (!ok) { setIsProcessing(false); return; }
-        return; // user will settle via quick settlement UI
+        return;
       }
 
       // Use store API for checkout to ensure consistency
@@ -619,6 +641,7 @@ export default function CheckOutsPage() {
 
           <Table aria-label="Check-outs table" className="min-w-full">
             <TableHeader>
+              <TableColumn className="w-28">ID</TableColumn>
               <TableColumn className="w-40">GUEST</TableColumn>
               <TableColumn className="w-36">BILLED TO</TableColumn>
               <TableColumn className="w-20">ROOM</TableColumn>
@@ -651,22 +674,10 @@ export default function CheckOutsPage() {
                   className="hover:bg-gray-50"
                   {...getAnalyticsData(checkOut)}
                 >
+                  <TableCell className="font-semibold">{checkOut.id}</TableCell>
                   <TableCell>
-                    <div className="flex items-center space-x-3">
-                      <Avatar 
-                        name={checkOut.guestName} 
-                        size="sm" 
-                        className="bg-ghana-gold text-white font-semibold"
-                        showFallback
-                      />
-                      <div className="min-w-0 flex-1">
-                        <p className="font-semibold text-gray-900 truncate">{checkOut.guestName}</p>
-                        <p className="text-xs text-gray-600">{(checkOut as any).guestPhone || 'N/A'}</p>
-                        <p className="text-xs text-gray-500">ID: {checkOut.id.slice(-6)}</p>
-                        {(checkOut as any).guestEmail && (
-                          <p className="text-xs text-blue-600 truncate">{(checkOut as any).guestEmail}</p>
-                        )}
-                      </div>
+                    <div className="min-w-0">
+                      <p className="font-semibold text-gray-900 truncate">{checkOut.guestName}</p>
                     </div>
                   </TableCell>
                   <TableCell>
@@ -765,11 +776,17 @@ export default function CheckOutsPage() {
           </div>
         </div>
 
-        <Modal isOpen={isOpen} onClose={onClose} size="2xl">
+        <Modal isOpen={isOpen} onClose={onClose} size="4xl">
           <ModalContent>
             <ModalHeader>Process Check-out</ModalHeader>
             <ModalBody>
-              {selectedCheckOut && (
+              {selectedCheckOut && (() => {
+                const settingsState = useSettingsStore.getState();
+                const policy = settingsState.roomManagement?.payLaterPolicy || 'both';
+                const res = frontOfficeStore.reservations.find(r => r.id === selectedCheckOut.id);
+                const isCorporate = !!(res?.companyName || res?.billingPersonName);
+                const payLaterAllowed = (policy === 'both') || (policy === 'corporate' && isCorporate) || (policy === 'individual' && !isCorporate);
+                return (
                 <div className="space-y-4">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
@@ -935,8 +952,13 @@ export default function CheckOutsPage() {
                             <div className="text-sm text-gray-700">Outstanding Balance</div>
                             <div className={`font-bold ${outstandingBalance > 0 ? 'text-red-600' : 'text-gray-600'}`}>₵{outstandingBalance.toLocaleString()}</div>
                           </div>
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                            <Select label="Payment Method" selectedKeys={[settlementMethod]} onSelectionChange={(keys)=> setSettlementMethod(Array.from(keys)[0] as any)}>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <Select label="Payment Method" selectedKeys={[usePayLater ? 'Pay Later' : settlementMethod]} onSelectionChange={(keys)=> {
+                      const k = Array.from(keys)[0] as string;
+                      if (k === 'Pay Later') { setUsePayLater(true); setSettlementAmount(0); setSettlementMethod('Credit'); }
+                      else { setUsePayLater(false); setSettlementMethod(k as any); }
+                    }}>
+                      <SelectItem key="Pay Later">Pay Later</SelectItem>
                               <SelectItem key="Cash">Cash</SelectItem>
                               <SelectItem key="Card">Card</SelectItem>
                               <SelectItem key="Mobile Money">Mobile Money</SelectItem>
@@ -945,10 +967,18 @@ export default function CheckOutsPage() {
                               <SelectItem key="Corporate Account">Corporate Account</SelectItem>
                               <SelectItem key="Credit">Credit</SelectItem>
                             </Select>
-                            <Input label="Amount (GHS)" type="number" value={String(settlementAmount)} onChange={(e)=> setSettlementAmount(parseFloat(e.target.value || '0'))} />
+                    <Input label="Amount (GHS)" type="number" value={String(usePayLater ? 0 : settlementAmount)} onChange={(e)=> setSettlementAmount(parseFloat(e.target.value || '0'))} isDisabled={usePayLater} />
                             <Input label="Reference" value={settlementRef} onChange={(e)=> setSettlementRef(e.target.value)} />
                           </div>
-                          <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2 items-end">
+                  {usePayLater && (
+                    <div className="text-xs text-gray-600">Pay Later selected. Amount is set to 0. For corporate, enter PO/Project/Cost Center in Reference.</div>
+                  )}
+                  {payLaterAllowed && (
+                    <div className="p-3 bg-yellow-50 rounded-md border border-yellow-200 text-sm text-yellow-800">
+                      Pay Later is enabled ({policy}). Corporate accounts require a PO/Project/Cost Center reference.
+                    </div>
+                  )}
+                          <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
                             <div>
                               <Select label="Receipt Template" selectedKeys={[receiptTpl]} onSelectionChange={(keys)=> setReceiptTpl(Array.from(keys)[0] as string)}>
                                 {receiptTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
@@ -959,26 +989,31 @@ export default function CheckOutsPage() {
                                 {invoiceTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
                               </Select>
                             </div>
-                            <div className="flex gap-2 justify-end">
-                              <Button variant="light" onPress={()=> handlePrintReceipt(selectedCheckOut)}>Print Receipt</Button>
-                              <Button variant="light" onPress={()=> handlePrintInvoice(selectedCheckOut)}>Print Invoice</Button>
+                            <div className="flex gap-2 justify-start">
+                              <Button variant="flat" onPress={()=> handlePrintReceipt(selectedCheckOut)}>🧾 Print Receipt</Button>
+                              <Button variant="flat" onPress={()=> handlePrintInvoice(selectedCheckOut)}>🧾 Print Invoice</Button>
+                            </div>
+                            <div className="flex justify-end">
+                              <Button color="success" className="bg-green-600 text-white"
+                                isDisabled={outstandingBalance <= 0 || settlementAmount <= 0}
+                                onPress={() => {
+                                  frontOfficeStore.addPayment(selectedCheckOut.id, settlementMethod, settlementAmount, { notes: 'Folio settlement during checkout', processedBy: 'Front Desk', ref: settlementRef });
+                                  try { handlePrintReceipt(selectedCheckOut); } catch {}
+                                  setTimeout(() => loadCheckOuts(), 50);
+                                }}
+                              >
+                                Process Payment
+                              </Button>
                             </div>
                           </div>
-                            <Button color="success" className="bg-green-600 text-white"
-                              isDisabled={outstandingBalance <= 0 || settlementAmount <= 0}
-                              onPress={() => {
-                                frontOfficeStore.addPayment(selectedCheckOut.id, settlementMethod, settlementAmount, { notes: 'Folio settlement during checkout', processedBy: 'Front Desk', ref: settlementRef });
-                                setTimeout(() => loadCheckOuts(), 50);
-                              }}
-                            >
-                              Settle Balance
-                            </Button>
+                            
                           </div>
                       );
                     })()}
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </ModalBody>
             <ModalFooter>
               <Button variant="flat" onPress={onClose}>

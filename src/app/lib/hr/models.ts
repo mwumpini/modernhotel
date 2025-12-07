@@ -7,17 +7,44 @@ export interface Employee {
   lastName: string;
   email: string;
   phone: string;
+  gender?: 'male' | 'female' | 'other' | 'prefer_not_to_say';
+  nationality?: string;
+  maritalStatus?: 'single' | 'married' | 'divorced' | 'widowed' | 'other';
   dateOfBirth: Date;
   hireDate: Date;
   terminationDate?: Date;
   departmentId: string;
   positionId: string;
   managerId?: string;
+  workLocation?: string;
   employmentType: 'full_time' | 'part_time' | 'contract' | 'temporary' | 'intern';
   status: 'active' | 'inactive' | 'terminated' | 'suspended' | 'on_leave';
+  residencyStatus?: 'resident' | 'non_resident';
+  employmentClass?: 'regular' | 'part_time' | 'casual';
+  secondEmployment?: boolean;
+  incomeTaxDeductible?: boolean; // PAYE/Withholding Tax - generic for all countries
+  ssnitEnrolled?: boolean; // Tier 1
+  tier2Enrolled?: boolean; // Tier 2
+  tier3Enrolled?: boolean; // Tier 3
   salary: number;
   hourlyRate?: number;
   overtimeRate?: number;
+  // Ghana payroll: support monthly vs hourly, with basic and allowances
+  compensationType?: 'monthly' | 'hourly';
+  basicSalary?: number; // core basic for PAYE
+  allowances?: number; // total regular allowances (non-overtime)
+  paymentFrequency?: 'monthly' | 'biweekly' | 'weekly';
+  taxWithholding?: {
+    tin?: string;
+    filingStatus?: 'single' | 'married' | 'head_of_household' | string;
+    allowances?: number;
+  };
+  governmentIds?: {
+    nationalId?: string;
+    ssn?: string;
+    passport?: string;
+    workPermit?: string;
+  };
   bankAccount: {
     accountNumber: string;
     bankName: string;
@@ -36,7 +63,14 @@ export interface Employee {
     postalCode: string;
     country: string;
   };
-  documents: string[]; // Document IDs
+  documents: string[]; // Document IDs or filenames
+  qualifications?: Array<{
+    type: 'education' | 'certification' | 'experience';
+    title: string;
+    institution?: string;
+    year?: number;
+  }>;
+  acknowledgments?: Array<{ code: string; title: string; date: Date }>;
   notes?: string;
   createdAt: Date;
   updatedAt: Date;

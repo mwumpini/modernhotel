@@ -28,6 +28,7 @@ import {
   Badge
 } from '@heroui/react';
 import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
+import { useCalculateTax } from '@/app/hooks/useCalculateTax';
 
 interface RatePlan {
   id: string;
@@ -113,33 +114,31 @@ export default function RoomRateManagement() {
     console.log(`[${timestamp}] ROOM_RATE_MANAGEMENT: ${action}`, details);
   };
 
-  // Ghana hotel taxes effective gross factor: 2.5% NHIL + 2.5% GETFund + 1% COVID on base,
-  // VAT 15% applied on (base + levies), plus 1% Tourism on base ⇒ overall multiplier ≈ 1.229
-  const GHANA_GROSS_FACTOR = 1.229;
+  const calculateTax = useCalculateTax();
 
-  // Price preview helpers (Ghana taxes)
-  const computeTaxBreakdown = (base: number) => {
-    const subtotal = base;
-    const nhil = subtotal * 0.025;
-    const getfund = subtotal * 0.025;
-    const covid = subtotal * 0.01;
-    const vat = (subtotal + nhil + getfund + covid) * 0.15;
-    const tourism = subtotal * 0.01;
-    const totalTax = nhil + getfund + covid + vat + tourism;
-    const finalBill = subtotal + totalTax;
-    return { subtotal, nhil, getfund, covid, vat, tourism, totalTax, finalBill };
-  };
-
-  const reverseToSubtotalFromGross = (gross: number) => {
-    return gross / GHANA_GROSS_FACTOR;
+  // Reverse gross-to-subtotal by binary searching the engine (monotonic increasing total)
+  const reverseToSubtotalFromGross = (gross: number, category?: string, context?: Record<string, any>) => {
+    let lo = 0, hi = Math.max(gross, 1) * 2;
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2;
+      const { total } = calculateTax(mid, category, context);
+      if (total > gross) hi = mid; else lo = mid;
+    }
+    return lo;
   };
 
   const getLivePreview = () => {
     if (!newRatePlan.price || Number(newRatePlan.price) <= 0) return null;
-    const baseForCalc = newRatePlan.priceType === 'subtotal' 
+    const category = 'HOTEL';
+    const context = { numPersons: 1, numNights: 1 };
+    const baseForCalc = newRatePlan.priceType === 'subtotal'
       ? Number(newRatePlan.price)
-      : reverseToSubtotalFromGross(Number(newRatePlan.price));
-    return computeTaxBreakdown(baseForCalc);
+      : reverseToSubtotalFromGross(Number(newRatePlan.price), category, context);
+    const result = calculateTax(baseForCalc, category, context);
+    const breakdownEntries = result.taxes.map(t => ({ key: t.name, amount: t.amount }));
+    const mapped: any = { subtotal: baseForCalc, totalTax: result.taxes.reduce((s, t) => s + t.amount, 0), finalBill: result.total };
+    breakdownEntries.forEach(b => { mapped[b.key.toLowerCase().replace(/[^a-z]/g, '')] = b.amount; });
+    return mapped;
   };
 
   const handleAddRatePlan = () => {
@@ -532,14 +531,11 @@ export default function RoomRateManagement() {
                     <TableCell className="dark:text-white">₵{plan.basePrice}</TableCell>
                     <TableCell className="text-center dark:text-white">
                       {(() => {
-                        const subtotal = plan.basePrice;
-                        const nhil = subtotal * 0.025;
-                        const getfund = subtotal * 0.025;
-                        const covid = subtotal * 0.01;
-                        const vat = (subtotal + nhil + getfund + covid) * 0.15;
-                        const tourism = subtotal * 0.01;
-                        const finalBill = subtotal + nhil + getfund + covid + vat + tourism;
-                        return `₵${finalBill.toFixed(2)}`;
+                        const category = 'HOTEL';
+                        const context = { numPersons: 1, numNights: 1, roomType: plan.roomTypeId };
+                        const subtotal = plan.priceType === 'subtotal' ? plan.basePrice : reverseToSubtotalFromGross(plan.basePrice, category, context);
+                        const { total } = calculateTax(subtotal, category, context);
+                        return `₵${total.toFixed(2)}`;
                       })()}
                     </TableCell>
                     <TableCell>
@@ -671,15 +667,12 @@ export default function RoomRateManagement() {
               const roomType = enhancedFrontOfficeStore.roomTypes.find(rt => rt.id === plan.roomTypeId);
               if (!roomType) return null;
 
-              // Calculate tax breakdown (Ghana taxes)
-              const subtotal = plan.priceType === 'subtotal' ? plan.basePrice : plan.basePrice / GHANA_GROSS_FACTOR;
-              const nhil = subtotal * 0.025; // 2.5%
-              const getfund = subtotal * 0.025; // 2.5%
-              const covid = subtotal * 0.01; // 1.0%
-              const vat = (subtotal + nhil + getfund + covid) * 0.15; // 15% on amount after levies
-              const tourism = subtotal * 0.01; // 1.0%
-              const totalTax = nhil + getfund + covid + vat + tourism;
-              const grossTotal = subtotal + totalTax;
+              // Calculate tax breakdown via engine
+              const category = 'HOTEL';
+              const context = { numPersons: 1, numNights: 1, roomType: plan.roomTypeId };
+              const subtotal = plan.priceType === 'subtotal' ? plan.basePrice : reverseToSubtotalFromGross(plan.basePrice, category, context);
+              const { taxes, total } = calculateTax(subtotal, category, context);
+              const grossTotal = total;
 
               return (
                 <div className="p-4 border rounded-lg bg-gray-50">
@@ -703,26 +696,18 @@ export default function RoomRateManagement() {
                         <span className="text-sm text-gray-600">Base Rate:</span>
                         <span className="font-mono">₵{subtotal.toFixed(2)}</span>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-gray-600">NHIL (2.5%):</span>
-                        <span className="font-mono text-orange-600">₵{nhil.toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-gray-600">GETFund (2.5%):</span>
-                        <span className="font-mono text-orange-600">₵{getfund.toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-gray-600">COVID-19 (1.0%):</span>
-                        <span className="font-mono text-orange-600">₵{covid.toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-gray-600">VAT (15.0%):</span>
-                        <span className="font-mono text-orange-600">₵{vat.toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-sm text-gray-600">Tourism (1.0%):</span>
-                        <span className="font-mono text-orange-600">₵{tourism.toFixed(2)}</span>
-                      </div>
+                      {(() => {
+                        const category = 'HOTEL';
+                        const context = { numPersons: 1, numNights: 1, roomType: plan.roomTypeId };
+                        const subtotalPreview = plan.priceType === 'subtotal' ? plan.basePrice : reverseToSubtotalFromGross(plan.basePrice, category, context);
+                        const { taxes } = calculateTax(subtotalPreview, category, context);
+                        return taxes.map((t, idx) => (
+                          <div key={`${t.name}-${idx}`} className="flex justify-between">
+                            <span className="text-sm text-gray-600">{t.name}:</span>
+                            <span className="font-mono text-orange-600">₵{t.amount.toFixed(2)}</span>
+                          </div>
+                        ));
+                      })()}
                     </div>
                     
                     <div className="space-y-2">

@@ -274,6 +274,54 @@ export class EnhancedFrontOfficeStore {
     return eventBooking;
   }
 
+  updateEventBooking(id: string, updates: Partial<EventBooking>): EventBooking | null {
+    const index = this.eventBookings.findIndex(event => event.id === id);
+    if (index === -1) {
+      return null;
+    }
+
+    const current = this.eventBookings[index];
+    const mergedCostBreakdown = updates.costBreakdown
+      ? {
+          ...current.costBreakdown,
+          ...updates.costBreakdown,
+          accommodation: {
+            ...current.costBreakdown.accommodation,
+            ...(updates.costBreakdown.accommodation ?? {})
+          },
+          package: {
+            ...current.costBreakdown.package,
+            ...(updates.costBreakdown.package ?? {})
+          },
+          services: {
+            ...current.costBreakdown.services,
+            ...(updates.costBreakdown.services ?? {})
+          }
+        }
+      : current.costBreakdown;
+
+    const updated: EventBooking = {
+      ...current,
+      ...updates,
+      costBreakdown: mergedCostBreakdown,
+      resources: updates.resources ?? current.resources,
+      rooms: updates.rooms ?? current.rooms,
+      updatedAt: new Date().toISOString()
+    };
+
+    this.eventBookings[index] = updated;
+    this.notify();
+
+    trackEvent('FO.EventBooking.Updated', {
+      id: updated.id,
+      eventType: updated.eventType,
+      attendees: updated.attendees,
+      totalCost: updated.totalCost
+    });
+
+    return updated;
+  }
+
   /**
    * Get available event resources for a specific date range
    */

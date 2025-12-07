@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { 
   Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
   Input, Select, SelectItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Chip, Textarea,
-  Tabs, Tab
+  Tabs, Tab, Divider, Accordion, AccordionItem, Checkbox
 } from '@heroui/react';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
@@ -22,6 +22,378 @@ interface QuickAction {
   requiresModule?: string;
 }
 
+type ReportFilterConfig = {
+  voucherType?: boolean;
+  user?: boolean;
+  room?: boolean;
+  dateRange?: boolean;
+  service?: boolean;
+  costCenters?: boolean;
+  notes?: boolean;
+};
+
+interface ReportDefinition {
+  key: string;
+  label: string;
+  description: string;
+  metrics: string[];
+  filters: ReportFilterConfig;
+}
+
+interface ReportCategory {
+  key: string;
+  label: string;
+  icon: string;
+  description: string;
+  reports: ReportDefinition[];
+}
+
+type ReportLogLevel = 'info' | 'success' | 'warning';
+
+interface ReportLogEntry {
+  id: string;
+  timestamp: string;
+  level: ReportLogLevel;
+  action: string;
+  context?: string;
+}
+
+interface ReportFiltersState {
+  voucherType: string;
+  user: string;
+  room: string;
+  fromDate: string;
+  toDate: string;
+  service: string;
+  notes: string;
+}
+
+const REPORT_LOG_COLOR: Record<ReportLogLevel, 'primary' | 'success' | 'warning'> = {
+  info: 'primary',
+  success: 'success',
+  warning: 'warning'
+};
+
+const REPORT_VOUCHER_TYPES = [
+  { label: 'All Vouchers', value: 'all' },
+  { label: 'Service Receipt', value: 'service-receipt' },
+  { label: 'Pro-Forma / Invoice', value: 'invoice' },
+  { label: 'Credit Note', value: 'credit-note' },
+  { label: 'Adjustment Voucher', value: 'adjustment' }
+];
+
+const FALLBACK_COST_CENTERS = [
+  { label: 'Conference', value: 'CONFERENCE' },
+  { label: 'Front Desk', value: 'FRONT_DESK' },
+  { label: 'Gift Shop', value: 'GIFT_SHOP' },
+  { label: 'Housekeeping', value: 'HOUSEKEEPING' },
+  { label: 'Kitchen', value: 'KITCHEN' },
+  { label: 'Restaurant', value: 'RESTAURANT' },
+  { label: 'Stores', value: 'STORES' },
+  { label: 'Swimming Pool', value: 'SWIMMING_POOL' }
+];
+
+const SERVICE_REPORT_OPTIONS = [
+  { label: 'Airport Shuttle', value: 'airport-shuttle' },
+  { label: 'Conference Equipment Rental', value: 'conference-equipment' },
+  { label: 'Banquet Service', value: 'banquet-service' },
+  { label: 'Spa & Wellness', value: 'spa-wellness' },
+  { label: 'Laundry & Valet', value: 'laundry' },
+  { label: 'Restaurant À La Carte', value: 'restaurant-a-la-carte' }
+];
+
+const getDefaultReportRange = () => {
+  const today = new Date();
+  const to = today.toISOString().split('T')[0];
+  const from = new Date(today);
+  from.setDate(from.getDate() - 7);
+  return { from: from.toISOString().split('T')[0], to };
+};
+
+const buildInitialReportFilters = (): ReportFiltersState => {
+  const range = getDefaultReportRange();
+  return {
+    voucherType: REPORT_VOUCHER_TYPES[0]?.value || 'all',
+    user: '',
+    room: '',
+    fromDate: range.from,
+    toDate: range.to,
+    service: SERVICE_REPORT_OPTIONS[0]?.value || '',
+    notes: ''
+  };
+};
+
+const FRONT_OFFICE_REPORT_CATALOG: ReportCategory[] = [
+  {
+    key: 'front-office',
+    label: 'Front Office Reports',
+    icon: '🛎️',
+    description: 'Room operations, arrivals, departures, and cashier analytics.',
+    reports: [
+      {
+        key: 'checkin-daybook',
+        label: 'Checkin DayBook',
+        description: 'Chronological log of all arrivals with booking status and remarks.',
+        metrics: ['Arrivals vs expected', 'Early / late check-ins', 'Pending registrations'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'cancelled-checkin',
+        label: 'Cancelled Checkin',
+        description: 'Audit trail of cancelled arrivals with user, reason, and revenue impact.',
+        metrics: ['Cancelled bookings', 'Loss value', 'Responsible agent'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-statement',
+        label: 'Daily Statement',
+        description: 'End-of-day cashier statement consolidating all transactions.',
+        metrics: ['Cash vs non-cash mix', 'Variance alerts', 'Pending approvals'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-statement-columnar',
+        label: 'Daily Statement Columnar',
+        description: 'Columnar version of the daily statement for finance validation.',
+        metrics: ['Payment mode split', 'Tax collected', 'Night audit status'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'tariff-summary',
+        label: 'Tariff Summary',
+        description: 'Snapshot of rack, BAR, and negotiated rates by room class.',
+        metrics: ['Rate variance', 'Dynamic pricing overrides', 'Promo utilisation'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-room-occupancy-chart',
+        label: 'Daily Room Occupancy Chart',
+        description: 'Graphical occupancy trend by block, segment, and status.',
+        metrics: ['Occupancy %', 'Sold vs available rooms', 'Market mix'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-room-status',
+        label: 'Daily Room Status',
+        description: 'Live status board for each room including HK and maintenance flags.',
+        metrics: ['Ready vs dirty rooms', 'OOS rooms', 'Turnaround time'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-room-status-category',
+        label: 'Daily Room Status Category',
+        description: 'Status distribution aggregated by room category.',
+        metrics: ['Category occupancy', 'VIP readiness', 'Upgrade potential'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-fo-report',
+        label: 'Daily FO Report',
+        description: 'Executive summary of Front Office KPIs for leadership.',
+        metrics: ['ADR', 'RevPAR', 'Guest movements'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'room-rent-category',
+        label: 'Room Rent Category Wise',
+        description: 'Room revenue contribution per category and contract type.',
+        metrics: ['Category revenue', 'Average stay length', 'Upsell performance'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'agent-checkin-daybook',
+        label: 'Agent Wise Checkin DayBook',
+        description: 'Arrivals handled per travel agent or OTA partner.',
+        metrics: ['Arrivals per agent', 'Conversion rate', 'Commission value'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'agent-checkin-detail',
+        label: 'Agent Wise Checkin Detail',
+        description: 'Granular view of each guest tied to an agency contract.',
+        metrics: ['Rate codes', 'Package inclusions', 'No-show risk'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'guest-profile',
+        label: 'Guest Profile',
+        description: '360° profile of in-house and repeat guests with preferences.',
+        metrics: ['Loyalty tier', 'Total spend', 'Stay frequency'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'guest-checkin-daybook',
+        label: 'Guest Wise Checkin DayBook',
+        description: 'Individual guest check-in ledger with documents and remarks.',
+        metrics: ['Check-in method', 'Deposit status', 'Document validity'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'guest-checkin-detail',
+        label: 'Guest Wise Checkin Detail',
+        description: 'Detailed passport, visa, and contact information per guest.',
+        metrics: ['Nationality mix', 'Visa expiry alerts', 'Escort requirements'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'passport-detail',
+        label: 'Passport Detail',
+        description: 'Passport registry for compliance and immigration reporting.',
+        metrics: ['Expiring passports', 'Country distribution', 'Missing scans'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'visa-detail',
+        label: 'Visa Detail',
+        description: 'Visa types, validity, and sponsor information for guests.',
+        metrics: ['Visa types', 'Overstay risk', 'Pending renewals'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'extra-bed',
+        label: 'Extra Bed Report',
+        description: 'Tracking of extra bed requests, availability, and billing.',
+        metrics: ['Beds deployed', 'Revenue from extras', 'Pending pickups'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'checkout-daybook',
+        label: 'CheckOut DayBook',
+        description: 'Chronological ledger of departures with settlement status.',
+        metrics: ['Departures vs expected', 'Late check-outs', 'Balance pending'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'cancelled-checkout',
+        label: 'Cancelled CheckOut',
+        description: 'Record of reversed departures and reinstated folios.',
+        metrics: ['Reopened folios', 'Reason codes', 'User accountability'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'checkout-detail',
+        label: 'CheckOut Detail',
+        description: 'Guest-level departure details including folio balances.',
+        metrics: ['Payments captured', 'Incidental charges', 'Feedback status'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'salesman-checkout',
+        label: 'SalesMan CheckOut Detail',
+        description: 'Performance of sales associates handling departures.',
+        metrics: ['Collections per associate', 'Upsell success', 'Waiver count'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'consolidated-checkout',
+        label: 'Consolidated CheckOut Report',
+        description: 'Aggregated departure metrics for finance reconciliation.',
+        metrics: ['Totals by payment type', 'Group departures', 'Outstanding folios'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-tabular-ledger',
+        label: 'DailyTabularLedger',
+        description: 'Ledger-style snapshot of room revenue, taxes, and adjustments.',
+        metrics: ['Room revenue', 'Tax buckets', 'Adjustments'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-tabular-ledger-summary',
+        label: 'DailyTabularLedger Summary',
+        description: 'Summarised ledger for quick finance approvals.',
+        metrics: ['Net vs gross', 'Ledger balance', 'Exceptions flagged'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'guest-room-history-summary',
+        label: 'Guest Room History Summary',
+        description: 'Historical stay summary by guest with spend and preferences.',
+        metrics: ['Lifetime nights', 'Average rate', 'Preferred room type'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'room-history',
+        label: 'Room History',
+        description: 'Maintenance and occupancy history for each room.',
+        metrics: ['Downtime days', 'Incidents logged', 'Refurbishment notes'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-checkout-accounts',
+        label: 'Daily CheckOut Accounts Report',
+        description: 'Finance view of balances cleared on the day of departure.',
+        metrics: ['Settled folios', 'AR transfers', 'Write-offs'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'daily-checkout-accounts-gst',
+        label: 'Daily CheckOut Accounts Report GST',
+        description: 'GST-ready export of checkout settlements with tax codes.',
+        metrics: ['GST collected', 'Tax variance', 'Submission status'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'budget-analysis',
+        label: 'BudgetAnalysis',
+        description: 'Budget vs actual tracking for room revenue and expenses.',
+        metrics: ['Budget adherence', 'Forecast variance', 'Cost per room'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      },
+      {
+        key: 'front-office-tax',
+        label: 'Front Office Tax Reports',
+        description: 'Tax liability statements for regulatory filing.',
+        metrics: ['Tourism levy', 'VAT breakdown', 'Withholding summaries'],
+        filters: { voucherType: true, user: true, room: true, dateRange: true, notes: true }
+      }
+    ]
+  },
+  {
+    key: 'service-reports',
+    label: 'Service Reports',
+    icon: '🧾',
+    description: 'Ancillary services, vouchers, and cost centre performance.',
+    reports: [
+      {
+        key: 'service-wise',
+        label: 'Service Wise',
+        description: 'Service revenue and utilisation by department or package.',
+        metrics: ['Service revenue', 'Utilisation vs capacity', 'Average ticket value'],
+        filters: { voucherType: true, dateRange: true, service: true, costCenters: true, notes: true }
+      },
+      {
+        key: 'cancelled-service',
+        label: 'Cancelled Service',
+        description: 'Cancelled ancillary services with refund or reschedule notes.',
+        metrics: ['Cancellation count', 'Refund value', 'Reason analysis'],
+        filters: { voucherType: true, dateRange: true, service: true, costCenters: true, notes: true }
+      },
+      {
+        key: 'party-wise',
+        label: 'Party Wise',
+        description: 'Service consumption grouped by event or guest party.',
+        metrics: ['Spend per party', 'Cost centre splits', 'Complimentary usage'],
+        filters: { voucherType: true, dateRange: true, service: true, costCenters: true, notes: true }
+      },
+      {
+        key: 'service-consolidated',
+        label: 'Service Consolidated',
+        description: 'Consolidated ancillary service revenue for finance.',
+        metrics: ['Net service revenue', 'Department contribution', 'Pending postings'],
+        filters: { voucherType: true, dateRange: true, service: true, costCenters: true, notes: true }
+      },
+      {
+        key: 'feedback-report',
+        label: 'Feedback Report',
+        description: 'Structured service feedback, sentiment, and follow-up tasks.',
+        metrics: ['Satisfaction score', 'Themes detected', 'Response SLA'],
+        filters: { voucherType: true, dateRange: true, service: true, costCenters: true, notes: true }
+      }
+    ]
+  }
+];
+
 export default function FrontOfficeOperationsDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
@@ -30,6 +402,124 @@ export default function FrontOfficeOperationsDashboard() {
   const [isCheckOutModalOpen, setIsCheckOutModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [tick, setTick] = useState(0);
+  const [reportSearch, setReportSearch] = useState('');
+  const [selectedReportKey, setSelectedReportKey] = useState(FRONT_OFFICE_REPORT_CATALOG[0]?.reports[0]?.key || '');
+  const [reportFilters, setReportFilters] = useState<ReportFiltersState>(() => buildInitialReportFilters());
+  const [selectedCostCenters, setSelectedCostCenters] = useState<Set<string>>(
+    () => new Set(FALLBACK_COST_CENTERS.map(option => option.value))
+  );
+  const [reportLogEntries, setReportLogEntries] = useState<ReportLogEntry[]>(() => [
+    {
+      id: `fo-log-${Date.now()}`,
+      timestamp: new Date().toLocaleString(),
+      level: 'info',
+      action: 'Reports console initialised',
+      context: 'Front Office filters loaded'
+    }
+  ]);
+  const costCenterOptions = FALLBACK_COST_CENTERS;
+  const filteredReportCatalog = useMemo(() => {
+    const term = reportSearch.trim().toLowerCase();
+    if (!term) return FRONT_OFFICE_REPORT_CATALOG;
+    return FRONT_OFFICE_REPORT_CATALOG
+      .map(category => {
+        const reports = category.reports.filter(report => {
+          const haystack = `${report.label} ${report.description} ${report.metrics.join(' ')}`.toLowerCase();
+          return haystack.includes(term);
+        });
+        return { ...category, reports };
+      })
+      .filter(category => category.reports.length > 0);
+  }, [reportSearch]);
+  const selectedReportContext = useMemo(() => {
+    for (const category of FRONT_OFFICE_REPORT_CATALOG) {
+      const report = category.reports.find(item => item.key === selectedReportKey);
+      if (report) {
+        return { category, report };
+      }
+    }
+    const fallbackCategory = FRONT_OFFICE_REPORT_CATALOG[0];
+    return fallbackCategory
+      ? { category: fallbackCategory, report: fallbackCategory.reports[0] }
+      : { category: null, report: undefined };
+  }, [selectedReportKey]);
+  const selectedReport = selectedReportContext?.report;
+  const selectedReportCategory = selectedReportContext?.category;
+  const selectedCostCenterList = useMemo(() => Array.from(selectedCostCenters), [selectedCostCenters]);
+  const selectedCostCenterLabels = useMemo(() => {
+    const labelMap = new Map(costCenterOptions.map(option => [option.value, option.label]));
+    return selectedCostCenterList.map(value => labelMap.get(value) || value);
+  }, [costCenterOptions, selectedCostCenterList]);
+  const selectedVoucherType = useMemo(
+    () => REPORT_VOUCHER_TYPES.find(option => option.value === reportFilters.voucherType) || REPORT_VOUCHER_TYPES[0],
+    [reportFilters.voucherType]
+  );
+  const selectedServiceOption = useMemo(
+    () => SERVICE_REPORT_OPTIONS.find(option => option.value === reportFilters.service),
+    [reportFilters.service]
+  );
+  const logReportAction = useCallback(
+    (action: string, level: ReportLogLevel = 'info', context?: string) => {
+      setReportLogEntries(prev => {
+        const entry: ReportLogEntry = {
+          id: `fo-log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          timestamp: new Date().toLocaleString(),
+          level,
+          action,
+          context
+        };
+        const next = [entry, ...prev];
+        return next.slice(0, 10);
+      });
+    },
+    []
+  );
+  const updateReportFilter = useCallback((key: keyof ReportFiltersState, value: string) => {
+    setReportFilters(prev => ({ ...prev, [key]: value }));
+  }, []);
+  const handleReportSelection = useCallback(
+    (reportKey: string, label: string) => {
+      setSelectedReportKey(reportKey);
+      logReportAction(`Switched to ${label}`, 'info', 'Report focus updated');
+      trackEvent('Analytics.FiltersUpdated', { scope: 'front-office', reportKey });
+    },
+    [logReportAction]
+  );
+  const handleCostCenterToggle = useCallback(
+    (value: string, label: string) => {
+      setSelectedCostCenters(prev => {
+        const next = new Set(prev);
+        if (next.has(value)) {
+          next.delete(value);
+          logReportAction(`Removed ${label}`, 'warning', 'Cost centre filter updated');
+        } else {
+          next.add(value);
+          logReportAction(`Added ${label}`, 'info', 'Cost centre filter updated');
+        }
+        return next;
+      });
+    },
+    [logReportAction]
+  );
+  const handleReportAction = useCallback(
+    (mode: 'preview' | 'export' | 'schedule') => {
+      if (!selectedReport) return;
+      const context = `${reportFilters.fromDate} → ${reportFilters.toDate}`;
+      const analyticsEventType =
+        mode === 'preview' ? 'Report.Opened' : mode === 'export' ? 'Analytics.Exported' : 'Report.Scheduled';
+      trackEvent(analyticsEventType, {
+        scope: 'front-office',
+        mode,
+        reportKey: selectedReport.key,
+        filters: reportFilters,
+        costCenters: selectedCostCenterList
+      });
+      const actionLabel =
+        mode === 'preview' ? 'Preview generated' : mode === 'export' ? 'Export prepared' : 'Schedule configured';
+      logReportAction(`${actionLabel} for ${selectedReport.label}`, 'success', context);
+    },
+    [selectedReport, reportFilters, selectedCostCenterList, logReportAction]
+  );
 
   const settings = useSettingsStore();
 
@@ -313,6 +803,300 @@ export default function FrontOfficeOperationsDashboard() {
     </div>
   );
 
+  const renderReports = () => (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Card className="lg:col-span-1 border border-gray-200 h-full">
+          <CardHeader className="flex flex-col gap-1">
+            <h4 className="font-semibold text-ghana-black flex items-center gap-2">
+              <span>{selectedReportCategory?.icon || '📁'}</span>
+              Report Explorer
+            </h4>
+            <p className="text-xs text-gray-500">
+              Mirrors the legacy Front Office console with all room & service reports.
+            </p>
+          </CardHeader>
+          <CardBody className="space-y-4">
+            <Input
+              label="Search reports"
+              placeholder="Tariff, DayBook, Service..."
+              value={reportSearch}
+              onValueChange={setReportSearch}
+            />
+            <Divider />
+            {filteredReportCatalog.length > 0 ? (
+              <Accordion
+                selectionMode="multiple"
+                defaultExpandedKeys={filteredReportCatalog.map(category => category.key)}
+                className="w-full"
+              >
+                {filteredReportCatalog.map(category => (
+                  <AccordionItem
+                    key={category.key}
+                    aria-label={category.label}
+                    title={
+                      <span className="flex items-center gap-2 text-ghana-black font-semibold">
+                        <span>{category.icon}</span>
+                        {category.label}
+                      </span>
+                    }
+                    subtitle={category.description}
+                  >
+                    <div className="space-y-2">
+                      {category.reports.map(report => (
+                        <button
+                          key={report.key}
+                          onClick={() => handleReportSelection(report.key, report.label)}
+                          className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${
+                            selectedReport?.key === report.key
+                              ? 'border-ghana-gold bg-ghana-gold/5 text-ghana-black shadow-sm'
+                              : 'border-gray-200 hover:border-ghana-gold/60'
+                          }`}
+                        >
+                          <p className="text-sm font-semibold">{report.label}</p>
+                          <p className="text-xs text-gray-500">{report.description}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            ) : (
+              <div className="text-sm text-gray-500">
+                No reports match this keyword — try another search.
+              </div>
+            )}
+          </CardBody>
+        </Card>
+        <div className="lg:col-span-2 space-y-6">
+          <Card className="border border-gray-200">
+            <CardHeader>
+              <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="text-xs uppercase text-gray-400 tracking-wide">
+                    {selectedReportCategory?.label || 'Select a report'}
+                  </p>
+                  <h4 className="text-lg font-semibold text-ghana-black">
+                    {selectedReport?.label || 'Choose a report to configure'}
+                  </h4>
+                  <p className="text-sm text-gray-500">{selectedReport?.description}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Chip size="sm" variant="flat" color="primary">
+                    Voucher: {selectedVoucherType?.label}
+                  </Chip>
+                  <Chip size="sm" variant="flat" color="success">
+                    Date: {reportFilters.fromDate} → {reportFilters.toDate}
+                  </Chip>
+                </div>
+              </div>
+            </CardHeader>
+            <CardBody className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {selectedReport?.filters?.voucherType && (
+                  <Select
+                    label="Voucher Type"
+                    selectedKeys={[reportFilters.voucherType] as any}
+                    onSelectionChange={keys => {
+                      const value = Array.from(keys)[0]?.toString() || 'all';
+                      updateReportFilter('voucherType', value);
+                    }}
+                  >
+                    {REPORT_VOUCHER_TYPES.map(option => (
+                      <SelectItem key={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </Select>
+                )}
+                {selectedReport?.filters?.user && (
+                  <Input
+                    label="User / Agent"
+                    placeholder="Front office staff"
+                    value={reportFilters.user}
+                    onValueChange={value => updateReportFilter('user', value)}
+                  />
+                )}
+                {selectedReport?.filters?.room && (
+                  <Input
+                    label="Room / Hall"
+                    placeholder="e.g. 305 or Oforwaa Hall"
+                    value={reportFilters.room}
+                    onValueChange={value => updateReportFilter('room', value)}
+                  />
+                )}
+                {selectedReport?.filters?.service && (
+                  <Select
+                    label="Service / Package"
+                    selectedKeys={reportFilters.service ? [reportFilters.service] as any : []}
+                    onSelectionChange={keys => {
+                      const value = Array.from(keys)[0]?.toString() || '';
+                      updateReportFilter('service', value);
+                    }}
+                  >
+                    {SERVICE_REPORT_OPTIONS.map(option => (
+                      <SelectItem key={option.value}>{option.label}</SelectItem>
+                    ))}
+                  </Select>
+                )}
+                {selectedReport?.filters?.dateRange && (
+                  <>
+                    <Input
+                      type="date"
+                      label="From"
+                      value={reportFilters.fromDate}
+                      onValueChange={value => updateReportFilter('fromDate', value)}
+                    />
+                    <Input
+                      type="date"
+                      label="To"
+                      value={reportFilters.toDate}
+                      onValueChange={value => updateReportFilter('toDate', value)}
+                    />
+                  </>
+                )}
+              </div>
+              {selectedReport?.filters?.costCenters && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <p className="text-sm font-semibold text-gray-600">Cost Centres</p>
+                    <Chip size="sm" variant="flat" color="secondary">
+                      {selectedCostCenterList.length} selected
+                    </Chip>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {costCenterOptions.map(option => (
+                      <Checkbox
+                        key={option.value}
+                        isSelected={selectedCostCenters.has(option.value)}
+                        onValueChange={() => handleCostCenterToggle(option.value, option.label)}
+                      >
+                        {option.label}
+                      </Checkbox>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {selectedReport?.filters?.notes && (
+                <Textarea
+                  label="Narrative / Instructions"
+                  placeholder="Add notes that should appear on the rendered report"
+                  value={reportFilters.notes}
+                  minRows={2}
+                  onValueChange={value => updateReportFilter('notes', value)}
+                />
+              )}
+              <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
+                <Button
+                  color="primary"
+                  variant="solid"
+                  startContent="👁️"
+                  onPress={() => handleReportAction('preview')}
+                >
+                  Show Report
+                </Button>
+                <Button
+                  color="secondary"
+                  variant="flat"
+                  startContent="💾"
+                  onPress={() => handleReportAction('export')}
+                >
+                  Export PDF
+                </Button>
+                <Button
+                  color="success"
+                  variant="flat"
+                  startContent="📧"
+                  onPress={() => handleReportAction('schedule')}
+                >
+                  Schedule Email
+                </Button>
+              </div>
+            </CardBody>
+          </Card>
+          <Card className="border border-gray-200">
+            <CardHeader>
+              <div>
+                <h4 className="font-semibold text-ghana-black">Report Snapshot</h4>
+                <p className="text-sm text-gray-500">Quick view of metric focus, filters, and distribution.</p>
+              </div>
+            </CardHeader>
+            <CardBody className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <p className="text-xs uppercase text-gray-500">Voucher</p>
+                  <p className="text-sm font-semibold text-ghana-black">{selectedVoucherType?.label}</p>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <p className="text-xs uppercase text-gray-500">Date Window</p>
+                  <p className="text-sm font-semibold text-ghana-black">
+                    {reportFilters.fromDate} → {reportFilters.toDate}
+                  </p>
+                </div>
+                <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                  <p className="text-xs uppercase text-gray-500">Service Focus</p>
+                  <p className="text-sm font-semibold text-ghana-black">
+                    {selectedServiceOption?.label || 'Not applicable'}
+                  </p>
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-medium text-gray-600 mb-2">Focus Metrics</p>
+                <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1">
+                  {selectedReport?.metrics?.map(metric => (
+                    <li key={metric}>{metric}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-600 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-ghana-black">User / Room Filters</span>
+                  <Chip size="sm" variant="flat" color="primary">
+                    {reportFilters.user || 'Any'} · {reportFilters.room || 'All rooms'}
+                  </Chip>
+                </div>
+                {selectedReport?.filters?.costCenters && (
+                  <p>Cost Centres: {selectedCostCenterLabels.length > 0 ? selectedCostCenterLabels.join(', ') : 'None'}</p>
+                )}
+                {selectedReport?.filters?.notes && reportFilters.notes && (
+                  <p className="italic text-gray-500">Note: {reportFilters.notes}</p>
+                )}
+              </div>
+            </CardBody>
+          </Card>
+          <Card className="border border-gray-200">
+            <CardHeader>
+              <div className="flex items-center justify-between w-full">
+                <div>
+                  <h4 className="font-semibold text-ghana-black">Report Activity Log</h4>
+                  <p className="text-sm text-gray-500">Every action is traced for accountability.</p>
+                </div>
+                <Chip size="sm" variant="flat" color="secondary">
+                  {reportLogEntries.length} entries
+                </Chip>
+              </div>
+            </CardHeader>
+            <CardBody className="space-y-3">
+              {reportLogEntries.map(entry => (
+                <div key={entry.id} className="border border-gray-100 rounded-lg p-3 bg-white shadow-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <Chip size="sm" variant="flat" color={REPORT_LOG_COLOR[entry.level]}>
+                      {entry.level.toUpperCase()}
+                    </Chip>
+                    <span className="text-xs text-gray-400">{entry.timestamp}</span>
+                  </div>
+                  <p className="text-sm font-semibold text-ghana-black mt-1">{entry.action}</p>
+                  {entry.context && <p className="text-xs text-gray-500 mt-0.5">{entry.context}</p>}
+                </div>
+              ))}
+              {reportLogEntries.length === 0 && (
+                <p className="text-sm text-gray-500">No activity recorded yet.</p>
+              )}
+            </CardBody>
+          </Card>
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
@@ -330,12 +1114,14 @@ export default function FrontOfficeOperationsDashboard() {
         <Tab key="overview" title="Overview" />
         <Tab key="reservations" title="Reservations" />
         <Tab key="room-assignment" title="Room Assignment" />
+        <Tab key="reports" title="Reports & Analytics" />
       </Tabs>
 
       <div className="mt-6">
         {selectedTab === 'overview' && renderOverview()}
         {selectedTab === 'reservations' && renderReservations()}
         {selectedTab === 'room-assignment' && renderRoomAssignment()}
+        {selectedTab === 'reports' && renderReports()}
       </div>
 
       {/* Reservation Modal */}

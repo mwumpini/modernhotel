@@ -115,13 +115,13 @@ const navigationItems: NavItem[] = [
   },
   {
     title: 'Payment Methods',
-    href: '/settings?tab=payment-methods',
+    href: '/?tab=payment-methods',
     icon: CreditCardIcon,
     description: 'Payment options and methods'
   },
   {
     title: 'Tax Management',
-    href: '/settings?tab=tax-management',
+    href: '/?tab=tax-management',
     icon: CalculatorIcon,
     description: 'VAT and tax compliance'
   },
@@ -151,7 +151,7 @@ const navigationItems: NavItem[] = [
   },
   {
     title: 'Settings',
-    href: '/settings',
+    href: '/?tab=overview',
     icon: Cog6ToothIcon,
     description: 'System configuration'
   }

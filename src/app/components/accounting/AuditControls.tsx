@@ -5,7 +5,7 @@ import {
   Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip, Badge, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Tabs, Tab, Textarea, Divider, Spinner, Alert, Progress
+  Tabs, Tab, Textarea, Divider, Spinner, Alert, Progress, Pagination
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { AuditTrail } from '@/app/lib/accounting/models';
@@ -22,6 +22,8 @@ export default function AuditControlsPage() {
   const [filterAction, setFilterAction] = useState<string>('all');
   const [filterTable, setFilterTable] = useState<string>('all');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+  const [page, setPage] = useState(1);
+  const rowsPerPage = 10;
 
   // Filter audit trail
   const filteredAuditTrail = useMemo(() => {
@@ -42,6 +44,14 @@ export default function AuditControlsPage() {
       return matchesSearch && matchesAction && matchesTable && matchesDate;
     });
   }, [auditTrail, searchTerm, filterAction, filterTable, dateRange]);
+
+  // Pagination
+  const paginatedAuditTrail = useMemo(() => {
+    const start = (page - 1) * rowsPerPage;
+    return filteredAuditTrail.slice(start, start + rowsPerPage);
+  }, [filteredAuditTrail, page]);
+
+  const auditTrailPages = Math.ceil(filteredAuditTrail.length / rowsPerPage);
 
   // Get unique actions and tables for filters
   const actions = useMemo(() => {
@@ -193,7 +203,7 @@ export default function AuditControlsPage() {
                     <TableColumn>DETAILS</TableColumn>
                   </TableHeader>
                   <TableBody emptyContent="No audit trail entries found.">
-                    {filteredAuditTrail.map((entry) => (
+                    {paginatedAuditTrail.map((entry) => (
                       <TableRow key={entry.id}>
                         <TableCell>
                           <span className="text-sm">
@@ -247,18 +257,20 @@ export default function AuditControlsPage() {
             <Tab key="controls" title="🛡️ Internal Controls">
               <div className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Internal Controls</h3>
-                <div className="text-center p-8 text-gray-500">
-                  Internal controls management coming soon...
-                </div>
+                <ul className="list-disc pl-6 text-sm text-gray-700 space-y-2">
+                  <li>User actions are logged in the Audit Trail with timestamp and user ID.</li>
+                  <li>Journal postings and voids generate immutable audit entries.</li>
+                  <li>Bank reconciliations and period closes are recorded with user and time.</li>
+                </ul>
               </div>
             </Tab>
 
             <Tab key="compliance" title="📋 Compliance">
               <div className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Compliance Reports</h3>
-                <div className="text-center p-8 text-gray-500">
-                  Compliance reporting coming soon...
-                </div>
+                <Alert color="primary">
+                  For VAT/NHIL/GETFund/COVID-19 and Tourism Levy returns, use the Compliance module under ⚖️ Compliance & Reports. Accounting journal entries integrate via tax GL codes.
+                </Alert>
               </div>
             </Tab>
           </Tabs>

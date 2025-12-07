@@ -22,6 +22,8 @@ import { useRouter } from 'next/navigation';
 import ChartOfAccounts from './accounting/ChartOfAccounts';
 import BankCashReceivables from './accounting/BankCashReceivables';
 import AccountsPayable from './accounting/AccountsPayable';
+import BooksTaxes from './accounting/BooksTaxes';
+import AccountsReceivable from './accounting/AccountsReceivable';
 import InventoryFixedAssets from './accounting/InventoryFixedAssets';
 import FinancialReports from './accounting/FinancialReports';
 import AuditControls from './accounting/AuditControls';
@@ -83,6 +85,16 @@ const InfoIcon = ({ description }: { description: string }) => {
 
 export default function AccountingMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
+  const leanMode = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_LEAN_MODE === 'true') : (process.env.NEXT_PUBLIC_LEAN_MODE === 'true');
+  useEffect(() => {
+    try {
+      const wanted = localStorage.getItem('accounting.tab');
+      if (wanted) {
+        setSelectedTab(wanted);
+        localStorage.removeItem('accounting.tab');
+      }
+    } catch {}
+  }, []);
   
   // Sample accounting data - in real app, this would come from stores
   const totalAssets = 2847500;
@@ -446,33 +458,53 @@ export default function AccountingMainDashboard() {
                   </div>
                 </Tab>
 
+                {!leanMode && (
                 <Tab key="accounts" title="📊 Chart of Accounts">
                   <ChartOfAccounts />
                 </Tab>
+                )}
 
-                <Tab key="banking" title="💰 Bank & Cash">
-                  <BankCashReceivables />
-                </Tab>
+                {!leanMode && (
+                  <Tab key="banking" title="💰 Bank & Cash">
+                    <BankCashReceivables />
+                  </Tab>
+                )}
+
+                {/* Removed focused Sales Invoices and Bills tabs to streamline to A/R and A/P only */}
 
                 <Tab key="receivables" title="📝 Accounts Receivable">
-                  <AccountsPayable />
+                  <div className="p-6">
+                  <AccountsReceivable />
+                  </div>
                 </Tab>
 
                 <Tab key="payables" title="🧾 Accounts Payable">
                   <AccountsPayable />
                 </Tab>
 
+                {!leanMode && (
                 <Tab key="assets" title="📦 Inventory & Assets">
                   <InventoryFixedAssets />
                 </Tab>
+                )}
 
+                {!leanMode && (
                 <Tab key="reports" title="📈 Financial Reports">
                   <FinancialReports />
                 </Tab>
+                )}
 
+                <Tab key="taxes" title="🧮 Taxes">
+                  <div className="p-6">
+                    <BooksTaxes />
+                  </div>
+                </Tab>
+
+                {!leanMode && (
                 <Tab key="audit" title="🔍 Audit Controls">
                   <AuditControls />
                 </Tab>
+                )}
 
                 <Tab key="reconciliation" title="⚖️ Reconciliation">
                   <ViewActivities />

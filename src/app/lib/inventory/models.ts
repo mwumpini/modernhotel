@@ -14,8 +14,8 @@ export interface StockItem {
   minimumStock: number;
   maximumStock: number;
   reorderPoint: number;
-  supplierId: string;
-  supplierName: string;
+  supplierId?: string;
+  supplierName?: string;
   location: string;
   binLocation?: string;
   expiryDate?: Date;
@@ -103,6 +103,36 @@ export interface PurchaseOrderItem {
   unitCost: number;
   totalCost: number;
   receivedQuantity: number;
+  notes?: string;
+}
+
+export interface Requisition {
+  id: string;
+  requisitionNumber: string;
+  requestedBy: string;
+  requestedDate: Date;
+  requestedItems: RequisitionItem[];
+  status: 'pending' | 'approved' | 'rejected' | 'converted-to-po' | 'cancelled';
+  approvedBy?: string;
+  approvedAt?: Date;
+  rejectedBy?: string;
+  rejectedAt?: Date;
+  rejectionReason?: string;
+  convertedToPOId?: string;
+  convertedToPONumber?: string;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface RequisitionItem {
+  id: string;
+  itemId: string;
+  itemCode: string;
+  itemName: string;
+  quantity: number;
+  estimatedPrice: number;
+  totalCost: number;
   notes?: string;
 }
 
@@ -317,4 +347,142 @@ export interface CostAnalysis {
     carryingCostPercentage: number;
     stockoutRate: number;
   };
+}
+
+// Goods Receipt Note (GRN)
+export interface GoodsReceiptNote {
+  id: string;
+  grnNumber: string;
+  poId: string;
+  poNumber: string;
+  supplierId: string;
+  supplierName: string;
+  receiptDate: Date;
+  receivedBy: string;
+  items: GRNItem[];
+  totalItems: number;
+  totalValue: number;
+  status: 'pending' | 'quality-check' | 'approved' | 'rejected' | 'completed';
+  qualityCheckedBy?: string;
+  qualityCheckedAt?: Date;
+  qualityStatus?: 'passed' | 'failed' | 'partial';
+  qualityNotes?: string;
+  approvedBy?: string;
+  approvedAt?: Date;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface GRNItem {
+  id: string;
+  poItemId: string;
+  itemId: string;
+  itemCode: string;
+  itemName: string;
+  orderedQuantity: number;
+  receivedQuantity: number;
+  acceptedQuantity: number;
+  rejectedQuantity: number;
+  unitCost: number;
+  totalValue: number;
+  batchNumber?: string;
+  expiryDate?: Date;
+  qualityStatus: 'pending' | 'passed' | 'failed';
+  qualityNotes?: string;
+  notes?: string;
+}
+
+// Supplier Invoice
+export interface SupplierInvoice {
+  id: string;
+  invoiceNumber: string;
+  supplierId: string;
+  supplierName: string;
+  poId: string;
+  poNumber: string;
+  grnId?: string;
+  grnNumber?: string;
+  invoiceDate: Date;
+  dueDate: Date;
+  items: InvoiceItem[];
+  subtotal: number;
+  taxAmount: number;
+  shippingAmount: number;
+  discountAmount: number;
+  totalAmount: number;
+  currency: string;
+  status: 'pending' | 'matched' | 'approved' | 'rejected' | 'paid' | 'cancelled';
+  matchingStatus: {
+    isQuantityMatched: boolean;
+    isPriceMatched: boolean;
+    isTermsMatched: boolean;
+    discrepancies: string[];
+    matchedBy?: string;
+    matchedAt?: Date;
+  };
+  approvedBy?: string;
+  approvedAt?: Date;
+  rejectedBy?: string;
+  rejectedAt?: Date;
+  rejectionReason?: string;
+  paidBy?: string;
+  paidAt?: Date;
+  paymentMethod?: string;
+  paymentReference?: string;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface InvoiceItem {
+  id: string;
+  poItemId: string;
+  grnItemId?: string;
+  itemId: string;
+  itemCode: string;
+  itemName: string;
+  quantity: number;
+  unitPrice: number;
+  totalPrice: number;
+  notes?: string;
+}
+
+// Quality Check
+export interface QualityCheck {
+  id: string;
+  checkNumber: string;
+  grnId: string;
+  grnNumber: string;
+  poId: string;
+  poNumber: string;
+  supplierId: string;
+  supplierName: string;
+  checkedBy: string;
+  checkedDate: Date;
+  items: QualityCheckItem[];
+  overallStatus: 'pending' | 'passed' | 'failed' | 'partial';
+  passedItems: number;
+  failedItems: number;
+  totalItems: number;
+  notes?: string;
+  approvedBy?: string;
+  approvedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface QualityCheckItem {
+  id: string;
+  grnItemId: string;
+  itemId: string;
+  itemCode: string;
+  itemName: string;
+  receivedQuantity: number;
+  checkedQuantity: number;
+  passedQuantity: number;
+  failedQuantity: number;
+  qualityStatus: 'pending' | 'passed' | 'failed';
+  failureReason?: string;
+  notes?: string;
 }

@@ -385,6 +385,13 @@ export const useMaintenanceStore = create<MaintenanceStore>((set, get) => ({
       actualCost,
       notes: notes || undefined
     });
+    
+    // Record expense to Maintenance cost center
+    try {
+      const { useAccountingStore } = require('../accounting/store');
+      const { recordExpense } = useAccountingStore.getState();
+      recordExpense('MT', actualCost);
+    } catch {}
   },
 
   verifyMaintenanceWork: (requestId, supervisorId, supervisorName) => {

@@ -22,6 +22,7 @@ interface StockStore {
   updateStockLevel: (itemId: string, quantity: number, operation: 'add' | 'remove' | 'set') => void;
   checkReorderPoint: (itemId: string) => boolean;
   getLowStockItems: () => StockItem[];
+  getOutOfStockItems: () => StockItem[];
   getOverstockItems: () => StockItem[];
   getExpiringItems: (daysThreshold: number) => StockItem[];
   
@@ -327,9 +328,21 @@ export const useStockStore = create<StockStore>((set, get) => ({
     return item.currentStock <= item.reorderPoint;
   },
 
-  getLowStockItems: () => get().stockItems.filter(item => item.currentStock <= item.reorderPoint),
+  getLowStockItems: () => get().stockItems.filter(item => 
+    item.isActive && 
+    item.currentStock > 0 && 
+    item.currentStock <= item.reorderPoint
+  ),
 
-  getOverstockItems: () => get().stockItems.filter(item => item.currentStock > item.maximumStock * 0.8),
+  getOutOfStockItems: () => get().stockItems.filter(item => 
+    item.isActive && 
+    (item.currentStock === 0 || item.currentStock < item.minimumStock)
+  ),
+
+  getOverstockItems: () => get().stockItems.filter(item => 
+    item.isActive && 
+    item.currentStock > item.maximumStock * 0.8
+  ),
 
   getExpiringItems: (daysThreshold) => {
     const thresholdDate = new Date(Date.now() + daysThreshold * 24 * 60 * 60 * 1000);

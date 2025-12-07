@@ -1,12 +1,28 @@
 'use client';
 
+/**
+ * FrontOfficeStore
+ *
+ * Central in-memory state for Front Office domain (reservations, folios, guests, rooms).
+ *
+ * Design:
+ * - UI reads via instance fields and subscribes using store.subscribe.
+ * - Heavy domain logic (folios, API, seeding, invoices) is delegated to helpers
+ *   in ./helpers to keep this file short and maintainable.
+ * - All mutations call notify() so subscribed dashboards/components react.
+ */
+
 import { Reservation, GuestProfile, RoomType, RoomEntity, RatePlan, Folio, FolioPayment, BillingPerson, StayReason } from './types';
 import { trackEvent } from '../analytics/trackEvent';
 import { logAudit } from '../analytics/auditLogStore';
 import { postRoomRevenue, postPayment } from '../accounting/journal';
+import * as folioHelpers from './helpers/folio';
 import { housekeepingStore } from '../housekeeping/store';
 import { useSettingsStore } from '../settings/store';
 import { useAccountingStore } from '../accounting/store';
+import * as apiHelpers from './helpers/api';
+import * as seedHelpers from './helpers/seed';
+import * as invoiceHelpers from './helpers/invoice';
 
 class FrontOfficeStore {
   reservations: Reservation[] = [];
@@ -166,181 +182,7 @@ class FrontOfficeStore {
   }
 
   // Initialize sample reservations for testing
-  private initializeSampleReservations() {
-    const today = new Date();
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dayAfter = new Date(today);
-    dayAfter.setDate(dayAfter.getDate() + 2);
-    const threeDaysLater = new Date(today);
-    threeDaysLater.setDate(threeDaysLater.getDate() + 3);
-
-    // Sample reservations for testing
-    this.reservations = [
-      {
-        id: 'R-001',
-        resId: 'RES-001',
-        guestId: 'guest-001',
-        guestName: 'John Mensah',
-        guestPhone: '+233 24 123 4567',
-        guestEmail: 'john.mensah@email.com',
-        roomTypeId: 'rt-standard',
-        roomId: '101',
-        arrival: today.toISOString().split('T')[0],
-        departure: tomorrow.toISOString().split('T')[0],
-        status: 'confirmed',
-        source: 'DIRECTINN',
-        adults: 2,
-        children: 0,
-        paymentMethod: 'Cash',
-        remarksToGuest: 'High floor preferred',
-        stayReason: 'leisure',
-        billingPersonName: 'John Mensah',
-        createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
-        updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
-      },
-      {
-        id: 'R-002',
-        resId: 'RES-002',
-        guestId: 'guest-002',
-        guestName: 'Ama Osei',
-        guestPhone: '+233 26 987 6543',
-        guestEmail: 'ama.osei@email.com',
-        roomTypeId: 'rt-deluxe',
-        roomId: '201',
-        arrival: today.toISOString().split('T')[0],
-        departure: dayAfter.toISOString().split('T')[0],
-        status: 'checked-in',
-        source: 'BOOKING.COM',
-        adults: 1,
-        children: 1,
-        paymentMethod: 'Credit Card',
-        remarksToGuest: 'Extra bed needed',
-        stayReason: 'business',
-        billingPersonName: 'Ama Osei',
-        createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-        updatedAt: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
-      },
-      {
-        id: 'R-003',
-        resId: 'RES-003',
-        guestId: 'guest-003',
-        guestName: 'Kwame Asante',
-        guestPhone: '+233 20 555 1234',
-        guestEmail: 'kwame.asante@email.com',
-        roomTypeId: 'rt-suite',
-        roomId: '301',
-        arrival: tomorrow.toISOString().split('T')[0],
-        departure: threeDaysLater.toISOString().split('T')[0],
-        status: 'confirmed',
-        source: 'WALK IN',
-        adults: 2,
-        children: 2,
-        paymentMethod: 'Bank Transfer',
-        remarksToGuest: 'Anniversary celebration',
-        stayReason: 'leisure',
-        billingPersonName: 'Kwame Asante',
-        createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-        updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString()
-      }
-    ];
-
-    // --- Seed demo check-outs scenarios (appear in Check-outs table) ---
-    const twoDaysAgo = new Date(today); twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
-    const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
-
-    const seedReservations: Reservation[] = [
-      // 1) Fully paid guest
-      {
-        id: 'R-004',
-        resId: 'RES-004',
-        guestId: 'guest-demo-004',
-        guestName: 'Kofi Boateng',
-        guestPhone: '+233 20 111 2222',
-        guestEmail: 'kofi.boateng@example.com',
-        roomTypeId: 'rt-standard',
-        roomId: '102',
-        arrival: twoDaysAgo.toISOString().split('T')[0],
-        departure: today.toISOString().split('T')[0],
-        status: 'checked-in',
-        source: 'DIRECTINN',
-        adults: 1,
-        children: 0,
-        paymentMethod: 'Card',
-        remarksToGuest: 'Near elevator',
-        stayReason: 'leisure',
-        billingPersonName: 'Self',
-        createdAt: twoDaysAgo.toISOString(),
-        updatedAt: new Date().toISOString()
-      },
-      // 2) Corporate credit billed (fully settled by corporate account)
-      {
-        id: 'R-005',
-        resId: 'RES-005',
-        guestId: 'guest-demo-005',
-        guestName: 'Abena Serwaa',
-        guestPhone: '+233 24 333 4444',
-        guestEmail: 'abena.serwaa@example.com',
-        roomTypeId: 'rt-deluxe',
-        roomId: '202',
-        arrival: yesterday.toISOString().split('T')[0],
-        departure: today.toISOString().split('T')[0],
-        status: 'checked-in',
-        source: 'BOOKING.COM',
-        adults: 1,
-        children: 0,
-        paymentMethod: 'Corporate Account',
-        remarksToGuest: 'Corporate stay',
-        stayReason: 'business',
-        billingPersonName: 'Ghana Telecom Ltd',
-        createdAt: yesterday.toISOString(),
-        updatedAt: new Date().toISOString()
-      },
-      // 3) Part payment (outstanding balance)
-      {
-        id: 'R-006',
-        resId: 'RES-006',
-        guestId: 'guest-demo-006',
-        guestName: 'Yaw Owusu',
-        guestPhone: '+233 27 555 6666',
-        guestEmail: 'yaw.owusu@example.com',
-        roomTypeId: 'rt-standard',
-        roomId: '103',
-        arrival: twoDaysAgo.toISOString().split('T')[0],
-        departure: today.toISOString().split('T')[0],
-        status: 'checked-in',
-        source: 'WALK IN',
-        adults: 2,
-        children: 0,
-        paymentMethod: 'Cash',
-        remarksToGuest: 'Late checkout if possible',
-        stayReason: 'leisure',
-        billingPersonName: 'Self',
-        createdAt: twoDaysAgo.toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-    ];
-
-    this.reservations = [...this.reservations, ...seedReservations];
-
-    // Seed folio activity for the demo reservations so financials show up
-    const seedFolio = (reservationId: string, charges: number[], payments: Array<{ method: 'Cash'|'Card'|'Mobile Money'|'Corporate Account'|'Bank Transfer'|'Check'|'Credit'; amount?: number }>) => {
-      charges.forEach(amount => this.addCharge(reservationId, 'Room Charge', amount));
-      const f = this.getOrCreateFolio(reservationId);
-      this.updateFolioBalances(f);
-      payments.forEach(p => {
-        const val = typeof p.amount === 'number' ? p.amount : (this.getOrCreateFolio(reservationId).balance || 0);
-        if (val > 0) this.addPayment(reservationId, p.method, val);
-      });
-    };
-
-    // Fully paid ~ ₵900 (incl. taxes/services), pay by Card
-    seedFolio('R-004', [600, 150, 100], [ { method: 'Card' } ]);
-    // Corporate billed ~ ₵1200, paid by Corporate Account
-    seedFolio('R-005', [800, 250], [ { method: 'Corporate Account' } ]);
-    // Part payment: charges ~ ₵1500, paid ₵700 cash
-    seedFolio('R-006', [1000, 300, 100], [ { method: 'Cash', amount: 700 } ]);
-  }
+  private initializeSampleReservations() { seedHelpers.initializeSampleReservations(this as any); const seedFolio = (reservationId: string, charges: number[], payments: Array<{ method: 'Cash'|'Card'|'Mobile Money'|'Corporate Account'|'Bank Transfer'|'Check'|'Credit'; amount?: number }>) => { charges.forEach(amount => this.addCharge(reservationId, 'Room Charge', amount)); const f = this.getOrCreateFolio(reservationId); this.updateFolioBalances(f); payments.forEach(p => { const val = typeof p.amount === 'number' ? p.amount : (this.getOrCreateFolio(reservationId).balance || 0); if (val > 0) this.addPayment(reservationId, p.method, val); }); }; seedFolio('R-004', [600, 150, 100], [ { method: 'Card' } ]); seedFolio('R-005', [800, 250], [ { method: 'Corporate Account' } ]); seedFolio('R-006', [1000, 300, 100], [ { method: 'Cash', amount: 700 } ]); }
 
   subscribe(l: () => void) { this.listeners.push(l); return () => { this.listeners = this.listeners.filter(x => x !== l); }; }
   notify() {
@@ -376,6 +218,24 @@ class FrontOfficeStore {
     try {
       const settings = useSettingsStore.getState();
       const cfgRooms = settings.roomManagement.rooms || [];
+      // Sync room types and rate plans from settings so FO has authoritative data
+      const cfgRoomTypes = settings.roomManagement.roomTypes || [];
+      const cfgRatePlans = settings.roomManagement.ratePlans || [];
+      this.roomTypes = cfgRoomTypes.map(rt => ({ id: rt.id, name: rt.name, baseRate: rt.baseRate }));
+      this.ratePlans = cfgRatePlans.map(rp => ({
+        id: rp.id,
+        name: rp.name,
+        roomTypeId: rp.roomTypeId,
+        basePrice: rp.basePrice,
+        price: rp.basePrice,
+        isActive: rp.isActive,
+        marketSegment: rp.marketSegment,
+        rateType: rp.rateType as any,
+        eventSpecific: rp.eventSpecific,
+        restrictions: rp.restrictions,
+        seasonalRates: rp.seasonalRates,
+        dayOfWeekRates: rp.dayOfWeekRates
+      }));
       const mapped = cfgRooms.map(r => ({
         id: r.number,
         roomTypeId: r.typeId,
@@ -384,6 +244,8 @@ class FrontOfficeStore {
       this.rooms = mapped;
       this.notify();
       trackEvent('FO.Rooms.SyncedFromSettings', { count: mapped.length });
+      trackEvent('FO.RatePlans.SyncedFromSettings' as any, { count: this.ratePlans.length });
+      trackEvent('FO.RoomTypes.SyncedFromSettings' as any, { count: this.roomTypes.length });
     } catch (e) {
       console.error('FO: Failed to sync rooms from settings', e);
     }
@@ -401,91 +263,10 @@ class FrontOfficeStore {
   }
 
   // Load reservations from API and map to local model
-  async syncReservationsFromApi(tenantSubdomain: string) {
-    try {
-      const res = await fetch('/api/reservations', {
-        headers: { 'x-tenant-subdomain': tenantSubdomain }
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      const mapped: Reservation[] = (data.reservations || []).map((r: any) => ({
-        id: r.id,
-        guestId: r.guestId,
-        guestName: r.guest?.name || 'Guest',
-        roomTypeId: 'rt-standard',
-        ratePlanId: undefined,
-        arrival: new Date(r.checkInDate).toISOString(),
-        departure: new Date(r.checkOutDate).toISOString(),
-        status: (r.status as any) || 'pending',
-        source: r.source || 'Direct',
-        roomId: r.roomId || undefined,
-        adults: r.adults ?? 1,
-        children: r.children ?? 0,
-        isGuaranteed: false,
-        remarksToGuest: undefined,
-        marketCodes: [],
-        internalNotes: undefined,
-        stayReason: 'personal',
-        createdAt: r.createdAt,
-        updatedAt: r.updatedAt
-      }));
-      this.reservations = mapped;
-      this.notify();
-    } catch (e) {
-      console.error('Failed to sync reservations from API', e);
-    }
-  }
+  async syncReservationsFromApi(tenantSubdomain: string) { return apiHelpers.syncReservationsFromApi(this as any, tenantSubdomain); }
 
   // Create reservation via API helpers
-  async createGuestAndReservationViaApi(tenantSubdomain: string, payload: {
-    guestName: string;
-    guestPhone?: string;
-    guestEmail?: string;
-    arrival: string;
-    departure: string;
-    adults?: number;
-    children?: number;
-    source?: string;
-  }) {
-    try {
-      const guestResp = await fetch('/api/guests', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-tenant-subdomain': tenantSubdomain
-        },
-        body: JSON.stringify({
-          name: payload.guestName,
-          phone: payload.guestPhone,
-          email: payload.guestEmail,
-          nationality: 'Ghana'
-        })
-      });
-      if (!guestResp.ok) throw new Error('Failed to create guest');
-      const guest = await guestResp.json();
-
-      const resResp = await fetch('/api/reservations', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-tenant-subdomain': tenantSubdomain
-        },
-        body: JSON.stringify({
-          guestId: guest.id,
-          checkInDate: payload.arrival,
-          checkOutDate: payload.departure,
-          adults: payload.adults ?? 1,
-          children: payload.children ?? 0,
-          status: 'confirmed',
-          source: payload.source || 'Direct'
-        })
-      });
-      if (!resResp.ok) throw new Error('Failed to create reservation');
-      await this.syncReservationsFromApi(tenantSubdomain);
-    } catch (e) {
-      console.error('Failed to create reservation via API', e);
-    }
-  }
+  async createGuestAndReservationViaApi(tenantSubdomain: string, payload: { guestName: string; guestPhone?: string; guestEmail?: string; arrival: string; departure: string; adults?: number; children?: number; source?: string; }) { return apiHelpers.createGuestAndReservationViaApi(this as any, tenantSubdomain, payload); }
 
   createGuest(g: Omit<GuestProfile,'id'|'serialNumber'>) {
     const settings = useSettingsStore.getState();
@@ -675,16 +456,109 @@ class FrontOfficeStore {
   }
 
   updateReservation(res: Reservation) { this.reservations = this.reservations.map(r => r.id === res.id ? { ...res, updatedAt: new Date().toISOString() } : r); this.notify(); trackEvent('FO.Reservation.Updated', { id: res.id }); }
-  cancelReservation(id: string) { this.reservations = this.reservations.map(r => r.id === id ? { ...r, status: 'cancelled', updatedAt: new Date().toISOString() } : r); this.notify(); trackEvent('FO.Reservation.Cancelled', { id }); }
+  cancelReservation(id: string) {
+    const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
+    const policy = settingsState?.roomManagement;
+    this.reservations = this.reservations.map(r => r.id === id ? { ...r, status: 'cancelled', updatedAt: new Date().toISOString() } : r);
+    this.notify();
+    trackEvent('FO.Reservation.Cancelled', { id });
+    try {
+      if (policy?.cancellationPolicyEnabled) {
+        const res = this.reservations.find(r => r.id === id);
+        if (!res) return;
+        // Compute hours before arrival
+        const arrival = new Date(res.arrival);
+        const now = new Date();
+        const diffHrs = (arrival.getTime() - now.getTime()) / 36e5;
+        if (diffHrs < (policy.freeCancellationHours ?? 0)) {
+          // Late cancellation → post penalty according to fee type
+          const folio = this.getOrCreateFolio(id);
+          const nightly = (res.rateBreakdown && res.rateBreakdown[0]?.total) ? res.rateBreakdown[0].total : 0;
+          let penalty = 0;
+          switch (policy.lateCancellationFeeType) {
+            case 'first_night': penalty = nightly; break;
+            case 'percent_reservation': {
+              const remainingTotal = (res.rateBreakdown || []).reduce((s, d) => s + (d.total || 0), 0);
+              penalty = Math.max(0, (policy.lateCancellationFeeValue || 0) / 100 * remainingTotal);
+              break;
+            }
+            case 'flat': penalty = Math.max(0, policy.lateCancellationFeeValue || 0); break;
+            default: penalty = 0;
+          }
+          if (penalty > 0) {
+            this.addFolioCharge(folio.id, { id: `C-${Date.now().toString().slice(-6)}`, description: 'Cancellation Penalty', amount: penalty });
+          }
+        }
+      }
+    } catch {}
+  }
   assignRoom(id: string, roomId: string) { this.reservations = this.reservations.map(r => r.id === id ? { ...r, roomId } : r); this.notify(); }
   checkIn(id: string) {
     const res = this.reservations.find(r => r.id === id);
-    this.reservations = this.reservations.map(r => r.id === id ? { ...r, status: 'checked-in' } : r);
+
+    // Auto-assign a room if none is assigned yet so Check-Ins view reflects immediately
+    let assignedRoomId = (res?.roomId && res.roomId !== 'TBD') ? res.roomId : undefined;
+    const settings = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
+    const shouldAutoAssign = settings?.roomSettings?.autoAssignRooms !== false;
+    try {
+      if (!assignedRoomId && res && shouldAutoAssign) {
+        // Prefer vacant rooms matching the reservation's room type
+        const matchingVacant = housekeepingStore
+          .getRoomsByStatus('vacant')
+          .filter(room => room.roomTypeId === res.roomTypeId);
+        const fallbackVacant = housekeepingStore.getRoomsByStatus('vacant');
+        const candidate = matchingVacant[0] || fallbackVacant[0];
+        if (candidate) assignedRoomId = candidate.roomNumber;
+      }
+    } catch {}
+
+    this.reservations = this.reservations.map(r => 
+      r.id === id 
+        ? { 
+            ...r, 
+            status: 'checked-in', 
+            roomId: assignedRoomId || r.roomId || 'TBD',
+            updatedAt: new Date().toISOString(),
+            ...(assignedRoomId ? { checkInTime: new Date().toISOString() } as any : {})
+          } 
+        : r
+    );
     this.notify();
-    if (res?.roomId) {
-      housekeepingStore.updateRoomStatus(res.roomId, 'occupied', 'FrontDesk', `Guest ${res.guestName} checked in`);
+    // Auto-post nightly room charges to folio based on reservation rate breakdown
+    try {
+      const reservation = this.reservations.find(r => r.id === id);
+      if (reservation) {
+        // Ensure we have a rate breakdown; compute if missing
+        const breakdown = (reservation.rateBreakdown && reservation.rateBreakdown.length > 0)
+          ? reservation.rateBreakdown
+          : this.calculateRateBreakdown(reservation.roomTypeId, reservation.arrival, reservation.departure);
+
+        const folio = this.getOrCreateFolio(reservation.id);
+        const existingDates = new Set((folio.charges || [])
+          .filter(c => (c.description || '').toLowerCase().includes('room'))
+          .map(c => c.date));
+
+        for (const day of breakdown) {
+          if (!existingDates.has(day.date)) {
+            this.addFolioCharge(folio.id, {
+              id: `C-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*1000)}`,
+              date: day.date,
+              description: 'Room Charge',
+              amount: day.total,
+            });
+          }
+        }
+        this.updateFolioBalances(folio);
+      }
+    } catch (e) {
+      console.warn('FO: Failed to auto-post room charges on check-in', e);
     }
-    trackEvent('FO.Reservation.CheckedIn', { id });
+
+    if (assignedRoomId) {
+      try { housekeepingStore.updateRoomStatus(assignedRoomId, 'occupied', 'FrontDesk', `Guest ${res?.guestName || ''} checked in`); } catch {}
+    }
+
+    trackEvent('FO.Reservation.CheckedIn', { id, autoAssignedRoom: !!assignedRoomId, autoAssignEnabled: shouldAutoAssign });
     try {
       const checkInEventId = `EVT-CI-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*100)}`;
       logAudit({
@@ -693,12 +567,43 @@ class FrontOfficeStore {
         entity: 'Reservation',
         entityId: id,
         details: 'Reservation checked in',
-        meta: { eventId: checkInEventId, eventType: 'check-in' }
+        meta: { eventId: checkInEventId, eventType: 'check-in', autoAssignedRoom: assignedRoomId }
       });
     } catch {}
   }
   checkOut(id: string) {
     const res = this.reservations.find(r => r.id === id);
+    // Early checkout handling: remove future room charges if policy is enabled
+    try {
+      const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
+      const policyEnabled = !!settingsState?.roomManagement?.earlyCheckoutPolicyEnabled;
+      if (policyEnabled && res) {
+        const folio = this.getOrCreateFolio(id);
+        const today = new Date();
+        const todayISO = today.toISOString().slice(0,10);
+        // Keep charges up to yesterday (or today if posted earlier), drop any future-dated room charges
+        const kept: any[] = [];
+        const removed: any[] = [];
+        for (const ch of folio.charges) {
+          const isRoom = (ch.description || '').toLowerCase().includes('room');
+          const dateOnly = (ch.date || '').slice(0,10);
+          if (isRoom) {
+            if (dateOnly && dateOnly > todayISO) {
+              removed.push(ch);
+              continue;
+            }
+          }
+          kept.push(ch);
+        }
+        if (removed.length > 0) {
+          folio.charges = kept;
+          this.updateFolioBalances(folio);
+          try { trackEvent('FO.Folio.RoomChargesRemovedEarlyCheckout' as any, { reservationId: id, removed: removed.length }); } catch {}
+          try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: id, details: `Removed ${removed.length} future room charge(s) due to early checkout`, severity: 'medium' }); } catch {}
+        }
+      }
+    } catch {}
+
     this.reservations = this.reservations.map(r => r.id === id ? { ...r, status: 'checked-out' } : r);
     this.notify();
     if (res?.roomId) {
@@ -723,51 +628,16 @@ class FrontOfficeStore {
   }
 
   // Folio helpers
-  getOrCreateFolio(reservationId: string): Folio {
-    let f = this.folios.find(x => x.reservationId === reservationId);
-    if (!f) {
-      f = { 
-        id: `F-${Date.now().toString().slice(-6)}`, 
-        reservationId, 
-        charges: [], 
-        payments: [], 
-        currency: 'GHS',
-        status: 'active'
-      };
-      this.folios.unshift(f); 
-      this.updateFolioBalances(f);
-      this.notify();
-    }
-    return f;
-  }
+  getOrCreateFolio(reservationId: string): Folio { return folioHelpers.getOrCreateFolio(this as any, reservationId); }
 
-  updateFolioBalances(folio: Folio) {
-    const totalCharges = folio.charges.reduce((sum, charge) => sum + charge.amount + (charge.tax || 0), 0);
-    const totalPayments = folio.payments
-      .filter(p => p.status === 'completed')
-      .reduce((sum, payment) => sum + payment.amount, 0);
-    const balance = totalCharges - totalPayments;
-    
-    folio.totalCharges = totalCharges;
-    folio.totalPayments = totalPayments;
-    folio.balance = Math.max(0, balance);
-    
-    // Update guest credit balance if credit was applied
-    const creditUsed = folio.payments
-      .filter(p => p.method === 'Credit' && p.status === 'completed')
-      .reduce((sum, payment) => sum + (payment.creditApplied || 0), 0);
-    
-    if (creditUsed > 0) {
-      const reservation = this.reservations.find(r => r.id === folio.reservationId);
-      if (reservation) {
-        const guest = this.guests.find(g => g.id === reservation.guestId);
-        if (guest) {
-          guest.creditBalance = (guest.creditBalance || 0) - creditUsed;
-          guest.lastCreditUpdate = new Date().toISOString();
-        }
-      }
-    }
-  }
+  getFolioById(folioId: string): Folio | undefined { return folioHelpers.getFolioById(this as any, folioId); }
+
+  updateFolioBalances(folio: Folio) { folioHelpers.updateFolioBalances(this as any, folio); }
+
+  addFolioCharge(folioId: string, charge: { id: string; description: string; amount: number; date?: string; tax?: number; category?: string; reference?: string }) { folioHelpers.addFolioCharge(this as any, folioId, charge); }
+
+  // Best practice: close folio hands off to Accounts (auto-post invoice)
+  closeFolio(reservationId: string, options?: { postInvoice?: boolean }) { return folioHelpers.closeFolio(this as any, reservationId, options); }
 
   // Maintenance flow
   reportMaintenance(roomId: string, category: 'plumbing'|'electrical'|'hvac'|'furniture'|'appliances'|'structural'|'other', description: string) {
@@ -776,170 +646,22 @@ class FrontOfficeStore {
   }
 
   // --- Folio advanced operations ---
-  transferCharge(fromReservationId: string, chargeId: string, toReservationId: string, note?: string) {
-    const fromFolio = this.getOrCreateFolio(fromReservationId);
-    const toFolio = this.getOrCreateFolio(toReservationId);
-    const idx = fromFolio.charges.findIndex(c => c.id === chargeId);
-    if (idx === -1) return false;
-    const charge = fromFolio.charges[idx];
-    // Remove and push to target
-    fromFolio.charges.splice(idx, 1);
-    toFolio.charges.push({ ...charge, id: `C-${Date.now().toString().slice(-6)}`, description: `${charge.description} (Transferred${note ? `: ${note}` : ''})` });
-    this.updateFolioBalances(fromFolio);
-    this.updateFolioBalances(toFolio);
-    this.notify();
-    trackEvent('FO.Folio.ChargeTransferred', { fromReservationId, toReservationId, amount: charge.amount });
-    try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: fromReservationId, details: `Transferred charge ${chargeId} to ${toReservationId}`, severity: 'medium' }); } catch {}
-    return true;
-  }
+  transferCharge(fromReservationId: string, chargeId: string, toReservationId: string, note?: string) { return folioHelpers.transferCharge(this as any, fromReservationId, chargeId, toReservationId, note); }
 
-  splitCharge(reservationId: string, chargeId: string, targetReservationId: string, amountToMove: number, note?: string) {
-    const source = this.getOrCreateFolio(reservationId);
-    const idx = source.charges.findIndex(c => c.id === chargeId);
-    if (idx === -1) return false;
-    const charge = source.charges[idx];
-    const move = Math.max(0, Math.min(amountToMove, charge.amount));
-    if (move === 0) return false;
-    const tax = charge.tax || 0;
-    const taxMove = tax * (move / (charge.amount || 1));
-    // Reduce original
-    source.charges[idx] = { ...charge, amount: charge.amount - move, tax: Math.max(0, tax - taxMove) } as any;
-    // Add to target
-    const target = this.getOrCreateFolio(targetReservationId);
-    target.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description: `${charge.description} (Split${note ? `: ${note}` : ''})`, amount: move, tax: taxMove });
-    this.updateFolioBalances(source);
-    this.updateFolioBalances(target);
-    this.notify();
-    trackEvent('FO.Folio.ChargeSplit', { reservationId, targetReservationId, move });
-    try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: reservationId, details: `Split charge ${chargeId}, moved ₵${move} to ${targetReservationId}`, severity: 'medium' }); } catch {}
-    return true;
-  }
+  splitCharge(reservationId: string, chargeId: string, targetReservationId: string, amountToMove: number, note?: string) { return folioHelpers.splitCharge(this as any, reservationId, chargeId, targetReservationId, amountToMove, note); }
 
-  voidCharge(reservationId: string, chargeId: string, reason: string) {
-    const folio = this.getOrCreateFolio(reservationId);
-    const ch = folio.charges.find(c => c.id === chargeId);
-    if (!ch) return false;
-    // Add reversal entry; keep original intact for audit
-    folio.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description: `VOID ${ch.description} - ${reason}`, amount: -Math.abs(ch.amount), tax: -(ch.tax || 0) });
-    this.updateFolioBalances(folio);
-    this.notify();
-    trackEvent('FO.Folio.ChargeVoided', { reservationId, amount: ch.amount });
-    try { logAudit({ area: 'frontdesk', action: 'void', entity: 'Folio', entityId: reservationId, details: `Voided charge ${chargeId}: ${reason}`, severity: 'high' }); } catch {}
-    return true;
-  }
+  voidCharge(reservationId: string, chargeId: string, reason: string) { return folioHelpers.voidCharge(this as any, reservationId, chargeId, reason); }
 
-  refundPayment(reservationId: string, paymentId: string, amount: number, reason?: string) {
-    const folio = this.getOrCreateFolio(reservationId);
-    const payment = folio.payments.find(p => p.id === paymentId);
-    if (!payment) return false;
-    const val = Math.min(amount || payment.amount, payment.amount);
-    // Record refund as negative payment and a matching negative charge for revenue reversal
-    folio.payments.push({ id: `P-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), method: payment.method, amount: -Math.abs(val), status: 'completed', notes: `Refund: ${reason || ''}` } as any);
-    folio.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description: `Refund issued${reason ? ` - ${reason}` : ''}`, amount: -Math.abs(val), tax: 0 });
-    this.updateFolioBalances(folio);
-    this.notify();
-    trackEvent('FO.Folio.PaymentRefunded', { reservationId, amount: val });
-    try { logAudit({ area: 'frontdesk', action: 'refund', entity: 'Folio', entityId: reservationId, details: `Refunded ₵${val}: ${reason || ''}`, severity: 'high' }); } catch {}
-    return true;
-  }
+  refundPayment(reservationId: string, paymentId: string, amount: number, reason?: string) { return folioHelpers.refundPayment(this as any, reservationId, paymentId, amount, reason); }
 
   // Allocate a single corporate/company receipt across multiple reservations' folios
-  postCorporateReceipt(payer: string, reservationIds: string[], totalAmount: number, reference?: string) {
-    let remaining = totalAmount || 0;
-    const allocations: Array<{ reservationId: string; applied: number }> = [];
-    // Order by highest balance first to clear largest balances, typical practice; adjust as needed
-    const ordered = [...reservationIds]
-      .map(id => ({ id, bal: (this.getOrCreateFolio(id).balance || 0) }))
-      .sort((a, b) => b.bal - a.bal)
-      .map(x => x.id);
+  postCorporateReceipt(payer: string, reservationIds: string[], totalAmount: number, reference?: string) { return folioHelpers.postCorporateReceipt(this as any, payer, reservationIds, totalAmount, reference); }
 
-    for (const id of ordered) {
-      if (remaining <= 0) break;
-      const folio = this.getOrCreateFolio(id);
-      this.updateFolioBalances(folio);
-      const bal = Math.max(0, folio.balance || 0);
-      if (bal <= 0) continue;
-      const apply = Math.min(remaining, bal);
-      if (apply > 0) {
-        this.addPayment(id, 'Corporate Account', apply, {
-          notes: `Corporate receipt from ${payer}${reference ? ` (${reference})` : ''}`,
-          processedBy: 'Front Desk',
-          ref: reference
-        });
-        allocations.push({ reservationId: id, applied: apply });
-        remaining -= apply;
-      }
-    }
+  private getTaxRates() { return folioHelpers.getTaxRates(this as any); }
 
-    this.notify();
-    trackEvent('FO.Folio.CorporateReceiptAllocated', { payer, totalAmount, remaining, allocations: allocations.length });
-    try {
-      logAudit({
-        area: 'frontdesk',
-        action: 'create',
-        entity: 'Payment',
-        entityId: `CORP-${Date.now().toString().slice(-6)}`,
-        details: `Corporate receipt ₵${totalAmount} from ${payer} allocated to ${allocations.length} folios` ,
-        severity: 'medium',
-        meta: { allocations, reference, remaining }
-      });
-    } catch {}
+  addCharge(reservationId: string, description: string, amount: number) { folioHelpers.addCharge(this as any, reservationId, description, amount); }
 
-    return { allocations, remaining };
-  }
-
-  private getTaxRates() {
-    try {
-      if (typeof window === 'undefined' || typeof localStorage === 'undefined') {
-        return { vat: 12.5, nhil: 2.5, levy: 1.0 };
-      }
-      const vat = Number(localStorage.getItem('tax.vat') || '12.5');
-      const nhil = Number(localStorage.getItem('tax.nhil') || '2.5');
-      const levy = Number(localStorage.getItem('tax.tourism') || '1.0');
-      return { vat, nhil, levy };
-    } catch {
-      return { vat: 12.5, nhil: 2.5, levy: 1.0 };
-    }
-  }
-
-  addCharge(reservationId: string, description: string, amount: number) {
-    const f = this.getOrCreateFolio(reservationId);
-    const { vat, nhil, levy } = this.getTaxRates();
-    const tax = amount * (vat + nhil + levy) / 100;
-    f.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description, amount, tax });
-    this.notify();
-    trackEvent('FO.Folio.ChargePosted', { reservationId, description, amount, tax });
-    if (description.toLowerCase().includes('room')) {
-      postRoomRevenue(reservationId, amount, tax);
-    }
-  }
-
-  addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: {
-    invoiceId?: string;
-    creditApplied?: number;
-    notes?: string;
-    processedBy?: string;
-    ref?: string;
-  }) {
-    const f = this.getOrCreateFolio(reservationId);
-    const payment: FolioPayment = {
-      id: `P-${Date.now().toString().slice(-6)}`,
-      date: new Date().toISOString(),
-      method,
-      amount,
-      status: 'completed',
-      processedBy: options?.processedBy || 'Front Desk',
-      ...options
-    };
-    f.payments.push(payment);
-    this.updateFolioBalances(f);
-    this.notify();
-    trackEvent('FO.Folio.PaymentReceived', { reservationId, method, amount, invoiceId: options?.invoiceId });
-    // Map to supported payment methods for accounting
-    const accountingMethod = method === 'Credit' || method === 'Corporate Account' || method === 'Bank Transfer' || method === 'Check' 
-      ? 'Cash' : method;
-    postPayment(reservationId, accountingMethod as 'Cash'|'Card'|'Mobile Money', amount);
-  }
+  addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: { invoiceId?: string; creditApplied?: number; notes?: string; processedBy?: string; ref?: string; }) { folioHelpers.addPayment(this as any, reservationId, method, amount, options); }
 
   // Credit management methods
   addCreditToGuest(guestId: string, amount: number, reason: string, processedBy: string = 'Front Desk') {
@@ -1022,12 +744,34 @@ class FrontOfficeStore {
     const start = new Date(arrival);
     const end = new Date(departure);
     const nightly: { date: string; base: number; total: number }[] = [];
-    const defaultBase = base ?? (this.ratePlans.find(rp => rp.roomTypeId === roomTypeId)?.price || this.roomTypes.find(rt => rt.id === roomTypeId)?.baseRate || 0);
+    // Prefer default rate plan from settings if available (treated as gross per-night)
+    const settings = useSettingsStore.getState();
+    const defaultRpId = (settings.roomManagement.defaultRatePlanByRoomType || {})[roomTypeId];
+    const defaultRp = defaultRpId ? this.ratePlans.find(rp => rp.id === defaultRpId) : undefined;
+    // Determine nightly gross base: plan.basePrice (gross) if available; otherwise convert roomType baseRate (net) to gross
+    // Compute gross factor from layered settings (fallback to approx if not available)
+    const layeredRates = (() => {
+      try { return (this as any).getTaxRates(); } catch { return { vat: 12.5, nhil: 2.5, getfund: 0, covid: 0, levy: 1.0 }; }
+    })();
+    const subtotalFor1 = 1;
+    const levies = subtotalFor1 * (Number(layeredRates.nhil || 0) / 100)
+      + subtotalFor1 * (Number(layeredRates.getfund || 0) / 100)
+      + subtotalFor1 * (Number(layeredRates.covid || 0) / 100);
+    const vatOnLevied = (subtotalFor1 + levies) * (Number(layeredRates.vat || 0) / 100);
+    const tourism = subtotalFor1 * (Number(layeredRates.levy || 0) / 100);
+    const GHANA_GROSS_FACTOR = 1 + levies + vatOnLevied + tourism;
+    const roomTypeBase = this.roomTypes.find(rt => rt.id === roomTypeId)?.baseRate || 0;
+    const defaultBaseGross = (() => {
+      if (typeof base === 'number' && !isNaN(base)) return base;
+      if (defaultRp && typeof (defaultRp.basePrice ?? defaultRp.price) === 'number') return (defaultRp.basePrice ?? defaultRp.price) as number;
+      const anyPlan = this.ratePlans.find(rp => rp.roomTypeId === roomTypeId);
+      if (anyPlan && typeof (anyPlan.basePrice ?? anyPlan.price) === 'number') return (anyPlan.basePrice ?? anyPlan.price) as number;
+      return roomTypeBase * GHANA_GROSS_FACTOR;
+    })();
     for (const d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const dow = d.getDay(); // 0 Sun..6 Sat
-      const isWeekend = dow === 5 || dow === 6; // Fri/Sat
-      const rate = isWeekend ? defaultBase * 1.07 : defaultBase; // +7% weekend bump
-      nightly.push({ date: d.toISOString().slice(0,10), base: Math.round(rate), total: Math.round(rate) });
+      const rate = defaultBaseGross; // use layered gross from settings
+      const val = parseFloat(rate.toFixed(2));
+      nightly.push({ date: d.toISOString().slice(0,10), base: val, total: val });
     }
     return nightly;
   }
@@ -1234,11 +978,69 @@ class FrontOfficeStore {
   processCheckout(reservationId: string, checkoutNotes?: string) {
     const reservation = this.reservations.find(r => r.id === reservationId);
     if (reservation) {
+      // Enforce corporate billing requirements: if company will pay later, require references
+      // Pay-later policy from Settings (both | corporate | individual). Default 'both'
+      const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
+      const policy = settingsState?.roomManagement?.payLaterPolicy || 'both';
+      const requireCorporateReference = !!settingsState?.roomManagement?.requireCorporateReference;
+      const isCorporate = !!(reservation.companyName || reservation.billingPersonName);
+      const payLaterAllowed = (policy === 'both') || (policy === 'corporate' && isCorporate) || (policy === 'individual' && !isCorporate);
+      if (isCorporate && payLaterAllowed && requireCorporateReference) {
+        const hasReference = Boolean((reservation as any).projectCode || (reservation as any).costCenter || (reservation as any).poNumber);
+        if (!hasReference) {
+          console.warn('FO: Corporate checkout blocked - missing PO/Project Code/Cost Center');
+          try {
+            logAudit({
+              area: 'frontdesk',
+              action: 'other',
+              entity: 'Reservation',
+              entityId: reservationId,
+              details: 'Corporate checkout blocked: missing billing reference (PO/Project Code/Cost Center)',
+              severity: 'medium'
+            });
+          } catch {}
+          trackEvent('FO.Checkout.Blocked.Corporate' as any, { reservationId, reason: 'missing_billing_reference' });
+          // Do not change status; return null to signal failure to caller
+          return null;
+        }
+      }
+
+      // Apply late checkout fee if applicable
+      try {
+        const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
+        const rm = settingsState?.roomManagement;
+        if (rm?.lateCheckoutFeeEnabled) {
+          const outHour = new Date().getHours();
+          const stdHour = Number(rm.standardCheckOutHour ?? 11);
+          const grace = Number(rm.lateCheckoutGraceMinutes ?? 0);
+          const crossed = outHour > stdHour || (outHour === stdHour && new Date().getMinutes() > grace);
+          if (crossed) {
+            const folio = this.getOrCreateFolio(reservationId);
+            const nightly = (reservation.rateBreakdown && reservation.rateBreakdown[0]?.total) ? reservation.rateBreakdown[0].total : 0;
+            let fee = 0;
+            if ((rm.lateCheckoutFeeType || 'flat') === 'percent_of_nightly') {
+              fee = Math.max(0, (rm.lateCheckoutFeeValue || 0) / 100 * nightly);
+            } else {
+              fee = Math.max(0, rm.lateCheckoutFeeValue || 0);
+            }
+            if (fee > 0) this.addFolioCharge(folio.id, { id: `C-${Date.now().toString().slice(-6)}`, description: 'Late Checkout Fee', amount: fee });
+          }
+        }
+      } catch {}
+
       reservation.status = 'checked-out';
       reservation.updatedAt = new Date().toISOString();
       (reservation as any).checkOutTime = new Date().toISOString();
       (reservation as any).checkoutNotes = checkoutNotes;
       
+      // Keep housekeeping in sync (mirror logic from checkOut)
+      try {
+        if (reservation.roomId) {
+          housekeepingStore.updateRoomStatus(reservation.roomId, 'dirty', 'FrontDesk', 'Guest checked out');
+          housekeepingStore.createTask({ roomNumber: reservation.roomId, roomTypeId: reservation.roomTypeId, taskType: 'turnover', priority: 'high', estimatedMinutes: 45, checklist: ['Change linens', 'Clean bathroom', 'Vacuum floor', 'Restock amenities'] });
+        }
+      } catch {}
+
       this.notify();
       
       trackEvent('FO.Reservation.CheckedOut', {
@@ -1267,94 +1069,37 @@ class FrontOfficeStore {
     return null;
   }
 
-  // Generate an accounting invoice from a reservation folio and mark reservation
-  private generateAccountingInvoiceForReservation(reservationId: string) {
-    const reservation = this.reservations.find(r => r.id === reservationId);
-    if (!reservation) return;
-
-    const folio = this.getOrCreateFolio(reservationId);
-    this.updateFolioBalances(folio);
-
-    // Compute financials
-    const subtotal = folio.charges.reduce((sum, c) => sum + c.amount, 0);
-    const taxAmount = folio.charges.reduce((sum, c) => sum + (c.tax || 0), 0);
-    const total = subtotal + taxAmount;
-    const paid = folio.totalPayments || 0;
-    const balance = Math.max(0, (folio.balance ?? (total - paid)));
-
-    // Build invoice lines
-    const lines = folio.charges.map((c, idx) => ({
-      id: `IL-${Date.now().toString().slice(-6)}-${idx}`,
-      invoiceId: 'pending',
-      description: c.description,
-      quantity: 1,
-      unitPrice: c.amount,
-      amount: c.amount,
-      taxAmount: c.tax || 0,
-      glAccountCode: c.description.toLowerCase().includes('room') ? '4100' : '4300'
-    }));
-
-    // Create invoice model
-    const settings = useSettingsStore.getState();
-    const accounting = useAccountingStore.getState();
-    const newId = `A-INV-${Date.now().toString().slice(-6)}`;
-    const invNumber = settings.getNextInvoiceNumber();
-    const dueDate = new Date(Date.now() + (settings.invoiceSettings.defaultPaymentTerms * 24 * 60 * 60 * 1000)).toISOString();
-
-    const invoice = {
-      id: newId,
-      invoiceNumber: invNumber,
-      type: 'Sales' as const,
-      date: new Date().toISOString(),
-      dueDate,
-      businessPartnerId: reservation.guestId || reservation.guestName,
-      reference: reservation.resId || reservation.id,
-      description: `Guest stay folio for ${reservation.guestName}`,
-      subtotal,
-      taxAmount,
-      total,
-      currency: 'GHS',
-      status: balance === 0 ? 'Paid' as const : 'Posted' as const,
-      paidAmount: Math.min(total, paid),
-      paidDate: balance === 0 ? new Date().toISOString() : undefined,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      lines
-    };
-
-    // Assign generated invoiceId to lines and persist
-    invoice.lines = invoice.lines.map(l => ({ ...l, invoiceId: newId }));
-    try { accounting.addInvoice(invoice as any); } catch (e) { console.warn('FO: addInvoice failed', e); }
-
-    // Optionally post matching payments
-    try {
-      (folio.payments || []).forEach(p => {
-        accounting.addPayment({
-          id: `A-PAY-${Date.now().toString().slice(-6)}`,
-          paymentNumber: `PAY-${Date.now().toString().slice(-6)}`,
-          date: p.date,
-          type: 'Receipt',
-          businessPartnerId: reservation.guestId || reservation.guestName,
-          invoiceId: newId,
-          reference: p.ref,
-          description: `Payment for ${invNumber}`,
-          amount: p.amount,
-          currency: 'GHS',
-          paymentMethod: (p.method === 'Card' || p.method === 'Mobile Money') ? (p.method as any) : 'Cash',
-          status: 'Posted',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        } as any);
-      });
-    } catch {}
-
-    // Mark reservation & close folio
-    (reservation as any).invoiceGenerated = true;
-    (reservation as any).invoiceGeneratedDate = new Date().toISOString();
-    (reservation as any).invoiceStatus = balance === 0 ? 'paid' : 'sent';
-    folio.status = 'closed';
+  // Mark No-Show per policy (charges if configured)
+  markNoShow(reservationId: string) {
+    const res = this.reservations.find(r => r.id === reservationId);
+    if (!res) return;
+    const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
+    const rm = settingsState?.roomManagement;
+    this.reservations = this.reservations.map(r => r.id === reservationId ? { ...r, status: 'no-show', updatedAt: new Date().toISOString() } : r);
     this.notify();
+    trackEvent('FO.Reservation.NoShow' as any, { reservationId });
+    try {
+      if (rm?.noShowPolicyEnabled) {
+        const folio = this.getOrCreateFolio(reservationId);
+        const nightly = (res.rateBreakdown && res.rateBreakdown[0]?.total) ? res.rateBreakdown[0].total : 0;
+        let charge = 0;
+        switch (rm.noShowChargeType) {
+          case 'first_night': charge = nightly; break;
+          case 'percent_reservation': {
+            const total = (res.rateBreakdown || []).reduce((s, d) => s + (d.total || 0), 0);
+            charge = Math.max(0, (rm.noShowChargeValue || 0) / 100 * total);
+            break;
+          }
+          case 'flat': charge = Math.max(0, rm.noShowChargeValue || 0); break;
+          default: charge = 0;
+        }
+        if (charge > 0) this.addFolioCharge(folio.id, { id: `C-${Date.now().toString().slice(-6)}`, description: 'No-Show Charge', amount: charge });
+      }
+    } catch {}
   }
+
+  // Generate an accounting invoice from a reservation folio and mark reservation
+  private generateAccountingInvoiceForReservation(reservationId: string) { return invoiceHelpers.generateAccountingInvoiceForReservation(this as any, reservationId); }
 
   // Extend stay for a reservation
   extendStay(reservationId: string, additionalNights: number) {

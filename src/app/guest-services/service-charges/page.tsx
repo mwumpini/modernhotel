@@ -24,11 +24,14 @@ import {
   Badge,
   Chip,
   Textarea,
-  Divider
+  Divider,
+  Pagination
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { useSettingsStore } from '../../lib/settings/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
+import { openPrintPreview } from '../../lib/print/engine';
+import { listTemplates } from '../../lib/print/templates';
 
 interface ServiceCharge {
   id: string;
@@ -55,6 +58,8 @@ export default function ServiceChargesPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const receiptTemplates = useMemo(() => listTemplates('receipt'), []);
+  const [receiptTpl, setReceiptTpl] = useState<string>(receiptTemplates[0]?.key || 'simple-receipt');
 
   // Form state
   const [formData, setFormData] = useState({
@@ -123,6 +128,10 @@ export default function ServiceChargesPage() {
       return matchesSearch && matchesStatus && matchesCategory;
     });
   }, [serviceCharges, searchTerm, statusFilter, categoryFilter]);
+
+  // Pagination state
+  const [page, setPage] = useState(1);
+  const rowsPerPage = 10;
 
   // Handle form submission
   const handleSubmit = (e: React.FormEvent) => {
@@ -473,7 +482,9 @@ export default function ServiceChargesPage() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filteredCharges.map((charge) => {
+                filteredCharges
+                  .slice((page - 1) * rowsPerPage, page * rowsPerPage)
+                  .map((charge) => {
                   const categoryInfo = getCategoryInfo(charge.category);
                   const isExternal = charge.roomNumber === 'External';
                   return (
@@ -565,6 +576,15 @@ export default function ServiceChargesPage() {
               )}
             </TableBody>
           </Table>
+          <div className="flex justify-end mt-3">
+            <Pagination
+              page={page}
+              total={Math.max(1, Math.ceil(filteredCharges.length / rowsPerPage))}
+              onChange={setPage}
+              showControls
+              size="sm"
+            />
+          </div>
         </CardBody>
       </Card>
 
@@ -945,6 +965,30 @@ export default function ServiceChargesPage() {
                         💰 Overpayment - Change: ₵{(paymentData.amount - selectedCharge.amount).toLocaleString()}
                       </div>
                     )}
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
+                    <Select label="Receipt Template" selectedKeys={[receiptTpl]} onSelectionChange={(keys)=> setReceiptTpl(Array.from(keys)[0] as string)}>
+                      {receiptTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
+                    </Select>
+                    <Button
+                      variant="flat"
+                      onPress={() => {
+                        if (!selectedCharge) return;
+                        const data = {
+                          org: { name: 'Hotel', address: '', phone: '', email: '' },
+                          guest: { name: selectedCharge.guestName, roomNumber: selectedCharge.roomNumber },
+                          docNumber: `RCPT-${Date.now()}`,
+                          docDate: new Date().toISOString(),
+                          title: 'Receipt',
+                          items: [ { description: `Payment for ${selectedCharge.description}`, amount: paymentData.amount, date: new Date().toISOString() } ],
+                          totals: { subTotal: paymentData.amount, payments: paymentData.amount, balance: 0, grandTotal: paymentData.amount },
+                          currency: '₵'
+                        } as any;
+                        try { openPrintPreview('receipt' as any, receiptTpl, data); } catch {}
+                      }}
+                    >
+                      🧾 Print Receipt
+                    </Button>
+                  </div>
                   </div>
                 </div>
               )}

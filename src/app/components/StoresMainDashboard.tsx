@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
 import { 
   Card, 
   CardBody, 
@@ -18,8 +18,8 @@ import {
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useRouter } from 'next/navigation';
 
-// Import specialized Stores/Inventory components
-import InventorySupplyChainDashboard from './InventorySupplyChainDashboard';
+// Import specialized Stores/Inventory components - lazy load heavy components
+const InventorySupplyChainDashboard = lazy(() => import('./InventorySupplyChainDashboard'));
 import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
@@ -471,23 +471,33 @@ export default function StoresMainDashboard() {
             </Tab>
 
             <Tab key="inventory" title="📦 Inventory Management">
-              <InventorySupplyChainDashboard />
+              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
+                <InventorySupplyChainDashboard />
+              </Suspense>
             </Tab>
 
             <Tab key="suppliers" title="🏢 Supplier Management">
-              <InventorySupplyChainDashboard />
+              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
+                <InventorySupplyChainDashboard />
+              </Suspense>
             </Tab>
 
             <Tab key="purchase-orders" title="📋 Purchase Orders">
-              <InventorySupplyChainDashboard />
+              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
+                <InventorySupplyChainDashboard />
+              </Suspense>
             </Tab>
 
             <Tab key="operations" title="🔄 Stock Operations">
-              <InventorySupplyChainDashboard />
+              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
+                <InventorySupplyChainDashboard />
+              </Suspense>
             </Tab>
 
             <Tab key="reports" title="📊 Reports & Analytics">
-              <InventorySupplyChainDashboard />
+              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
+                <InventorySupplyChainDashboard />
+              </Suspense>
             </Tab>
 
             <Tab key="analytics" title="📈 Analytics Dashboard">

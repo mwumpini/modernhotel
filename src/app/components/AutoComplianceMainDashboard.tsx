@@ -25,6 +25,7 @@ import CountrySelector from './CountrySelector';
 import Checkout from './Checkout';
 import ComplianceReports from './ComplianceReports';
 import TaxRateBuilder from './TaxRateBuilder';
+import PayrollBuilderPanel from './PayrollBuilderPanel';
 import GhanaCompliance from './GhanaCompliance';
 
 // Info Icon Component with Tooltip
@@ -476,33 +477,10 @@ export default function AutoComplianceMainDashboard() {
               <Tab key="tax" title="💰 Tax Management">
                 <div className="space-y-6 mt-4">
                   <h3 className="text-xl font-semibold text-ghana-black">Tax Management</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <Card>
-                      <CardHeader>
-                        <h4 className="font-semibold">Tax Rules Engine</h4>
-                      </CardHeader>
-                      <CardBody>
-                        <p className="text-sm text-gray-600">Automated tax calculation and rules management</p>
-                        <div className="mt-4">
-                          <Badge color="success" variant="flat" className="mr-2">{totalTaxRules} Active Rules</Badge>
-                          <Badge color="primary" variant="flat" className="mr-2">{taxCalculationsToday} Calculations Today</Badge>
-                        </div>
-                      </CardBody>
-                    </Card>
-                    <Card>
-                      <CardHeader>
-                        <h4 className="font-semibold">Tax Returns</h4>
-                      </CardHeader>
-                      <CardBody>
-                        <p className="text-sm text-gray-600">Automated tax return filing and management</p>
-                        <div className="mt-4">
-                          <Badge color="success" variant="flat" className="mr-2">{taxReturnsFiled} Returns Filed</Badge>
-                          <Badge color="warning" variant="flat" className="mr-2">VAT: 12.5%</Badge>
-                        </div>
-                      </CardBody>
-                    </Card>
-                  </div>
                   <TaxRateBuilder />
+                  <Divider className="my-4" />
+                  <h3 className="text-xl font-semibold text-ghana-black">Payroll (PAYE) Management</h3>
+                  <PayrollBuilderPanel />
                 </div>
               </Tab>
 

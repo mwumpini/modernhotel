@@ -1,0 +1,25 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { getTenantContext, getTenantFromRequest } from '@/app/lib/api/tenant'
+import { listCustomerBalances } from '@/app/lib/ar/repository'
+
+export async function GET(request: NextRequest) {
+	console.log('[ar/customers][GET] start')
+	try {
+		const subdomain = getTenantFromRequest(request)
+		if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
+		const ctx = await getTenantContext(subdomain)
+		if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+
+		const { searchParams } = new URL(request.url)
+		const type = (searchParams.get('type') as 'all' | 'guest' | 'company') || 'all'
+
+		const data = await listCustomerBalances(ctx.tenantId, type)
+		console.log('[ar/customers][GET] result', { count: data.length })
+		return NextResponse.json({ data })
+	} catch (error) {
+		console.error('[ar/customers][GET] error', error)
+		return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+	}
+}
+
+

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Button, Card, CardBody, Input, Select, SelectItem, Divider } from "@heroui/react";
+import { Button, Card, CardBody, Input, Select, SelectItem, Divider, Tooltip } from "@heroui/react";
 import { useCalculateTax } from '@/app/hooks/useCalculateTax';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 
@@ -21,11 +21,12 @@ export default function Checkout({ subtotal: initialSubtotal = 0, onComplete }: 
   const [subtotal, setSubtotal] = useState(initialSubtotal);
   const [category, setCategory] = useState('ALL');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [operation, setOperation] = useState<'external' | 'internal'>('external');
   
   const calculateTax = useCalculateTax();
   const { country } = useComplianceStore();
   
-  const { taxes, total } = calculateTax(subtotal, category);
+  const { taxes, total } = calculateTax(subtotal, category, { domain: 'sales', operation });
 
   const handlePayment = async () => {
     setIsProcessing(true);
@@ -103,6 +104,19 @@ export default function Checkout({ subtotal: initialSubtotal = 0, onComplete }: 
             ))}
           </Select>
 
+          <Select
+            label="Operation"
+            selectedKeys={[operation]}
+            onSelectionChange={(keys) => {
+              const selectedKey = Array.from(keys)[0] as 'external' | 'internal';
+              setOperation(selectedKey);
+            }}
+            variant="bordered"
+          >
+            <SelectItem key="external">External (Customer-facing)</SelectItem>
+            <SelectItem key="internal">Internal (In-house)</SelectItem>
+          </Select>
+
           <Divider />
 
           <div className="space-y-2">
@@ -111,9 +125,14 @@ export default function Checkout({ subtotal: initialSubtotal = 0, onComplete }: 
               <span className="font-medium">${subtotal.toFixed(2)}</span>
             </div>
             
-            {taxes.map((tax) => (
-              <div key={tax.name} className="flex justify-between text-sm">
-                <span className="text-gray-600">{tax.name}:</span>
+            {taxes.map((tax, idx) => (
+              <div key={`${tax.name}-${idx}`} className="flex items-center justify-between text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-gray-600">{tax.name}:</span>
+                  <Tooltip content={`GL: ${tax.glCode} • Context: sales/${operation.toUpperCase()}`}>
+                    <span aria-label="info" className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-[10px] text-gray-700">i</span>
+                  </Tooltip>
+                </div>
                 <span className="font-medium text-ghana-green">+${tax.amount.toFixed(2)}</span>
               </div>
             ))}
@@ -139,8 +158,8 @@ export default function Checkout({ subtotal: initialSubtotal = 0, onComplete }: 
             <div className="mt-4 p-3 bg-gray-50 rounded-lg">
               <p className="text-xs text-gray-600 mb-2">Applied Tax Rules:</p>
               <div className="space-y-1">
-                {taxes.map((tax) => (
-                  <div key={tax.name} className="flex justify-between text-xs">
+                {taxes.map((tax, idx) => (
+                  <div key={`${tax.name}-${idx}`} className="flex justify-between text-xs">
                     <span>{tax.name}</span>
                     <span className="font-mono">{tax.glCode}</span>
                   </div>

@@ -215,6 +215,12 @@ export const useSupplyStore = create<SupplyStore>((set, get) => ({
   },
 
   restockSupply: (id, quantity) => {
+    const supply = get().getSupply(id);
+    if (!supply) return;
+    
+    // Calculate cost of supplies purchased
+    const cost = supply.unitCost * quantity;
+    
     get().updateStock(id, quantity, 'add');
     
     // Update last restocked date
@@ -222,10 +228,30 @@ export const useSupplyStore = create<SupplyStore>((set, get) => ({
       lastRestocked: new Date(),
       nextRestockDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days from now
     });
+    
+    // Record expense to Housekeeping cost center
+    try {
+      const { useAccountingStore } = require('../accounting/store');
+      const { recordExpense } = useAccountingStore.getState();
+      recordExpense('HK', cost);
+    } catch {}
   },
 
   useSupply: (id, quantity) => {
+    const supply = get().getSupply(id);
+    if (!supply) return;
+    
+    // Calculate cost of supplies used
+    const cost = supply.unitCost * quantity;
+    
     get().updateStock(id, quantity, 'remove');
+    
+    // Record expense to Housekeeping cost center
+    try {
+      const { useAccountingStore } = require('../accounting/store');
+      const { recordExpense } = useAccountingStore.getState();
+      recordExpense('HK', cost);
+    } catch {}
   },
 
   adjustStock: (id, newQuantity, reason) => {

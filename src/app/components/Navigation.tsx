@@ -53,7 +53,7 @@ const FrontOfficeReportsAnalysis = lazy(() => import('./FrontOfficeReportsAnalys
 
 // Lazy load accounting components
 const ChartOfAccountsPage = lazy(() => import('./accounting/ChartOfAccounts'));
-const BankCashReceivablesPage = lazy(() => import('./accounting/BankCashReceivables'));
+const BankCashManagementPage = lazy(() => import('./accounting/BankCashReceivables'));
 const AccountsPayablePage = lazy(() => import('./accounting/AccountsPayable'));
 const InventoryFixedAssetsPage = lazy(() => import('./accounting/InventoryFixedAssets'));
 const FinancialReportsPage = lazy(() => import('./accounting/FinancialReports'));
@@ -64,14 +64,22 @@ interface NavigationProps {
   onLogout: () => void;
 }
 
-type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'user-preferences' | 'compliance' | 'inventory' | 'user-management' | 'user-management-dashboard' | 'user-management-unified' | 'theme-test' | 'offline-management' | 'api-integration' | 'performance-optimization' | 'template-builder' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'room-management' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-receivables' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'room-configuration' | 'rate-management';
+type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'user-preferences' | 'compliance' | 'inventory' | 'user-management' | 'user-management-dashboard' | 'user-management-unified' | 'theme-test' | 'offline-management' | 'api-integration' | 'performance-optimization' | 'template-builder' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'room-management' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'room-configuration' | 'rate-management';
 export default function Navigation({ onLogout }: NavigationProps) {
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
+  const leanMode = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_LEAN_MODE === 'true') : (process.env.NEXT_PUBLIC_LEAN_MODE === 'true');
 
   // Log navigation component initialization and state changes
   React.useEffect(() => {
     console.log('Navigation component initialized with default section:', activeSection);
+    try {
+      const target = localStorage.getItem('nav.section');
+      if (target) {
+        setActiveSection(target as ActiveSection);
+        localStorage.removeItem('nav.section');
+      }
+    } catch {}
   }, []);
 
   React.useEffect(() => {
@@ -108,32 +116,22 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'frontdesk',
       title: `🏨 Front Office Operations${getUnreadCount('frontdesk') ? ` (${getUnreadCount('frontdesk')})` : ''}`,
       icon: '🏨',
-                                                               items: [
-                    { title: '📊 Operations', href: '#' },
-                    { title: '📈 Reports & Analysis', href: '/reports' },
-                    { title: '📊 Analytics Dashboard', href: '/analytics' },
-                    { title: '⚙️ User Preferences', href: '#' },
-                  ]
+      items: [
+        { title: '📊 Operations', href: '#' }
+      ]
     },
     {
       key: 'events-conferences',
       title: '🎪 Events & Conferences',
       icon: '🎪',
-      items: [
-        { title: '📊 Operations', href: '#' },
-        { title: '📈 Reports & Analysis', href: '#' },
-        { title: '⚙️ User Preferences', href: '#' },
-      ]
+      items: []
     },
     {
       key: 'f&b',
       title: '🍽️ Food & Beverage',
       icon: '🍽️',
       items: [
-        { title: 'R&B Operations', href: '#' },
-        { title: 'Kitchen Operations', href: '#' },
-        { title: '📈 Reports & Analysis', href: '#' },
-        { title: '⚙️ User Preferences', href: '#' },
+        { title: 'Kitchen Operations', href: '#' }
       ]
     },
     {
@@ -148,75 +146,45 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'inventory',
       title: `📦 Inventory & Stores${getUnreadCount('inventory') ? ` (${getUnreadCount('inventory')})` : ''}`,
       icon: '📦',
-      items: [
-        { title: '📊 Operations', href: '#' },
-        { title: '📈 Reports & Analysis', href: '#' },
-        { title: '⚙️ User Preferences', href: '#' },
-      ]
+      items: []
     },
     {
       key: 'security',
       title: `🚨 Security Operations${getUnreadCount('security') ? ` (${getUnreadCount('security')})` : ''}`,
       icon: '🚨',
-      items: [
-        { title: '📊 Operations', href: '#' },
-        { title: '📈 Reports & Analysis', href: '#' },
-        { title: '⚙️ User Preferences', href: '#' },
-      ]
+      items: []
     },
     {
       key: 'hr',
       title: `👥 HR & Payroll${getUnreadCount('hr') ? ` (${getUnreadCount('hr')})` : ''}`,
       icon: '👥',
-      items: [
-        { title: '📊 Operations', href: '#' },
-        { title: '📈 Reports & Analysis', href: '#' },
-        { title: '⚙️ User Preferences', href: '#' },
-      ]
+      items: []
     },
     {
       key: 'accounting',
-      title: '🧾 Complete Accounting System',
+      title: '🧾 Accounting & Finance',
       icon: '🧾',
       items: [
         { title: 'Accounting Management', href: '#' },
-        { title: 'Chart of Accounts', href: '#' },
-        { title: 'Bank, Cash & Receivables', href: '#' },
+        ...(leanMode ? [] : [{ title: 'Chart of Accounts', href: '#' }]),
+        ...(leanMode ? [] : [{ title: 'Bank & Cash Management', href: '#' }]),
         { title: 'Accounts Payable', href: '#' },
-        { title: 'Inventory & Fixed Assets', href: '#' },
-        { title: 'Financial Reports', href: '#' },
-        { title: 'Audit & Controls', href: '#' },
-        { title: 'View Activities', href: '#' },
-      ]
+        { title: 'Accounts Receivable', href: '#' },
+        ...(leanMode ? [] : [{ title: 'Financial Reports', href: '#' }]),
+        ...(leanMode ? [] : [{ title: 'Audit & Controls', href: '#' }])
+      ].filter(Boolean as any)
     },
     {
       key: 'compliance',
       title: '⚖️ Compliance & Reports',
       icon: '⚖️',
-      items: [
-        { title: 'Tax Calculator & Rules', href: '#' },
-        { title: 'VAT/NHIL Returns', href: '#' },
-        { title: 'Tourism Levy & SSNIT', href: '#' },
-        { title: 'Operational Reports', href: '#' },
-      ]
+      items: []
     },
     {
       key: 'settings',
       title: '⚙️ System Settings',
       icon: '⚙️',
-      items: [
-        { title: 'Rate Management', href: '#' },
-        { title: 'Reports & Analytics', href: '#' },
-        { title: 'User Management & Preferences', href: '#' },
-        { title: 'Theme Test', href: '#' },
-        { title: 'Offline Management & Sync', href: '#' },
-        { title: 'API Integration', href: '#' },
-        { title: 'Performance Optimization', href: '#' },
-        { title: 'Template Builder', href: '#' },
-        { title: 'Activity Logs', href: '#' },
-        { title: 'Tax Rules & APIs', href: '#' },
-        { title: 'Localization & Templates', href: '#' },
-      ]
+      items: []
     }
   ];
 
@@ -356,10 +324,14 @@ export default function Navigation({ onLogout }: NavigationProps) {
         setActiveSection('accounting-management');
       } else if (itemTitle === 'Chart of Accounts') {
         setActiveSection('chart-of-accounts');
-      } else if (itemTitle === 'Bank, Cash & Receivables') {
-        setActiveSection('bank-cash-receivables');
+      } else if (itemTitle === 'Bank & Cash Management') {
+        setActiveSection('bank-cash-management');
       } else if (itemTitle === 'Accounts Payable') {
         setActiveSection('accounts-payable');
+      } else if (itemTitle === 'Accounts Receivable') {
+        try { localStorage.setItem('accounting.tab', 'receivables'); } catch {}
+        setActiveSection('accounting-management');
+        return;
       } else if (itemTitle === 'Inventory & Fixed Assets') {
         setActiveSection('inventory-fixed-assets');
       } else if (itemTitle === 'Financial Reports') {
@@ -388,7 +360,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
         setActiveSection('inventory');
       }
     } else if (sectionKey === 'settings' && itemTitle) {
-      if (itemTitle === 'Rate Management') {
+      if (itemTitle === 'System Setup Wizard') {
+        try { window.location.href = '/setup'; } catch {}
+      } else if (itemTitle === 'Rate Management') {
         setActiveSection('rate-management');
       } else if (itemTitle === 'Reports & Analytics') {
         setActiveSection('reports-analytics');
@@ -532,8 +506,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;
       case 'chart-of-accounts':
         return <Suspense fallback={<div className="p-6 text-center">Loading Chart of Accounts...</div>}><ChartOfAccountsPage /></Suspense>;
-      case 'bank-cash-receivables':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Bank & Cash Receivables...</div>}><BankCashReceivablesPage /></Suspense>;
+      case 'bank-cash-management':
+        return <Suspense fallback={<div className="p-6 text-center">Loading Bank & Cash Management...</div>}><BankCashManagementPage /></Suspense>;
       case 'accounts-payable':
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounts Payable...</div>}><AccountsPayablePage /></Suspense>;
       case 'inventory-fixed-assets':

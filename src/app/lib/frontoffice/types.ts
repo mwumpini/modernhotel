@@ -415,6 +415,8 @@ export interface FolioCharge {
   description: string;
   amount: number; // positive
   tax?: number; // tax component
+  category?: string;
+  reference?: string;
 }
 
 export interface FolioPayment {

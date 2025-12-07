@@ -17,6 +17,7 @@ export type DomainEventType =
   | 'FB.Receipt.Printed'
   | 'FB.Receipt.Reprinted'
   | 'Stores.Issued'
+  | 'Stores.QuickAction'
   | 'Accounting.COGSBooked'
   | 'FO.Reservation.Created'
   | 'FO.Reservation.Updated'

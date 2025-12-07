@@ -33,10 +33,119 @@ model Tenant {
   reservations Reservation[]
   auditLogs   AuditLog[]
   rooms       Room[]
+  companies   Company[]
+  suppliers   Supplier[]
+  units       UnitOfMeasure[]
+  itemCategories ItemCategory[]
+  inventoryItems InventoryItem[]
+  stockLocations StockLocation[]
+  currencies  Currency[]
+  exchangeRates ExchangeRate[]
+  accounts    Account[]
+  taxes       Tax[]
+  folios      Folio[]
+  folioLines  FolioLine[]
+  payments    Payment[]
+  paymentMethods PaymentMethod[]
+  expenseVouchers ExpenseVoucher[]
+  expenseLines ExpenseLine[]
+  pettyCashFunds PettyCashFund[]
+  pettyCashTxns PettyCashTxn[]
 
   @@map("tenants")
 }
 
+model ExpenseVoucher {
+  id           String   @id @default(cuid())
+  tenantId     String
+  propertyId   String?
+  supplierId   String?
+  payeeName    String?
+  date         DateTime @default(now())
+  reference    String?
+  status       String   @default("draft") // draft, approved, paid, void
+  currencyId   String
+  subtotal     Decimal  @db.Decimal(12, 2)
+  taxAmount    Decimal  @db.Decimal(12, 2)
+  totalAmount  Decimal  @db.Decimal(12, 2)
+  costCenter   String?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property     Property? @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  supplier     Supplier? @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  currency     Currency  @relation(fields: [currencyId], references: [id])
+  lines        ExpenseLine[]
+  pettyCashTxns PettyCashTxn[]
+
+  @@index([tenantId, date])
+  @@map("expense_vouchers")
+}
+
+model ExpenseLine {
+  id           String   @id @default(cuid())
+  tenantId     String
+  voucherId    String
+  accountId    String
+  description  String
+  quantity     Decimal  @db.Decimal(10, 3)
+  unitPrice    Decimal  @db.Decimal(10, 2)
+  amount       Decimal  @db.Decimal(12, 2)
+  taxId        String?
+  taxAmount    Decimal? @db.Decimal(12, 2)
+  costCenter   String?
+  createdAt    DateTime @default(now())
+
+  // Relations
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  voucher      ExpenseVoucher @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  account      Account  @relation(fields: [accountId], references: [id])
+  tax          Tax?     @relation(fields: [taxId], references: [id])
+
+  @@index([tenantId, voucherId])
+  @@map("expense_lines")
+}
+
+model PettyCashFund {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  currencyId  String
+  balance     Decimal  @db.Decimal(12, 2) @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  currency    Currency @relation(fields: [currencyId], references: [id])
+  transactions PettyCashTxn[]
+
+  @@unique([tenantId, name])
+  @@map("petty_cash_funds")
+}
+
+model PettyCashTxn {
+  id          String   @id @default(cuid())
+  tenantId    String
+  fundId      String
+  type        String   // float, expense, replenish, adjust
+  amount      Decimal  @db.Decimal(12, 2)
+  date        DateTime @default(now())
+  reference   String?
+  description String?
+  voucherId   String?
+
+  // Relations
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fund        PettyCashFund @relation(fields: [fundId], references: [id], onDelete: Cascade)
+  voucher     ExpenseVoucher? @relation(fields: [voucherId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, date])
+  @@map("petty_cash_txns")
+}
 model User {
   id          String   @id @default(cuid())
   tenantId    String
@@ -78,6 +187,9 @@ model Property {
   // Relations
   tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   rooms       Room[]
+  stockLocations StockLocation[]
+  folios     Folio[]
+  expenseVouchers ExpenseVoucher[]
 
   @@unique([tenantId, name])
   @@map("properties")
@@ -95,6 +207,7 @@ model Guest {
   
   // Relations
   reservations Reservation[]
+  folios       Folio[]
   
   // Marketing attribution
   source      String?
@@ -210,4 +323,316 @@ model Room {
 
   @@unique([tenantId, propertyId, roomNumber])
   @@map("rooms")
+}
+
+model Company {
+  id          String   @id @default(cuid())
+  tenantId    String
+  code        String
+  name        String
+  email       String?
+  phone       String?
+  taxNumber   String?
+  billingAddress Json?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  folios      Folio[]
+
+  @@unique([tenantId, code])
+  @@map("companies")
+}
+
+model Supplier {
+  id            String   @id @default(cuid())
+  tenantId      String
+  code          String
+  name          String
+  email         String?
+  phone         String?
+  contactPerson String?
+  taxNumber     String?
+  address       Json?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  expenseVouchers ExpenseVoucher[]
+
+  @@unique([tenantId, code])
+  @@map("suppliers")
+}
+
+model UnitOfMeasure {
+  id          String   @id @default(cuid())
+  tenantId    String
+  code        String
+  name        String
+  precision   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items       InventoryItem[]
+
+  @@unique([tenantId, code])
+  @@map("units")
+}
+
+model ItemCategory {
+  id          String        @id @default(cuid())
+  tenantId    String
+  code        String
+  name        String
+  parentId    String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  // Relations
+  tenant      Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent      ItemCategory? @relation("CategoryToParent", fields: [parentId], references: [id])
+  children    ItemCategory[] @relation("CategoryToParent")
+  items       InventoryItem[]
+
+  @@unique([tenantId, code])
+  @@map("item_categories")
+}
+
+model InventoryItem {
+  id            String   @id @default(cuid())
+  tenantId      String
+  code          String
+  name          String
+  description   String?
+  categoryId    String?
+  unitId        String?
+  isPerishable  Boolean  @default(false)
+  isSerialized  Boolean  @default(false)
+  barcode       String?
+  defaultCost   Decimal? @db.Decimal(10, 2)
+  sellingPrice  Decimal? @db.Decimal(10, 2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category      ItemCategory?  @relation(fields: [categoryId], references: [id])
+  unit          UnitOfMeasure? @relation(fields: [unitId], references: [id])
+
+  @@unique([tenantId, code])
+  @@map("inventory_items")
+}
+
+model StockLocation {
+  id          String   @id @default(cuid())
+  tenantId    String
+  propertyId  String?
+  code        String
+  name        String
+  type        String
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property    Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@map("stock_locations")
+}
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+model Currency {
+  id            String   @id @default(cuid())
+  tenantId      String
+  code          String
+  name          String
+  symbol        String?
+  decimalPlaces Int      @default(2)
+  isBase        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  exchangeRatesFrom ExchangeRate[] @relation("ExchangeFrom")
+  exchangeRatesTo   ExchangeRate[] @relation("ExchangeTo")
+  folios       Folio[]
+  payments     Payment[]
+  expenseVouchers ExpenseVoucher[]
+  pettyCashFunds PettyCashFund[]
+
+  @@unique([tenantId, code])
+  @@map("currencies")
+}
+
+model ExchangeRate {
+  id              String   @id @default(cuid())
+  tenantId        String
+  fromCurrencyId  String
+  toCurrencyId    String
+  rate            Decimal  @db.Decimal(18, 8)
+  validFrom       DateTime
+  createdAt       DateTime @default(now())
+
+  // Relations
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  fromCurrency    Currency @relation("ExchangeFrom", fields: [fromCurrencyId], references: [id])
+  toCurrency      Currency @relation("ExchangeTo", fields: [toCurrencyId], references: [id])
+
+  @@index([tenantId, validFrom])
+  @@unique([tenantId, fromCurrencyId, toCurrencyId, validFrom])
+  @@map("exchange_rates")
+}
+
+model Account {
+  id          String      @id @default(cuid())
+  tenantId    String
+  code        String
+  name        String
+  type        AccountType
+  parentId    String?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  parent      Account?    @relation("AccountParent", fields: [parentId], references: [id])
+  children    Account[]   @relation("AccountParent")
+  folioLines  FolioLine[]
+  expenseLines ExpenseLine[]
+
+  @@unique([tenantId, code])
+  @@map("accounts")
+}
+
+model Tax {
+  id          String   @id @default(cuid())
+  tenantId    String
+  code        String
+  name        String
+  rate        Decimal  @db.Decimal(7, 4)
+  type        String
+  isInclusive Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  folioLines  FolioLine[]
+  expenseLines ExpenseLine[]
+
+  @@unique([tenantId, code])
+  @@map("taxes")
+}
+
+model PaymentMethod {
+  id          String   @id @default(cuid())
+  tenantId    String
+  code        String
+  name        String
+  type        String   // e.g., cash, card, mobile_money, bank_transfer, voucher
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  payments    Payment[]
+
+  @@unique([tenantId, code])
+  @@map("payment_methods")
+}
+
+model Folio {
+  id          String   @id @default(cuid())
+  tenantId    String
+  propertyId  String
+  guestId     String?
+  companyId   String?
+  currencyId  String
+  type        String   // guest, city_ledger, house, deposit
+  status      String   @default("open") // open, closed, settled
+  openedAt    DateTime @default(now())
+  closedAt    DateTime?
+  remarks     String?
+
+  // Relations
+  tenant      Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property    Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  guest       Guest?   @relation(fields: [guestId], references: [id], onDelete: SetNull)
+  company     Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  currency    Currency @relation(fields: [currencyId], references: [id])
+  lines       FolioLine[]
+  payments    Payment[]
+
+  @@index([tenantId, status])
+  @@map("folios")
+}
+
+model FolioLine {
+  id            String    @id @default(cuid())
+  tenantId      String
+  folioId       String
+  postingDate   DateTime  @default(now())
+  description   String
+  quantity      Decimal   @db.Decimal(10, 3)
+  unitPrice     Decimal   @db.Decimal(10, 2)
+  amount        Decimal   @db.Decimal(12, 2)
+  isCredit      Boolean   @default(false)
+  source        String?
+  reference     String?
+  taxId         String?
+  taxAmount     Decimal?  @db.Decimal(12, 2)
+  accountId     String?
+  createdAt     DateTime  @default(now())
+
+  // Relations
+  tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  folio         Folio    @relation(fields: [folioId], references: [id], onDelete: Cascade)
+  tax           Tax?     @relation(fields: [taxId], references: [id])
+  account       Account? @relation(fields: [accountId], references: [id])
+
+  @@index([tenantId, postingDate])
+  @@map("folio_lines")
+}
+
+model Payment {
+  id              String   @id @default(cuid())
+  tenantId        String
+  folioId         String?
+  amount          Decimal  @db.Decimal(12, 2)
+  currencyId      String
+  methodId        String
+  reference       String?
+  externalId      String?
+  status          String   @default("completed") // completed, pending, failed, refunded
+  receivedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  // Relations
+  tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  folio           Folio?        @relation(fields: [folioId], references: [id], onDelete: SetNull)
+  currency        Currency      @relation(fields: [currencyId], references: [id])
+  method          PaymentMethod @relation(fields: [methodId], references: [id])
+
+  @@index([tenantId, status])
+  @@map("payments")
 }

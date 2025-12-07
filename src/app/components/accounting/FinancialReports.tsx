@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip, Badge, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Tabs, Tab, Textarea, Divider, Spinner, Alert, Progress
+  Tabs, Tab, Textarea, Divider, Spinner, Alert, Progress, Pagination
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
 
@@ -23,11 +23,27 @@ export default function FinancialReportsPage() {
 
   const [selectedTab, setSelectedTab] = useState("overview");
   const [selectedPeriod, setSelectedPeriod] = useState<string>("");
+  const [page, setPage] = useState(1);
+  const rowsPerPage = 10;
+
+  useEffect(() => {
+    if (!selectedPeriod && currentFinancialPeriod) {
+      setSelectedPeriod(currentFinancialPeriod.id);
+    }
+  }, [selectedPeriod, currentFinancialPeriod]);
 
   // Get financial data
   const trialBalance = useMemo(() => {
     return getTrialBalance(selectedPeriod) || [];
   }, [getTrialBalance, selectedPeriod]);
+
+  // Pagination for trial balance
+  const paginatedTrialBalance = useMemo(() => {
+    const start = (page - 1) * rowsPerPage;
+    return trialBalance.slice(start, start + rowsPerPage);
+  }, [trialBalance, page]);
+
+  const trialBalancePages = Math.ceil(trialBalance.length / rowsPerPage);
 
   const incomeStatement = useMemo(() => {
     return getIncomeStatement(selectedPeriod) || {
@@ -149,9 +165,30 @@ export default function FinancialReportsPage() {
                   </Card>
                 </div>
 
-                <div className="text-center p-8 text-gray-500">
-                  <h3 className="text-lg font-semibold mb-2">Financial Reports Overview</h3>
-                  <p>Detailed financial analysis and reporting coming soon...</p>
+                {/* Quick glance trial balance */}
+                <div className="mt-6">
+                  <h3 className="text-lg font-semibold mb-3">Trial Balance Snapshot</h3>
+                  <Table aria-label="Trial Balance Snapshot">
+                    <TableHeader>
+                      <TableColumn>ACCOUNT</TableColumn>
+                      <TableColumn>TYPE</TableColumn>
+                      <TableColumn className="text-right">DEBIT</TableColumn>
+                      <TableColumn className="text-right">CREDIT</TableColumn>
+                    </TableHeader>
+                    <TableBody>
+                      {trialBalance.map((row: any, idx: number) => (
+                        <TableRow key={idx}>
+                          <TableCell>
+                            <div className="font-medium">{row.accountName}</div>
+                            <div className="text-xs text-gray-500 font-mono">{row.accountCode}</div>
+                          </TableCell>
+                          <TableCell>{row.type}</TableCell>
+                          <TableCell className="text-right">₵{(row.debitBalance ?? 0).toLocaleString()}</TableCell>
+                          <TableCell className="text-right">₵{(row.creditBalance ?? 0).toLocaleString()}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
                 </div>
               </div>
             </Tab>
@@ -159,8 +196,21 @@ export default function FinancialReportsPage() {
             <Tab key="income-statement" title="📈 Income Statement">
               <div className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Income Statement</h3>
-                <div className="text-center p-8 text-gray-500">
-                  Detailed income statement report coming soon...
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Card>
+                    <CardBody>
+                      <div className="flex justify-between"><span>Total Revenue</span><span className="font-semibold">₵{incomeStatement.totalRevenue.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Total Expenses</span><span className="font-semibold">₵{incomeStatement.totalExpenses.toLocaleString()}</span></div>
+                      <Divider className="my-2" />
+                      <div className="flex justify-between"><span>Net Income</span><span className={`font-semibold ${incomeStatement.netIncome >= 0 ? 'text-green-600' : 'text-red-600'}`}>₵{incomeStatement.netIncome.toLocaleString()}</span></div>
+                    </CardBody>
+                  </Card>
+                  <Card>
+                    <CardBody>
+                      <div className="flex justify-between"><span>Gross Profit</span><span className="font-semibold">₵{incomeStatement.grossProfit.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Operating Expenses</span><span className="font-semibold">₵{incomeStatement.operatingExpenses.toLocaleString()}</span></div>
+                    </CardBody>
+                  </Card>
                 </div>
               </div>
             </Tab>
@@ -168,8 +218,30 @@ export default function FinancialReportsPage() {
             <Tab key="balance-sheet" title="⚖️ Balance Sheet">
               <div className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Balance Sheet</h3>
-                <div className="text-center p-8 text-gray-500">
-                  Detailed balance sheet report coming soon...
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <Card>
+                    <CardBody>
+                      <div className="flex justify-between"><span>Current Assets</span><span className="font-semibold">₵{balanceSheet.currentAssets.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Fixed Assets</span><span className="font-semibold">₵{balanceSheet.fixedAssets.toLocaleString()}</span></div>
+                      <Divider className="my-2" />
+                      <div className="flex justify-between"><span>Total Assets</span><span className="font-semibold">₵{balanceSheet.totalAssets.toLocaleString()}</span></div>
+                    </CardBody>
+                  </Card>
+                  <Card>
+                    <CardBody>
+                      <div className="flex justify-between"><span>Current Liabilities</span><span className="font-semibold">₵{balanceSheet.currentLiabilities.toLocaleString()}</span></div>
+                      <div className="flex justify-between"><span>Long-term Liabilities</span><span className="font-semibold">₵{balanceSheet.longTermLiabilities.toLocaleString()}</span></div>
+                      <Divider className="my-2" />
+                      <div className="flex justify-between"><span>Total Liabilities</span><span className="font-semibold">₵{balanceSheet.totalLiabilities.toLocaleString()}</span></div>
+                    </CardBody>
+                  </Card>
+                  <Card>
+                    <CardBody>
+                      <div className="flex justify-between"><span>Total Equity</span><span className="font-semibold">₵{balanceSheet.totalEquity.toLocaleString()}</span></div>
+                      <Divider className="my-2" />
+                      <div className="flex justify-between"><span>Total Liabilities & Equity</span><span className="font-semibold">₵{balanceSheet.totalLiabilitiesAndEquity.toLocaleString()}</span></div>
+                    </CardBody>
+                  </Card>
                 </div>
               </div>
             </Tab>
@@ -177,18 +249,49 @@ export default function FinancialReportsPage() {
             <Tab key="cash-flow" title="💸 Cash Flow">
               <div className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Cash Flow Statement</h3>
-                <div className="text-center p-8 text-gray-500">
-                  Detailed cash flow statement coming soon...
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <Card><CardBody><div className="flex justify-between"><span>Operating</span><span className="font-semibold">₵{cashFlow.operatingCashFlow.toLocaleString()}</span></div></CardBody></Card>
+                  <Card><CardBody><div className="flex justify-between"><span>Investing</span><span className="font-semibold">₵{cashFlow.investingCashFlow.toLocaleString()}</span></div></CardBody></Card>
+                  <Card><CardBody><div className="flex justify-between"><span>Financing</span><span className="font-semibold">₵{cashFlow.financingCashFlow.toLocaleString()}</span></div></CardBody></Card>
                 </div>
+                <Card className="mt-6"><CardBody><div className="flex justify-between"><span>Net Cash Flow</span><span className="font-semibold">₵{cashFlow.netCashFlow.toLocaleString()}</span></div></CardBody></Card>
               </div>
             </Tab>
 
             <Tab key="trial-balance" title="📋 Trial Balance">
               <div className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Trial Balance</h3>
-                <div className="text-center p-8 text-gray-500">
-                  Trial balance report coming soon...
+                <Table aria-label="Trial Balance">
+                  <TableHeader>
+                    <TableColumn>ACCOUNT</TableColumn>
+                    <TableColumn>TYPE</TableColumn>
+                    <TableColumn className="text-right">DEBIT</TableColumn>
+                    <TableColumn className="text-right">CREDIT</TableColumn>
+                  </TableHeader>
+                  <TableBody emptyContent="No trial balance rows.">
+                    {paginatedTrialBalance.map((row: any, idx: number) => (
+                      <TableRow key={idx}>
+                        <TableCell>
+                          <div className="font-medium">{row.accountName}</div>
+                          <div className="text-xs text-gray-500 font-mono">{row.accountCode}</div>
+                        </TableCell>
+                        <TableCell>{row.type}</TableCell>
+                        <TableCell className="text-right">₵{(row.debitBalance ?? 0).toLocaleString()}</TableCell>
+                        <TableCell className="text-right">₵{(row.creditBalance ?? 0).toLocaleString()}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {trialBalancePages > 1 && (
+                  <div className="flex justify-center mt-4 p-4">
+                    <Pagination 
+                      total={trialBalancePages} 
+                      page={page} 
+                      onChange={setPage}
+                      showControls
+                    />
                 </div>
+                )}
               </div>
             </Tab>
           </Tabs>

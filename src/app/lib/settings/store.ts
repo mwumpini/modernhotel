@@ -142,6 +142,12 @@ export interface ComplianceSettings {
 }
 
 export interface ReceiptSettings {
+  // Numbering
+  prefix?: string;
+  suffix?: string;
+  nextNumber?: number;
+  numberFormat?: string;
+  
   // Header
   businessName: string;
   tagline?: string;
@@ -262,6 +268,51 @@ export interface ClientSettings {
   // Required Fields
   requiredFields: string[];
   optionalFields: string[];
+}
+
+// Generic numbering pattern used across modules
+export interface NumberingPattern {
+  prefix: string;
+  suffix?: string;
+  nextNumber: number;
+  numberFormat: string;
+}
+
+// System-wide, module-scoped numbering settings
+export interface ModuleNumberingSettings {
+  frontOffice: {
+    folio: NumberingPattern;
+    housekeepingTicket: NumberingPattern;
+  };
+  foodBeverage: {
+    order: NumberingPattern;
+    kitchenOrderTicket: NumberingPattern;
+  };
+  inventory: {
+    requisition: NumberingPattern;
+    stockTransfer: NumberingPattern;
+    goodsReceipt: NumberingPattern;
+  };
+  accounting: {
+    creditNote: NumberingPattern;
+    debitNote: NumberingPattern;
+  };
+  events: {
+    eventBooking: NumberingPattern;
+    quotation: NumberingPattern;
+  };
+  maintenance: {
+    workOrder: NumberingPattern;
+    inspection: NumberingPattern;
+  };
+  security: {
+    incidentReport: NumberingPattern;
+    accessPass: NumberingPattern;
+  };
+  hr: {
+    employeeId: NumberingPattern;
+    timesheet: NumberingPattern;
+  };
 }
 
 export interface ReservationSettings {
@@ -434,6 +485,37 @@ export interface Tenant {
 }
 
 export interface SystemSettings {
+  // Initial setup
+  initialSetupCompleted?: boolean;
+
+  // Company Settings
+  companySettings?: {
+    legalName: string;
+    tradingName: string;
+    registrationNumber?: string;
+    taxId?: string; // TIN/VAT
+    logoUrl?: string;
+    address: {
+      line1: string;
+      line2?: string;
+      city: string;
+      state?: string;
+      postalCode?: string;
+      country: string;
+    };
+    contact: {
+      phone: string;
+      email: string;
+      website?: string;
+    };
+    defaultCurrency: string;
+    financialYearStartDate: string; // ISO (YYYY-MM-DD)
+    addressFormatTemplate: string; // e.g., "{line1}\n{city}, {country}"
+    priceDisplayFormat: 'symbol' | 'code' | 'both';
+    defaultTaxScheme?: string; // e.g., Ghana Standard
+    baseCurrencyLocked: boolean;
+    roundingRule: 'nearest' | 'up' | 'down';
+  };
   // SaaS Platform Settings
   tenantId: string;
   tenant: Tenant;
@@ -493,6 +575,9 @@ export interface SystemSettings {
   reservationSettings: ReservationSettings;
   documentTemplates: DocumentTemplateSettings;
   
+  // System-wide Numbering grouped by modules
+  moduleNumbering: ModuleNumberingSettings;
+  
   // Integration Settings
   integrations: {
     paymentGateways: {
@@ -536,6 +621,8 @@ export interface SystemSettings {
   
   // Hotel-Specific Settings
   hotelSettings: {
+    hotelName?: string;
+    classification?: '1-Star' | '2-Star' | '3-Star' | '4-Star' | '5-Star' | 'Boutique' | 'Aparthotel' | 'Resort' | 'Other';
     checkInTime: string; // e.g., "14:00"
     checkOutTime: string; // e.g., "11:00"
     lateCheckOutFee: number;
@@ -570,6 +657,8 @@ export interface SystemSettings {
     exchangeRateUpdateFrequency: 'daily' | 'weekly' | 'monthly';
     taxInclusive: boolean;
     roundToNearest: number;
+    roundingRule?: 'nearest' | 'up' | 'down';
+    priceDisplayFormat?: 'symbol' | 'code' | 'both';
     enableDiscounts: boolean;
     maxDiscountPercentage: number;
     requireApprovalForDiscounts: boolean;
@@ -708,6 +797,7 @@ export interface SystemSettings {
       companyName: string;
       supportEmail: string;
       supportPhone: string;
+    logoPosition?: 'left' | 'center' | 'right';
     };
   };
 }
@@ -730,6 +820,9 @@ export interface RoomManagementSettings {
   roomNumberingFormat: 'sequential' | 'floor-based' | 'custom';
   customNumberingPrefix?: string;
   floorSeparator: string;
+  
+  // Default Rate Plan mapping per Room Type (roomTypeId -> ratePlanId)
+  defaultRatePlanByRoomType?: Record<string, string>;
   
   // Room Types
   roomTypes: Array<{
@@ -777,6 +870,46 @@ export interface RoomManagementSettings {
     canBook: boolean;
     requiresAction: boolean;
   }>;
+
+  // Checkout policy: who can use Pay Later
+  payLaterPolicy?: 'both' | 'corporate' | 'individual';
+  // Operations Policies
+  requireCorporateReference?: boolean;
+  defaultCreditTermsDays?: number;
+  lateCheckoutFeeEnabled?: boolean;
+  lateCheckoutGraceMinutes?: number;
+  lateCheckoutFeeType?: 'flat' | 'percent_of_nightly';
+  lateCheckoutFeeValue?: number;
+  earlyCheckoutPolicyEnabled?: boolean;
+  earlyCheckoutRefundType?: 'none' | 'nightly_prorate' | 'percent_penalty';
+  earlyCheckoutPenaltyPercent?: number; // applies when refundType is percent_penalty
+  earlyCheckoutCutoffHour?: number; // e.g., 11 means 11:00 local time same-day rule
+  earlyCheckoutAdvancedEnabled?: boolean;
+
+  // Standard times
+  standardCheckInHour?: number; // 0-23
+  standardCheckOutHour?: number; // 0-23
+
+  // No-Show Policy
+  noShowPolicyEnabled?: boolean;
+  noShowChargeType?: 'first_night' | 'percent_reservation' | 'flat';
+  noShowChargeValue?: number;
+  noShowCutoffHour?: number; // hour after scheduled arrival to mark no-show
+
+  // Cancellation Policy
+  cancellationPolicyEnabled?: boolean;
+  freeCancellationHours?: number; // hours before arrival
+  lateCancellationFeeType?: 'first_night' | 'percent_reservation' | 'flat';
+  lateCancellationFeeValue?: number;
+
+  // Deposit/Guarantee Policy
+  depositPolicyEnabled?: boolean;
+  depositType?: 'percent' | 'flat';
+  depositValue?: number;
+  requireDepositToConfirm?: boolean;
+
+  // Invoicing reminders
+  invoiceReminderScheduleDays?: number[]; // e.g., [7,14,30]
   
   // Rate Plans
   ratePlans: Array<{
@@ -1031,6 +1164,8 @@ interface SettingsStore extends SystemSettings {
   
   // Room Management
   roomManagement: RoomManagementSettings;
+
+  
   
   // Module Management Methods
   toggleModule: (module: keyof ModuleSettings) => void;
@@ -1193,6 +1328,8 @@ const defaultRoles: UserRole[] = [
 ];
 
 const defaultSettings: SystemSettings = {
+  initialSetupCompleted: false,
+
   // SaaS Platform Settings
   tenantId: 'demo-tenant-001',
   tenant: {
@@ -1399,7 +1536,11 @@ const defaultSettings: SystemSettings = {
   },
   
   receiptSettings: {
-    businessName: 'Ghana Hotel Management',
+    prefix: 'RCP',
+    suffix: '',
+    nextNumber: 1,
+    numberFormat: 'RCP-{YEAR}-{NUMBER}',
+    businessName: 'Demo Hotel Ltd',
     tagline: 'Excellence in Hospitality',
     showTaxBreakdown: true,
     showPaymentMethod: true,
@@ -1407,7 +1548,7 @@ const defaultSettings: SystemSettings = {
     showTransactionId: true,
     footerText: 'Thank you for choosing us. Visit again soon!',
     socialMedia: ['Facebook', 'Instagram', 'Twitter'],
-    website: 'www.ghanahotel.com',
+    website: 'www.demohotel.com',
     primaryColor: '#059669',
     fontFamily: 'Arial, sans-serif',
     fontSize: '12px',
@@ -1610,6 +1751,46 @@ const defaultSettings: SystemSettings = {
       }
     ],
   },
+
+  // Module-scoped numbering defaults (additional to existing invoice/receipt/reservation/client)
+  moduleNumbering: {
+    frontOffice: {
+      folio: { prefix: 'FOL', suffix: '', nextNumber: 1, numberFormat: 'FOL-{YEAR}-{NUMBER}' },
+      housekeepingTicket: { prefix: 'HK', suffix: '', nextNumber: 1, numberFormat: 'HK-{NUMBER}' },
+    },
+    foodBeverage: {
+      order: { prefix: 'ORD', suffix: '', nextNumber: 1, numberFormat: 'ORD-{NUMBER}' },
+      kitchenOrderTicket: { prefix: 'KOT', suffix: '', nextNumber: 1, numberFormat: 'KOT-{NUMBER}' },
+    },
+    inventory: {
+      requisition: { prefix: 'REQ', suffix: '', nextNumber: 1, numberFormat: 'REQ-{NUMBER}' },
+      stockTransfer: { prefix: 'ST', suffix: '', nextNumber: 1, numberFormat: 'ST-{NUMBER}' },
+      goodsReceipt: { prefix: 'GRN', suffix: '', nextNumber: 1, numberFormat: 'GRN-{NUMBER}' },
+    },
+    accounting: {
+      creditNote: { prefix: 'CN', suffix: '', nextNumber: 1, numberFormat: 'CN-{YEAR}-{NUMBER}' },
+      debitNote: { prefix: 'DN', suffix: '', nextNumber: 1, numberFormat: 'DN-{YEAR}-{NUMBER}' },
+    },
+    events: {
+      eventBooking: { prefix: 'EVT', suffix: '', nextNumber: 1, numberFormat: 'EVT-{YEAR}-{NUMBER}' },
+      quotation: { prefix: 'QT', suffix: '', nextNumber: 1, numberFormat: 'QT-{YEAR}-{NUMBER}' },
+    },
+    maintenance: {
+      workOrder: { prefix: 'WO', suffix: '', nextNumber: 1, numberFormat: 'WO-{YEAR}-{NUMBER}' },
+      inspection: { prefix: 'INSP', suffix: '', nextNumber: 1, numberFormat: 'INSP-{NUMBER}' },
+    },
+    security: {
+      incidentReport: { prefix: 'INC', suffix: '', nextNumber: 1, numberFormat: 'INC-{YEAR}-{NUMBER}' },
+      accessPass: { prefix: 'PASS', suffix: '', nextNumber: 1, numberFormat: 'PASS-{NUMBER}' },
+    },
+    hr: {
+      employeeId: { prefix: 'EMP', suffix: '', nextNumber: 1, numberFormat: 'EMP{NUMBER}' },
+      timesheet: { prefix: 'TS', suffix: '', nextNumber: 1, numberFormat: 'TS-{YEAR}-{NUMBER}' },
+    },
+  },
+
+  // Operations Policies
+  // (stored separately via updateNestedSetting; kept here for backward compatibility no-op)
   
   integrations: {
     paymentGateways: {
@@ -1642,6 +1823,8 @@ const defaultSettings: SystemSettings = {
   
   // Hotel-Specific Settings
   hotelSettings: {
+    hotelName: 'Demo Hotel',
+    classification: '3-Star',
     checkInTime: '14:00',
     checkOutTime: '11:00',
     lateCheckOutFee: 50,
@@ -1676,6 +1859,8 @@ const defaultSettings: SystemSettings = {
     exchangeRateUpdateFrequency: 'daily',
     taxInclusive: false,
     roundToNearest: 0.50,
+    roundingRule: 'nearest',
+    priceDisplayFormat: 'symbol',
     enableDiscounts: true,
     maxDiscountPercentage: 25,
     requireApprovalForDiscounts: true,
@@ -1811,10 +1996,37 @@ const defaultSettings: SystemSettings = {
       primaryColor: '#2563eb',
       secondaryColor: '#64748b',
       fontFamily: 'Inter, sans-serif',
-      companyName: 'Ghana Hotel Management',
+      companyName: 'Demo Hotel Ltd',
       supportEmail: 'support@ghana-hotel.com',
       supportPhone: '+233 20 123 4567',
+      logoPosition: 'left',
     },
+  },
+
+  // Company Settings (new)
+  companySettings: {
+    legalName: 'Demo Hotel Ltd',
+    tradingName: 'Demo Hotel',
+    registrationNumber: '',
+    taxId: '',
+    logoUrl: '',
+    address: {
+      line1: 'Accra',
+      city: 'Accra',
+      country: 'GH',
+    },
+    contact: {
+      phone: '+233 20 123 4567',
+      email: 'info@demohotel.com',
+      website: 'www.demohotel.com',
+    },
+    defaultCurrency: 'GHS',
+    financialYearStartDate: '2025-01-01',
+    addressFormatTemplate: '{line1}\n{city}, {country}',
+    priceDisplayFormat: 'symbol',
+    defaultTaxScheme: 'Ghana Standard',
+    baseCurrencyLocked: false,
+    roundingRule: 'nearest',
   },
 };
 
@@ -1906,6 +2118,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         environment: state.environment,
         defaultCountry: state.defaultCountry,
         supportedCountries: state.supportedCountries,
+        initialSetupCompleted: state.initialSetupCompleted,
+        companySettings: state.companySettings,
+        hotelSettings: state.hotelSettings,
+        financialSettings: state.financialSettings,
+        receiptSettings: state.receiptSettings,
+        moduleNumbering: state.moduleNumbering,
         security: state.security,
         integrations: state.integrations,
         backup: state.backup,
@@ -2012,6 +2230,21 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ roomManagement: newRoomManagement });
     get().saveSettings();
     get().publish();
+  },
+
+  // Room Management - Default Rate Plan Mapping Helpers
+  setDefaultRatePlanForRoomType: (roomTypeId: string, ratePlanId: string) => {
+    const state = get();
+    const existing = state.roomManagement.defaultRatePlanByRoomType || {};
+    const updated = { ...existing, [roomTypeId]: ratePlanId };
+    const newRoomManagement = { ...state.roomManagement, defaultRatePlanByRoomType: updated } as RoomManagementSettings;
+    set({ roomManagement: newRoomManagement });
+    get().saveSettings();
+    get().publish();
+  },
+  getDefaultRatePlanForRoomType: (roomTypeId: string) => {
+    const state = get();
+    return (state.roomManagement.defaultRatePlanByRoomType || {})[roomTypeId];
   },
 
   addRoomType: (roomType: RoomManagementSettings['roomTypes'][0]) => {
@@ -2806,7 +3039,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   getNextReceiptNumber: () => {
     const state = get();
     const settings = state.receiptSettings;
-    // Receipts typically don't have sequential numbering, but we can implement if needed
+    // Use configured numbering if present, else fallback to timestamp-based
+    if (settings?.numberFormat && settings?.prefix !== undefined) {
+      const year = new Date().getFullYear();
+      const number = settings.nextNumber || 1;
+      // update next number if we control it
+      set({ receiptSettings: { ...settings, nextNumber: number + 1 } as any });
+      const padded = number.toString().padStart(4, '0');
+      return (settings.numberFormat as string)
+        .replace('{YEAR}', year.toString())
+        .replace('{NUMBER}', padded)
+        .replace('{PREFIX}', settings.prefix || '')
+        .replace('{SUFFIX}', settings.suffix || '');
+    }
     return `RCP-${Date.now().toString().slice(-6)}`;
   },
   
@@ -2980,6 +3225,33 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   roomManagement: {
     roomNumberingFormat: 'sequential',
     floorSeparator: '-',
+    payLaterPolicy: 'both',
+    requireCorporateReference: false,
+    defaultCreditTermsDays: 30,
+    lateCheckoutFeeEnabled: false,
+    lateCheckoutGraceMinutes: 0,
+    lateCheckoutFeeType: 'flat',
+    lateCheckoutFeeValue: 0,
+    earlyCheckoutPolicyEnabled: true,
+    earlyCheckoutRefundType: 'nightly_prorate',
+    earlyCheckoutPenaltyPercent: 0,
+    earlyCheckoutCutoffHour: 11,
+    earlyCheckoutAdvancedEnabled: false,
+    standardCheckInHour: 14,
+    standardCheckOutHour: 11,
+    noShowPolicyEnabled: false,
+    noShowChargeType: 'first_night',
+    noShowChargeValue: 0,
+    noShowCutoffHour: 23,
+    cancellationPolicyEnabled: false,
+    freeCancellationHours: 24,
+    lateCancellationFeeType: 'first_night',
+    lateCancellationFeeValue: 0,
+    depositPolicyEnabled: false,
+    depositType: 'percent',
+    depositValue: 0,
+    requireDepositToConfirm: false,
+    invoiceReminderScheduleDays: [7, 14, 30],
     roomTypes: [],
     rooms: [],
     roomStatuses: [],
@@ -3021,7 +3293,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         unit: 'per_person',
         seasonalPricing: []
       },
-      {
+     {
         id: 'laundry-service',
         name: 'Laundry Service',
         category: 'Housekeeping',

@@ -4,6 +4,9 @@ import React, { useState } from 'react';
 import { Card, CardBody, CardHeader, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Divider, Badge, Progress, Tabs, Tab } from "@heroui/react";
 import { ordersStore, FBOrder } from '../lib/fb/ordersStore';
 import { kitchenOpsStore, KitchenOpRecord } from '../lib/fb/kitchenOpsStore';
+import { trackEvent } from '../lib/analytics/trackEvent';
+import { logAudit } from '../lib/analytics/auditLogStore';
+import { dmStore } from '../lib/communications/dmStore';
 
 interface Order {
   id: string;
@@ -78,6 +81,9 @@ export default function FoodBeverageKitchen() {
     }
   });
   const [storeOrders, setStoreOrders] = useState<FBOrder[]>([]);
+  const [rejectModal, setRejectModal] = useState<{ open: boolean; orderId: string | null; itemId?: string | null; reason: string }>(
+    { open: false, orderId: null, itemId: null, reason: '' }
+  );
   const kitchenStaff = [
     { id: 'chef-kwame', name: 'Chef Kwame' },
     { id: 'chef-ama', name: 'Chef Ama' },
@@ -514,6 +520,11 @@ export default function FoodBeverageKitchen() {
                                   const updated = { ...order, items: order.items.map(it => it.id === item.id ? { ...it, status: 'ready', preparedById: item.assignedToId, preparedByName: item.assignedToName, preparedAt: new Date().toISOString(), readyAt: new Date().toISOString() } : it) };
                                   ordersStore.update(updated);
                                 }}>Mark Ready</Button>
+                                <Button size="sm" variant="flat" color="danger" onClick={() => setRejectModal({ open: true, orderId: order.id, itemId: item.id, reason: '' })}>Reject</Button>
+                                <Button size="sm" variant="flat" color="warning" onClick={() => {
+                                  // Notify Restaurant/Bar (simulate team IDs)
+                                  try { dmStore.getState().send('kitchen', 'restaurant', `Order ${order.id} item ${item.name} is delayed`); } catch {}
+                                }}>Notify Delay</Button>
                               </div>
                             </div>
                           ))}
@@ -541,6 +552,13 @@ export default function FoodBeverageKitchen() {
                           <div className="flex gap-2">
                             <Button size="sm" color="primary" variant="flat" onClick={() => ordersStore.update({ ...order, status: getNextStoreStatus(order.status) })}>Advance Status</Button>
                             <Button size="sm" color="success" variant="flat" onClick={() => ordersStore.update({ ...order, status: 'served' })}>Mark Ready</Button>
+                            <Button size="sm" color="danger" variant="flat" onClick={() => setRejectModal({ open: true, orderId: order.id, itemId: null, reason: '' })}>Reject Order</Button>
+                            <Button size="sm" color="danger" onClick={() => {
+                              ordersStore.remove(order.id);
+                              trackEvent('FB.OrderStatusChanged', { id: order.id, status: 'deleted' });
+                              try { logAudit({ area: 'kitchen', action: 'delete', entity: 'Order', entityId: order.id, details: 'Kitchen deleted order', severity: 'high' }); } catch {}
+                              try { dmStore.getState().send('kitchen', 'restaurant', `Order ${order.id} was deleted by Kitchen`); } catch {}
+                            }}>Delete Order</Button>
                           </div>
                         </div>
                       </CardBody>
@@ -816,6 +834,34 @@ export default function FoodBeverageKitchen() {
             <Button color="primary" className="bg-ghana-green text-white" onPress={() => setIsRecipeModalOpen(false)}>
               Add Recipe
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Reject Modal */}
+      <Modal isOpen={rejectModal.open} onClose={() => setRejectModal({ open: false, orderId: null, itemId: null, reason: '' })}>
+        <ModalContent>
+          <ModalHeader>Reject {rejectModal.itemId ? 'Item' : 'Order'}</ModalHeader>
+          <ModalBody>
+            <Input label="Reason" placeholder="Out of stock, cannot prepare, etc." value={rejectModal.reason} onChange={(e) => setRejectModal({ ...rejectModal, reason: e.target.value })} />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onClick={() => setRejectModal({ open: false, orderId: null, itemId: null, reason: '' })}>Cancel</Button>
+            <Button color="danger" onClick={() => {
+              if (!rejectModal.orderId) { setRejectModal({ open: false, orderId: null, itemId: null, reason: '' }); return; }
+              const order = storeOrders.find(o => o.id === rejectModal.orderId);
+              if (!order) { setRejectModal({ open: false, orderId: null, itemId: null, reason: '' }); return; }
+              if (rejectModal.itemId) {
+                const name = order.items.find(i => i.id === rejectModal.itemId)?.name || '';
+                ordersStore.update({ ...order, items: order.items.map(i => i.id === rejectModal.itemId ? { ...i, status: 'pending', note: `REJECTED: ${rejectModal.reason}` } as any : i) });
+                kitchenOpsStore.add({ orderId: order.id, table: order.table, waiterId: order.waiterId, itemId: rejectModal.itemId, itemName: name, action: 'status', fromStatus: 'preparing', toStatus: 'pending', notes: `Rejected: ${rejectModal.reason}` });
+              } else {
+                ordersStore.update({ ...order, status: 'pending', notes: `REJECTED: ${rejectModal.reason}` });
+              }
+              trackEvent('FB.OrderUpdated', { id: rejectModal.orderId, action: 'rejected', reason: rejectModal.reason });
+              try { logAudit({ area: 'kitchen', action: 'update', entity: rejectModal.itemId ? 'OrderItem' : 'Order', entityId: rejectModal.orderId, details: `Rejected ${rejectModal.itemId ? 'item' : 'order'}: ${rejectModal.reason}`, severity: 'medium' }); } catch {}
+              setRejectModal({ open: false, orderId: null, itemId: null, reason: '' });
+            }}>Confirm</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

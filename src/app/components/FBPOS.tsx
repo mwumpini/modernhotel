@@ -31,11 +31,13 @@ import { logAudit } from '../lib/analytics/auditLogStore';
 import { ordersStore, FBOrder } from '../lib/fb/ordersStore';
 import { buildReceiptHtml, printReceipt, printKOTDoc, buildKOTHtml, printHtml, previewReceipt } from '../lib/print/print';
 import { storesIssueBus } from '../lib/fb/stores';
+import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { storesStore } from '../lib/stores/store';
 import { useAccountingStore } from '../lib/accounting/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { customerStore } from '../lib/fb/customerStore';
 
-type CustomerType = 'In-house' | 'Walk-in' | 'Takeout';
+type CustomerType = 'In-house' | 'Walk-in';
 type VenueMode = 'Restaurant' | 'Bar';
 type PaymentMethod = 'Cash' | 'Card' | 'Mobile Money' | 'Room Charge';
 
@@ -81,10 +83,13 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [venue, setVenue] = useState<VenueMode>('Restaurant');
   const [customerType, setCustomerType] = useState<CustomerType>('Walk-in');
   const [roomNumber, setRoomNumber] = useState('');
-  const [guestName, setGuestName] = useState('');
+  const [guestName, setGuestName] = useState('Walk-in Guest');
   const [roomSearchTerm, setRoomSearchTerm] = useState('');
   const [guestSearchTerm, setGuestSearchTerm] = useState('');
   const [selectedGuest, setSelectedGuest] = useState<any>(null);
+  const [walkInSearchTerm, setWalkInSearchTerm] = useState('');
+  const [selectedWalkIn, setSelectedWalkIn] = useState<any>(null);
+  const [walkInFocused, setWalkInFocused] = useState(false);
   const [tableNumber, setTableNumber] = useState('T01');
   const [waiterId, setWaiterId] = useState('W1');
   const [search, setSearch] = useState('');
@@ -94,6 +99,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [applyRoomServiceCharge, setApplyRoomServiceCharge] = useState<boolean>(false);
   const [pendingOrders, setPendingOrders] = useState<PendingOrder[]>([]);
   const [orderNotes, setOrderNotes] = useState<string>('');
+  
   const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>(() => {
     try { return (localStorage.getItem('kitchen.priority.filter') as any) || 'high'; } catch { return 'high'; }
   });
@@ -116,6 +122,36 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [showAllItems, setShowAllItems] = useState(false);
   const [sortKey, setSortKey] = useState<string>('id');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
+  const [activityPage, setActivityPage] = useState<number>(1);
+  const [activityRowsPerPage, setActivityRowsPerPage] = useState<number>(10);
+  const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: number }>>([]);
+  const [tipAmount, setTipAmount] = useState<number>(0);
+  const [settleRoomSearch, setSettleRoomSearch] = useState<string>('');
+  const [settleSelectedRoom, setSettleSelectedRoom] = useState<{ roomId: string; guestId: string; guestName: string } | null>(null);
+  const [orderMode, setOrderMode] = useState<'Dine-in' | 'Takeaway'>('Dine-in');
+  const [packagingFee, setPackagingFee] = useState<number>(0);
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const cartRef = React.useRef<HTMLDivElement | null>(null);
+  const [showItemDiscounts, setShowItemDiscounts] = useState<boolean>(false);
+  const cancelReasonModal = useDisclosure();
+  const [cancelReason, setCancelReason] = useState<string>('Out of stock');
+  const [cancelReasonCustom, setCancelReasonCustom] = useState<string>('');
+
+  // Keep order-level Room Service in sync with item-level service charge
+  React.useEffect(() => {
+    setCart(prev => prev.map(i => ({
+      ...i,
+      serviceChargePerUnit: applyRoomServiceCharge ? roomServiceChargePerUnit : 0,
+      isRoomService: applyRoomServiceCharge
+    })));
+  }, [applyRoomServiceCharge, roomServiceChargePerUnit]);
+
+  // Safe display name for guests (Front Office clients)
+  const getGuestDisplayName = (g: any) => {
+    if (!g) return '';
+    const name = g.name || [g.firstName, g.middleName, g.lastName].filter(Boolean).join(' ');
+    return (name || '').trim();
+  };
 
   // POS Activity row modal state
   const [activitySelected, setActivitySelected] = useState<{ order: FBOrder; item: any } | null>(null);
@@ -152,13 +188,22 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   // Get filtered guests based on search
   const filteredGuests = useMemo(() => {
-    if (!guestSearchTerm) return frontOfficeStore.guests.slice(0, 20);
-    return frontOfficeStore.guests.filter(guest => 
-      guest.name.toLowerCase().includes(guestSearchTerm.toLowerCase()) ||
-      guest.phone?.includes(guestSearchTerm) ||
-      guest.email?.toLowerCase().includes(guestSearchTerm.toLowerCase())
-    ).slice(0, 20);
+    const list = frontOfficeStore.guests || [];
+    if (!guestSearchTerm) return list.slice(0, 20);
+    const q = (guestSearchTerm || '').toLowerCase();
+    return list.filter(guest => {
+      const name = getGuestDisplayName(guest).toLowerCase();
+      const phone = guest?.phone || '';
+      const email = (guest?.email || '').toLowerCase();
+      return name.includes(q) || phone.includes(guestSearchTerm) || email.includes(q);
+    }).slice(0, 20);
   }, [guestSearchTerm]);
+
+  // Walk-in customers search
+  const filteredWalkIns = useMemo(() => {
+    if (!walkInSearchTerm) return customerStore.getAllCustomers().slice(0, 20);
+    return customerStore.searchCustomers(walkInSearchTerm).slice(0, 20);
+  }, [walkInSearchTerm]);
 
   // Handle room selection
   const handleRoomSelect = (room: any) => {
@@ -170,9 +215,16 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   // Handle guest selection
   const handleGuestSelect = (guest: any) => {
-    setGuestName(guest.name);
+    setGuestName(getGuestDisplayName(guest));
     setSelectedGuest(guest);
     setGuestSearchTerm('');
+  };
+
+  const handleWalkInSelect = (cust: any) => {
+    const fullName = `${cust.firstName} ${cust.lastName}`.trim();
+    setGuestName(fullName);
+    setSelectedWalkIn(cust);
+    setWalkInSearchTerm('');
   };
 
   // Handle customer type change
@@ -180,10 +232,14 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setCustomerType(newType);
     if (newType !== 'In-house') {
       setRoomNumber('');
-      setGuestName('');
+      setGuestName('Walk-in Guest');
       setSelectedGuest(null);
       setRoomSearchTerm('');
       setGuestSearchTerm('');
+    }
+    if (newType !== 'Walk-in') {
+      setSelectedWalkIn(null);
+      setWalkInSearchTerm('');
     }
   };
 
@@ -213,7 +269,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       });
 
       // Update folio balances
-      frontOfficeStore.updateFolioBalances(folio.id);
+      frontOfficeStore.updateFolioBalances(folio);
       
       // Track the event
       trackEvent('FB.RoomCharge', { 
@@ -391,6 +447,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     return sorted;
   }, [orders, aliases, menuIdToCategory, waiters, sortKey, sortDirection]);
 
+  const totalActivityPages = Math.max(1, Math.ceil((sortedOrders.length || 0) / (activityRowsPerPage || 10)));
+  React.useEffect(() => {
+    if (activityPage > totalActivityPages) setActivityPage(totalActivityPages);
+  }, [activityRowsPerPage, sortedOrders.length, totalActivityPages, activityPage]);
+
   const openActivityModal = (o: FBOrder, it: any) => {
     setActivitySelected({ order: o, item: it });
     setActivityQty(it.qty || 0);
@@ -427,11 +488,15 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setActivitySelected(null);
   };
 
-  const activityCancel = () => {
+  const doCancelWithReason = (reason: string) => {
     if (!activitySelected) return;
     const { order: o, item: it } = activitySelected;
+    const wasServed = (it.status === 'served' || o.status === 'served');
+    if (wasServed && !reason) return;
     ordersStore.removeItem(o.id, it.id);
-    logAudit({ area: 'f&b', action: 'delete', entity: 'OrderItem', entityId: `${o.id}-${it.id}`, details: `Cancelled ${it.name}`, meta: { table: o.table, waiter: o.waiterId }});
+    try { kitchenOpsStore.add({ orderId: o.id, table: o.table, waiterId: o.waiterId, itemId: it.id, itemName: it.name, action: 'status', fromStatus: (it.status as any) || 'pending', toStatus: 'pending', notes: `Cancelled${wasServed ? ' after served' : ''}${reason ? `: ${reason}` : ''}` }); } catch {}
+    trackEvent('FB.OrderItemCancelled' as any, { orderId: o.id, itemId: it.id, served: wasServed, reason }, { sourceModule: 'F&B' });
+    logAudit({ area: 'f&b', action: 'delete', entity: 'OrderItem', entityId: `${o.id}-${it.id}`, details: `Cancelled ${it.name}${wasServed ? ' (after served)' : ''}${reason ? ` - ${reason}` : ''}`, meta: { table: o.table, waiter: o.waiterId }});
     setActivitySelected(null);
   };
 
@@ -461,12 +526,41 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   const clearCart = () => setCart([]);
 
-  const serviceChargeAmount = cart.reduce((sum, ci) => sum + (ci.serviceChargePerUnit || 0) * ci.qty, 0);
+  const rawServiceChargeAmount = cart.reduce((sum, ci) => sum + (ci.serviceChargePerUnit || 0) * ci.qty, 0);
+  const serviceChargeAmount = orderMode === 'Dine-in' ? rawServiceChargeAmount : 0;
   const subtotal = cart.reduce((sum, ci) => sum + ci.price * ci.qty, 0);
   const itemDiscountAmount = cart.reduce((sum, ci) => sum + (ci.discountPerUnit || 0) * ci.qty, 0);
   const orderDiscountAmount = Math.round((subtotal * discountPercent) * 100) / 100 / 100;
-  const totalBeforeTip = Math.max(0, subtotal - itemDiscountAmount - orderDiscountAmount + serviceChargeAmount);
+  const totalBeforeTip = Math.max(0, subtotal - itemDiscountAmount - orderDiscountAmount + serviceChargeAmount + (orderMode === 'Takeaway' ? (packagingFee || 0) : 0));
   const total = Math.max(0, totalBeforeTip);
+  const grandTotal = Math.max(0, total + (tipAmount || 0));
+  const splitPaid = splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const splitRemaining = Math.max(0, grandTotal - splitPaid);
+
+  // Distribute order-level discount across items as per-unit discounts for activity log/store
+  const distributeOrderDiscountPerUnit = (items: { id: string; price: number; qty: number; discountPerUnit?: number; serviceChargePerUnit?: number; isRoomService?: boolean; name: string; route: 'kitchen'|'bar' }[]) => {
+    if (!discountPercent || subtotal <= 0) {
+      return items.map(i => ({ ...i, discountPerUnit: i.discountPerUnit || 0 }));
+    }
+    const target = Math.max(0, (subtotal * discountPercent) / 100);
+    const amounts = items.map(i => ({ id: i.id, line: i.price * i.qty }));
+    const sumLines = amounts.reduce((s, a) => s + a.line, 0) || 1;
+    // preliminary allocation
+    let allocated = 0;
+    const perItemTotalDiscount = amounts.map((a, idx) => {
+      const raw = target * (a.line / sumLines);
+      const rounded = idx === amounts.length - 1 ? (target - allocated) : Math.round(raw * 100) / 100;
+      allocated += idx === amounts.length - 1 ? 0 : rounded;
+      return { id: a.id, total: Math.max(0, rounded) };
+    });
+    // convert to per-unit
+    const withPerUnit = items.map(i => {
+      const d = perItemTotalDiscount.find(x => x.id === i.id)?.total || 0;
+      const perUnit = i.qty > 0 ? Math.min(i.price, Math.round((d / i.qty) * 100) / 100) : 0;
+      return { ...i, discountPerUnit: perUnit };
+    });
+    return withPerUnit;
+  };
 
   const sendOrder = () => {
     if (cart.length === 0) return;
@@ -476,6 +570,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       alert('Please select a room and guest for in-house orders');
       return;
     }
+    // For walk-in or takeout, allow optional client but set name if selected
     const id = `ORD-${Date.now().toString().slice(-6)}`;
     const newOrder: PendingOrder = {
       id,
@@ -490,11 +585,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       priority,
     };
     setPendingOrders(prev => [newOrder, ...prev]);
+    const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
     ordersStore.add({
       id: newOrder.id,
       table: newOrder.table,
       waiterId: newOrder.waiterId,
-      items: newOrder.items.map(i => ({ 
+      items: itemsWithOrderDiscount.map(i => ({ 
         id: i.id, 
         name: i.name, 
         price: i.price, 
@@ -512,14 +608,14 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       notes: orderNotes,
       urgent: priority === 'urgent',
       priority,
-      guestName: customerType === 'In-house' ? guestName : undefined,
+      guestName: customerType === 'In-house' ? guestName : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : undefined),
       roomNumber: customerType === 'In-house' ? roomNumber : undefined,
     } as any);
     // Auto-issue items to Stores (demo)
     cart.forEach(i => {
       storesIssueBus.issue({ sku: i.id, name: i.name, qty: i.qty, uom: 'ea', department: i.route === 'bar' ? 'Bar' : 'Kitchen', referenceId: id });
     });
-    trackEvent('FB.OrderPlaced', { id, table: tableNumber, waiterId, items: cart.map(i => ({ id: i.id, qty: i.qty })), venue, customerType }, { sourceModule: 'F&B' });
+      trackEvent('FB.OrderPlaced', { id, table: tableNumber, waiterId, items: itemsWithOrderDiscount.map(i => ({ id: i.id, qty: i.qty, discountPerUnit: i.discountPerUnit || 0 })), venue, customerType }, { sourceModule: 'F&B' });
     trackEvent('FB.KOT.Created', { id, urgent: priority === 'urgent' }, { sourceModule: 'F&B' });
     clearCart();
     setOrderNotes('');
@@ -548,11 +644,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
       // Persist order in shared store as paid
       const newId = `ORD-${Date.now().toString().slice(-6)}`;
+      const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
       ordersStore.add({
         id: newId,
         table: tableNumber,
         waiterId,
-        items: cart.map(i => ({
+        items: itemsWithOrderDiscount.map(i => ({
           id: i.id,
           name: i.name,
           price: i.price,
@@ -570,8 +667,9 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         notes: orderNotes,
         urgent: priority === 'urgent',
         priority,
-        guestName: customerType === 'In-house' ? guestName : undefined,
+        guestName: customerType === 'In-house' ? guestName : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : undefined),
         roomNumber: customerType === 'In-house' ? roomNumber : undefined,
+        
       } as any);
 
       // Update inventory (demo issue movements)
@@ -588,6 +686,19 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           costCenter: venue === 'Restaurant' ? 'REST' : 'BAR'
         });
       });
+
+      // Record revenue to appropriate center
+      try {
+        const { useAccountingStore } = require('../lib/accounting/store');
+        const { recordRevenue } = useAccountingStore.getState();
+        if (venue === 'Restaurant') {
+          recordRevenue('REST', total);
+        } else if (venue === 'Bar') {
+          recordRevenue('BAR', total);
+        } else if (venue === 'Room Service') {
+          recordRevenue('RS', total);
+        }
+      } catch {}
 
       // Add to guest folio if room charge
       if (paymentMethod === 'Room Charge' && customerType === 'In-house') {
@@ -691,6 +802,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setCustomerType(o.customerType);
     setOrderNotes(o.notes || '');
     setPriority(o.priority || (o.urgent ? 'urgent' : 'low'));
+    setEditingOrderId(o.id);
+    try { setTimeout(() => cartRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 0); } catch {}
   };
 
   const deleteOrder = (orderId: string) => {
@@ -770,77 +883,89 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 <Select label="Customer Type" selectedKeys={[customerType]} onSelectionChange={(k) => handleCustomerTypeChange(Array.from(k as Set<string>)[0] as CustomerType)}>
                   <SelectItem key="In-house">In-house</SelectItem>
                   <SelectItem key="Walk-in">Walk-in</SelectItem>
-                  <SelectItem key="Takeout">Takeout</SelectItem>
                 </Select>
+                {/* Unified guest/customer search directly under customer type */}
+                {customerType === 'In-house' ? (
+                  <div>
+                    <Input 
+                      label="Room Number" 
+                      placeholder="Search by room number or guest name..."
+                      value={roomSearchTerm || roomNumber}
+                      onChange={(e) => {
+                        setRoomSearchTerm(e.target.value);
+                        if (!e.target.value) {
+                          setRoomNumber('');
+                          setGuestName('');
+                          setSelectedGuest(null);
+                        }
+                      }}
+                      onFocus={() => setRoomSearchTerm(roomNumber)}
+                      startContent={<span>🏨</span>}
+                    />
+                    {roomSearchTerm && filteredRooms.length > 0 && (
+                      <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg z-10">
+                        {filteredRooms.map((room) => (
+                          <div
+                            key={room.roomId}
+                            className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                            onClick={() => handleRoomSelect(room)}
+                          >
+                            <div className="font-medium">Room {room.roomId}</div>
+                            <div className="text-sm text-gray-600">{room.guestName} • {room.roomType}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div>
+                    <Input 
+                      label="Customer (Walk-in)" 
+                      placeholder="Search by name, phone, or email..."
+                      value={walkInSearchTerm || (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : '')}
+                      onChange={(e) => {
+                        setWalkInSearchTerm(e.target.value);
+                        if (!e.target.value) {
+                          setSelectedWalkIn(null);
+                        }
+                      }}
+                      onFocus={() => { setWalkInFocused(true); setWalkInSearchTerm(selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : ''); }}
+                      onBlur={() => { setTimeout(() => setWalkInFocused(false), 150); }}
+                      startContent={<span>🧾</span>}
+                    />
+                    {(walkInFocused || !!walkInSearchTerm) && filteredWalkIns.length > 0 && (
+                      <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg z-10">
+                        {filteredWalkIns.map((c) => (
+                          <div
+                            key={c.id}
+                            className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                            onClick={() => handleWalkInSelect(c)}
+                          >
+                            <div className="font-medium">{c.firstName} {c.lastName}</div>
+                            <div className="text-sm text-gray-600">
+                              {c.phone && `📞 ${c.phone}`}
+                              {c.email && ` • ✉️ ${c.email}`}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="grid grid-cols-2 gap-2">
+                  <Select label="Order Mode" selectedKeys={[orderMode]} onSelectionChange={(k) => setOrderMode(Array.from(k as Set<string>)[0] as any)}>
+                    <SelectItem key="Dine-in">Dine-in</SelectItem>
+                    <SelectItem key="Takeaway">Takeaway</SelectItem>
+                  </Select>
+                  {orderMode === 'Takeaway' ? (
+                    <Input type="number" label="Packaging Fee (₵)" value={String(packagingFee)} onChange={(e) => setPackagingFee(Number(e.target.value || 0))} />
+                  ) : (
+                    <div />
+                  )}
+                </div>
 
                 {customerType === 'In-house' && (
                   <div className="space-y-3">
-                    <div>
-                      <Input 
-                        label="Room Number" 
-                        placeholder="Search by room number or guest name..."
-                        value={roomSearchTerm || roomNumber}
-                        onChange={(e) => {
-                          setRoomSearchTerm(e.target.value);
-                          if (!e.target.value) {
-                            setRoomNumber('');
-                            setGuestName('');
-                            setSelectedGuest(null);
-                          }
-                        }}
-                        onFocus={() => setRoomSearchTerm(roomNumber)}
-                        startContent={<span>🏨</span>}
-                      />
-                      {roomSearchTerm && filteredRooms.length > 0 && (
-                        <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg z-10">
-                          {filteredRooms.map((room) => (
-                            <div
-                              key={room.roomId}
-                              className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
-                              onClick={() => handleRoomSelect(room)}
-                            >
-                              <div className="font-medium">Room {room.roomId}</div>
-                              <div className="text-sm text-gray-600">{room.guestName} • {room.roomType}</div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                    
-                    <div>
-                      <Input 
-                        label="Guest Name" 
-                        placeholder="Search by name, phone, or email..."
-                        value={guestSearchTerm || guestName}
-                        onChange={(e) => {
-                          setGuestSearchTerm(e.target.value);
-                          if (!e.target.value) {
-                            setGuestName('');
-                            setSelectedGuest(null);
-                          }
-                        }}
-                        onFocus={() => setGuestSearchTerm(guestName)}
-                        startContent={<span>👤</span>}
-                      />
-                      {guestSearchTerm && filteredGuests.length > 0 && (
-                        <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg z-10">
-                          {filteredGuests.map((guest) => (
-                            <div
-                              key={guest.id}
-                              className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
-                              onClick={() => handleGuestSelect(guest)}
-                            >
-                              <div className="font-medium">{guest.name}</div>
-                              <div className="text-sm text-gray-600">
-                                {guest.phone && `📞 ${guest.phone}`}
-                                {guest.email && ` • ✉️ ${guest.email}`}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
                     {selectedGuest && (
                       <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
                         <div className="text-sm text-green-800">
@@ -908,10 +1033,17 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           <div className="space-y-4">
             <Card className="border-0 shadow-lg">
               <CardHeader className="pb-2 flex items-center justify-between">
-                <h3 className="font-semibold text-ghana-black">Current Order</h3>
-                <Chip size="sm" variant="flat" color="primary">{venue}</Chip>
+                <div className="flex items-center gap-3">
+                  <h3 className="font-semibold text-ghana-black">Current Order</h3>
+                  <Chip size="sm" variant="flat" color="primary">{venue}</Chip>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => setShowItemDiscounts(v => !v)}>
+                    {showItemDiscounts ? 'Hide Item Discounts' : 'Show Item Discounts'}
+                  </Button>
+                </div>
               </CardHeader>
-              <CardBody>
+              <CardBody ref={cartRef}>
                 <div className="space-y-3">
                   {cart.length === 0 && (
                     <div className="text-sm text-gray-500">No items added.</div>
@@ -930,15 +1062,17 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           <div className="w-16 text-right text-sm">₵{(ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty}</div>
                         </div>
                       </div>
-                      <div className="mt-2 grid grid-cols-2 gap-2 text-xs items-center">
-                        <Input size="sm" type="number" label="Discount/Unit (₵)" value={String(ci.discountPerUnit || 0)} onChange={(e) => setCart(prev => prev.map(x => x.id === ci.id ? { ...x, discountPerUnit: Number(e.target.value || 0) } : x))} />
-                        <Input size="sm" type="number" label="Service/Unit (₵)" value={String(ci.serviceChargePerUnit || 0)} onChange={(e) => setCart(prev => prev.map(x => x.id === ci.id ? { ...x, serviceChargePerUnit: Number(e.target.value || 0) } : x))} />
-                        <Select size="sm" label="Room Service" selectedKeys={[ci.isRoomService ? 'yes' : 'no']} onSelectionChange={(k) => setCart(prev => prev.map(x => x.id === ci.id ? { ...x, isRoomService: Array.from(k as Set<string>)[0] === 'yes' } : x))}>
-                          <SelectItem key="no">No</SelectItem>
-                          <SelectItem key="yes">Yes</SelectItem>
-                        </Select>
-                        <Input size="sm" label="Notes" value={ci.note || ''} onChange={(e) => setCart(prev => prev.map(x => x.id === ci.id ? { ...x, note: e.target.value } : x))} />
-                      </div>
+                      {showItemDiscounts && (
+                        <div className="mt-2 grid grid-cols-3 gap-2 text-xs items-center">
+                          <Input 
+                            size="sm" 
+                            type="number" 
+                            label="Disc/Unit (₵)" 
+                            value={String(ci.discountPerUnit || 0)} 
+                            onChange={(e) => setCart(prev => prev.map(x => x.id === ci.id ? { ...x, discountPerUnit: Number(e.target.value || 0) } : x))} 
+                          />
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -953,7 +1087,50 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                   <div className="flex justify-between font-semibold text-ghana-black"><span>Total</span><span>₵{total.toFixed(2)}</span></div>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-2">
-                  <Button variant="flat" className="bg-ghana-green text-white" onClick={sendOrder}>Send</Button>
+                  <Button variant="flat" className="bg-ghana-green text-white" onClick={() => {
+                    if (editingOrderId) {
+                      // Update existing order instead of creating a new one
+                      const existing = orders.find(o => o.id === editingOrderId);
+                      if (existing) {
+                        const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
+                        const updated = {
+                          ...existing,
+                          table: tableNumber,
+                          waiterId,
+                          venue,
+                          notes: orderNotes,
+                          items: itemsWithOrderDiscount.map(i => ({
+                            id: i.id,
+                            name: i.name,
+                            price: i.price,
+                            qty: i.qty,
+                            route: i.route,
+                            status: (existing.items.find(x => x.id === i.id)?.status) || 'pending',
+                            prepMinutes: i.route === 'kitchen' ? 15 : 2,
+                            isRoomService: i.isRoomService || false,
+                            discountPerUnit: i.discountPerUnit || 0,
+                            serviceChargePerUnit: i.serviceChargePerUnit || 0
+                          }))
+                        } as any;
+                        // Reflect to store and local pending list
+                        ordersStore.update(updated);
+                        trackEvent('FB.OrderUpdated', { id: updated.id, items: updated.items.map((it: any) => ({ id: it.id, qty: it.qty, discountPerUnit: it.discountPerUnit || 0 })) }, { sourceModule: 'F&B' });
+                        setPendingOrders(prev => prev.map(po => po.id === editingOrderId ? {
+                          ...po,
+                          table: updated.table,
+                          waiterId: updated.waiterId,
+                          venue: updated.venue,
+                          notes: updated.notes,
+                          items: cart
+                        } : po));
+                      }
+                      setEditingOrderId(null);
+                      clearCart();
+                      setOrderNotes('');
+                      return;
+                    }
+                    sendOrder();
+                  }}>{editingOrderId ? 'Update' : 'Send'}</Button>
                   <Button variant="flat" className="bg-gray-200" onClick={clearCart}>Clear</Button>
                   <Button variant="flat" className="bg-blue-600 text-white" onClick={openPayment}>Pay</Button>
                   <Button variant="flat" className="bg-indigo-600 text-white" onClick={() => {
@@ -1001,17 +1178,29 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         </div>
       </div>
 
+        {/* Visual divider between POS terminal and Activity Table */}
+        <div className="my-6 border-t border-gray-300" />
+
         {/* POS Activity Table - moved to bottom */}
-        <Card className="border-0 shadow-lg mt-6">
+        <Card className="border border-gray-300 shadow-lg mt-6">
                         <CardHeader className="pb-2 flex items-center justify-between">
                 <h3 className="font-semibold text-ghana-black">POS Activity Table</h3>
-                <Button 
-                  size="sm" 
-                  variant="flat" 
-                  onClick={() => setShowAllItems(!showAllItems)}
-                >
-                  {showAllItems ? 'Show 10' : 'Show All'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Select size="sm" label="Rows" selectedKeys={[String(activityRowsPerPage)]} onSelectionChange={(k) => {
+                    const v = Number(Array.from(k as Set<string>)[0] || '10');
+                    setActivityRowsPerPage(v);
+                    setActivityPage(1);
+                  }} className="w-24">
+                    <SelectItem key="10">10</SelectItem>
+                    <SelectItem key="25">25</SelectItem>
+                    <SelectItem key="50">50</SelectItem>
+                  </Select>
+                  <div className="flex items-center gap-1">
+                    <Button size="sm" variant="flat" className="bg-gray-100" isDisabled={activityPage <= 1} onClick={() => setActivityPage(p => Math.max(1, p - 1))}>Prev</Button>
+                    <span className="text-xs text-gray-600">Page {activityPage} / {totalActivityPages}</span>
+                    <Button size="sm" variant="flat" className="bg-gray-100" isDisabled={activityPage >= totalActivityPages} onClick={() => setActivityPage(p => Math.min(totalActivityPages, p + 1))}>Next</Button>
+                  </div>
+                </div>
               </CardHeader>
           <CardBody>
                             <div className="w-full overflow-x-auto max-h-[50vh] overflow-y-auto">
@@ -1212,9 +1401,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       >
                         WAITER/ESS {sortKey === 'waiter' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </TableColumn>
+                      <TableColumn>ACTIONS</TableColumn>
                     </TableHeader>
                     <TableBody>
-                      {sortedOrders.slice(0, showAllItems ? undefined : 10).map(({ order: o, item: it }) => (
+                      {sortedOrders.slice((activityPage - 1) * activityRowsPerPage, activityPage * activityRowsPerPage).map(({ order: o, item: it }) => (
                         <TableRow key={`${o.id}-${it.id}`} onDoubleClick={() => openActivityModal(o, it)}>
                           <TableCell>{o.id}</TableCell>
                           <TableCell>{o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}</TableCell>
@@ -1231,6 +1421,42 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           <TableCell>₵{(((it as any).discountPerUnit || 0) * it.qty).toFixed(2)}</TableCell>
                           <TableCell>₵{(it.price - ((it as any).discountPerUnit || 0) + (((it as any).serviceChargePerUnit || 0))).toFixed(2)}</TableCell>
                           <TableCell>{waiters.find(w => w.id === o.waiterId)?.name || o.waiterId}</TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                className={`${(it.status || o.status) === 'served' ? 'bg-green-600 text-white' : 'bg-orange-50 text-orange-700 border border-orange-200'}`}
+                                isDisabled={(it.status || o.status) === 'served'}
+                                onClick={() => {
+                                  if ((it.status || o.status) === 'served') return;
+                                  ordersStore.updateItem(o.id, it.id, { status: 'served' });
+                                  kitchenOpsStore.add({ orderId: o.id, table: o.table, waiterId: o.waiterId, itemId: it.id, itemName: it.name, action: 'status', fromStatus: (it.status as any) || 'pending', toStatus: 'served', priority: (o.priority || (o.urgent ? 'urgent' : 'low')) as any });
+                                  trackEvent('FB.OrderStatusChanged', { id: o.id, itemId: it.id, status: 'served' }, { sourceModule: 'F&B' });
+                                }}
+                              >
+                                {(it.status || o.status) === 'served' ? 'Served' : 'Serve'}
+                              </Button>
+                              <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => openActivityModal(o, it)}>Actions</Button>
+                              <Button size="sm" variant="flat" className="bg-blue-50 text-blue-700 border border-blue-200" onClick={() => {
+                                // Open payment modal for current cart based on this order
+                                const mapped = {
+                                  id: o.id,
+                                  table: o.table,
+                                  waiterId: o.waiterId,
+                                  items: o.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: '', route: i.route })),
+                                  status: o.status as any,
+                                  customerType: o.customerType as any,
+                                  venue: o.venue as any,
+                                  notes: o.notes,
+                                  urgent: o.urgent,
+                                  priority: o.priority,
+                                } as any;
+                                loadOrderIntoCart(mapped);
+                                paymentModal.onOpen();
+                              }}>Payment</Button>
+                            </div>
+                          </TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1249,6 +1475,53 @@ export default function FBPOS({ onClose }: FBPOSProps) {
               <Button variant="flat" className="bg-yellow-500 text-white" onClick={() => handlePayment('Mobile Money', total)}>Mobile Money</Button>
               <Button variant="flat" className="bg-purple-600 text-white" onClick={() => handlePayment('Room Charge', total)}>Bill to Room</Button>
             </div>
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-2">
+                <div className="font-medium text-ghana-black">Split Payments</div>
+                <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => setSplitPayments(prev => [...prev, { method: 'Cash', amount: 0 }])}>Add Split</Button>
+              </div>
+              {splitPayments.length === 0 && (
+                <div className="text-xs text-gray-500">No split rows added.</div>
+              )}
+              <div className="space-y-2">
+                {splitPayments.map((row, idx) => (
+                  <div key={idx} className="grid grid-cols-6 gap-2 items-center">
+                    <Select size="sm" label="Method" selectedKeys={[row.method]} onSelectionChange={(k) => setSplitPayments(prev => prev.map((r,i) => i===idx ? { ...r, method: Array.from(k as Set<string>)[0] as PaymentMethod } : r))}>
+                      <SelectItem key="Cash">Cash</SelectItem>
+                      <SelectItem key="Card">Card</SelectItem>
+                      <SelectItem key="Mobile Money">Mobile Money</SelectItem>
+                      <SelectItem key="Room Charge">Room Charge</SelectItem>
+                    </Select>
+                    <Input size="sm" type="number" label="Amount" value={String(row.amount)} onChange={(e) => setSplitPayments(prev => prev.map((r,i) => i===idx ? { ...r, amount: Number(e.target.value || 0) } : r))} className="col-span-3" />
+                    <Button size="sm" variant="flat" className="bg-red-100" onClick={() => setSplitPayments(prev => prev.filter((_, i) => i !== idx))}>Remove</Button>
+                  </div>
+                ))}
+              </div>
+              <div className="grid grid-cols-2 gap-2 mt-3">
+                <Input label="Tip/Gratuity (₵)" type="number" value={String(tipAmount)} onChange={(e) => setTipAmount(Number(e.target.value || 0))} />
+                <div className="p-2 rounded-lg bg-gray-50 border border-gray-200 text-sm flex items-center justify-between">
+                  <span>Remaining</span>
+                  <span className="font-semibold">₵{splitRemaining.toFixed(2)}</span>
+                </div>
+              </div>
+              {splitPayments.some(p => p.method === 'Room Charge' && Number(p.amount) > 0) && (
+                <div className="mt-3">
+                  <div className="text-xs text-gray-600 mb-1">Select room to charge</div>
+                  <Input 
+                    label="Room (for Room Charge)"
+                    placeholder="Search room or guest..."
+                    value={settleRoomSearch}
+                    onChange={(e) => setSettleRoomSearch(e.target.value)}
+                    startContent={<span>🏨</span>}
+                  />
+                  {settleRoomSearch && filteredRooms.filter(r => r.roomId.toLowerCase().includes(settleRoomSearch.toLowerCase()) || r.guestName.toLowerCase().includes(settleRoomSearch.toLowerCase())).slice(0, 10).map(r => (
+                    <div key={r.roomId} className="p-2 border-b text-sm cursor-pointer hover:bg-gray-50" onClick={() => { setSettleSelectedRoom(r as any); setSettleRoomSearch(`${r.roomId} - ${r.guestName}`); }}>
+                      Room {r.roomId} • {r.guestName}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             {customerType === 'In-house' && (
               <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-200 text-sm">
                 <div className="flex items-center justify-between">
@@ -1261,12 +1534,96 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 </div>
               </div>
             )}
+                {(customerType === 'Walk-in' || customerType === 'Takeout') && (
+                  <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-200 text-sm">
+                    <div className="flex items-center justify-between">
+                      <span>Customer</span>
+                      <span className="font-semibold">{selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : '-'}</span>
+                    </div>
+                  </div>
+                )}
+
+                {customerType === 'Walk-in' && (
+                  <div className="space-y-3">
+                    <div>
+                    <Input 
+                        label="Customer (Walk-in)" 
+                        placeholder="Search by name, phone, or email..."
+                        value={walkInSearchTerm || (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : '')}
+                        onChange={(e) => {
+                          setWalkInSearchTerm(e.target.value);
+                          if (!e.target.value) {
+                            setSelectedWalkIn(null);
+                          }
+                        }}
+                      onFocus={() => { setWalkInFocused(true); setWalkInSearchTerm(selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : ''); }}
+                      onBlur={() => { setTimeout(() => setWalkInFocused(false), 150); }}
+                        startContent={<span>🧾</span>}
+                      />
+                      {(walkInFocused || !!walkInSearchTerm) && filteredWalkIns.length > 0 && (
+                        <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg z-10">
+                          {filteredWalkIns.map((c) => (
+                            <div
+                              key={c.id}
+                              className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                              onClick={() => handleWalkInSelect(c)}
+                            >
+                              <div className="font-medium">{c.firstName} {c.lastName}</div>
+                              <div className="text-sm text-gray-600">
+                                {c.phone && `📞 ${c.phone}`}
+                                {c.email && ` • ✉️ ${c.email}`}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="mt-2 text-xs text-gray-600">
+                        Can't find customer? <a className="text-blue-600 underline" href="/manage-clients" target="_blank" rel="noopener noreferrer">Register new client</a>
+                      </div>
+                    </div>
+
+                    {selectedWalkIn && (
+                      <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <div className="text-sm text-green-800">
+                          <div className="font-medium">✓ Customer Selected</div>
+                          <div>Customer: {selectedWalkIn.firstName} {selectedWalkIn.lastName}</div>
+                        </div>
+                      </div>
+                    )}
+              </div>
+            )}
             <div className="text-sm">
-              <div className="flex items-center justify-between"><span>Total</span><span className="font-semibold">₵{total.toFixed(2)}</span></div>
+              <div className="flex items-center justify-between"><span>Subtotal</span><span className="font-semibold">₵{total.toFixed(2)}</span></div>
+              {orderMode === 'Takeaway' && (
+                <div className="flex items-center justify-between"><span>Packaging</span><span className="font-semibold">₵{(packagingFee || 0).toFixed(2)}</span></div>
+              )}
+              <div className="flex items-center justify-between"><span>Tip</span><span className="font-semibold">₵{(tipAmount || 0).toFixed(2)}</span></div>
+              <div className="flex items-center justify-between"><span>Total</span><span className="font-semibold">₵{grandTotal.toFixed(2)}</span></div>
             </div>
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" className="bg-gray-200" onClick={paymentModal.onClose}>Close</Button>
+            <Button color="primary" isDisabled={splitPayments.length > 0 && splitRemaining > 0} onClick={() => {
+              // Process split including room charges
+              // Minimal: rely on events and receipt; advanced GL hooks can be added later
+              (async () => {
+                try {
+                  // Simulate combined processing
+                  const hasRoom = splitPayments.some(p => p.method === 'Room Charge' && Number(p.amount) > 0);
+                  if (hasRoom && !settleSelectedRoom && !(selectedGuest && roomNumber)) {
+                    alert('Select room to charge or choose In-house with room.');
+                    return;
+                  }
+                } finally {
+                }
+              })().then(()=>{
+                // Fallback to single flow function for now
+                // Use aggregate grandTotal as receipt total; folio posting handled in handlePayment when needed
+                // For now, just close and clear
+              });
+              // Basic finalize to avoid blocking UX
+              paymentModal.onClose();
+            }}>Complete Payment</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -1442,31 +1799,73 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           <ModalBody>
             {!activitySelected ? null : (
               <div className="space-y-3 text-sm">
-                <div><strong>Item:</strong> {activitySelected.item.name}</div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  <Input size="sm" type="number" label="Qty" value={String(activityQty)} onChange={(e) => setActivityQty(Math.max(0, Number(e.target.value || 0)))} />
-                  <Input size="sm" label="Table" value={activityTable} onChange={(e) => setActivityTable(e.target.value)} />
-                  <Select size="sm" label="Venue" selectedKeys={[activityVenue]} onSelectionChange={(k) => setActivityVenue(Array.from(k as Set<string>)[0] as VenueMode)}>
-                    <SelectItem key="Restaurant">Restaurant</SelectItem>
-                    <SelectItem key="Bar">Bar</SelectItem>
-                  </Select>
-                  <Select size="sm" label="Waiter" selectedKeys={[activityWaiter]} onSelectionChange={(k) => setActivityWaiter(Array.from(k as Set<string>)[0])}>
-                    {waiters.map(w => (<SelectItem key={w.id}>{w.name}</SelectItem>))}
-                  </Select>
+                <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
+                  <div className="flex items-center justify-between">
+                    <div className="font-medium text-ghana-black">{activitySelected.item.name}</div>
+                    <Badge color="primary" variant="flat">{activitySelected.order.table}</Badge>
+                  </div>
+                  <div className="mt-1 text-xs text-gray-600">
+                    <span>Waiter: {waiters.find(w => w.id === activitySelected.order.waiterId)?.name || activitySelected.order.waiterId}</span>
+                    <span className="mx-2">•</span>
+                    <span>Venue: {activitySelected.order.venue}</span>
+                    <span className="mx-2">•</span>
+                    <span>Status: {(activitySelected.item.status || activitySelected.order.status)}</span>
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <Button variant="flat" className="bg-blue-50 text-blue-700 border border-blue-200" onClick={() => {
+                    const o = activitySelected.order;
+                    const mapped = {
+                      id: o.id,
+                      table: o.table,
+                      waiterId: o.waiterId,
+                      items: o.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: '', route: i.route })),
+                      status: o.status as any,
+                      customerType: o.customerType as any,
+                      venue: o.venue as any,
+                      notes: o.notes,
+                      urgent: o.urgent,
+                      priority: o.priority,
+                    } as any;
+                    loadOrderIntoCart(mapped);
+                    setActivitySelected(null);
+                  }}>Edit in Cart</Button>
+                  <Button variant="flat" className="bg-red-50 text-red-700 border border-red-200" onClick={activityCancel}>Cancel Item</Button>
+                  <Button variant="flat" className="bg-gray-100 text-red-600" onClick={() => { if (activitySelected) requestDeleteWithPin(activitySelected.order.id); }}>Delete Order</Button>
                 </div>
               </div>
             )}
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" className="bg-gray-200" onClick={() => setActivitySelected(null)}>Close</Button>
-            {activitySelected && (
-              <>
-                <Button color="primary" onClick={activityReceipt}>Receipt</Button>
-                <Button color="warning" variant="flat" onClick={activityChangeOrder}>Change Order</Button>
-                <Button color="secondary" variant="flat" onClick={activityEdit}>Edit</Button>
-                <Button color="danger" onClick={activityCancel}>Cancel</Button>
-              </>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Cancel reason modal */}
+      <Modal isOpen={cancelReasonModal.isOpen} onClose={cancelReasonModal.onClose}>
+        <ModalContent>
+          <ModalHeader className="text-ghana-black">Cancellation Reason</ModalHeader>
+          <ModalBody>
+            <Select label="Reason" selectedKeys={[cancelReason]} onSelectionChange={(k) => setCancelReason(Array.from(k as Set<string>)[0] as string)}>
+              <SelectItem key="Out of stock">Out of stock</SelectItem>
+              <SelectItem key="Customer changed mind">Customer changed mind</SelectItem>
+              <SelectItem key="Wrong entry">Wrong entry</SelectItem>
+              <SelectItem key="Kitchen rejected">Kitchen rejected</SelectItem>
+              <SelectItem key="Other">Other</SelectItem>
+            </Select>
+            {cancelReason === 'Other' && (
+              <Input label="Custom reason" placeholder="Type reason" value={cancelReasonCustom} onChange={(e) => setCancelReasonCustom(e.target.value)} />
             )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" className="bg-gray-200" onClick={cancelReasonModal.onClose}>Close</Button>
+            <Button color="danger" onClick={() => {
+              const finalReason = cancelReason === 'Other' ? (cancelReasonCustom || '') : cancelReason;
+              doCancelWithReason(finalReason);
+              setCancelReasonCustom('');
+              cancelReasonModal.onClose();
+            }}>Confirm Cancel</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

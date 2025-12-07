@@ -293,7 +293,7 @@ export default function ExecutiveManagementDashboard() {
       const stock = useStockStore.getState();
       (stock.alerts || []).filter(a => a.isActive && !a.isAcknowledged).forEach(a => {
         const sev = a.severity === 'high' ? 'critical' : a.severity === 'medium' ? 'warning' : 'info';
-        out[sev].push({ id: `inv-${a.id}`, severity: sev as any, text: `${a.message} (${a.itemName})`, nav: '/settings' });
+        out[sev].push({ id: `inv-${a.id}`, severity: sev as any, text: `${a.message} (${a.itemName})`, nav: '/?tab=overview' });
       });
     } catch {}
     try {
@@ -545,7 +545,7 @@ export default function ExecutiveManagementDashboard() {
               <div>
                 <div className="font-semibold mb-2">🟢 Adequate</div>
                 <ul className="space-y-1 list-disc list-inside">
-                  {stockSummary.adequate.map(i => (<li key={i.id} className="flex justify-between items-center"><span>{i.name}</span><Button size="sm" variant="light" onPress={() => go('/settings')}>View</Button></li>))}
+                  {stockSummary.adequate.map(i => (<li key={i.id} className="flex justify-between items-center"><span>{i.name}</span><Button size="sm" variant="light" onPress={() => go('/?tab=overview')}>View</Button></li>))}
                   {stockSummary.adequate.length === 0 && <li className="text-gray-500">No items</li>}
                 </ul>
               </div>

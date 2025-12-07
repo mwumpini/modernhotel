@@ -60,6 +60,8 @@ interface Payment {
   notes?: string;
   receiptUrl?: string;
   creditApplied?: number; // Amount applied from credit balance
+  billedTo?: string;
+  balance?: number;
 }
 
 interface Invoice {
@@ -105,6 +107,8 @@ export default function InvoicesPaymentsPage() {
   const [balanceFilter, setBalanceFilter] = useState<'all'|'zero'|'positive'>('all');
   const [folioSortBy, setFolioSortBy] = useState<'balance'|'updatedAt'>('balance');
   const [folioSortOrder, setFolioSortOrder] = useState<'asc'|'desc'>('desc');
+  const [folioDateFrom, setFolioDateFrom] = useState<string>('');
+  const [folioDateTo, setFolioDateTo] = useState<string>('');
   const { isOpen: isFolioModalOpen, onOpen: onFolioModalOpen, onClose: onFolioModalClose } = useDisclosure();
   const [adjustmentAmount, setAdjustmentAmount] = useState<number>(0);
   const [adjustmentReason, setAdjustmentReason] = useState<string>('');
@@ -181,13 +185,16 @@ export default function InvoicesPaymentsPage() {
     const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
     const bal = folio.balance || 0;
     const matchesBalance = balanceFilter === 'all' || (balanceFilter === 'zero' ? bal === 0 : bal > 0);
-    return matchesSearch && matchesStatus && matchesPayer && matchesBalance;
-  }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter]);
+    // Date range filter: show reservations whose stay overlaps the selected range
+    const fromOk = !folioDateFrom || new Date(reservation.departure) >= new Date(folioDateFrom);
+    const toOk = !folioDateTo || new Date(reservation.arrival) <= new Date(folioDateTo);
+    return matchesSearch && matchesStatus && matchesPayer && matchesBalance && fromOk && toOk;
+  }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFrom, folioDateTo]);
 
   // Reset folio page when filters change
   useEffect(() => {
     setFolioPage(1);
-  }, [folioSearchTerm, folioStatusFilter]);
+  }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFrom, folioDateTo]);
 
   const totalFolioPages = Math.max(1, Math.ceil(
     frontOfficeStore.reservations.filter(matchesFolioFilters).length / itemsPerPage
@@ -472,7 +479,12 @@ export default function InvoicesPaymentsPage() {
   };
 
   const handleViewPayment = (payment: Payment) => {
-    setSelectedPayment(payment);
+    // Enrich the selected payment with reservation context for the modal
+    const res = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
+    const folio = res ? frontOfficeStore.getOrCreateFolio(res.id) : undefined;
+    const billedTo = res ? (res.companyName || res.billingPersonName || res.guestName || '—') : '—';
+    const balance = folio?.balance || 0;
+    setSelectedPayment({ ...payment, billedTo, balance } as any);
     onPaymentOpen();
   };
 
@@ -957,7 +969,10 @@ export default function InvoicesPaymentsPage() {
               <TableHeader>
                 <TableColumn>TRANSACTION</TableColumn>
                 <TableColumn>INVOICE</TableColumn>
-                <TableColumn>AMOUNT</TableColumn>
+                <TableColumn>GUEST</TableColumn>
+                <TableColumn>BILLED TO</TableColumn>
+                <TableColumn>PAID</TableColumn>
+                <TableColumn>BALANCE</TableColumn>
                 <TableColumn>METHOD</TableColumn>
                 <TableColumn>STATUS</TableColumn>
                 <TableColumn>DATE</TableColumn>
@@ -966,7 +981,7 @@ export default function InvoicesPaymentsPage() {
               <TableBody>
                 {payments.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center py-8">
+                    <TableCell colSpan={10} className="text-center py-8">
                       <div className="text-gray-500">
                         <p className="text-lg">No payments found</p>
                         <p className="text-sm">Payments will appear here when they are added to invoices</p>
@@ -990,12 +1005,36 @@ export default function InvoicesPaymentsPage() {
                       <span className="font-medium">{payment.invoiceId}</span>
                     </TableCell>
                     <TableCell>
+                      {(() => {
+                        const res = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
+                        const guestName = res?.guestName || '—';
+                        return <span className="font-medium">{guestName}</span>;
+                      })()}
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const res = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
+                        if (!res) return '—';
+                        const billed = res.companyName || res.billingPersonName || res.guestName || '—';
+                        return <span className="font-medium">{billed}</span>;
+                      })()}
+                    </TableCell>
+                    <TableCell>
                       <div>
                         <span className="font-medium">₵{payment.amount.toFixed(2)}</span>
                         {payment.creditApplied && payment.creditApplied > 0 && (
                           <p className="text-xs text-green-600">Credit: ₵{payment.creditApplied.toFixed(2)}</p>
                         )}
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      {(() => {
+                        const res = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
+                        if (!res) return '—';
+                        const folio = frontOfficeStore.getOrCreateFolio(res.id);
+                        const balance = folio.balance || 0;
+                        return <span className="font-medium">₵{balance.toFixed(2)}</span>;
+                      })()}
                     </TableCell>
                     <TableCell>
                       <Chip size="sm" variant="flat">{getPaymentMethodLabel(payment.paymentMethod)}</Chip>
@@ -1046,6 +1085,8 @@ export default function InvoicesPaymentsPage() {
                     className="w-64"
                     startContent={<span>🔍</span>}
                   />
+                  <Input type="date" aria-label="From" value={folioDateFrom} onChange={(e)=> setFolioDateFrom(e.target.value)} className="w-36" />
+                  <Input type="date" aria-label="To" value={folioDateTo} onChange={(e)=> setFolioDateTo(e.target.value)} className="w-36" />
                   <Select
                     placeholder="Filter by status"
                     selectedKeys={new Set([folioStatusFilter])}
@@ -1083,9 +1124,12 @@ export default function InvoicesPaymentsPage() {
 
             <Table aria-label="Folio management table">
               <TableHeader>
+                <TableColumn>ID</TableColumn>
                 <TableColumn>GUEST</TableColumn>
-                <TableColumn>FOLIO</TableColumn>
                 <TableColumn>PAYER</TableColumn>
+                <TableColumn>ROOM</TableColumn>
+                <TableColumn>CHECK-IN</TableColumn>
+                <TableColumn>CHECK-OUT</TableColumn>
                 <TableColumn>
                   <button
                     className="font-semibold"
@@ -1121,31 +1165,10 @@ export default function InvoicesPaymentsPage() {
                     return (
                       <TableRow key={reservation.id}>
                         <TableCell>
-                          <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 bg-purple-100 rounded-full flex items-center justify-center">
-                              <span className="text-purple-600 font-semibold text-sm">
-                                {(guest?.name || reservation.guestName || 'U').charAt(0).toUpperCase()}
-                              </span>
-                            </div>
-                            <div title={`Room ${room?.id || 'TBD'} • ${roomType?.name || 'Standard'} • ${new Date(reservation.arrival).toLocaleDateString()} - ${new Date(reservation.departure).toLocaleDateString()} • ${reservation.status}`}>
-                              <p className="font-semibold text-gray-900">{guest?.name || reservation.guestName || 'Unknown Guest'}</p>
-                              <p className="text-xs text-gray-500">{reservation.guestPhone || 'N/A'}</p>
-                              <p className="text-xs text-blue-600">{reservation.guestEmail || 'N/A'}</p>
-                              <div className="mt-1 text-[11px] text-gray-500">
-                                Room {room?.id || 'TBD'} • {roomType?.name || 'Standard'} •
-                                <span className="ml-1">{new Date(reservation.arrival).toLocaleDateString()} - {new Date(reservation.departure).toLocaleDateString()}</span>
-                                <Badge className="ml-2" size="sm" color={reservation.status === 'checked-in' ? 'success' : reservation.status === 'checked-out' ? 'default' : 'warning'} variant="flat">
-                                  {reservation.status}
-                                </Badge>
-                              </div>
-                            </div>
-                          </div>
+                          <div className="text-sm font-medium">{reservation.resId || reservation.id}</div>
                         </TableCell>
                         <TableCell>
-                          <div className="text-sm">
-                            <div className="font-medium">{reservation.resId || reservation.id}</div>
-                            <div className="text-xs text-gray-500">{(folio.type || 'main').toString().toUpperCase()}</div>
-                          </div>
+                          <div className="font-semibold text-gray-900">{guest?.name || reservation.guestName || 'Unknown Guest'}</div>
                         </TableCell>
                         <TableCell>
                           <div className="text-sm">
@@ -1153,6 +1176,9 @@ export default function InvoicesPaymentsPage() {
                               <>
                                 <div className="font-medium">Company</div>
                                 <div className="text-xs text-gray-500">{reservation.companyName || reservation.billingPersonName || 'Corporate'}</div>
+                                {(!((reservation as any).projectCode || (reservation as any).costCenter || (reservation as any).poNumber)) && (
+                                  <Badge color="danger" variant="flat" className="mt-1">Missing PO/Ref</Badge>
+                                )}
                               </>
                             ) : (
                               <>
@@ -1161,6 +1187,18 @@ export default function InvoicesPaymentsPage() {
                               </>
                             )}
                           </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            <div className="font-medium">Room {room?.id || 'TBD'}</div>
+                            <div className="text-xs text-gray-500">{roomType?.name || 'Standard'}</div>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">{new Date(reservation.arrival).toLocaleDateString()}</div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="text-sm">{new Date(reservation.departure).toLocaleDateString()}</div>
                         </TableCell>
                         <TableCell>
                           <div className="space-y-1">
@@ -1260,7 +1298,7 @@ export default function InvoicesPaymentsPage() {
                 </Select>
                 <Button color="primary" onPress={() => { if (selectedInvoice) handlePrintInvoice(selectedInvoice); }}>Print</Button>
               </div>
-              <div className="text-sm text-gray-600">Tip: Use the new template “Ghana Top Class Invoice” for a premium layout with signatures.</div>
+              <div className="text-sm text-gray-600">Tip: Use the new template "Ghana Top Class Invoice" for a premium layout with signatures.</div>
             </>
           ) : null}
         </CardBody>
@@ -1286,7 +1324,7 @@ export default function InvoicesPaymentsPage() {
                   <div>
                     <h4 className="font-semibold mb-2">Invoice Information</h4>
                     <p><strong>Number:</strong> {selectedInvoice.invoiceNumber}</p>
-                    <p><strong>Status:</strong> <Badge color={getStatusColor(selectedInvoice.status)} variant="flat" className="ml-2">{selectedInvoice.status.replace('_', ' ')}</Badge></p>
+                    <div><strong>Status:</strong> <span className="inline-flex ml-2"><Badge color={getStatusColor(selectedInvoice.status)} variant="flat" className="ml-2">{selectedInvoice.status.replace('_', ' ')}</Badge></span></div>
                     <p><strong>Due Date:</strong> {selectedInvoice.dueDate}</p>
                     <p><strong>Created:</strong> {selectedInvoice.createdAt}</p>
                     <p><strong>Updated:</strong> {selectedInvoice.updatedAt}</p>
@@ -1497,7 +1535,7 @@ export default function InvoicesPaymentsPage() {
                   </div>
                   <div>
                     <h4 className="font-semibold mb-2">Status</h4>
-                    <p><strong>Status:</strong> <Badge color={getPaymentStatusColor(selectedPayment.status)} variant="flat" className="ml-2">{selectedPayment.status}</Badge></p>
+                    <div><strong>Status:</strong> <span className="inline-flex ml-2"><Badge color={getPaymentStatusColor(selectedPayment.status)} variant="flat" className="ml-2">{selectedPayment.status}</Badge></span></div>
                     <p><strong>Processed:</strong> {selectedPayment.processedAt}</p>
                     <p><strong>By:</strong> {selectedPayment.processedBy}</p>
                     {selectedPayment.reference && (<p><strong>Reference:</strong> {selectedPayment.reference}</p>)}

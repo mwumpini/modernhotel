@@ -1,16 +1,27 @@
 import { create } from 'zustand';
-import { Supplier, PurchaseOrder, PurchaseOrderItem } from './models';
+import { Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck, QualityCheckItem } from './models';
+import type { BusinessPartner } from '../accounting/models';
+import { useStockStore } from './stockStore';
 
 interface SupplierStore {
   suppliers: Supplier[];
   purchaseOrders: PurchaseOrder[];
+  requisitions: Requisition[];
+  goodsReceiptNotes: GoodsReceiptNote[];
+  supplierInvoices: SupplierInvoice[];
+  qualityChecks: QualityCheck[];
   selectedSupplier: Supplier | null;
   selectedPurchaseOrder: PurchaseOrder | null;
+  selectedRequisition: Requisition | null;
+  selectedGRN: GoodsReceiptNote | null;
+  selectedInvoice: SupplierInvoice | null;
+  _syncingToAccounting: boolean; // Internal flag to prevent circular sync
   
   // Supplier Management
-  addSupplier: (supplier: Omit<Supplier, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  updateSupplier: (id: string, updates: Partial<Supplier>) => void;
+  addSupplier: (supplier: Omit<Supplier, 'updatedAt'> & { id?: string; createdAt?: Date }, skipSync?: boolean) => void;
+  updateSupplier: (id: string, updates: Partial<Supplier>, skipSync?: boolean) => void;
   deleteSupplier: (id: string) => void;
+  generateNextSupplierCode: () => string;
   getSupplier: (id: string) => Supplier | undefined;
   getSupplierByCode: (code: string) => Supplier | undefined;
   getSuppliersByCategory: (category: string) => Supplier[];
@@ -38,9 +49,20 @@ interface SupplierStore {
   cancelPurchaseOrder: (orderId: string, reason: string) => void;
   closePurchaseOrder: (orderId: string) => void;
   
+  // Requisition Management
+  createRequisition: (requisition: Omit<Requisition, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updateRequisition: (id: string, updates: Partial<Requisition>) => void;
+  deleteRequisition: (id: string) => void;
+  approveRequisition: (id: string, approvedBy: string) => void;
+  rejectRequisition: (id: string, rejectedBy: string, reason?: string) => void;
+  convertRequisitionToPO: (requisitionId: string, supplierId: string) => PurchaseOrder | null;
+  getRequisition: (id: string) => Requisition | undefined;
+  getRequisitionsByStatus: (status: Requisition['status']) => Requisition[];
+  
   // Selection
   selectSupplier: (supplier: Supplier | null) => void;
   selectPurchaseOrder: (order: PurchaseOrder | null) => void;
+  selectRequisition: (requisition: Requisition | null) => void;
   
   // Analytics
   getSupplierPerformance: (supplierId: string) => {
@@ -70,6 +92,38 @@ interface SupplierStore {
     averageOrderValue: number;
     percentageOfTotal: number;
   }>;
+  
+  // GRN (Goods Receipt Note) Management
+  generateNextGRNNumber: () => string;
+  createGRN: (grn: Omit<GoodsReceiptNote, 'id' | 'grnNumber' | 'createdAt' | 'updatedAt'>) => GoodsReceiptNote;
+  updateGRN: (id: string, updates: Partial<GoodsReceiptNote>) => void;
+  getGRN: (id: string) => GoodsReceiptNote | undefined;
+  getGRNsByPO: (poId: string) => GoodsReceiptNote[];
+  getGRNsByStatus: (status: GoodsReceiptNote['status']) => GoodsReceiptNote[];
+  approveGRN: (grnId: string, approvedBy: string) => void;
+  rejectGRN: (grnId: string, rejectedBy: string, reason: string) => void;
+  selectGRN: (grn: GoodsReceiptNote | null) => void;
+  
+  // Supplier Invoice Management
+  generateNextInvoiceNumber: () => string;
+  createSupplierInvoice: (invoice: Omit<SupplierInvoice, 'id' | 'invoiceNumber' | 'createdAt' | 'updatedAt'>) => SupplierInvoice;
+  updateSupplierInvoice: (id: string, updates: Partial<SupplierInvoice>) => void;
+  getSupplierInvoice: (id: string) => SupplierInvoice | undefined;
+  getInvoicesByPO: (poId: string) => SupplierInvoice[];
+  getInvoicesByStatus: (status: SupplierInvoice['status']) => SupplierInvoice[];
+  performThreeWayMatch: (invoiceId: string, matchedBy: string) => { matched: boolean; discrepancies: string[] };
+  approveInvoice: (invoiceId: string, approvedBy: string) => void;
+  rejectInvoice: (invoiceId: string, rejectedBy: string, reason: string) => void;
+  markInvoicePaid: (invoiceId: string, paidBy: string, paymentMethod: string, paymentReference: string) => void;
+  selectInvoice: (invoice: SupplierInvoice | null) => void;
+  
+  // Quality Check Management
+  generateNextQualityCheckNumber: () => string;
+  createQualityCheck: (check: Omit<QualityCheck, 'id' | 'checkNumber' | 'createdAt' | 'updatedAt'>) => QualityCheck;
+  updateQualityCheck: (id: string, updates: Partial<QualityCheck>) => void;
+  getQualityCheck: (id: string) => QualityCheck | undefined;
+  getQualityChecksByGRN: (grnId: string) => QualityCheck[];
+  completeQualityCheck: (checkId: string, approvedBy: string) => void;
 }
 
 // Sample data
@@ -302,32 +356,260 @@ const samplePurchaseOrders: PurchaseOrder[] = [
 export const useSupplierStore = create<SupplierStore>((set, get) => ({
   suppliers: sampleSuppliers,
   purchaseOrders: samplePurchaseOrders,
+  requisitions: [],
+  goodsReceiptNotes: [],
+  supplierInvoices: [],
+  qualityChecks: [],
   selectedSupplier: null,
   selectedPurchaseOrder: null,
+  selectedRequisition: null,
+  selectedGRN: null,
+  selectedInvoice: null,
+  _syncingToAccounting: false,
 
   // Supplier Management
-  addSupplier: (supplierData) => {
+  addSupplier: (supplierData, skipSync = false) => {
+    const supplierId = supplierData.id || Date.now().toString();
+    
+    // Auto-generate code if not provided
+    let supplierCode = supplierData.code;
+    if (!supplierCode || supplierCode.trim() === '') {
+      supplierCode = get().generateNextSupplierCode();
+    }
+    
+    // Check if supplier already exists by ID or code
+    const state = get();
+    const existingSupplier = state.suppliers.find(
+      s => s.id === supplierId || s.code === supplierCode
+    );
+    
+    if (existingSupplier) {
+      // Supplier already exists, update it instead
+      const updatedSupplier: Supplier = {
+        ...existingSupplier,
+        ...supplierData,
+        id: existingSupplier.id, // Preserve existing ID
+        updatedAt: new Date()
+      };
+      set(state => ({
+        suppliers: state.suppliers.map(s => s.id === existingSupplier.id ? updatedSupplier : s)
+      }));
+      
+      // Sync update to accounting if needed
+      if (!skipSync && !state._syncingToAccounting) {
+        try {
+          set({ _syncingToAccounting: true });
+          const { useAccountingStore } = require('../accounting/store');
+          const accountingStore = useAccountingStore.getState();
+          const existingBP = accountingStore.businessPartners.find(
+            (bp: BusinessPartner) => bp.id === updatedSupplier.id || bp.code === updatedSupplier.code
+          );
+          
+          if (existingBP) {
+            const bpUpdates: Partial<BusinessPartner> = {
+              code: updatedSupplier.code,
+              name: updatedSupplier.name,
+              taxNumber: updatedSupplier.taxId,
+              address: updatedSupplier.address,
+              phone: updatedSupplier.phone,
+              email: updatedSupplier.email,
+              contactPerson: updatedSupplier.contactPerson,
+              creditLimit: updatedSupplier.creditLimit,
+              paymentTerms: updatedSupplier.paymentTerms === 'immediate' ? 0 :
+                            updatedSupplier.paymentTerms === 'net30' ? 30 :
+                            updatedSupplier.paymentTerms === 'net60' ? 60 :
+                            updatedSupplier.paymentTerms === 'net90' ? 90 : 30,
+              balance: updatedSupplier.currentBalance,
+              isActive: updatedSupplier.isActive,
+              countryCode: updatedSupplier.country?.toUpperCase()?.slice(0, 2) || 'GH',
+              updatedAt: updatedSupplier.updatedAt.toISOString()
+            };
+            accountingStore.updateBusinessPartner(existingBP.id, bpUpdates);
+          }
+        } catch (error) {
+          console.error('Failed to sync supplier update to accounting:', error);
+        } finally {
+          set({ _syncingToAccounting: false });
+        }
+      }
+      return;
+    }
+    
+    // New supplier, add it
     const newSupplier: Supplier = {
       ...supplierData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
+      id: supplierId,
+      code: supplierCode, // Use auto-generated code
+      createdAt: supplierData.createdAt || new Date(),
       updatedAt: new Date()
     };
     set(state => ({ suppliers: [...state.suppliers, newSupplier] }));
+    
+    // Sync to accounting store (unless we're syncing from accounting)
+    if (!skipSync && !get()._syncingToAccounting) {
+      try {
+        set(state => ({ ...state, _syncingToAccounting: true }));
+        const { useAccountingStore } = require('../accounting/store');
+        const accountingStore = useAccountingStore.getState();
+        const existingBP = accountingStore.businessPartners.find(
+          (bp: BusinessPartner) => bp.id === newSupplier.id || bp.code === newSupplier.code
+        );
+        
+        if (!existingBP) {
+          // Convert Supplier to BusinessPartner
+          const businessPartner: BusinessPartner = {
+            id: newSupplier.id,
+            code: newSupplier.code,
+            name: newSupplier.name,
+            type: 'Supplier',
+            taxNumber: newSupplier.taxId,
+            address: newSupplier.address,
+            phone: newSupplier.phone,
+            email: newSupplier.email,
+            contactPerson: newSupplier.contactPerson,
+            creditLimit: newSupplier.creditLimit,
+            paymentTerms: newSupplier.paymentTerms === 'immediate' ? 0 :
+                          newSupplier.paymentTerms === 'net30' ? 30 :
+                          newSupplier.paymentTerms === 'net60' ? 60 :
+                          newSupplier.paymentTerms === 'net90' ? 90 : 30,
+            glAccountCode: '2100', // Accounts Payable
+            currency: 'GHS',
+            balance: newSupplier.currentBalance,
+            isActive: newSupplier.isActive,
+            countryCode: newSupplier.country?.toUpperCase()?.slice(0, 2) || 'GH',
+            createdAt: newSupplier.createdAt.toISOString(),
+            updatedAt: newSupplier.updatedAt.toISOString()
+          };
+          accountingStore.addBusinessPartner(businessPartner);
+        }
+      } catch (error) {
+        console.error('Failed to sync supplier to accounting:', error);
+      } finally {
+        set(state => ({ ...state, _syncingToAccounting: false }));
+      }
+    }
   },
 
-  updateSupplier: (id, updates) => {
-    set(state => ({
-      suppliers: state.suppliers.map(supplier => 
+  updateSupplier: (id, updates, skipSync = false) => {
+    set(state => {
+      const updatedSuppliers = state.suppliers.map(supplier => 
         supplier.id === id 
           ? { ...supplier, ...updates, updatedAt: new Date() }
           : supplier
-      )
-    }));
+      );
+      const updatedSupplier = updatedSuppliers.find(s => s.id === id);
+      
+      // Sync to accounting store (unless we're syncing from accounting)
+      if (updatedSupplier && !skipSync && !state._syncingToAccounting) {
+        try {
+          set({ _syncingToAccounting: true });
+          const { useAccountingStore } = require('../accounting/store');
+          const accountingStore = useAccountingStore.getState();
+          const existingBP = accountingStore.businessPartners.find(
+            (bp: BusinessPartner) => bp.id === id || bp.code === updatedSupplier.code
+          );
+          
+          if (existingBP) {
+            // Update existing BusinessPartner
+            const bpUpdates: Partial<BusinessPartner> = {
+              code: updatedSupplier.code,
+              name: updatedSupplier.name,
+              taxNumber: updatedSupplier.taxId,
+              address: updatedSupplier.address,
+              phone: updatedSupplier.phone,
+              email: updatedSupplier.email,
+              contactPerson: updatedSupplier.contactPerson,
+              creditLimit: updatedSupplier.creditLimit,
+              paymentTerms: updatedSupplier.paymentTerms === 'immediate' ? 0 :
+                            updatedSupplier.paymentTerms === 'net30' ? 30 :
+                            updatedSupplier.paymentTerms === 'net60' ? 60 :
+                            updatedSupplier.paymentTerms === 'net90' ? 90 : 30,
+              balance: updatedSupplier.currentBalance,
+              isActive: updatedSupplier.isActive,
+              countryCode: updatedSupplier.country?.toUpperCase()?.slice(0, 2) || 'GH',
+              updatedAt: updatedSupplier.updatedAt.toISOString()
+            };
+            accountingStore.updateBusinessPartner(existingBP.id, bpUpdates);
+          } else {
+            // Create new BusinessPartner if doesn't exist
+            const businessPartner: BusinessPartner = {
+              id: updatedSupplier.id,
+              code: updatedSupplier.code,
+              name: updatedSupplier.name,
+              type: 'Supplier',
+              taxNumber: updatedSupplier.taxId,
+              address: updatedSupplier.address,
+              phone: updatedSupplier.phone,
+              email: updatedSupplier.email,
+              contactPerson: updatedSupplier.contactPerson,
+              creditLimit: updatedSupplier.creditLimit,
+              paymentTerms: updatedSupplier.paymentTerms === 'immediate' ? 0 :
+                            updatedSupplier.paymentTerms === 'net30' ? 30 :
+                            updatedSupplier.paymentTerms === 'net60' ? 60 :
+                            updatedSupplier.paymentTerms === 'net90' ? 90 : 30,
+              glAccountCode: '2100',
+              currency: 'GHS',
+              balance: updatedSupplier.currentBalance,
+              isActive: updatedSupplier.isActive,
+              countryCode: updatedSupplier.country?.toUpperCase()?.slice(0, 2) || 'GH',
+              createdAt: updatedSupplier.createdAt.toISOString(),
+              updatedAt: updatedSupplier.updatedAt.toISOString()
+            };
+            accountingStore.addBusinessPartner(businessPartner);
+          }
+        } catch (error) {
+          console.error('Failed to sync supplier update to accounting:', error);
+        } finally {
+          set({ _syncingToAccounting: false });
+        }
+      }
+      
+      return { suppliers: updatedSuppliers };
+    });
   },
 
   deleteSupplier: (id) => {
-    set(state => ({ suppliers: state.suppliers.filter(supplier => supplier.id !== id) }));
+    set(state => {
+      const supplier = state.suppliers.find(s => s.id === id);
+      
+      // Sync to accounting store - mark as inactive instead of deleting
+      if (supplier) {
+        try {
+          const { useAccountingStore } = require('../accounting/store');
+          const accountingStore = useAccountingStore.getState();
+          const existingBP = accountingStore.businessPartners.find(
+            (bp: BusinessPartner) => bp.id === id || bp.code === supplier.code
+          );
+          
+          if (existingBP) {
+            accountingStore.updateBusinessPartner(existingBP.id, { 
+              isActive: false,
+              updatedAt: new Date().toISOString()
+            });
+          }
+        } catch (error) {
+          console.error('Failed to sync supplier deletion to accounting:', error);
+        }
+      }
+      
+      return { suppliers: state.suppliers.filter(supplier => supplier.id !== id) };
+    });
+  },
+
+  generateNextSupplierCode: () => {
+    const state = get();
+    // Find all suppliers with codes matching SUP-XXX pattern
+    const supPattern = /^SUP-(\d+)$/i;
+    const supCodes = state.suppliers
+      .map(s => {
+        const match = s.code.match(supPattern);
+        return match ? parseInt(match[1], 10) : 0;
+      })
+      .filter(num => num > 0);
+    
+    // Get the highest number and increment
+    const nextNumber = supCodes.length > 0 ? Math.max(...supCodes) + 1 : 1;
+    return `SUP-${String(nextNumber).padStart(3, '0')}`;
   },
 
   getSupplier: (id) => get().suppliers.find(supplier => supplier.id === id),
@@ -459,10 +741,144 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
     get().updatePurchaseOrder(orderId, { status: 'closed' });
   },
 
+  // Requisition Management
+  createRequisition: (requisitionData) => {
+    const newRequisition: Requisition = {
+      ...requisitionData,
+      id: Date.now().toString(),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    set(state => ({ requisitions: [...state.requisitions, newRequisition] }));
+  },
+
+  updateRequisition: (id, updates) => {
+    set(state => ({
+      requisitions: state.requisitions.map(req => 
+        req.id === id 
+          ? { ...req, ...updates, updatedAt: new Date() }
+          : req
+      )
+    }));
+  },
+
+  deleteRequisition: (id) => {
+    set(state => ({ requisitions: state.requisitions.filter(req => req.id !== id) }));
+  },
+
+  approveRequisition: (id, approvedBy) => {
+    set(state => ({
+      requisitions: state.requisitions.map(req => 
+        req.id === id 
+          ? { 
+              ...req, 
+              status: 'approved' as const,
+              approvedBy,
+              approvedAt: new Date(),
+              updatedAt: new Date()
+            }
+          : req
+      )
+    }));
+  },
+
+  rejectRequisition: (id, rejectedBy, reason) => {
+    set(state => ({
+      requisitions: state.requisitions.map(req => 
+        req.id === id 
+          ? { 
+              ...req, 
+              status: 'rejected' as const,
+              rejectedBy,
+              rejectedAt: new Date(),
+              rejectionReason: reason,
+              updatedAt: new Date()
+            }
+          : req
+      )
+    }));
+  },
+
+  convertRequisitionToPO: (requisitionId, supplierId) => {
+    const requisition = get().getRequisition(requisitionId);
+    if (!requisition || requisition.status !== 'approved') {
+      return null;
+    }
+
+    const supplier = get().getSupplier(supplierId);
+    if (!supplier) {
+      return null;
+    }
+
+    // Generate PO number
+    const year = new Date().getFullYear();
+    const poCount = get().purchaseOrders.length + 1;
+    const poNumber = `PO-${year}-${String(poCount).padStart(3, '0')}`;
+
+    // Convert requisition items to PO items
+    const poItems: PurchaseOrderItem[] = requisition.requestedItems.map(item => ({
+      id: Date.now().toString() + Math.random().toString(),
+      itemId: item.itemId,
+      itemCode: item.itemCode,
+      itemName: item.itemName,
+      quantity: item.quantity,
+      unitCost: item.estimatedPrice,
+      totalCost: item.totalCost,
+      receivedQuantity: 0,
+      notes: item.notes
+    }));
+
+    // Calculate totals
+    const subtotal = poItems.reduce((sum, item) => sum + item.totalCost, 0);
+    const tax = subtotal * 0.15; // 15% VAT
+    const finalAmount = subtotal + tax;
+
+    const newPO: PurchaseOrder = {
+      id: Date.now().toString(),
+      poNumber,
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      orderDate: new Date(),
+      expectedDeliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      status: 'draft',
+      priority: 'medium',
+      totalAmount: subtotal,
+      taxAmount: tax,
+      shippingAmount: 0,
+      discountAmount: 0,
+      finalAmount: finalAmount,
+      currency: 'GHS',
+      paymentTerms: supplier.paymentTerms || 'net30',
+      notes: `Converted from Requisition ${requisition.requisitionNumber}`,
+      items: poItems,
+      createdBy: requisition.requestedBy,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    // Create the PO
+    get().createPurchaseOrder(newPO);
+
+    // Update requisition status
+    get().updateRequisition(requisitionId, {
+      status: 'converted-to-po',
+      convertedToPOId: newPO.id,
+      convertedToPONumber: newPO.poNumber
+    });
+
+    return newPO;
+  },
+
+  getRequisition: (id) => get().requisitions.find(req => req.id === id),
+
+  getRequisitionsByStatus: (status) => get().requisitions.filter(req => req.status === status),
+
   // Selection
   selectSupplier: (supplier) => set({ selectedSupplier: supplier }),
 
   selectPurchaseOrder: (order) => set({ selectedPurchaseOrder: order }),
+
+  selectRequisition: (requisition) => set({ selectedRequisition: requisition }),
 
   // Analytics
   getSupplierPerformance: (supplierId) => {
@@ -575,5 +991,353 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
     });
     
     return analysis;
+  },
+
+  // GRN Management Functions
+  generateNextGRNNumber: () => {
+    const year = new Date().getFullYear();
+    const existingGRNs = get().goodsReceiptNotes.filter(grn => {
+      const grnYear = grn.grnNumber.split('-')[1];
+      return grnYear === String(year);
+    });
+    const nextNumber = existingGRNs.length + 1;
+    return `GRN-${year}-${String(nextNumber).padStart(3, '0')}`;
+  },
+
+  createGRN: (grnData) => {
+    const grnNumber = get().generateNextGRNNumber();
+    const newGRN: GoodsReceiptNote = {
+      ...grnData,
+      id: Date.now().toString(),
+      grnNumber,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    set(state => ({ goodsReceiptNotes: [...state.goodsReceiptNotes, newGRN] }));
+    return newGRN;
+  },
+
+  updateGRN: (id, updates) => {
+    set(state => ({
+      goodsReceiptNotes: state.goodsReceiptNotes.map(grn =>
+        grn.id === id ? { ...grn, ...updates, updatedAt: new Date() } : grn
+      )
+    }));
+  },
+
+  getGRN: (id) => get().goodsReceiptNotes.find(grn => grn.id === id),
+
+  getGRNsByPO: (poId) => get().goodsReceiptNotes.filter(grn => grn.poId === poId),
+
+  getGRNsByStatus: (status) => get().goodsReceiptNotes.filter(grn => grn.status === status),
+
+  approveGRN: (grnId, approvedBy) => {
+    const grn = get().goodsReceiptNotes.find(g => g.id === grnId);
+    if (!grn) return;
+    
+    // Determine cost center based on items
+    const itemCategories = grn.items.map(item => {
+      try {
+        const stockStore = useStockStore.getState();
+        const stockItem = stockStore.getStockItem(item.itemId);
+        return stockItem?.category;
+      } catch {
+        return undefined;
+      }
+    });
+    
+    // Map categories to cost centers
+    const categoryToCenterMap: Record<string, string> = {
+      'food': 'KT',
+      'beverage': 'FB',
+      'cleaning': 'HK',
+      'maintenance': 'MT',
+      'office': 'AC',
+      'linens': 'HK',
+      'amenities': 'FO'
+    };
+    
+    // Default to kitchen for food purchases, otherwise use first category
+    let costCenter = 'KT';
+    if (itemCategories.length > 0 && itemCategories[0]) {
+      const firstCategory = itemCategories[0];
+      costCenter = categoryToCenterMap[firstCategory] || 'FO';
+    }
+    
+    // Record expense to appropriate cost center
+    try {
+      const { useAccountingStore } = require('../accounting/store');
+      const { recordExpense } = useAccountingStore.getState();
+      recordExpense(costCenter, grn.totalValue);
+    } catch {}
+    
+    set(state => ({
+      goodsReceiptNotes: state.goodsReceiptNotes.map(grn =>
+        grn.id === grnId
+          ? {
+              ...grn,
+              status: 'approved' as const,
+              approvedBy,
+              approvedAt: new Date(),
+              updatedAt: new Date()
+            }
+          : grn
+      )
+    }));
+  },
+
+  rejectGRN: (grnId, rejectedBy, reason) => {
+    set(state => ({
+      goodsReceiptNotes: state.goodsReceiptNotes.map(grn =>
+        grn.id === grnId
+          ? {
+              ...grn,
+              status: 'rejected' as const,
+              approvedBy: rejectedBy,
+              approvedAt: new Date(),
+              notes: reason,
+              updatedAt: new Date()
+            }
+          : grn
+      )
+    }));
+  },
+
+  selectGRN: (grn) => set({ selectedGRN: grn }),
+
+  // Supplier Invoice Management Functions
+  generateNextInvoiceNumber: () => {
+    const year = new Date().getFullYear();
+    const existingInvoices = get().supplierInvoices.filter(inv => {
+      const invYear = inv.invoiceNumber.includes(String(year));
+      return invYear;
+    });
+    const nextNumber = existingInvoices.length + 1;
+    return `INV-${year}-${String(nextNumber).padStart(4, '0')}`;
+  },
+
+  createSupplierInvoice: (invoiceData) => {
+    const invoiceNumber = (invoiceData as any).invoiceNumber || get().generateNextInvoiceNumber();
+    const newInvoice: SupplierInvoice = {
+      ...invoiceData,
+      id: Date.now().toString(),
+      invoiceNumber,
+      matchingStatus: {
+        isQuantityMatched: false,
+        isPriceMatched: false,
+        isTermsMatched: false,
+        discrepancies: []
+      },
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    set(state => ({ supplierInvoices: [...state.supplierInvoices, newInvoice] }));
+    return newInvoice;
+  },
+
+  updateSupplierInvoice: (id, updates) => {
+    set(state => ({
+      supplierInvoices: state.supplierInvoices.map(inv =>
+        inv.id === id ? { ...inv, ...updates, updatedAt: new Date() } : inv
+      )
+    }));
+  },
+
+  getSupplierInvoice: (id) => get().supplierInvoices.find(inv => inv.id === id),
+
+  getInvoicesByPO: (poId) => get().supplierInvoices.filter(inv => inv.poId === poId),
+
+  getInvoicesByStatus: (status) => get().supplierInvoices.filter(inv => inv.status === status),
+
+  performThreeWayMatch: (invoiceId, matchedBy) => {
+    const invoice = get().getSupplierInvoice(invoiceId);
+    if (!invoice) return { matched: false, discrepancies: ['Invoice not found'] };
+
+    const po = get().getPurchaseOrder(invoice.poId);
+    if (!po) return { matched: false, discrepancies: ['Purchase Order not found'] };
+
+    const grn = get().getGRNsByPO(invoice.poId).find(g => g.status === 'approved' || g.status === 'completed');
+    const discrepancies: string[] = [];
+
+    // Quantity Matching (PO vs GRN vs Invoice)
+    let quantityMatched = true;
+    if (!grn) {
+      discrepancies.push('GRN not found or not approved');
+      quantityMatched = false;
+    } else {
+      invoice.items.forEach(invItem => {
+        const poItem = po.items.find(i => i.id === invItem.poItemId);
+        const grnItem = grn.items.find(i => i.poItemId === invItem.poItemId);
+        
+        if (poItem && grnItem) {
+          if (invItem.quantity !== grnItem.acceptedQuantity) {
+            discrepancies.push(`Quantity mismatch for ${invItem.itemCode}: Invoice ${invItem.quantity} vs GRN ${grnItem.acceptedQuantity}`);
+            quantityMatched = false;
+          }
+          if (invItem.quantity > poItem.quantity) {
+            discrepancies.push(`Quantity exceeds PO for ${invItem.itemCode}: Invoice ${invItem.quantity} vs PO ${poItem.quantity}`);
+            quantityMatched = false;
+          }
+        }
+      });
+    }
+
+    // Price Matching (PO vs Invoice)
+    let priceMatched = true;
+    invoice.items.forEach(invItem => {
+      const poItem = po.items.find(i => i.id === invItem.poItemId);
+      if (poItem && Math.abs(invItem.unitPrice - poItem.unitCost) > 0.01) {
+        discrepancies.push(`Price mismatch for ${invItem.itemCode}: Invoice ₵${invItem.unitPrice} vs PO ₵${poItem.unitCost}`);
+        priceMatched = false;
+      }
+    });
+
+    // Terms Matching
+    let termsMatched = true;
+    const invoiceTotal = invoice.subtotal + invoice.taxAmount + invoice.shippingAmount - invoice.discountAmount;
+    const poTotal = po.finalAmount;
+    if (Math.abs(invoiceTotal - poTotal) > 0.01) {
+      discrepancies.push(`Total amount mismatch: Invoice ₵${invoiceTotal.toFixed(2)} vs PO ₵${poTotal.toFixed(2)}`);
+      termsMatched = false;
+    }
+
+    const allMatched = quantityMatched && priceMatched && termsMatched;
+
+    // Update invoice matching status
+    get().updateSupplierInvoice(invoiceId, {
+      matchingStatus: {
+        isQuantityMatched: quantityMatched,
+        isPriceMatched: priceMatched,
+        isTermsMatched: termsMatched,
+        discrepancies,
+        matchedBy,
+        matchedAt: new Date()
+      },
+      status: allMatched ? 'matched' : 'pending'
+    });
+
+    return { matched: allMatched, discrepancies };
+  },
+
+  approveInvoice: (invoiceId, approvedBy) => {
+    set(state => ({
+      supplierInvoices: state.supplierInvoices.map(inv =>
+        inv.id === invoiceId
+          ? {
+              ...inv,
+              status: 'approved' as const,
+              approvedBy,
+              approvedAt: new Date(),
+              updatedAt: new Date()
+            }
+          : inv
+      )
+    }));
+  },
+
+  rejectInvoice: (invoiceId, rejectedBy, reason) => {
+    set(state => ({
+      supplierInvoices: state.supplierInvoices.map(inv =>
+        inv.id === invoiceId
+          ? {
+              ...inv,
+              status: 'rejected' as const,
+              rejectedBy,
+              rejectedAt: new Date(),
+              rejectionReason: reason,
+              updatedAt: new Date()
+            }
+          : inv
+      )
+    }));
+  },
+
+  markInvoicePaid: (invoiceId, paidBy, paymentMethod, paymentReference) => {
+    set(state => ({
+      supplierInvoices: state.supplierInvoices.map(inv =>
+        inv.id === invoiceId
+          ? {
+              ...inv,
+              status: 'paid' as const,
+              paidBy,
+              paidAt: new Date(),
+              paymentMethod,
+              paymentReference,
+              updatedAt: new Date()
+            }
+          : inv
+      )
+    }));
+  },
+
+  selectInvoice: (invoice) => set({ selectedInvoice: invoice }),
+
+  // Quality Check Management Functions
+  generateNextQualityCheckNumber: () => {
+    const year = new Date().getFullYear();
+    const existingChecks = get().qualityChecks.filter(qc => {
+      const qcYear = qc.checkNumber.split('-')[1];
+      return qcYear === String(year);
+    });
+    const nextNumber = existingChecks.length + 1;
+    return `QC-${year}-${String(nextNumber).padStart(3, '0')}`;
+  },
+
+  createQualityCheck: (checkData) => {
+    const checkNumber = get().generateNextQualityCheckNumber();
+    const newCheck: QualityCheck = {
+      ...checkData,
+      id: Date.now().toString(),
+      checkNumber,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    set(state => ({ qualityChecks: [...state.qualityChecks, newCheck] }));
+    return newCheck;
+  },
+
+  updateQualityCheck: (id, updates) => {
+    set(state => ({
+      qualityChecks: state.qualityChecks.map(qc =>
+        qc.id === id ? { ...qc, ...updates, updatedAt: new Date() } : qc
+      )
+    }));
+  },
+
+  getQualityCheck: (id) => get().qualityChecks.find(qc => qc.id === id),
+
+  getQualityChecksByGRN: (grnId) => get().qualityChecks.filter(qc => qc.grnId === grnId),
+
+  completeQualityCheck: (checkId, approvedBy) => {
+    const check = get().getQualityCheck(checkId);
+    if (!check) return;
+
+    const passedCount = check.items.filter(i => i.qualityStatus === 'passed').length;
+    const failedCount = check.items.filter(i => i.qualityStatus === 'failed').length;
+    const overallStatus = failedCount === 0 ? 'passed' : passedCount === 0 ? 'failed' : 'partial';
+
+    set(state => ({
+      qualityChecks: state.qualityChecks.map(qc =>
+        qc.id === checkId
+          ? {
+              ...qc,
+              overallStatus: overallStatus as 'passed' | 'failed' | 'partial',
+              passedItems: passedCount,
+              failedItems: failedCount,
+              approvedBy,
+              approvedAt: new Date(),
+              updatedAt: new Date()
+            }
+          : qc
+      )
+    }));
+
+    // Update GRN quality status
+    get().updateGRN(check.grnId, {
+      qualityCheckedBy: approvedBy,
+      qualityCheckedAt: new Date(),
+      qualityStatus: overallStatus as 'passed' | 'failed' | 'partial',
+      status: overallStatus === 'passed' ? 'quality-check' as const : 'rejected' as const
+    });
   }
 }));

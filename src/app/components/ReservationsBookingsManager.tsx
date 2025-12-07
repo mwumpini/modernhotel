@@ -33,8 +33,11 @@ import {
   Dropdown,
   DropdownTrigger,
   DropdownMenu,
-  DropdownItem
+  DropdownItem,
+  Switch,
+  Pagination as HeroPagination
 } from "@heroui/react";
+import { Autocomplete, AutocompleteItem } from "@heroui/react";
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
@@ -61,6 +64,7 @@ interface ReservationFormData {
   
   roomTypeId: string;
   ratePlanId?: string;
+  customRate?: number;
   arrival: string;
   departure: string;
   adults: number;
@@ -181,6 +185,8 @@ const AuditLogSection = ({ reservationId }: { reservationId: string }) => {
 export default function ReservationsBookingsManager({ mode = 'reservation', embed = false, autoOpenNew = false }: ReservationsManagerProps) {
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [filteredReservations, setFilteredReservations] = useState<Reservation[]>([]);
+  const [resPage, setResPage] = useState(1);
+  const resRowsPerPage = 10;
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
@@ -191,28 +197,24 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [isAssignOpen, setIsAssignOpen] = useState(false);
   const [assignReservation, setAssignReservation] = useState<Reservation | null>(null);
   const [assignRoomId, setAssignRoomId] = useState<string>('');
+  const [assignRoomSearch, setAssignRoomSearch] = useState<string>('');
+  const [assignMatchTypeOnly, setAssignMatchTypeOnly] = useState<boolean>(true);
   
-  // Derived pricing helpers
+  // Derived pricing helpers (bulk-only usage now)
   const getSelectedRoomType = (roomTypeId: string) =>
     useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === roomTypeId);
   const getNightlyRate = (roomTypeId: string) => {
-    // First try to get rate from selected rate plan
-    if (formData.ratePlanId) {
-      const ratePlan = useSettingsStore.getState().roomManagement.ratePlans.find(rp => rp.id === formData.ratePlanId);
-      if (ratePlan) {
-        return ratePlan.basePrice || 0;
-      }
+    const settingsState = useSettingsStore.getState();
+    const defaultRpId = (settingsState.roomManagement.defaultRatePlanByRoomType || {})[roomTypeId];
+    if (defaultRpId) {
+      const rp = settingsState.roomManagement.ratePlans.find(rp => rp.id === defaultRpId);
+      if (rp) return rp.basePrice || 0;
     }
-    
-    // Fallback to room type base rate or first available rate plan for this room type
+    const anyRp = settingsState.roomManagement.ratePlans.find(rp => rp.roomTypeId === roomTypeId && rp.isActive);
+    if (anyRp) return anyRp.basePrice || 0;
     const roomType = getSelectedRoomType(roomTypeId);
-    if (roomType?.baseRate) {
-      return roomType.baseRate;
-    }
-    
-    // Try to find any rate plan for this room type
-    const ratePlan = useSettingsStore.getState().roomManagement.ratePlans.find(rp => rp.roomTypeId === roomTypeId);
-    return ratePlan?.basePrice || 0;
+    if (roomType?.baseRate) return roomType.baseRate;
+    return 0;
   };
   const getTaxRate = () => {
     // Try reading tax from settings; fall back to 15% if not configured
@@ -227,6 +229,68 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       return 0.15;
     }
   };
+
+  // Ghana hotel taxes full gross factor (NHIL, GETFund, COVID, VAT on levies, Tourism levy)
+  const GHANA_GROSS_FACTOR = 1.229;
+
+  // Helper to derive tax-inclusive plan price from settings plan (uniform: always base × Ghana factor)
+  const getPlanGross = (plan: any): number => {
+    if (!plan) return 0;
+    const base = Number(plan.basePrice || 0);
+    const gross = base * GHANA_GROSS_FACTOR;
+    return Number.isFinite(gross) ? Number(gross.toFixed(2)) : 0;
+  };
+
+  // Compute nightly rate for a specific reservation (independent of form state)
+  const getNightlyRateForReservation = (reservation: Reservation) => {
+    const settingsState = useSettingsStore.getState();
+    // Prefer stored breakdown
+    if (reservation.rateBreakdown && reservation.rateBreakdown.length > 0) {
+      return reservation.rateBreakdown[0]?.total || reservation.rateBreakdown[0]?.base || 0;
+    }
+    // Use reservation's selected rate plan
+    if (reservation.ratePlanId) {
+      const rp = (settingsState.roomManagement.ratePlans || []).find(r => r.id === reservation.ratePlanId);
+      if (rp) return rp.basePrice || 0;
+    }
+    // Fallback: default mapping for this room type
+    const defaultRpId = (settingsState.roomManagement.defaultRatePlanByRoomType || {})[reservation.roomTypeId];
+    if (defaultRpId) {
+      const rp = (settingsState.roomManagement.ratePlans || []).find(r => r.id === defaultRpId);
+      if (rp) return rp.basePrice || 0;
+    }
+    // Finally, room type base
+    const rt = (settingsState.roomManagement.roomTypes || []).find(rt => rt.id === reservation.roomTypeId);
+    return rt?.baseRate || 0;
+  };
+
+  const getComputedTotalsForReservation = (reservation: Reservation) => {
+    const nights = calculateNights(reservation.arrival, reservation.departure) || 1;
+    const nightly = getNightlyRateForReservation(reservation);
+    const subtotal = nightly * nights;
+    const taxRate = getTaxRate();
+    const tax = Math.round(subtotal * taxRate);
+    const grandTotal = subtotal + tax;
+    return { nights, nightly, subtotal, taxRate, tax, grandTotal };
+  };
+
+  // Display helper: nightly rate including taxes for reservation
+  const getDisplayNightlyRateGross = (reservation: Reservation) => {
+    const settingsState = useSettingsStore.getState();
+    // Prefer explicit plan gross from settings
+    if (reservation.ratePlanId) {
+      const rp = (settingsState.roomManagement.ratePlans || []).find((r: any) => r.id === reservation.ratePlanId);
+      if (rp && typeof rp.basePrice === 'number') return getPlanGross(rp);
+    }
+    // Prefer stored breakdown totals if present
+    if (reservation.rateBreakdown && reservation.rateBreakdown.length > 0) {
+      return Math.round(reservation.rateBreakdown[0].total || reservation.rateBreakdown[0].base || 0);
+    }
+    // Fallback: compute from net + taxes
+    const nightlyNet = getNightlyRateForReservation(reservation);
+    const gross = nightlyNet * GHANA_GROSS_FACTOR;
+    return Math.round(gross);
+  };
   const getComputedTotals = (arrival: string, departure: string, roomTypeId: string) => {
     const nights = calculateNights(arrival, departure) || 1;
     const nightly = getNightlyRate(roomTypeId);
@@ -235,6 +299,25 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     const tax = Math.round(subtotal * taxRate);
     const grandTotal = subtotal + tax;
     return { nights, nightly, subtotal, taxRate, tax, grandTotal };
+  };
+
+  // Helper to derive nightly base from a room type + selection
+  const getNightlyBaseFromSelection = (roomTypeId: string, ratePlanId?: string, custom?: number) => {
+    const settingsState = useSettingsStore.getState();
+    if (ratePlanId && ratePlanId !== 'custom') {
+      const rp = (settingsState.roomManagement.ratePlans || []).find((r: any) => r.id === ratePlanId);
+      if (rp) return rp.basePrice || 0;
+    }
+    if (typeof custom === 'number' && !isNaN(custom)) return custom;
+    const defaultRpId = (settingsState.roomManagement.defaultRatePlanByRoomType || {})[roomTypeId as any];
+    if (defaultRpId) {
+      const rp = (settingsState.roomManagement.ratePlans || []).find((r: any) => r.id === defaultRpId);
+      if (rp) return rp.basePrice || 0;
+    }
+    const anyRp = (settingsState.roomManagement.ratePlans || []).find((r: any) => r.roomTypeId === roomTypeId && r.isActive);
+    if (anyRp) return anyRp.basePrice || 0;
+    const rt = (settingsState.roomManagement.roomTypes || []).find((rt: any) => rt.id === roomTypeId);
+    return rt?.baseRate || 0;
   };
   
   // New state for guest selection (default to existing guest search)
@@ -256,12 +339,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [billingPersonSearchError, setBillingPersonSearchError] = useState<string | null>(null);
   
   // Bulk reservation state
-  const [isBulkReservation, setIsBulkReservation] = useState(false);
+  // Single-guest flow removed; always use bulk reservations
+  const [isBulkReservation, setIsBulkReservation] = useState(true);
   const [bulkGuests, setBulkGuests] = useState<Array<{
     id: string;
     guest: GuestProfile;
     roomTypeId: string;
     roomId?: string;
+    ratePlanId?: string;
     customRate?: number;
     specialRequests?: string;
     adults: number;
@@ -269,6 +354,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     arrival: string;
     departure: string;
   }>>([]);
+
+  // If multiple guests and third party is not selected, default to Guest Pays with optional confirmation
+  useEffect(() => {
+    if (bulkGuests.length > 1 && useBillingPerson) {
+      const proceed = confirm('Multiple guests selected. Bill a third party for all guests? Click Cancel to keep Guest Pays.');
+      if (!proceed) setUseBillingPerson(false);
+    }
+  }, [bulkGuests.length]);
   
   const [formData, setFormData] = useState<ReservationFormData>({
     guestName: '',
@@ -562,6 +655,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       costCenter: ''
     });
     onOpen();
+    // Auto-select default rate plan when room type picked later
   };
 
   const addGuestToBulk = (guest: GuestProfile) => {
@@ -573,7 +667,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
     const newId = (bulkGuests.length + 1).toString();
     const roomTypeId = formData.roomTypeId || useSettingsStore.getState().roomManagement.roomTypes[0]?.id || '';
-    const roomType = useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === roomTypeId);
+    const settings = useSettingsStore.getState();
+    const defaultRpId = (settings.roomManagement.defaultRatePlanByRoomType || {})[roomTypeId];
     const baseRate = getNightlyRate(roomTypeId);
 
     setBulkGuests([...bulkGuests, {
@@ -581,7 +676,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       guest: guest,
       roomTypeId: roomTypeId,
       roomId: '',
-      customRate: baseRate,
+      ratePlanId: 'custom',
+      customRate: 0,
       specialRequests: '',
       adults: 1,
       children: 0,
@@ -600,9 +696,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   };
 
   const updateBulkGuest = (id: string, field: string, value: string | number) => {
-    setBulkGuests(bulkGuests.map(guest => 
+  setBulkGuests(prev => prev.map(guest => 
       guest.id === id ? { ...guest, [field]: value } : guest
     ));
+  try { trackEvent('FO.NewRes.BulkGuestUpdated' as any, { id, field, value }); } catch {}
   };
 
   const handleEditReservation = (reservation: Reservation) => {
@@ -682,7 +779,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     setFormData(prev => ({
       ...prev,
       billingPersonId: billingPerson.id,
-      companyName: (billingPerson as any).employerCompany || prev.companyName || ''
+      companyName: (billingPerson as any).employerCompany || prev.companyName || '',
+      // Store a display name for downstream UI like Check-in/Check-out BILLED TO
+      // without changing existing companyName usage
+      // @ts-ignore
+      billingPersonName: (billingPerson as any).name || `${(billingPerson as any).firstName || ''} ${(billingPerson as any).lastName || ''}`.trim()
     }));
     setShowBillingPersonSearch(false);
     setBillingPersonSearchTerm('');
@@ -703,9 +804,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         return;
       }
       
-      // Validate billing person for multiple guests
-      if (bulkGuests.length > 1 && !selectedBillingPerson) {
-        alert('Please select a billing person for multiple guest reservations');
+      // Validate billing person for multiple guests only when third party pays
+      if (bulkGuests.length > 1 && useBillingPerson && !selectedBillingPerson) {
+        alert('Please select a billing person for multiple guest reservations (Third Party Pays selected).');
         return;
       }
 
@@ -715,12 +816,33 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           // Use the selected guest (already exists in system)
           const guest = bulkGuest.guest;
 
+          // Determine nightly base from selected rate plan or custom
+          const selectedPlan = bulkGuest.ratePlanId
+            ? (useSettingsStore.getState().roomManagement.ratePlans || []).find((r: any) => r.id === bulkGuest.ratePlanId)
+            : undefined;
+          const nightlyBase = (selectedPlan?.basePrice)
+            || (typeof bulkGuest.customRate === 'number' ? bulkGuest.customRate : undefined)
+            || getNightlyRate(bulkGuest.roomTypeId);
+          const rateBreakdown = frontOfficeStore.calculateRateBreakdown(
+            bulkGuest.roomTypeId,
+            bulkGuest.arrival,
+            bulkGuest.departure,
+            nightlyBase
+          );
+
           // Create reservation with personal details from each guest
       const reservation = frontOfficeStore.createReservation({
         guestId: guest.id,
         guestName: (guest as any).name || `${(guest as any).firstName || ''} ${(guest as any).lastName || ''}`.trim() || 'Guest',
             roomTypeId: bulkGuest.roomTypeId,
-        ratePlanId: formData.ratePlanId || undefined,
+        ratePlanId: (() => {
+          if (bulkGuest.ratePlanId) return bulkGuest.ratePlanId;
+          if (formData.ratePlanId) return formData.ratePlanId;
+          try {
+            const settings = useSettingsStore.getState();
+            return (settings.roomManagement.defaultRatePlanByRoomType || {})[bulkGuest.roomTypeId || ''];
+          } catch { return undefined; }
+        })() || undefined,
             arrival: bulkGuest.arrival,
             departure: bulkGuest.departure,
             adults: bulkGuest.adults,
@@ -734,10 +856,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         stayReason: formData.stayReason,
         stayReasonDetails: formData.stayReasonDetails,
         billingPersonId: formData.billingPersonId,
+        billingPersonName: (useBillingPerson && selectedBillingPerson)
+          ? ((selectedBillingPerson as any).name || `${(selectedBillingPerson as any).firstName || ''} ${(selectedBillingPerson as any).lastName || ''}`.trim())
+          : undefined,
         companyName: formData.companyName,
         projectCode: formData.projectCode,
             costCenter: formData.costCenter,
-            roomId: bulkGuest.roomId
+            roomId: bulkGuest.roomId,
+            rateBreakdown
           });
 
           createdReservations.push(reservation);
@@ -760,12 +886,25 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         alert(`Successfully created ${createdReservations.length} reservation${createdReservations.length !== 1 ? 's' : ''}${formData.companyName ? ` for ${formData.companyName}` : ''}`);
         }
     } else if (selectedReservation) {
-      // Update existing reservation
+      // Update existing reservation + recompute rate breakdown for folio/check-in
+      const selectedPlan = formData.ratePlanId && formData.ratePlanId !== 'custom'
+        ? (useSettingsStore.getState().roomManagement.ratePlans || []).find((r: any) => r.id === formData.ratePlanId)
+        : undefined;
+      const nightlyBase = (selectedPlan?.basePrice)
+        || (typeof formData.customRate === 'number' ? formData.customRate : undefined)
+        || getNightlyRate(formData.roomTypeId);
+      const rateBreakdown = frontOfficeStore.calculateRateBreakdown(
+        formData.roomTypeId,
+        formData.arrival,
+        formData.departure,
+        nightlyBase
+      );
+
       const updatedReservation = {
         ...selectedReservation,
         guestName: formData.guestName,
         roomTypeId: formData.roomTypeId,
-        ratePlanId: formData.ratePlanId || undefined,
+        ratePlanId: (formData.ratePlanId === 'custom' ? undefined : (formData.ratePlanId || undefined)),
         arrival: formData.arrival,
         departure: formData.departure,
         adults: formData.adults,
@@ -778,9 +917,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         stayReason: formData.stayReason,
         stayReasonDetails: formData.stayReasonDetails,
         billingPersonId: formData.billingPersonId,
+        billingPersonName: (useBillingPerson && selectedBillingPerson)
+          ? ((selectedBillingPerson as any).name || `${(selectedBillingPerson as any).firstName || ''} ${(selectedBillingPerson as any).lastName || ''}`.trim())
+          : undefined,
         companyName: formData.companyName,
         projectCode: formData.projectCode,
-        costCenter: formData.costCenter
+        costCenter: formData.costCenter,
+        rateBreakdown
       };
 
       frontOfficeStore.updateReservation(updatedReservation);
@@ -798,7 +941,19 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const handleQuickAction = (action: string, reservation: Reservation) => {
     switch (action) {
       case 'checkin':
-        frontOfficeStore.checkIn(reservation.id);
+        {
+          const autoAssign = useSettingsStore.getState().roomSettings.autoAssignRooms !== false;
+          const hasRoom = !!reservation.roomId && reservation.roomId !== 'TBD';
+          if (!autoAssign && !hasRoom) {
+            // Prompt assign room modal instead of immediate check-in
+            setAssignReservation(reservation);
+            const avail = getAvailableRooms(reservation.roomTypeId);
+            setAssignRoomId(avail[0] || '');
+            setIsAssignOpen(true);
+          } else {
+            frontOfficeStore.checkIn(reservation.id);
+          }
+        }
         break;
       case 'checkout':
         frontOfficeStore.checkOut(reservation.id);
@@ -858,6 +1013,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     return housekeepingStore.getRoomsByStatus('vacant')
       .filter(room => room.roomTypeId === roomTypeId)
       .map(room => room.roomNumber);
+  };
+
+  const getVacantRooms = () => {
+    return housekeepingStore.getRoomsByStatus('vacant').map(r => r.roomNumber);
   };
 
   return (
@@ -1055,15 +1214,19 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               <TableColumn className="hidden md:table-cell">Check-in Date</TableColumn>
               <TableColumn className="hidden md:table-cell">Check-out Date</TableColumn>
               <TableColumn className="hidden md:table-cell">Nights</TableColumn>
+              <TableColumn className="hidden xl:table-cell">Rate</TableColumn>
+              <TableColumn className="hidden xl:table-cell">Amount</TableColumn>
+              <TableColumn className="hidden xl:table-cell">Rate Plan</TableColumn>
               <TableColumn className="hidden xl:table-cell">Purpose</TableColumn>
               <TableColumn className="hidden xl:table-cell">Billing</TableColumn>
               <TableColumn>Status</TableColumn>
               <TableColumn className="hidden lg:table-cell">Room</TableColumn>
-              <TableColumn className="hidden xl:table-cell">Rate</TableColumn>
               <TableColumn>Actions</TableColumn>
             </TableHeader>
             <TableBody>
-              {filteredReservations.map((reservation) => (
+              {filteredReservations
+                .slice((resPage - 1) * resRowsPerPage, resPage * resRowsPerPage)
+                .map((reservation) => (
                 <TableRow 
                   key={reservation.id}
                   className="cursor-pointer hover:bg-gray-50"
@@ -1072,9 +1235,6 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   <TableCell className="hidden sm:table-cell">
                     <div className="flex items-center space-x-2">
                       <span className="font-semibold text-ghana-black">{reservation.resId || reservation.id}</span>
-                      <Chip size="sm" variant="flat" color="secondary">
-                        {reservation.source || 'Direct'}
-                      </Chip>
                     </div>
                   </TableCell>
                   <TableCell>
@@ -1105,6 +1265,25 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     <div className="text-sm">
                       {calculateNights(reservation.arrival, reservation.departure)}
                     </div>
+                  </TableCell>
+                  <TableCell className="hidden xl:table-cell">
+                    <span className="font-medium">₵{getDisplayNightlyRateGross(reservation).toFixed(2)}</span>
+                  </TableCell>
+                  <TableCell className="hidden xl:table-cell">
+                    {(() => {
+                      const nightly = getDisplayNightlyRateGross(reservation);
+                      const nights = calculateNights(reservation.arrival, reservation.departure) || 1;
+                      const total = (Number.isFinite(nightly) ? nightly : 0) * nights;
+                      return `₵${Number(total).toFixed(2)}`;
+                    })()}
+                  </TableCell>
+                  <TableCell className="hidden xl:table-cell">
+                    {(() => {
+                      const rpId = reservation.ratePlanId;
+                      if (!rpId) return 'Custom Rate';
+                      const rp = (useSettingsStore.getState().roomManagement.ratePlans || []).find((r: any) => r.id === rpId);
+                      return rp?.name || rpId;
+                    })()}
                   </TableCell>
                   <TableCell className="hidden xl:table-cell">
                     <div className="text-sm">
@@ -1156,11 +1335,6 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     ) : (
                       <span className="text-gray-400">Unassigned</span>
                     )}
-                  </TableCell>
-                  <TableCell className="hidden xl:table-cell">
-                    <span className="font-medium">
-                      ₵{getNightlyRate(reservation.roomTypeId).toLocaleString()}
-                    </span>
                   </TableCell>
                   <TableCell>
                     <div className="flex space-x-1">
@@ -1249,14 +1423,23 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           </Table>
         </CardBody>
       </Card>
+      <div className="flex justify-end mt-3">
+        <HeroPagination
+          page={resPage}
+          total={Math.max(1, Math.ceil(filteredReservations.length / resRowsPerPage))}
+          onChange={setResPage}
+          showControls
+          size="sm"
+        />
+      </div>
 
       {/* Reservation Form Modal */}
       <Modal isOpen={isOpen} onClose={onClose} size="4xl" className="mx-2 sm:mx-4">
-        <ModalContent>
+        <ModalContent className="max-h-[90vh]">
           <ModalHeader>
             {isCreatingNew ? 'Create New Reservation' : 'View / Edit Reservation'}
           </ModalHeader>
-          <ModalBody>
+          <ModalBody className="overflow-y-auto">
             <Tabs aria-label="Reservation details" selectedKey={tabKey} onSelectionChange={(key)=> setTabKey(key as string)}>
               <Tab key="summary" title="🧾 Summary / Print">
                 {selectedReservation ? (
@@ -1317,11 +1500,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     </div>
                     {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotals(selectedReservation.arrival, selectedReservation.departure, selectedReservation.roomTypeId); return (
                       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                        <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toLocaleString()}</div></CardBody></Card>
+                        <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toFixed(2)}</div></CardBody></Card>
                         <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
-                        <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toLocaleString()}</div></CardBody></Card>
-                        <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toLocaleString()}</div></CardBody></Card>
-                        <Card><CardBody><div className="text-xs text-gray-600">Grand Total</div><div className="text-lg font-semibold">₵{grandTotal.toLocaleString()}</div></CardBody></Card>
+                        <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toFixed(2)}</div></CardBody></Card>
+                        <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toFixed(2)}</div></CardBody></Card>
+                        <Card><CardBody><div className="text-xs text-gray-600">Grand Total</div><div className="text-lg font-semibold">₵{grandTotal.toFixed(2)}</div></CardBody></Card>
                       </div>
                     ); })()}
 
@@ -1475,26 +1658,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           value={formData.email}
                           onChange={(e) => setFormData({...formData, email: e.target.value})}
                         />
-                        <Select
-                          label="Room Type"
-                          selectedKeys={formData.roomTypeId ? new Set([formData.roomTypeId]) : new Set()}
-                          onSelectionChange={(keys) => setFormData({...formData, roomTypeId: Array.from(keys as Set<string>)[0] || ''})}
-                        >
-                          {useSettingsStore.getState().roomManagement.roomTypes.map(rt => (
-                            <SelectItem key={rt.id}>{rt.name}</SelectItem>
-                          ))}
-                        </Select>
-                        {/* Rate Plan (optional) */}
-                        {/* Optional: Rate plan dropdown (fallback empty if not configured) */}
-                        <Select
-                          label="Rate Plan (optional)"
-                          selectedKeys={formData.ratePlanId ? new Set([formData.ratePlanId]) : new Set()}
-                          onSelectionChange={(keys) => setFormData({...formData, ratePlanId: Array.from(keys as Set<string>)[0] || ''})}
-                        >
-                          {(useSettingsStore.getState()?.roomManagement?.ratePlans || []).map((rp: any) => (
-                            <SelectItem key={rp.id}>{rp.name || rp.code || rp.id}</SelectItem>
-                          ))}
-                        </Select>
+                        {/* Single-guest form temporarily disabled by request */}
                         <Input
                           label="Arrival"
                           type="date"
@@ -1524,11 +1688,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
                         {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotals(formData.arrival, formData.departure, formData.roomTypeId || ''); return (
                           <>
-                            <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toLocaleString()}</div></CardBody></Card>
+                            <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toFixed(2)}</div></CardBody></Card>
                             <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
-                            <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toLocaleString()}</div></CardBody></Card>
-                            <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toLocaleString()}</div></CardBody></Card>
-                            <Card><CardBody><div className="text-xs text-gray-600">Grand Total</div><div className="text-lg font-semibold">₵{grandTotal.toLocaleString()}</div></CardBody></Card>
+                            <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toFixed(2)}</div></CardBody></Card>
+                            <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toFixed(2)}</div></CardBody></Card>
+                            <Card><CardBody><div className="text-xs text-gray-600">Grand Total</div><div className="text-lg font-semibold">₵{grandTotal.toFixed(2)}</div></CardBody></Card>
                           </>
                         ); })()}
                       </div>
@@ -1656,11 +1820,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                       {index + 1}
                     </div>
                       <div>
-                                      <h5 className="font-medium text-gray-900">{bulkGuest.guest.name}</h5>
-                                      <div className="text-sm text-gray-600">
-                                        {bulkGuest.guest.phone && `📱 ${bulkGuest.guest.phone}`}
-                                        {bulkGuest.guest.email && ` 📧 ${bulkGuest.guest.email}`}
-                      </div>
+                                      <h5 className="font-medium text-gray-900">
+                                        {bulkGuest.guest.name || `${(bulkGuest.guest as any).firstName || ''} ${(bulkGuest.guest as any).lastName || ''}`.trim() || 'Guest'}
+                                      </h5>
                       </div>
                       </div>
                                   <Button
@@ -1716,37 +1878,89 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     selectedKeys={bulkGuest.roomTypeId ? new Set([bulkGuest.roomTypeId]) : new Set()}
                                     onSelectionChange={(keys) => {
                                       const id = Array.from(keys as Set<string>)[0] || '';
-                                      const newRoomType = useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === id);
                                       updateBulkGuest(bulkGuest.id, 'roomTypeId', id);
-                                      updateBulkGuest(bulkGuest.id, 'customRate', getNightlyRate(id));
+                                      const settings = useSettingsStore.getState();
+                                      const plans = (settings.roomManagement.ratePlans || []).filter((rp: any) => rp.roomTypeId === id);
+                          const defaultId = (settings.roomManagement.defaultRatePlanByRoomType || {})[id];
+                          // Default to Custom Rate at 0.00 on room type change
+                          updateBulkGuest(bulkGuest.id, 'ratePlanId', 'custom');
+                          updateBulkGuest(bulkGuest.id, 'customRate', 0);
                                     }}
                         placeholder="Select room type"
                                   >
-                                    {useSettingsStore.getState().roomManagement.roomTypes.map(rt => (
-                                      <SelectItem key={rt.id}>
-                                        {rt.name} - ₵{getNightlyRate(rt.id)}/night
+                        {(useSettingsStore.getState().roomManagement.roomTypes || []).map((rt: any) => {
+                          return (
+                            <SelectItem key={rt.id} textValue={rt.name}>
+                              {rt.name}
                           </SelectItem>
-                        ))}
+                          );
+                        })}
                       </Select>
+                      {/* Selected Room Type chip removed per request */}
                                   
-                      <Input
-                                    label="Custom Rate (₵)"
-                                    type="number"
-                                    placeholder="Override rate"
-                                    value={bulkGuest.customRate?.toString() || ''}
-                                    onChange={(e) => updateBulkGuest(bulkGuest.id, 'customRate', parseFloat(e.target.value) || baseRate)}
-                                    startContent="₵"
-                                  />
-                                  
-                                  <div className="flex items-end">
-                                    <div className="w-full p-3 bg-gray-50 rounded-lg">
-                                      <div className="text-sm text-gray-600">Final Rate</div>
-                                      <div className="text-lg font-semibold text-gray-900">₵{finalRate.toFixed(2)}/night</div>
-                    </div>
-                    </div>
+                      {/* Rate selector: list rate plans for selected room type + Custom Rate */}
+                      <Select<any>
+                        label="Rate"
+                        isDisabled={!bulkGuest.roomTypeId}
+                        placeholder="Select rate"
+                        selectedKeys={new Set([bulkGuest.ratePlanId || 'custom'])}
+                        onSelectionChange={(keys) => {
+                          const selected = Array.from(keys as Set<string>)[0] || '';
+                          if (selected === 'custom') {
+                            // Switch to editable custom mode and reset to 0.00 gross
+                            updateBulkGuest(bulkGuest.id, 'ratePlanId', 'custom');
+                            updateBulkGuest(bulkGuest.id, 'customRate', 0);
+                          } else {
+                            updateBulkGuest(bulkGuest.id, 'ratePlanId', selected);
+                            // Store plan into customRate as NET is not needed; keep zero so custom is independent
+                            updateBulkGuest(bulkGuest.id, 'customRate', 0);
+                          }
+                        }}
+                      >
+                        {(() => {
+                          const items = (useSettingsStore.getState().roomManagement.ratePlans || [])
+                            .filter((rp: any) => rp.roomTypeId === bulkGuest.roomTypeId)
+                            .map((rp: any) => (
+                              <SelectItem key={rp.id} textValue={rp.name}>{`${rp.name} — ₵${getPlanGross(rp).toFixed(2)}`}</SelectItem>
+                            ));
+                          items.push(<SelectItem key="custom" textValue="Custom Rate">Custom Rate</SelectItem>);
+                          return items as unknown as any;
+                        })()}
+                      </Select>
+                      {/* Selected Rate chip removed per request */}
+                      {bulkGuest.ratePlanId === 'custom' ? (
+                        <Input
+                          label="Enter Custom Rate (₵ incl. taxes)"
+                          type="number"
+                          placeholder="Override rate"
+                          value={(() => { const gross = (bulkGuest.customRate || 0) * GHANA_GROSS_FACTOR; return Number.isFinite(gross) ? gross.toFixed(2) : '0.00'; })()}
+                          onChange={(e) => {
+                            const gross = parseFloat(e.target.value);
+                            if (isNaN(gross) || gross < 0) { updateBulkGuest(bulkGuest.id, 'customRate', 0); return; }
+                            const net = gross / GHANA_GROSS_FACTOR;
+                            updateBulkGuest(bulkGuest.id, 'customRate', Number(net.toFixed(2)));
+                          }}
+                          startContent="₵"
+                        />
+                      ) : (
+                        <Input
+                          label="Enter Custom Rate (₵)"
+                          type="number"
+                          value={(() => { 
+                            const rp = useSettingsStore.getState().roomManagement.ratePlans.find(r => r.id === bulkGuest.ratePlanId); 
+                            const gross = rp ? getPlanGross(rp) : 0;
+                            return Number(gross).toFixed(2);
+                          })()}
+                          isDisabled
+                          startContent="₵"
+                          endContent={<span title="Locked by rate plan">🔒</span>}
+                        />
+                      )}
+                      
                   </div>
                   
-                                <div className="mt-3">
+                  {/* Special Requests and Amount on the same row */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                                   <Textarea
                                     label="Special Requests"
                                     placeholder="Any special requests for this guest"
@@ -1754,6 +1968,21 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     onChange={(e) => updateBulkGuest(bulkGuest.id, 'specialRequests', e.target.value)}
                                     rows={2}
                       />
+                      <div className="p-3 bg-gray-50 rounded-lg">
+                      <div className="text-sm text-gray-600">Amount (incl. taxes)</div>
+                      <div className="text-lg font-semibold text-gray-900">
+                        {(() => {
+                          const nights = calculateNights(bulkGuest.arrival, bulkGuest.departure) || 1;
+                          // If plan selected, use settings plan price directly (already gross)
+                          const rp = bulkGuest.ratePlanId ? useSettingsStore.getState().roomManagement.ratePlans.find(r => r.id === bulkGuest.ratePlanId) : undefined;
+                          const nightlyGross = rp 
+                            ? getPlanGross(rp)
+                            : ((bulkGuest.customRate || baseRate) * GHANA_GROSS_FACTOR);
+                          const amount = nightlyGross * nights;
+                          return `₵${amount.toFixed(2)}`;
+                        })()}
+                      </div>
+                    </div>
                     </div>
                     </div>
                             );
@@ -2127,15 +2356,38 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               <div className="space-y-3">
                 <div className="text-sm text-gray-600">Reservation</div>
                 <div className="font-medium">{assignReservation.guestName} • {assignReservation.resId || assignReservation.id}</div>
-                <Select
-                  label="Available Rooms"
-                  selectedKeys={assignRoomId ? new Set([assignRoomId]) : new Set()}
-                  onSelectionChange={(keys) => setAssignRoomId(Array.from(keys as Set<string>)[0] || '')}
-                >
-                  {getAvailableRooms(assignReservation.roomTypeId).map((num) => (
-                    <SelectItem key={num}>{num}</SelectItem>
-                  ))}
-                </Select>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm text-gray-600">
+                      {assignMatchTypeOnly ? 'Showing vacant rooms for selected room type' : 'Showing all vacant rooms'}
+                    </div>
+                    <Switch isSelected={assignMatchTypeOnly} onValueChange={setAssignMatchTypeOnly}>
+                      Match Type
+                    </Switch>
+                  </div>
+                  <Autocomplete<any>
+                    label="Assign to Room"
+                    placeholder="Search or select a vacant room"
+                    selectedKey={assignRoomId || undefined}
+                    onSelectionChange={(key) => setAssignRoomId(typeof key === 'string' ? key : (key as any) || '')}
+                    onInputChange={(value) => setAssignRoomSearch(value)}
+                  >
+                    {(() => {
+                      const all = assignMatchTypeOnly
+                        ? getAvailableRooms(assignReservation.roomTypeId)
+                        : getVacantRooms();
+                      const filtered = assignRoomSearch
+                        ? all.filter(n => n.toLowerCase().includes((assignRoomSearch || '').toLowerCase()))
+                        : all;
+                      const list = filtered.length ? filtered : ['No vacant rooms'];
+                      return list.map((num) => (
+                        <AutocompleteItem key={num} textValue={num} isDisabled={num === 'No vacant rooms'}>
+                          {num}
+                        </AutocompleteItem>
+                      ));
+                    })()}
+                  </Autocomplete>
+                </div>
               </div>
             ) : (
               <div className="text-gray-500">No reservation selected.</div>

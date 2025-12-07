@@ -83,6 +83,7 @@ export default function SystemSettingsMainDashboard() {
   const [showRateManagement, setShowRateManagement] = useState(false);
   const router = useRouter();
   const settings = useSettingsStore();
+  const initialSetupCompleted = useSettingsStore(s => s.initialSetupCompleted);
   
   // Sample system data - in real app, this would come from stores
   const totalUsers = 45;
@@ -112,21 +113,21 @@ export default function SystemSettingsMainDashboard() {
   // Operational items following the uniform pattern
   const operationalItems = [
     {
+      category: 'System Configuration',
+      items: [
+        { title: 'System Setup', icon: '⚙️', description: 'Initial company, localization, taxes, numbering & security', status: 'active', count: 0 },
+        { title: 'Room Configuration', icon: '🏠', description: 'Room types, rates, and configuration', status: 'active', count: totalRooms },
+        { title: 'Operational Policies', icon: '📜', description: 'Checkout, credit terms, references', status: 'active', count: 4 },
+        { title: 'System Modules', icon: '⚙️', description: 'Active system components', status: 'active', count: systemModules },
+      ]
+    },
+    {
       category: 'User Management',
       items: [
         { title: 'User Accounts', icon: '👥', description: 'User creation, roles, and permissions', status: 'active', count: totalUsers },
         { title: 'Access Control', icon: '🔐', description: 'Role-based access and security', status: 'active', count: activeUsers },
         { title: 'User Preferences', icon: '👤', description: 'Personal settings and customization', status: 'active', count: 0 },
         { title: 'User Analytics', icon: '📊', description: 'User activity and performance metrics', status: 'active', count: 0 },
-      ]
-    },
-    {
-      category: 'System Configuration',
-      items: [
-        { title: 'Room Management', icon: '🏠', description: 'Room types, rates, and configuration', status: 'active', count: totalRooms },
-        { title: 'Room Types', icon: '🏷️', description: 'Room categories and amenities', status: 'active', count: configuredRoomTypes },
-        { title: 'Amenities', icon: '✨', description: 'Hotel facilities and services', status: 'active', count: activeAmenities },
-        { title: 'System Modules', icon: '⚙️', description: 'Active system components', status: 'active', count: systemModules },
       ]
     },
     {
@@ -194,6 +195,19 @@ export default function SystemSettingsMainDashboard() {
 
   return (
     <div className="p-6">
+      {!initialSetupCompleted && (
+        <Card className="mb-6 border-0 shadow-lg border-l-4 border-l-amber-500 bg-amber-50">
+          <CardBody className="flex items-center justify-between gap-4">
+            <div>
+              <h3 className="text-lg font-semibold text-ghana-black">System Setup Required</h3>
+              <p className="text-sm text-gray-700">Complete the initial company, localization, financial, property, numbering, and security setup.</p>
+            </div>
+            <Button color="warning" className="bg-amber-500 text-white" onPress={() => router.replace('/setup')}>
+              Open System Setup
+            </Button>
+          </CardBody>
+        </Card>
+      )}
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">⚙️ System Settings & Configuration</h2>
         <Badge color="primary" variant="flat">System Admin</Badge>
@@ -377,8 +391,15 @@ export default function SystemSettingsMainDashboard() {
                               // Handle navigation based on item type
                               if (item.title.includes('User Accounts')) {
                                 handleTabChange('users');
-                              } else if (item.title.includes('Room Management')) {
+                            } else if (item.title.includes('Room Configuration') || item.title.includes('Room Management')) {
                                 handleTabChange('rooms');
+                            } else if (item.title.includes('System Setup')) {
+                              try { router.replace('/setup'); } catch {}
+                            } else if (item.title.includes('Operational Policies')) {
+                              try {
+                                localStorage.setItem('room-config.openTab', 'operations-policies');
+                              } catch {}
+                              handleTabChange('rooms');
                               } else if (item.title.includes('System Health')) {
                                 handleTabChange('health');
                               } else if (item.title.includes('Security Score')) {
@@ -413,6 +434,7 @@ export default function SystemSettingsMainDashboard() {
                   </Card>
                 ))}
               </div>
+              {/* Operations Policies moved to Room Configuration → Operational Policies */}
             </Tab>
 
             <Tab key="users" title="👥 User Management">

@@ -35,6 +35,9 @@ import EventRateManagement from './EventRateManagement';
 // import jsPDF from 'jspdf';
 // import 'jspdf-autotable';
 
+// Ghana total-to-net conversion factor used when deriving subtotal from gross
+export const GHANA_GROSS_FACTOR = 1.229;
+
 interface RoomType {
   id: string;
   name: string;
@@ -588,12 +591,13 @@ export default function RoomConfigurationDashboard() {
 
   const handleAddRatePlan = () => {
     if (newRatePlan.name && newRatePlan.roomType && Number(newRatePlan.price) > 0) {
-      const ratePlan: RatePlan = {
+      const ratePlan = {
         id: Date.now().toString(),
         name: newRatePlan.name,
         roomTypeId: newRatePlan.roomType,
         basePrice: Number(newRatePlan.price), // Convert string to number
         priceType: newRatePlan.priceType,
+        rateType: 'standard',
                  isActive: true,
          marketSegment: 'General',
          lastUpdated: new Date().toISOString(),
@@ -615,7 +619,7 @@ export default function RoomConfigurationDashboard() {
         }
       };
       
-      settingsStore.addRatePlan(ratePlan);
+      settingsStore.addRatePlan(ratePlan as any);
       logAction('ADD_RATE_PLAN', { ratePlan });
       setNewRatePlan({ name: '', roomType: '', price: '0', priceType: 'subtotal', description: '' });
     }
@@ -887,31 +891,32 @@ export default function RoomConfigurationDashboard() {
     return direction === 'asc' ? '↑' : '↓';
   };
 
-  // Price preview helpers (Ghana taxes)
-  const computeTaxBreakdown = (base: number) => {
-    const subtotal = base;
-    const nhil = subtotal * 0.025;
-    const getfund = subtotal * 0.025;
-    const covid = subtotal * 0.01;
-    const vat = (subtotal + nhil + getfund + covid) * 0.15;
-    const tourism = subtotal * 0.01;
-    const totalTax = nhil + getfund + covid + vat + tourism;
-    const finalBill = subtotal + totalTax;
-    return { subtotal, nhil, getfund, covid, vat, tourism, totalTax, finalBill };
+  // Price preview helpers via compliance engine
+  const { useCalculateTax } = require('../hooks/useCalculateTax');
+  const calcTax = useCalculateTax?.() || ((a: number) => ({ taxes: [], total: a }));
+  const reverseToSubtotalFromGross = (gross: number, category?: string, context?: Record<string, any>) => {
+    let lo = 0, hi = Math.max(gross, 1) * 2;
+    for (let i = 0; i < 24; i++) {
+      const mid = (lo + hi) / 2;
+      const { total } = calcTax(mid, category, context);
+      if (total > gross) hi = mid; else lo = mid;
+    }
+    return lo;
   };
-
-  // Ghana hotel taxes effective gross factor: 2.5% NHIL + 2.5% GETFund + 1% COVID on base,
-  // VAT 15% applied on (base + levies), plus 1% Tourism on base ⇒ overall multiplier ≈ 1.229
-  const GHANA_GROSS_FACTOR = 1.229;
-  const reverseToSubtotalFromGross = (gross: number) => {
-    return gross / GHANA_GROSS_FACTOR;
+  const computeTaxBreakdown = (base: number) => {
+    const category = 'HOTEL';
+    const context = { numPersons: 1, numNights: 1 };
+    const { taxes, total } = calcTax(base, category, context);
+    const mapped: any = { subtotal: base, totalTax: taxes.reduce((s: number, t: any) => s + t.amount, 0), finalBill: total };
+    taxes.forEach((t: any) => { mapped[t.name.toLowerCase().replace(/[^a-z]/g, '')] = t.amount; });
+    return mapped;
   };
 
   const getLivePreview = () => {
     if (!newRatePlan.price || Number(newRatePlan.price) <= 0) return null;
-    const baseForCalc = newRatePlan.priceType === 'subtotal' 
+    const baseForCalc = newRatePlan.priceType === 'subtotal'
       ? Number(newRatePlan.price)
-      : reverseToSubtotalFromGross(Number(newRatePlan.price));
+      : reverseToSubtotalFromGross(Number(newRatePlan.price), 'HOTEL', { numPersons: 1, numNights: 1 });
     return computeTaxBreakdown(baseForCalc);
   };
 
@@ -1021,11 +1026,15 @@ export default function RoomConfigurationDashboard() {
       const mainData = settingsStore.roomManagement.ratePlans.map(plan => {
         const transformedPlan = transformRatePlanData(plan);
         // Calculate tax breakdown for CSV export
-        const subtotal = transformedPlan.priceType === 'subtotal' ? transformedPlan.basePrice : transformedPlan.basePrice / GHANA_GROSS_FACTOR;
+        // Only "subtotal" and "gross_total" are valid values for priceType
+        const subtotal =
+          transformedPlan.priceType === 'subtotal'
+            ? transformedPlan.basePrice
+            : transformedPlan.basePrice / GHANA_GROSS_FACTOR;
         const nhil = subtotal * 0.025; // 2.5%
         const getfund = subtotal * 0.025; // 2.5%
         const covid = subtotal * 0.01; // 1.0%
-        const vat = (subtotal + nhil + getfund + covid) * 0.15; // 15% on amount after levies
+        const vat = (subtotal + nhil + getfund + covid) * 0.15; // 15% VAT after levies
         const tourism = subtotal * 0.01; // 1.0%
         const totalTax = nhil + getfund + covid + vat + tourism;
         const finalBill = subtotal + totalTax;
@@ -1304,6 +1313,17 @@ export default function RoomConfigurationDashboard() {
 
   return (
     <div className="p-6">
+      {/* Deep-link handler from Settings Overview */}
+      {(() => {
+        try {
+          const requested = localStorage.getItem('room-config.openTab');
+          if (requested && requested !== activeTab) {
+            setActiveTab(requested);
+            localStorage.removeItem('room-config.openTab');
+          }
+        } catch {}
+        return null;
+      })()}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-ghana-black">🏠 Room Configuration</h1>
@@ -1317,6 +1337,13 @@ export default function RoomConfigurationDashboard() {
             className="bg-purple-600 text-white hover:bg-purple-700"
           >
             🎯 Event Rates
+          </Button>
+          <Button 
+            color="warning" 
+            variant="flat"
+            onClick={() => setActiveTab('operations-policies')}
+          >
+            📜 Operational Policies
           </Button>
           <Button 
             color="primary" 
@@ -1509,6 +1536,212 @@ export default function RoomConfigurationDashboard() {
               </Button>
             </div>
           )}
+        </Tab>
+
+        <Tab key="amenities" title="Room Amenities">
+          <Card>
+            <CardHeader>
+              <h3 className="text-xl font-semibold">Room Amenities</h3>
+              <p className="text-sm text-gray-600">LINK amenities to specific room types and toggle them</p>
+            </CardHeader>
+            <CardBody>
+              {/* Room Type Selector for Amenities */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div>
+                  <label className="text-sm text-gray-600">Room Type</label>
+                  <select
+                    className="mt-1 w-full border rounded-md h-10 px-3"
+                    value={selectedAmenitiesRoomTypeId}
+                    onChange={(e) => setSelectedAmenitiesRoomTypeId(e.target.value)}
+                  >
+                    <option value="">Select room type to manage amenities</option>
+                    {settingsStore.roomManagement.roomTypes.map((type) => (
+                      <option key={type.id} value={type.id}>{type.name}</option>
+                    ))}
+                  </select>
+                </div>
+                {selectedAmenitiesRoomTypeId && (
+                  <div className="flex items-end">
+                    <Badge color="primary" variant="flat">
+                      Managing: {getRoomTypeName(selectedAmenitiesRoomTypeId)}
+                    </Badge>
+                  </div>
+                )}
+              </div>
+              {/* First Row: Bedding & Linens, Bathroom Amenities */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <h4 className="font-medium mb-3"><strong>Bedding & Linens</strong></h4>
+                  <div className="space-y-3">
+                    {getAmenitiesByCategory('bedding').map((amenity) => (
+                      <div key={amenity.id} className="flex items-center justify-between">
+                        <span className="text-sm">{amenity.name}</span>
+                        <Switch
+                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
+                          onValueChange={() => toggleAmenity(amenity.id)}
+                          color="primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium mb-3"><strong>Bathroom Amenities</strong></h4>
+                  <div className="space-y-3">
+                    {getAmenitiesByCategory('bathroom').map((amenity) => (
+                      <div key={amenity.id} className="flex items-center justify-between">
+                        <span className="text-sm">{amenity.name}</span>
+                        <Switch
+                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
+                          onValueChange={() => toggleAmenity(amenity.id)}
+                          color="primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              
+              {/* Second Row: Furniture & Storage, Electronics & Appliances */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                <div>
+                  <h4 className="font-medium mb-3"><strong>Furniture & Storage</strong></h4>
+                  <div className="space-y-3">
+                    {getAmenitiesByCategory('furniture').map((amenity) => (
+                      <div key={amenity.id} className="flex items-center justify-between">
+                        <span className="text-sm">{amenity.name}</span>
+                        <Switch
+                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
+                          onValueChange={() => toggleAmenity(amenity.id)}
+                          color="primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium mb-3"><strong>Electronics & Appliances</strong></h4>
+                  <div className="space-y-3">
+                    {getAmenitiesByCategory('electronics').map((amenity) => (
+                      <div key={amenity.id} className="flex items-center justify-between">
+                        <span className="text-sm">{amenity.name}</span>
+                        <Switch
+                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
+                          onValueChange={() => toggleAmenity(amenity.id)}
+                          color="primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Third Row: Guest Supplies & Consumables, Specialized Equipment */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                <div>
+                  <h4 className="font-medium mb-3"><strong>Guest Supplies & Consumables</strong></h4>
+                  <div className="space-y-3">
+                    {getAmenitiesByCategory('supplies').map((amenity) => (
+                      <div key={amenity.id} className="flex items-center justify-between">
+                        <span className="text-sm">{amenity.name}</span>
+                        <Switch
+                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
+                          onValueChange={() => toggleAmenity(amenity.id)}
+                          color="primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium mb-3"><strong>Specialized Equipment</strong></h4>
+                  <div className="space-y-3">
+                    {getAmenitiesByCategory('specialized').map((amenity) => (
+                      <div key={amenity.id} className="flex items-center justify-between">
+                        <span className="text-sm">{amenity.name}</span>
+                        <Switch
+                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
+                          onValueChange={() => toggleAmenity(amenity.id)}
+                          color="primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Fourth Row: Disability-Friendly Amenities, Luxury Amenities */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+                <div>
+                  <h4 className="font-medium mb-3"><strong>Disability-Friendly Amenities</strong></h4>
+                  <div className="space-y-3">
+                    {getAmenitiesByCategory('disability').map((amenity) => (
+                      <div key={amenity.id} className="flex items-center justify-between">
+                        <span className="text-sm">{amenity.name}</span>
+                        <Switch
+                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
+                          onValueChange={() => toggleAmenity(amenity.id)}
+                          color="primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                
+                <div>
+                  <h4 className="font-medium mb-3"><strong>Luxury Amenities</strong></h4>
+                  <div className="space-y-3">
+                    {getAmenitiesByCategory('luxury').map((amenity) => (
+                      <div key={amenity.id} className="flex items-center justify-between">
+                        <span className="text-sm">{amenity.name}</span>
+                        <Switch
+                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
+                          onValueChange={() => toggleAmenity(amenity.id)}
+                          color="primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Fifth Row: Other */}
+              <div className="grid grid-cols-1 gap-6 mt-6">
+                <div>
+                  <h4 className="font-medium mb-3"><strong>Other</strong></h4>
+                  <div className="space-y-3">
+                    {getAmenitiesByCategory('other').map((amenity) => (
+                      <div key={amenity.id} className="flex items-center justify-between">
+                        <span className="text-sm">{amenity.name}</span>
+                        <Switch
+                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
+                          onValueChange={() => toggleAmenity(amenity.id)}
+                          color="primary"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="mt-6 pt-4 border-t">
+                <Button color="primary" variant="flat" onClick={() => {
+                  if (!selectedAmenitiesRoomTypeId) {
+                    alert('Please select a room type first.');
+                    return;
+                  }
+                  const rt = getSelectedAmenitiesRoomType();
+                  logAction('SAVE_AMENITIES_FOR_ROOM_TYPE', { roomTypeId: selectedAmenitiesRoomTypeId, amenities: rt?.amenities || [] });
+                  alert('Amenities updated for ' + getRoomTypeName(selectedAmenitiesRoomTypeId));
+                }}>
+                  Update Amenities for Selected Type
+                </Button>
+              </div>
+            </CardBody>
+          </Card>
         </Tab>
 
         <Tab key="rooms" title="Rooms">
@@ -2508,210 +2741,265 @@ export default function RoomConfigurationDashboard() {
           </div>
         </Tab>
 
-        <Tab key="amenities" title="Room Amenities">
-          <Card>
-            <CardHeader>
-              <h3 className="text-xl font-semibold">Room Amenities</h3>
-              <p className="text-sm text-gray-600">LINK amenities to specific room types and toggle them</p>
-            </CardHeader>
-            <CardBody>
-              {/* Room Type Selector for Amenities */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                <div>
-                  <label className="text-sm text-gray-600">Room Type</label>
-                  <select
-                    className="mt-1 w-full border rounded-md h-10 px-3"
-                    value={selectedAmenitiesRoomTypeId}
-                    onChange={(e) => setSelectedAmenitiesRoomTypeId(e.target.value)}
-                  >
-                    <option value="">Select room type to manage amenities</option>
-                    {settingsStore.roomManagement.roomTypes.map((type) => (
-                      <option key={type.id} value={type.id}>{type.name}</option>
-                    ))}
-                  </select>
-                </div>
-                {selectedAmenitiesRoomTypeId && (
-                  <div className="flex items-end">
-                    <Badge color="primary" variant="flat">
-                      Managing: {getRoomTypeName(selectedAmenitiesRoomTypeId)}
-                    </Badge>
-                  </div>
-                )}
-              </div>
-              {/* First Row: Bedding & Linens, Bathroom Amenities */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h4 className="font-medium mb-3"><strong>Bedding & Linens</strong></h4>
-                  <div className="space-y-3">
-                    {getAmenitiesByCategory('bedding').map((amenity) => (
-                      <div key={amenity.id} className="flex items-center justify-between">
-                        <span className="text-sm">{amenity.name}</span>
-                        <Switch
-                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
-                          onValueChange={() => toggleAmenity(amenity.id)}
-                          color="primary"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                
-                <div>
-                  <h4 className="font-medium mb-3"><strong>Bathroom Amenities</strong></h4>
-                  <div className="space-y-3">
-                    {getAmenitiesByCategory('bathroom').map((amenity) => (
-                      <div key={amenity.id} className="flex items-center justify-between">
-                        <span className="text-sm">{amenity.name}</span>
-                        <Switch
-                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
-                          onValueChange={() => toggleAmenity(amenity.id)}
-                          color="primary"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              
-              {/* Second Row: Furniture & Storage, Electronics & Appliances */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                <div>
-                  <h4 className="font-medium mb-3"><strong>Furniture & Storage</strong></h4>
-                  <div className="space-y-3">
-                    {getAmenitiesByCategory('furniture').map((amenity) => (
-                      <div key={amenity.id} className="flex items-center justify-between">
-                        <span className="text-sm">{amenity.name}</span>
-                        <Switch
-                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
-                          onValueChange={() => toggleAmenity(amenity.id)}
-                          color="primary"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                
-                <div>
-                  <h4 className="font-medium mb-3"><strong>Electronics & Appliances</strong></h4>
-                  <div className="space-y-3">
-                    {getAmenitiesByCategory('electronics').map((amenity) => (
-                      <div key={amenity.id} className="flex items-center justify-between">
-                        <span className="text-sm">{amenity.name}</span>
-                        <Switch
-                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
-                          onValueChange={() => toggleAmenity(amenity.id)}
-                          color="primary"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+        <Tab key="operations-policies" title="📜 Operational Policies">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Pay Later Policy</h4>
+              </CardHeader>
+              <CardBody className="pt-0 flex items-center justify-between">
+                <div className="text-sm text-gray-600">Who can check out without immediate payment</div>
+                <select
+                  className="border rounded-md p-2 text-sm"
+                  value={settingsStore.roomManagement.payLaterPolicy || 'both'}
+                  onChange={(e) => settingsStore.updateNestedSetting('roomManagement.payLaterPolicy', e.target.value)}
+                >
+                  <option value="both">Both Corporate and Individual</option>
+                  <option value="corporate">Corporate Only</option>
+                  <option value="individual">Individual Only</option>
+                </select>
+              </CardBody>
+            </Card>
 
-              {/* Third Row: Guest Supplies & Consumables, Specialized Equipment */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                <div>
-                  <h4 className="font-medium mb-3"><strong>Guest Supplies & Consumables</strong></h4>
-                  <div className="space-y-3">
-                    {getAmenitiesByCategory('supplies').map((amenity) => (
-                      <div key={amenity.id} className="flex items-center justify-between">
-                        <span className="text-sm">{amenity.name}</span>
-                        <Switch
-                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
-                          onValueChange={() => toggleAmenity(amenity.id)}
-                          color="primary"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                
-                <div>
-                  <h4 className="font-medium mb-3"><strong>Specialized Equipment</strong></h4>
-                  <div className="space-y-3">
-                    {getAmenitiesByCategory('specialized').map((amenity) => (
-                      <div key={amenity.id} className="flex items-center justify-between">
-                        <span className="text-sm">{amenity.name}</span>
-                        <Switch
-                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
-                          onValueChange={() => toggleAmenity(amenity.id)}
-                          color="primary"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Default Credit Terms (days)</h4>
+              </CardHeader>
+              <CardBody className="pt-0 flex items-center justify-between">
+                <div className="text-sm text-gray-600">Applies by default to corporate invoices</div>
+                <input
+                  type="number"
+                  className="border rounded-md p-2 text-sm w-28"
+                  value={(settingsStore.roomManagement.defaultCreditTermsDays ?? 30).toString()}
+                  onChange={(e) => settingsStore.updateNestedSetting('roomManagement.defaultCreditTermsDays', Math.max(0, parseInt(e.target.value || '0')))}
+                />
+              </CardBody>
+            </Card>
 
-              {/* Fourth Row: Disability-Friendly Amenities, Luxury Amenities */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-                <div>
-                  <h4 className="font-medium mb-3"><strong>Disability-Friendly Amenities</strong></h4>
-                  <div className="space-y-3">
-                    {getAmenitiesByCategory('disability').map((amenity) => (
-                      <div key={amenity.id} className="flex items-center justify-between">
-                        <span className="text-sm">{amenity.name}</span>
-                        <Switch
-                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
-                          onValueChange={() => toggleAmenity(amenity.id)}
-                          color="primary"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                
-                <div>
-                  <h4 className="font-medium mb-3"><strong>Luxury Amenities</strong></h4>
-                  <div className="space-y-3">
-                    {getAmenitiesByCategory('luxury').map((amenity) => (
-                      <div key={amenity.id} className="flex items-center justify-between">
-                        <span className="text-sm">{amenity.name}</span>
-                        <Switch
-                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
-                          onValueChange={() => toggleAmenity(amenity.id)}
-                          color="primary"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Require Corporate Reference</h4>
+              </CardHeader>
+              <CardBody className="pt-0 flex items-center justify-between">
+                <div className="text-sm text-gray-600">PO/Project/Cost Center required for corporate pay-later</div>
+                <Switch
+                  isSelected={!!settingsStore.roomManagement.requireCorporateReference}
+                  onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.requireCorporateReference', v)}
+                >
+                  {settingsStore.roomManagement.requireCorporateReference ? 'Required' : 'Optional'}
+                </Switch>
+              </CardBody>
+            </Card>
 
-              {/* Fifth Row: Other */}
-              <div className="grid grid-cols-1 gap-6 mt-6">
-                <div>
-                  <h4 className="font-medium mb-3"><strong>Other</strong></h4>
-                  <div className="space-y-3">
-                    {getAmenitiesByCategory('other').map((amenity) => (
-                      <div key={amenity.id} className="flex items-center justify-between">
-                        <span className="text-sm">{amenity.name}</span>
-                        <Switch
-                          isSelected={isAmenityEnabledForSelectedType(amenity.id)}
-                          onValueChange={() => toggleAmenity(amenity.id)}
-                          color="primary"
-                        />
-                      </div>
-                    ))}
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Late Checkout Rules</h4>
+              </CardHeader>
+              <CardBody className="pt-0">
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-600">Enable late checkout fee</div>
+                    <Switch
+                      isSelected={!!settingsStore.roomManagement.lateCheckoutFeeEnabled}
+                      onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.lateCheckoutFeeEnabled', v)}
+                    >
+                      {settingsStore.roomManagement.lateCheckoutFeeEnabled ? 'Enabled' : 'Disabled'}
+                    </Switch>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-600">Grace Minutes</label>
+                      <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.lateCheckoutGraceMinutes ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCheckoutGraceMinutes', Math.max(0, parseInt(e.target.value||'0')))} />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">Fee Type</label>
+                      <select className="mt-1 w-full border rounded-md p-2 text-sm" value={settingsStore.roomManagement.lateCheckoutFeeType || 'flat'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCheckoutFeeType', e.target.value)}>
+                        <option value="flat">Flat Amount (₵)</option>
+                        <option value="percent_of_nightly">% of Nightly Rate</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">Fee Value</label>
+                      <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.lateCheckoutFeeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCheckoutFeeValue', Math.max(0, Number(e.target.value||'0')))} />
+                    </div>
                   </div>
                 </div>
-              </div>
-              
-              <div className="mt-6 pt-4 border-t">
-                <Button color="primary" variant="flat" onClick={() => {
-                  if (!selectedAmenitiesRoomTypeId) {
-                    alert('Please select a room type first.');
-                    return;
-                  }
-                  const rt = getSelectedAmenitiesRoomType();
-                  logAction('SAVE_AMENITIES_FOR_ROOM_TYPE', { roomTypeId: selectedAmenitiesRoomTypeId, amenities: rt?.amenities || [] });
-                  alert('Amenities updated for ' + getRoomTypeName(selectedAmenitiesRoomTypeId));
-                }}>
-                  Update Amenities for Selected Type
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
+              </CardBody>
+            </Card>
+
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Early Checkout Rules</h4>
+              </CardHeader>
+              <CardBody className="pt-0">
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-700 font-medium">No charge for early checkout</div>
+                    <Switch
+                      isSelected={!!settingsStore.roomManagement.earlyCheckoutPolicyEnabled}
+                      onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.earlyCheckoutPolicyEnabled', v)}
+                    >
+                      {settingsStore.roomManagement.earlyCheckoutPolicyEnabled ? 'On' : 'Off'}
+                    </Switch>
+                  </div>
+                  <div className="text-xs text-gray-600">When On, the system automatically removes all unused nights from the folio if a guest checks out before the scheduled departure date. No extra charges are added.</div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-600">Cutoff Hour (24h)</label>
+                      <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.earlyCheckoutCutoffHour ?? 11).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutCutoffHour', Math.max(0, Math.min(23, Number(e.target.value||'0'))))} />
+                    </div>
+                  </div>
+                  <div className="pt-2 border-t mt-2">
+                    <label className="flex items-center gap-2 text-xs text-gray-600">
+                      <input type="checkbox" className="accent-ghana-green" checked={!!settingsStore.roomManagement.earlyCheckoutAdvancedEnabled} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutAdvancedEnabled', e.target.checked)} />
+                      Show advanced options
+                    </label>
+                    {settingsStore.roomManagement.earlyCheckoutAdvancedEnabled && (
+                      <div className="mt-3 grid grid-cols-3 gap-3">
+                        <div>
+                          <label className="text-xs text-gray-600">Refund/Penalty Mode</label>
+                          <select className="mt-1 w-full border rounded-md p-2 text-sm" value={settingsStore.roomManagement.earlyCheckoutRefundType || 'nightly_prorate'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutRefundType', e.target.value)}>
+                            <option value="nightly_prorate">Prorate unused nights</option>
+                            <option value="none">No refund (charge remaining)</option>
+                            <option value="percent_penalty">% penalty on remaining</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-600">Penalty %</label>
+                          <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.earlyCheckoutPenaltyPercent ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutPenaltyPercent', Math.max(0, Number(e.target.value||'0')))} />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-600">Note</label>
+                          <input type="text" className="mt-1 w-full border rounded-md p-2 text-sm" placeholder="Explain your early checkout practice" onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.earlyCheckoutNote', e.target.value)} />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Standard Times & Cutoffs</h4>
+              </CardHeader>
+              <CardBody className="pt-0">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-600">Standard Check-in Hour</label>
+                    <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.standardCheckInHour ?? 14).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.standardCheckInHour', Math.max(0, Math.min(23, Number(e.target.value||'0'))))} />
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600">Standard Check-out Hour</label>
+                    <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.standardCheckOutHour ?? 11).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.standardCheckOutHour', Math.max(0, Math.min(23, Number(e.target.value||'0'))))} />
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">No-Show Policy</h4>
+              </CardHeader>
+              <CardBody className="pt-0">
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-600">Enable no-show policy</div>
+                    <Switch isSelected={!!settingsStore.roomManagement.noShowPolicyEnabled} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.noShowPolicyEnabled', v)}>
+                      {settingsStore.roomManagement.noShowPolicyEnabled ? 'Enabled' : 'Disabled'}
+                    </Switch>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-600">Charge Type</label>
+                      <select className="mt-1 w-full border rounded-md p-2 text-sm" value={settingsStore.roomManagement.noShowChargeType || 'first_night'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.noShowChargeType', e.target.value)}>
+                        <option value="first_night">First Night</option>
+                        <option value="percent_reservation">% of Reservation</option>
+                        <option value="flat">Flat Amount</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">Charge Value</label>
+                      <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.noShowChargeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.noShowChargeValue', Math.max(0, Number(e.target.value||'0')))} />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">Cutoff Hour (24h)</label>
+                      <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.noShowCutoffHour ?? 23).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.noShowCutoffHour', Math.max(0, Math.min(23, Number(e.target.value||'0'))))} />
+                    </div>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Cancellation Policy</h4>
+              </CardHeader>
+              <CardBody className="pt-0">
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-600">Enable cancellation policy</div>
+                    <Switch isSelected={!!settingsStore.roomManagement.cancellationPolicyEnabled} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.cancellationPolicyEnabled', v)}>
+                      {settingsStore.roomManagement.cancellationPolicyEnabled ? 'Enabled' : 'Disabled'}
+                    </Switch>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-600">Free Cancellation (hours before arrival)</label>
+                      <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.freeCancellationHours ?? 24).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.freeCancellationHours', Math.max(0, Number(e.target.value||'0')))} />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">Late Cancel Fee Type</label>
+                      <select className="mt-1 w-full border rounded-md p-2 text-sm" value={settingsStore.roomManagement.lateCancellationFeeType || 'first_night'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCancellationFeeType', e.target.value)}>
+                        <option value="first_night">First Night</option>
+                        <option value="percent_reservation">% of Reservation</option>
+                        <option value="flat">Flat Amount</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">Late Cancel Fee Value</label>
+                      <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.lateCancellationFeeValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.lateCancellationFeeValue', Math.max(0, Number(e.target.value||'0')))} />
+                    </div>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Deposit / Guarantee</h4>
+              </CardHeader>
+              <CardBody className="pt-0">
+                <div className="grid grid-cols-1 gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-gray-600">Require deposit</div>
+                    <Switch isSelected={!!settingsStore.roomManagement.depositPolicyEnabled} onValueChange={(v)=> settingsStore.updateNestedSetting('roomManagement.depositPolicyEnabled', v)}>
+                      {settingsStore.roomManagement.depositPolicyEnabled ? 'Enabled' : 'Disabled'}
+                    </Switch>
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs text-gray-600">Deposit Type</label>
+                      <select className="mt-1 w-full border rounded-md p-2 text-sm" value={settingsStore.roomManagement.depositType || 'percent'} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.depositType', e.target.value)}>
+                        <option value="percent">% of Reservation</option>
+                        <option value="flat">Flat Amount</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-600">Deposit Value</label>
+                      <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.depositValue ?? 0).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.depositValue', Math.max(0, Number(e.target.value||'0')))} />
+                    </div>
+                    <div className="flex items-end">
+                      <label className="flex items-center text-xs text-gray-600 gap-2">
+                        <input type="checkbox" className="accent-ghana-green" checked={!!settingsStore.roomManagement.requireDepositToConfirm} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.requireDepositToConfirm', e.target.checked)} />
+                        Require to confirm reservation
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </CardBody>
+            </Card>
+          </div>
         </Tab>
 
         {/* Bulk Operations standalone tab placed after Rate Plans */}
@@ -2949,30 +3237,30 @@ export default function RoomConfigurationDashboard() {
           <ModalHeader>Bulk Add Rooms</ModalHeader>
           <ModalBody>
             <div className="space-y-4">
-              {/* Simple Help Section */}
-              <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <h4 className="font-semibold text-blue-800 mb-2">🎯 Single Floor Room Creation</h4>
-                <p className="text-sm text-blue-700 mb-3">
-                  Create rooms for a specific building and floor. Perfect for adding floors one by one!
-                </p>
-                
-                                 <div className="grid grid-cols-1 gap-3 text-sm">
-                   <div className="p-3 bg-white rounded border">
-                     <strong className="text-green-700">Example:</strong> Building 1, Floor A (Floor #1) → 1A01, 1A02, 1A03...
-                   </div>
-                   <div className="p-3 bg-white rounded border">
-                     <strong className="text-blue-700">Then:</strong> Building 1, Floor 2B (Floor #2) → 12B01, 12B02, 12B03...
-                   </div>
-                   <div className="p-3 bg-white rounded border">
-                     <strong className="text-purple-700">Pattern:</strong> Prefix + Building + Floor + Room Number + Suffix
-                   </div>
-                   <div className="p-3 bg-white rounded border">
-                     <strong className="text-orange-700">Floor System:</strong> Floor Identifier (A, B, 1A) + Floor Number (0=Ground, 1=1st, 2=2nd)
-                   </div>
-                   <div className="p-3 bg-white rounded border">
-                     <strong className="text-indigo-700">Analytics:</strong> Floor Number tracks actual level for occupancy, pricing, and maintenance analysis
-                   </div>
-                 </div>
+              {/* Header + Info tooltip */}
+              <div className="flex items-center justify-between">
+                <h4 className="font-semibold text-blue-800">🎯 Single Floor Room Creation</h4>
+                <Tooltip
+                  content={
+                    <div className="max-w-sm text-sm space-y-2">
+                      <div className="text-blue-700">Create rooms for a specific building and floor. Perfect for adding floors one by one!</div>
+                      <div><strong className="text-green-700">Example:</strong> Building 1, Floor A (Floor #1) → 1A01, 1A02, 1A03...</div>
+                      <div><strong className="text-blue-700">Then:</strong> Building 1, Floor 2B (Floor #2) → 12B01, 12B02, 12B03...</div>
+                      <div><strong className="text-purple-700">Pattern:</strong> Prefix + Building + Floor + Room Number + Suffix</div>
+                      <div><strong className="text-orange-700">Floor System:</strong> Floor Identifier (A, B, 1A) + Floor Number (0=Ground, 1=1st, 2=2nd)</div>
+                      <div><strong className="text-indigo-700">Analytics:</strong> Floor Number tracks actual level for occupancy, pricing, and maintenance analysis</div>
+                    </div>
+                  }
+                >
+                  <span
+                    role="img"
+                    aria-label="Info"
+                    className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center cursor-pointer select-none"
+                    title="Info"
+                  >
+                    i
+                  </span>
+                </Tooltip>
               </div>
               
               {/* Basic Settings */}

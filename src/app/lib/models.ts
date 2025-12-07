@@ -38,9 +38,51 @@ export interface TaxRule {
   id: string;
   countryCode: string; // 'GH', 'ZW', 'US'
   name: string;        // 'NHIL', 'VAT'
+  typeId?: string;     // Link to TaxType
   rate: number;        // 2.5 for 2.5%
   glCode: string;      // Accounting code
-  appliesTo?: string[] // Optional: product categories
+  description?: string;
+  appliesTo?: string[]; // Optional: product categories
+  enabled?: boolean;    // Whether rule is active
+  priority?: number;    // Lower runs first
+  calculationBase?: 'subtotal' | 'subtotal_plus_applied' | 'per_person' | 'per_night' | 'per_person_night';
+  method?: 'rate' | 'fixed' | 'tiered';
+  fixedAmount?: number; // used when method is 'fixed'
+  tiers?: Array<{
+    upto?: number;      // apply up to this base threshold; undefined = remaining
+    rate?: number;      // percent for this tier when method is 'tiered'
+    fixed?: number;     // fixed amount for this tier when method is 'tiered'
+  }>;
+  stacking?: 'additive' | 'compound';
+  rounding?: 'none' | 'nearest' | 'down' | 'up';
+  roundTo?: number;     // e.g., 0.01
+  effectiveFrom?: string; // ISO date
+  effectiveTo?: string;   // ISO date
+  isSeparate?: boolean; // whether to present as separate charge
+  domain?: 'sales' | 'payroll' | 'corporate' | 'purchases' | 'custom'; // selects rule group
+  operation?: 'internal' | 'external' | 'both'; // applicable to operation type
+  effect?: 'add' | 'subtract' | 'exclude_total' | 'informational'; // how to affect payable total
+  tags?: string[];
+  scope?: {
+    roomTypes?: string[];
+    guestTypes?: string[];
+  };
+  condition?: {
+    field: string;
+    op: 'eq' | 'ne' | 'gt' | 'lt' | 'gte' | 'lte' | 'in';
+    value: any;
+  };
+}
+
+// Tax Type definition (groups one or more rules under a named type)
+export interface TaxType {
+  id: string;
+  countryCode: string; // country this type applies to
+  name: string;        // e.g., 'Purchases VAT', 'Withholding - Services'
+  description?: string;
+  domain?: 'sales' | 'purchases' | 'payroll' | 'corporate' | 'custom';
+  operation?: 'internal' | 'external' | 'both';
+  tags?: string[];
 }
 
 // Country reporting requirements

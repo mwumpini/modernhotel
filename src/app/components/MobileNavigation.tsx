@@ -114,11 +114,12 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
     },
     {
       key: 'accounting',
-      title: '🧾 Complete Accounting System',
+      title: '🧾 Accounting & Finance',
       icon: '🧾',
       items: [
         { title: 'Chart of Accounts', href: '/accounting/coa', badge: 'Ghana GAAP' },
         { title: 'Bank, Cash & Receivables', href: '/accounting/banking', badge: 'Mobile Money' },
+        // Receivables embedded in dashboard; omit standalone entry for now
         { title: 'Accounts Payable', href: '/accounting/ap', badge: 'Vendor' },
         { title: 'Inventory & Fixed Assets', href: '/accounting/inventory', badge: 'COGS' },
         { title: 'Financial Reports', href: '/accounting/reports', badge: 'Compliance' },

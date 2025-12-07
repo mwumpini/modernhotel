@@ -8,7 +8,7 @@ interface PayrollStore {
   selectedRecord: PayrollRecord | null;
 
   // Payroll Period Management
-  createPayrollPeriod: (period: Omit<PayrollPeriod, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  createPayrollPeriod: (period: Omit<PayrollPeriod, 'id' | 'createdAt' | 'updatedAt'>) => PayrollPeriod;
   updatePayrollPeriod: (id: string, updates: Partial<PayrollPeriod>) => void;
   deletePayrollPeriod: (id: string) => void;
   getPayrollPeriod: (id: string) => PayrollPeriod | undefined;
@@ -213,9 +213,18 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
       createdAt: new Date(),
       updatedAt: new Date()
     };
+    console.log('[HR][Payroll][Store] createPayrollPeriod: Creating new period', {
+      id: newPeriod.id,
+      periodNumber: newPeriod.periodNumber,
+      startDate: newPeriod.startDate,
+      endDate: newPeriod.endDate,
+      status: newPeriod.status
+    });
     set((state) => ({
       payrollPeriods: [...state.payrollPeriods, newPeriod]
     }));
+    console.log('[HR][Payroll][Store] createPayrollPeriod: Period created successfully', newPeriod.id);
+    return newPeriod;
   },
 
   updatePayrollPeriod: (id, updates) => {
@@ -306,7 +315,7 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
           ? { 
               ...record, 
               status: 'paid', 
-              paymentDate: new Date(), 
+              paidAt: new Date(), 
               updatedAt: new Date() 
             } 
           : record
