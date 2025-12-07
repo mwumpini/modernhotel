@@ -5890,6 +5890,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     setIsInvoiceModalOpen(true);
   };
 
+
   const validateInvoiceForm = () => {
     const errors: Record<string, string> = {};
     if (!invoiceForm.eventId) errors.eventId = 'Select an event';
@@ -10904,6 +10905,20 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       }
     };
 
+    // Open invoice edit from the invoices table using the folio workflow
+    const openInvoiceFromTable = (invoice: EventInvoice) => {
+      const relatedEvent =
+        managedEvents.find((e: any) => e.id === invoice.eventId) ||
+        allEvents.find((e: any) => e.id === invoice.eventId);
+      if (!relatedEvent) {
+        alert('Could not find the related event for this invoice. It may have been removed.');
+        return;
+      }
+      // Open the folio first so balances/totals are in sync, then open the invoice editor
+      handleOpenEventFolio(relatedEvent);
+      setTimeout(() => openInvoiceModal('edit', invoice, relatedEvent), 150);
+    };
+
     // Wrapper functions for function view exports using filteredManagedEvents
     const exportManagementFunctionSchedulePDF = () => {
       try {
@@ -12350,7 +12365,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                 size="sm"
                                 variant="flat"
                                 color="primary"
-                                onPress={() => openInvoiceModal('edit', invoice)}
+                                onPress={() => openInvoiceFromTable(invoice)}
                               >
                                 ✏️ Edit
                               </Button>
@@ -15928,6 +15943,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                             >
                               📄 Import Invoice ({formatCurrency(invoice.total)})
                               {invoiceExists && <span className="ml-1 text-xs opacity-75">(exists)</span>}
+                            </Button>
+                          )}
+                          {invoice && (
+                            <Button
+                              size="sm"
+                              color="secondary"
+                              variant="flat"
+                              onPress={() => openInvoiceModal('edit', invoice)}
+                            >
+                              ✏️ Edit Invoice
                             </Button>
                           )}
                           <Button
