@@ -10905,7 +10905,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       }
     };
 
-    // Open invoice edit from the invoices table using the event edit form (folio workflow)
+    // Open invoice edit from the invoices table using the event edit form (no invoice modal)
     const openInvoiceFromTable = (invoice: EventInvoice) => {
       const relatedEvent =
         managedEvents.find((e: any) => e.id === invoice.eventId) ||
@@ -10914,8 +10914,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         alert('Could not find the related event for this invoice. It may have been removed.');
         return;
       }
-      // Open the event edit form with invoice creation/edit flag so user edits within the event modal
-      openEventForEdit(relatedEvent, false, true);
+      // Open the event edit form directly (no invoice modal)
+      setSelectedTab('completed');
+      openEventForEdit(relatedEvent, false, false);
+      setIsInvoiceModalOpen(false);
     };
 
     // Wrapper functions for function view exports using filteredManagedEvents
@@ -15945,16 +15947,6 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                             >
                               📄 Import Invoice ({formatCurrency(invoice.total)})
                               {invoiceExists && <span className="ml-1 text-xs opacity-75">(exists)</span>}
-                            </Button>
-                          )}
-                          {invoice && (
-                            <Button
-                              size="sm"
-                              color="secondary"
-                              variant="flat"
-                              onPress={() => openInvoiceModal('edit', invoice)}
-                            >
-                              ✏️ Edit Invoice
                             </Button>
                           )}
                           <Button
