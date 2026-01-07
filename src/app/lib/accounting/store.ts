@@ -317,9 +317,30 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // Journal Entries Actions
   setJournalEntries: (entries) => set({ journalEntries: entries }),
   
-  addJournalEntry: (entry) => set((state) => ({
-    journalEntries: [...state.journalEntries, entry]
-  })),
+  addJournalEntry: (entry) => set((state) => {
+    // Detailed logging for journal entry creation
+    const lines = (entry.lines || []) as any[];
+    const totalDebit = lines.reduce((sum, l) => sum + (l.debit || 0), 0);
+    const totalCredit = lines.reduce((sum, l) => sum + (l.credit || 0), 0);
+    
+    console.log(`[Accounting] 📒 Journal Entry Created:`, {
+      entryNumber: entry.entryNumber || entry.id,
+      description: entry.description,
+      date: entry.date,
+      status: entry.status,
+      totalDebit: `GHS ${totalDebit.toLocaleString()}`,
+      totalCredit: `GHS ${totalCredit.toLocaleString()}`,
+      balanced: totalDebit === totalCredit ? '✓ Balanced' : '⚠️ UNBALANCED',
+      lineCount: lines.length,
+      source: (entry as any).sourceModule || 'manual',
+      accounts: lines.map(l => `${l.accountCode}: Dr ${l.debit || 0} / Cr ${l.credit || 0}`).join(', '),
+      timestamp: new Date().toISOString()
+    });
+    
+    return {
+      journalEntries: [...state.journalEntries, entry]
+    };
+  }),
   
   updateJournalEntry: (id, updates) => set((state) => ({
     journalEntries: state.journalEntries.map(entry =>
@@ -702,6 +723,20 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   setInvoices: (invoices) => set({ invoices: invoices }),
   
   addInvoice: (invoice) => set((state) => {
+    // Detailed logging for invoice creation
+    console.log(`[Accounting] 📄 Invoice Created:`, {
+      invoiceNumber: invoice.invoiceNumber || invoice.id,
+      type: invoice.type,
+      customer: invoice.businessPartnerId,
+      subtotal: `GHS ${(invoice.subtotal || 0).toLocaleString()}`,
+      tax: `GHS ${(invoice.taxAmount || 0).toLocaleString()}`,
+      total: `GHS ${(invoice.total || 0).toLocaleString()}`,
+      status: invoice.status,
+      dueDate: invoice.dueDate,
+      source: (invoice as any).sourceModule || 'manual',
+      timestamp: new Date().toISOString()
+    });
+    
     const updatedPartners = state.businessPartners.map(p => {
       if (p.id !== invoice.businessPartnerId) return p;
       if (invoice.type === 'Purchase' && (p.type === 'Supplier' || p.type === 'Both')) {
@@ -794,6 +829,20 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   setPayments: (payments) => set({ payments: payments }),
   
   addPayment: (payment) => set((state) => {
+    // Detailed logging for payment/receipt creation
+    const isReceipt = payment.type === 'Receipt';
+    console.log(`[Accounting] ${isReceipt ? '🧾 Receipt' : '💳 Payment'} Created:`, {
+      paymentNumber: payment.paymentNumber || payment.id,
+      type: payment.type,
+      party: payment.businessPartnerId,
+      amount: `GHS ${(payment.amount || 0).toLocaleString()}`,
+      method: payment.paymentMethod,
+      invoiceId: payment.invoiceId || 'N/A',
+      status: payment.status,
+      source: (payment as any).sourceModule || 'manual',
+      timestamp: new Date().toISOString()
+    });
+    
     const updatedPartners = state.businessPartners.map(p => {
       if (p.id !== payment.businessPartnerId) return p;
       if (payment.type === 'Payment' && (p.type === 'Supplier' || p.type === 'Both')) {
@@ -1568,32 +1617,68 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     revenueCenters: state.revenueCenters.filter(center => center.id !== id)
   })),
 
-  // Helper functions to track costs and revenue
+  // Helper functions to track costs and revenue with detailed logging
   recordExpense: (costCenterCode, amount) => set((state) => {
     const center = state.costCenters.find(cc => cc.code === costCenterCode);
     if (center) {
+      const previousAmount = center.actualExpenses || 0;
+      const newAmount = previousAmount + amount;
+      const budget = center.budget || 0;
+      const variance = budget - newAmount;
+      const utilizationPercent = budget > 0 ? ((newAmount / budget) * 100).toFixed(1) : 'N/A';
+      
+      console.log(`[Accounting] 📊 Expense Recorded:`, {
+        costCenter: `${center.name} (${costCenterCode})`,
+        amount: `GHS ${amount.toLocaleString()}`,
+        previousTotal: `GHS ${previousAmount.toLocaleString()}`,
+        newTotal: `GHS ${newAmount.toLocaleString()}`,
+        budget: `GHS ${budget.toLocaleString()}`,
+        variance: `GHS ${variance.toLocaleString()}`,
+        utilization: `${utilizationPercent}%`,
+        timestamp: new Date().toISOString()
+      });
+      
       return {
         costCenters: state.costCenters.map(cc =>
           cc.id === center.id
-            ? { ...cc, actualExpenses: cc.actualExpenses + amount, updatedAt: new Date().toISOString() }
+            ? { ...cc, actualExpenses: newAmount, variance: budget - newAmount, updatedAt: new Date().toISOString() }
             : cc
         )
       };
     }
+    console.warn(`[Accounting] ⚠️ Cost center not found: ${costCenterCode}`);
     return state;
   }),
 
   recordRevenue: (revenueCenterCode, amount) => set((state) => {
     const center = state.revenueCenters.find(rc => rc.code === revenueCenterCode);
     if (center) {
+      const previousAmount = center.actualRevenue || 0;
+      const newAmount = previousAmount + amount;
+      const target = center.budget || 0;
+      const variance = newAmount - target;
+      const achievementPercent = target > 0 ? ((newAmount / target) * 100).toFixed(1) : 'N/A';
+      
+      console.log(`[Accounting] 💰 Revenue Recorded:`, {
+        revenueCenter: `${center.name} (${revenueCenterCode})`,
+        amount: `GHS ${amount.toLocaleString()}`,
+        previousTotal: `GHS ${previousAmount.toLocaleString()}`,
+        newTotal: `GHS ${newAmount.toLocaleString()}`,
+        target: `GHS ${target.toLocaleString()}`,
+        variance: `GHS ${variance.toLocaleString()}`,
+        achievement: `${achievementPercent}%`,
+        timestamp: new Date().toISOString()
+      });
+      
       return {
         revenueCenters: state.revenueCenters.map(rc =>
           rc.id === center.id
-            ? { ...rc, actualRevenue: rc.actualRevenue + amount, updatedAt: new Date().toISOString() }
+            ? { ...rc, actualRevenue: newAmount, variance: newAmount - (rc.budget || 0), updatedAt: new Date().toISOString() }
             : rc
         )
       };
     }
+    console.warn(`[Accounting] ⚠️ Revenue center not found: ${revenueCenterCode}`);
     return state;
   }),
 

@@ -7,11 +7,16 @@
  * to keep logic testable and decoupled from the class file. They manage folios,
  * balances, charges, payments and inter-folio movements, and bridge to accounting
  * and audit modules. No UI concerns live here.
+ * 
+ * ACCOUNTING INTEGRATION:
+ * All revenue and payment transactions are automatically captured by the accounting
+ * system, creating Sales Invoices, Receipts, and GL journal entries.
  */
 
 import { trackEvent } from '../../analytics/trackEvent';
 import { logAudit } from '../../analytics/auditLogStore';
 import { postRoomRevenue, postPayment } from '../../accounting/journal';
+import { captureRevenue, capturePayment } from '../../accounting/integration';
 import type { Folio, FolioPayment } from '../types';
 import { useSettingsStore } from '../../settings/store';
 
@@ -104,10 +109,14 @@ export function updateFolioBalances(self: StoreLike, folio: Folio) {
 /**
  * Add a single charge to a folio, auto-computing tax from persisted tax rates
  * when not specified. Emits tracking and accounting signals for room revenue.
+ * 
+ * ACCOUNTING INTEGRATION:
+ * Automatically captures revenue to AR, creates Sales Invoice, and posts GL entries.
  */
 export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: string; description: string; amount: number; date?: string; tax?: number; category?: string; reference?: string }) {
 	const folio = getFolioById(self, folioId);
 	if (!folio) return;
+	
 	// Layered Ghana computation sourced from Settings compliance
 	const tax = typeof charge.tax === 'number' ? charge.tax : layeredTaxFromSettings(charge.amount);
 	folio.charges.push({
@@ -121,15 +130,49 @@ export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: s
 	});
 	updateFolioBalances(self, folio);
 	self.notify();
+	
+	// Get reservation details for accounting
+	const reservation = self.reservations?.find((r: any) => r.id === folio.reservationId);
+	const guestName = reservation?.guestName || 'Walk-in Guest';
+	const guestEmail = reservation?.guestEmail || reservation?.email;
+	const guestPhone = reservation?.guestPhone || reservation?.phone;
+	
 	trackEvent('FO.Folio.ChargePosted', { reservationId: folio.reservationId, description: charge.description, amount: charge.amount, tax, category: charge.category, reference: charge.reference });
+	
+	// ===== ACCOUNTING INTEGRATION =====
+	// Auto-capture revenue to AR, Sales Invoice, and GL
+	try {
+		const result = captureRevenue({
+			id: charge.id,
+			source: 'front_office',
+			customerId: reservation?.guestId || folio.reservationId,
+			customerName: guestName,
+			customerEmail: guestEmail,
+			customerPhone: guestPhone,
+			reference: folio.reservationId,
+			description: `${charge.description} - Room ${reservation?.roomId || reservation?.roomNumber || 'N/A'}`,
+			items: [{
+				description: charge.description,
+				quantity: 1,
+				unitPrice: charge.amount,
+				taxPercent: tax > 0 ? (tax / charge.amount) * 100 : 0,
+			}],
+			subtotal: charge.amount,
+			taxAmount: tax,
+			total: charge.amount + tax,
+			date: charge.date,
+		});
+		
+		if (result) {
+			console.log(`[FO.Folio] ✅ Accounting captured - Invoice: ${result.invoiceId}, JE: ${result.journalEntryId}`);
+		}
+	} catch (err) {
+		console.error('[FO.Folio] ❌ Accounting integration error:', err);
+	}
+	
+	// Legacy room revenue posting (kept for backward compatibility)
 	if ((charge.description || '').toLowerCase().includes('room')) {
 		postRoomRevenue(folio.reservationId, charge.amount, tax);
-		// Record to Room Revenue center
-		try {
-			const { useAccountingStore } = require('../../accounting/store');
-			const { recordRevenue } = useAccountingStore.getState();
-			recordRevenue('RM', charge.amount);
-		} catch {}
 	}
 }
 
@@ -322,6 +365,9 @@ export function addCharge(self: StoreLike, reservationId: string, description: s
 
 /**
  * Post a payment to folio, update balances, and mirror to accounting journal.
+ * 
+ * ACCOUNTING INTEGRATION:
+ * Automatically creates Receipt, updates AR invoice, and posts GL entries.
  */
 export function addPayment(self: StoreLike, reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: {
 	invoiceId?: string;
@@ -331,8 +377,9 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 	ref?: string;
 }) {
 	const f = getOrCreateFolio(self, reservationId);
+	const paymentId = `P-${Date.now().toString().slice(-6)}`;
 	const payment: FolioPayment = {
-		id: `P-${Date.now().toString().slice(-6)}`,
+		id: paymentId,
 		date: new Date().toISOString(),
 		method,
 		amount,
@@ -343,10 +390,45 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 	f.payments.push(payment);
 	updateFolioBalances(self, f);
 	self.notify();
+	
+	// Get reservation details for accounting
+	const reservation = self.reservations?.find((r: any) => r.id === reservationId);
+	const guestName = reservation?.guestName || 'Walk-in Guest';
+	
 	trackEvent('FO.Folio.PaymentReceived', { reservationId, method, amount, invoiceId: options?.invoiceId });
-	const accountingMethod = method === 'Credit' || method === 'Corporate Account' || method === 'Bank Transfer' || method === 'Check'
+	
+	// ===== ACCOUNTING INTEGRATION =====
+	// Auto-capture payment to Receipt and GL
+	try {
+		// Map payment method to accounting-compatible method
+		const accountingMethod = method === 'Credit' || method === 'Corporate Account' 
+			? 'Bank Transfer' 
+			: method === 'Check' 
+				? 'Cheque' 
+				: method;
+		
+		const result = capturePayment({
+			id: paymentId,
+			invoiceId: options?.invoiceId,
+			customerId: reservation?.guestId || reservationId,
+			customerName: guestName,
+			amount: amount,
+			paymentMethod: accountingMethod as any,
+			reference: options?.ref || reservationId,
+			description: options?.notes || `Payment from ${guestName}`,
+		}, 'front_office');
+		
+		if (result) {
+			console.log(`[FO.Folio] ✅ Payment captured - Receipt: ${result.receiptId}, JE: ${result.journalEntryId}`);
+		}
+	} catch (err) {
+		console.error('[FO.Folio] ❌ Payment integration error:', err);
+	}
+	
+	// Legacy payment posting (kept for backward compatibility)
+	const legacyMethod = method === 'Credit' || method === 'Corporate Account' || method === 'Bank Transfer' || method === 'Check'
 		? 'Cash' : method;
-	postPayment(reservationId, accountingMethod as 'Cash'|'Card'|'Mobile Money', amount);
+	postPayment(reservationId, legacyMethod as 'Cash'|'Card'|'Mobile Money', amount);
 }
 
 

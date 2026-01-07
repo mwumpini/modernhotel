@@ -55,6 +55,7 @@ import { openPrintPreview } from '../lib/print/engine';
 import { listTemplates } from '../lib/print/templates';
 import { useSettingsStore } from '../lib/settings/store';
 import { useAccountingStore } from '../lib/accounting/store';
+import { captureRevenue, capturePayment } from '../lib/accounting/integration';
 
 type VenueStatus = 'available' | 'booked' | 'setup' | 'maintenance';
 
@@ -3481,6 +3482,60 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         venueId: venueKey,
         status: eventStatus
       });
+      
+      // ===== ACCOUNTING INTEGRATION =====
+      // When event is confirmed, auto-capture revenue to AR and create Sales Invoice
+      if (eventStatus === 'confirmed' && totals.total > 0) {
+        try {
+          const result = captureRevenue({
+            id: `EVT-${uiEvent.id}`,
+            source: 'conference',
+            customerId: orgClientId || `client_${uiEvent.id}`,
+            customerName: orgName || 'Conference Client',
+            customerEmail: orgClientEmail,
+            customerPhone: orgContactPhone,
+            reference: uiEvent.id,
+            description: `Conference Booking: ${eventName} - ${venueInfo?.name || 'Venue TBD'}`,
+            items: [
+              {
+                description: `${eventName} - Conference Package (${attendees} pax, ${durationDays} days)`,
+                quantity: 1,
+                unitPrice: totals.total,
+                taxPercent: 0, // Tax calculated separately
+              }
+            ],
+            subtotal: totals.total,
+            taxAmount: 0,
+            total: totals.total,
+            date: new Date().toISOString(),
+          });
+          
+          if (result) {
+            console.log(`[Events] ✅ Booking revenue captured - Invoice: ${result.invoiceId}`);
+          }
+          
+          // If deposit was paid, also capture the payment
+          if (depositAmount > 0) {
+            const paymentResult = capturePayment({
+              id: `DEP-${uiEvent.id}`,
+              invoiceId: result?.invoiceId,
+              customerId: orgClientId || `client_${uiEvent.id}`,
+              customerName: orgName || 'Conference Client',
+              amount: depositAmount,
+              paymentMethod: 'Bank Transfer',
+              reference: `DEP-${uiEvent.id}`,
+              description: `Deposit for ${eventName}`,
+            }, 'conference');
+            
+            if (paymentResult) {
+              console.log(`[Events] ✅ Deposit captured - Receipt: ${paymentResult.receiptId}`);
+            }
+          }
+        } catch (error) {
+          console.error('[Events] ❌ Accounting integration error:', error);
+        }
+      }
+      
       setIsEventModalOpen(false);
       setEditingEvent(null);
       setIsCreatingEvent(false);
@@ -6622,22 +6677,64 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     );
     setFolioEntryForm({ type: 'charge', amount: 0, description: '', reference: '', costCenter: '', revenueCenter: '', method: 'Cash', recordedBy: 'Events Team' });
     
-    // Record to cost/revenue centers if specified
-    if (folioEntryForm.type === 'charge' && folioEntryForm.costCenter) {
+    // ===== ACCOUNTING INTEGRATION =====
+    // Auto-capture to AR, Sales Invoice/Receipt, and GL
+    if (folioEntryForm.type === 'charge') {
+      // Charge = Revenue from conference services
       try {
-        const { recordExpense } = useAccountingStore.getState();
-        recordExpense(folioEntryForm.costCenter, amount);
-        console.log('[Folio] Recorded expense to cost center:', folioEntryForm.costCenter, formatCurrency(amount));
+        const result = captureRevenue({
+          id: newEntry.id,
+          source: 'conference',
+          customerId: activeFolio.clientId || activeFolio.eventId,
+          customerName: activeFolio.clientName || activeFolio.eventName || 'Conference Client',
+          reference: activeFolio.eventId,
+          description: `${activeFolio.eventName || 'Conference'} - ${newEntry.description}`,
+          items: [{
+            description: newEntry.description,
+            quantity: 1,
+            unitPrice: amount,
+            taxPercent: 0, // Tax handled separately if needed
+          }],
+          subtotal: amount,
+          taxAmount: 0,
+          total: amount,
+        });
+        
+        if (result) {
+          console.log(`[Events] ✅ Revenue captured - Invoice: ${result.invoiceId}, JE: ${result.journalEntryId}`);
+        }
+        
+        // Also record to cost center if specified (for expense tracking)
+        if (folioEntryForm.costCenter) {
+          const { recordExpense } = useAccountingStore.getState();
+          recordExpense(folioEntryForm.costCenter, amount);
+          console.log('[Folio] Recorded expense to cost center:', folioEntryForm.costCenter, formatCurrency(amount));
+        }
       } catch (error) {
-        console.error('[Folio] Error recording expense to cost center:', error);
+        console.error('[Events] ❌ Accounting integration error:', error);
       }
-    } else if (folioEntryForm.type === 'payment' && folioEntryForm.revenueCenter) {
+    } else if (folioEntryForm.type === 'payment') {
+      // Payment = Receipt from client
       try {
-        const { recordRevenue } = useAccountingStore.getState();
-        recordRevenue(folioEntryForm.revenueCenter, amount);
-        console.log('[Folio] Recorded revenue to revenue center:', folioEntryForm.revenueCenter, formatCurrency(amount));
+        // Map payment method
+        const paymentMethod = (folioEntryForm.method || 'Cash') as 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Cheque';
+        
+        const result = capturePayment({
+          id: newEntry.id,
+          invoiceId: folioEntryForm.reference || undefined,
+          customerId: activeFolio.clientId || activeFolio.eventId,
+          customerName: activeFolio.clientName || activeFolio.eventName || 'Conference Client',
+          amount: amount,
+          paymentMethod: paymentMethod,
+          reference: newEntry.reference || activeFolio.eventId,
+          description: `Payment for ${activeFolio.eventName || 'Conference'} - ${newEntry.description}`,
+        }, 'conference');
+        
+        if (result) {
+          console.log(`[Events] ✅ Payment captured - Receipt: ${result.receiptId}, JE: ${result.journalEntryId}`);
+        }
       } catch (error) {
-        console.error('[Folio] Error recording revenue to revenue center:', error);
+        console.error('[Events] ❌ Payment integration error:', error);
       }
     }
     

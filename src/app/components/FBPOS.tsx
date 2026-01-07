@@ -34,6 +34,7 @@ import { storesIssueBus } from '../lib/fb/stores';
 import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { storesStore } from '../lib/stores/store';
 import { useAccountingStore } from '../lib/accounting/store';
+import { captureCompleteSale, type DepartmentSource } from '../lib/accounting/integration';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { customerStore } from '../lib/fb/customerStore';
 
@@ -687,18 +688,64 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         });
       });
 
-      // Record revenue to appropriate center
+      // ===== ACCOUNTING INTEGRATION =====
+      // Auto-capture complete sale (revenue + payment) to AR, Sales Invoice, Receipt, and GL
       try {
-        const { useAccountingStore } = require('../lib/accounting/store');
-        const { recordRevenue } = useAccountingStore.getState();
-        if (venue === 'Restaurant') {
-          recordRevenue('REST', total);
-        } else if (venue === 'Bar') {
-          recordRevenue('BAR', total);
-        } else if (venue === 'Room Service') {
-          recordRevenue('RS', total);
+        // Determine department source based on venue
+        const departmentSource: DepartmentSource = venue === 'Restaurant' ? 'restaurant' 
+          : venue === 'Bar' ? 'bar' 
+          : venue === 'Room Service' ? 'room_service' 
+          : 'restaurant';
+        
+        // Get customer name
+        const fbCustomerName = customerType === 'In-house' 
+          ? guestName 
+          : selectedWalkIn 
+            ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() 
+            : 'Walk-in Customer';
+        
+        // Map payment method for accounting
+        const accountingPaymentMethod = paymentMethod === 'Room Charge' 
+          ? 'Bank Transfer' as const
+          : paymentMethod as 'Cash' | 'Card' | 'Mobile Money';
+        
+        // Calculate tax breakdown
+        const taxPercent = ((vatAmount + nhilAmount + getFundAmount + tourismLevy) / subtotal) * 100;
+        
+        const result = captureCompleteSale(
+          {
+            id: newId,
+            source: departmentSource,
+            customerId: customerType === 'In-house' && roomNumber ? `ROOM-${roomNumber}` : undefined,
+            customerName: fbCustomerName,
+            reference: newId,
+            description: `${venue} Sale - Table ${tableNumber || 'N/A'}`,
+            items: cart.map(item => ({
+              description: item.name,
+              quantity: item.qty,
+              unitPrice: item.price,
+              taxPercent: taxPercent,
+            })),
+            subtotal: subtotal,
+            taxAmount: vatAmount + nhilAmount + getFundAmount + tourismLevy,
+            total: total,
+          },
+          {
+            id: `PAY-${newId}`,
+            customerName: fbCustomerName,
+            amount: total,
+            paymentMethod: accountingPaymentMethod,
+            reference: newId,
+            description: `Payment for ${venue} order ${newId}`,
+          }
+        );
+        
+        if (result) {
+          console.log(`[F&B POS] ✅ Accounting captured - Invoice: ${result.invoiceId}, Receipt: ${result.receiptId}`);
         }
-      } catch {}
+      } catch (err) {
+        console.error('[F&B POS] ❌ Accounting integration error:', err);
+      }
 
       // Add to guest folio if room charge
       if (paymentMethod === 'Room Charge' && customerType === 'In-house') {

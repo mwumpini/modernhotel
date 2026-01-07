@@ -1,0 +1,585 @@
+'use client';
+
+/**
+ * Accounting Integration Module
+ * 
+ * This module provides automatic accounting capture for all revenue-generating
+ * departments in the hotel. When operational transactions occur, this module
+ * automatically:
+ * 
+ * 1. Creates Sales Invoices in Accounts Receivable
+ * 2. Records revenue to Revenue Centers
+ * 3. Posts journal entries to General Ledger
+ * 4. Creates Receipts when payments are received
+ * 5. Updates AR balances and GL accounts
+ * 
+ * Integration Points:
+ * - Front Office (Room Revenue)
+ * - Restaurant (F&B Revenue)
+ * - Bar (F&B Revenue)
+ * - Room Service (F&B Revenue)
+ * - Conference/Events (Conference Revenue)
+ */
+
+import { useAccountingStore } from './store';
+
+// GL Account Codes for Ghana Hotel Chart of Accounts
+const GL_ACCOUNTS = {
+  // Assets
+  CASH: '1000',
+  BANK: '1100',
+  ACCOUNTS_RECEIVABLE: '1200',
+  INVENTORY: '1300',
+  
+  // Liabilities
+  ACCOUNTS_PAYABLE: '2000',
+  VAT_PAYABLE: '2100',
+  NHIL_PAYABLE: '2110',
+  GETFUND_PAYABLE: '2120',
+  COVID_LEVY_PAYABLE: '2130',
+  TOURISM_LEVY_PAYABLE: '2140',
+  
+  // Revenue
+  ROOM_REVENUE: '4100',
+  FB_REVENUE: '4200',
+  CONFERENCE_REVENUE: '4300',
+  SERVICE_CHARGES: '4400',
+  OTHER_REVENUE: '4500',
+  
+  // Cost of Sales
+  ROOM_COGS: '5100',
+  FB_COGS: '5200',
+  
+  // Expenses
+  OPERATING_EXPENSES: '6000',
+};
+
+// Revenue Center Codes
+const REVENUE_CENTERS = {
+  ROOM: 'RM',
+  RESTAURANT: 'REST',
+  BAR: 'BAR',
+  ROOM_SERVICE: 'RS',
+  CONFERENCE: 'CF',
+  SERVICE_CHARGES: 'SC',
+};
+
+// Payment method to GL mapping
+const PAYMENT_GL_MAP: Record<string, string> = {
+  'Cash': GL_ACCOUNTS.CASH,
+  'Card': GL_ACCOUNTS.BANK,
+  'Mobile Money': GL_ACCOUNTS.BANK,
+  'Bank Transfer': GL_ACCOUNTS.BANK,
+  'Cheque': GL_ACCOUNTS.BANK,
+};
+
+export type DepartmentSource = 'front_office' | 'restaurant' | 'bar' | 'room_service' | 'conference' | 'spa' | 'other';
+
+export interface RevenueTransaction {
+  id: string;
+  source: DepartmentSource;
+  customerId?: string;
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  reference?: string; // reservation ID, order ID, etc.
+  description: string;
+  items: {
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    taxPercent?: number;
+  }[];
+  subtotal: number;
+  taxAmount: number;
+  total: number;
+  currency?: string;
+  date?: string;
+}
+
+export interface PaymentTransaction {
+  id: string;
+  invoiceId?: string;
+  customerId?: string;
+  customerName: string;
+  amount: number;
+  paymentMethod: 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Cheque';
+  reference?: string;
+  description?: string;
+  currency?: string;
+  date?: string;
+}
+
+/**
+ * Get the GL revenue account for a department
+ */
+function getRevenueGLAccount(source: DepartmentSource): string {
+  switch (source) {
+    case 'front_office':
+      return GL_ACCOUNTS.ROOM_REVENUE;
+    case 'restaurant':
+    case 'bar':
+    case 'room_service':
+      return GL_ACCOUNTS.FB_REVENUE;
+    case 'conference':
+      return GL_ACCOUNTS.CONFERENCE_REVENUE;
+    case 'spa':
+      return GL_ACCOUNTS.OTHER_REVENUE;
+    default:
+      return GL_ACCOUNTS.OTHER_REVENUE;
+  }
+}
+
+/**
+ * Get the Revenue Center code for a department
+ */
+function getRevenueCenterCode(source: DepartmentSource): string {
+  switch (source) {
+    case 'front_office':
+      return REVENUE_CENTERS.ROOM;
+    case 'restaurant':
+      return REVENUE_CENTERS.RESTAURANT;
+    case 'bar':
+      return REVENUE_CENTERS.BAR;
+    case 'room_service':
+      return REVENUE_CENTERS.ROOM_SERVICE;
+    case 'conference':
+      return REVENUE_CENTERS.CONFERENCE;
+    default:
+      return REVENUE_CENTERS.SERVICE_CHARGES;
+  }
+}
+
+/**
+ * Generate a unique invoice number
+ */
+function generateInvoiceNumber(source: DepartmentSource): string {
+  const prefixes: Record<DepartmentSource, string> = {
+    front_office: 'FO',
+    restaurant: 'REST',
+    bar: 'BAR',
+    room_service: 'RS',
+    conference: 'CONF',
+    spa: 'SPA',
+    other: 'OTH',
+  };
+  const prefix = prefixes[source] || 'INV';
+  const year = new Date().getFullYear();
+  const timestamp = Date.now().toString().slice(-6);
+  return `${prefix}-${year}-${timestamp}`;
+}
+
+/**
+ * Generate a unique payment/receipt number
+ */
+function generateReceiptNumber(source: DepartmentSource): string {
+  const prefixes: Record<DepartmentSource, string> = {
+    front_office: 'FO-RCP',
+    restaurant: 'REST-RCP',
+    bar: 'BAR-RCP',
+    room_service: 'RS-RCP',
+    conference: 'CONF-RCP',
+    spa: 'SPA-RCP',
+    other: 'RCP',
+  };
+  const prefix = prefixes[source] || 'RCP';
+  const year = new Date().getFullYear();
+  const timestamp = Date.now().toString().slice(-6);
+  return `${prefix}-${year}-${timestamp}`;
+}
+
+/**
+ * MAIN FUNCTION: Capture revenue transaction
+ * 
+ * This function is called when any department generates revenue.
+ * It automatically:
+ * 1. Creates a Sales Invoice
+ * 2. Records to Revenue Center
+ * 3. Posts journal entry to GL (Dr: AR, Cr: Revenue)
+ * 4. Adds to audit trail
+ */
+export function captureRevenue(transaction: RevenueTransaction): { invoiceId: string; journalEntryId: string } | null {
+  const store = useAccountingStore.getState();
+  const now = new Date().toISOString();
+  const transactionDate = transaction.date || now;
+  
+  console.log(`[Accounting Integration] Capturing revenue from ${transaction.source}:`, {
+    customer: transaction.customerName,
+    total: transaction.total,
+    reference: transaction.reference,
+  });
+  
+  try {
+    // 1. Create Sales Invoice
+    const invoiceId = `INV-${transaction.source.toUpperCase()}-${Date.now()}`;
+    const invoiceNumber = generateInvoiceNumber(transaction.source);
+    const revenueGLAccount = getRevenueGLAccount(transaction.source);
+    
+    const invoiceLines = transaction.items.map((item, idx) => ({
+      id: `IL-${Date.now()}-${idx}`,
+      invoiceId,
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      amount: +(item.quantity * item.unitPrice).toFixed(2),
+      taxAmount: +((item.quantity * item.unitPrice * (item.taxPercent || 0)) / 100).toFixed(2),
+      glAccountCode: revenueGLAccount,
+    }));
+    
+    const invoice = {
+      id: invoiceId,
+      invoiceNumber,
+      type: 'Sales' as const,
+      date: transactionDate,
+      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+      businessPartnerId: transaction.customerId || `GUEST-${Date.now()}`,
+      reference: transaction.reference,
+      description: transaction.description,
+      subtotal: transaction.subtotal,
+      taxAmount: transaction.taxAmount,
+      total: transaction.total,
+      currency: transaction.currency || 'GHS',
+      status: 'Posted' as const,
+      paidAmount: 0,
+      createdAt: now,
+      updatedAt: now,
+      lines: invoiceLines,
+      // Extended fields for tracking
+      sourceModule: transaction.source,
+      customerName: transaction.customerName,
+      customerEmail: transaction.customerEmail,
+      customerPhone: transaction.customerPhone,
+    };
+    
+    store.addInvoice(invoice as any);
+    console.log(`[Accounting Integration] Created Sales Invoice: ${invoiceNumber}`);
+    
+    // 2. Record to Revenue Center
+    const revenueCenterCode = getRevenueCenterCode(transaction.source);
+    store.recordRevenue(revenueCenterCode, transaction.subtotal);
+    console.log(`[Accounting Integration] Recorded revenue to center: ${revenueCenterCode}, Amount: ${transaction.subtotal}`);
+    
+    // 3. Create Journal Entry (Dr: AR, Cr: Revenue, Cr: Tax Payable)
+    const journalEntryId = `JE-${transaction.source.toUpperCase()}-${Date.now()}`;
+    const journalLines: any[] = [
+      // Debit Accounts Receivable
+      {
+        id: `JL-${Date.now()}-1`,
+        journalEntryId,
+        accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+        description: `AR - ${transaction.description}`,
+        debit: transaction.total,
+        credit: 0,
+        costCenter: revenueCenterCode,
+      },
+      // Credit Revenue
+      {
+        id: `JL-${Date.now()}-2`,
+        journalEntryId,
+        accountCode: revenueGLAccount,
+        description: `Revenue - ${transaction.description}`,
+        debit: 0,
+        credit: transaction.subtotal,
+        costCenter: revenueCenterCode,
+      },
+    ];
+    
+    // Add tax liability entries if there's tax
+    if (transaction.taxAmount > 0) {
+      journalLines.push({
+        id: `JL-${Date.now()}-3`,
+        journalEntryId,
+        accountCode: GL_ACCOUNTS.VAT_PAYABLE,
+        description: `Tax Payable - ${transaction.description}`,
+        debit: 0,
+        credit: transaction.taxAmount,
+        costCenter: revenueCenterCode,
+      });
+    }
+    
+    const journalEntry = {
+      id: journalEntryId,
+      entryNumber: `JE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`,
+      date: transactionDate,
+      description: `Auto-posted: ${transaction.description}`,
+      reference: transaction.reference || invoiceNumber,
+      status: 'Posted' as const,
+      lines: journalLines,
+      totalDebit: transaction.total,
+      totalCredit: transaction.total,
+      createdBy: 'system',
+      postedBy: 'system',
+      postedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      sourceModule: transaction.source,
+      sourceTransactionId: transaction.id,
+    };
+    
+    store.addJournalEntry(journalEntry as any);
+    console.log(`[Accounting Integration] Posted Journal Entry: ${journalEntry.entryNumber}`);
+    
+    // 4. Add Audit Trail
+    store.addAuditTrail({
+      id: `AT-${Date.now()}`,
+      tableName: 'AccountingIntegration',
+      recordId: invoiceId,
+      action: 'RevenueCapture',
+      oldValues: null as any,
+      newValues: {
+        source: transaction.source,
+        invoiceId,
+        journalEntryId,
+        total: transaction.total,
+        customer: transaction.customerName,
+      },
+      userId: 'system',
+      timestamp: now,
+    });
+    
+    console.log(`[Accounting Integration] ✅ Revenue capture complete for ${transaction.customerName}: GHS ${transaction.total.toLocaleString()}`);
+    
+    return { invoiceId, journalEntryId };
+    
+  } catch (error) {
+    console.error('[Accounting Integration] ❌ Error capturing revenue:', error);
+    return null;
+  }
+}
+
+/**
+ * MAIN FUNCTION: Capture payment/receipt
+ * 
+ * This function is called when payment is received for any transaction.
+ * It automatically:
+ * 1. Creates a Receipt
+ * 2. Updates the Invoice paid amount
+ * 3. Posts journal entry to GL (Dr: Cash/Bank, Cr: AR)
+ * 4. Adds to audit trail
+ */
+export function capturePayment(
+  transaction: PaymentTransaction,
+  source: DepartmentSource
+): { receiptId: string; journalEntryId: string } | null {
+  const store = useAccountingStore.getState();
+  const now = new Date().toISOString();
+  const transactionDate = transaction.date || now;
+  
+  console.log(`[Accounting Integration] Capturing payment from ${source}:`, {
+    customer: transaction.customerName,
+    amount: transaction.amount,
+    method: transaction.paymentMethod,
+    invoiceId: transaction.invoiceId,
+  });
+  
+  try {
+    // 1. Create Receipt
+    const receiptId = `RCP-${source.toUpperCase()}-${Date.now()}`;
+    const receiptNumber = generateReceiptNumber(source);
+    
+    const receipt = {
+      id: receiptId,
+      paymentNumber: receiptNumber,
+      date: transactionDate,
+      type: 'Receipt' as const,
+      businessPartnerId: transaction.customerId || `GUEST-${Date.now()}`,
+      invoiceId: transaction.invoiceId,
+      reference: transaction.reference,
+      description: transaction.description || `Payment from ${transaction.customerName}`,
+      amount: transaction.amount,
+      currency: transaction.currency || 'GHS',
+      paymentMethod: transaction.paymentMethod,
+      status: 'Posted' as const,
+      createdAt: now,
+      updatedAt: now,
+      sourceModule: source,
+      customerName: transaction.customerName,
+    };
+    
+    store.addPayment(receipt as any);
+    console.log(`[Accounting Integration] Created Receipt: ${receiptNumber}`);
+    
+    // 2. Update Invoice paid amount if linked
+    if (transaction.invoiceId) {
+      const invoices = store.invoices;
+      const invoice = invoices.find((inv: any) => inv.id === transaction.invoiceId);
+      if (invoice) {
+        const newPaidAmount = (invoice.paidAmount || 0) + transaction.amount;
+        const newStatus = newPaidAmount >= invoice.total ? 'Paid' : invoice.status;
+        store.updateInvoice(invoice.id, {
+          paidAmount: newPaidAmount,
+          status: newStatus as any,
+          paidDate: newPaidAmount >= invoice.total ? now : undefined,
+          updatedAt: now,
+        });
+        console.log(`[Accounting Integration] Updated Invoice ${invoice.invoiceNumber}: Paid ${newPaidAmount}/${invoice.total}`);
+      }
+    }
+    
+    // 3. Create Journal Entry (Dr: Cash/Bank, Cr: AR)
+    const journalEntryId = `JE-PAY-${source.toUpperCase()}-${Date.now()}`;
+    const cashGLAccount = PAYMENT_GL_MAP[transaction.paymentMethod] || GL_ACCOUNTS.CASH;
+    const revenueCenterCode = getRevenueCenterCode(source);
+    
+    const journalEntry = {
+      id: journalEntryId,
+      entryNumber: `JE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`,
+      date: transactionDate,
+      description: `Auto-posted: Payment received - ${transaction.customerName}`,
+      reference: receiptNumber,
+      status: 'Posted' as const,
+      lines: [
+        // Debit Cash/Bank
+        {
+          id: `JL-${Date.now()}-1`,
+          journalEntryId,
+          accountCode: cashGLAccount,
+          description: `${transaction.paymentMethod} received - ${transaction.customerName}`,
+          debit: transaction.amount,
+          credit: 0,
+          costCenter: revenueCenterCode,
+        },
+        // Credit Accounts Receivable
+        {
+          id: `JL-${Date.now()}-2`,
+          journalEntryId,
+          accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+          description: `AR settlement - ${transaction.customerName}`,
+          debit: 0,
+          credit: transaction.amount,
+          costCenter: revenueCenterCode,
+        },
+      ],
+      totalDebit: transaction.amount,
+      totalCredit: transaction.amount,
+      createdBy: 'system',
+      postedBy: 'system',
+      postedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      sourceModule: source,
+      sourceTransactionId: transaction.id,
+    };
+    
+    store.addJournalEntry(journalEntry as any);
+    console.log(`[Accounting Integration] Posted Payment Journal Entry: ${journalEntry.entryNumber}`);
+    
+    // 4. Add Audit Trail
+    store.addAuditTrail({
+      id: `AT-${Date.now()}`,
+      tableName: 'AccountingIntegration',
+      recordId: receiptId,
+      action: 'PaymentCapture',
+      oldValues: null as any,
+      newValues: {
+        source,
+        receiptId,
+        journalEntryId,
+        amount: transaction.amount,
+        method: transaction.paymentMethod,
+        customer: transaction.customerName,
+        invoiceId: transaction.invoiceId,
+      },
+      userId: 'system',
+      timestamp: now,
+    });
+    
+    console.log(`[Accounting Integration] ✅ Payment capture complete: ${transaction.paymentMethod} GHS ${transaction.amount.toLocaleString()} from ${transaction.customerName}`);
+    
+    return { receiptId, journalEntryId };
+    
+  } catch (error) {
+    console.error('[Accounting Integration] ❌ Error capturing payment:', error);
+    return null;
+  }
+}
+
+/**
+ * Capture a complete sale transaction (revenue + payment in one go)
+ * Useful for POS transactions where payment is immediate
+ */
+export function captureCompleteSale(
+  revenue: RevenueTransaction,
+  payment: Omit<PaymentTransaction, 'invoiceId'>
+): { invoiceId: string; receiptId: string; journalEntryIds: string[] } | null {
+  console.log(`[Accounting Integration] Capturing complete sale from ${revenue.source}:`, {
+    customer: revenue.customerName,
+    total: revenue.total,
+    paymentMethod: payment.paymentMethod,
+  });
+  
+  try {
+    // 1. Capture revenue first
+    const revenueResult = captureRevenue(revenue);
+    if (!revenueResult) {
+      throw new Error('Failed to capture revenue');
+    }
+    
+    // 2. Capture payment with invoice link
+    const paymentResult = capturePayment(
+      {
+        ...payment,
+        invoiceId: revenueResult.invoiceId,
+      },
+      revenue.source
+    );
+    
+    if (!paymentResult) {
+      throw new Error('Failed to capture payment');
+    }
+    
+    console.log(`[Accounting Integration] ✅ Complete sale captured: Invoice ${revenueResult.invoiceId}, Receipt ${paymentResult.receiptId}`);
+    
+    return {
+      invoiceId: revenueResult.invoiceId,
+      receiptId: paymentResult.receiptId,
+      journalEntryIds: [revenueResult.journalEntryId, paymentResult.journalEntryId],
+    };
+    
+  } catch (error) {
+    console.error('[Accounting Integration] ❌ Error capturing complete sale:', error);
+    return null;
+  }
+}
+
+/**
+ * Get accounting summary for a department
+ */
+export function getDepartmentAccountingSummary(source: DepartmentSource): {
+  totalRevenue: number;
+  totalReceivables: number;
+  totalReceipts: number;
+  invoiceCount: number;
+  receiptCount: number;
+} {
+  const store = useAccountingStore.getState();
+  
+  const departmentInvoices = store.invoices.filter(
+    (inv: any) => inv.sourceModule === source && inv.type === 'Sales'
+  );
+  
+  const departmentReceipts = store.payments.filter(
+    (pmt: any) => pmt.sourceModule === source && pmt.type === 'Receipt'
+  );
+  
+  const totalRevenue = departmentInvoices.reduce((sum: number, inv: any) => sum + (inv.total || 0), 0);
+  const totalReceivables = departmentInvoices.reduce(
+    (sum: number, inv: any) => sum + ((inv.total || 0) - (inv.paidAmount || 0)),
+    0
+  );
+  const totalReceipts = departmentReceipts.reduce((sum: number, pmt: any) => sum + (pmt.amount || 0), 0);
+  
+  return {
+    totalRevenue,
+    totalReceivables,
+    totalReceipts,
+    invoiceCount: departmentInvoices.length,
+    receiptCount: departmentReceipts.length,
+  };
+}
+
+/**
+ * Export GL Account codes for use in other modules
+ */
+export { GL_ACCOUNTS, REVENUE_CENTERS };
+

@@ -215,33 +215,62 @@ export default function AccountsReceivable() {
 			<div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
 				<Card>
 					<CardBody className="text-center">
-						<div className="text-2xl font-bold text-blue-600">₵{(totals.total).toLocaleString()}</div>
-						<div className="text-sm text-gray-600">Total Invoices</div>
+						<div className="text-2xl font-bold text-blue-600">₵{(salesInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0) + totals.total).toLocaleString()}</div>
+						<div className="text-sm text-gray-600">Total Revenue</div>
 						<Progress value={100} size="sm" color="primary" className="mt-2" />
 					</CardBody>
 				</Card>
 				<Card>
 					<CardBody className="text-center">
-						<div className="text-2xl font-bold text-orange-600">₵{(totals.balance).toLocaleString()}</div>
-						<div className="text-sm text-gray-600">Outstanding</div>
+						<div className="text-2xl font-bold text-orange-600">₵{(salesInvoices.reduce((s: number, i: any) => s + ((i.total || 0) - (i.paidAmount || 0)), 0) + totals.balance).toLocaleString()}</div>
+						<div className="text-sm text-gray-600">Outstanding AR</div>
 						<Progress value={100} size="sm" color="warning" className="mt-2" />
 					</CardBody>
 				</Card>
 				<Card>
 					<CardBody className="text-center">
-						<div className="text-2xl font-bold text-green-600">₵{(totals.paid).toLocaleString()}</div>
-						<div className="text-sm text-gray-600">Total Payments</div>
+						<div className="text-2xl font-bold text-green-600">₵{(receipts.reduce((s: number, r: any) => s + (r.amount || 0), 0) + totals.paid).toLocaleString()}</div>
+						<div className="text-sm text-gray-600">Total Receipts</div>
 						<Progress value={100} size="sm" color="success" className="mt-2" />
 					</CardBody>
 				</Card>
 				<Card>
 					<CardBody className="text-center">
-						<div className="text-2xl font-bold text-emerald-600">{rows.length}</div>
-						<div className="text-sm text-gray-600">Invoices Listed</div>
+						<div className="text-2xl font-bold text-emerald-600">{salesInvoices.length + rows.length}</div>
+						<div className="text-sm text-gray-600">Total Invoices</div>
 						<Progress value={100} size="sm" color="secondary" className="mt-2" />
 					</CardBody>
 				</Card>
 			</div>
+
+            {/* Revenue by Source Summary */}
+            {salesInvoices.length > 0 && (
+                <Card className="mb-6">
+                    <CardBody>
+                        <h3 className="font-semibold mb-3">📊 Revenue by Source (Auto-Captured)</h3>
+                        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                            {[
+                                { key: 'front_office', label: '🏨 Front Office', color: 'bg-blue-100 text-blue-800' },
+                                { key: 'restaurant', label: '🍽️ Restaurant', color: 'bg-green-100 text-green-800' },
+                                { key: 'bar', label: '🍺 Bar', color: 'bg-amber-100 text-amber-800' },
+                                { key: 'room_service', label: '🛎️ Room Service', color: 'bg-purple-100 text-purple-800' },
+                                { key: 'conference', label: '📅 Conference', color: 'bg-red-100 text-red-800' },
+                            ].map(src => {
+                                const sourceInvoices = salesInvoices.filter((i: any) => i.sourceModule === src.key);
+                                const total = sourceInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0);
+                                const count = sourceInvoices.length;
+                                return (
+                                    <div key={src.key} className={`p-3 rounded-lg ${src.color}`}>
+                                        <div className="text-xs font-medium">{src.label}</div>
+                                        <div className="text-lg font-bold">₵{total.toLocaleString()}</div>
+                                        <div className="text-xs opacity-75">{count} invoice{count !== 1 ? 's' : ''}</div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </CardBody>
+                </Card>
+            )}
 
 			<Card>
 				<CardBody className="p-0">
@@ -278,44 +307,102 @@ export default function AccountsReceivable() {
                                     <Button color="primary" onClick={openNewInvoice}>➕ Add Invoice</Button>
 								</div>
 
-								<Table aria-label="Sales invoices table">
-									<TableHeader>
-										<TableColumn>INVOICE #</TableColumn>
-										<TableColumn>CUSTOMER</TableColumn>
-										<TableColumn>DATE</TableColumn>
-										<TableColumn>DUE DATE</TableColumn>
-										<TableColumn align="end">SUBTOTAL</TableColumn>
-										<TableColumn align="end">TAX</TableColumn>
-										<TableColumn align="end">TOTAL</TableColumn>
-										<TableColumn align="end">PAID</TableColumn>
-										<TableColumn align="end">BALANCE</TableColumn>
-										<TableColumn>STATUS</TableColumn>
-										<TableColumn>AGING</TableColumn>
-										<TableColumn>ACTIONS</TableColumn>
-									</TableHeader>
-									<TableBody emptyContent="No sales invoices found.">
-										{rows.map(r => (
-											<TableRow key={r.id}>
-												<TableCell className="font-medium">{r.number}</TableCell>
-												<TableCell>{r.customer}</TableCell>
-												<TableCell>{r.date}</TableCell>
-												<TableCell>{r.dueDate}</TableCell>
-												<TableCell className="text-right">{r.currency} {r.subtotal.toFixed(2)}</TableCell>
-												<TableCell className="text-right">{r.currency} {r.tax.toFixed(2)}</TableCell>
-												<TableCell className="text-right">{r.currency} {r.total.toFixed(2)}</TableCell>
-												<TableCell className="text-right">{r.currency} {r.paid.toFixed(2)}</TableCell>
-												<TableCell className="text-right">{r.currency} {r.balance.toFixed(2)}</TableCell>
-												<TableCell>
-													<Chip size="sm" color={r.status === 'Overdue' ? 'danger' : r.status === 'Paid' ? 'success' : r.status === 'Open' ? 'primary' : 'default'} variant="flat">
-														{r.status}
-													</Chip>
-												</TableCell>
-												<TableCell />
-												<TableCell><Button size="sm" variant="light">View</Button></TableCell>
-											</TableRow>
-										))}
-									</TableBody>
-								</Table>
+                                {/* Live Auto-Captured Invoices from Revenue Centers */}
+                                {salesInvoices.length > 0 && (
+                                    <div className="mb-4">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <span className="text-lg font-semibold">🔄 Auto-Captured Revenue</span>
+                                            <Chip size="sm" color="success" variant="flat">{salesInvoices.length} transactions</Chip>
+                                        </div>
+                                        <Table aria-label="Auto-captured invoices">
+                                            <TableHeader>
+                                                <TableColumn>INVOICE #</TableColumn>
+                                                <TableColumn>SOURCE</TableColumn>
+                                                <TableColumn>CUSTOMER</TableColumn>
+                                                <TableColumn>DESCRIPTION</TableColumn>
+                                                <TableColumn>DATE</TableColumn>
+                                                <TableColumn align="end">TOTAL</TableColumn>
+                                                <TableColumn align="end">PAID</TableColumn>
+                                                <TableColumn align="end">BALANCE</TableColumn>
+                                                <TableColumn>STATUS</TableColumn>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {salesInvoices.slice(0, 20).map((inv: any) => {
+                                                    const sourceLabels: Record<string, { label: string; color: 'primary' | 'secondary' | 'success' | 'warning' | 'danger' }> = {
+                                                        front_office: { label: '🏨 Front Office', color: 'primary' },
+                                                        restaurant: { label: '🍽️ Restaurant', color: 'success' },
+                                                        bar: { label: '🍺 Bar', color: 'warning' },
+                                                        room_service: { label: '🛎️ Room Service', color: 'secondary' },
+                                                        conference: { label: '📅 Conference', color: 'danger' },
+                                                    };
+                                                    const source = sourceLabels[inv.sourceModule] || { label: inv.sourceModule || 'Manual', color: 'default' as any };
+                                                    const balance = (inv.total || 0) - (inv.paidAmount || 0);
+                                                    return (
+                                                        <TableRow key={inv.id}>
+                                                            <TableCell className="font-mono text-sm">{inv.invoiceNumber || inv.id}</TableCell>
+                                                            <TableCell>
+                                                                <Chip size="sm" color={source.color} variant="flat">{source.label}</Chip>
+                                                            </TableCell>
+                                                            <TableCell>{inv.customerName || customers.find(c => c.id === inv.businessPartnerId)?.name || inv.businessPartnerId}</TableCell>
+                                                            <TableCell className="max-w-xs truncate">{inv.description}</TableCell>
+                                                            <TableCell>{new Date(inv.date).toLocaleDateString()}</TableCell>
+                                                            <TableCell className="text-right font-medium">₵{Number(inv.total || 0).toLocaleString()}</TableCell>
+                                                            <TableCell className="text-right text-green-600">₵{Number(inv.paidAmount || 0).toLocaleString()}</TableCell>
+                                                            <TableCell className="text-right text-orange-600">₵{balance.toLocaleString()}</TableCell>
+                                                            <TableCell>
+                                                                <Chip size="sm" color={inv.status === 'Paid' ? 'success' : inv.status === 'Posted' ? 'primary' : 'default'} variant="flat">
+                                                                    {inv.status}
+                                                                </Chip>
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    );
+                                                })}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+                                )}
+
+                                <div className="border-t pt-4">
+                                    <h4 className="font-semibold mb-3">📋 Manual/Demo Invoices</h4>
+                                    <Table aria-label="Sales invoices table">
+                                        <TableHeader>
+                                            <TableColumn>INVOICE #</TableColumn>
+                                            <TableColumn>CUSTOMER</TableColumn>
+                                            <TableColumn>DATE</TableColumn>
+                                            <TableColumn>DUE DATE</TableColumn>
+                                            <TableColumn align="end">SUBTOTAL</TableColumn>
+                                            <TableColumn align="end">TAX</TableColumn>
+                                            <TableColumn align="end">TOTAL</TableColumn>
+                                            <TableColumn align="end">PAID</TableColumn>
+                                            <TableColumn align="end">BALANCE</TableColumn>
+                                            <TableColumn>STATUS</TableColumn>
+                                            <TableColumn>AGING</TableColumn>
+                                            <TableColumn>ACTIONS</TableColumn>
+                                        </TableHeader>
+                                        <TableBody emptyContent="No sales invoices found.">
+                                            {rows.map(r => (
+                                                <TableRow key={r.id}>
+                                                    <TableCell className="font-medium">{r.number}</TableCell>
+                                                    <TableCell>{r.customer}</TableCell>
+                                                    <TableCell>{r.date}</TableCell>
+                                                    <TableCell>{r.dueDate}</TableCell>
+                                                    <TableCell className="text-right">{r.currency} {r.subtotal.toFixed(2)}</TableCell>
+                                                    <TableCell className="text-right">{r.currency} {r.tax.toFixed(2)}</TableCell>
+                                                    <TableCell className="text-right">{r.currency} {r.total.toFixed(2)}</TableCell>
+                                                    <TableCell className="text-right">{r.currency} {r.paid.toFixed(2)}</TableCell>
+                                                    <TableCell className="text-right">{r.currency} {r.balance.toFixed(2)}</TableCell>
+                                                    <TableCell>
+                                                        <Chip size="sm" color={r.status === 'Overdue' ? 'danger' : r.status === 'Paid' ? 'success' : r.status === 'Open' ? 'primary' : 'default'} variant="flat">
+                                                            {r.status}
+                                                        </Chip>
+                                                    </TableCell>
+                                                    <TableCell />
+                                                    <TableCell><Button size="sm" variant="light">View</Button></TableCell>
+                                                </TableRow>
+                                            ))}
+                                        </TableBody>
+                                    </Table>
+                                </div>
 							</div>
 						</Tab>
 
@@ -323,28 +410,47 @@ export default function AccountsReceivable() {
                             <div className="p-6 space-y-4">
                                 <div className="flex justify-between items-center">
                                     <h3 className="text-lg font-semibold">Customer Receipts</h3>
-                                    <Button color="primary" onClick={openNewReceipt}>Record Receipt</Button>
+                                    <div className="flex items-center gap-2">
+                                        <Chip size="sm" color="success" variant="flat">{receipts.length} receipts</Chip>
+                                        <Button color="primary" onClick={openNewReceipt}>Record Receipt</Button>
+                                    </div>
                                 </div>
                                 <Table aria-label="Customer Receipts">
                                     <TableHeader>
                                         <TableColumn>RECEIPT #</TableColumn>
+                                        <TableColumn>SOURCE</TableColumn>
                                         <TableColumn>CUSTOMER</TableColumn>
                                         <TableColumn>DATE</TableColumn>
                                         <TableColumn align="end">AMOUNT</TableColumn>
                                         <TableColumn>METHOD</TableColumn>
+                                        <TableColumn>INVOICE</TableColumn>
                                         <TableColumn>STATUS</TableColumn>
                                     </TableHeader>
                                     <TableBody emptyContent="No receipts found.">
-                                        {receipts.map((p: any) => (
-                                            <TableRow key={p.id}>
-                                                <TableCell className="font-mono text-sm">{p.paymentNumber || p.id}</TableCell>
-                                                <TableCell>{customers.find(c => c.id === p.businessPartnerId)?.name || p.businessPartnerId}</TableCell>
-                                                <TableCell>{new Date(p.date).toLocaleDateString()}</TableCell>
-                                                <TableCell className="text-right">₵{Number(p.amount || 0).toLocaleString()}</TableCell>
-                                                <TableCell><Chip size="sm" variant="flat">{p.paymentMethod || 'Cash'}</Chip></TableCell>
-                                                <TableCell><Chip size="sm" color={p.status === 'Posted' ? 'success' : 'default'} variant="flat">{p.status || 'Draft'}</Chip></TableCell>
-                                            </TableRow>
-                                        ))}
+                                        {receipts.map((p: any) => {
+                                            const sourceLabels: Record<string, { label: string; color: 'primary' | 'secondary' | 'success' | 'warning' | 'danger' }> = {
+                                                front_office: { label: '🏨 Front Office', color: 'primary' },
+                                                restaurant: { label: '🍽️ Restaurant', color: 'success' },
+                                                bar: { label: '🍺 Bar', color: 'warning' },
+                                                room_service: { label: '🛎️ Room Service', color: 'secondary' },
+                                                conference: { label: '📅 Conference', color: 'danger' },
+                                            };
+                                            const source = sourceLabels[p.sourceModule] || { label: p.sourceModule || '📝 Manual', color: 'default' as any };
+                                            return (
+                                                <TableRow key={p.id}>
+                                                    <TableCell className="font-mono text-sm">{p.paymentNumber || p.id}</TableCell>
+                                                    <TableCell>
+                                                        <Chip size="sm" color={source.color} variant="flat">{source.label}</Chip>
+                                                    </TableCell>
+                                                    <TableCell>{p.customerName || customers.find(c => c.id === p.businessPartnerId)?.name || p.businessPartnerId}</TableCell>
+                                                    <TableCell>{new Date(p.date).toLocaleDateString()}</TableCell>
+                                                    <TableCell className="text-right font-medium text-green-600">₵{Number(p.amount || 0).toLocaleString()}</TableCell>
+                                                    <TableCell><Chip size="sm" variant="flat">{p.paymentMethod || 'Cash'}</Chip></TableCell>
+                                                    <TableCell className="font-mono text-xs">{p.invoiceId || '-'}</TableCell>
+                                                    <TableCell><Chip size="sm" color={p.status === 'Posted' ? 'success' : 'default'} variant="flat">{p.status || 'Draft'}</Chip></TableCell>
+                                                </TableRow>
+                                            );
+                                        })}
                                     </TableBody>
                                 </Table>
                             </div>
