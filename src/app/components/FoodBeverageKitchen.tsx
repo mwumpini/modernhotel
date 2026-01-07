@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Card, CardBody, CardHeader, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Divider, Badge, Progress, Tabs, Tab } from "@heroui/react";
-import { ordersStore, FBOrder } from '../lib/fb/ordersStore';
+import { ordersStore, FBOrder, OrderItem as FBOrderItem } from '../lib/fb/ordersStore';
 import { kitchenOpsStore, KitchenOpRecord } from '../lib/fb/kitchenOpsStore';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { logAudit } from '../lib/analytics/auditLogStore';
@@ -63,6 +63,8 @@ interface Recipe {
   allergens: string[];
 }
 
+type PriorityFilter = 'all' | 'low' | 'medium' | 'high' | 'urgent';
+
 interface RecipeIngredient {
   name: string;
   quantity: number;
@@ -73,9 +75,9 @@ export default function FoodBeverageKitchen() {
   const [selectedTab, setSelectedTab] = useState('orders');
   const [isNewOrderModalOpen, setIsNewOrderModalOpen] = useState(false);
   const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
-  const [selectedPriority, setSelectedPriority] = useState<string>(() => {
+  const [selectedPriority, setSelectedPriority] = useState<PriorityFilter>(() => {
     try {
-      return localStorage.getItem('kitchen.priority.filter') || 'high';
+      return (localStorage.getItem('kitchen.priority.filter') as PriorityFilter) || 'high';
     } catch {
       return 'high';
     }
@@ -407,19 +409,19 @@ export default function FoodBeverageKitchen() {
                 <div className="flex items-center justify-between mb-4">
                   <Select
                     label="Filter by Priority"
-                    placeholder="All Priorities"
-                    value={selectedPriority}
-                    onChange={(e) => {
-                      setSelectedPriority(e.target.value);
-                      try { localStorage.setItem('kitchen.priority.filter', e.target.value); } catch {}
+                    selectedKeys={new Set([selectedPriority])}
+                    onSelectionChange={(keys) => {
+                      const next = (Array.from(keys)[0] as PriorityFilter) || 'all';
+                      setSelectedPriority(next);
+                      try { localStorage.setItem('kitchen.priority.filter', next); } catch {}
                     }}
                     className="w-64"
                   >
-                    <SelectItem key="all" value="all">All Priorities</SelectItem>
-                    <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
-                    <SelectItem key="high" value="high">High</SelectItem>
-                    <SelectItem key="medium" value="medium">Medium</SelectItem>
-                    <SelectItem key="low" value="low">Low</SelectItem>
+                    <SelectItem key="all">All Priorities</SelectItem>
+                    <SelectItem key="urgent">Urgent</SelectItem>
+                    <SelectItem key="high">High</SelectItem>
+                    <SelectItem key="medium">Medium</SelectItem>
+                    <SelectItem key="low">Low</SelectItem>
                   </Select>
                 </div>
                 
@@ -474,8 +476,17 @@ export default function FoodBeverageKitchen() {
                                     priority: (order.priority || (order.urgent ? 'urgent' : 'low')) as any,
                                     prepMinutes: item.prepMinutes,
                                   });
-                                  const updated = { ...order, items: order.items.map(it => it.id === item.id ? { ...it, status: next, startedAt: next === 'preparing' ? new Date().toISOString() : it.startedAt, readyAt: next === 'ready' ? new Date().toISOString() : it.readyAt } : it) };
-                                  ordersStore.update(updated);
+                                  const updatedItems: FBOrderItem[] = order.items.map((it): FBOrderItem =>
+                                    it.id === item.id
+                                      ? {
+                                          ...it,
+                                          status: next,
+                                          startedAt: next === 'preparing' ? new Date().toISOString() : it.startedAt,
+                                          readyAt: next === 'ready' ? new Date().toISOString() : it.readyAt,
+                                        }
+                                      : it
+                                  );
+                                  ordersStore.update({ ...order, items: updatedItems });
                                 }}>
                                   <SelectItem key="pending">Pending</SelectItem>
                                   <SelectItem key="preparing">Preparing</SelectItem>
@@ -497,8 +508,10 @@ export default function FoodBeverageKitchen() {
                                     priority: (order.priority || (order.urgent ? 'urgent' : 'low')) as any,
                                     prepMinutes: item.prepMinutes,
                                   });
-                                  const updated = { ...order, items: order.items.map(it => it.id === item.id ? { ...it, assignedToId: staff?.id, assignedToName: staff?.name } : it) };
-                                  ordersStore.update(updated);
+                                  const updatedItems: FBOrderItem[] = order.items.map((it): FBOrderItem =>
+                                    it.id === item.id ? { ...it, assignedToId: staff?.id, assignedToName: staff?.name } : it
+                                  );
+                                  ordersStore.update({ ...order, items: updatedItems });
                                 }} className="w-64">
                                   {kitchenStaff.map(s => (
                                     <SelectItem key={s.id}>{s.name}</SelectItem>
@@ -517,8 +530,19 @@ export default function FoodBeverageKitchen() {
                                     priority: (order.priority || (order.urgent ? 'urgent' : 'low')) as any,
                                     prepMinutes: item.prepMinutes,
                                   });
-                                  const updated = { ...order, items: order.items.map(it => it.id === item.id ? { ...it, status: 'ready', preparedById: item.assignedToId, preparedByName: item.assignedToName, preparedAt: new Date().toISOString(), readyAt: new Date().toISOString() } : it) };
-                                  ordersStore.update(updated);
+                                  const updatedItems: FBOrderItem[] = order.items.map((it): FBOrderItem =>
+                                    it.id === item.id
+                                      ? {
+                                          ...it,
+                                          status: 'ready',
+                                          preparedById: item.assignedToId,
+                                          preparedByName: item.assignedToName,
+                                          preparedAt: new Date().toISOString(),
+                                          readyAt: new Date().toISOString(),
+                                        }
+                                      : it
+                                  );
+                                  ordersStore.update({ ...order, items: updatedItems });
                                 }}>Mark Ready</Button>
                                 <Button size="sm" variant="flat" color="danger" onClick={() => setRejectModal({ open: true, orderId: order.id, itemId: item.id, reason: '' })}>Reject</Button>
                                 <Button size="sm" variant="flat" color="warning" onClick={() => {
@@ -768,16 +792,16 @@ export default function FoodBeverageKitchen() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Table Number" placeholder="e.g., T1" />
                 <Select label="Priority" placeholder="Select priority">
-                  <SelectItem key="low" value="low">Low</SelectItem>
-                  <SelectItem key="medium" value="medium">Medium</SelectItem>
-                  <SelectItem key="high" value="high">High</SelectItem>
-                  <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
+                  <SelectItem key="low">Low</SelectItem>
+                  <SelectItem key="medium">Medium</SelectItem>
+                  <SelectItem key="high">High</SelectItem>
+                  <SelectItem key="urgent">Urgent</SelectItem>
                 </Select>
               </div>
               
               <Select label="Menu Items" placeholder="Select items" selectionMode="multiple">
                 {recipes.map((recipe) => (
-                  <SelectItem key={recipe.id} value={recipe.name}>
+                  <SelectItem key={recipe.id}>
                     {recipe.name} ({recipe.preparationTime}min)
                   </SelectItem>
                 ))}
@@ -807,19 +831,19 @@ export default function FoodBeverageKitchen() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Recipe Name" placeholder="Enter recipe name" />
                 <Select label="Category" placeholder="Select category">
-                  <SelectItem key="appetizer" value="appetizer">Appetizer</SelectItem>
-                  <SelectItem key="main-course" value="main-course">Main Course</SelectItem>
-                  <SelectItem key="dessert" value="dessert">Dessert</SelectItem>
-                  <SelectItem key="beverage" value="beverage">Beverage</SelectItem>
+                  <SelectItem key="appetizer">Appetizer</SelectItem>
+                  <SelectItem key="main-course">Main Course</SelectItem>
+                  <SelectItem key="dessert">Dessert</SelectItem>
+                  <SelectItem key="beverage">Beverage</SelectItem>
                 </Select>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Input label="Preparation Time (min)" type="number" placeholder="30" />
                 <Select label="Difficulty" placeholder="Select difficulty">
-                  <SelectItem key="easy" value="easy">Easy</SelectItem>
-                  <SelectItem key="medium" value="medium">Medium</SelectItem>
-                  <SelectItem key="hard" value="hard">Hard</SelectItem>
+                  <SelectItem key="easy">Easy</SelectItem>
+                  <SelectItem key="medium">Medium</SelectItem>
+                  <SelectItem key="hard">Hard</SelectItem>
                 </Select>
                 <Input label="Allergens" placeholder="e.g., Peanuts, Fish, Gluten" />
               </div>
@@ -853,7 +877,11 @@ export default function FoodBeverageKitchen() {
               if (!order) { setRejectModal({ open: false, orderId: null, itemId: null, reason: '' }); return; }
               if (rejectModal.itemId) {
                 const name = order.items.find(i => i.id === rejectModal.itemId)?.name || '';
-                ordersStore.update({ ...order, items: order.items.map(i => i.id === rejectModal.itemId ? { ...i, status: 'pending', note: `REJECTED: ${rejectModal.reason}` } as any : i) });
+                const updatedItems: FBOrderItem[] = order.items.map((i): FBOrderItem =>
+                  i.id === rejectModal.itemId ? { ...i, status: 'pending' } : i
+                );
+                const rejectionNote = `REJECTED: ${rejectModal.reason}`;
+                ordersStore.update({ ...order, items: updatedItems, notes: order.notes ? `${order.notes}\n${rejectionNote}` : rejectionNote });
                 kitchenOpsStore.add({ orderId: order.id, table: order.table, waiterId: order.waiterId, itemId: rejectModal.itemId, itemName: name, action: 'status', fromStatus: 'preparing', toStatus: 'pending', notes: `Rejected: ${rejectModal.reason}` });
               } else {
                 ordersStore.update({ ...order, status: 'pending', notes: `REJECTED: ${rejectModal.reason}` });

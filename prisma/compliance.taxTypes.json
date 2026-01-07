@@ -32,40 +32,7 @@
     "tags": [
       "template:ghana_sales_standard"
     ],
-    "id": "1762106053345"
-  },
-  {
-    "countryCode": "GH",
-    "name": "Ghana Sales (VAT+Levies)",
-    "description": "Auto-created from template ghana_sales_standard",
-    "domain": "sales",
-    "operation": "external",
-    "tags": [
-      "template:ghana_sales_standard"
-    ],
     "id": "1762106053354"
-  },
-  {
-    "countryCode": "GH",
-    "name": "Ghana Sales (VAT+Levies)",
-    "description": "Auto-created from template ghana_sales_standard",
-    "domain": "sales",
-    "operation": "external",
-    "tags": [
-      "template:ghana_sales_standard"
-    ],
-    "id": "1762121135166"
-  },
-  {
-    "countryCode": "GH",
-    "name": "Ghana Sales (VAT+Levies)",
-    "description": "Auto-created from template ghana_sales_standard",
-    "domain": "sales",
-    "operation": "external",
-    "tags": [
-      "template:ghana_sales_standard"
-    ],
-    "id": "1762121135176"
   },
   {
     "countryCode": "ZW",
@@ -120,28 +87,6 @@
     "tags": [
       "template:ghana_sales_standard"
     ],
-    "id": "1762123144819"
-  },
-  {
-    "countryCode": "GH",
-    "name": "Ghana Sales (VAT+Levies)",
-    "description": "Auto-created from template ghana_sales_standard",
-    "domain": "sales",
-    "operation": "external",
-    "tags": [
-      "template:ghana_sales_standard"
-    ],
-    "id": "1764101369680"
-  },
-  {
-    "countryCode": "GH",
-    "name": "Ghana Sales (VAT+Levies)",
-    "description": "Auto-created from template ghana_sales_standard",
-    "domain": "sales",
-    "operation": "external",
-    "tags": [
-      "template:ghana_sales_standard"
-    ],
-    "id": "1764101369698"
+    "id": "1767797767261"
   }
 ]
