@@ -616,6 +616,7 @@ export default function EventsConferencesMainDashboard() {
   const [isViewMode, setIsViewMode] = useState<boolean>(false);
   const [isAdjustMode, setIsAdjustMode] = useState<boolean>(false);
   const [isCreatingInvoiceFromFolio, setIsCreatingInvoiceFromFolio] = useState<boolean>(false);
+  const [isEditingInvoiceDetails, setIsEditingInvoiceDetails] = useState<boolean>(false);
   const [lastCreatedInvoiceId, setLastCreatedInvoiceId] = useState<string | null>(null);
   const [editingVenue, setEditingVenue] = useState<VenueDetails | null>(null);
   const [venueForm, setVenueForm] = useState<VenueFormState>(() => createEmptyVenueForm());
@@ -875,6 +876,27 @@ export default function EventsConferencesMainDashboard() {
     status: EventInvoiceStatus;
     reference?: string;
     notes?: string;
+    formSnapshot?: InvoiceFormSnapshot;
+  }
+
+  interface InvoiceFormSnapshot {
+    eventId: string;
+    eventName: string;
+    clientName: string;
+    startDate: string;
+    endDate: string;
+    dailySchedule: any[];
+    particularLabels: any;
+    discountEnabled: boolean;
+    discountType: 'percent' | 'amount';
+    discountValue: number;
+    subtotal: number;
+    tax: number;
+    total: number;
+    balance: number;
+    issueDate: string;
+    dueDate: string;
+    status: EventInvoiceStatus;
   }
 
   interface EventReceipt {
@@ -1188,7 +1210,40 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   const RecentActivities = require('./RecentActivities').default;
   const complianceCountry = useComplianceStore(state => state.country);
   const complianceTaxRules = useComplianceStore(state => state.taxRules);
+  const setComplianceCountry = useComplianceStore(state => state.setCountry);
   const complianceCalculateTax = useCalculateTax();
+  
+  // Track when event modal opens to refresh tax rules
+  const [taxRulesLoaded, setTaxRulesLoaded] = React.useState(false);
+  
+  // Load tax rules from Tax Management - refresh when modal opens
+  React.useEffect(() => {
+    const loadTaxRules = async () => {
+      try {
+        const country = complianceCountry || 'GH';
+        console.log('[Events] Loading tax rules for country:', country);
+        await setComplianceCountry(country);
+        setTaxRulesLoaded(true);
+      } catch (error) {
+        console.error('[Events] Failed to load tax rules:', error);
+      }
+    };
+    // Load on mount and when event modal opens
+    if (!taxRulesLoaded || isEventModalOpen) {
+      loadTaxRules();
+    }
+  }, [isEventModalOpen]);
+  
+  // Function to manually refresh tax rules
+  const refreshTaxRules = React.useCallback(async () => {
+    try {
+      const country = complianceCountry || 'GH';
+      await setComplianceCountry(country);
+      console.log('[Events] Tax rules refreshed for:', country);
+    } catch (error) {
+      console.error('[Events] Failed to refresh tax rules:', error);
+    }
+  }, [complianceCountry, setComplianceCountry]);
   const printingDefaults = useSettingsStore(state => state.printing);
   const updatePrintingTemplates = useSettingsStore(state => state.updatePrintingTemplates);
   
@@ -1683,6 +1738,76 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   const [roomRate, setRoomRate] = useState<number>(0);
   const [customParticulars, setCustomParticulars] = useState<Array<{ id: string; label: string; rate: number }>>([]);
   
+  // Store schedule data as a Map keyed by date for persistence across date changes
+  const [scheduleDataMap, setScheduleDataMap] = useState<Map<string, {
+    conferencePax: number;
+    lunchPax: number;
+    dinnerPax: number;
+    rooms: number;
+    rate: number;
+    extras: Record<string, number>;
+    extraLines: { id: string; name: string; qty: number; unitPrice: number; taxGroup: string }[];
+  }>>(new Map());
+
+  // Compute the current date range from startDate/endDate
+  const computedDateRange = useMemo(() => {
+    if (!startDate || !endDate) return [];
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) return [];
+    const dates: string[] = [];
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      dates.push(new Date(d).toISOString().slice(0, 10));
+    }
+    return dates;
+  }, [startDate, endDate]);
+
+  // Sync dailySchedule array from computedDateRange + scheduleDataMap
+  useEffect(() => {
+    if (computedDateRange.length === 0) {
+      setDailySchedule([]);
+      return;
+    }
+    const newSchedule = computedDateRange.map(date => {
+      const existing = scheduleDataMap.get(date);
+      if (existing) {
+        return { date, ...existing };
+      }
+      // Default values for new dates
+      const rooms = isResidential ? (expectedPax || 0) : 0;
+      return {
+        date,
+        conferencePax: expectedPax || 0,
+        lunchPax: expectedPax || 0,
+        dinnerPax: expectedPax || 0,
+        rooms,
+        rate: defaultDayRate || 0,
+        extras: {} as Record<string, number>,
+        extraLines: [] as { id: string; name: string; qty: number; unitPrice: number; taxGroup: string }[]
+      };
+    });
+    setDailySchedule(newSchedule);
+  }, [computedDateRange, scheduleDataMap, expectedPax, isResidential, defaultDayRate]);
+
+  // Persist changes to scheduleDataMap when dailySchedule changes (from user edits)
+  const updateScheduleData = useCallback((date: string, updates: Partial<typeof scheduleDataMap extends Map<string, infer V> ? V : never>) => {
+    setScheduleDataMap(prev => {
+      const newMap = new Map(prev);
+      const existing = newMap.get(date) || {
+        conferencePax: expectedPax || 0,
+        lunchPax: expectedPax || 0,
+        dinnerPax: expectedPax || 0,
+        rooms: isResidential ? (expectedPax || 0) : 0,
+        rate: defaultDayRate || 0,
+        extras: {},
+        extraLines: []
+      };
+      newMap.set(date, { ...existing, ...updates });
+      return newMap;
+    });
+  }, [expectedPax, isResidential, defaultDayRate]);
+
+  
   useEffect(() => {
     if (venueKey && !modernVenues.some(venue => venue.id === venueKey)) {
       setVenueKey('');
@@ -1903,27 +2028,10 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   const [hasWarnings, setHasWarnings] = useState<boolean>(false);
   const [conflictingEvents, setConflictingEvents] = useState<any[]>([]);
 
-  // capacity lookup will be done lazily in effects to avoid TDZ with modernVenues
-
-  const regenerateSchedule = (s: string, e: string, pax: number, residential: boolean) => {
-    if (!s || !e) { setDailySchedule([]); return; }
-    const start = new Date(s);
-    const end = new Date(e);
-    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) { setDailySchedule([]); return; }
-    const days: Array<{ date: string; conferencePax: number; lunchPax: number; dinnerPax: number; rooms: number; rate: number; extras: Record<string, number>; extraLines: { id: string; name: string; qty: number; unitPrice: number; taxGroup: string }[] }>=[];
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      const iso = new Date(d).toISOString().slice(0,10);
-      const rooms = residential ? (pax || 0) : 0;
-      days.push({ date: iso, conferencePax: pax || 0, lunchPax: pax || 0, dinnerPax: pax || 0, rooms, rate: defaultDayRate || 0, extras: {}, extraLines: [] });
-    }
-    setDailySchedule(days);
-  };
-
+  // Availability and clash checks (schedule generation now handled by computedDateRange)
   useEffect(() => {
-    // Availability and clash checks
     if (!venueKey || !startDate || !endDate || !expectedPax) {
       setAvailabilityNote('Select dates, venue and expected pax to check availability...');
-      regenerateSchedule(startDate, endDate, expectedPax, isResidential);
       return;
     }
 
@@ -1956,21 +2064,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setClashCount(clashes.length);
     setHasWarnings(warnings.length > 0);
     setConflictingEvents(clashes);
-    regenerateSchedule(startDate, endDate, expectedPax, isResidential);
   }, [startDate, endDate, venueKey, expectedPax, isResidential]);
-
-  // Ensure Phase 3 defaults mirror Expected Pax on change
-  useEffect(() => {
-    if (dailySchedule.length > 0) {
-      setDailySchedule(prev => prev.map(row => ({
-        ...row,
-        conferencePax: expectedPax || 0,
-        lunchPax: expectedPax || 0,
-        dinnerPax: expectedPax || 0,
-        rooms: isResidential ? (expectedPax || 0) : row.rooms
-      })));
-    }
-  }, [expectedPax]);
 
   const computeDayAmounts = (row: { conferencePax: number; rate: number; extraLines?: Array<{ qty: number; unitPrice: number; taxGroup: string }> }) => {
     let subtotal = (Number(row.conferencePax) || 0) * (Number(row.rate) || 0);
@@ -3026,6 +3120,115 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setPhase1Error('');
     return true;
   };
+  // Save invoice-specific details without modifying the original event
+  const handleInvoiceDetailsSave = () => {
+    if (!editingEvent) {
+      alert('❌ No event selected for invoice details editing.');
+      return;
+    }
+
+    try {
+      // Find the current invoice
+      const currentInvoice = eventInvoices.find(inv => inv.eventId === editingEvent.id);
+      if (!currentInvoice) {
+        alert('❌ No invoice found for this event. Please create an invoice first.');
+        return;
+      }
+
+      // Create a snapshot of the current form state (this contains the edited pax, dates, rates etc.)
+      const formSnapshot: InvoiceFormSnapshot = {
+        eventId: editingEvent.id,
+        eventName: editingEvent.name,
+        clientName: editingEvent.clientName,
+        startDate: startDate,
+        endDate: endDate,
+        dailySchedule: dailySchedule,
+        particularLabels: particularLabels,
+        discountEnabled: discountEnabled,
+        discountType: discountType,
+        discountValue: discountValue,
+        subtotal: computeEventTotals().subtotal,
+        tax: computeEventTotals().tax,
+        total: computeEventTotals().total,
+        balance: computeEventTotals().total,
+        issueDate: new Date().toISOString().split('T')[0],
+        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        status: 'Draft' as EventInvoiceStatus
+      };
+
+      // Update the invoice with the new snapshot and recalculated totals
+      const updatedInvoice: EventInvoice = {
+        ...currentInvoice,
+        formSnapshot,
+        subtotal: formSnapshot.subtotal,
+        tax: formSnapshot.tax,
+        total: formSnapshot.total,
+        balance: formSnapshot.total, // Reset balance to new total
+        notes: `Invoice details updated on ${new Date().toLocaleDateString()}. ${currentInvoice.notes || ''}`.trim()
+      };
+
+      // Update the invoice in state
+      setEventInvoices(prev => prev.map(inv => inv.id === currentInvoice.id ? updatedInvoice : inv));
+
+      // If this invoice is already imported to a folio, update the folio entry
+      const activeFolio = eventFolios.find(f => f.eventId === editingEvent.id);
+      if (activeFolio) {
+        const existingEntry = activeFolio.entries.find(e =>
+          e.reference === currentInvoice.id || e.description.includes(`Invoice ${currentInvoice.id}`)
+        );
+
+        if (existingEntry) {
+          // Update the existing folio entry with new totals
+          const entryIndex = activeFolio.entries.findIndex(e => e.id === existingEntry.id);
+          if (entryIndex !== -1) {
+            const previousBalance = entryIndex > 0 ? activeFolio.entries[entryIndex - 1].balance : 0;
+            const newBalance = previousBalance + updatedInvoice.total;
+
+            const updatedEntries = [...activeFolio.entries];
+            updatedEntries[entryIndex] = {
+              ...existingEntry,
+              debit: updatedInvoice.total,
+              balance: newBalance,
+              description: `Invoice ${updatedInvoice.id} - Updated Details`
+            };
+
+            // Update subsequent entries' balances
+            for (let i = entryIndex + 1; i < updatedEntries.length; i++) {
+              const prevBalance = updatedEntries[i - 1].balance;
+              if (updatedEntries[i].debit > 0) {
+                updatedEntries[i].balance = prevBalance + updatedEntries[i].debit;
+              } else if (updatedEntries[i].credit > 0) {
+                updatedEntries[i].balance = prevBalance - updatedEntries[i].credit;
+              }
+            }
+
+            setEventFolios(prev => prev.map(f =>
+              f.id === activeFolio.id
+                ? { ...f, entries: updatedEntries, updatedAt: new Date().toISOString() }
+                : f
+            ));
+
+            if (activeFolio.id === activeFolio?.id) {
+              setActiveFolio({ ...activeFolio, entries: updatedEntries, updatedAt: new Date().toISOString() });
+            }
+          }
+        }
+      }
+
+      // Close modal and reset editing state
+      setIsEventModalOpen(false);
+      setIsEditingInvoiceDetails(false);
+
+      alert(`✅ Invoice details updated successfully!\n\nNew Total: ₵${formatCurrency(updatedInvoice.total)}\n\nNote: Original event data remains unchanged.`);
+
+      console.log('[Invoice] Details updated successfully:', updatedInvoice.id);
+
+    } catch (error) {
+      console.error('[Invoice] Error saving invoice details:', error);
+      alert(`❌ Error saving invoice details: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
   const handleEventSubmit = () => {
     if (eventSubmitting) return;
     if (!validateEventForm()) return;
@@ -3342,6 +3545,55 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     }
   };
 
+  // Apply invoice snapshot data to form state for editing
+  const applyInvoiceSnapshotToState = (snapshot: InvoiceFormSnapshot) => {
+    if (!snapshot) return;
+
+    // Apply basic event info
+    setEventName(snapshot.eventName || '');
+    setOrgName(snapshot.clientName || '');
+    setStartDate(snapshot.startDate || '');
+    setEndDate(snapshot.endDate || '');
+
+    // Apply schedule and rates data
+    if (Array.isArray(snapshot.dailySchedule)) {
+      setDailySchedule(snapshot.dailySchedule);
+      
+      // Also update scheduleDataMap to preserve the snapshot data
+      const newMap = new Map<string, {
+        conferencePax: number;
+        lunchPax: number;
+        dinnerPax: number;
+        rooms: number;
+        rate: number;
+        extras: Record<string, number>;
+        extraLines: { id: string; name: string; qty: number; unitPrice: number; taxGroup: string }[];
+      }>();
+      snapshot.dailySchedule.forEach(row => {
+        if (row.date) {
+          newMap.set(row.date, {
+            conferencePax: row.conferencePax || 0,
+            lunchPax: row.lunchPax || 0,
+            dinnerPax: row.dinnerPax || 0,
+            rooms: row.rooms || 0,
+            rate: row.rate || 0,
+            extras: row.extras || {},
+            extraLines: row.extraLines || []
+          });
+        }
+      });
+      setScheduleDataMap(newMap);
+    }
+    if (snapshot.particularLabels) {
+      setParticularLabels(snapshot.particularLabels);
+    }
+
+    // Apply financial settings
+    setDiscountEnabled(snapshot.discountEnabled || false);
+    setDiscountType(snapshot.discountType || 'percent');
+    setDiscountValue(snapshot.discountValue || 0);
+  };
+
   const resetEventFormState = (seed: Partial<any> = {}) => {
     const todayStr = new Date().toISOString().split('T')[0];
     const arrival = seed.arrivalDate || todayStr;
@@ -3404,7 +3656,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     const seedPax = expectedPax || 0;
 
     const blankEvent = {
-      id: `evt-${Date.now()}`,
+      id: `EVT-${String(customEvents.length + 1).padStart(3, '0')}`,
       arrivalDate: arrival,
       departureDate: departure,
       venue: seedVenue,
@@ -4734,7 +4986,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setIsCreatingEvent(true);
     loadQuoteIntoEventForm(exportQuote);
     const eventDraft = {
-      id: exportQuote.id || `evt-from-quote-${Date.now()}`,
+      id: exportQuote.id || `EVT-Q${String(customEvents.length + 1).padStart(3, '0')}`,
       eventName: exportQuote.eventName,
       organization: exportQuote.clientName,
       contactPerson: exportQuote.clientName,
@@ -5890,6 +6142,65 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     setIsInvoiceModalOpen(true);
   };
 
+  // Open detailed invoice editing - allows editing pax, dates, rates without affecting original event
+  const openInvoiceDetailEdit = (invoice: EventInvoice) => {
+    const event = allEvents.find(ev => ev.id === invoice.eventId);
+    if (!event) {
+      alert('❌ Event not found for this invoice.');
+      return;
+    }
+
+    // Always load event data first to populate base form
+    convertCustomEventToFormState(event);
+
+    // Then apply invoice snapshot if available (overrides with saved invoice edits)
+    if (invoice.formSnapshot) {
+      applyInvoiceSnapshotToState(invoice.formSnapshot);
+    } else {
+      // Create a snapshot from invoice data if no formSnapshot exists
+      // This ensures consistency with the full form experience
+      const invoiceStart = invoice.issueDate || event.startDate || new Date().toISOString().split('T')[0];
+      const invoiceEnd = invoice.dueDate || event.endDate || invoiceStart;
+      setStartDate(invoiceStart);
+      setEndDate(invoiceEnd);
+      
+      // Set financial totals from invoice
+      if (invoice.subtotal !== undefined) {
+        // Apply invoice totals to the form
+        setDiscountEnabled(false);
+        setDiscountValue(0);
+      }
+    }
+
+    // Set invoice-specific flags
+    setIsCreatingEvent(false);
+    setIsViewMode(false);
+    setIsAdjustMode(false);
+    setIsCreatingInvoiceFromFolio(false);
+    setEditingEvent(event);
+    setEventStatus('invoiced');
+
+    // Store the invoice ID for saving later
+    setInvoiceForm(prev => ({ 
+      ...prev, 
+      id: invoice.id,
+      eventId: invoice.eventId,
+      eventName: invoice.eventName,
+      clientName: invoice.clientName,
+      subtotal: invoice.subtotal,
+      tax: invoice.tax,
+      total: invoice.total,
+      balance: invoice.balance,
+      status: invoice.status,
+      notes: invoice.notes || ''
+    }));
+
+    // Mark that we're editing invoice details specifically
+    setIsEditingInvoiceDetails(true);
+
+    // Open the event modal in a special invoice editing mode
+    setIsEventModalOpen(true);
+  };
 
   const validateInvoiceForm = () => {
     const errors: Record<string, string> = {};
@@ -6625,25 +6936,50 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   // Import invoice to folio (manual import from UI)
   const importInvoiceToFolio = (folio: EventFolio) => {
     const event = allEvents.find(e => e.id === folio.eventId);
-    if (!event) return;
-    
+    if (!event) {
+      alert('❌ Error: Event not found for this folio.');
+      console.error('[Folio] Event not found for folio:', folio.id);
+      return;
+    }
+
     const invoice = eventInvoices.find((inv: any) => inv.eventId === folio.eventId);
     if (!invoice) {
-      alert('No invoice found for this event.');
+      alert('❌ Error: No invoice found for this event. Please create an invoice first.');
+      console.error('[Folio] No invoice found for event:', event.id);
       return;
     }
-    
+
     // Check if invoice already exists in folio entries
     const invoiceExists = folio.entries.some(e => e.reference === invoice.id || e.description.includes(`Invoice ${invoice.id}`));
-    if (invoiceExists) {
-      if (!confirm('Invoice already exists in folio. Update it with current values?')) return;
-      // Update existing entry
-      syncInvoiceToFolio(invoice, true);
-      return;
+
+    try {
+      if (invoiceExists) {
+        const confirmed = confirm(`📝 Invoice ${invoice.id} already exists in this folio.\n\nUpdate with current values (₵${formatCurrency(invoice.total)})?`);
+        if (!confirmed) return;
+
+        // Update existing entry
+        const success = syncInvoiceToFolio(invoice, true);
+        if (success) {
+          alert(`✅ Invoice ${invoice.id} updated successfully in folio!`);
+          console.log('[Folio] Invoice updated successfully:', invoice.id);
+        } else {
+          alert('❌ Failed to update invoice in folio. Please try again.');
+        }
+        return;
+      }
+
+      // Import new invoice
+      const success = syncInvoiceToFolio(invoice);
+      if (success) {
+        alert(`✅ Invoice ${invoice.id} imported successfully to folio!\n\nAmount: ₵${formatCurrency(invoice.total)}`);
+        console.log('[Folio] Invoice imported successfully:', invoice.id);
+      } else {
+        alert('❌ Failed to import invoice to folio. Please try again.');
+      }
+    } catch (error) {
+      console.error('[Folio] Error importing invoice:', error);
+      alert(`❌ Error importing invoice: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
-    
-    // Import new invoice
-    syncInvoiceToFolio(invoice);
   };
 
 
@@ -6852,53 +7188,71 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   // Import receipts to folio
   const importReceiptsToFolio = (folio: EventFolio) => {
     const event = allEvents.find(e => e.id === folio.eventId);
-    if (!event) return;
-    
-    const receipts = eventReceipts.filter((rec: any) => rec.eventId === folio.eventId);
-    if (receipts.length === 0) {
-      alert('No receipts found for this event.');
+    if (!event) {
+      alert('❌ Error: Event not found for this folio.');
+      console.error('[Folio] Event not found for folio:', folio.id);
       return;
     }
-    
+
+    const receipts = eventReceipts.filter((rec: any) => rec.eventId === folio.eventId);
+    if (receipts.length === 0) {
+      alert('ℹ️ No receipts found for this event. Create some receipts first.');
+      console.log('[Folio] No receipts found for event:', event.id);
+      return;
+    }
+
     // Filter out receipts that already exist in folio
     const existingReferences = folio.entries.map(e => e.reference).filter(Boolean);
     const newReceipts = receipts.filter((rec: any) => !existingReferences.includes(rec.id));
-    
+
     if (newReceipts.length === 0) {
-      alert('All receipts have already been imported to this folio.');
+      alert(`ℹ️ All ${receipts.length} receipts have already been imported to this folio.`);
+      console.log('[Folio] All receipts already imported for event:', event.id);
       return;
     }
-    
-    let currentBalance = getFolioCurrentBalance(folio);
-    const newEntries: EventFolioEntry[] = newReceipts.map((receipt: any) => {
-      currentBalance = currentBalance - receipt.amount; // Payments reduce balance
-      return {
-        id: `FLE-${Date.now().toString().slice(-6)}-${receipt.id.slice(-3)}`,
-        date: receipt.date || new Date().toISOString().split('T')[0],
-        description: `Receipt ${receipt.id} - ${receipt.method}`,
-        debit: 0,
-        credit: receipt.amount,
-        balance: currentBalance,
-        reference: receipt.id,
-        revenueCenter: 'CF' // Conference/Event revenue center
-      };
-    });
-    
-    setEventFolios(prev =>
-      prev.map(f =>
-        f.id === folio.id
-          ? { ...f, entries: [...f.entries, ...newEntries], updatedAt: new Date().toISOString() }
-          : f
-      )
-    );
-    setActiveFolio((prev: any) =>
-      prev && prev.id === folio.id
-        ? { ...prev, entries: [...prev.entries, ...newEntries], updatedAt: new Date().toISOString() }
-        : prev
-    );
-    
-    console.log('[Folio] Imported receipts:', newReceipts.length, formatCurrency(newReceipts.reduce((sum, r) => sum + r.amount, 0)));
-    trackEvent('Events.EventCreated', { action: 'folio_receipts_imported', folioId: folio.id, receiptCount: newReceipts.length });
+
+    try {
+      let currentBalance = getFolioCurrentBalance(folio);
+      const newEntries: EventFolioEntry[] = newReceipts.map((receipt: any) => {
+        currentBalance = currentBalance - receipt.amount; // Payments reduce balance
+        return {
+          id: `FLE-${Date.now().toString().slice(-6)}-${receipt.id.slice(-3)}`,
+          date: receipt.date || new Date().toISOString().split('T')[0],
+          description: `Receipt ${receipt.id} - ${receipt.method}`,
+          debit: 0,
+          credit: receipt.amount,
+          balance: currentBalance,
+          reference: receipt.id,
+          revenueCenter: 'CF' // Conference/Event revenue center
+        };
+      });
+
+      // Update folios state
+      setEventFolios(prev =>
+        prev.map(f =>
+          f.id === folio.id
+            ? { ...f, entries: [...f.entries, ...newEntries], updatedAt: new Date().toISOString() }
+            : f
+        )
+      );
+
+      // Update active folio if it's the current one
+      setActiveFolio((prev: any) =>
+        prev && prev.id === folio.id
+          ? { ...prev, entries: [...prev.entries, ...newEntries], updatedAt: new Date().toISOString() }
+          : prev
+      );
+
+      const totalAmount = newReceipts.reduce((sum, r) => sum + r.amount, 0);
+      alert(`✅ Successfully imported ${newReceipts.length} receipt(s)!\n\nTotal Amount: ₵${formatCurrency(totalAmount)}\nNew Balance: ₵${formatCurrency(currentBalance)}`);
+
+      console.log('[Folio] Imported receipts successfully:', newReceipts.length, formatCurrency(totalAmount));
+      trackEvent('Events.EventCreated', { action: 'folio_receipts_imported', folioId: folio.id, receiptCount: newReceipts.length });
+
+    } catch (error) {
+      console.error('[Folio] Error importing receipts:', error);
+      alert(`❌ Error importing receipts: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
   };
 
   const handleEditInvoiceFromFolio = (invoice?: EventInvoice | null) => {
@@ -10905,19 +11259,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       }
     };
 
-    // Open invoice edit from the invoices table using the event edit form (no invoice modal)
+    // Open invoice edit from the invoices table using the full invoice detail edit form
     const openInvoiceFromTable = (invoice: EventInvoice) => {
-      const relatedEvent =
-        managedEvents.find((e: any) => e.id === invoice.eventId) ||
-        allEvents.find((e: any) => e.id === invoice.eventId);
-      if (!relatedEvent) {
-        alert('Could not find the related event for this invoice. It may have been removed.');
-        return;
-      }
-      // Open the event edit form directly (no invoice modal)
-      setSelectedTab('completed');
-      openEventForEdit(relatedEvent, false, false);
-      setIsInvoiceModalOpen(false);
+      // Use the same full form as "Create/Edit Invoice" from folio
+      openInvoiceDetailEdit(invoice);
     };
 
     // Wrapper functions for function view exports using filteredManagedEvents
@@ -12350,6 +12695,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                           <TableCell>
                             <div className="font-medium">{invoice.eventName}</div>
                             <div className="text-xs text-gray-500">{invoice.clientName}</div>
+                            <div className="text-xs text-blue-600 mt-0.5">📑 From: {invoice.eventId}</div>
                           </TableCell>
                           <TableCell>{formatDateDisplay(invoice.issueDate)}</TableCell>
                           <TableCell>{formatDateDisplay(invoice.dueDate)}</TableCell>
@@ -12502,7 +12848,15 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                             </Badge>
                           </TableCell>
                           <TableCell>{receipt.reference || '—'}</TableCell>
-                          <TableCell>{receipt.invoiceId || '—'}</TableCell>
+                          <TableCell>
+                            {receipt.invoiceId ? (
+                              <Badge color="primary" variant="flat" size="sm">
+                                🧾 {receipt.invoiceId}
+                              </Badge>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </TableCell>
                           <TableCell>
                             <div className="flex flex-wrap items-center gap-2">
                               <Button
@@ -12629,11 +12983,21 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                           </TableCell>
                         </TableRow>
                       ) : (
-                        paginatedQuotes.map((quote: QuoteListItem) => (
+                        paginatedQuotes.map((quote: QuoteListItem) => {
+                          const hasInvoice = eventInvoices.some(inv => inv.eventId === quote.eventId);
+                          const linkedInvoice = eventInvoices.find(inv => inv.eventId === quote.eventId);
+                          return (
                           <TableRow key={quote.id}>
                             <TableCell>
                               <div className="font-semibold text-ghana-black">{quote.quoteNumber}</div>
                               <div className="text-xs text-gray-500">{quote.reference || '—'}</div>
+                              {hasInvoice ? (
+                                <Badge color="success" variant="flat" size="sm" className="mt-1">
+                                  🧾 {linkedInvoice?.id}
+                                </Badge>
+                              ) : (
+                                <span className="text-xs text-gray-400 mt-1 block">No invoice yet</span>
+                              )}
                             </TableCell>
                             <TableCell>{quote.clientName}</TableCell>
                             <TableCell>{quote.eventName}</TableCell>
@@ -12664,7 +13028,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                               </div>
                             </TableCell>
                           </TableRow>
-                        ))
+                        );})
                       )}
                     </TableBody>
                   </Table>
@@ -13597,6 +13961,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           setIsCreatingEvent(false);
           setIsAdjustMode(false);
           setIsViewMode(false);
+          setIsEditingInvoiceDetails(false);
           setHoveredGanttEventId(null);
         }}
         size="5xl"
@@ -13608,9 +13973,21 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               <span className="text-2xl">🎉</span>
               <div>
                 <h3 className="text-lg font-semibold">
-                  {isCreatingEvent ? 'Create New Event' : isViewMode ? 'View Event' : 'Edit Event'}
+                  {isEditingInvoiceDetails
+                    ? 'Edit Invoice Details'
+                    : isCreatingEvent
+                      ? 'Create New Event'
+                      : isViewMode
+                        ? 'View Event'
+                        : 'Edit Event'
+                  }
                 </h3>
-                <p className="text-sm text-gray-600">Complete event booking following Ghanaian business process</p>
+                <p className="text-sm text-gray-600">
+                  {isEditingInvoiceDetails
+                    ? 'Modify invoice-specific details (pax, dates, rates) without affecting the original event'
+                    : 'Complete event booking following Ghanaian business process'
+                  }
+                </p>
               </div>
             </div>
           </ModalHeader>
@@ -13619,6 +13996,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             <div className="mb-8">
               <h4 className="font-semibold text-lg mb-4 flex items-center gap-2">
                 📋 Phase 1: Event Details & Client
+                {isEditingInvoiceDetails && <Badge color="primary" variant="flat" className="ml-2 text-xs">✏️ Editable</Badge>}
               </h4>
               <div className="space-y-6">
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
@@ -13741,7 +14119,6 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   </div>
                 </div>
               </div>
-
               {phase1Error && (
                 <div className="mt-4 p-3 rounded border border-red-200 bg-red-50 text-red-700 text-sm">{phase1Error}</div>
               )}
@@ -13753,6 +14130,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             <div className="mb-8">
               <h4 className="font-semibold text-lg mb-4 flex items-center gap-2">
                 📅 Phase 2: Event Dates & Venue
+                {isEditingInvoiceDetails && <Badge color="primary" variant="flat" className="ml-2 text-xs">✏️ Editable</Badge>}
               </h4>
               <div className="space-y-6">
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
@@ -13761,21 +14139,23 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
-                  isReadOnly={isViewMode}
+                  isReadOnly={isViewMode && !isEditingInvoiceDetails}
+                  description={isEditingInvoiceDetails ? "Change to expand/contract schedule" : undefined}
                 />
                 <Input
                   label="End Date"
                   type="date"
                   value={endDate}
                   onChange={(e) => setEndDate(e.target.value)}
-                  isReadOnly={isViewMode}
+                  isReadOnly={isViewMode && !isEditingInvoiceDetails}
+                  description={isEditingInvoiceDetails ? "Change to expand/contract schedule" : undefined}
                 />
                 <Select 
                   label="Venue Selection" 
                   placeholder="Select venue" 
                   selectedKeys={venueKey ? [venueKey] : []} 
                   onSelectionChange={(keys)=> setVenueKey(Array.from(keys)[0] as string)}
-                  isDisabled={isViewMode}
+                  isDisabled={isViewMode && !isEditingInvoiceDetails}
                 >
                   {(modernVenues || []).map(v => (
                     <SelectItem key={v.id}>{`${v.name} (${v.capacity} pax)`}</SelectItem>
@@ -13791,14 +14171,14 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     value={expectedPax ? String(expectedPax) : ''}
                     onChange={(e)=> setExpectedPax(parseInt(e.target.value || '0', 10) || 0)}
                     className="flex-1"
-                    isReadOnly={isViewMode}
+                    isReadOnly={isViewMode && !isEditingInvoiceDetails}
                   />
-                  {isCreatingInvoiceFromFolio ? (
+                  {isCreatingInvoiceFromFolio || isEditingInvoiceDetails ? (
                     <Select
                       label={renderStatusLabel('Event Status', { key: 'invoiced', label: 'Invoiced', icon: '🧾' })}
                       selectedKeys={new Set(['invoiced'])}
                       isDisabled
-                      description="Status locked while finalizing invoice"
+                      description="Status locked to Invoiced"
                     >
                       <SelectItem key="invoiced">🧾 Invoiced</SelectItem>
                     </Select>
@@ -13821,7 +14201,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       ))}
                     </Select>
                   )}
-                  {!isCreatingInvoiceFromFolio && eventStatus !== 'invoiced' && (
+                  {!isCreatingInvoiceFromFolio && !isEditingInvoiceDetails && eventStatus !== 'invoiced' && (
                     <div className="flex flex-col gap-2">
                       <span className="text-sm font-semibold text-gray-600">Availability & Conflicts</span>
                       <Popover placement="bottom-start">
@@ -13878,11 +14258,17 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
             <Divider className="my-8" />
 
-            {/* Phase 3: Daily Schedule & Headcounts (NEW, MOST IMPORTANT PHASE) */}
+            {/* Phase 3: Daily Schedule & Headcounts */}
             <div className="mb-6">
               <h4 className="font-semibold text-lg mb-3 flex items-center gap-2">
                 📊 Phase 3: Daily Schedule & Headcounts
+                {isEditingInvoiceDetails && <Badge color="primary" variant="flat" className="ml-2 text-xs">✏️ Editable</Badge>}
               </h4>
+              {isEditingInvoiceDetails && (
+                <div className="text-sm text-blue-600 bg-blue-50 p-3 rounded-md border border-blue-200 mb-4">
+                  💡 Editing invoice details. All changes will update the invoice totals but won't affect the original event quote.
+                </div>
+              )}
               {/* Rates controls */}
               <div className="mb-4 flex flex-wrap items-end gap-4">
                 <div className="flex items-center gap-3">
@@ -13905,268 +14291,185 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 )}
               </div>
               
-              {/* Daily Schedule Table */}
-              <div className="overflow-x-auto" style={{ scrollbarWidth: 'thin', scrollbarColor: '#9ca3af #f3f4f6' }}>
-                {!ratesByParticulars ? (
-                <Table aria-label="Daily schedule" className="min-w-full">
-                  <TableHeader>
-                    <TableColumn>Date</TableColumn>
-                    <TableColumn>{particularLabels.rooms}</TableColumn>
-                    <TableColumn>{particularLabels.dinnerPax}</TableColumn>
-                    <TableColumn>{particularLabels.lunchPax}</TableColumn>
-                    <TableColumn>{particularLabels.conferencePax}</TableColumn>
-                    <TableColumn>Rate (₵)</TableColumn>
-                    <TableColumn>Subtotal (₵)</TableColumn>
-                    <TableColumn className="w-12 text-center">Actions</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {dailySchedule.length === 0 ? (
-                      <TableRow>
-                        <TableCell className="text-center text-gray-500" colSpan={8}>
-                          <div className="py-8">
-                            <span className="text-4xl">📅</span>
-                            <p className="mt-2">Please select Start and End dates to generate daily schedule</p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      dailySchedule.map((row, idx) => {
+              {/* Daily Schedule Table - Using plain HTML table for dynamic columns */}
+              <div className="overflow-x-auto rounded-lg border" style={{ scrollbarWidth: 'thin', scrollbarColor: '#9ca3af #f3f4f6' }}>
+                {dailySchedule.length === 0 ? (
+                  /* Empty state - no dates selected */
+                  <div className="py-12 text-center text-gray-500 bg-gray-50">
+                    <span className="text-5xl">📅</span>
+                    <p className="mt-3 text-lg">Please select Start and End dates to generate daily schedule</p>
+                  </div>
+                ) : !ratesByParticulars ? (
+                  /* Package Mode Table */
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.rooms}</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.dinnerPax}</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.lunchPax}</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.conferencePax}</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rate (₵)</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal (₵)</th>
+                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {dailySchedule.map((row, idx) => {
                         const c = computeDayAmounts(row);
                         return (
-                          <TableRow key={row.date}>
-                            <TableCell>{row.date}</TableCell>
-                            <TableCell>
-                              <Input size="sm" type="number" value={String(row.rooms)} onChange={(e)=> {
+                          <tr key={row.date} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{row.date}</td>
+                            <td className="px-4 py-3">
+                              <Input size="sm" type="number" value={String(row.rooms)} onChange={(e) => {
                                 const v = parseInt(e.target.value || '0', 10) || 0;
-                                setDailySchedule(prev => prev.map((r,i)=> i===idx ? { ...r, rooms: v } : r));
-                              }} isReadOnly={isViewMode} />
-                            </TableCell>
-                            <TableCell>
-                              <Input size="sm" type="number" value={String(row.dinnerPax)} onChange={(e)=> {
+                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, rooms: v } : r));
+                                updateScheduleData(row.date, { rooms: v });
+                              }} isReadOnly={isViewMode} className="w-20" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <Input size="sm" type="number" value={String(row.dinnerPax)} onChange={(e) => {
                                 const v = parseInt(e.target.value || '0', 10) || 0;
-                                setDailySchedule(prev => prev.map((r,i)=> i===idx ? { ...r, dinnerPax: v } : r));
-                              }} isReadOnly={isViewMode} />
-                            </TableCell>
-                            <TableCell>
-                              <Input size="sm" type="number" value={String(row.lunchPax)} onChange={(e)=> {
+                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, dinnerPax: v } : r));
+                                updateScheduleData(row.date, { dinnerPax: v });
+                              }} isReadOnly={isViewMode} className="w-20" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <Input size="sm" type="number" value={String(row.lunchPax)} onChange={(e) => {
                                 const v = parseInt(e.target.value || '0', 10) || 0;
-                                setDailySchedule(prev => prev.map((r,i)=> i===idx ? { ...r, lunchPax: v } : r));
-                              }} isReadOnly={isViewMode} />
-                            </TableCell>
-                            <TableCell>
-                              <Input size="sm" type="number" value={String(row.conferencePax)} onChange={(e)=> {
+                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, lunchPax: v } : r));
+                                updateScheduleData(row.date, { lunchPax: v });
+                              }} isReadOnly={isViewMode} className="w-20" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <Input size="sm" type="number" value={String(row.conferencePax)} onChange={(e) => {
                                 const v = parseInt(e.target.value || '0', 10) || 0;
-                                setDailySchedule(prev => prev.map((r,i)=> i===idx ? { ...r, conferencePax: v } : r));
-                              }} isReadOnly={isViewMode} />
-                            </TableCell>
-                            <TableCell>
-                              <Input size="sm" type="number" value={String(row.rate)} onChange={(e)=> {
+                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, conferencePax: v } : r));
+                                updateScheduleData(row.date, { conferencePax: v });
+                              }} isReadOnly={isViewMode} className="w-20" />
+                            </td>
+                            <td className="px-4 py-3">
+                              <Input size="sm" type="number" value={String(row.rate)} onChange={(e) => {
                                 const v = parseFloat(e.target.value || '0') || 0;
-                                setDailySchedule(prev => prev.map((r,i)=> i===idx ? { ...r, rate: v } : r));
-                              }} className="w-28" isReadOnly={isViewMode} />
-                            </TableCell>
-                            <TableCell>₵{c.subtotal.toFixed(2)}</TableCell>
-                            <TableCell className="text-center">
+                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, rate: v } : r));
+                                updateScheduleData(row.date, { rate: v });
+                              }} className="w-24" isReadOnly={isViewMode} />
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">₵{c.subtotal.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-center">
                               {!isViewMode ? (
                                 <div className="space-y-2">
-                                  <Button size="sm" variant="flat" className="px-2" onPress={()=> addExtraLineToDay(idx)} aria-label="Add extra">＋</Button>
-                                  {(row.extraLines||[]).map((ln, lineIdx) => (
+                                  <Button size="sm" variant="flat" className="px-2" onPress={() => addExtraLineToDay(idx)} aria-label="Add extra">＋</Button>
+                                  {(row.extraLines || []).map((ln, lineIdx) => (
                                     <div key={`${row.date}-ex-${ln.id}`} className="flex items-center gap-1">
-                                      <Input size="sm" value={ln.name} onChange={(e)=> updateExtraLineOnDay(idx, lineIdx, { name: e.target.value })} className="w-24" />
-                                      <Input size="sm" type="number" value={String(ln.qty)} onChange={(e)=> updateExtraLineOnDay(idx, lineIdx, { qty: parseInt(e.target.value || '0', 10) || 0 })} className="w-16" />
-                                      <Input size="sm" type="number" value={String(ln.unitPrice)} onChange={(e)=> updateExtraLineOnDay(idx, lineIdx, { unitPrice: parseFloat(e.target.value || '0') || 0 })} className="w-20" />
-                                      <span className="text-xs text-gray-500">₵{((Number(ln.qty)||0)*(Number(ln.unitPrice)||0)).toFixed(2)}</span>
-                                      <Button size="sm" color="danger" variant="light" className="px-2" onPress={()=> removeExtraLineFromDay(idx, lineIdx)} aria-label="Remove">✖</Button>
+                                      <Input size="sm" value={ln.name} onChange={(e) => updateExtraLineOnDay(idx, lineIdx, { name: e.target.value })} className="w-24" />
+                                      <Input size="sm" type="number" value={String(ln.qty)} onChange={(e) => updateExtraLineOnDay(idx, lineIdx, { qty: parseInt(e.target.value || '0', 10) || 0 })} className="w-16" />
+                                      <Input size="sm" type="number" value={String(ln.unitPrice)} onChange={(e) => updateExtraLineOnDay(idx, lineIdx, { unitPrice: parseFloat(e.target.value || '0') || 0 })} className="w-20" />
+                                      <span className="text-xs text-gray-500">₵{((Number(ln.qty) || 0) * (Number(ln.unitPrice) || 0)).toFixed(2)}</span>
+                                      <Button size="sm" color="danger" variant="light" className="px-2" onPress={() => removeExtraLineFromDay(idx, lineIdx)} aria-label="Remove">✖</Button>
                                     </div>
                                   ))}
                                 </div>
                               ) : (
                                 <div className="space-y-1">
-                                  {(row.extraLines||[]).map((ln, lineIdx) => (
+                                  {(row.extraLines || []).map((ln, lineIdx) => (
                                     <div key={`${row.date}-ex-${ln.id}`} className="text-xs text-gray-600">
-                                      {ln.name}: {ln.qty} × ₵{ln.unitPrice} = ₵{((Number(ln.qty)||0)*(Number(ln.unitPrice)||0)).toFixed(2)}
+                                      {ln.name}: {ln.qty} × ₵{ln.unitPrice} = ₵{((Number(ln.qty) || 0) * (Number(ln.unitPrice) || 0)).toFixed(2)}
                                     </div>
                                   ))}
                                   {(!row.extraLines || row.extraLines.length === 0) && <span className="text-xs text-gray-400">—</span>}
                                 </div>
                               )}
-                            </TableCell>
-                          </TableRow>
+                            </td>
+                          </tr>
                         );
-                      })
-                    )}
-                  </TableBody>
-                </Table>
+                      })}
+                    </tbody>
+                  </table>
                 ) : (
-                <Table aria-label="Daily schedule - rates by particulars" className="min-w-full">
-                  <TableHeader>
-                    <TableColumn>Particular</TableColumn>
-                    <TableColumn>Rate (₵)</TableColumn>
-                    {(() => {
-                      const validSchedule = dailySchedule.filter(r => r && r.date);
-                      if (validSchedule.length > 0) {
+                  /* Particulars Mode Table - Dynamic columns based on dates */
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Particular</th>
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rate (₵)</th>
+                        {dailySchedule.map((row) => (
+                          <th key={row.date} className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            {new Date(row.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
+                          </th>
+                        ))}
+                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subtotal (₵)</th>
+                        <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-12">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {/* Standard Particulars Rows */}
+                      {(['rooms', 'dinnerPax', 'lunchPax', 'conferencePax'] as const)
+                        .filter(k => !hiddenParticulars[k])
+                        .map((key) => {
+                          const label = particularLabels[key];
+                          const rate = key === 'conferencePax' ? conferenceRate : key === 'lunchPax' ? lunchRate : key === 'dinnerPax' ? dinnerRate : roomRate;
+                          const setRate = key === 'conferencePax' ? setConferenceRate : key === 'lunchPax' ? setLunchRate : key === 'dinnerPax' ? setDinnerRate : setRoomRate;
+                          const subtotal = dailySchedule.reduce((s, r) => s + ((r as any)[key] || 0) * (rate || 0), 0);
+                          return (
+                            <tr key={key} className="hover:bg-gray-50">
+                              <td className="px-4 py-3">
+                                <Input size="sm" value={label} onChange={(e) => setParticularLabels(prev => ({ ...prev, [key]: e.target.value }))} className="w-40" isReadOnly={isViewMode} />
+                              </td>
+                              <td className="px-4 py-3">
+                                <Input size="sm" type="number" value={String(rate)} onChange={(e) => setRate(parseFloat(e.target.value || '0') || 0)} className="w-24" isReadOnly={isViewMode} />
+                              </td>
+                              {dailySchedule.map((r, idx) => (
+                                <td key={`${key}-${r.date}`} className="px-4 py-3 text-center">
+                                  <Input size="sm" type="number" value={String((r as any)[key] || 0)} onChange={(e) => {
+                                    const v = parseInt(e.target.value || '0', 10) || 0;
+                                    setDailySchedule(prev => prev.map((x, i) => i === idx ? { ...x, [key]: v } : x));
+                                    updateScheduleData(r.date, { [key]: v } as any);
+                                  }} className="w-20" isReadOnly={isViewMode} />
+                                </td>
+                              ))}
+                              <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">₵{subtotal.toFixed(2)}</td>
+                              <td className="px-4 py-3 text-center">
+                                {!isViewMode && <Button size="sm" color="danger" variant="light" className="px-2" onPress={() => setHiddenParticulars(prev => ({ ...prev, [key]: true }))} aria-label="Remove">✖</Button>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      {/* Custom Particulars Rows */}
+                      {customParticulars.map((p) => {
+                        const subtotal = dailySchedule.reduce((s, r) => s + (r.extras?.[p.id] || 0) * (p.rate || 0), 0);
                         return (
-                          <>
-                            {validSchedule.map((r) => (
-                              <TableColumn key={r.date}>
-                                {new Date(r.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}
-                              </TableColumn>
+                          <tr key={p.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3">
+                              <Input size="sm" value={p.label} onChange={(e) => setCustomParticulars(prev => prev.map(x => x.id === p.id ? { ...x, label: e.target.value } : x))} isReadOnly={isViewMode} />
+                            </td>
+                            <td className="px-4 py-3">
+                              <Input size="sm" type="number" value={String(p.rate)} onChange={(e) => setCustomParticulars(prev => prev.map(x => x.id === p.id ? { ...x, rate: parseFloat(e.target.value || '0') || 0 } : x))} className="w-24" isReadOnly={isViewMode} />
+                            </td>
+                            {dailySchedule.map((r, idx) => (
+                              <td key={`extra-${p.id}-${r.date}`} className="px-4 py-3 text-center">
+                                <Input size="sm" type="number" value={String(r.extras?.[p.id] || 0)} onChange={(e) => {
+                                  const v = parseInt(e.target.value || '0', 10) || 0;
+                                  setDailySchedule(prev => prev.map((x, i) => i === idx ? { ...x, extras: { ...(x.extras || {}), [p.id]: v } } : x));
+                                  const currentExtras = scheduleDataMap.get(r.date)?.extras || {};
+                                  updateScheduleData(r.date, { extras: { ...currentExtras, [p.id]: v } });
+                                }} className="w-20" isReadOnly={isViewMode} />
+                              </td>
                             ))}
-                          </>
-                        );
-                      }
-                      return <TableColumn>Dates</TableColumn>;
-                    })()}
-                    <TableColumn>Subtotal (₵)</TableColumn>
-                    <TableColumn className="w-12 text-center">Actions</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {(() => {
-                      const validSchedule = dailySchedule.filter(r => r && r.date);
-                      const standardParticulars = (['rooms','dinnerPax','lunchPax','conferencePax'] as const)
-                        .filter(k => !hiddenParticulars[k]);
-                      const totalRows = standardParticulars.length + customParticulars.length;
-                      const columnCount = 2 + (validSchedule.length > 0 ? validSchedule.length : 1) + 2; // Particular + Rate + Dates + Subtotal + Actions
-                      
-                      if (totalRows === 0) {
-                        return (
-                          <TableRow>
-                            <TableCell colSpan={columnCount} className="text-center text-gray-500 py-8">
-                              <div>
-                                <span className="text-4xl">📅</span>
-                                <p className="mt-2">Please select Start and End dates to generate daily schedule</p>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      }
-                      
-                      return (
-                        <>
-                          {standardParticulars.map((key) => {
-                            const label = particularLabels[key];
-                            const rate = key === 'conferencePax' ? conferenceRate : key === 'lunchPax' ? lunchRate : key === 'dinnerPax' ? dinnerRate : roomRate;
-                            const setRate = key === 'conferencePax' ? setConferenceRate : key === 'lunchPax' ? setLunchRate : key === 'dinnerPax' ? setDinnerRate : setRoomRate;
-                            const qtys = validSchedule.map(r => (r as any)[key] || 0);
-                            const subtotal = qtys.reduce((s,q)=> s + q * (rate||0), 0);
-                            return (
-                              <TableRow key={key}>
-                                <TableCell>
-                                  <div className="flex items-center gap-2">
-                                    <Input size="sm" value={label} onChange={(e)=> setParticularLabels(prev => ({ ...prev, [key]: e.target.value }))} className="w-40" isReadOnly={isViewMode} />
-                                  </div>
-                                </TableCell>
-                                <TableCell>
-                                  <Input size="sm" type="number" value={String(rate)} onChange={(e)=> setRate(parseFloat(e.target.value || '0') || 0)} className="w-28" isReadOnly={isViewMode} />
-                                </TableCell>
-                                {validSchedule.length > 0 ? (
-                                  <>
-                                    {validSchedule.map((r, idx) => {
-                                      const originalIdx = dailySchedule.findIndex(x => x.date === r.date);
-                                      return (
-                                        <TableCell key={`c-${key}-${r.date}-${idx}`}>
-                                          <Input size="sm" type="number" value={String((r as any)[key] || 0)} onChange={(e)=> {
-                                            const v = parseInt(e.target.value || '0', 10) || 0;
-                                            if (originalIdx >= 0) {
-                                              setDailySchedule(prev => prev.map((x,i)=> i===originalIdx ? { ...x, [key]: v } as any : x));
-                                            }
-                                          }} className="w-24 flex-shrink-0" isReadOnly={isViewMode} />
-                                        </TableCell>
-                                      );
-                                    })}
-                                  </>
-                                ) : (
-                                  <TableCell>
-                                    <span className="text-sm text-gray-400">Select dates to generate schedule</span>
-                                  </TableCell>
-                                )}
-                                <TableCell>₵{subtotal.toFixed(2)}</TableCell>
-                                <TableCell className="text-center">
-                                  {!isViewMode && <Button size="sm" color="danger" variant="light" className="px-2" onPress={()=> setHiddenParticulars(prev => ({ ...prev, [key]: true }))} aria-label="Remove">✖</Button>}
-                                </TableCell>
-                              </TableRow>
-                            );
-                          })}
-                        </>
-                      );
-                    })()}
-                    <>
-                    {customParticulars.map((p) => {
-                      const validSchedule = dailySchedule.filter(r => r && r.date);
-                      const qtys = validSchedule.map(r => r.extras?.[p.id] || 0);
-                      const subtotal = qtys.reduce((s,q)=> s + q * (p.rate||0), 0);
-                      return (
-                        <TableRow key={p.id}>
-                          <TableCell>
-                            <Input
-                              size="sm"
-                              value={p.label}
-                              onChange={(e)=> setCustomParticulars(prev => prev.map(x => x.id===p.id ? { ...x, label: e.target.value } : x))}
-                              isReadOnly={isViewMode}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <Input
-                              size="sm"
-                              type="number"
-                              value={String(p.rate)}
-                              onChange={(e)=> setCustomParticulars(prev => prev.map(x => x.id===p.id ? { ...x, rate: parseFloat(e.target.value || '0') || 0 } : x))}
-                              className="w-28"
-                              isReadOnly={isViewMode}
-                            />
-                          </TableCell>
-                          {validSchedule.length > 0 ? (
-                            <>
-                              {validSchedule.map((r, idx) => {
-                                const originalIdx = dailySchedule.findIndex(x => x.date === r.date);
-                                return (
-                                  <TableCell key={`extra-${p.id}-${r.date}-${idx}`}>
-                                    <Input
-                                      size="sm"
-                                      type="number"
-                                      value={String(r.extras?.[p.id] || 0)}
-                                      onChange={(e)=> {
-                                        const v = parseInt(e.target.value || '0', 10) || 0;
-                                        if (originalIdx >= 0) {
-                                          setDailySchedule(prev => prev.map((x,i)=> i===originalIdx ? { ...x, extras: { ...(x.extras||{}), [p.id]: v } } : x));
-                                        }
-                                      }}
-                                      className="w-24 flex-shrink-0"
-                                      isReadOnly={isViewMode}
-                                    />
-                                  </TableCell>
-                                );
-                              })}
-                            </>
-                          ) : (
-                            <TableCell>
-                              <span className="text-sm text-gray-400">Select dates to generate schedule</span>
-                            </TableCell>
-                          )}
-                          <TableCell>₵{subtotal.toFixed(2)}</TableCell>
-                          <TableCell className="text-center">
-                            {!isViewMode && (
-                              <Button
-                                size="sm"
-                                color="danger"
-                                variant="light"
-                                className="px-2"
-                                onPress={()=> {
+                            <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">₵{subtotal.toFixed(2)}</td>
+                            <td className="px-4 py-3 text-center">
+                              {!isViewMode && (
+                                <Button size="sm" color="danger" variant="light" className="px-2" onPress={() => {
                                   setCustomParticulars(prev => prev.filter(x => x.id !== p.id));
-                                  setDailySchedule(prev => prev.map(r => { const n = { ...(r.extras||{}) }; delete n[p.id]; return { ...r, extras: n }; }));
-                                }}
-                                aria-label="Remove"
-                              >
-                                ✖
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    </>
-                  </TableBody>
-                </Table>
+                                  setDailySchedule(prev => prev.map(r => { const n = { ...(r.extras || {}) }; delete n[p.id]; return { ...r, extras: n }; }));
+                                }} aria-label="Remove">✖</Button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 )}
               </div>
             {/* Phase 3 totals removed - moved subtotal to Phase 4 */}
@@ -14185,7 +14488,12 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               <div className="flex flex-col md:flex-row gap-6">
                 {/* Left controls: tax exempt only */}
                 <div className="p-6 bg-white rounded-lg border w-full md:w-4/12 space-y-4">
-                  <h5 className="font-medium text-ghana-black">Payment & Tax Controls</h5>
+                  <div className="flex items-center justify-between">
+                    <h5 className="font-medium text-ghana-black">Payment & Tax Controls</h5>
+                    <Button size="sm" variant="light" onPress={refreshTaxRules} className="text-xs">
+                      🔄 Sync Taxes
+                    </Button>
+                  </div>
                   <div className="space-y-3 text-sm">
                     <div className="flex items-center justify-between">
                       <span>Prepayment Enabled</span>
@@ -14213,12 +14521,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   </div>
                 </div>
                 <div className="space-y-2 text-sm">
-                  {detailedTaxRows.length > 0 ? (
+                  {eventTaxExempt ? (
+                    <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-center">
+                      <span className="text-green-700 font-medium">✓ Tax Exempt</span>
+                      <span className="block text-xs text-green-600 mt-1">All taxes waived for this event</span>
+                    </div>
+                  ) : detailedTaxRows.length > 0 ? (
                     <>
-                      <div className="grid grid-cols-4 gap-2 font-semibold text-xs uppercase text-gray-500">
+                      <div className="grid grid-cols-3 gap-2 font-semibold text-xs uppercase text-gray-500">
                         <span>Tax</span>
-                        <span className="text-right">Basis</span>
-                        <span className="text-right">Effect</span>
+                        <span className="text-right">Rate</span>
                         <span className="text-right">Amount</span>
                       </div>
                       <div className="space-y-1">
@@ -14227,24 +14539,15 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                             ? (tax.fixedAmount != null ? `₵${Number(tax.fixedAmount).toFixed(2)}` : 'Fixed')
                             : (tax.rate != null ? `${tax.rate}%` : (tax.method === 'tiered' ? 'Tiered' : '—'));
                           const amountDisplay = `₵${Number(tax.amount || 0).toFixed(2)}`;
-                          const effectLabel = tax.effect === 'subtract'
-                            ? 'Subtract'
-                            : tax.effect === 'exclude_total'
-                              ? 'Exclude'
-                              : tax.effect === 'informational'
-                                ? 'Info'
-                                : 'Add';
                           return (
                             <div
                               key={`${tax.name}-${idx}`}
-                              className="grid grid-cols-4 gap-2 items-center text-xs md:text-sm"
+                              className="grid grid-cols-3 gap-2 items-center text-xs md:text-sm"
                             >
                               <span className="font-medium text-ghana-black">{tax.name}</span>
                               <span className="text-right text-gray-600">{basisLabel}</span>
-                              <span className="text-right text-gray-600">{effectLabel}</span>
                               <span className={`text-right font-medium ${tax.effect === 'subtract' ? 'text-red-600' : 'text-gray-800'}`}>
                                 {amountDisplay}
-                                {eventTaxExempt && <span className="ml-1 text-xs text-green-700">(exempt)</span>}
                               </span>
                             </div>
                           );
@@ -14252,7 +14555,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       </div>
                     </>
                   ) : (
-                    <div className="text-sm text-gray-500">No tax rules configured for the currently selected compliance country.</div>
+                    <div className="text-sm text-gray-500">
+                      No tax rules configured for {complianceCountry === 'GH' ? 'Ghana' : complianceCountry || 'the selected country'}. 
+                      <span className="block text-xs mt-1">Configure tax rules in Tax Management under Compliance & Reports.</span>
+                    </div>
                   )}
                 </div>
                 <div className="border-t pt-4">
@@ -14335,14 +14641,37 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 📞 Phase 6: Status & Communication
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-                <Select
-                  label={renderStatusLabel('Current Status', { key: 'invoiced', label: 'Invoiced', icon: '🧾' })}
-                  size="sm"
-                  selectedKeys={new Set(['invoiced'])}
-                  isDisabled
-                >
-                  <SelectItem key="invoiced">🧾 Invoiced</SelectItem>
-                </Select>
+                {/* Current Status - linked to Phase 2 event status */}
+                {isEditingInvoiceDetails || isCreatingInvoiceFromFolio ? (
+                  <Select
+                    label={renderStatusLabel('Current Status', { key: 'invoiced', label: 'Invoiced', icon: '🧾' })}
+                    size="sm"
+                    selectedKeys={new Set(['invoiced'])}
+                    isDisabled
+                    description="Locked during invoice editing"
+                  >
+                    <SelectItem key="invoiced">🧾 Invoiced</SelectItem>
+                  </Select>
+                ) : (
+                  <Select
+                    label={renderStatusLabel('Current Status', eventStatus ? { key: eventStatus, label: eventStatus.charAt(0).toUpperCase() + eventStatus.slice(1), icon: eventStatus === 'quote' ? '📝' : eventStatus === 'confirmed' ? '✅' : eventStatus === 'invoiced' ? '🧾' : '📋' } : undefined)}
+                    size="sm"
+                    selectedKeys={eventStatus ? new Set([eventStatus]) : new Set()}
+                    onSelectionChange={(keys) => {
+                      const selected = Array.from(keys)[0] as SimpleEventStatus;
+                      if (selected) setEventStatus(selected);
+                    }}
+                    isDisabled={isViewMode}
+                    description="Synced with Phase 2"
+                  >
+                    {PRE_EVENT_STATUS_OPTIONS.map(option => (
+                      <SelectItem key={option.key}>
+                        {option.icon ? `${option.icon} ` : ''}
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </Select>
+                )}
                 <Input
                   size="sm"
                   label="Next Action Required"
@@ -14373,9 +14702,61 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 />
                 <Card className="border border-dashed border-gray-200 bg-white h-full">
                   <CardHeader className="pb-2 pt-3 px-4">
-                    <p className="text-sm font-semibold text-ghana-black">Print Quote & Invoice</p>
+                    <p className="text-sm font-semibold text-ghana-black">
+                      {isEditingInvoiceDetails ? 'Print Invoice' : 'Print Quote & Invoice'}
+                    </p>
                   </CardHeader>
                   <CardBody className="pt-0 px-4 pb-4">
+                    {isEditingInvoiceDetails ? (
+                      <div className="space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-end sm:gap-3">
+                          <Select
+                            size="sm"
+                            label="Invoice Template"
+                            className="flex-1"
+                            selectedKeys={selectedInvoiceTemplate ? [selectedInvoiceTemplate] : []}
+                            onSelectionChange={(keys) => {
+                              const value = Array.from(keys)[0] as string | undefined;
+                              if (!value) return;
+                              setSelectedInvoiceTemplate(value);
+                              updatePrintingTemplates?.({ invoice: value });
+                            }}
+                            placeholder={invoiceTemplateOptions.length ? 'Choose template' : 'No templates available'}
+                          >
+                            {invoiceTemplateOptions.map((tpl) => (
+                              <SelectItem key={tpl.key}>{tpl.name}</SelectItem>
+                            ))}
+                          </Select>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            color="primary"
+                            className="flex-1"
+                            isDisabled={!invoiceTemplateOptions.length}
+                            onPress={() => {
+                              // Find the current invoice for this event
+                              const invoice = eventInvoices.find(inv => inv.eventId === editingEvent?.id);
+                              if (invoice) {
+                                handleDownloadInvoicePdf(invoice);
+                              } else {
+                                alert('Please save the invoice first before printing.');
+                              }
+                            }}
+                          >
+                            📄 Download PDF
+                          </Button>
+                          <Button
+                            size="sm"
+                            color="secondary"
+                            className="flex-1"
+                            onPress={handleExportEventXls}
+                          >
+                            📊 Export XLS
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
                     <Tabs
                       size="sm"
                       variant="underlined"
@@ -14432,6 +14813,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         </div>
                       </Tab>
                     </Tabs>
+                    )}
                   </CardBody>
                 </Card>
               </div>
@@ -14482,11 +14864,23 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <Button
                   color="primary"
                   isDisabled={eventSubmitting}
-                  onPress={handleEventSubmit}
+                  onPress={isEditingInvoiceDetails ? handleInvoiceDetailsSave : handleEventSubmit}
                 >
                   {eventSubmitting
-                    ? (isCreatingEvent ? 'Creating...' : isAdjustMode ? 'Adjusting...' : 'Updating...')
-                    : (isCreatingEvent ? 'Create Event' : isAdjustMode ? 'Adjust' : 'Update Event')}
+                    ? (isEditingInvoiceDetails
+                        ? 'Saving Invoice Details...'
+                        : isCreatingEvent
+                          ? 'Creating...'
+                          : isAdjustMode
+                            ? 'Adjusting...'
+                            : 'Updating...')
+                    : (isEditingInvoiceDetails
+                        ? 'Save Invoice Details'
+                        : isCreatingEvent
+                          ? 'Create Event'
+                          : isAdjustMode
+                            ? 'Adjust'
+                            : 'Update Event')}
                 </Button>
               </>
             )}
@@ -15884,96 +16278,152 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   if (!activeFolio || !activeFolio.eventId) {
                     return null;
                   }
-                  
+
                   const event = allEvents.find(e => e.id === activeFolio.eventId);
                   const invoice = eventInvoices.find((inv: EventInvoice) => inv.eventId === activeFolio.eventId);
                   const receipts = eventReceipts.filter((rec: EventReceipt) => rec.eventId === activeFolio.eventId);
-                  const budget = event ? getQuoteBudgetSnapshot(event) : null;
-                  const budgetTotal = budget ? budget.total : 0;
-                  
+
                   const invoiceExists = activeFolio.entries.some((e: EventFolioEntry) => e.reference === invoice?.id || e.description.includes(`Invoice ${invoice?.id}`));
-                  const budgetExists = activeFolio.entries.some((e: EventFolioEntry) => e.description.includes('Event Budget') || e.description.includes('Quote'));
                   const existingReceiptRefs = activeFolio.entries.map((e: EventFolioEntry) => e.reference).filter(Boolean);
                   const newReceipts = receipts.filter((rec: any) => !existingReceiptRefs.includes(rec.id));
-                  
-                  // Always show this section if there's an event (can create invoice or import items)
+                  const newReceiptsAmount = newReceipts.reduce((sum: number, r: any) => sum + r.amount, 0);
+
+                  // Load Proforma: Create invoice from event and import to folio in one click
+                  const handleLoadProforma = () => {
+                    if (!event) return;
+                    
+                    // Get budget/quote data from event
+                    const budget = getQuoteBudgetSnapshot(event);
+                    const budgetTotal = budget?.total || 0;
+                    const budgetSubtotal = budgetTotal / 1.125; // Assume 12.5% tax was included
+                    const budgetTax = budgetTotal - budgetSubtotal;
+                    
+                    // Create invoice from proforma
+                    const invoiceId = `INV-${Date.now().toString().slice(-6)}`;
+                    const newInvoice: EventInvoice = {
+                      id: invoiceId,
+                      eventId: event.id,
+                      eventName: event.name || activeFolio.eventName,
+                      clientName: event.organization || activeFolio.clientName,
+                      issueDate: new Date().toISOString().split('T')[0],
+                      dueDate: event.departureDate || new Date().toISOString().split('T')[0],
+                      subtotal: budgetSubtotal,
+                      tax: budgetTax,
+                      total: budgetTotal,
+                      balance: budgetTotal,
+                      status: 'Issued',
+                      notes: `Generated from proforma for ${event.name}`
+                    };
+
+                    // Add invoice to state
+                    setEventInvoices((prev: EventInvoice[]) => [...prev, newInvoice]);
+                    
+                    // Auto-import to folio
+                    syncInvoiceToFolio(newInvoice, false);
+                    
+                    trackEvent('Events.EventCreated', { action: 'proforma_loaded', invoiceId, eventId: event.id });
+                  };
+
+                  // Get proforma amount from event budget
+                  const proformaBudget = getQuoteBudgetSnapshot(event);
+                  const proformaAmount = proformaBudget?.total || 0;
+
                   return event ? (
-                    <Card className="border-2 border-blue-200 bg-blue-50">
+                    <Card className="border-2 border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50">
                       <CardHeader>
-                        <h4 className="font-semibold text-blue-800">📥 Quick Import & Create</h4>
-                        <p className="text-sm text-blue-600">Create invoices or import charges and payments from related documents</p>
+                        <div className="flex flex-col w-full gap-3">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <h4 className="font-semibold text-blue-800 flex items-center gap-2">
+                                <span className="text-xl">⚡</span>
+                                Quick Import & Create
+                              </h4>
+                              <p className="text-sm text-blue-600">Create invoices or import charges and payments</p>
+                            </div>
+                            <Badge color="primary" variant="flat" className="text-xs">{event.name}</Badge>
+                          </div>
+                          {/* Proforma and Invoice Amounts Display */}
+                          <div className="flex flex-wrap gap-3 p-3 bg-white/60 rounded-lg border border-blue-100">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-gray-500">📋 Proforma:</span>
+                              <span className="font-semibold text-blue-700">{formatCurrency(proformaAmount)}</span>
+                            </div>
+                            {invoice && (
+                              <>
+                                <div className="border-l border-gray-300 h-5"></div>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-gray-500">🧾 Invoice:</span>
+                                  <span className="font-semibold text-green-700">{formatCurrency(invoice.total)}</span>
+                                </div>
+                                {invoice.total !== proformaAmount && (
+                                  <>
+                                    <div className="border-l border-gray-300 h-5"></div>
+                                    <div className="flex items-center gap-2">
+                                      <span className="text-xs text-gray-500">Δ Difference:</span>
+                                      <span className={`font-semibold ${invoice.total > proformaAmount ? 'text-red-600' : 'text-green-600'}`}>
+                                        {invoice.total > proformaAmount ? '+' : ''}{formatCurrency(invoice.total - proformaAmount)}
+                                      </span>
+                                    </div>
+                                  </>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        </div>
                       </CardHeader>
                       <CardBody>
                         <div className="flex flex-wrap gap-2">
-                          {!invoice && (
-                            <Button
-                              size="sm"
-                              color="primary"
-                              variant="solid"
-                              onPress={() => {
-                                if (!activeFolio || !activeFolio.eventId) {
-                                  console.error('[Folio] Cannot create invoice: activeFolio or eventId is null');
-                                  alert('Folio or event not found. Please try again.');
-                                  return;
-                                }
-                                
-                                try {
-                                  // Find the event from the folio
-                                  const event = allEvents.find(e => e.id === activeFolio.eventId);
-                                  if (!event) {
-                                    alert('Event not found. Please ensure the event exists.');
-                                    return;
-                                  }
-                                  
-                                  console.log('[Folio] Opening event form to create invoice for event:', activeFolio.eventId);
-                                  // Open the event form in edit mode with invoice creation flag - the quote will become the invoice
-                                  openEventForEdit(event, false, true);
-                                  console.log('[Folio] Event form opened successfully');
-                                } catch (error) {
-                                  console.error('[Folio] Error opening event form:', error);
-                                  alert(`Failed to open event form: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                                }
-                              }}
+                          {/* Load Proforma - Creates invoice and imports to folio automatically */}
+                          {!invoice ? (
+                            <Button 
+                              size="sm" 
+                              color="primary" 
+                              variant="solid" 
+                              onPress={handleLoadProforma}
+                              startContent={<span>📋</span>}
                             >
-                              ➕ Create Invoice
+                              Load Proforma
                             </Button>
+                          ) : (
+                            <>
+                              {/* Show Import to Folio status after proforma is loaded */}
+                              <Button 
+                                size="sm" 
+                                color="success" 
+                                variant="flat" 
+                                isDisabled={true}
+                                startContent={<span>✅</span>}
+                              >
+                                Import to Folio (done)
+                              </Button>
+                              {/* Create/Edit Invoice button */}
+                              <Button 
+                                size="sm" 
+                                color="primary" 
+                                variant="solid" 
+                                onPress={() => openInvoiceDetailEdit(invoice)}
+                                startContent={<span>➕</span>}
+                              >
+                                Create/Edit Invoice
+                              </Button>
+                            </>
                           )}
-                          {invoice && (
-                            <Button
-                              size="sm"
-                              color="primary"
-                              variant="flat"
-                              onPress={() => importInvoiceToFolio(activeFolio)}
-                            >
-                              📄 Import Invoice ({formatCurrency(invoice.total)})
-                              {invoiceExists && <span className="ml-1 text-xs opacity-75">(exists)</span>}
-                            </Button>
-                          )}
-                          <Button
-                            size="sm"
-                            color="success"
-                            variant="solid"
-                            onPress={() => {
-                              // Record a new receipt for this event directly from the folio.
-                              // Pass an override with the current folio balance so the amount defaults correctly.
-                              const eventOverride = {
-                                ...event,
-                                balance: activeFolioBalance
-                              };
-                              openReceiptModal('create', undefined, eventOverride);
-                            }}
+                          <Button 
+                            size="sm" 
+                            color="success" 
+                            variant="solid" 
+                            onPress={() => openReceiptModal('create', undefined, { ...event, balance: Math.abs(activeFolioBalance) })}
                           >
                             ➕ Record Receipt
                           </Button>
-                          {receipts.length > 0 && (
-                            <Button
-                              size="sm"
-                              color="success"
-                              variant="flat"
+                          {newReceipts.length > 0 && (
+                            <Button 
+                              size="sm" 
+                              color="success" 
+                              variant="flat" 
                               onPress={() => importReceiptsToFolio(activeFolio)}
-                              isDisabled={newReceipts.length === 0}
                             >
-                              💳 Import Receipts ({newReceipts.length} new, {formatCurrency(newReceipts.reduce((sum, r) => sum + r.amount, 0))})
+                              💳 Import {newReceipts.length} Receipts ({formatCurrency(newReceiptsAmount)})
                             </Button>
                           )}
                         </div>
@@ -16343,115 +16793,272 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </div>
           </ModalHeader>
           <ModalBody className="py-6">
-            <div className="space-y-4">
-              <Input
-                label="Event"
-                value={invoiceForm.eventName || ''}
-                isReadOnly
-                variant="flat"
-              />
-              <Input
-                label="Client Name"
-                value={invoiceForm.clientName || ''}
-                onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, clientName: value }))}
-                isInvalid={!!invoiceErrors.clientName}
-                errorMessage={invoiceErrors.clientName}
-              />
-              <div className="grid grid-cols-2 gap-4">
-                <Input
-                  label="Issue Date"
-                  type="date"
-                  value={invoiceForm.issueDate || ''}
-                  onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, issueDate: value }))}
-                  isInvalid={!!invoiceErrors.issueDate}
-                  errorMessage={invoiceErrors.issueDate}
-                />
-                <Input
-                  label="Due Date"
-                  type="date"
-                  value={invoiceForm.dueDate || ''}
-                  onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, dueDate: value }))}
-                  isInvalid={!!invoiceErrors.dueDate}
-                  errorMessage={invoiceErrors.dueDate}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <Input
-                  label="Subtotal (₵)"
-                  type="number"
-                  value={invoiceForm.subtotal?.toString() || '0'}
-                  onValueChange={(value) => {
-                    const num = parseFloat(value) || 0;
-                    const tax = invoiceForm.tax || 0;
-                    const newTotal = num + tax;
-                    setInvoiceForm(prev => ({
-                      ...prev,
-                      subtotal: num,
-                      total: newTotal,
-                      balance: newTotal
-                    }));
-                  }}
-                  isInvalid={!!invoiceErrors.subtotal}
-                  errorMessage={invoiceErrors.subtotal}
-                />
-                <Input
-                  label="Tax (₵)"
-                  type="number"
-                  value={invoiceForm.tax?.toString() || '0'}
-                  onValueChange={(value) => {
-                    const num = parseFloat(value) || 0;
-                    setInvoiceForm(prev => ({
-                      ...prev,
-                      tax: num,
-                      total: (prev.subtotal || 0) + num,
-                      balance: (prev.subtotal || 0) + num
-                    }));
-                  }}
-                  isInvalid={!!invoiceErrors.tax}
-                  errorMessage={invoiceErrors.tax}
-                />
-              </div>
-              <Input
-                label="Total (₵)"
-                type="number"
-                value={invoiceForm.total?.toString() || '0'}
-                onValueChange={(value) => {
-                  const num = parseFloat(value) || 0;
-                  setInvoiceForm(prev => ({ ...prev, total: num, balance: num }));
-                }}
-                isInvalid={!!invoiceErrors.total}
-                errorMessage={invoiceErrors.total}
-              />
-              <Input
-                label="Balance (₵)"
-                type="number"
-                value={invoiceForm.balance?.toString() || '0'}
-                onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, balance: parseFloat(value) || 0 }))}
-                isInvalid={!!invoiceErrors.balance}
-                errorMessage={invoiceErrors.balance}
-              />
-              <Input
-                label="Reference (Optional)"
-                value={invoiceForm.reference || ''}
-                onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, reference: value }))}
-                placeholder="Invoice reference number"
-              />
-              <Textarea
-                label="Notes (Optional)"
-                value={invoiceForm.notes || ''}
-                onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, notes: value }))}
-                placeholder="Additional notes"
-                minRows={3}
-              />
+            <div className="space-y-6">
+              {/* Header Section */}
+              <Card className="border border-gray-200">
+                <CardHeader>
+                  <h4 className="font-semibold text-gray-800">Invoice Details</h4>
+                </CardHeader>
+                <CardBody className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Input
+                      label="Invoice Number"
+                      placeholder="INV-123456"
+                      value={invoiceForm.id || ''}
+                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, id: value }))}
+                      isInvalid={!!invoiceErrors.id}
+                      errorMessage={invoiceErrors.id}
+                    />
+                    <Input
+                      label="Reference (Optional)"
+                      value={invoiceForm.reference || ''}
+                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, reference: value }))}
+                      placeholder="PO number or reference"
+                    />
+                  </div>
+                  <Input
+                    label="Event"
+                    value={invoiceForm.eventName || ''}
+                    isReadOnly
+                    variant="flat"
+                    description="Linked to selected event"
+                  />
+                  <Input
+                    label="Client Name"
+                    value={invoiceForm.clientName || ''}
+                    onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, clientName: value }))}
+                    isInvalid={!!invoiceErrors.clientName}
+                    errorMessage={invoiceErrors.clientName}
+                  />
+                  <div className="grid grid-cols-2 gap-4">
+                    <Input
+                      label="Issue Date"
+                      type="date"
+                      value={invoiceForm.issueDate || ''}
+                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, issueDate: value }))}
+                      isInvalid={!!invoiceErrors.issueDate}
+                      errorMessage={invoiceErrors.issueDate}
+                    />
+                    <Input
+                      label="Due Date"
+                      type="date"
+                      value={invoiceForm.dueDate || ''}
+                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, dueDate: value }))}
+                      isInvalid={!!invoiceErrors.dueDate}
+                      errorMessage={invoiceErrors.dueDate}
+                    />
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* Financial Section */}
+              <Card className="border border-gray-200">
+                <CardHeader>
+                  <h4 className="font-semibold text-gray-800">Financial Details</h4>
+                </CardHeader>
+                <CardBody className="space-y-4">
+                  {/* Amount Breakdown */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Input
+                      label="Subtotal (₵)"
+                      type="number"
+                      value={invoiceForm.subtotal?.toString() || '0'}
+                      onValueChange={(value) => {
+                        const num = parseFloat(value) || 0;
+                        const tax = invoiceForm.tax || 0;
+                        const newTotal = num + tax;
+                        setInvoiceForm(prev => ({
+                          ...prev,
+                          subtotal: num,
+                          total: newTotal,
+                          balance: newTotal
+                        }));
+                      }}
+                      isInvalid={!!invoiceErrors.subtotal}
+                      errorMessage={invoiceErrors.subtotal}
+                      startContent={<span className="text-gray-500">₵</span>}
+                    />
+                    <Input
+                      label="Tax (₵)"
+                      type="number"
+                      value={invoiceForm.tax?.toString() || '0'}
+                      onValueChange={(value) => {
+                        const num = parseFloat(value) || 0;
+                        const subtotal = invoiceForm.subtotal || 0;
+                        const newTotal = subtotal + num;
+                        setInvoiceForm(prev => ({
+                          ...prev,
+                          tax: num,
+                          total: newTotal,
+                          balance: newTotal
+                        }));
+                      }}
+                      isInvalid={!!invoiceErrors.tax}
+                      errorMessage={invoiceErrors.tax}
+                      startContent={<span className="text-gray-500">₵</span>}
+                    />
+                  </div>
+
+                  {/* Total and Balance */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-medium text-gray-700">Total Amount:</span>
+                        <span className="text-lg font-bold text-gray-900">
+                          ₵{formatCurrency(invoiceForm.total || 0)}
+                        </span>
+                      </div>
+                      <div className="text-xs text-gray-500 mt-1">
+                        Subtotal: ₵{formatCurrency(invoiceForm.subtotal || 0)} +
+                        Tax: ₵{formatCurrency(invoiceForm.tax || 0)}
+                      </div>
+                    </div>
+                    <Input
+                      label="Outstanding Balance (₵)"
+                      type="number"
+                      value={invoiceForm.balance?.toString() || '0'}
+                      onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, balance: parseFloat(value) || 0 }))}
+                      isInvalid={!!invoiceErrors.balance}
+                      errorMessage={invoiceErrors.balance}
+                      description="Amount still owed by client"
+                      startContent={<span className="text-gray-500">₵</span>}
+                    />
+                  </div>
+                </CardBody>
+              </Card>
+
+              {/* Notes & Status Section */}
+              <Card className="border border-gray-200">
+                <CardHeader>
+                  <h4 className="font-semibold text-gray-800">Notes & Status</h4>
+                </CardHeader>
+                <CardBody className="space-y-4">
+                  <Textarea
+                    label="Invoice Notes"
+                    value={invoiceForm.notes || ''}
+                    onValueChange={(value) => setInvoiceForm(prev => ({ ...prev, notes: value }))}
+                    placeholder="Payment terms, special instructions, or additional notes"
+                    minRows={3}
+                  />
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <Select
+                      label="Invoice Status"
+                      selectedKeys={invoiceForm.status ? [invoiceForm.status] : []}
+                      onSelectionChange={(keys) => {
+                        const selected = Array.from(keys)[0] as EventInvoiceStatus;
+                        setInvoiceForm(prev => ({ ...prev, status: selected }));
+                      }}
+                      description="Current status of this invoice"
+                    >
+                      <SelectItem key="Draft">
+                        <div className="flex items-center gap-2">
+                          <span>📝</span>
+                          <span>Draft</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem key="Issued">
+                        <div className="flex items-center gap-2">
+                          <span>📤</span>
+                          <span>Issued</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem key="Paid">
+                        <div className="flex items-center gap-2">
+                          <span>✅</span>
+                          <span>Paid</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem key="Partial">
+                        <div className="flex items-center gap-2">
+                          <span>💰</span>
+                          <span>Partial</span>
+                        </div>
+                      </SelectItem>
+                      <SelectItem key="Overdue">
+                        <div className="flex items-center gap-2">
+                          <span>⚠️</span>
+                          <span>Overdue</span>
+                        </div>
+                      </SelectItem>
+                    </Select>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-gray-700">Quick Actions</label>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="primary"
+                          onPress={() => {
+                            const event = allEvents.find(ev => ev.id === invoiceForm.eventId);
+                            if (event) {
+                              openEventForEdit(event, false, false);
+                            }
+                          }}
+                        >
+                          View Event
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="secondary"
+                          onPress={() => {
+                            const details = `Invoice: ${invoiceForm.id}\nClient: ${invoiceForm.clientName}\nAmount: ₵${invoiceForm.total}\nDue: ${invoiceForm.dueDate}`;
+                            navigator.clipboard.writeText(details);
+                          }}
+                        >
+                          Copy Details
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Status Badge */}
+                  {invoiceForm.status && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-600">Status:</span>
+                      <Badge
+                        color={
+                          invoiceForm.status === 'Paid' ? 'success' :
+                          invoiceForm.status === 'Partial' ? 'warning' :
+                          invoiceForm.status === 'Overdue' ? 'danger' :
+                          invoiceForm.status === 'Issued' ? 'primary' : 'default'
+                        }
+                        variant="flat"
+                      >
+                        {invoiceForm.status}
+                      </Badge>
+                      {invoiceForm.status === 'Paid' && (
+                        <span className="text-xs text-green-600">🎉 Fully paid</span>
+                      )}
+                      {invoiceForm.status === 'Overdue' && (
+                        <span className="text-xs text-red-600">⚠️ Requires attention</span>
+                      )}
+                    </div>
+                  )}
+                </CardBody>
+              </Card>
             </div>
           </ModalBody>
           <ModalFooter>
-            <Button color="default" variant="flat" onPress={() => setIsInvoiceModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button color="primary" onPress={handleInvoiceSave}>
-              {invoiceModalMode === 'edit' ? 'Update Invoice' : 'Create Invoice'}
-            </Button>
+            <div className="flex justify-between items-center w-full">
+              <div className="text-xs text-gray-500">
+                {invoiceModalMode === 'edit' ? 'Update existing invoice' : 'Create new invoice for event'}
+              </div>
+              <div className="flex gap-2">
+                <Button color="default" variant="flat" onPress={() => setIsInvoiceModalOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  color="primary"
+                  onPress={handleInvoiceSave}
+                  startContent={<span>💾</span>}
+                >
+                  {invoiceModalMode === 'edit' ? 'Update Invoice' : 'Create Invoice'}
+                </Button>
+              </div>
+            </div>
           </ModalFooter>
         </ModalContent>
       </Modal>
