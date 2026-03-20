@@ -221,6 +221,13 @@ export interface Invoice {
   // Tax scheme selection
   taxScheme?: 'GH_STANDARD' | 'FLAT' | 'NONE';
   flatRatePercent?: number;
+  // WHT Tracking - for invoices where customer withholds tax
+  whtExpected?: number; // Expected WHT amount (5% of subtotal)
+  whtVatExpected?: number; // Expected WHT-VAT amount (7% of VAT)
+  whtReceived?: number; // WHT certificate amount received
+  whtVatReceived?: number; // WHT-VAT certificate amount received
+  whtCertificateIds?: string[]; // IDs of linked WHT certificates
+  whtStatus?: 'N/A' | 'Pending' | 'Partial' | 'Complete'; // WHT certificate status
 }
 
 // Invoice Line
@@ -254,11 +261,16 @@ export interface Payment {
   amount: number;
   currency: string;
   exchangeRate?: number;
-  paymentMethod: 'Cash' | 'Bank' | 'Check' | 'Card' | 'Mobile Money';
+  paymentMethod: 'Cash' | 'Bank' | 'Check' | 'Card' | 'Mobile Money' | 'WHT Certificate';
   bankAccountId?: string;
   checkNumber?: string;
   status: 'Draft' | 'Posted' | 'Void';
   journalEntryId?: string;
+  // WHT Certificate fields (for payments with withheld tax)
+  isWHTCertificate?: boolean;
+  whtCertificateId?: string; // Link to WHTCertificate record
+  whtAmount?: number; // Amount of WHT (5% of subtotal)
+  whtVatAmount?: number; // Amount of WHT-VAT (7% of VAT)
   // Receipt acknowledgement & files
   receivedBy?: string;
   receiverContact?: string;
@@ -271,6 +283,41 @@ export interface Payment {
   pdfFileName?: string;
   pdfGeneratedAt?: string;
   pdfGeneratedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// WHT Certificate - Proof of withholding tax payment from GRA
+export interface WHTCertificate {
+  id: string;
+  certificateNumber: string; // GRA certificate number
+  date: string; // Date certificate was issued
+  receivedDate: string; // Date company received the certificate
+  withholdingAgentName: string; // Name of customer/payer who withheld
+  withholdingAgentTIN: string; // Tax Identification Number of withholding agent
+  taxPeriod: string; // e.g., "January 2026", "Q1 2026"
+  invoiceId?: string; // Linked invoice
+  invoiceNumber?: string;
+  // Amounts
+  grossAmount: number; // Original invoice amount
+  whtRate: number; // Typically 5%
+  whtAmount: number; // WHT withheld
+  whtVatRate?: number; // Typically 7%
+  whtVatAmount?: number; // WHT-VAT withheld
+  totalWithheld: number; // whtAmount + whtVatAmount
+  // Status
+  status: 'Pending' | 'Received' | 'Verified' | 'Filed' | 'Used';
+  // GL Entries
+  journalEntryId?: string;
+  // Tax credit tracking
+  taxCreditAccountCode?: string; // GL code for WHT receivable/credit
+  taxCreditUsedAmount?: number; // Amount already used as tax credit
+  taxCreditBalance?: number; // Remaining credit balance
+  // Metadata
+  verifiedBy?: string;
+  verifiedDate?: string;
+  notes?: string;
+  attachments?: string[]; // Scanned certificate files
   createdAt: string;
   updatedAt: string;
 }
@@ -473,6 +520,8 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '1200', name: 'Accounts Receivable', type: 'Asset', category: 'Current Assets', level: 2 },
   { code: '1210', name: 'Guest Accounts Receivable', type: 'Asset', category: 'Current Assets', level: 3 },
   { code: '1220', name: 'Other Receivables', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1230', name: 'WHT Receivable', type: 'Asset', category: 'Current Assets', level: 3, description: 'Withholding tax credits from GRA certificates' },
+  { code: '1240', name: 'WHT-VAT Receivable', type: 'Asset', category: 'Current Assets', level: 3, description: 'Withholding VAT credits from GRA certificates' },
   { code: '1300', name: 'Inventory', type: 'Asset', category: 'Current Assets', level: 2 },
   { code: '1310', name: 'Food and Beverage Inventory', type: 'Asset', category: 'Current Assets', level: 3 },
   { code: '1320', name: 'Housekeeping Supplies', type: 'Asset', category: 'Current Assets', level: 3 },

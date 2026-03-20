@@ -75,6 +75,39 @@ const PAYMENT_GL_MAP: Record<string, string> = {
 
 export type DepartmentSource = 'front_office' | 'restaurant' | 'bar' | 'room_service' | 'conference' | 'spa' | 'other';
 
+export interface ProformaTransaction {
+  id: string;
+  source: DepartmentSource;
+  customerId?: string;
+  customerName: string;
+  customerEmail?: string;
+  customerPhone?: string;
+  reference?: string;
+  description: string;
+  items: {
+    description: string;
+    quantity: number;
+    unitPrice: number;
+    taxPercent?: number;
+  }[];
+  subtotal: number;
+  taxAmount: number;
+  total: number;
+  currency?: string;
+  validUntil?: string;
+  date?: string;
+  staffId?: string;
+  staffName?: string;
+  staffRole?: string;
+  // Additional metadata
+  eventId?: string;
+  reservationId?: string;
+  pax?: number;
+  checkIn?: string;
+  checkOut?: string;
+  venue?: string;
+}
+
 export interface RevenueTransaction {
   id: string;
   source: DepartmentSource;
@@ -95,6 +128,10 @@ export interface RevenueTransaction {
   total: number;
   currency?: string;
   date?: string;
+  // Staff tracking
+  staffId?: string;
+  staffName?: string;
+  staffRole?: string;
 }
 
 export interface PaymentTransaction {
@@ -108,6 +145,10 @@ export interface PaymentTransaction {
   description?: string;
   currency?: string;
   date?: string;
+  // Staff tracking
+  staffId?: string;
+  staffName?: string;
+  staffRole?: string;
 }
 
 /**
@@ -226,6 +267,17 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
       glAccountCode: revenueGLAccount,
     }));
     
+    // Calculate tax breakdown if tax exists
+    const taxBreakdown = transaction.taxAmount > 0 ? (() => {
+      const subtotal = transaction.subtotal;
+      return [
+        { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: subtotal * 0.025 },
+        { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: subtotal * 0.025 },
+        { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: subtotal * 0.01 },
+        { code: 'VAT', name: 'VAT', rate: 15.0, amount: subtotal * 0.15 },
+      ];
+    })() : [];
+    
     const invoice = {
       id: invoiceId,
       invoiceNumber,
@@ -238,17 +290,23 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
       subtotal: transaction.subtotal,
       taxAmount: transaction.taxAmount,
       total: transaction.total,
+      taxBreakdown, // Store tax breakdown for display
       currency: transaction.currency || 'GHS',
       status: 'Posted' as const,
       paidAmount: 0,
       createdAt: now,
       updatedAt: now,
       lines: invoiceLines,
+      items: transaction.items, // Store original items for display
       // Extended fields for tracking
       sourceModule: transaction.source,
       customerName: transaction.customerName,
       customerEmail: transaction.customerEmail,
       customerPhone: transaction.customerPhone,
+      // Staff who processed the transaction
+      staffId: transaction.staffId,
+      staffName: transaction.staffName,
+      staffRole: transaction.staffRole,
     };
     
     store.addInvoice(invoice as any);
@@ -324,9 +382,10 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
       id: `AT-${Date.now()}`,
       tableName: 'AccountingIntegration',
       recordId: invoiceId,
-      action: 'RevenueCapture',
+      action: 'Create',
       oldValues: null as any,
       newValues: {
+        type: 'RevenueCapture',
         source: transaction.source,
         invoiceId,
         journalEntryId,
@@ -343,6 +402,239 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
     
   } catch (error) {
     console.error('[Accounting Integration] ❌ Error capturing revenue:', error);
+    return null;
+  }
+}
+
+/**
+ * Generate a unique proforma number
+ */
+function generateProformaNumber(source: DepartmentSource): string {
+  const prefixes: Record<DepartmentSource, string> = {
+    front_office: 'PRO-FO',
+    restaurant: 'PRO-REST',
+    bar: 'PRO-BAR',
+    room_service: 'PRO-RS',
+    conference: 'PRO-CONF',
+    spa: 'PRO-SPA',
+    other: 'PRO',
+  };
+  const prefix = prefixes[source] || 'PRO';
+  const year = new Date().getFullYear();
+  const timestamp = Date.now().toString().slice(-6);
+  return `${prefix}-${year}-${timestamp}`;
+}
+
+/**
+ * PROFORMA FUNCTION: Capture proforma/quote
+ * 
+ * This function is called when a proforma invoice or quote is created.
+ * It automatically:
+ * 1. Creates a Proforma Invoice (not yet revenue - just a quote)
+ * 2. Adds to audit trail
+ * 
+ * Note: Proformas do NOT post to GL until converted to actual invoices
+ */
+export function captureProforma(transaction: ProformaTransaction): { proformaId: string } | null {
+  const store = useAccountingStore.getState();
+  const now = new Date().toISOString();
+  const transactionDate = transaction.date || now;
+  
+  console.log(`[Accounting Integration] Capturing proforma from ${transaction.source}:`, {
+    customer: transaction.customerName,
+    total: transaction.total,
+    reference: transaction.reference,
+    eventId: transaction.eventId,
+    reservationId: transaction.reservationId,
+  });
+  
+  try {
+    const proformaId = `PRO-${transaction.source.toUpperCase()}-${Date.now()}`;
+    const proformaNumber = generateProformaNumber(transaction.source);
+    
+    const proformaLines = transaction.items.map((item, idx) => ({
+      id: `PL-${Date.now()}-${idx}`,
+      invoiceId: proformaId,
+      description: item.description,
+      quantity: item.quantity,
+      unitPrice: item.unitPrice,
+      amount: +(item.quantity * item.unitPrice).toFixed(2),
+      taxAmount: +((item.quantity * item.unitPrice * (item.taxPercent || 0)) / 100).toFixed(2),
+    }));
+    
+    const proforma = {
+      id: proformaId,
+      invoiceNumber: proformaNumber,
+      type: 'Sales' as const,
+      isProforma: true,
+      date: transactionDate,
+      dueDate: transaction.validUntil || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      businessPartnerId: transaction.customerId || `GUEST-${Date.now()}`,
+      reference: transaction.reference,
+      description: transaction.description,
+      subtotal: transaction.subtotal,
+      taxAmount: transaction.taxAmount,
+      total: transaction.total,
+      currency: transaction.currency || 'GHS',
+      status: 'Draft' as const,
+      paidAmount: 0,
+      createdAt: now,
+      updatedAt: now,
+      lines: proformaLines,
+      // Extended fields
+      sourceModule: transaction.source,
+      customerName: transaction.customerName,
+      customerEmail: transaction.customerEmail,
+      customerPhone: transaction.customerPhone,
+      staffId: transaction.staffId,
+      staffName: transaction.staffName,
+      staffRole: transaction.staffRole,
+      // Proforma-specific metadata
+      eventId: transaction.eventId,
+      reservationId: transaction.reservationId,
+      pax: transaction.pax,
+      checkIn: transaction.checkIn,
+      checkOut: transaction.checkOut,
+      venue: transaction.venue,
+    };
+    
+    store.addInvoice(proforma as any);
+    console.log(`[Accounting Integration] Created Proforma: ${proformaNumber}`);
+    
+    // Add Audit Trail
+    store.addAuditTrail({
+      id: `AT-${Date.now()}`,
+      tableName: 'AccountingIntegration',
+      recordId: proformaId,
+      action: 'Create',
+      oldValues: null as any,
+      newValues: {
+        type: 'ProformaCapture',
+        source: transaction.source,
+        proformaId,
+        total: transaction.total,
+        customer: transaction.customerName,
+        eventId: transaction.eventId,
+        reservationId: transaction.reservationId,
+      },
+      userId: transaction.staffId || 'system',
+      timestamp: now,
+    });
+    
+    console.log(`[Accounting Integration] ✅ Proforma capture complete for ${transaction.customerName}: GHS ${transaction.total.toLocaleString()}`);
+    
+    return { proformaId };
+    
+  } catch (error) {
+    console.error('[Accounting Integration] ❌ Error capturing proforma:', error);
+    return null;
+  }
+}
+
+/**
+ * Convert proforma to sales invoice
+ * Called when a proforma is confirmed and becomes an actual invoice
+ */
+export function convertProformaToInvoice(proformaId: string): { invoiceId: string; journalEntryId: string } | null {
+  const store = useAccountingStore.getState();
+  const now = new Date().toISOString();
+  
+  const proforma = store.invoices.find((inv: any) => inv.id === proformaId && inv.isProforma);
+  if (!proforma) {
+    console.error('[Accounting Integration] Proforma not found:', proformaId);
+    return null;
+  }
+  
+  console.log(`[Accounting Integration] Converting proforma to invoice:`, proformaId);
+  
+  try {
+    // Update proforma to regular invoice
+    const source = (proforma as any).sourceModule || 'other';
+    const revenueGLAccount = getRevenueGLAccount(source);
+    const revenueCenterCode = getRevenueCenterCode(source);
+    
+    store.updateInvoice(proformaId, {
+      isProforma: false,
+      status: 'Posted',
+      updatedAt: now,
+      invoiceNumber: (proforma as any).invoiceNumber?.replace('PRO-', 'INV-') || `INV-${Date.now()}`,
+    } as any);
+    
+    // Record to Revenue Center
+    store.recordRevenue(revenueCenterCode, proforma.subtotal);
+    
+    // Create Journal Entry (Dr: AR, Cr: Revenue)
+    const journalEntryId = `JE-CONV-${Date.now()}`;
+    const journalEntry = {
+      id: journalEntryId,
+      entryNumber: `JE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`,
+      date: now,
+      description: `Proforma converted to Invoice: ${(proforma as any).description}`,
+      reference: proformaId,
+      status: 'Posted' as const,
+      lines: [
+        {
+          id: `JL-${Date.now()}-1`,
+          journalEntryId,
+          accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+          description: `AR - ${(proforma as any).description}`,
+          debit: proforma.total,
+          credit: 0,
+          costCenter: revenueCenterCode,
+        },
+        {
+          id: `JL-${Date.now()}-2`,
+          journalEntryId,
+          accountCode: revenueGLAccount,
+          description: `Revenue - ${(proforma as any).description}`,
+          debit: 0,
+          credit: proforma.subtotal,
+          costCenter: revenueCenterCode,
+        },
+      ],
+      totalDebit: proforma.total,
+      totalCredit: proforma.total,
+      createdBy: 'system',
+      postedBy: 'system',
+      postedAt: now,
+      createdAt: now,
+      updatedAt: now,
+      sourceModule: source,
+      sourceTransactionId: proformaId,
+    };
+    
+    if (proforma.taxAmount && proforma.taxAmount > 0) {
+      (journalEntry.lines as any[]).push({
+        id: `JL-${Date.now()}-3`,
+        journalEntryId,
+        accountCode: GL_ACCOUNTS.VAT_PAYABLE,
+        description: `Tax Payable - ${(proforma as any).description}`,
+        debit: 0,
+        credit: proforma.taxAmount,
+        costCenter: revenueCenterCode,
+      });
+    }
+    
+    store.addJournalEntry(journalEntry as any);
+    
+    // Audit Trail
+    store.addAuditTrail({
+      id: `AT-${Date.now()}`,
+      tableName: 'AccountingIntegration',
+      recordId: proformaId,
+      action: 'Update',
+      oldValues: { isProforma: true, status: 'Draft' },
+      newValues: { type: 'ProformaConversion', isProforma: false, status: 'Posted', journalEntryId },
+      userId: 'system',
+      timestamp: now,
+    });
+    
+    console.log(`[Accounting Integration] ✅ Proforma converted: ${proformaId} → Invoice posted`);
+    
+    return { invoiceId: proformaId, journalEntryId };
+    
+  } catch (error) {
+    console.error('[Accounting Integration] ❌ Error converting proforma:', error);
     return null;
   }
 }
@@ -394,26 +686,61 @@ export function capturePayment(
       updatedAt: now,
       sourceModule: source,
       customerName: transaction.customerName,
+      // Staff who processed the payment
+      staffId: transaction.staffId,
+      staffName: transaction.staffName,
+      staffRole: transaction.staffRole,
     };
     
     store.addPayment(receipt as any);
     console.log(`[Accounting Integration] Created Receipt: ${receiptNumber}`);
     
     // 2. Update Invoice paid amount if linked
+    // Try to find invoice by ID first, then by reference (for event bookings)
+    const invoices = store.invoices;
+    let invoice = null;
+    
     if (transaction.invoiceId) {
-      const invoices = store.invoices;
-      const invoice = invoices.find((inv: any) => inv.id === transaction.invoiceId);
-      if (invoice) {
-        const newPaidAmount = (invoice.paidAmount || 0) + transaction.amount;
-        const newStatus = newPaidAmount >= invoice.total ? 'Paid' : invoice.status;
-        store.updateInvoice(invoice.id, {
-          paidAmount: newPaidAmount,
-          status: newStatus as any,
-          paidDate: newPaidAmount >= invoice.total ? now : undefined,
-          updatedAt: now,
-        });
-        console.log(`[Accounting Integration] Updated Invoice ${invoice.invoiceNumber}: Paid ${newPaidAmount}/${invoice.total}`);
+      invoice = invoices.find((inv: any) => inv.id === transaction.invoiceId);
+    }
+    
+    // If not found by ID, try to find by reference (common for conference/event payments)
+    if (!invoice && transaction.reference) {
+      invoice = invoices.find((inv: any) => 
+        inv.reference === transaction.reference || 
+        (inv as any).eventId === transaction.reference ||
+        inv.id.includes(transaction.reference)
+      );
+    }
+    
+    // Also try to find by customer for partial matching
+    if (!invoice && transaction.customerId) {
+      const customerInvoices = invoices.filter((inv: any) => 
+        inv.businessPartnerId === transaction.customerId &&
+        inv.type === 'Sales' &&
+        (inv.paidAmount || 0) < inv.total
+      );
+      // Get the oldest unpaid invoice for this customer
+      if (customerInvoices.length > 0) {
+        invoice = customerInvoices.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())[0];
       }
+    }
+    
+    if (invoice) {
+      const newPaidAmount = (invoice.paidAmount || 0) + transaction.amount;
+      const newStatus = newPaidAmount >= invoice.total ? 'Paid' : invoice.status;
+      store.updateInvoice(invoice.id, {
+        paidAmount: newPaidAmount,
+        status: newStatus as any,
+        paidDate: newPaidAmount >= invoice.total ? now : undefined,
+        updatedAt: now,
+      });
+      console.log(`[Accounting Integration] Updated Invoice ${(invoice as any).invoiceNumber}: Paid ${newPaidAmount}/${invoice.total}`);
+      
+      // Update receipt with actual invoice ID
+      store.updatePayment(receiptId, { invoiceId: invoice.id } as any);
+    } else if (transaction.invoiceId || transaction.reference) {
+      console.warn(`[Accounting Integration] ⚠ Could not find invoice to link payment. InvoiceID: ${transaction.invoiceId}, Ref: ${transaction.reference}`);
     }
     
     // 3. Create Journal Entry (Dr: Cash/Bank, Cr: AR)
@@ -469,9 +796,10 @@ export function capturePayment(
       id: `AT-${Date.now()}`,
       tableName: 'AccountingIntegration',
       recordId: receiptId,
-      action: 'PaymentCapture',
+      action: 'Create',
       oldValues: null as any,
       newValues: {
+        type: 'PaymentCapture',
         source,
         receiptId,
         journalEntryId,

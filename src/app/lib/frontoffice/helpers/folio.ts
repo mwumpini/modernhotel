@@ -113,7 +113,7 @@ export function updateFolioBalances(self: StoreLike, folio: Folio) {
  * ACCOUNTING INTEGRATION:
  * Automatically captures revenue to AR, creates Sales Invoice, and posts GL entries.
  */
-export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: string; description: string; amount: number; date?: string; tax?: number; category?: string; reference?: string }) {
+export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: string; description: string; amount: number; date?: string; tax?: number; category?: string; reference?: string; staffId?: string; staffName?: string; }) {
 	const folio = getFolioById(self, folioId);
 	if (!folio) return;
 	
@@ -161,6 +161,10 @@ export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: s
 			taxAmount: tax,
 			total: charge.amount + tax,
 			date: charge.date,
+			// Staff who processed the charge
+			staffId: charge.staffId,
+			staffName: charge.staffName,
+			staffRole: 'Front Desk Agent',
 		});
 		
 		if (result) {
@@ -374,6 +378,7 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 	creditApplied?: number;
 	notes?: string;
 	processedBy?: string;
+	staffId?: string;
 	ref?: string;
 }) {
 	const f = getOrCreateFolio(self, reservationId);
@@ -416,6 +421,10 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 			paymentMethod: accountingMethod as any,
 			reference: options?.ref || reservationId,
 			description: options?.notes || `Payment from ${guestName}`,
+			// Staff who processed the payment
+			staffId: options?.staffId,
+			staffName: options?.processedBy || 'Front Desk',
+			staffRole: 'Front Desk Agent',
 		}, 'front_office');
 		
 		if (result) {

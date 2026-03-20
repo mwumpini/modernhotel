@@ -712,6 +712,14 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         // Calculate tax breakdown
         const taxPercent = ((vatAmount + nhilAmount + getFundAmount + tourismLevy) / subtotal) * 100;
         
+        // Get current waiter/staff info
+        const currentWaiter = waiters.find(w => w.id === waiterId);
+        const staffInfo = {
+          staffId: waiterId,
+          staffName: currentWaiter?.name || waiterId,
+          staffRole: venue === 'Bar' ? 'Bartender' : 'Waiter/Cashier',
+        };
+        
         const result = captureCompleteSale(
           {
             id: newId,
@@ -729,6 +737,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             subtotal: subtotal,
             taxAmount: vatAmount + nhilAmount + getFundAmount + tourismLevy,
             total: total,
+            // Staff tracking
+            ...staffInfo,
           },
           {
             id: `PAY-${newId}`,
@@ -737,6 +747,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             paymentMethod: accountingPaymentMethod,
             reference: newId,
             description: `Payment for ${venue} order ${newId}`,
+            // Staff tracking
+            ...staffInfo,
           }
         );
         

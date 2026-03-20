@@ -55,7 +55,7 @@ import { openPrintPreview } from '../lib/print/engine';
 import { listTemplates } from '../lib/print/templates';
 import { useSettingsStore } from '../lib/settings/store';
 import { useAccountingStore } from '../lib/accounting/store';
-import { captureRevenue, capturePayment } from '../lib/accounting/integration';
+import { captureRevenue, capturePayment, captureProforma } from '../lib/accounting/integration';
 
 type VenueStatus = 'available' | 'booked' | 'setup' | 'maintenance';
 
@@ -4393,6 +4393,55 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     }
     openPrintPreview('proforma', templateKey, data as any);
     trackEvent('Events.EventCreated', { action: 'quote_pdf_generated', templateKey, eventName });
+    
+    // ===== CAPTURE PROFORMA TO ACCOUNTING =====
+    try {
+      const totals = computeQuoteTotals();
+      const eventId = editingEvent?.id || `EVT-${Date.now()}`;
+      const proformaResult = captureProforma({
+        id: `PRO-${eventId}-${Date.now()}`,
+        source: 'conference',
+        customerId: orgClientId || `client_${eventId}`,
+        customerName: orgName || 'Conference Client',
+        customerEmail: orgClientEmail || undefined,
+        customerPhone: orgContactPhone || undefined,
+        reference: eventId,
+        description: `Proforma for ${eventName || 'Conference Event'}`,
+        items: quoteDays.flatMap(day => day.services.map(svc => ({
+          description: `${day.label} - ${svc.name}`,
+          quantity: svc.qty,
+          unitPrice: svc.unitPrice,
+          taxPercent: 0,
+        }))).length > 0 ? quoteDays.flatMap(day => day.services.map(svc => ({
+          description: `${day.label} - ${svc.name}`,
+          quantity: svc.qty,
+          unitPrice: svc.unitPrice,
+          taxPercent: 0,
+        }))) : [{
+          description: eventName || 'Conference Services',
+          quantity: 1,
+          unitPrice: totals.subtotal,
+          taxPercent: totals.tax > 0 ? (totals.tax / totals.subtotal) * 100 : 0,
+        }],
+        subtotal: totals.subtotal,
+        taxAmount: totals.tax,
+        total: totals.total,
+        validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        eventId: eventId,
+        pax: expectedPax || 0,
+        checkIn: startDate || undefined,
+        checkOut: endDate || undefined,
+        venue: modernVenues.find(v => v.id === venueKey)?.name || undefined,
+        staffName: 'Events Team',
+        staffRole: 'Events Coordinator',
+      });
+      
+      if (proformaResult) {
+        console.log(`[Events] ✅ Proforma captured to AR: ${proformaResult.proformaId}`);
+      }
+    } catch (error) {
+      console.error('[Events] ❌ Failed to capture proforma:', error);
+    }
   };
 
   // Download invoice PDF for a specific invoice
@@ -6679,8 +6728,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     
     // ===== ACCOUNTING INTEGRATION =====
     // Auto-capture to AR, Sales Invoice/Receipt, and GL
+    // Get staff info from form
+    const staffInfo = {
+      staffId: folioEntryForm.recordedBy || 'events-team',
+      staffName: folioEntryForm.recordedBy || 'Events Team',
+      staffRole: 'Events Coordinator',
+    };
+    
     if (folioEntryForm.type === 'charge') {
       // Charge = Revenue from conference services
+      // Note: Folio entry is the gross amount (may include tax if pre-calculated)
       try {
         const result = captureRevenue({
           id: newEntry.id,
@@ -6693,11 +6750,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             description: newEntry.description,
             quantity: 1,
             unitPrice: amount,
-            taxPercent: 0, // Tax handled separately if needed
+            taxPercent: 0, // Tax included in amount or handled separately
           }],
           subtotal: amount,
-          taxAmount: 0,
+          taxAmount: 0, // Tax breakdown shown separately if needed
           total: amount,
+          // Staff tracking
+          ...staffInfo,
         });
         
         if (result) {
@@ -6706,9 +6765,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         
         // Also record to cost center if specified (for expense tracking)
         if (folioEntryForm.costCenter) {
-          const { recordExpense } = useAccountingStore.getState();
-          recordExpense(folioEntryForm.costCenter, amount);
-          console.log('[Folio] Recorded expense to cost center:', folioEntryForm.costCenter, formatCurrency(amount));
+        const { recordExpense } = useAccountingStore.getState();
+        recordExpense(folioEntryForm.costCenter, amount);
+        console.log('[Folio] Recorded expense to cost center:', folioEntryForm.costCenter, formatCurrency(amount));
         }
       } catch (error) {
         console.error('[Events] ❌ Accounting integration error:', error);
@@ -6728,6 +6787,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           paymentMethod: paymentMethod,
           reference: newEntry.reference || activeFolio.eventId,
           description: `Payment for ${activeFolio.eventName || 'Conference'} - ${newEntry.description}`,
+          // Staff tracking
+          ...staffInfo,
         }, 'conference');
         
         if (result) {
