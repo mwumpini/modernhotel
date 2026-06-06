@@ -35,11 +35,11 @@ class ReportingStore {
     };
 
     // Top selling items
-    const itemSales: Record<string, { name: string; quantity: number; revenue: number }> = {};
+    const itemSales: Record<string, { itemId: string; name: string; quantity: number; revenue: number }> = {};
     orders.forEach(order => {
       order.items.forEach(item => {
         if (!itemSales[item.id]) {
-          itemSales[item.id] = { name: item.name, quantity: 0, revenue: 0 };
+          itemSales[item.id] = { itemId: item.id, name: item.name, quantity: 0, revenue: 0 };
         }
         itemSales[item.id].quantity += item.qty;
         itemSales[item.id].revenue += item.price * item.qty;

@@ -23,13 +23,11 @@ import {
   ModalFooter,
   useDisclosure,
   Chip,
-  Tooltip,
   Dropdown,
   DropdownTrigger,
   DropdownMenu,
   DropdownItem,
-  Switch,
-  Divider
+  Switch
 } from "@heroui/react";
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
@@ -364,23 +362,22 @@ export default function RoomAssignmentsManager() {
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Statuses</SelectItem>
-              <SelectItem key="occupied" value="occupied">🟢 Occupied</SelectItem>
-              <SelectItem key="vacant" value="vacant">⚪ Vacant</SelectItem>
-              <SelectItem key="dirty" value="dirty">🟡 Dirty</SelectItem>
-              <SelectItem key="clean" value="clean">🔵 Clean</SelectItem>
-              <SelectItem key="inspected" value="inspected">🟣 Inspected</SelectItem>
-              <SelectItem key="out-of-order" value="out-of-order">🔴 Out of Order</SelectItem>
-              <SelectItem key="maintenance" value="maintenance">🟠 Maintenance</SelectItem>
+              <SelectItem key="all">All Statuses</SelectItem>
+              <SelectItem key="occupied">🟢 Occupied</SelectItem>
+              <SelectItem key="vacant">⚪ Vacant</SelectItem>
+              <SelectItem key="dirty">🟡 Dirty</SelectItem>
+              <SelectItem key="clean">🔵 Clean</SelectItem>
+              <SelectItem key="inspected">🟣 Inspected</SelectItem>
+              <SelectItem key="out-of-order">🔴 Out of Order</SelectItem>
+              <SelectItem key="maintenance">🟠 Maintenance</SelectItem>
             </Select>
             <Select
               placeholder="Filter by floor"
               value={floorFilter}
               onChange={(e) => setFloorFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Floors</SelectItem>
-              {uniqueFloors.map(floor => (
-                <SelectItem key={floor} value={floor}>Floor {floor}</SelectItem>
+              {['all', ...uniqueFloors].map(floor => (
+                <SelectItem key={String(floor)}>{floor === 'all' ? 'All Floors' : `Floor ${floor}`}</SelectItem>
               ))}
             </Select>
             <Select
@@ -388,9 +385,8 @@ export default function RoomAssignmentsManager() {
               value={roomTypeFilter}
               onChange={(e) => setRoomTypeFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Types</SelectItem>
-              {uniqueRoomTypes.map(type => (
-                <SelectItem key={type} value={type}>{type}</SelectItem>
+              {['all', ...uniqueRoomTypes].map(type => (
+                <SelectItem key={type}>{type === 'all' ? 'All Types' : type}</SelectItem>
               ))}
             </Select>
             <Select
@@ -398,12 +394,12 @@ export default function RoomAssignmentsManager() {
               value={sortBy}
               onChange={(e) => setSortBy(e.target.value)}
             >
-              <SelectItem key="roomNumber" value="roomNumber">Room Number</SelectItem>
-              <SelectItem key="roomType" value="roomType">Room Type</SelectItem>
-              <SelectItem key="status" value="status">Status</SelectItem>
-              <SelectItem key="rate" value="rate">Rate</SelectItem>
-              <SelectItem key="checkInDate" value="checkInDate">Check In Date</SelectItem>
-              <SelectItem key="checkOutDate" value="checkOutDate">Check Out Date</SelectItem>
+              <SelectItem key="roomNumber">Room Number</SelectItem>
+              <SelectItem key="roomType">Room Type</SelectItem>
+              <SelectItem key="status">Status</SelectItem>
+              <SelectItem key="rate">Rate</SelectItem>
+              <SelectItem key="checkInDate">Check In Date</SelectItem>
+              <SelectItem key="checkOutDate">Check Out Date</SelectItem>
             </Select>
             <div className="flex items-center space-x-2">
               <Button
@@ -524,7 +520,7 @@ export default function RoomAssignmentsManager() {
                           >
                             ✏️ Edit
                           </DropdownItem>
-                          {assignment.status === 'occupied' && (
+                          {(assignment.status === 'occupied' ? (
                             <DropdownItem 
                               key="checkout"
                               onClick={(e) => {
@@ -534,7 +530,7 @@ export default function RoomAssignmentsManager() {
                             >
                               🚪 Check Out
                             </DropdownItem>
-                          )}
+                          ) : null) as any}
                           <DropdownItem 
                             key="maintenance"
                             onClick={(e) => {
@@ -643,20 +639,20 @@ export default function RoomAssignmentsManager() {
                       })}
                       disabled={!isEditing}
                     >
-                      <SelectItem key="occupied" value="occupied">🟢 Occupied</SelectItem>
-                      <SelectItem key="vacant" value="vacant">⚪ Vacant</SelectItem>
-                      <SelectItem key="dirty" value="dirty">🟡 Dirty</SelectItem>
-                      <SelectItem key="clean" value="clean">🔵 Clean</SelectItem>
-                      <SelectItem key="inspected" value="inspected">🟣 Inspected</SelectItem>
-                      <SelectItem key="out-of-order" value="out-of-order">🔴 Out of Order</SelectItem>
-                      <SelectItem key="maintenance" value="maintenance">🟠 Maintenance</SelectItem>
+                      <SelectItem key="occupied">🟢 Occupied</SelectItem>
+                      <SelectItem key="vacant">⚪ Vacant</SelectItem>
+                      <SelectItem key="dirty">🟡 Dirty</SelectItem>
+                      <SelectItem key="clean">🔵 Clean</SelectItem>
+                      <SelectItem key="inspected">🟣 Inspected</SelectItem>
+                      <SelectItem key="out-of-order">🔴 Out of Order</SelectItem>
+                      <SelectItem key="maintenance">🟠 Maintenance</SelectItem>
                     </Select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Rate (₵)</label>
                     <Input
                       type="number"
-                      value={selectedAssignment.rate}
+                      value={String(selectedAssignment.rate)}
                       onChange={(e) => setSelectedAssignment({
                         ...selectedAssignment,
                         rate: parseFloat(e.target.value) || 0

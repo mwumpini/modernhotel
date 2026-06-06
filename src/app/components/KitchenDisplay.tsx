@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Card, CardBody, CardHeader, Badge, Button, Chip } from '@heroui/react';
+import { Card, CardBody, Badge, Button, Chip } from '@heroui/react';
 import { ordersStore, FBOrder } from '../lib/fb/ordersStore';
 
 function useOrders() {

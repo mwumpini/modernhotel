@@ -6,11 +6,9 @@ import { Input } from '@heroui/react';
 import { Button } from '@heroui/react';
 import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from '@heroui/react';
 import { Chip } from '@heroui/react';
-import { Badge } from '@heroui/react';
 import { Tooltip } from '@heroui/react';
 import { Select, SelectItem } from '@heroui/react';
 import { Switch } from '@heroui/react';
-import { Progress } from '@heroui/react';
 
 interface CurrencyRate {
   id: string;
@@ -247,7 +245,7 @@ export default function CurrencyExchangeManager() {
             <Input
               label="Amount"
               type="number"
-              value={conversionAmount}
+              value={String(conversionAmount)}
               onChange={(e) => setConversionAmount(Number(e.target.value))}
               startContent={selectedCurrencyData?.symbol}
               placeholder="Enter amount"
@@ -259,7 +257,7 @@ export default function CurrencyExchangeManager() {
               onChange={(e) => setSelectedCurrency(e.target.value)}
             >
               {currencies.filter(c => c.isActive).map((currency) => (
-                <SelectItem key={currency.code} value={currency.code}>
+                <SelectItem key={currency.code}>
                   {currency.symbol} {currency.code}
                 </SelectItem>
               ))}
@@ -438,7 +436,7 @@ export default function CurrencyExchangeManager() {
                 label="Exchange Rate (to GHS)"
                 type="number"
                 step="0.0001"
-                value={newCurrency.rate}
+                value={String(newCurrency.rate)}
                 onChange={(e) => setNewCurrency(prev => ({ ...prev, rate: Number(e.target.value) }))}
                 placeholder="e.g., 0.0123"
               />
@@ -448,9 +446,9 @@ export default function CurrencyExchangeManager() {
                 selectedKeys={[newCurrency.source]}
                 onChange={(e) => setNewCurrency(prev => ({ ...prev, source: e.target.value as any }))}
               >
-                <SelectItem key="manual" value="manual">Manual</SelectItem>
-                <SelectItem key="api" value="api">API</SelectItem>
-                <SelectItem key="bank" value="bank">Bank</SelectItem>
+                <SelectItem key="manual">Manual</SelectItem>
+                <SelectItem key="api">API</SelectItem>
+                <SelectItem key="bank">Bank</SelectItem>
               </Select>
               
               <Select
@@ -458,10 +456,10 @@ export default function CurrencyExchangeManager() {
                 selectedKeys={[newCurrency.updateFrequency]}
                 onChange={(e) => setNewCurrency(prev => ({ ...prev, updateFrequency: e.target.value as any }))}
               >
-                <SelectItem key="manual" value="manual">Manual</SelectItem>
-                <SelectItem key="daily" value="daily">Daily</SelectItem>
-                <SelectItem key="hourly" value="hourly">Hourly</SelectItem>
-                <SelectItem key="realtime" value="realtime">Real-time</SelectItem>
+                <SelectItem key="manual">Manual</SelectItem>
+                <SelectItem key="daily">Daily</SelectItem>
+                <SelectItem key="hourly">Hourly</SelectItem>
+                <SelectItem key="realtime">Real-time</SelectItem>
               </Select>
               
               <Switch
@@ -515,7 +513,7 @@ export default function CurrencyExchangeManager() {
                 label="Exchange Rate (to GHS)"
                 type="number"
                 step="0.0001"
-                value={editingCurrency.rate}
+                value={String(editingCurrency.rate)}
                 onChange={(e) => setEditingCurrency(prev => prev ? { ...prev, rate: Number(e.target.value) } : null)}
               />
               
@@ -524,9 +522,9 @@ export default function CurrencyExchangeManager() {
                 selectedKeys={[editingCurrency.source]}
                 onChange={(e) => setEditingCurrency(prev => prev ? { ...prev, source: e.target.value as any } : null)}
               >
-                <SelectItem key="manual" value="manual">Manual</SelectItem>
-                <SelectItem key="api" value="api">API</SelectItem>
-                <SelectItem key="bank" value="bank">Bank</SelectItem>
+                <SelectItem key="manual">Manual</SelectItem>
+                <SelectItem key="api">API</SelectItem>
+                <SelectItem key="bank">Bank</SelectItem>
               </Select>
               
               <Select
@@ -534,10 +532,10 @@ export default function CurrencyExchangeManager() {
                 selectedKeys={[editingCurrency.updateFrequency]}
                 onChange={(e) => setEditingCurrency(prev => prev ? { ...prev, updateFrequency: e.target.value as any } : null)}
               >
-                <SelectItem key="manual" value="manual">Manual</SelectItem>
-                <SelectItem key="daily" value="daily">Daily</SelectItem>
-                <SelectItem key="hourly" value="hourly">Hourly</SelectItem>
-                <SelectItem key="realtime" value="realtime">Real-time</SelectItem>
+                <SelectItem key="manual">Manual</SelectItem>
+                <SelectItem key="daily">Daily</SelectItem>
+                <SelectItem key="hourly">Hourly</SelectItem>
+                <SelectItem key="realtime">Real-time</SelectItem>
               </Select>
             </CardBody>
             <CardFooter className="flex justify-end gap-2">

@@ -3,7 +3,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
-  Badge, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure, Textarea, Pagination,
+  Badge, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure, Pagination,
   Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Progress, Divider
 } from '@heroui/react';
 // Icons removed - not available in @heroui/react

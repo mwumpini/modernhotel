@@ -155,9 +155,9 @@ function totalsTable(t: PrintTotals, currency: string) {
     const { vat, nhil, levy, covid, gefl, gtal } = t.taxes;
     if (gefl) lines.push(['GEFL (2.5%)', gefl]);
     if (nhil) lines.push(['NHIL (2.5%)', nhil]);
-    if (covid) lines.push(['COVID Levy (1%)', covid]);
+    if (covid) lines.push(['COVID Levy (legacy)', covid]);
     if (levy) lines.push(['Tourism Levy (1%)', levy]);
-    if (vat) lines.push(['VAT (12.5%)', vat]);
+    if (vat) lines.push(['VAT', vat]);
     if (gtal) lines.push(['GTAL (1%) of (0)', gtal]);
   }
   const taxesTotal = (t.taxes ? Object.values(t.taxes).reduce((s, v) => s + (v || 0), 0) : 0);

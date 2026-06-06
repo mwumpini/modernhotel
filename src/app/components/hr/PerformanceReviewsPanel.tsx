@@ -101,7 +101,7 @@ export default function PerformanceReviewsPanel() {
               <TableColumn>REVIEWER</TableColumn>
               <TableColumn>RATING</TableColumn>
               <TableColumn>STATUS</TableColumn>
-              <TableColumn></TableColumn>
+              <TableColumn>{' '}</TableColumn>
             </TableHeader>
             <TableBody>
               {filtered.map((r) => {

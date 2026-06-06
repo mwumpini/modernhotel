@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { MaintenanceRequest, WorkOrder, InspectionReport, HousekeepingStaff, MaintenancePart, WorkOrderMaterial } from './models';
+import { MaintenanceRequest, WorkOrder, InspectionReport, HousekeepingStaff } from './models';
 
 interface MaintenanceStore {
   maintenanceRequests: MaintenanceRequest[];

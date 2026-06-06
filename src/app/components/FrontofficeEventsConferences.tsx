@@ -6,7 +6,6 @@ import {
   CardBody, 
   CardHeader, 
   Button, 
-  Badge, 
   Table,
   TableHeader,
   TableColumn,
@@ -17,8 +16,6 @@ import {
   Select,
   SelectItem,
   Chip,
-  Progress,
-  Avatar,
   Modal,
   ModalContent,
   ModalHeader,
@@ -772,7 +769,7 @@ export default function FrontofficeEventsConferences() {
                           return org.includes(q.toLowerCase()) || name.includes(q.toLowerCase()) || phone.includes(q.toLowerCase());
                         }).slice(0, 20)
                       : [];
-                    const items = [] as React.ReactNode[];
+                    const items = [] as React.ReactElement[];
                     if (q.length >= 2) {
                       items.push(
                         <AutocompleteItem key={`custom:${q}`} textValue={q}>

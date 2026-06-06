@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Card, CardBody, CardHeader, Tabs, Tab, Button, Input, Select, SelectItem, Progress, Chip, Badge } from "@heroui/react";
+import { Card, CardBody, CardHeader, Tabs, Tab, Button, Input, Progress, Chip, Badge } from "@heroui/react";
 import { reportingStore } from '../lib/fb/reportingStore';
 import { inventoryStore } from '../lib/fb/inventoryStore';
 import { customerStore } from '../lib/fb/customerStore';

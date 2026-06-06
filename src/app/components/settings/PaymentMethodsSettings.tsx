@@ -230,11 +230,11 @@ export default function PaymentMethodsSettings() {
 								value={formData.type}
 								onChange={(e) => setFormData({ ...formData, type: e.target.value })}
 							>
-								<SelectItem key="card" value="card">💳 Credit/Debit Card</SelectItem>
-								<SelectItem key="mobile_money" value="mobile_money">📱 Mobile Money</SelectItem>
-								<SelectItem key="bank_transfer" value="bank_transfer">🏦 Bank Transfer</SelectItem>
-								<SelectItem key="cash" value="cash">💵 Cash</SelectItem>
-								<SelectItem key="crypto" value="crypto">₿ Cryptocurrency</SelectItem>
+								<SelectItem key="card">💳 Credit/Debit Card</SelectItem>
+								<SelectItem key="mobile_money">📱 Mobile Money</SelectItem>
+								<SelectItem key="bank_transfer">🏦 Bank Transfer</SelectItem>
+								<SelectItem key="cash">💵 Cash</SelectItem>
+								<SelectItem key="crypto">₿ Cryptocurrency</SelectItem>
 							</Select>
 							<Input
 								label="Processing Fee (%)"
@@ -261,9 +261,9 @@ export default function PaymentMethodsSettings() {
 								value={formData.status}
 								onChange={(e) => setFormData({ ...formData, status: e.target.value })}
 							>
-								<SelectItem key="active" value="active">Active</SelectItem>
-								<SelectItem key="inactive" value="inactive">Inactive</SelectItem>
-								<SelectItem key="maintenance" value="maintenance">Maintenance</SelectItem>
+								<SelectItem key="active">Active</SelectItem>
+								<SelectItem key="inactive">Inactive</SelectItem>
+								<SelectItem key="maintenance">Maintenance</SelectItem>
 							</Select>
 						</div>
 					</ModalBody>

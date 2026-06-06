@@ -307,19 +307,18 @@ export default function RoomInspectionPanel() {
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Statuses</SelectItem>
-              <SelectItem key="passed" value="passed">✅ Passed</SelectItem>
-              <SelectItem key="partial" value="partial">⚠️ Partial</SelectItem>
-              <SelectItem key="failed" value="failed">❌ Failed</SelectItem>
+              <SelectItem key="all">All Statuses</SelectItem>
+              <SelectItem key="passed">✅ Passed</SelectItem>
+              <SelectItem key="partial">⚠️ Partial</SelectItem>
+              <SelectItem key="failed">❌ Failed</SelectItem>
             </Select>
             <Select
               placeholder="Filter by inspector"
               value={inspectorFilter}
               onChange={(e) => setInspectorFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Inspectors</SelectItem>
-              {staff.filter(s => s.role === 'inspector').map((inspector) => (
-                <SelectItem key={inspector.id} value={inspector.id}>
+              {[{ id: 'all', name: 'All Inspectors' }, ...staff.filter(s => s.role === 'inspector')].map((inspector) => (
+                <SelectItem key={inspector.id}>
                   {inspector.name}
                 </SelectItem>
               ))}
@@ -478,7 +477,7 @@ export default function RoomInspectionPanel() {
                     isRequired
                   >
                     {rooms.filter(r => r.status === 'clean' || r.status === 'inspected').map((room) => (
-                      <SelectItem key={room.roomNumber} value={room.roomNumber}>
+                      <SelectItem key={room.roomNumber}>
                         Room {room.roomNumber}
                       </SelectItem>
                     ))}
@@ -493,7 +492,7 @@ export default function RoomInspectionPanel() {
                     isRequired
                   >
                     {staff.filter(s => s.active && s.role === 'inspector').map((inspector) => (
-                      <SelectItem key={inspector.id} value={inspector.id}>
+                      <SelectItem key={inspector.id}>
                         {inspector.name}
                       </SelectItem>
                     ))}

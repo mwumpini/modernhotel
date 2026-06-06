@@ -15,8 +15,7 @@ import {
   TableBody, 
   TableRow, 
   TableCell, 
-  Chip, 
-  Switch,
+  Chip,
   Modal,
   ModalContent,
   ModalHeader,
@@ -138,6 +137,9 @@ export default function RoomRateManagement() {
     const breakdownEntries = result.taxes.map(t => ({ key: t.name, amount: t.amount }));
     const mapped: any = { subtotal: baseForCalc, totalTax: result.taxes.reduce((s, t) => s + t.amount, 0), finalBill: result.total };
     breakdownEntries.forEach(b => { mapped[b.key.toLowerCase().replace(/[^a-z]/g, '')] = b.amount; });
+    if (mapped.vatstandardrate != null) mapped.vat = mapped.vatstandardrate;
+    if (mapped.tourismlevy != null) mapped.tourism = mapped.tourismlevy;
+    if (mapped.getfundlevy != null) mapped.getfund = mapped.getfundlevy;
     return mapped;
   };
 
@@ -170,7 +172,7 @@ export default function RoomRateManagement() {
         }
       };
       
-      enhancedFrontOfficeStore.addRatePlan(ratePlan);
+      enhancedFrontOfficeStore.addRatePlan(ratePlan as any);
       logAction('ADD_RATE_PLAN', { ratePlan });
       setNewRatePlan({ name: '', roomType: '', price: '0', priceType: 'subtotal', description: '' });
       setShowCreateForm(false);
@@ -282,7 +284,7 @@ export default function RoomRateManagement() {
       }
     }));
 
-    return ratePlans.sort((a: RatePlan, b: RatePlan) => {
+    return ratePlans.sort((a: any, b: any) => {
       let aValue: any, bValue: any;
       
       switch (ratePlansSortField) {
@@ -434,7 +436,6 @@ export default function RoomRateManagement() {
                   <div className="flex justify-between"><span>Base (Subtotal):</span><span className="font-mono">₵{getLivePreview()?.subtotal?.toFixed(2) || '0.00'}</span></div>
                   <div className="flex justify-between"><span>NHIL (2.5%):</span><span className="font-mono">₵{getLivePreview()?.nhil?.toFixed(2) || '0.00'}</span></div>
                   <div className="flex justify-between"><span>GETFund (2.5%):</span><span className="font-mono">₵{getLivePreview()?.getfund?.toFixed(2) || '0.00'}</span></div>
-                  <div className="flex justify-between"><span>COVID-19 (1.0%):</span><span className="font-mono">₵{getLivePreview()?.covid?.toFixed(2) || '0.00'}</span></div>
                   <div className="flex justify-between"><span>VAT (15% on base+levies):</span><span className="font-mono">₵{getLivePreview()?.vat?.toFixed(2) || '0.00'}</span></div>
                   <div className="flex justify-between"><span>Tourism Levy (1%):</span><span className="font-mono">₵{getLivePreview()?.tourism?.toFixed(2) || '0.00'}</span></div>
                 </div>
@@ -585,7 +586,7 @@ export default function RoomRateManagement() {
                             size="sm" 
                             variant="light" 
                             isIconOnly
-                            onClick={() => handleEditRatePlan(plan)}
+                            onClick={() => handleEditRatePlan(plan as any)}
                             className="dark:bg-gray-600 dark:text-gray-100 dark:hover:bg-gray-500"
                           >
                             ✏️
@@ -597,7 +598,7 @@ export default function RoomRateManagement() {
                             variant="light" 
                             color="danger" 
                             isIconOnly
-                            onClick={() => handleDeleteRatePlan(plan)}
+                            onClick={() => handleDeleteRatePlan(plan as any)}
                             className="dark:bg-red-600 dark:text-white dark:hover:bg-red-700"
                           >
                             🗑️
@@ -673,6 +674,9 @@ export default function RoomRateManagement() {
               const subtotal = plan.priceType === 'subtotal' ? plan.basePrice : reverseToSubtotalFromGross(plan.basePrice, category, context);
               const { taxes, total } = calculateTax(subtotal, category, context);
               const grossTotal = total;
+              const totalTax = taxes.reduce((s, t) => s + t.amount, 0);
+              const nhilAmt = taxes.find((t) => t.name === 'NHIL')?.amount ?? 0;
+              const getfundAmt = taxes.find((t) => t.name.includes('GETFund'))?.amount ?? 0;
 
               return (
                 <div className="p-4 border rounded-lg bg-gray-50">
@@ -722,7 +726,7 @@ export default function RoomRateManagement() {
                       <div className="pt-2">
                         <div className="text-xs text-gray-500">
                           <p><strong>Tax Breakdown:</strong></p>
-                          <p>• NHIL + GETFund + COVID-19 = {((nhil + getfund + covid) / subtotal * 100).toFixed(1)}% of base</p>
+                          <p>• NHIL + GETFund = {subtotal > 0 ? (((nhilAmt + getfundAmt) / subtotal) * 100).toFixed(1) : '0'}% of base</p>
                           <p>• VAT = 15% of (base + levies)</p>
                           <p>• Tourism = 1% of base</p>
                         </div>
@@ -894,7 +898,6 @@ export default function RoomRateManagement() {
                     <div className="flex justify-between"><span>Base (Subtotal):</span><span className="font-mono">₵{getLivePreview()?.subtotal?.toFixed(2) || '0.00'}</span></div>
                     <div className="flex justify-between"><span>NHIL (2.5%):</span><span className="font-mono">₵{getLivePreview()?.nhil?.toFixed(2) || '0.00'}</span></div>
                     <div className="flex justify-between"><span>GETFund (2.5%):</span><span className="font-mono">₵{getLivePreview()?.getfund?.toFixed(2) || '0.00'}</span></div>
-                    <div className="flex justify-between"><span>COVID-19 (1.0%):</span><span className="font-mono">₵{getLivePreview()?.covid?.toFixed(2) || '0.00'}</span></div>
                     <div className="flex justify-between"><span>VAT (15% on base+levies):</span><span className="font-mono">₵{getLivePreview()?.vat?.toFixed(2) || '0.00'}</span></div>
                     <div className="flex justify-between"><span>Tourism Levy (1%):</span><span className="font-mono">₵{getLivePreview()?.tourism?.toFixed(2) || '0.00'}</span></div>
                     <div className="flex justify-between text-base mt-2">

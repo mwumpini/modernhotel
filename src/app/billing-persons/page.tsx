@@ -598,7 +598,7 @@ export default function BillingPersonsPage() {
                       <label className="block text-sm font-medium text-gray-700 mb-1">Credit Limit (₵)</label>
                       <Input
                         type="number"
-                        value={formData.creditLimit}
+                        value={String(formData.creditLimit)}
                         onChange={(e) => setFormData({...formData, creditLimit: parseFloat(e.target.value) || 0})}
                         placeholder="0 for no limit"
                       />

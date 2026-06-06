@@ -8,19 +8,88 @@
  * balances, charges, payments and inter-folio movements, and bridge to accounting
  * and audit modules. No UI concerns live here.
  * 
- * ACCOUNTING INTEGRATION:
- * All revenue and payment transactions are automatically captured by the accounting
- * system, creating Sales Invoices, Receipts, and GL journal entries.
+ * ACCOUNTING (simple flow):
+ * Folio holds charges and payments during the stay. Sales invoices, receipts, and
+ * GL journal entries are posted once at checkout via generateAccountingInvoiceForReservation.
+ * Other modules (e.g. events) still use accounting/integration.ts directly.
  */
 
 import { trackEvent } from '../../analytics/trackEvent';
 import { logAudit } from '../../analytics/auditLogStore';
-import { postRoomRevenue, postPayment } from '../../accounting/journal';
-import { captureRevenue, capturePayment } from '../../accounting/integration';
 import type { Folio, FolioPayment } from '../types';
-import { useSettingsStore } from '../../settings/store';
+import { computeSalesTaxTotal, getCanonicalTaxRates } from '../../tax/engine';
 
 type StoreLike = any;
+
+const SERVICE_CHARGE_KEYWORDS = [
+	'service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar',
+	'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch',
+	'dinner', 'snack', 'beverage', 'drink', 'food', 'meal',
+];
+
+export { calculateStayNights } from './rates';
+
+function isRoomCharge(description?: string) {
+	return (description || '').toLowerCase().includes('room');
+}
+
+/** Map folio charge to GL revenue account at checkout (simpleFlow). */
+export function folioChargeGlCode(charge: { description?: string; category?: string }): string {
+	const cat = (charge.category || '').toLowerCase();
+	if (isRoomCharge(charge.description) || cat === 'room') return '4100';
+	if (cat === 'f&b' || cat === 'fb' || isServiceCharge(charge.description)) return '4200';
+	if (cat === 'conference' || (charge.description || '').toLowerCase().includes('conference')) return '4300';
+	return '4300';
+}
+
+function isServiceCharge(description?: string) {
+	const desc = (description || '').toLowerCase();
+	return SERVICE_CHARGE_KEYWORDS.some((k) => desc.includes(k));
+}
+
+/** Canonical folio totals for tables, modals, and billing screens. */
+export function getFolioDisplayTotals(folio: Folio) {
+	const charges = folio.charges || [];
+	const payments = folio.payments || [];
+	const subtotal = charges.reduce((s, c) => s + (c.amount || 0), 0);
+	const taxTotal = charges.reduce((s, c) => s + (c.tax || 0), 0);
+	const totalCharges = subtotal + taxTotal;
+	const totalPayments = payments
+		.filter((p) => p.status === 'completed')
+		.reduce((s, p) => s + (p.amount || 0), 0);
+	const balance = totalCharges - totalPayments;
+	const outstandingBalance = Math.max(0, balance);
+	// Room charges are net (excl. tax); all levy amounts roll up into taxTotal.
+	const roomCharges = charges
+		.filter((c) => isRoomCharge(c.description))
+		.reduce((s, c) => s + (c.amount || 0), 0);
+	const serviceCharges = charges
+		.filter((c) => isServiceCharge(c.description))
+		.reduce((s, c) => s + (c.amount || 0), 0);
+	const otherCharges = charges
+		.filter((c) => !isRoomCharge(c.description) && !isServiceCharge(c.description))
+		.reduce((s, c) => s + (c.amount || 0), 0);
+	const gross = (c: { amount?: number; tax?: number }) => (c.amount || 0) + (c.tax || 0);
+	const roomChargesInclusive = charges
+		.filter((c) => isRoomCharge(c.description))
+		.reduce((s, c) => s + gross(c), 0);
+	const serviceChargesInclusive = charges
+		.filter((c) => isServiceCharge(c.description))
+		.reduce((s, c) => s + gross(c), 0);
+	return {
+		subtotal,
+		taxTotal,
+		totalCharges,
+		totalPayments,
+		balance,
+		outstandingBalance,
+		roomCharges,
+		serviceCharges,
+		otherCharges,
+		roomChargesInclusive,
+		serviceChargesInclusive,
+	};
+}
 
 /**
  * Get existing folio for a reservation or create a new active folio.
@@ -88,37 +157,40 @@ export function updateFolioBalances(self: StoreLike, folio: Folio) {
 
 	folio.totalCharges = totalCharges;
 	folio.totalPayments = totalPayments;
-	folio.balance = Math.max(0, balance);
+	folio.balance = balance;
 
 	const creditUsed = (folio.payments || [])
 		.filter((p: any) => p.method === 'Credit' && p.status === 'completed')
 		.reduce((sum: number, payment: any) => sum + (payment.creditApplied || 0), 0);
-
-	if (creditUsed > 0) {
+	const prevCreditDeducted = folio._creditDeducted || 0;
+	if (creditUsed !== prevCreditDeducted) {
 		const reservation = self.reservations.find((r: any) => r.id === folio.reservationId);
 		if (reservation) {
 			const guest = self.guests.find((g: any) => g.id === reservation.guestId);
 			if (guest) {
-				guest.creditBalance = (guest.creditBalance || 0) - creditUsed;
+				guest.creditBalance = (guest.creditBalance || 0) - (creditUsed - prevCreditDeducted);
 				guest.lastCreditUpdate = new Date().toISOString();
 			}
 		}
+		folio._creditDeducted = creditUsed;
 	}
+
+	// Single write-through chokepoint: every folio mutation recomputes balances,
+	// so persisting here keeps the database row authoritative without wiring each
+	// individual helper (charge, payment, transfer, split, void, refund, close).
+	try { self.persistFolio?.(folio); } catch {}
 }
 
 /**
  * Add a single charge to a folio, auto-computing tax from persisted tax rates
- * when not specified. Emits tracking and accounting signals for room revenue.
- * 
- * ACCOUNTING INTEGRATION:
- * Automatically captures revenue to AR, creates Sales Invoice, and posts GL entries.
+ * when not specified. GL revenue is recognised at guest checkout, not on each charge.
  */
 export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: string; description: string; amount: number; date?: string; tax?: number; category?: string; reference?: string; staffId?: string; staffName?: string; }) {
 	const folio = getFolioById(self, folioId);
 	if (!folio) return;
 	
 	// Layered Ghana computation sourced from Settings compliance
-	const tax = typeof charge.tax === 'number' ? charge.tax : layeredTaxFromSettings(charge.amount);
+	const tax = typeof charge.tax === 'number' ? charge.tax : computeSalesTaxTotal(charge.amount);
 	folio.charges.push({
 		id: charge.id,
 		date: charge.date || new Date().toISOString(),
@@ -130,54 +202,7 @@ export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: s
 	});
 	updateFolioBalances(self, folio);
 	self.notify();
-	
-	// Get reservation details for accounting
-	const reservation = self.reservations?.find((r: any) => r.id === folio.reservationId);
-	const guestName = reservation?.guestName || 'Walk-in Guest';
-	const guestEmail = reservation?.guestEmail || reservation?.email;
-	const guestPhone = reservation?.guestPhone || reservation?.phone;
-	
 	trackEvent('FO.Folio.ChargePosted', { reservationId: folio.reservationId, description: charge.description, amount: charge.amount, tax, category: charge.category, reference: charge.reference });
-	
-	// ===== ACCOUNTING INTEGRATION =====
-	// Auto-capture revenue to AR, Sales Invoice, and GL
-	try {
-		const result = captureRevenue({
-			id: charge.id,
-			source: 'front_office',
-			customerId: reservation?.guestId || folio.reservationId,
-			customerName: guestName,
-			customerEmail: guestEmail,
-			customerPhone: guestPhone,
-			reference: folio.reservationId,
-			description: `${charge.description} - Room ${reservation?.roomId || reservation?.roomNumber || 'N/A'}`,
-			items: [{
-				description: charge.description,
-				quantity: 1,
-				unitPrice: charge.amount,
-				taxPercent: tax > 0 ? (tax / charge.amount) * 100 : 0,
-			}],
-			subtotal: charge.amount,
-			taxAmount: tax,
-			total: charge.amount + tax,
-			date: charge.date,
-			// Staff who processed the charge
-			staffId: charge.staffId,
-			staffName: charge.staffName,
-			staffRole: 'Front Desk Agent',
-		});
-		
-		if (result) {
-			console.log(`[FO.Folio] ✅ Accounting captured - Invoice: ${result.invoiceId}, JE: ${result.journalEntryId}`);
-		}
-	} catch (err) {
-		console.error('[FO.Folio] ❌ Accounting integration error:', err);
-	}
-	
-	// Legacy room revenue posting (kept for backward compatibility)
-	if ((charge.description || '').toLowerCase().includes('room')) {
-		postRoomRevenue(folio.reservationId, charge.amount, tax);
-	}
 }
 
 /**
@@ -317,40 +342,18 @@ export function postCorporateReceipt(self: StoreLike, payer: string, reservation
 }
 
 /**
- * Read tax rates from storage with safe defaults.
+ * Canonical tax rates from accounting TaxConfig (synced from compliance TaxRateBuilder).
+ * Replaces the old settings.countryCompliance.taxRates path.
  */
-export function getTaxRates(self: StoreLike) {
-    try {
-        const settings = useSettingsStore.getState?.();
-        const compliance = settings?.getCurrentCountryCompliance?.();
-        const tr = (compliance?.taxRates || {}) as any;
-        return { 
-            vat: Number(tr.vat || 0), 
-            nhil: Number(tr.nhil || 0), 
-            levy: Number(tr.tourismLevy || 0),
-            getfund: Number(tr.getfundLevy || 0),
-            covid: Number(tr.covid19Levy || 0)
-        } as any;
-    } catch {
-        return { vat: 12.5, nhil: 2.5, levy: 1.0 } as any;
-    }
-}
-
-function layeredTaxFromSettings(amount: number): number {
-    try {
-        const rates = getTaxRates({});
-        const subtotal = amount || 0;
-        const nhilAmt = subtotal * (Number(rates.nhil || 0) / 100);
-        const getfundAmt = subtotal * (Number((rates as any).getfund || 0) / 100);
-        const covidAmt = subtotal * (Number((rates as any).covid || 0) / 100);
-        const leviesTotal = nhilAmt + getfundAmt + covidAmt;
-        const vatAmt = (subtotal + leviesTotal) * (Number(rates.vat || 0) / 100);
-        const tourismAmt = subtotal * (Number(rates.levy || 0) / 100);
-        return Math.max(0, nhilAmt + getfundAmt + covidAmt + vatAmt + tourismAmt);
-    } catch {
-        const { vat, nhil, levy } = { vat: 12.5, nhil: 2.5, levy: 1.0 } as any;
-        return amount * ((vat + nhil + levy) / 100);
-    }
+export function getTaxRates(_self: StoreLike) {
+    const r = getCanonicalTaxRates();
+    return {
+        vat: r.vat,
+        nhil: r.nhil,
+        getfund: r.getfund,
+        levy: r.tourismLevy,
+        covid: 0,
+    };
 }
 
 /**
@@ -358,20 +361,15 @@ function layeredTaxFromSettings(amount: number): number {
  */
 export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number) {
 	const f = getOrCreateFolio(self, reservationId);
-	const tax = layeredTaxFromSettings(amount);
+	const tax = computeSalesTaxTotal(amount);
 	f.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description, amount, tax } as any);
+	updateFolioBalances(self, f);
 	self.notify();
 	trackEvent('FO.Folio.ChargePosted', { reservationId, description, amount, tax });
-	if (description.toLowerCase().includes('room')) {
-		postRoomRevenue(reservationId, amount, tax);
-	}
 }
 
 /**
- * Post a payment to folio, update balances, and mirror to accounting journal.
- * 
- * ACCOUNTING INTEGRATION:
- * Automatically creates Receipt, updates AR invoice, and posts GL entries.
+ * Post a payment to folio and update balances. Cash/bank and AR are posted at checkout.
  */
 export function addPayment(self: StoreLike, reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: {
 	invoiceId?: string;
@@ -395,49 +393,7 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 	f.payments.push(payment);
 	updateFolioBalances(self, f);
 	self.notify();
-	
-	// Get reservation details for accounting
-	const reservation = self.reservations?.find((r: any) => r.id === reservationId);
-	const guestName = reservation?.guestName || 'Walk-in Guest';
-	
 	trackEvent('FO.Folio.PaymentReceived', { reservationId, method, amount, invoiceId: options?.invoiceId });
-	
-	// ===== ACCOUNTING INTEGRATION =====
-	// Auto-capture payment to Receipt and GL
-	try {
-		// Map payment method to accounting-compatible method
-		const accountingMethod = method === 'Credit' || method === 'Corporate Account' 
-			? 'Bank Transfer' 
-			: method === 'Check' 
-				? 'Cheque' 
-				: method;
-		
-		const result = capturePayment({
-			id: paymentId,
-			invoiceId: options?.invoiceId,
-			customerId: reservation?.guestId || reservationId,
-			customerName: guestName,
-			amount: amount,
-			paymentMethod: accountingMethod as any,
-			reference: options?.ref || reservationId,
-			description: options?.notes || `Payment from ${guestName}`,
-			// Staff who processed the payment
-			staffId: options?.staffId,
-			staffName: options?.processedBy || 'Front Desk',
-			staffRole: 'Front Desk Agent',
-		}, 'front_office');
-		
-		if (result) {
-			console.log(`[FO.Folio] ✅ Payment captured - Receipt: ${result.receiptId}, JE: ${result.journalEntryId}`);
-		}
-	} catch (err) {
-		console.error('[FO.Folio] ❌ Payment integration error:', err);
-	}
-	
-	// Legacy payment posting (kept for backward compatibility)
-	const legacyMethod = method === 'Credit' || method === 'Corporate Account' || method === 'Bank Transfer' || method === 'Check'
-		? 'Cash' : method;
-	postPayment(reservationId, legacyMethod as 'Cash'|'Card'|'Mobile Money', amount);
 }
 
 

@@ -143,7 +143,9 @@ export type DomainEventType =
   | 'FO.Reservation.StatusUpdated'
   | 'accounting.quick_action'
   | 'API.ServiceToggled'
-  | 'compliance.quick_action';
+  | 'compliance.quick_action'
+  // Allow additional namespaced event names while preserving autocomplete for the known ones above.
+  | (string & {});
 
 export interface DomainEventMeta {
   tenantId?: string;

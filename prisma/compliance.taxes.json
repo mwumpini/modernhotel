@@ -4,7 +4,7 @@
     "countryCode": "GH",
     "name": "NHIL",
     "rate": 2.5,
-    "glCode": "2150",
+    "glCode": "2120",
     "appliesTo": [
       "ALL"
     ],
@@ -20,14 +20,14 @@
     "domain": "sales",
     "operation": "external",
     "effect": "add",
-    "typeId": "1767797767261"
+    "typeId": "1774039061292"
   },
   {
     "id": "gh-getfund",
     "countryCode": "GH",
     "name": "GETFund Levy",
     "rate": 2.5,
-    "glCode": "2151",
+    "glCode": "2130",
     "appliesTo": [
       "ALL"
     ],
@@ -43,37 +43,14 @@
     "domain": "sales",
     "operation": "external",
     "effect": "add",
-    "typeId": "1767797767261"
-  },
-  {
-    "id": "gh-covid",
-    "countryCode": "GH",
-    "name": "COVID-19 Levy",
-    "rate": 1,
-    "glCode": "2152",
-    "appliesTo": [
-      "ALL"
-    ],
-    "description": "COVID-19 Recovery Levy",
-    "enabled": true,
-    "priority": 12,
-    "calculationBase": "subtotal",
-    "stacking": "additive",
-    "rounding": "nearest",
-    "roundTo": 0.01,
-    "isSeparate": false,
-    "method": "rate",
-    "domain": "sales",
-    "operation": "external",
-    "effect": "add",
-    "typeId": "1767797767261"
+    "typeId": "1774039061292"
   },
   {
     "id": "gh-vat",
     "countryCode": "GH",
     "name": "VAT (Standard Rate)",
     "rate": 15,
-    "glCode": "2153",
+    "glCode": "2110",
     "appliesTo": [
       "ALL"
     ],
@@ -95,7 +72,7 @@
     "countryCode": "GH",
     "name": "Tourism Levy",
     "rate": 1,
-    "glCode": "2154",
+    "glCode": "2150",
     "appliesTo": [
       "ROOM",
       "HOTEL"
@@ -112,14 +89,14 @@
     "domain": "sales",
     "operation": "external",
     "effect": "add",
-    "typeId": "1767797767261"
+    "typeId": "1774039061292"
   },
   {
     "id": "gh-withholding",
     "countryCode": "GH",
     "name": "Withholding - Services",
     "rate": 7.5,
-    "glCode": "2300",
+    "glCode": "2160",
     "appliesTo": [
       "SERVICE"
     ],
@@ -201,5 +178,191 @@
     "domain": "payroll",
     "operation": "internal",
     "effect": "subtract"
+  },
+  {
+    "countryCode": "GH",
+    "typeId": "1774039061292",
+    "name": "NHIL",
+    "rate": 2.5,
+    "glCode": "2150",
+    "appliesTo": [
+      "ALL"
+    ],
+    "description": "National Health Insurance Levy",
+    "enabled": true,
+    "priority": 10,
+    "calculationBase": "subtotal",
+    "stacking": "additive",
+    "rounding": "nearest",
+    "roundTo": 0.01,
+    "isSeparate": false,
+    "method": "rate",
+    "domain": "sales",
+    "operation": "external",
+    "effect": "add",
+    "id": "1774201271867"
+  },
+  {
+    "countryCode": "GH",
+    "typeId": "1774039061292",
+    "name": "NHIL",
+    "rate": 2.5,
+    "glCode": "2150",
+    "appliesTo": [
+      "ALL"
+    ],
+    "description": "National Health Insurance Levy",
+    "enabled": true,
+    "priority": 10,
+    "calculationBase": "subtotal",
+    "stacking": "additive",
+    "rounding": "nearest",
+    "roundTo": 0.01,
+    "isSeparate": false,
+    "method": "rate",
+    "domain": "sales",
+    "operation": "external",
+    "effect": "add",
+    "id": "1774201271876"
+  },
+  {
+    "countryCode": "GH",
+    "typeId": "1774039061292",
+    "name": "GETFund Levy",
+    "rate": 2.5,
+    "glCode": "2151",
+    "appliesTo": [
+      "ALL"
+    ],
+    "description": "Ghana Education Trust Fund Levy",
+    "enabled": true,
+    "priority": 11,
+    "calculationBase": "subtotal",
+    "stacking": "additive",
+    "rounding": "nearest",
+    "roundTo": 0.01,
+    "isSeparate": false,
+    "method": "rate",
+    "domain": "sales",
+    "operation": "external",
+    "effect": "add",
+    "id": "1774201276416"
+  },
+  {
+    "countryCode": "GH",
+    "typeId": "1774039061292",
+    "name": "GETFund Levy",
+    "rate": 2.5,
+    "glCode": "2151",
+    "appliesTo": [
+      "ALL"
+    ],
+    "description": "Ghana Education Trust Fund Levy",
+    "enabled": true,
+    "priority": 11,
+    "calculationBase": "subtotal",
+    "stacking": "additive",
+    "rounding": "nearest",
+    "roundTo": 0.01,
+    "isSeparate": false,
+    "method": "rate",
+    "domain": "sales",
+    "operation": "external",
+    "effect": "add",
+    "id": "1774201276958"
+  },
+  {
+    "countryCode": "GH",
+    "typeId": "1774039061292",
+    "name": "VAT (Standard Rate)",
+    "rate": 15,
+    "glCode": "2153",
+    "appliesTo": [
+      "ALL"
+    ],
+    "description": "VAT on (subtotal + levies)",
+    "enabled": true,
+    "priority": 20,
+    "calculationBase": "subtotal_plus_applied",
+    "stacking": "compound",
+    "rounding": "nearest",
+    "roundTo": 0.01,
+    "isSeparate": false,
+    "method": "rate",
+    "domain": "sales",
+    "operation": "external",
+    "effect": "add",
+    "id": "1774201277395"
+  },
+  {
+    "countryCode": "GH",
+    "typeId": "1774039061292",
+    "name": "VAT (Standard Rate)",
+    "rate": 15,
+    "glCode": "2153",
+    "appliesTo": [
+      "ALL"
+    ],
+    "description": "VAT on (subtotal + levies)",
+    "enabled": true,
+    "priority": 20,
+    "calculationBase": "subtotal_plus_applied",
+    "stacking": "compound",
+    "rounding": "nearest",
+    "roundTo": 0.01,
+    "isSeparate": false,
+    "method": "rate",
+    "domain": "sales",
+    "operation": "external",
+    "effect": "add",
+    "id": "1774201277495"
+  },
+  {
+    "countryCode": "GH",
+    "typeId": "1774039061292",
+    "name": "Tourism Levy",
+    "rate": 1,
+    "glCode": "2154",
+    "appliesTo": [
+      "ROOM",
+      "HOTEL"
+    ],
+    "description": "Tourism development levy",
+    "enabled": true,
+    "priority": 30,
+    "calculationBase": "subtotal",
+    "stacking": "additive",
+    "rounding": "nearest",
+    "roundTo": 0.01,
+    "isSeparate": true,
+    "method": "rate",
+    "domain": "sales",
+    "operation": "external",
+    "effect": "add",
+    "id": "1774201277922"
+  },
+  {
+    "countryCode": "GH",
+    "typeId": "1774039061292",
+    "name": "Tourism Levy",
+    "rate": 1,
+    "glCode": "2154",
+    "appliesTo": [
+      "ROOM",
+      "HOTEL"
+    ],
+    "description": "Tourism development levy",
+    "enabled": true,
+    "priority": 30,
+    "calculationBase": "subtotal",
+    "stacking": "additive",
+    "rounding": "nearest",
+    "roundTo": 0.01,
+    "isSeparate": true,
+    "method": "rate",
+    "domain": "sales",
+    "operation": "external",
+    "effect": "add",
+    "id": "1774201278001"
   }
 ]

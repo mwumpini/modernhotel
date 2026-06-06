@@ -4,7 +4,6 @@ import React, { useState, useEffect } from 'react';
 import { 
   Card, 
   CardBody, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -17,16 +16,12 @@ import {
   ModalBody, 
   ModalFooter,
   Textarea,
-  Dropdown,
-  DropdownTrigger,
-  DropdownMenu,
-  DropdownItem,
   Tooltip
 } from "@heroui/react";
 import { housekeepingStore } from '../../lib/housekeeping/store';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
-import { RoomStatus, TaskPriority } from '../../lib/housekeeping/types';
+import { RoomStatus } from '../../lib/housekeeping/types';
 
 interface RoomStatusData {
   roomNumber: string;
@@ -200,24 +195,24 @@ export default function RoomStatusGrid() {
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Statuses</SelectItem>
-              <SelectItem key="occupied" value="occupied">🟢 Occupied</SelectItem>
-              <SelectItem key="vacant" value="vacant">⚪ Vacant</SelectItem>
-              <SelectItem key="dirty" value="dirty">🟡 Dirty</SelectItem>
-              <SelectItem key="clean" value="clean">🔵 Clean</SelectItem>
-              <SelectItem key="inspected" value="inspected">🟣 Inspected</SelectItem>
-              <SelectItem key="out-of-order" value="out-of-order">🔴 Out of Order</SelectItem>
-              <SelectItem key="maintenance" value="maintenance">🟠 Maintenance</SelectItem>
+              <SelectItem key="all">All Statuses</SelectItem>
+              <SelectItem key="occupied">🟢 Occupied</SelectItem>
+              <SelectItem key="vacant">⚪ Vacant</SelectItem>
+              <SelectItem key="dirty">🟡 Dirty</SelectItem>
+              <SelectItem key="clean">🔵 Clean</SelectItem>
+              <SelectItem key="inspected">🟣 Inspected</SelectItem>
+              <SelectItem key="out-of-order">🔴 Out of Order</SelectItem>
+              <SelectItem key="maintenance">🟠 Maintenance</SelectItem>
             </Select>
             <Select
               placeholder="Filter by floor"
               value={floorFilter}
               onChange={(e) => setFloorFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Floors</SelectItem>
-              <SelectItem key="1" value="1">Floor 1</SelectItem>
-              <SelectItem key="2" value="2">Floor 2</SelectItem>
-              <SelectItem key="3" value="3">Floor 3</SelectItem>
+              <SelectItem key="all">All Floors</SelectItem>
+              <SelectItem key="1">Floor 1</SelectItem>
+              <SelectItem key="2">Floor 2</SelectItem>
+              <SelectItem key="3">Floor 3</SelectItem>
             </Select>
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600">Filtered:</span>
@@ -381,12 +376,12 @@ export default function RoomStatusGrid() {
                     onChange={(e) => setNewStatus(e.target.value as RoomStatus)}
                     placeholder="Select new status"
                   >
-                    <SelectItem key="vacant" value="vacant">⚪ Vacant</SelectItem>
-                    <SelectItem key="dirty" value="dirty">🟡 Dirty</SelectItem>
-                    <SelectItem key="clean" value="clean">🔵 Clean</SelectItem>
-                    <SelectItem key="inspected" value="inspected">🟣 Inspected</SelectItem>
-                    <SelectItem key="maintenance" value="maintenance">🟠 Maintenance</SelectItem>
-                    <SelectItem key="out-of-order" value="out-of-order">🔴 Out of Order</SelectItem>
+                    <SelectItem key="vacant">⚪ Vacant</SelectItem>
+                    <SelectItem key="dirty">🟡 Dirty</SelectItem>
+                    <SelectItem key="clean">🔵 Clean</SelectItem>
+                    <SelectItem key="inspected">🟣 Inspected</SelectItem>
+                    <SelectItem key="maintenance">🟠 Maintenance</SelectItem>
+                    <SelectItem key="out-of-order">🔴 Out of Order</SelectItem>
                   </Select>
                 </div>
 

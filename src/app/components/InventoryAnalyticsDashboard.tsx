@@ -89,9 +89,9 @@ export default function InventoryAnalyticsDashboard() {
             onChange={(e) => setSelectedPeriod(e.target.value as 'daily' | 'weekly' | 'monthly')}
             className="w-32"
           >
-            <SelectItem key="daily" value="daily">Daily</SelectItem>
-            <SelectItem key="weekly" value="weekly">Weekly</SelectItem>
-            <SelectItem key="monthly" value="monthly">Monthly</SelectItem>
+            <SelectItem key="daily">Daily</SelectItem>
+            <SelectItem key="weekly">Weekly</SelectItem>
+            <SelectItem key="monthly">Monthly</SelectItem>
           </Select>
           <Input
             type="date"
@@ -720,10 +720,10 @@ export default function InventoryAnalyticsDashboard() {
                         value={selectedReportType}
                         onChange={(e) => setSelectedReportType(e.target.value as InventoryReport['type'])}
                       >
-                        <SelectItem key="daily" value="daily">Daily</SelectItem>
-                        <SelectItem key="weekly" value="weekly">Weekly</SelectItem>
-                        <SelectItem key="monthly" value="monthly">Monthly</SelectItem>
-                        <SelectItem key="custom" value="custom">Custom</SelectItem>
+                        <SelectItem key="daily">Daily</SelectItem>
+                        <SelectItem key="weekly">Weekly</SelectItem>
+                        <SelectItem key="monthly">Monthly</SelectItem>
+                        <SelectItem key="custom">Custom</SelectItem>
                       </Select>
                       <div className="flex gap-2">
                         <Button 

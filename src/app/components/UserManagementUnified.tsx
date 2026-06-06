@@ -465,7 +465,7 @@ export default function UserManagementUnified() {
             <div>
               <p className="text-sm font-medium text-gray-600">Current User</p>
               <p className="text-lg font-bold text-ghana-black">{currentUser?.firstName} {currentUser?.lastName}</p>
-              <p className="text-sm text-gray-600">{currentUser?.role}</p>
+              <p className="text-sm text-gray-600">{roles.find(r => r.id === currentUser?.roleId)?.name || currentUser?.roleId}</p>
             </div>
             <div className="text-3xl">👤</div>
           </div>
@@ -558,7 +558,7 @@ export default function UserManagementUnified() {
   const handleEditRole = (role: { id: string; name: string; description: string; permissions?: string[]; isActive: boolean }) => {
     console.log('🔧 [UserManagementUnified] Editing role:', { roleId: role.id, name: role.name });
     setIsEditingRole(true);
-    setSelectedRole(role);
+    setSelectedRole(role as any);
     setRoleForm({
       name: role.name,
       description: role.description,
@@ -1010,7 +1010,7 @@ export default function UserManagementUnified() {
                 onChange={(e) => setUserForm({...userForm, roleId: e.target.value})}
               >
                 {roles.map((role) => (
-                  <SelectItem key={role.id} value={role.id}>
+                  <SelectItem key={role.id}>
                     {role.name}
                   </SelectItem>
                 ))}

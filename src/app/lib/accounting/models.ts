@@ -34,6 +34,9 @@ export interface JournalEntry {
   createdAt: string;
   updatedAt: string;
   lines: JournalEntryLine[];
+  /** Originating module (e.g. pl_period_close, front_office_checkout). */
+  sourceModule?: string;
+  sourceTransactionId?: string;
 }
 
 // Journal Entry Line
@@ -80,6 +83,14 @@ export interface TaxConfig {
   effectiveFrom: string;
   effectiveTo?: string;
   countryCode: string;
+  /**
+   * Lower value = applied first on tax-exclusive amount (pre-VAT levies). VAT is applied last on (exclusive + pre-VAT).
+   */
+  purchaseStackOrder?: number;
+  /** Include in automatic purchase (input) tax posting. Default: true except withholding. */
+  applyOnPurchases?: boolean;
+  /** Include in automatic sales (output) tax posting. Default: true except withholding. */
+  applyOnSales?: boolean;
 }
 
 // Financial Period
@@ -205,6 +216,8 @@ export interface Invoice {
   workflowStatus?: 'New' | 'In Review' | 'Approved' | 'Rejected' | 'Paid';
   rejectionReason?: string;
   countryCode?: string;
+  /** Originating module (e.g. integration_extended_expense, front_office_checkout). */
+  sourceModule?: string;
   taxBreakdown?: {
     vat?: number;
     nhil?: number;
@@ -228,6 +241,8 @@ export interface Invoice {
   whtVatReceived?: number; // WHT-VAT certificate amount received
   whtCertificateIds?: string[]; // IDs of linked WHT certificates
   whtStatus?: 'N/A' | 'Pending' | 'Partial' | 'Complete'; // WHT certificate status
+  /** Automated GL / AR sub-ledger classification (NHIA, insurers, etc.) */
+  salesLedgerPreset?: 'nhia_claim' | 'insurance_receivable' | 'standard';
 }
 
 // Invoice Line
@@ -266,6 +281,8 @@ export interface Payment {
   checkNumber?: string;
   status: 'Draft' | 'Posted' | 'Void';
   journalEntryId?: string;
+  /** Originating module (manual_ar_ap, restaurant, integration_extended_*, etc.) */
+  sourceModule?: string;
   // WHT Certificate fields (for payments with withheld tax)
   isWHTCertificate?: boolean;
   whtCertificateId?: string; // Link to WHTCertificate record
@@ -399,12 +416,29 @@ export interface FixedAsset {
   depreciationRate: number;
   accumulatedDepreciation: number;
   netBookValue: number;
+  /** Ghana tax pool for capital allowance (wear & tear). */
+  capitalAllowancePool?: import('./capitalAllowance').CapitalAllowancePool;
+  /** Cumulative tax capital allowance claimed (does not affect book NBV). */
+  accumulatedCapitalAllowance?: number;
   location?: string;
   department?: string;
   status: 'Active' | 'Disposed' | 'Under Maintenance';
   glAccountCode: string;
+  capitalizationJournalEntryId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Tax capital allowance claim register (no book JE — feeds tax computation). */
+export interface CapitalAllowanceClaim {
+  id: string;
+  assetId: string;
+  taxYear: number;
+  period: string; // YYYY-MM
+  pool: import('./capitalAllowance').CapitalAllowancePool;
+  allowanceAmount: number;
+  writtenDownValueAfter: number;
+  createdAt: string;
 }
 
 // Depreciation Schedule
@@ -501,13 +535,15 @@ export interface AuditTrail {
 }
 
 // Ghana-Specific Tax Codes
+/** Default rates + **leaf** GL codes (must match `GHANA_CHART_OF_ACCOUNTS` tax payables). */
 export const GHANA_TAX_CODES = {
-  VAT: { code: 'VAT', name: 'Value Added Tax', rate: 15.0, glCode: '2100' },
-  NHIL: { code: 'NHIL', name: 'National Health Insurance Levy', rate: 2.5, glCode: '2101' },
-  GETFUND: { code: 'GETFUND', name: 'Ghana Education Trust Fund', rate: 2.5, glCode: '2102' },
-  COVID19: { code: 'COVID19', name: 'COVID-19 Recovery Levy', rate: 1.0, glCode: '2103' },
-  TOURISM: { code: 'TOURISM', name: 'Tourism Development Levy', rate: 1.0, glCode: '2104' },
-  WITHHOLDING: { code: 'WITHHOLDING', name: 'Withholding Tax', rate: 5.0, glCode: '2105' }
+  VAT: { code: 'VAT', name: 'Value Added Tax', rate: 15.0, glCode: '2110' },
+  NHIL: { code: 'NHIL', name: 'National Health Insurance Levy', rate: 2.5, glCode: '2120' },
+  GETFUND: { code: 'GETFUND', name: 'Ghana Education Trust Fund', rate: 2.5, glCode: '2130' },
+  /** @deprecated Abolished; retained for historical invoices only */
+  COVID19: { code: 'COVID19', name: 'COVID-19 Recovery Levy (legacy)', rate: 0, glCode: '2140' },
+  TOURISM: { code: 'TOURISM', name: 'Tourism Development Levy', rate: 1.0, glCode: '2150' },
+  WITHHOLDING: { code: 'WITHHOLDING', name: 'Withholding Tax', rate: 5.0, glCode: '2160' }
 };
 
 // Standard Chart of Accounts for Ghana Hotels
@@ -520,6 +556,8 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '1200', name: 'Accounts Receivable', type: 'Asset', category: 'Current Assets', level: 2 },
   { code: '1210', name: 'Guest Accounts Receivable', type: 'Asset', category: 'Current Assets', level: 3 },
   { code: '1220', name: 'Other Receivables', type: 'Asset', category: 'Current Assets', level: 3 },
+  { code: '1225', name: 'NHIA / NHIS Receivable', type: 'Asset', category: 'Current Assets', level: 3, description: 'Claims due from National Health Insurance' },
+  { code: '1226', name: 'Insurance Company Receivable', type: 'Asset', category: 'Current Assets', level: 3, description: 'Guest or corporate insurer recoveries' },
   { code: '1230', name: 'WHT Receivable', type: 'Asset', category: 'Current Assets', level: 3, description: 'Withholding tax credits from GRA certificates' },
   { code: '1240', name: 'WHT-VAT Receivable', type: 'Asset', category: 'Current Assets', level: 3, description: 'Withholding VAT credits from GRA certificates' },
   { code: '1300', name: 'Inventory', type: 'Asset', category: 'Current Assets', level: 2 },
@@ -537,9 +575,12 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '2110', name: 'VAT Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
   { code: '2120', name: 'NHIL Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
   { code: '2130', name: 'GETFund Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
-  { code: '2140', name: 'COVID-19 Levy Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
+  { code: '2140', name: 'COVID-19 Levy Payable (legacy)', type: 'Liability', category: 'Current Liabilities', level: 3 },
   { code: '2150', name: 'Tourism Levy Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
+  { code: '2160', name: 'Withholding Tax Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
   { code: '2200', name: 'Accounts Payable', type: 'Liability', category: 'Current Liabilities', level: 2 },
+  { code: '2210', name: 'PAYE Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Employee income tax withheld' },
+  { code: '2220', name: 'SSNIT & Tier-1 Contributions Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Social security remittances due' },
   { code: '2300', name: 'Accrued Expenses', type: 'Liability', category: 'Current Liabilities', level: 2 },
   { code: '2400', name: 'Deferred Revenue', type: 'Liability', category: 'Current Liabilities', level: 2 },
 

@@ -4,11 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { 
   Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
   Input, Select, SelectItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Chip, Textarea,
-  Tabs, Tab, Divider, Progress, Avatar, useDisclosure, Tooltip, Switch
+  Tabs, Tab, useDisclosure, Tooltip, Switch
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
-import { housekeepingStore } from '../lib/housekeeping/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
 
 interface Room {
@@ -234,19 +233,18 @@ export default function RoomManagementDashboard() {
                 placeholder="All Floors"
                 className="w-32"
               >
-                <SelectItem key="all" value="all">All Floors</SelectItem>
-                <SelectItem key="1" value="1">Floor 1</SelectItem>
-                <SelectItem key="2" value="2">Floor 2</SelectItem>
-                <SelectItem key="3" value="3">Floor 3</SelectItem>
+                <SelectItem key="all">All Floors</SelectItem>
+                <SelectItem key="1">Floor 1</SelectItem>
+                <SelectItem key="2">Floor 2</SelectItem>
+                <SelectItem key="3">Floor 3</SelectItem>
               </Select>
               <Select
                 label="Status"
                 placeholder="All Statuses"
                 className="w-40"
               >
-                <SelectItem key="all" value="all">All Statuses</SelectItem>
-                {settings.roomManagement.roomStatuses.filter(s => s.isActive).map(status => (
-                  <SelectItem key={status.id} value={status.id}>{status.name}</SelectItem>
+                {[{ id: 'all', name: 'All Statuses' }, ...settings.roomManagement.roomStatuses.filter(s => s.isActive)].map(status => (
+                  <SelectItem key={status.id}>{status.name}</SelectItem>
                 ))}
               </Select>
             </div>
@@ -517,7 +515,7 @@ export default function RoomManagementDashboard() {
                       onChange={(e) => handleStatusChange(selectedRoom.id, e.target.value)}
                     >
                       {settings.roomManagement.roomStatuses.filter(s => s.isActive).map(status => (
-                        <SelectItem key={status.id} value={status.id}>{status.name}</SelectItem>
+                        <SelectItem key={status.id}>{status.name}</SelectItem>
                       ))}
                     </Select>
                   </div>
@@ -551,25 +549,25 @@ export default function RoomManagementDashboard() {
                   <label className="text-sm font-medium">Room</label>
                   <Select placeholder="Select room">
                     {rooms.map(room => (
-                      <SelectItem key={room.id} value={room.id}>{room.number}</SelectItem>
+                      <SelectItem key={room.id}>{room.number}</SelectItem>
                     ))}
                   </Select>
                 </div>
                 <div>
                   <label className="text-sm font-medium">Action Type</label>
                   <Select placeholder="Select action">
-                    <SelectItem key="cleaning" value="cleaning">Cleaning</SelectItem>
-                    <SelectItem key="maintenance" value="maintenance">Maintenance</SelectItem>
-                    <SelectItem key="inspection" value="inspection">Inspection</SelectItem>
+                    <SelectItem key="cleaning">Cleaning</SelectItem>
+                    <SelectItem key="maintenance">Maintenance</SelectItem>
+                    <SelectItem key="inspection">Inspection</SelectItem>
                   </Select>
                 </div>
                 <div>
                   <label className="text-sm font-medium">Priority</label>
                   <Select placeholder="Select priority">
-                    <SelectItem key="low" value="low">Low</SelectItem>
-                    <SelectItem key="medium" value="medium">Medium</SelectItem>
-                    <SelectItem key="high" value="high">High</SelectItem>
-                    <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
+                    <SelectItem key="low">Low</SelectItem>
+                    <SelectItem key="medium">Medium</SelectItem>
+                    <SelectItem key="high">High</SelectItem>
+                    <SelectItem key="urgent">Urgent</SelectItem>
                   </Select>
                 </div>
                 <div>

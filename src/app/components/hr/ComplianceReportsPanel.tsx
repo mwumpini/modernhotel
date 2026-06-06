@@ -22,12 +22,12 @@ export default function ComplianceReportsPanel() {
               <TableColumn>REPORT</TableColumn>
               <TableColumn>PERIOD</TableColumn>
               <TableColumn>STATUS</TableColumn>
-              <TableColumn></TableColumn>
+              <TableColumn>{' '}</TableColumn>
             </TableHeader>
             <TableBody>
               {reports.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell>{r.name || r.type}</TableCell>
+                  <TableCell>{r.reportType}</TableCell>
                   <TableCell>{r.period || '-'}</TableCell>
                   <TableCell><Chip size="sm" variant="flat" color={color(r.status)}>{r.status}</Chip></TableCell>
                   <TableCell>

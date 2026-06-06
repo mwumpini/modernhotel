@@ -10,22 +10,42 @@ import {
   BankTransaction,
   BusinessPartner,
   Invoice,
-  InvoiceLine,
   Payment,
   PaymentVoucher,
   PaymentVoucherLine,
   FixedAsset,
   DepreciationSchedule,
+  CapitalAllowanceClaim,
   CostCenter,
   RevenueCenter,
   Project,
   FinancialReport,
   AuditTrail,
   WHTCertificate,
-  GHANA_CHART_OF_ACCOUNTS,
-  GHANA_TAX_CODES
+  GHANA_CHART_OF_ACCOUNTS
 } from './models';
+import { getTaxWrittenDownValue, resolveCapitalAllowancePool } from './capitalAllowance';
 import type { Supplier } from '../inventory/models';
+import type {
+  PurchaseOrder,
+  InventoryAccountingTransaction,
+  PayrollLedgerEntry,
+  SsnitRegisterEntry,
+  PayeRegisterEntry,
+  AccrualLedgerEntry,
+  PrepaymentLedgerEntry,
+  TaxProvisionEntry,
+} from './accountingArchitectureModels';
+import {
+  computeTrialBalanceGLBalances,
+  computeIncomeStatementFromJE,
+  computeBalanceSheetFromJE,
+  computeCashFlowForPeriod,
+  defaultRollupCoa,
+} from './jeDrivenReports';
+import { taxConfigsFromGhanaTemplate } from './taxFromConfig';
+import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments } from './helpers/api';
+import { syncInvoiceToLedger, syncPaymentToLedger } from './invoicePostingBridge';
 
 interface AccountingState {
   // Chart of Accounts
@@ -68,6 +88,7 @@ interface AccountingState {
   // Fixed Assets
   fixedAssets: FixedAsset[];
   depreciationSchedules: DepreciationSchedule[];
+  capitalAllowanceClaims: CapitalAllowanceClaim[];
   
   // Cost Centers & Projects
   costCenters: CostCenter[];
@@ -79,6 +100,16 @@ interface AccountingState {
   
   // Audit Trail
   auditTrail: AuditTrail[];
+
+  /** Menish / extended architecture registers (PO, inventory GL, payroll, adjustments, tax provisions) */
+  purchaseOrders: PurchaseOrder[];
+  inventoryAccountingTransactions: InventoryAccountingTransaction[];
+  payrollLedgerEntries: PayrollLedgerEntry[];
+  ssnitRegisterEntries: SsnitRegisterEntry[];
+  payeRegisterEntries: PayeRegisterEntry[];
+  accrualLedgerEntries: AccrualLedgerEntry[];
+  prepaymentLedgerEntries: PrepaymentLedgerEntry[];
+  taxRegisterEntries: TaxProvisionEntry[];
   
   // UI State
   isLoading: boolean;
@@ -214,6 +245,7 @@ interface AccountingState {
   setDepreciationSchedules: (schedules: DepreciationSchedule[]) => void;
   calculateDepreciation: (assetId: string, period: string) => Promise<void>;
   postDepreciation: (scheduleId: string) => Promise<void>;
+  recordCapitalAllowanceClaim: (assetId: string, period: string, amount: number) => CapitalAllowanceClaim | null;
   
   // Cost Centers & Projects
   setCostCenters: (centers: CostCenter[]) => void;
@@ -241,6 +273,16 @@ interface AccountingState {
   
   // Audit Trail
   addAuditTrail: (trail: AuditTrail) => void;
+
+  addPurchaseOrder: (po: PurchaseOrder) => void;
+  updatePurchaseOrder: (id: string, updates: Partial<PurchaseOrder>) => void;
+  addInventoryAccountingTransaction: (t: InventoryAccountingTransaction) => void;
+  addPayrollLedgerEntry: (p: PayrollLedgerEntry) => void;
+  addSsnitRegisterEntry: (e: SsnitRegisterEntry) => void;
+  addPayeRegisterEntry: (e: PayeRegisterEntry) => void;
+  addAccrualLedgerEntry: (e: AccrualLedgerEntry) => void;
+  addPrepaymentLedgerEntry: (e: PrepaymentLedgerEntry) => void;
+  addTaxRegisterEntry: (e: TaxProvisionEntry) => void;
   
   // Utility Functions
   getAccountBalance: (accountCode: string, period?: string) => number;
@@ -311,11 +353,20 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   whtCertificates: [],
   fixedAssets: [],
   depreciationSchedules: [],
+  capitalAllowanceClaims: [],
   costCenters: [],
   revenueCenters: [],
   projects: [],
   financialReports: [],
   auditTrail: [],
+  purchaseOrders: [],
+  inventoryAccountingTransactions: [],
+  payrollLedgerEntries: [],
+  ssnitRegisterEntries: [],
+  payeRegisterEntries: [],
+  accrualLedgerEntries: [],
+  prepaymentLedgerEntries: [],
+  taxRegisterEntries: [],
   isLoading: false,
   error: null,
 
@@ -361,16 +412,26 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       timestamp: new Date().toISOString()
     });
     
+    persistJournalEntry(entry);
     return {
     journalEntries: [...state.journalEntries, entry]
     };
   }),
   
-  updateJournalEntry: (id, updates) => set((state) => ({
+  updateJournalEntry: (id, updates) => set((state) => {
+    if (updates.status) {
+      persistJournalEntryStatus(id, {
+        status: updates.status,
+        postedBy: updates.postedBy,
+        postedAt: updates.postedAt,
+      });
+    }
+    return {
     journalEntries: state.journalEntries.map(entry =>
       entry.id === id ? { ...entry, ...updates } : entry
     )
-  })),
+    };
+  }),
   
   deleteJournalEntry: (id) => set((state) => ({
     journalEntries: state.journalEntries.filter(entry => entry.id !== id)
@@ -384,18 +445,20 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 1000));
       
+      const postedAt = new Date().toISOString();
       set((state) => ({
         journalEntries: state.journalEntries.map(entry =>
           entry.id === id 
             ? { 
                 ...entry, 
                 status: 'Posted',
-                postedAt: new Date().toISOString(),
+                postedAt,
                 postedBy: 'current-user'
               }
             : entry
         )
       }));
+      persistJournalEntryStatus(id, { status: 'Posted', postedAt, postedBy: 'current-user' });
       
       // Update GL balances
       const entry = get().journalEntries.find(e => e.id === id);
@@ -425,6 +488,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           entry.id === id ? { ...entry, status: 'Void' } : entry
         )
       }));
+      persistJournalEntryStatus(id, { status: 'Void' });
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to void journal entry' });
     } finally {
@@ -746,36 +810,48 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // Invoices Actions
   setInvoices: (invoices) => set({ invoices: invoices }),
   
-  addInvoice: (invoice) => set((state) => {
-    // Detailed logging for invoice creation
-    console.log(`[Accounting] 📄 Invoice Created:`, {
-      invoiceNumber: invoice.invoiceNumber || invoice.id,
-      type: invoice.type,
-      customer: invoice.businessPartnerId,
-      subtotal: `GHS ${(invoice.subtotal || 0).toLocaleString()}`,
-      tax: `GHS ${(invoice.taxAmount || 0).toLocaleString()}`,
-      total: `GHS ${(invoice.total || 0).toLocaleString()}`,
-      status: invoice.status,
-      dueDate: invoice.dueDate,
-      source: (invoice as any).sourceModule || 'manual',
-      timestamp: new Date().toISOString()
+  addInvoice: (invoice) => {
+    set((state) => {
+      console.log(`[Accounting] 📄 Invoice Created:`, {
+        invoiceNumber: invoice.invoiceNumber || invoice.id,
+        type: invoice.type,
+        customer: invoice.businessPartnerId,
+        subtotal: `GHS ${(invoice.subtotal || 0).toLocaleString()}`,
+        tax: `GHS ${(invoice.taxAmount || 0).toLocaleString()}`,
+        total: `GHS ${(invoice.total || 0).toLocaleString()}`,
+        status: invoice.status,
+        dueDate: invoice.dueDate,
+        source: (invoice as any).sourceModule || 'manual',
+        timestamp: new Date().toISOString()
+      });
+
+      const updatedPartners = state.businessPartners.map(p => {
+        if (p.id !== invoice.businessPartnerId) return p;
+        if (invoice.type === 'Purchase' && (p.type === 'Supplier' || p.type === 'Both')) {
+          return { ...p, balance: +(p.balance + invoice.total).toFixed(2) };
+        }
+        if (invoice.type === 'Sales' && (p.type === 'Customer' || p.type === 'Both')) {
+          return { ...p, balance: +(p.balance + invoice.total).toFixed(2) };
+        }
+        return p;
+      });
+      persistInvoice(invoice);
+      return {
+        businessPartners: updatedPartners,
+        invoices: [...state.invoices, invoice]
+      };
     });
-    
-    const updatedPartners = state.businessPartners.map(p => {
-      if (p.id !== invoice.businessPartnerId) return p;
-      if (invoice.type === 'Purchase' && (p.type === 'Supplier' || p.type === 'Both')) {
-        return { ...p, balance: +(p.balance + invoice.total).toFixed(2) };
+
+    const state = get();
+    const added = state.invoices.find(i => i.id === invoice.id);
+    if (added) {
+      const src = added.sourceModule;
+      if (!src || src === 'manual' || src === 'manual_ar_ap') {
+        const partner = state.businessPartners.find(p => p.id === added.businessPartnerId);
+        syncInvoiceToLedger(added, partner, get());
       }
-      if (invoice.type === 'Sales' && (p.type === 'Customer' || p.type === 'Both')) {
-        return { ...p, balance: +(p.balance + invoice.total).toFixed(2) };
-      }
-      return p;
-    });
-    return {
-      businessPartners: updatedPartners,
-    invoices: [...state.invoices, invoice]
-    };
-  }),
+    }
+  },
   
   updateInvoice: (id, updates) => set((state) => {
     const prev = state.invoices.find(i => i.id === id);
@@ -794,6 +870,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         return p;
       });
     }
+    persistInvoicePatch(id, updates);
     return {
       businessPartners: partners,
       invoices: state.invoices.map(invoice => invoice.id === id ? { ...invoice, ...updates } : invoice)
@@ -811,6 +888,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         return p;
       });
     }
+    persistInvoiceDelete(id);
     return {
       businessPartners: partners,
     invoices: state.invoices.filter(invoice => invoice.id !== id)
@@ -820,12 +898,25 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   postInvoice: async (id) => {
     set({ isLoading: true, error: null });
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      set((state) => ({
-        invoices: state.invoices.map(invoice =>
-          invoice.id === id ? { ...invoice, status: 'Posted' } : invoice
-        )
-      }));
+      const state = get();
+      const invoice = state.invoices.find(i => i.id === id);
+      if (!invoice) throw new Error('Invoice not found');
+
+      if (invoice.status === 'Draft') {
+        set((s) => ({
+          invoices: s.invoices.map(inv =>
+            inv.id === id ? { ...inv, status: 'Posted' as const, updatedAt: new Date().toISOString() } : inv
+          )
+        }));
+        persistInvoicePatch(id, { status: 'Posted' });
+      }
+
+      const refreshed = get().invoices.find(i => i.id === id)!;
+      const partner = get().businessPartners.find(p => p.id === refreshed.businessPartnerId);
+      const result = syncInvoiceToLedger(refreshed, partner, get());
+      if (!result.ok && !('skipped' in result)) {
+        throw new Error(result.error);
+      }
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to post invoice' });
     } finally {
@@ -842,6 +933,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           invoice.id === id ? { ...invoice, status: 'Void' } : invoice
         )
       }));
+      persistInvoicePatch(id, { status: 'Void' });
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to void invoice' });
     } finally {
@@ -852,36 +944,48 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // Payments Actions
   setPayments: (payments) => set({ payments: payments }),
   
-  addPayment: (payment) => set((state) => {
-    // Detailed logging for payment/receipt creation
-    const isReceipt = payment.type === 'Receipt';
-    console.log(`[Accounting] ${isReceipt ? '🧾 Receipt' : '💳 Payment'} Created:`, {
-      paymentNumber: payment.paymentNumber || payment.id,
-      type: payment.type,
-      party: payment.businessPartnerId,
-      amount: `GHS ${(payment.amount || 0).toLocaleString()}`,
-      method: payment.paymentMethod,
-      invoiceId: payment.invoiceId || 'N/A',
-      status: payment.status,
-      source: (payment as any).sourceModule || 'manual',
-      timestamp: new Date().toISOString()
+  addPayment: (payment) => {
+    set((state) => {
+      const isReceipt = payment.type === 'Receipt';
+      console.log(`[Accounting] ${isReceipt ? '🧾 Receipt' : '💳 Payment'} Created:`, {
+        paymentNumber: payment.paymentNumber || payment.id,
+        type: payment.type,
+        party: payment.businessPartnerId,
+        amount: `GHS ${(payment.amount || 0).toLocaleString()}`,
+        method: payment.paymentMethod,
+        invoiceId: payment.invoiceId || 'N/A',
+        status: payment.status,
+        source: (payment as any).sourceModule || 'manual',
+        timestamp: new Date().toISOString()
+      });
+
+      const updatedPartners = state.businessPartners.map(p => {
+        if (p.id !== payment.businessPartnerId) return p;
+        if (payment.type === 'Payment' && (p.type === 'Supplier' || p.type === 'Both')) {
+          return { ...p, balance: +(p.balance - payment.amount).toFixed(2) };
+        }
+        if (payment.type === 'Receipt' && (p.type === 'Customer' || p.type === 'Both')) {
+          return { ...p, balance: +(p.balance - payment.amount).toFixed(2) };
+        }
+        return p;
+      });
+      persistPayment(payment);
+      return {
+        businessPartners: updatedPartners,
+        payments: [...state.payments, payment]
+      };
     });
-    
-    const updatedPartners = state.businessPartners.map(p => {
-      if (p.id !== payment.businessPartnerId) return p;
-      if (payment.type === 'Payment' && (p.type === 'Supplier' || p.type === 'Both')) {
-        return { ...p, balance: +(p.balance - payment.amount).toFixed(2) };
+
+    const state = get();
+    const added = state.payments.find(p => p.id === payment.id);
+    if (added && added.status === 'Posted') {
+      const src = added.sourceModule;
+      if (!src || src === 'manual' || src === 'manual_ar_ap') {
+        const partner = state.businessPartners.find(p => p.id === added.businessPartnerId);
+        syncPaymentToLedger(added, partner, get());
       }
-      if (payment.type === 'Receipt' && (p.type === 'Customer' || p.type === 'Both')) {
-        return { ...p, balance: +(p.balance - payment.amount).toFixed(2) };
-      }
-      return p;
-    });
-    return {
-      businessPartners: updatedPartners,
-    payments: [...state.payments, payment]
-    };
-  }),
+    }
+  },
   
   updatePayment: (id, updates) => set((state) => {
     const prev = state.payments.find(p => p.id === id);
@@ -900,6 +1004,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         return bp;
       });
     }
+    persistPaymentPatch(id, updates);
     return {
       businessPartners: partners,
       payments: state.payments.map(payment => payment.id === id ? { ...payment, ...updates } : payment)
@@ -930,7 +1035,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   postPayment: async (id) => {
     set({ isLoading: true, error: null });
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
       const state = get();
       const payment = state.payments.find(p => p.id === id);
       if (!payment) throw new Error('Payment not found');
@@ -938,70 +1042,22 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const partner = state.businessPartners.find(bp => bp.id === payment.businessPartnerId);
       if (!partner) throw new Error('Business partner not found');
 
-      // Determine cash/bank account code
-      let cashOrBankGl = '1110'; // Cash in Hand default
-      let bankCurrency = state.currentPeriod ? 'GHS' : 'GHS';
-      if (payment.paymentMethod !== 'Cash' && payment.bankAccountId) {
-        const bank = state.bankAccounts.find(b => b.id === payment.bankAccountId);
-        if (bank) {
-          cashOrBankGl = bank.glAccountCode;
-          bankCurrency = bank.currency;
-        }
+      if (payment.status === 'Draft') {
+        set((s) => ({
+          payments: s.payments.map(pm =>
+            pm.id === id ? { ...pm, status: 'Posted' as const, updatedAt: new Date().toISOString() } : pm
+          )
+        }));
+        persistPaymentPatch(id, { status: 'Posted' });
       }
 
-      // Build journal lines: Debit AP, Credit Cash/Bank for supplier payment
-      const debitLine = {
-        id: Date.now().toString() + Math.random(),
-        journalEntryId: '',
-        accountCode: partner.glAccountCode,
-        description: payment.description || `Payment to ${partner.name}`,
-        debit: payment.amount,
-        credit: 0,
-        currency: payment.currency || 'GHS',
-        reference: payment.reference
-      } as JournalEntryLine;
+      const refreshed = get().payments.find(p => p.id === id)!;
+      const result = syncPaymentToLedger(refreshed, partner, get());
+      if (!result.ok && !('skipped' in result)) {
+        throw new Error(result.error);
+      }
 
-      const creditLine = {
-        id: Date.now().toString() + Math.random(),
-        journalEntryId: '',
-        accountCode: cashOrBankGl,
-        description: payment.description || `Payment to ${partner.name}`,
-        debit: 0,
-        credit: payment.amount,
-        currency: payment.currency || bankCurrency,
-        reference: payment.reference
-      } as JournalEntryLine;
-
-      const entryNumber = `JE-${new Date().getFullYear()}-${String(state.journalEntries.length + 1).padStart(4, '0')}`;
-      const journalEntry: JournalEntry = {
-        id: Date.now().toString(),
-        entryNumber,
-        date: payment.date,
-        reference: payment.paymentNumber,
-        description: `Supplier Payment ${payment.paymentNumber} - ${partner.name}`,
-        totalDebit: payment.amount,
-        totalCredit: payment.amount,
-        currency: payment.currency,
-        status: 'Posted',
-        postedBy: 'current-user',
-        postedAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        lines: [debitLine, creditLine]
-      };
-
-      // Update state: mark payment posted, link JE, add JE
-      set((s) => ({
-        payments: s.payments.map(pm => pm.id === id ? { ...pm, status: 'Posted', journalEntryId: journalEntry.id, updatedAt: new Date().toISOString() } : pm),
-        journalEntries: [...s.journalEntries, journalEntry]
-      }));
-
-      // Update GL balances
-      get().updateGLBalance(debitLine.accountCode, state.currentPeriod, { currentDebit: debitLine.debit, currentCredit: 0 });
-      get().updateGLBalance(creditLine.accountCode, state.currentPeriod, { currentDebit: 0, currentCredit: creditLine.credit });
-
-      // Bank transaction & balance if bank account provided
-      if (payment.bankAccountId) {
+      if (result.ok && !('skipped' in result) && payment.type === 'Payment' && payment.bankAccountId) {
         const bank = get().bankAccounts.find(b => b.id === payment.bankAccountId);
         if (bank) {
           const newBalance = +(bank.currentBalance - payment.amount).toFixed(2);
@@ -1017,19 +1073,21 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
             currency: bank.currency,
             balance: newBalance,
             status: 'Cleared',
-            journalEntryId: journalEntry.id,
+            journalEntryId: result.entry.id,
             createdAt: new Date().toISOString()
           });
         }
       }
 
-      // Audit trail
       get().addAuditTrail({
         id: Date.now().toString(),
         tableName: 'Payment',
         recordId: id,
         action: 'Post',
-        newValues: { status: 'Posted', journalEntryId: journalEntry.id },
+        newValues: {
+          status: 'Posted',
+          journalEntryId: result.ok && !('skipped' in result) ? result.entry.id : payment.journalEntryId,
+        },
         userId: 'current-user',
         timestamp: new Date().toISOString()
       });
@@ -1813,7 +1871,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
       set((prev) => ({
         depreciationSchedules: [...prev.depreciationSchedules, schedule],
-        fixedAssets: prev.fixedAssets.map(a => a.id === asset.id ? { ...a, accumulatedDepreciation: newAccumulated, netBookValue: newNBV } : a)
       }));
 
       // Log audit
@@ -1836,17 +1893,70 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   postDepreciation: async (scheduleId) => {
     set({ isLoading: true, error: null });
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      const schedule = get().depreciationSchedules.find((s) => s.id === scheduleId);
+      if (!schedule) throw new Error('Depreciation schedule not found');
+      if (schedule.isPosted) throw new Error('Depreciation already posted');
+
       set((state) => ({
-        depreciationSchedules: state.depreciationSchedules.map(schedule =>
-          schedule.id === scheduleId ? { ...schedule, isPosted: true } : schedule
-        )
+        depreciationSchedules: state.depreciationSchedules.filter((s) => s.id !== scheduleId),
       }));
+
+      const { captureDepreciation } = await import('./integrationExtendedCaptures');
+      const result = captureDepreciation({
+        assetId: schedule.assetId,
+        period: schedule.period,
+        amount: schedule.depreciationAmount,
+      });
+      if (!result) throw new Error('Failed to post depreciation to the ledger');
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to post depreciation' });
     } finally {
       set({ isLoading: false });
     }
+  },
+
+  recordCapitalAllowanceClaim: (assetId, period, amount) => {
+    const asset = get().fixedAssets.find((a) => a.id === assetId);
+    if (!asset) {
+      set({ error: 'Asset not found' });
+      return null;
+    }
+    const wdv = getTaxWrittenDownValue(asset);
+    const claimAmount = Math.min(Math.max(0, amount), wdv);
+    if (claimAmount <= 0) {
+      set({ error: 'No qualifying tax written-down value remaining' });
+      return null;
+    }
+    const newAccum = +( (asset.accumulatedCapitalAllowance ?? 0) + claimAmount).toFixed(2);
+    const claim: CapitalAllowanceClaim = {
+      id: `CA-${Date.now()}`,
+      assetId,
+      taxYear: parseInt(period.slice(0, 4), 10),
+      period,
+      pool: resolveCapitalAllowancePool(asset.category, asset.capitalAllowancePool),
+      allowanceAmount: claimAmount,
+      writtenDownValueAfter: Math.max(0, +(asset.purchaseCost - newAccum).toFixed(2)),
+      createdAt: new Date().toISOString(),
+    };
+    set((state) => ({
+      capitalAllowanceClaims: [...state.capitalAllowanceClaims, claim],
+      fixedAssets: state.fixedAssets.map((a) =>
+        a.id === assetId
+          ? { ...a, accumulatedCapitalAllowance: newAccum, updatedAt: new Date().toISOString() }
+          : a
+      ),
+      error: null,
+    }));
+    get().addAuditTrail({
+      id: `AT-CA-${Date.now()}`,
+      tableName: 'CapitalAllowanceClaim',
+      recordId: claim.id,
+      action: 'Create',
+      newValues: claim,
+      userId: 'system',
+      timestamp: new Date().toISOString(),
+    });
+    return claim;
   },
 
   // Cost Centers Actions
@@ -1999,6 +2109,34 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     auditTrail: [...state.auditTrail, trail]
   })),
 
+  addPurchaseOrder: (po) => set((state) => ({
+    purchaseOrders: [...state.purchaseOrders, po],
+  })),
+  updatePurchaseOrder: (id, updates) => set((state) => ({
+    purchaseOrders: state.purchaseOrders.map((p) => (p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p)),
+  })),
+  addInventoryAccountingTransaction: (t) => set((state) => ({
+    inventoryAccountingTransactions: [...state.inventoryAccountingTransactions, t],
+  })),
+  addPayrollLedgerEntry: (p) => set((state) => ({
+    payrollLedgerEntries: [...state.payrollLedgerEntries, p],
+  })),
+  addSsnitRegisterEntry: (e) => set((state) => ({
+    ssnitRegisterEntries: [...state.ssnitRegisterEntries, e],
+  })),
+  addPayeRegisterEntry: (e) => set((state) => ({
+    payeRegisterEntries: [...state.payeRegisterEntries, e],
+  })),
+  addAccrualLedgerEntry: (e) => set((state) => ({
+    accrualLedgerEntries: [...state.accrualLedgerEntries, e],
+  })),
+  addPrepaymentLedgerEntry: (e) => set((state) => ({
+    prepaymentLedgerEntries: [...state.prepaymentLedgerEntries, e],
+  })),
+  addTaxRegisterEntry: (e) => set((state) => ({
+    taxRegisterEntries: [...state.taxRegisterEntries, e],
+  })),
+
   // Utility Functions
   getAccountBalance: (accountCode, period) => {
     const balances = get().glBalances;
@@ -2014,111 +2152,30 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   },
   
   getTrialBalance: (period) => {
-    const targetPeriod = period || get().currentPeriod;
-    // Mock implementation for trial balance
-    return [
-      {
-        id: 'tb-1000',
-        accountCode: '1000',
-        period: targetPeriod,
-        openingBalance: 0,
-        currentDebit: 150000.00,
-        currentCredit: 0.00,
-        closingBalance: 150000.00,
-        currency: 'GHS',
-        lastUpdated: new Date().toISOString()
-      },
-      {
-        id: 'tb-1100',
-        accountCode: '1100',
-        period: targetPeriod,
-        openingBalance: 0,
-        currentDebit: 75000.00,
-        currentCredit: 0.00,
-        closingBalance: 75000.00,
-        currency: 'GHS',
-        lastUpdated: new Date().toISOString()
-      },
-      {
-        id: 'tb-2000',
-        accountCode: '2000',
-        period: targetPeriod,
-        openingBalance: 0,
-        currentDebit: 0.00,
-        currentCredit: 120000.00,
-        closingBalance: -120000.00,
-        currency: 'GHS',
-        lastUpdated: new Date().toISOString()
-      },
-      {
-        id: 'tb-3000',
-        accountCode: '3000',
-        period: targetPeriod,
-        openingBalance: 0,
-        currentDebit: 0.00,
-        currentCredit: 50000.00,
-        closingBalance: -50000.00,
-        currency: 'GHS',
-        lastUpdated: new Date().toISOString()
-      },
-      {
-        id: 'tb-4000',
-        accountCode: '4000',
-        period: targetPeriod,
-        openingBalance: 0,
-        currentDebit: 0.00,
-        currentCredit: 250000.00,
-        closingBalance: -250000.00,
-        currency: 'GHS',
-        lastUpdated: new Date().toISOString()
-      },
-      {
-        id: 'tb-5000',
-        accountCode: '5000',
-        period: targetPeriod,
-        openingBalance: 0,
-        currentDebit: 120000.00,
-        currentCredit: 0.00,
-        closingBalance: 120000.00,
-        currency: 'GHS',
-        lastUpdated: new Date().toISOString()
-      }
-    ];
+    const st = get();
+    const targetPeriod = period || st.currentPeriod;
+    const rollup = defaultRollupCoa();
+    return computeTrialBalanceGLBalances(st.chartOfAccounts, st.journalEntries, rollup, targetPeriod);
   },
-  
+
   getIncomeStatement: (period) => {
-    // Mock implementation for income statement
-    return {
-      totalRevenue: 150000.00,
-      totalExpenses: 120000.00,
-      netIncome: 30000.00,
-      grossProfit: 45000.00,
-      operatingExpenses: 75000.00
-    };
+    const st = get();
+    const p = period || st.currentPeriod;
+    const rollup = defaultRollupCoa();
+    return computeIncomeStatementFromJE(st.chartOfAccounts, st.journalEntries, rollup, p);
   },
-  
+
   getBalanceSheet: (period) => {
-    // Mock implementation for balance sheet
-    return {
-      currentAssets: 250000.00,
-      fixedAssets: 500000.00,
-      totalAssets: 750000.00,
-      currentLiabilities: 150000.00,
-      longTermLiabilities: 200000.00,
-      totalLiabilities: 350000.00,
-      totalEquity: 400000.00,
-      totalLiabilitiesAndEquity: 750000.00
-    };
+    const st = get();
+    const p = period || st.currentPeriod;
+    const rollup = defaultRollupCoa();
+    return computeBalanceSheetFromJE(st.chartOfAccounts, st.journalEntries, rollup, p);
   },
-  
+
   getCashFlow: (period) => {
-    // Mock implementation for cash flow
-    return {
-      operatingCashFlow: 35000.00,
-      investingCashFlow: -50000.00,
-      financingCashFlow: 15000.00,
-      netCashFlow: 0.00
-    };
+    const st = get();
+    const p = period || st.currentPeriod;
+    return computeCashFlowForPeriod(st.journalEntries, p);
   },
   
   calculateTax: (amount, taxCode) => {
@@ -2161,21 +2218,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         };
       });
       
-      // Initialize tax configurations
-      const taxConfigs: TaxConfig[] = Object.values(GHANA_TAX_CODES).map((tax, index) => ({
-        id: (index + 1).toString(),
-        code: tax.code,
-        name: tax.name,
-        rate: tax.rate,
-        type: tax.code as any,
-        glAccountCode: tax.glCode,
-        isRecoverable: true,
-        isActive: true,
-        effectiveFrom: new Date().toISOString(),
-        countryCode: 'GH',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }));
+      // Initialize tax configurations (aligned with chart leaf accounts; drives sales + purchase posting)
+      const taxConfigs: TaxConfig[] = taxConfigsFromGhanaTemplate();
       
       // Initialize current financial period
       const currentDate = new Date();
@@ -2283,8 +2327,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 125.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 125.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 50.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 750.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 800.00 },
            ],
            items: [
              { description: 'Training Room - Full Day', quantity: 1, unitPrice: 2000.00 },
@@ -2324,8 +2367,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 125.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 125.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 50.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 750.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 800.00 },
            ],
            items: [
              { description: 'Training Room - Full Day', quantity: 1, unitPrice: 2000.00 },
@@ -2368,8 +2410,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 375.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 375.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 150.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 2250.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 2400.00 },
            ],
            items: [
              { description: 'Grand Ballroom Venue', quantity: 1, unitPrice: 5000.00 },
@@ -2408,8 +2449,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 375.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 375.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 150.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 2250.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 2400.00 },
            ],
            items: [
              { description: 'Grand Ballroom Venue', quantity: 1, unitPrice: 5000.00 },
@@ -2452,8 +2492,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 200.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 200.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 80.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 1200.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 1280.00 },
            ],
            items: [
              { description: 'Conference Hall B', quantity: 1, unitPrice: 3000.00 },
@@ -2493,8 +2532,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 200.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 200.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 80.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 1200.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 1280.00 },
            ],
            items: [
              { description: 'Conference Hall B', quantity: 1, unitPrice: 3000.00 },
@@ -2538,8 +2576,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 87.50 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 87.50 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 35.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 525.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 560.00 },
            ],
            items: [
              { description: 'Garden Terrace Venue', quantity: 1, unitPrice: 1500.00 },
@@ -2578,8 +2615,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 87.50 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 87.50 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 35.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 525.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 560.00 },
            ],
            items: [
              { description: 'Garden Terrace Venue', quantity: 1, unitPrice: 1500.00 },
@@ -2624,8 +2660,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 300.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 300.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 120.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 1800.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 1920.00 },
            ],
            items: [
              { description: 'Grand Ballroom - Full Day', quantity: 1, unitPrice: 5000.00 },
@@ -2668,8 +2703,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 30.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 30.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 12.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 180.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 192.00 },
            ],
            items: [
              { description: 'Deluxe Room', quantity: 3, unitPrice: 400.00 },
@@ -2707,8 +2741,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 75.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 75.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 30.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 450.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 480.00 },
            ],
            items: [
              { description: 'Executive Suite', quantity: 5, unitPrice: 600.00 },
@@ -2749,8 +2782,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 7.13 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 7.13 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 2.85 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 42.75 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 45.60 },
            ],
            items: [
              { description: 'Jollof Rice with Chicken', quantity: 2, unitPrice: 85.00 },
@@ -2790,8 +2822,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 11.25 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 11.25 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 4.50 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 67.50 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 72.00 },
            ],
            items: [
              { description: 'Seafood Platter', quantity: 2, unitPrice: 180.00 },
@@ -2832,8 +2863,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 3.00 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 3.00 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 1.20 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 18.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 19.20 },
            ],
            items: [
              { description: 'Continental Breakfast', quantity: 2, unitPrice: 45.00 },
@@ -2875,8 +2905,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
            taxBreakdown: [
              { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: 12.50 },
              { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: 12.50 },
-             { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: 5.00 },
-             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 75.00 },
+             { code: 'VAT', name: 'VAT', rate: 15.0, amount: 80.00 },
            ],
            items: [
              { description: 'Consulting Services', quantity: 1, unitPrice: 500.00 },
@@ -3335,11 +3364,13 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           usefulLife: 5,
           salvageValue: 5000,
           depreciationMethod: 'Straight Line',
-          depreciationRate: 0,
+          depreciationRate: 20,
           accumulatedDepreciation: 10000,
           netBookValue: 40000,
+          capitalAllowancePool: 'furniture',
+          accumulatedCapitalAllowance: 8000,
           status: 'Active',
-          glAccountCode: '1500',
+          glAccountCode: '1510',
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString()
         }
@@ -3614,26 +3645,105 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           updatedAt: yesterday,
         }
        ];
-      
+
+      const prev = get();
+      const mergeById = <T extends { id: string }>(seed: T[], existing: T[]): T[] => {
+        const m = new Map<string, T>();
+        for (const item of seed) m.set(item.id, item);
+        for (const item of existing) m.set(item.id, item);
+        return Array.from(m.values());
+      };
+      const mergeRevenueCenters = (seed: typeof sampleRevenueCenters, existing: typeof sampleRevenueCenters) => {
+        const m = new Map<string, (typeof sampleRevenueCenters)[0]>();
+        for (const rc of seed) m.set(rc.code, rc);
+        for (const rc of existing) m.set(rc.code, rc);
+        return Array.from(m.values());
+      };
+
+      const mergeCostCenters = (seed: typeof sampleCostCenters, existing: typeof sampleCostCenters) => {
+        const m = new Map<string, (typeof sampleCostCenters)[0]>();
+        for (const cc of seed) m.set(cc.code, cc);
+        for (const cc of existing) m.set(cc.code, cc);
+        return Array.from(m.values());
+      };
+
+      const mergeChartByCode = (seed: ChartOfAccounts[], existing: ChartOfAccounts[]) => {
+        const m = new Map<string, ChartOfAccounts>();
+        for (const a of seed) m.set(a.code, a);
+        for (const a of existing) m.set(a.code, a);
+        return Array.from(m.values());
+      };
+
+      const mergeTaxConfigs = (seed: TaxConfig[], existing: TaxConfig[]) => {
+        const m = new Map<string, TaxConfig>();
+        for (const t of seed) m.set(t.code, t);
+        for (const t of existing) m.set(t.code, t);
+        return Array.from(m.values());
+      };
+
+      const mergedFinancialPeriods = mergeById([currentPeriod], prev.financialPeriods);
+
+      const prevFin = prev.currentFinancialPeriod;
+      let resolvedCurrentFinancial: FinancialPeriod;
+      if (prevFin?.id) {
+        const match = mergedFinancialPeriods.find((p) => p.id === prevFin.id);
+        resolvedCurrentFinancial =
+          match || mergedFinancialPeriods.find((p) => p.isCurrent) || currentPeriod;
+      } else {
+        resolvedCurrentFinancial =
+          mergedFinancialPeriods.find((p) => p.isCurrent) || currentPeriod;
+      }
+
+      const glMonthSlice = `${resolvedCurrentFinancial.year}-${String(resolvedCurrentFinancial.period).padStart(2, '0')}`;
+
       set({
-        chartOfAccounts: accounts,
-        taxConfigs,
-        financialPeriods: [currentPeriod],
-        currentFinancialPeriod: currentPeriod,
-        currentPeriod: currentDate.toISOString().slice(0, 7),
-        journalEntries: sampleJournalEntries,
-        invoices: sampleInvoices,
-        payments: samplePayments,
-        whtCertificates: sampleWHTCertificates,
-        businessPartners: samplePartners,
-        bankAccounts: sampleBankAccounts,
-        bankTransactions: sampleBankTxns,
-        fixedAssets: sampleAssets,
-        depreciationSchedules: sampleDepSchedules,
-        costCenters: sampleCostCenters,
-        revenueCenters: sampleRevenueCenters,
-        auditTrail: sampleAudit
+        chartOfAccounts: mergeChartByCode(accounts, prev.chartOfAccounts),
+        taxConfigs: mergeTaxConfigs(taxConfigs, prev.taxConfigs),
+        financialPeriods: mergedFinancialPeriods,
+        currentFinancialPeriod: resolvedCurrentFinancial,
+        currentPeriod: glMonthSlice,
+        journalEntries: mergeById(sampleJournalEntries, prev.journalEntries),
+        invoices: mergeById(sampleInvoices, prev.invoices),
+        payments: mergeById(samplePayments, prev.payments),
+        whtCertificates: mergeById(sampleWHTCertificates, prev.whtCertificates),
+        businessPartners: mergeById(samplePartners, prev.businessPartners),
+        bankAccounts: mergeById(sampleBankAccounts, prev.bankAccounts),
+        bankTransactions: mergeById(sampleBankTxns, prev.bankTransactions),
+        fixedAssets: mergeById(sampleAssets, prev.fixedAssets),
+        depreciationSchedules: mergeById(sampleDepSchedules, prev.depreciationSchedules),
+        costCenters: mergeCostCenters(sampleCostCenters, prev.costCenters),
+        revenueCenters: mergeRevenueCenters(sampleRevenueCenters, prev.revenueCenters),
+        auditTrail: mergeById(sampleAudit, prev.auditTrail)
       });
+
+      // Hydrate persisted records from the database (server authoritative).
+      // Seed records are demo-only and remain when the DB has none for that id.
+      const [serverJEs, serverInvoices, serverPayments] = await Promise.all([
+        fetchJournalEntries(),
+        fetchInvoices(),
+        fetchPayments(),
+      ]);
+      if (serverJEs && serverJEs.length > 0) {
+        set((s) => {
+          const byId = new Map(s.journalEntries.map(e => [e.id, e]));
+          serverJEs.forEach(e => byId.set(e.id, e));
+          return { journalEntries: Array.from(byId.values()) };
+        });
+      }
+      if (serverInvoices && serverInvoices.length > 0) {
+        set((s) => {
+          const byId = new Map(s.invoices.map(i => [i.id, i]));
+          serverInvoices.forEach(i => byId.set(i.id, i));
+          return { invoices: Array.from(byId.values()) };
+        });
+      }
+      if (serverPayments && serverPayments.length > 0) {
+        set((s) => {
+          const byId = new Map(s.payments.map(p => [p.id, p]));
+          serverPayments.forEach(p => byId.set(p.id, p));
+          return { payments: Array.from(byId.values()) };
+        });
+      }
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to initialize accounting' });
     } finally {

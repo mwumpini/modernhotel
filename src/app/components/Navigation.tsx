@@ -1,7 +1,8 @@
 'use client';
 
 import React, { Suspense, lazy } from 'react';
-import { Button, Link, Accordion, AccordionItem, Badge, Divider, Card, CardBody, CardHeader, Progress, Avatar, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from "@heroui/react";
+import { useRouter } from 'next/navigation';
+import { Button, Accordion, AccordionItem, Badge, Avatar } from "@heroui/react";
 
 // Lazy load heavy components to prevent chunk loading errors
 const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
@@ -66,6 +67,7 @@ interface NavigationProps {
 
 type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'user-preferences' | 'compliance' | 'inventory' | 'user-management' | 'user-management-dashboard' | 'user-management-unified' | 'theme-test' | 'offline-management' | 'api-integration' | 'performance-optimization' | 'template-builder' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'room-management' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'room-configuration' | 'rate-management';
 export default function Navigation({ onLogout }: NavigationProps) {
+  const router = useRouter();
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
   const leanMode = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_LEAN_MODE === 'true') : (process.env.NEXT_PUBLIC_LEAN_MODE === 'true');
@@ -597,6 +599,15 @@ export default function Navigation({ onLogout }: NavigationProps) {
               </AccordionItem>
             ))}
           </Accordion>
+
+          <Button
+            variant="bordered"
+            className="w-full mt-6 border-slate-300 bg-white text-ghana-black"
+            size="sm"
+            onPress={() => router.push('/help')}
+          >
+            Help (F1 / F12)
+          </Button>
 
           {/* Workflow Integration Info */}
           <div className="mt-8 p-4 bg-gradient-to-r from-blue-500/10 to-ghana-gold/10 rounded-xl border border-blue-500/20">

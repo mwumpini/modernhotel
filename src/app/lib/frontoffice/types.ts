@@ -67,6 +67,8 @@ export interface RatePlan {
   price?: number; // backward compatibility alias for basePrice
   isActive: boolean;
   marketSegment: string;
+  priceType?: string;
+  lastUpdated?: string;
   
   // NEW: Event & Conference Rate Management
   rateType?: 'standard' | 'corporate' | 'event_conference' | 'package' | 'fixed_price';
@@ -326,6 +328,9 @@ export interface GuestProfile {
   city?: string;
   country?: string;
   notes?: string;
+  company?: string;
+  vipStatus?: string;
+  specialRequests?: string[];
   
   // Emergency contact
   emergencyContact: EmergencyContact;
@@ -428,6 +433,7 @@ export interface FolioPayment {
   invoiceId?: string; // Link to specific invoice
   creditApplied?: number; // Amount applied from credit balance
   notes?: string;
+  description?: string;
   processedBy?: string;
   status: 'pending' | 'completed' | 'failed' | 'refunded';
 }
@@ -445,7 +451,8 @@ export interface Folio {
   creditBalance?: number; // Available credit for this folio
   totalCharges?: number; // Total charges on this folio
   totalPayments?: number; // Total payments received
-  balance?: number; // Current balance (charges - payments)
+  balance?: number; // Current balance (charges - payments; negative = overpayment/credit)
+  _creditDeducted?: number; // In-memory: credit already applied to guest profile
 }
 
 // Utility functions for GuestProfile

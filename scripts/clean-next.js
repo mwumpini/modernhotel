@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
 
 const dirs = ['.next'];
 for (const d of dirs) {
@@ -10,9 +10,8 @@ for (const d of dirs) {
       fs.rmSync(p, { recursive: true, force: true });
       console.log('Removed', d);
     } catch (e) {
-      console.error('Failed to remove', d, e.message);
+      console.error('Failed to remove', d, e instanceof Error ? e.message : e);
+      process.exitCode = 1;
     }
   }
 }
-
-

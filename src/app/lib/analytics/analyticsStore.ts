@@ -57,6 +57,7 @@ interface AnalyticsStore {
   filters: AnalyticsFilter;
   isLoading: boolean;
   lastRefresh: string | null;
+  error: string | null;
   
   // Actions
   setPeriod: (period: AnalyticsPeriod) => void;
@@ -118,6 +119,7 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
   filters: defaultFilters,
   isLoading: false,
   lastRefresh: null,
+  error: null,
 
   // Actions
   setPeriod: (period: AnalyticsPeriod) => {
@@ -136,7 +138,7 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
 
   refreshAnalytics: async () => {
     console.log(`[ANALYTICS STORE] Refreshing analytics data`);
-    set({ isLoading: true });
+    set({ isLoading: true, error: null });
     
     try {
       // Calculate all metrics
@@ -158,8 +160,8 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
       console.log(`[ANALYTICS STORE] Successfully refreshed analytics with ${metrics.length} metrics and ${insights.length} insights`);
     } catch (error) {
       console.error(`[ANALYTICS STORE] Error refreshing analytics:`, error);
-      set({ isLoading: false });
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      set({ isLoading: false, error: errorMessage });
       trackEvent('Analytics.RefreshError', { error: errorMessage });
     }
   },

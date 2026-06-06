@@ -217,7 +217,7 @@ export class HotelBizAnalytics {
     const threshold = 4.0;
 
     Object.entries(categoryBreakdown).forEach(([category, score]) => {
-      if (score < threshold) {
+      if ((score as number) < threshold) {
         improvementAreas.push(`${category.charAt(0).toUpperCase() + category.slice(1)} needs improvement`);
       }
     });
@@ -305,7 +305,7 @@ export class HotelBizAnalytics {
       11: 1.2   // December - Peak
     };
 
-    return baseOccupancy * (seasonalFactors[month] || 1.0);
+    return baseOccupancy * ((seasonalFactors as Record<number, number>)[month] || 1.0);
   }
 
   private calculateForecastConfidence(date: string): number {

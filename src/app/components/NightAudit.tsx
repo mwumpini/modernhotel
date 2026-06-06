@@ -4,19 +4,9 @@ import React, { useState, useEffect } from 'react';
 import { 
   Card, 
   CardBody, 
-  CardHeader, 
   Button, 
   Progress, 
-  Badge, 
-  Divider,
-  Checkbox,
-  Input,
-  Textarea,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
+  Badge,
   useDisclosure
 } from "@heroui/react";
 
@@ -75,7 +65,7 @@ export default function NightAudit() {
     {
       id: 'tax-calculations',
       title: '🧾 Ghana Tax Calculations',
-      description: 'VAT (12.5%), NHIL (2.5%), Tourism Levy, withholding tax',
+      description: 'VAT, NHIL, GETFund, Tourism Levy, withholding tax',
       status: 'pending',
       isAutomated: true,
       requiresApproval: true,
@@ -370,7 +360,7 @@ export default function NightAudit() {
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <h4 className="font-semibold text-ghana-black mb-2">🧾 Tax Compliance</h4>
               <ul className="text-sm text-gray-600 space-y-1">
-                <li>• VAT (12.5%) calculation & reporting</li>
+                <li>• VAT calculation & reporting</li>
                 <li>• NHIL (2.5%) processing</li>
                 <li>• Tourism Levy collection</li>
                 <li>• Withholding tax management</li>

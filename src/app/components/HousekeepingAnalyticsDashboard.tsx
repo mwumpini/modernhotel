@@ -117,9 +117,9 @@ export default function HousekeepingAnalyticsDashboard() {
             onSelectionChange={(keys) => setSelectedPeriod(Array.from(keys)[0] as 'daily' | 'weekly' | 'monthly')}
             className="w-32"
           >
-            <SelectItem key="daily" value="daily">Daily</SelectItem>
-            <SelectItem key="weekly" value="weekly">Weekly</SelectItem>
-            <SelectItem key="monthly" value="monthly">Monthly</SelectItem>
+            <SelectItem key="daily">Daily</SelectItem>
+            <SelectItem key="weekly">Weekly</SelectItem>
+            <SelectItem key="monthly">Monthly</SelectItem>
           </Select>
         </div>
       </div>

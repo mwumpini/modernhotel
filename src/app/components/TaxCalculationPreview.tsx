@@ -6,9 +6,6 @@ import { Input } from '@heroui/react';
 import { Select, SelectItem } from '@heroui/react';
 import { Button } from '@heroui/react';
 import { Switch } from '@heroui/react';
-import { Divider } from '@heroui/react';
-import { Badge } from '@heroui/react';
-import { Tooltip } from '@heroui/react';
 import { Chip } from '@heroui/react';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 
@@ -130,7 +127,7 @@ export default function TaxCalculationPreview({
         // Government contracts may have partial exemptions
         if (exemptionReason === 'Government Contract') {
           finalTaxes = finalTaxes.map(tax => {
-            if (['Tourism Levy', 'COVID-19 Levy'].includes(tax.name)) {
+            if (['Tourism Levy'].includes(tax.name)) {
               return { ...tax, isExempt: true, exemptionReason: 'Government Contract' };
             }
             return tax;
@@ -195,7 +192,7 @@ export default function TaxCalculationPreview({
             <Input
               label="Amount"
               type="number"
-              value={amount}
+              value={String(amount)}
               onChange={(e) => setAmount(Number(e.target.value))}
               startContent={getCurrencySymbol(selectedCurrency)}
               placeholder="Enter amount"
@@ -208,7 +205,7 @@ export default function TaxCalculationPreview({
               onChange={(e) => setSelectedCurrency(e.target.value)}
             >
               {SUPPORTED_CURRENCIES.map((currency) => (
-                <SelectItem key={currency.code} value={currency.code}>
+                <SelectItem key={currency.code}>
                   {currency.symbol} {currency.name} ({currency.code})
                 </SelectItem>
               ))}
@@ -219,10 +216,10 @@ export default function TaxCalculationPreview({
               selectedKeys={[selectedGuestType]}
               onChange={(e) => setSelectedGuestType(e.target.value as any)}
             >
-              <SelectItem key="individual" value="individual">Individual</SelectItem>
-              <SelectItem key="corporate" value="corporate">Corporate</SelectItem>
-              <SelectItem key="diplomatic" value="diplomatic">Diplomatic</SelectItem>
-              <SelectItem key="government" value="government">Government</SelectItem>
+              <SelectItem key="individual">Individual</SelectItem>
+              <SelectItem key="corporate">Corporate</SelectItem>
+              <SelectItem key="diplomatic">Diplomatic</SelectItem>
+              <SelectItem key="government">Government</SelectItem>
             </Select>
 
             <div className="flex items-end">
@@ -248,7 +245,7 @@ export default function TaxCalculationPreview({
                   isRequired={isTaxExempt}
                 >
                   {TAX_EXEMPTION_REASONS[selectedGuestType].map((reason) => (
-                    <SelectItem key={reason} value={reason}>
+                    <SelectItem key={reason}>
                       {reason}
                     </SelectItem>
                   ))}
@@ -279,11 +276,13 @@ export default function TaxCalculationPreview({
               >
                 {showBreakdown ? 'Hide' : 'Show'} Breakdown
               </Button>
-              <Badge
-                content={calculationResult.isExempt ? 'EXEMPT' : 'TAXABLE'}
+              <Chip
                 color={calculationResult.isExempt ? 'success' : 'primary'}
                 size="sm"
-              />
+                variant="flat"
+              >
+                {calculationResult.isExempt ? 'EXEMPT' : 'TAXABLE'}
+              </Chip>
             </div>
           </CardHeader>
           

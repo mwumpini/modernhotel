@@ -12,8 +12,7 @@ import {
   SecurityAlert,
   IncidentSeverity,
   IncidentStatus,
-  PatrolStatus,
-  VisitorStatus
+  PatrolStatus
 } from './types';
 import { trackEvent } from '../analytics/trackEvent';
 

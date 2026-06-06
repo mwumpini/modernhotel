@@ -190,7 +190,7 @@ export default function CountryManagement() {
             {supportedCountries.map((countryCode) => {
               const country = countryCompliance[countryCode];
               return (
-                <SelectItem key={countryCode} value={countryCode}>
+                <SelectItem key={countryCode}>
                   {country?.countryName || countryCode}
                 </SelectItem>
               );
@@ -218,9 +218,8 @@ export default function CountryManagement() {
               <TableColumn>ACTIONS</TableColumn>
             </TableHeader>
             <TableBody>
-              {supportedCountries.map((countryCode) => {
-                const country = countryCompliance[countryCode];
-                if (!country) return null;
+              {supportedCountries.filter((countryCode) => countryCompliance[countryCode]).map((countryCode) => {
+                const country = countryCompliance[countryCode]!;
                 
                 return (
                   <TableRow key={countryCode}>
@@ -342,7 +341,7 @@ export default function CountryManagement() {
                     label="VAT Rate (%)"
                     type="number"
                     step="0.1"
-                    value={newCountry.taxRates?.vat || ''}
+                    value={String(newCountry.taxRates?.vat || '')}
                     onChange={(e) => setNewCountry({
                       ...newCountry, 
                       taxRates: {...newCountry.taxRates, vat: parseFloat(e.target.value) || 0}
@@ -352,7 +351,7 @@ export default function CountryManagement() {
                     label="GST Rate (%)"
                     type="number"
                     step="0.1"
-                    value={newCountry.taxRates?.gst || ''}
+                    value={String(newCountry.taxRates?.gst || '')}
                     onChange={(e) => setNewCountry({
                       ...newCountry, 
                       taxRates: {...newCountry.taxRates, gst: parseFloat(e.target.value) || 0}
@@ -362,7 +361,7 @@ export default function CountryManagement() {
                     label="Sales Tax (%)"
                     type="number"
                     step="0.1"
-                    value={newCountry.taxRates?.salesTax || ''}
+                    value={String(newCountry.taxRates?.salesTax || '')}
                     onChange={(e) => setNewCountry({
                       ...newCountry, 
                       taxRates: {...newCountry.taxRates, salesTax: parseFloat(e.target.value) || 0}
@@ -382,7 +381,7 @@ export default function CountryManagement() {
                     value={newCountry.businessInfo?.name || ''}
                     onChange={(e) => setNewCountry({
                       ...newCountry, 
-                      businessInfo: {...newCountry.businessInfo, name: e.target.value}
+                      businessInfo: {...newCountry.businessInfo!, name: e.target.value}
                     })}
                   />
                   <Input
@@ -390,7 +389,7 @@ export default function CountryManagement() {
                     value={newCountry.businessInfo?.taxId || ''}
                     onChange={(e) => setNewCountry({
                       ...newCountry, 
-                      businessInfo: {...newCountry.businessInfo, taxId: e.target.value}
+                      businessInfo: {...newCountry.businessInfo!, taxId: e.target.value}
                     })}
                   />
                 </div>
@@ -400,7 +399,7 @@ export default function CountryManagement() {
                   value={newCountry.businessInfo?.address || ''}
                   onChange={(e) => setNewCountry({
                     ...newCountry, 
-                    businessInfo: {...newCountry.businessInfo, address: e.target.value}
+                    businessInfo: {...newCountry.businessInfo!, address: e.target.value}
                   })}
                 />
               </div>
@@ -420,7 +419,7 @@ export default function CountryManagement() {
                       isSelected={newCountry.compliance?.eInvoicing}
                       onValueChange={(value) => setNewCountry({
                         ...newCountry, 
-                        compliance: {...newCountry.compliance, eInvoicing: value}
+                        compliance: {...newCountry.compliance!, eInvoicing: value}
                       })}
                     />
                   </div>
@@ -433,7 +432,7 @@ export default function CountryManagement() {
                       isSelected={newCountry.compliance?.taxReports}
                       onValueChange={(value) => setNewCountry({
                         ...newCountry, 
-                        compliance: {...newCountry.compliance, taxReports: value}
+                        compliance: {...newCountry.compliance!, taxReports: value}
                       })}
                     />
                   </div>
@@ -446,7 +445,7 @@ export default function CountryManagement() {
                       isSelected={newCountry.compliance?.governmentIntegration}
                       onValueChange={(value) => setNewCountry({
                         ...newCountry, 
-                        compliance: {...newCountry.compliance, governmentIntegration: value}
+                        compliance: {...newCountry.compliance!, governmentIntegration: value}
                       })}
                     />
                   </div>
@@ -459,7 +458,7 @@ export default function CountryManagement() {
                       isSelected={newCountry.compliance?.digitalSignature}
                       onValueChange={(value) => setNewCountry({
                         ...newCountry, 
-                        compliance: {...newCountry.compliance, digitalSignature: value}
+                        compliance: {...newCountry.compliance!, digitalSignature: value}
                       })}
                     />
                   </div>
@@ -481,7 +480,7 @@ export default function CountryManagement() {
                       isSelected={newCountry.paymentMethods?.mobileMoney}
                       onValueChange={(value) => setNewCountry({
                         ...newCountry, 
-                        paymentMethods: {...newCountry.paymentMethods, mobileMoney: value}
+                        paymentMethods: {...newCountry.paymentMethods!, mobileMoney: value}
                       })}
                     />
                   </div>
@@ -494,7 +493,7 @@ export default function CountryManagement() {
                       isSelected={newCountry.paymentMethods?.creditCard}
                       onValueChange={(value) => setNewCountry({
                         ...newCountry, 
-                        paymentMethods: {...newCountry.paymentMethods, creditCard: value}
+                        paymentMethods: {...newCountry.paymentMethods!, creditCard: value}
                       })}
                     />
                   </div>
@@ -507,7 +506,7 @@ export default function CountryManagement() {
                       isSelected={newCountry.paymentMethods?.bankTransfer}
                       onValueChange={(value) => setNewCountry({
                         ...newCountry, 
-                        paymentMethods: {...newCountry.paymentMethods, bankTransfer: value}
+                        paymentMethods: {...newCountry.paymentMethods!, bankTransfer: value}
                       })}
                     />
                   </div>
@@ -520,7 +519,7 @@ export default function CountryManagement() {
                       isSelected={newCountry.paymentMethods?.digitalWallet}
                       onValueChange={(value) => setNewCountry({
                         ...newCountry, 
-                        paymentMethods: {...newCountry.paymentMethods, digitalWallet: value}
+                        paymentMethods: {...newCountry.paymentMethods!, digitalWallet: value}
                       })}
                     />
                   </div>

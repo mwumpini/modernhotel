@@ -1,11 +1,10 @@
 'use client';
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Progress, Input, Select, SelectItem } from "@heroui/react";
+import { Card, CardBody, CardHeader, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Input, Select, SelectItem } from "@heroui/react";
 import DashboardWrapper from './DashboardWrapper';
 import FBPOS from './FBPOS';
-import { trackEvent } from '../lib/analytics/trackEvent';
-import { ordersStore, FBOrder } from '../lib/fb/ordersStore';
+import { ordersStore } from '../lib/fb/ordersStore';
 
 export default function RestaurantManagement() {
   const [showPOS, setShowPOS] = useState(false);
@@ -248,8 +247,7 @@ export default function RestaurantManagement() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
               <Input size="sm" label="Search" placeholder="Search table/status/waiter" value={searchTables} onChange={(e)=> setSearchTables(e.target.value)} />
               <Select size="sm" label="Filter Waiter" selectedKeys={[filterWaiter]} onSelectionChange={(k)=> setFilterWaiter(Array.from(k as Set<string>)[0] || 'all')}>
-                <SelectItem key="all">All</SelectItem>
-                {waiterOptions.map(w => (<SelectItem key={w}>{w}</SelectItem>))}
+                {['all', ...waiterOptions].map(w => (<SelectItem key={w}>{w === 'all' ? 'All' : w}</SelectItem>))}
               </Select>
               <Input size="sm" label="Filter Table" placeholder="e.g., T12" value={filterTable} onChange={(e)=> setFilterTable(e.target.value)} />
             </div>

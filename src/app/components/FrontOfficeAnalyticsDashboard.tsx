@@ -2,12 +2,10 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
-  Tabs, Tab, Chip, Progress, Select, SelectItem, Input, DatePicker, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  useDisclosure, Textarea, Divider, Spinner, Alert, Avatar, Tooltip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
+  Card, CardBody, CardHeader, Button, 
+  Tabs, Tab, Chip, Progress, Select, SelectItem, Input, Divider, Spinner, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
 } from '@heroui/react';
 import { useAnalyticsStore } from '../lib/analytics/analyticsStore';
-import { trackEvent } from '../lib/analytics/trackEvent';
 import { useSettingsStore } from '../lib/settings/store';
 
 export default function FrontOfficeAnalyticsDashboard() {
@@ -409,7 +407,7 @@ export default function FrontOfficeAnalyticsDashboard() {
                 </CardHeader>
                 <CardBody>
                   <div className="space-y-3">
-                    {(revenueAnalytics.revenueBySource || []).map((source, index) => (
+                    {(revenueAnalytics.revenueBySource || []).map((source: any, index: number) => (
                       <div key={index} className="flex justify-between items-center">
                         <span>{source.source}:</span>
                         <div className="text-right">
@@ -473,7 +471,7 @@ export default function FrontOfficeAnalyticsDashboard() {
                 </CardHeader>
                 <CardBody>
                   <div className="space-y-3">
-                    {(occupancyAnalytics.occupancyByRoomType || []).map((type, index) => (
+                    {(occupancyAnalytics.occupancyByRoomType || []).map((type: any, index: number) => (
                       <div key={index} className="flex justify-between items-center">
                         <span>{type.type}:</span>
                         <div className="text-right">
@@ -603,7 +601,7 @@ export default function FrontOfficeAnalyticsDashboard() {
                 </CardHeader>
                 <CardBody>
                   <div className="space-y-3">
-                    {(performanceAnalytics.staffEfficiency || []).map((staff, index) => (
+                    {(performanceAnalytics.staffEfficiency || []).map((staff: any, index: number) => (
                       <div key={index} className="flex justify-between items-center">
                         <span>{staff.staff}:</span>
                         <div className="text-right">
@@ -694,7 +692,7 @@ export default function FrontOfficeAnalyticsDashboard() {
                                 <div className="p-3 bg-blue-50 rounded-lg">
                                   <h5 className="font-medium text-blue-800 mb-2">Peak Days</h5>
                                   <div className="space-y-1">
-                                    {seasonality.peakDays.map((day, index) => (
+                                    {seasonality.peakDays.map((day: any, index: number) => (
                                       <div key={index} className="flex justify-between text-sm">
                                         <span>{day.day}</span>
                                         <span className="font-semibold">{day.avgOccupancy.toFixed(1)}% occupancy</span>
@@ -705,7 +703,7 @@ export default function FrontOfficeAnalyticsDashboard() {
                                 <div className="p-3 bg-orange-50 rounded-lg">
                                   <h5 className="font-medium text-orange-800 mb-2">Low Days</h5>
                                   <div className="space-y-1">
-                                    {seasonality.lowDays.map((day, index) => (
+                                    {seasonality.lowDays.map((day: any, index: number) => (
                                       <div key={index} className="flex justify-between text-sm">
                                         <span>{day.day}</span>
                                         <span className="font-semibold">{day.avgOccupancy.toFixed(1)}% occupancy</span>
@@ -755,13 +753,13 @@ export default function FrontOfficeAnalyticsDashboard() {
                                    <div className="flex justify-between">
                                      <span>Next 7 Days Avg:</span>
                                      <span className="font-semibold">
-                                       {(forecast.forecast.slice(0, 7).reduce((sum, d) => sum + d.occupancy, 0) / 7).toFixed(1)}%
+                                       {(forecast.forecast.slice(0, 7).reduce((sum: number, d: any) => sum + d.occupancy, 0) / 7).toFixed(1)}%
                                      </span>
                                    </div>
                                    <div className="flex justify-between">
                                      <span>Next 30 Days Avg:</span>
                                      <span className="font-semibold">
-                                       {(forecast.forecast.reduce((sum, d) => sum + d.occupancy, 0) / forecast.forecast.length).toFixed(1)}%
+                                       {(forecast.forecast.reduce((sum: number, d: any) => sum + d.occupancy, 0) / forecast.forecast.length).toFixed(1)}%
                                      </span>
                                    </div>
                                  </div>
@@ -777,13 +775,13 @@ export default function FrontOfficeAnalyticsDashboard() {
                                    <div className="flex justify-between">
                                      <span>Next 7 Days Avg:</span>
                                      <span className="font-semibold">
-                                       {formatCurrency(forecast.forecast.slice(0, 7).reduce((sum, d) => sum + d.revenue, 0) / 7)}
+                                       {formatCurrency(forecast.forecast.slice(0, 7).reduce((sum: number, d: any) => sum + d.revenue, 0) / 7)}
                                      </span>
                                    </div>
                                    <div className="flex justify-between">
                                      <span>Next 30 Days Avg:</span>
                                      <span className="font-semibold">
-                                       {formatCurrency(forecast.forecast.reduce((sum, d) => sum + d.revenue, 0) / forecast.forecast.length)}
+                                       {formatCurrency(forecast.forecast.reduce((sum: number, d: any) => sum + d.revenue, 0) / forecast.forecast.length)}
                                      </span>
                                    </div>
                                  </div>
@@ -852,7 +850,7 @@ export default function FrontOfficeAnalyticsDashboard() {
                               <div className="p-4 bg-green-50 rounded-lg">
                                 <h5 className="font-medium text-green-800 mb-3">Top Reasons</h5>
                                 <div className="space-y-2">
-                                  {discountAnalytics.topReasons.slice(0, 3).map((reason, index) => (
+                                  {discountAnalytics.topReasons.slice(0, 3).map((reason: any, index: number) => (
                                     <div key={index} className="flex justify-between text-sm">
                                       <span>{reason.reason}:</span>
                                       <span className="font-semibold">
@@ -912,7 +910,7 @@ export default function FrontOfficeAnalyticsDashboard() {
                               <div className="p-4 bg-orange-50 rounded-lg">
                                 <h5 className="font-medium text-orange-800 mb-3">Top Reasons</h5>
                                 <div className="space-y-2">
-                                  {complimentaryAnalytics.reasons.slice(0, 3).map((reason, index) => (
+                                  {complimentaryAnalytics.reasons.slice(0, 3).map((reason: any, index: number) => (
                                     <div key={index} className="flex justify-between text-sm">
                                       <span>{reason.reason}:</span>
                                       <span className="font-semibold">
@@ -969,7 +967,7 @@ export default function FrontOfficeAnalyticsDashboard() {
                               <div>
                                 <h6 className="font-medium text-gray-800 mb-2">Key Recommendations:</h6>
                                 <div className="space-y-2">
-                                  {pricingStrategy.recommendations.map((rec, index) => (
+                                  {pricingStrategy.recommendations.map((rec: any, index: number) => (
                                     <div key={index} className="flex items-start space-x-3 p-2 bg-white rounded">
                                       <Chip 
                                         color={rec.priority === 'Immediate' ? 'danger' : rec.priority === 'Short-term' ? 'warning' : 'success'} 

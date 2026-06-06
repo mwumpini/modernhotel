@@ -35,7 +35,7 @@ export function useServiceWorker() {
     const registerServiceWorker = async () => {
       try {
         // Check if service worker is already registered
-        registration = await navigator.serviceWorker.getRegistration();
+        registration = (await navigator.serviceWorker.getRegistration()) ?? null;
         
         if (!registration) {
           // Check if service worker file exists before registering
@@ -66,7 +66,7 @@ export function useServiceWorker() {
 
         // Listen for service worker updates
         registration.addEventListener('updatefound', () => {
-          const newWorker = registration.installing;
+          const newWorker = registration!.installing;
           if (newWorker) {
             newWorker.addEventListener('statechange', () => {
               if (newWorker.state === 'installed') {

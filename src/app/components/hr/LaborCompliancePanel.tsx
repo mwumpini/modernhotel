@@ -27,7 +27,7 @@ export default function LaborCompliancePanel() {
             <TableHeader>
               <TableColumn>ITEM</TableColumn>
               <TableColumn>STATUS</TableColumn>
-              <TableColumn></TableColumn>
+              <TableColumn>{' '}</TableColumn>
             </TableHeader>
             <TableBody>
               {checklist.map((c) => (

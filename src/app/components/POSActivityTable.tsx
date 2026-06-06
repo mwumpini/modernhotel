@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Card, CardBody, CardHeader, Button, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Input, Select, SelectItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Alert } from '@heroui/react';
-import { ordersStore, FBOrder, OrderItem } from '../lib/fb/ordersStore';
+import { Card, CardBody, CardHeader, Button, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Input, Select, SelectItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
+import { ordersStore, FBOrder } from '../lib/fb/ordersStore';
 import { logAudit } from '../lib/analytics/auditLogStore';
 import { previewReceipt } from '../lib/print/print';
 
@@ -247,9 +247,8 @@ export default function POSActivityTable() {
             <SelectItem key="Bar">Bar</SelectItem>
           </Select>
           <Select size="sm" label="Waiter" selectedKeys={[waiter]} onSelectionChange={(k) => setWaiter(Array.from(k as Set<string>)[0] || '')}>
-            <SelectItem key="">All</SelectItem>
-            {waiterOptions.map(w => (
-              <SelectItem key={w}>{w}</SelectItem>
+            {['', ...waiterOptions].map(w => (
+              <SelectItem key={w}>{w || 'All'}</SelectItem>
             ))}
           </Select>
           <Input size="sm" type="date" label="From" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -265,7 +264,7 @@ export default function POSActivityTable() {
                 {(columnKey) => {
                   const key = String(columnKey) as keyof PosRow;
                   let value: any = item[key];
-                  if (key === 'time') {
+                  if ((key as string) === 'time') {
                     value = item.createdAt ? new Date(item.createdAt).toLocaleString() : '-';
                   }
                   if (key === 'amount' || key === 'discount' || key === 'price') {

@@ -39,17 +39,15 @@ import {
   ModalBody,
   ModalFooter,
   useDisclosure,
-  Avatar,
-  Dropdown,
-  DropdownTrigger,
-  DropdownMenu,
-  DropdownItem,
   Textarea,
-  Chip,
-  Pagination as Pagination2
+  Chip
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
+import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
+import { calculateStayNights } from '../../lib/frontoffice/helpers/rates';
 import { trackEvent } from '../../lib/analytics/trackEvent';
+import TodaysArrivalsPanel from '../../components/frontoffice/TodaysArrivalsPanel';
+import type { Reservation } from '../../lib/frontoffice/types';
 
 interface CheckInGuest {
   id: string;
@@ -75,6 +73,8 @@ interface CheckInGuest {
   paymentMethod?: string;
   creditBalance?: number;
   // Folio data
+  bookedNights?: number;
+  roomTotal?: number;
   totalCharges?: number;
   totalPayments?: number;
   balance?: number;
@@ -88,6 +88,9 @@ function formatDate(dateString: string) {
 }
 function formatTime(dateString: string) {
   return new Date(dateString).toLocaleTimeString('en-GH', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+function formatMoney(amount: number) {
+  return amount.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function CheckInsSection() {
@@ -114,6 +117,8 @@ function CheckInsSection() {
     type: 'deposit' // 'deposit', 'payment', 'prepayment'
   });
   const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [noShowTarget, setNoShowTarget] = useState<Reservation | null>(null);
+  const { isOpen: isNoShowOpen, onOpen: onNoShowOpen, onClose: onNoShowClose } = useDisclosure();
 
   // Quick intake state (Reservation search + Walk-in form)
   const [reservationSearchTerm, setReservationSearchTerm] = useState('');
@@ -158,43 +163,18 @@ function CheckInsSection() {
       .map(reservation => {
         const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const creditBalance = guest?.creditBalance || 0;
-        const nightsStayed = Math.max(0, Math.ceil((today.getTime() - new Date(reservation.arrival).getTime()) / (1000*60*60*24)));
-        
-        // Get the correct room rate from rate breakdown or fallback to room type rate
+        const nightsStayed = Math.max(0, Math.ceil((today.getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24)));
         const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
-        // Prefer gross (tax-inclusive) nightly from reservation rate breakdown; otherwise convert base to gross via folio tax rates
-        const baseCandidate = reservation.rateBreakdown?.[0]?.base || roomType?.baseRate || 0;
-        const taxRates = (() => {
-          try {
-            const { vat, nhil, levy } = (frontOfficeStore as any).getTaxRates ? (frontOfficeStore as any).getTaxRates() : { vat: 12.5, nhil: 2.5, levy: 1.0 };
-            return { vat, nhil, levy };
-          } catch { return { vat: 12.5, nhil: 2.5, levy: 1.0 }; }
-        })();
-        const grossFactor = 1 + ((taxRates.vat + taxRates.nhil + taxRates.levy) / 100);
-        const roomRate = Math.max(0, Math.round((reservation.rateBreakdown?.[0]?.total || (baseCandidate * grossFactor)) * 100) / 100);
-        
-        // Get folio data for this reservation
+        frontOfficeStore.ensureReservationRates(reservation);
+        frontOfficeStore.ensureFolioRoomCharges(reservation.id);
+        const quote = frontOfficeStore.getReservationQuote(reservation);
+        // Table: tax-inclusive for quick guest-facing quotes; folio modal keeps net + tax breakdown.
+        const roomRate = quote.nightlyGross;
         const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
-        const roomTotal = roomRate * (nightsStayed + 1);
-        // Identify service charges by common keywords
-        const serviceKeywords = ['service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar', 'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'drink', 'food', 'meal'];
-        const serviceCharges = folio.charges?.filter(charge => {
-          const desc = charge.description?.toLowerCase() || '';
-          return serviceKeywords.some(keyword => desc.includes(keyword));
-        }).reduce((sum, charge) => sum + (charge.amount || 0), 0) || 0;
-        
-        const otherCharges = folio.charges?.filter(charge => {
-          const desc = charge.description?.toLowerCase() || '';
-          return !serviceKeywords.some(keyword => desc.includes(keyword));
-        }).reduce((sum, charge) => sum + (charge.amount || 0), 0) || 0;
-        
-        // Calculate taxes from all charges
-        const taxTotal = folio.charges?.reduce((sum, charge) => sum + (charge.tax || 0), 0) || 0;
-        // Use folio totals to ensure inclusive amounts: include posted taxes
-        const postedBase = folio.charges?.reduce((s, c) => s + (c.amount || 0), 0) || 0;
-        const totalCharges = postedBase + taxTotal;
-        const totalPayments = folio.payments?.reduce((sum, payment) => sum + (payment.amount || 0), 0) || 0;
-        const balance = totalCharges - totalPayments;
+        frontOfficeStore.updateFolioBalances(folio);
+        const totals = getFolioDisplayTotals(folio);
+        const bookedNights = calculateStayNights(reservation.arrival, reservation.departure) || 1;
+        const roomTotal = totals.roomChargesInclusive || quote.grandTotal;
         
         return {
         id: reservation.id,
@@ -219,13 +199,14 @@ function CheckInsSection() {
           children: reservation.children || 0,
           paymentMethod: reservation.paymentMethod,
           creditBalance,
-          // Add folio data
-          totalCharges,
-          totalPayments,
-          balance,
-          serviceCharges,
-          otherCharges,
-          taxTotal
+          bookedNights,
+          totalCharges: totals.totalCharges,
+          totalPayments: totals.totalPayments,
+          balance: totals.outstandingBalance,
+          serviceCharges: totals.serviceChargesInclusive,
+          otherCharges: totals.otherCharges,
+          taxTotal: totals.taxTotal,
+          roomTotal,
         } as CheckInGuest;
       });
     setGuests(data);
@@ -268,7 +249,7 @@ function CheckInsSection() {
   }, [guests, searchTerm, statusFilter]);
 
   const totalRoomRevenue = useMemo(() => guests.reduce((s,g) => s + (g.roomRate || 0), 0), [guests]);
-  const totalRoomAmount = useMemo(() => guests.reduce((s,g) => s + ((g.roomRate || 0) * ((g.nightsStayed || 0) + 1)), 0), [guests]);
+  const totalRoomAmount = useMemo(() => guests.reduce((s,g) => s + (g.roomTotal || 0), 0), [guests]);
   const totalServiceCharges = useMemo(() => guests.reduce((s,g) => s + (g.serviceCharges || 0), 0), [guests]);
   const totalCharges = useMemo(() => guests.reduce((s,g) => s + (g.totalCharges || 0), 0), [guests]);
   const totalPayments = useMemo(() => guests.reduce((s,g) => s + (g.totalPayments || 0), 0), [guests]);
@@ -289,13 +270,10 @@ function CheckInsSection() {
   };
 
   const handleExtendStay = async (guest: CheckInGuest, nights: number) => {
-    const r = frontOfficeStore.reservations.find(r => r.id === guest.id);
-    if (r) {
-      const dep = new Date(r.departure); dep.setDate(dep.getDate() + nights); r.departure = dep.toISOString(); r.status = 'checked-in';
-      frontOfficeStore.notify();
-      trackEvent('FO.Reservation.Updated', { reservationId: guest.id, guestName: guest.guestName, additionalNights: nights, source: 'check-ins' });
-    }
-      onClose();
+    frontOfficeStore.extendStay(guest.id, nights);
+    trackEvent('FO.Reservation.Updated', { reservationId: guest.id, guestName: guest.guestName, additionalNights: nights, source: 'check-ins' });
+    loadGuests();
+    onClose();
     setSelectedGuest(null);
   };
 
@@ -333,9 +311,18 @@ function CheckInsSection() {
       setIsProcessing(true);
       
       // Use the store's addPayment method
+      const paymentMethodMap: Record<string, 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Check' | 'Corporate Account'> = {
+        cash: 'Cash',
+        card: 'Card',
+        'mobile money': 'Mobile Money',
+        'bank transfer': 'Bank Transfer',
+        check: 'Check',
+        'corporate account': 'Corporate Account',
+      };
+      const method = paymentMethodMap[paymentData.paymentMethod.toLowerCase()] || 'Cash';
       frontOfficeStore.addPayment(
         selectedFolioGuest.id,
-        paymentData.paymentMethod as 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Check' | 'Corporate Account',
+        method,
         paymentData.amount,
         {
           notes: `${paymentData.type === 'deposit' ? 'Deposit' : paymentData.type === 'prepayment' ? 'Prepayment' : 'Payment'} - ${paymentData.notes || 'Guest payment'}`,
@@ -388,10 +375,23 @@ function CheckInsSection() {
     }
   };
 
-  const checkInReservation = (reservation: any) => {
-    frontOfficeStore.updateReservationStatus(reservation.id, 'checked-in');
-    trackEvent('FO.Reservation.CheckedIn', { reservationId: reservation.id, guestName: reservation.guestName, roomType: reservation.roomType, source: 'quick-intake' });
-    // refresh
+  const checkInReservation = (reservation: Reservation) => {
+    frontOfficeStore.checkIn(reservation.id);
+    trackEvent('FO.Reservation.CheckedIn', { reservationId: reservation.id, guestName: reservation.guestName, source: 'check-ins-arrivals' });
+    loadGuests();
+  };
+
+  const openNoShowConfirm = (reservation: Reservation) => {
+    setNoShowTarget(reservation);
+    onNoShowOpen();
+  };
+
+  const confirmNoShow = () => {
+    if (!noShowTarget) return;
+    frontOfficeStore.markNoShow(noShowTarget.id);
+    trackEvent('FO.Reservation.NoShowManual' as any, { reservationId: noShowTarget.id, guestName: noShowTarget.guestName });
+    onNoShowClose();
+    setNoShowTarget(null);
     loadGuests();
   };
 
@@ -416,8 +416,12 @@ function CheckInsSection() {
       source,
         createdAt: new Date().toISOString()
       };
-    frontOfficeStore.addReservation(walkInReservation);
+    const created = frontOfficeStore.addReservation(walkInReservation);
+    if (created?.id) {
+      frontOfficeStore.checkIn(created.id);
+    }
     trackEvent('FO.Reservation.CheckedIn', { guestName: walkInReservation.guestName, roomType: walkInReservation.roomType, source });
+    loadGuests();
       setWalkInForm({
       guestName: '', phone: '', email: '', roomTypeId: '',
         arrivalDate: new Date().toISOString().split('T')[0],
@@ -432,7 +436,7 @@ function CheckInsSection() {
     <div className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
         <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Guests</p><p className="text-2xl font-bold text-ghana-black">{guests.length}</p></div><div className="text-2xl">👥</div></div></CardBody></Card>
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Avg Rate/Night</p><p className="text-2xl font-bold text-ghana-black">₵{guests.length > 0 ? Math.round(totalRoomRevenue / guests.length).toLocaleString() : '0'}</p></div><div className="text-2xl">💰</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Avg Rate/Night</p><p className="text-2xl font-bold text-ghana-black">₵{guests.length > 0 ? formatMoney(totalRoomRevenue / guests.length) : '0.00'}</p></div><div className="text-2xl">💰</div></div></CardBody></Card>
         <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Room Total</p><p className="text-2xl font-bold text-purple-600">₵{totalRoomAmount.toLocaleString()}</p></div><div className="text-2xl">🏨</div></div></CardBody></Card>
         <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Service Charges</p><p className="text-2xl font-bold text-orange-600">₵{totalServiceCharges.toLocaleString()}</p></div><div className="text-2xl">🏊</div></div></CardBody></Card>
         <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Amount</p><p className="text-2xl font-bold text-blue-600">₵{totalCharges.toLocaleString()}</p></div><div className="text-2xl">📊</div></div></CardBody></Card>
@@ -440,7 +444,7 @@ function CheckInsSection() {
         <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Outstanding</p><p className="text-2xl font-bold text-red-600">₵{totalOutstanding.toLocaleString()}</p></div><div className="text-2xl">⏰</div></div></CardBody></Card>
         </div>
 
-      <Card className="mb-2"><CardBody className="p-4"><div className="flex flex-col sm:flex-row gap-4"><Input placeholder="Search by guest name, room number, phone, or email..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1" startContent={<span className="text-gray-400">🔍</span>} /><Select placeholder="Filter by status" value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-full sm:w-48"><SelectItem key="all">All Statuses</SelectItem><SelectItem key="checked-in">Checked In</SelectItem><SelectItem key="extended">Extended</SelectItem><SelectItem key="early-checkout">Early Checkout</SelectItem></Select><Button color="primary" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white" onPress={() => setTransferModalOpen(true)}>🔄 Room Transfer</Button></div></CardBody></Card>
+      <Card className="mb-2"><CardBody className="p-4"><div className="flex flex-col sm:flex-row gap-4"><Input placeholder="Search by guest name, room number, phone, or email..." onChange={(e) => setSearchTerm(e.target.value)} className="flex-1" startContent={<span className="text-gray-400">🔍</span>} /><Select placeholder="Filter by status" onChange={(e) => setStatusFilter(e.target.value)} className="w-full sm:w-48"><SelectItem key="all">All Statuses</SelectItem><SelectItem key="checked-in">Checked In</SelectItem><SelectItem key="extended">Extended</SelectItem><SelectItem key="early-checkout">Early Checkout</SelectItem></Select><Button color="primary" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white" onPress={() => setTransferModalOpen(true)}>🔄 Room Transfer</Button></div></CardBody></Card>
 
       <Card><CardBody>
         <Tabs selectedKey={activeTab} onSelectionChange={(k)=>setActiveTab(k as string)} className="mb-4"><Tab key="quick" title="⚡ Quick Check-In" /><Tab key="overview" title="📊 Overview" /><Tab key="analytics" title="📈 Analytics" /></Tabs>
@@ -598,12 +602,17 @@ function CheckInsSection() {
 
         {activeTab === 'overview' && (
           <div className="space-y-4">
+            <TodaysArrivalsPanel
+              compact
+              onCheckIn={checkInReservation}
+              onNoShow={openNoShowConfirm}
+            />
             <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
               <strong>Column Guide:</strong> 
-              <span className="ml-2">RATE/NIGHT = Per night room rate</span>
-              <span className="ml-4">ROOM TOTAL = Rate × (Nights + 1)</span>
-              <span className="ml-4">SERVICE CHARGES = Swimming pool, laundry, etc.</span>
-              <span className="ml-4">AMOUNT = Total charges (room + services + other + taxes)</span>
+              <span className="ml-2">RATE/NIGHT = Per night room rate (incl. tax)</span>
+              <span className="ml-4">ROOM TOTAL = Posted room charges (incl. tax)</span>
+              <span className="ml-4">SERVICE CHARGES = Services (incl. tax)</span>
+              <span className="ml-4">AMOUNT = Total charges incl. tax — click Folio for excl. breakdown</span>
               <span className="ml-4">PAYMENTS = Total payments received</span>
               <span className="ml-4">BALANCE = Amount - Payments</span>
             </div>
@@ -656,14 +665,14 @@ function CheckInsSection() {
                   <TableCell className="text-center">{formatDate(guest.checkInDate)}<br/><span className="text-xs text-gray-500">{formatTime(guest.checkInDateTime)}</span></TableCell>
                   <TableCell className="text-center">{formatDate(guest.checkOutDate)}</TableCell>
                   <TableCell className="text-center">{guest.nightsStayed}</TableCell>
-                  <TableCell className="text-center font-semibold">₵{guest.roomRate.toLocaleString()}</TableCell>
-                  <TableCell className="text-center font-semibold text-purple-600">₵{(guest.roomRate * (guest.nightsStayed + 1)).toLocaleString()}</TableCell>
-                  <TableCell className="text-center font-semibold text-orange-600">₵{(guest.serviceCharges || 0).toLocaleString()}</TableCell>
-                  <TableCell className="text-center font-semibold text-blue-600">₵{(guest.totalCharges || 0).toLocaleString()}</TableCell>
-                  <TableCell className="text-center text-green-600 font-semibold">₵{(guest.totalPayments || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-center font-semibold">₵{formatMoney(guest.roomRate)}</TableCell>
+                  <TableCell className="text-center font-semibold text-purple-600">₵{formatMoney(guest.roomTotal || 0)}</TableCell>
+                  <TableCell className="text-center font-semibold text-orange-600">₵{formatMoney(guest.serviceCharges || 0)}</TableCell>
+                  <TableCell className="text-center font-semibold text-blue-600">₵{formatMoney(guest.totalCharges || 0)}</TableCell>
+                  <TableCell className="text-center text-green-600 font-semibold">₵{formatMoney(guest.totalPayments || 0)}</TableCell>
                   <TableCell className="text-center">
                     <span className={`font-semibold ${(guest.balance || 0) > 0 ? 'text-red-600' : (guest.balance || 0) < 0 ? 'text-green-600' : 'text-gray-500'}`}>
-                      ₵{(guest.balance || 0).toLocaleString()}
+                      ₵{formatMoney(guest.balance || 0)}
                     </span>
                             </TableCell>
                   <TableCell className="text-center"><Badge color="success" variant="flat">Checked In</Badge></TableCell>
@@ -742,20 +751,12 @@ function CheckInsSection() {
           <ModalBody className="p-6">
             {selectedFolioGuest && (() => {
               const folio = frontOfficeStore.getOrCreateFolio(selectedFolioGuest.id);
-              const roomTotal = (selectedFolioGuest.roomRate || 0) * ((selectedFolioGuest.nightsStayed || 0) + 1);
-              const serviceCharges = folio.charges?.filter(charge => {
-                const desc = charge.description?.toLowerCase() || '';
-                const serviceKeywords = ['service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar', 'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'drink', 'food', 'meal'];
-                return serviceKeywords.some(keyword => desc.includes(keyword));
-              }).reduce((sum, charge) => sum + (charge.amount || 0), 0) || 0;
-              const otherCharges = folio.charges?.filter(charge => {
-                const desc = charge.description?.toLowerCase() || '';
-                const serviceKeywords = ['service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar', 'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'drink', 'food', 'meal'];
-                return !serviceKeywords.some(keyword => desc.includes(keyword));
-              }).reduce((sum, charge) => sum + (charge.amount || 0), 0) || 0;
-              
-              // Calculate total taxes from all charges
-              const taxTotal = folio.charges?.reduce((sum, charge) => sum + (charge.tax || 0), 0) || 0;
+              frontOfficeStore.updateFolioBalances(folio);
+              const folioTotals = getFolioDisplayTotals(folio);
+              const roomTotal = folioTotals.roomCharges;
+              const serviceCharges = folioTotals.serviceCharges;
+              const otherCharges = folioTotals.otherCharges;
+              const taxTotal = folioTotals.taxTotal;
               
               return (
                 <div className="space-y-6">
@@ -763,9 +764,9 @@ function CheckInsSection() {
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
                       <CardBody className="text-center p-4">
-                        <div className="text-3xl font-bold text-blue-600">₵{roomTotal.toLocaleString()}</div>
+                        <div className="text-3xl font-bold text-blue-600">₵{formatMoney(roomTotal)}</div>
                         <div className="text-sm text-blue-700 font-medium">Room Charges</div>
-                        <div className="text-xs text-blue-600 mt-1">{(selectedFolioGuest.nightsStayed || 0) + 1} nights × ₵{(selectedFolioGuest.roomRate || 0).toLocaleString()}</div>
+                        <div className="text-xs text-blue-600 mt-1">Room rate excl. tax</div>
                       </CardBody>
                     </Card>
                     <Card className="bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200">
@@ -811,23 +812,23 @@ function CheckInsSection() {
                         <div className="space-y-3 p-4">
                           <div className="flex justify-between items-center py-2 border-b border-gray-100">
                             <span className="text-gray-600">Room Charges</span>
-                            <span className="font-semibold text-blue-600">₵{roomTotal.toLocaleString()}</span>
+                            <span className="font-semibold text-blue-600">₵{formatMoney(roomTotal)}</span>
                           </div>
                           <div className="flex justify-between items-center py-2 border-b border-gray-100">
                             <span className="text-gray-600">Service Charges</span>
-                            <span className="font-semibold text-orange-600">₵{serviceCharges.toLocaleString()}</span>
+                            <span className="font-semibold text-orange-600">₵{formatMoney(serviceCharges)}</span>
                         </div>
                           <div className="flex justify-between items-center py-2 border-b border-gray-100">
                             <span className="text-gray-600">Other Charges</span>
-                            <span className="font-semibold text-purple-600">₵{otherCharges.toLocaleString()}</span>
+                            <span className="font-semibold text-purple-600">₵{formatMoney(otherCharges)}</span>
                         </div>
                           <div className="flex justify-between items-center py-2 border-b border-gray-100">
-                            <span className="text-gray-600">Taxes (VAT + NHIL + Tourism)</span>
-                            <span className="font-semibold text-red-600">₵{taxTotal.toLocaleString()}</span>
+                            <span className="text-gray-600">Taxes (VAT + NHIL + GETFund + Tourism)</span>
+                            <span className="font-semibold text-red-600">₵{formatMoney(taxTotal)}</span>
                         </div>
                           <div className="flex justify-between items-center py-3 bg-gray-50 rounded-lg px-3">
                             <span className="font-bold text-gray-800">Total Charges (Incl. Tax)</span>
-                            <span className="font-bold text-lg text-gray-800">₵{(selectedFolioGuest.totalCharges || 0).toLocaleString()}</span>
+                            <span className="font-bold text-lg text-gray-800">₵{formatMoney(folioTotals.totalCharges)}</span>
                           </div>
                         </div>
                       </CardBody>
@@ -888,10 +889,9 @@ function CheckInsSection() {
                         </div>
                   </div>
                                 <div className="text-right">
-                                  <div className="font-semibold text-gray-800">₵{charge.amount.toLocaleString()}</div>
-                                  {charge.tax && (
-                                    <div className="text-xs text-gray-500">+₵{charge.tax.toLocaleString()} tax</div>
-                                  )}
+                                  <div className="font-semibold text-gray-800">
+                                    ₵{formatMoney(charge.amount)}
+                                  </div>
                     </div>
                     </div>
                             ))}
@@ -1181,6 +1181,24 @@ function CheckInsSection() {
                 {isProcessing ? 'Processing...' : '💳 Process Payment'}
               </Button>
                 </div>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        <Modal isOpen={isNoShowOpen} onClose={onNoShowClose}>
+          <ModalContent>
+            <ModalHeader>Mark no-show</ModalHeader>
+            <ModalBody>
+              {noShowTarget && (
+                <p className="text-sm">
+                  Mark <strong>{noShowTarget.guestName}</strong> ({noShowTarget.resId || noShowTarget.id}) as a no-show?
+                  Penalty and GL post apply per your no-show policy.
+                </p>
+              )}
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="flat" onPress={onNoShowClose}>Cancel</Button>
+              <Button color="danger" onPress={confirmNoShow}>Confirm no-show</Button>
             </ModalFooter>
           </ModalContent>
         </Modal>

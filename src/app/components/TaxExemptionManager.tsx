@@ -1,15 +1,13 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Card, CardHeader, CardBody, CardFooter } from '@heroui/react';
+import { Card, CardHeader, CardBody } from '@heroui/react';
 import { Input } from '@heroui/react';
 import { Button } from '@heroui/react';
 import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from '@heroui/react';
 import { Chip } from '@heroui/react';
-import { Badge } from '@heroui/react';
 import { Tooltip } from '@heroui/react';
 import { Select, SelectItem } from '@heroui/react';
-import { Switch } from '@heroui/react';
 import { Textarea } from '@heroui/react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure } from '@heroui/react';
 import { Tabs, Tab } from '@heroui/react';
@@ -72,7 +70,6 @@ const TAX_CATEGORIES = [
   'VAT (Standard Rate)',
   'NHIL',
   'GETFund Levy', 
-  'COVID-19 Levy',
   'Tourism Levy',
   'Withholding Tax',
   'Corporate Tax',
@@ -96,7 +93,7 @@ const EXEMPTION_TEMPLATES: ExemptionTemplate[] = [
     name: 'Diplomatic Mission Full',
     guestType: 'diplomatic',
     exemptionType: 'Diplomatic Mission',
-    taxCategories: ['VAT (Standard Rate)', 'NHIL', 'GETFund Levy', 'COVID-19 Levy', 'Tourism Levy'],
+    taxCategories: ['VAT (Standard Rate)', 'NHIL', 'GETFund Levy', 'Tourism Levy'],
     exemptionPercentage: 100,
     requirements: ['Diplomatic ID', 'Mission Letter', 'Country Accreditation'],
     validityPeriod: 1095,
@@ -107,7 +104,7 @@ const EXEMPTION_TEMPLATES: ExemptionTemplate[] = [
     name: 'Government Contract Partial',
     guestType: 'government',
     exemptionType: 'Government Contract',
-    taxCategories: ['Tourism Levy', 'COVID-19 Levy'],
+    taxCategories: ['Tourism Levy'],
     exemptionPercentage: 100,
     requirements: ['Contract Document', 'Government ID', 'Project Authorization'],
     validityPeriod: 730,
@@ -182,7 +179,7 @@ export default function TaxExemptionManager() {
         exemptionReason: 'Official diplomatic activities',
         certificateNumber: 'DIP-2024-002',
         certificateExpiry: '2027-01-31',
-        taxCategories: ['VAT (Standard Rate)', 'NHIL', 'GETFund Levy', 'COVID-19 Levy', 'Tourism Levy'],
+        taxCategories: ['VAT (Standard Rate)', 'NHIL', 'GETFund Levy', 'Tourism Levy'],
         exemptionPercentage: 100,
         status: 'approved',
         approvedBy: 'Senior Tax Officer Jane Smith',
@@ -338,12 +335,12 @@ export default function TaxExemptionManager() {
               selectedKeys={[filterStatus]}
               onChange={(e) => setFilterStatus(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Statuses</SelectItem>
-              <SelectItem key="pending" value="pending">Pending</SelectItem>
-              <SelectItem key="approved" value="approved">Approved</SelectItem>
-              <SelectItem key="rejected" value="rejected">Rejected</SelectItem>
-              <SelectItem key="expired" value="expired">Expired</SelectItem>
-              <SelectItem key="suspended" value="suspended">Suspended</SelectItem>
+              <SelectItem key="all">All Statuses</SelectItem>
+              <SelectItem key="pending">Pending</SelectItem>
+              <SelectItem key="approved">Approved</SelectItem>
+              <SelectItem key="rejected">Rejected</SelectItem>
+              <SelectItem key="expired">Expired</SelectItem>
+              <SelectItem key="suspended">Suspended</SelectItem>
             </Select>
 
             <Select
@@ -351,13 +348,13 @@ export default function TaxExemptionManager() {
               selectedKeys={[filterGuestType]}
               onChange={(e) => setFilterGuestType(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Types</SelectItem>
-              <SelectItem key="individual" value="individual">Individual</SelectItem>
-              <SelectItem key="corporate" value="corporate">Corporate</SelectItem>
-              <SelectItem key="diplomatic" value="diplomatic">Diplomatic</SelectItem>
-              <SelectItem key="government" value="government">Government</SelectItem>
-              <SelectItem key="charity" value="charity">Charity</SelectItem>
-              <SelectItem key="educational" value="educational">Educational</SelectItem>
+              <SelectItem key="all">All Types</SelectItem>
+              <SelectItem key="individual">Individual</SelectItem>
+              <SelectItem key="corporate">Corporate</SelectItem>
+              <SelectItem key="diplomatic">Diplomatic</SelectItem>
+              <SelectItem key="government">Government</SelectItem>
+              <SelectItem key="charity">Charity</SelectItem>
+              <SelectItem key="educational">Educational</SelectItem>
             </Select>
 
             <div className="flex items-end">
@@ -530,7 +527,7 @@ export default function TaxExemptionManager() {
                       onChange={(e) => setNewExemption(prev => ({ ...prev, guestType: e.target.value as any }))}
                     >
                       {Object.keys(EXEMPTION_TYPES).map((type) => (
-                        <SelectItem key={type} value={type}>
+                        <SelectItem key={type}>
                           {type.charAt(0).toUpperCase() + type.slice(1)}
                         </SelectItem>
                       ))}
@@ -545,7 +542,7 @@ export default function TaxExemptionManager() {
                       placeholder="Select exemption type"
                     >
                       {getExemptionTypeOptions(newExemption.guestType).map((type) => (
-                        <SelectItem key={type} value={type}>
+                        <SelectItem key={type}>
                           {type}
                         </SelectItem>
                       ))}
@@ -579,7 +576,7 @@ export default function TaxExemptionManager() {
                       type="number"
                       min="0"
                       max="100"
-                      value={newExemption.exemptionPercentage}
+                      value={String(newExemption.exemptionPercentage)}
                       onChange={(e) => setNewExemption(prev => ({ ...prev, exemptionPercentage: Number(e.target.value) }))}
                       endContent="%"
                     />

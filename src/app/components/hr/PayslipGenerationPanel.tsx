@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Button, Card, CardBody, CardHeader, Input, Select, SelectItem } from '@heroui/react';
+import { Button, Card, CardBody, CardHeader, Select, SelectItem } from '@heroui/react';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
 
 export default function PayslipGenerationPanel() {

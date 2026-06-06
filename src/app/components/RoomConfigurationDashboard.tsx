@@ -31,12 +31,19 @@ import {
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
 import EventRateManagement from './EventRateManagement';
+import {
+  exclusiveFromGross,
+  getCanonicalTaxRates,
+  salesTaxBreakdown,
+} from '../lib/tax/engine';
 // Dynamic imports for PDF generation to avoid SSR issues
 // import jsPDF from 'jspdf';
 // import 'jspdf-autotable';
 
-// Ghana total-to-net conversion factor used when deriving subtotal from gross
-export const GHANA_GROSS_FACTOR = 1.229;
+/** Derive tax-exclusive subtotal from a stored plan price. */
+function subtotalFromPlanPrice(basePrice: number, priceType?: string): number {
+  return priceType === 'gross_total' ? exclusiveFromGross(basePrice) : basePrice;
+}
 
 interface RoomType {
   id: string;
@@ -909,6 +916,9 @@ export default function RoomConfigurationDashboard() {
     const { taxes, total } = calcTax(base, category, context);
     const mapped: any = { subtotal: base, totalTax: taxes.reduce((s: number, t: any) => s + t.amount, 0), finalBill: total };
     taxes.forEach((t: any) => { mapped[t.name.toLowerCase().replace(/[^a-z]/g, '')] = t.amount; });
+    if (mapped.vatstandardrate != null) mapped.vat = mapped.vatstandardrate;
+    if (mapped.tourismlevy != null) mapped.tourism = mapped.tourismlevy;
+    if (mapped.getfundlevy != null) mapped.getfund = mapped.getfundlevy;
     return mapped;
   };
 
@@ -1027,16 +1037,8 @@ export default function RoomConfigurationDashboard() {
         const transformedPlan = transformRatePlanData(plan);
         // Calculate tax breakdown for CSV export
         // Only "subtotal" and "gross_total" are valid values for priceType
-        const subtotal =
-          transformedPlan.priceType === 'subtotal'
-            ? transformedPlan.basePrice
-            : transformedPlan.basePrice / GHANA_GROSS_FACTOR;
-        const nhil = subtotal * 0.025; // 2.5%
-        const getfund = subtotal * 0.025; // 2.5%
-        const covid = subtotal * 0.01; // 1.0%
-        const vat = (subtotal + nhil + getfund + covid) * 0.15; // 15% VAT after levies
-        const tourism = subtotal * 0.01; // 1.0%
-        const totalTax = nhil + getfund + covid + vat + tourism;
+        const subtotal = subtotalFromPlanPrice(transformedPlan.basePrice, transformedPlan.priceType);
+        const { nhil, getfund, vat, tourism, total: totalTax } = salesTaxBreakdown(subtotal);
         const finalBill = subtotal + totalTax;
         
         return [
@@ -1261,10 +1263,17 @@ export default function RoomConfigurationDashboard() {
 
   // Currency configuration
   const CURRENCIES = {
-    USD: { symbol: '$', name: 'US Dollar', taxRates: { vat: 0, nhil: 0, covid: 0, tourism: 0 } },
-    GBP: { symbol: '£', name: 'British Pound', taxRates: { vat: 0.20, nhil: 0, covid: 0, tourism: 0 } },
-    EUR: { symbol: '€', name: 'Euro', taxRates: { vat: 0.21, nhil: 0, covid: 0, tourism: 0 } },
-    GHS: { symbol: '₵', name: 'Ghanaian Cedi', taxRates: { vat: 0.15, nhil: 0.025, covid: 0.01, tourism: 0.01 } }
+    USD: { symbol: '$', name: 'US Dollar', taxRates: { vat: 0, nhil: 0, getfund: 0, tourism: 0 } },
+    GBP: { symbol: '£', name: 'British Pound', taxRates: { vat: 0.20, nhil: 0, getfund: 0, tourism: 0 } },
+    EUR: { symbol: '€', name: 'Euro', taxRates: { vat: 0.21, nhil: 0, getfund: 0, tourism: 0 } },
+    GHS: (() => {
+      const r = getCanonicalTaxRates();
+      return {
+        symbol: '₵',
+        name: 'Ghanaian Cedi',
+        taxRates: { vat: r.vat / 100, nhil: r.nhil / 100, getfund: r.getfund / 100, tourism: r.tourismLevy / 100 },
+      };
+    })()
   };
 
   // Get currency symbol for display
@@ -2251,8 +2260,7 @@ export default function RoomConfigurationDashboard() {
                     <div className="text-sm text-gray-700">
                       <div className="flex justify-between"><span>Base (Subtotal):</span><span className="font-mono">₵{getLivePreview()?.subtotal?.toFixed(2) || '0.00'}</span></div>
                       <div className="flex justify-between"><span>NHIL (2.5%):</span><span className="font-mono">₵{getLivePreview()?.nhil?.toFixed(2) || '0.00'}</span></div>
-                      <div className="flex justify-between"><span>GETFund (2.5%):</span><span className="font-mono">₵{getLivePreview()?.getfund?.toFixed(2) || '0.00'}</span></div>
-                      <div className="flex justify-between"><span>COVID-19 (1.0%):</span><span className="font-mono">₵{getLivePreview()?.covid?.toFixed(2) || '0.00'}</span></div>
+                      <div className="flex justify-between"><span>GETFund (2.5%):</span><span className="font-mono">₵{getLivePreview()?.getfundlevy?.toFixed(2) || getLivePreview()?.getfund?.toFixed(2) || '0.00'}</span></div>
                       <div className="flex justify-between"><span>VAT (15% on base+levies):</span><span className="font-mono">₵{getLivePreview()?.vat?.toFixed(2) || '0.00'}</span></div>
                       <div className="flex justify-between"><span>Tourism Levy (1%):</span><span className="font-mono">₵{getLivePreview()?.tourism?.toFixed(2) || '0.00'}</span></div>
                     </div>
@@ -2343,13 +2351,9 @@ export default function RoomConfigurationDashboard() {
                       <TableCell>₵{plan.basePrice}</TableCell>
                       <TableCell className="text-center">
                         {(() => {
-                          const subtotal = plan.basePrice;
-                          const nhil = subtotal * 0.025;
-                          const getfund = subtotal * 0.025;
-                          const covid = subtotal * 0.01;
-                          const vat = (subtotal + nhil + getfund + covid) * 0.15;
-                          const tourism = subtotal * 0.01;
-                          const finalBill = subtotal + nhil + getfund + covid + vat + tourism;
+                          const subtotal = subtotalFromPlanPrice(plan.basePrice, plan.priceType || 'subtotal');
+                          const { nhil, getfund, vat, tourism } = salesTaxBreakdown(subtotal);
+                          const finalBill = subtotal + nhil + getfund + vat + tourism;
                           return `₵${finalBill.toFixed(2)}`;
                         })()}
                       </TableCell>
@@ -2516,13 +2520,8 @@ export default function RoomConfigurationDashboard() {
 
                     // Calculate tax breakdown (Ghana taxes)
                     const transformedPlan = transformRatePlanData(plan);
-                    const subtotal = transformedPlan.priceType === 'subtotal' ? transformedPlan.basePrice : transformedPlan.basePrice / GHANA_GROSS_FACTOR;
-                    const nhil = subtotal * 0.025; // 2.5%
-                    const getfund = subtotal * 0.025; // 2.5%
-                    const covid = subtotal * 0.01; // 1.0%
-                    const vat = (subtotal + nhil + getfund + covid) * 0.15; // 15% on amount after levies
-                    const tourism = subtotal * 0.01; // 1.0%
-                    const totalTax = nhil + getfund + covid + vat + tourism;
+                    const subtotal = subtotalFromPlanPrice(transformedPlan.basePrice, transformedPlan.priceType);
+                    const { nhil, getfund, vat, tourism, total: totalTax } = salesTaxBreakdown(subtotal);
                     const grossTotal = subtotal + totalTax;
 
                     return (
@@ -2556,10 +2555,6 @@ export default function RoomConfigurationDashboard() {
                               <span className="font-mono text-orange-600">₵{getfund.toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">COVID-19 (1.0%):</span>
-                              <span className="font-mono text-orange-600">₵{covid.toFixed(2)}</span>
-                            </div>
-                            <div className="flex justify-between">
                               <span className="text-sm text-gray-600">VAT (15.0%):</span>
                               <span className="font-mono text-orange-600">₵{vat.toFixed(2)}</span>
                             </div>
@@ -2581,7 +2576,7 @@ export default function RoomConfigurationDashboard() {
                             <div className="pt-2">
                               <div className="text-xs text-gray-500">
                                 <p><strong>Tax Breakdown:</strong></p>
-                                <p>• NHIL + GETFund + COVID-19 = {((nhil + getfund + covid) / subtotal * 100).toFixed(1)}% of base</p>
+                                <p>• NHIL + GETFund = {((nhil + getfund) / subtotal * 100).toFixed(1)}% of base</p>
                                 <p>• VAT = 15% of (base + levies)</p>
                                 <p>• Tourism = 1% of base</p>
                               </div>
@@ -2893,6 +2888,42 @@ export default function RoomConfigurationDashboard() {
                     <label className="text-xs text-gray-600">Standard Check-out Hour</label>
                     <input type="number" className="mt-1 w-full border rounded-md p-2 text-sm" value={(settingsStore.roomManagement.standardCheckOutHour ?? 11).toString()} onChange={(e)=> settingsStore.updateNestedSetting('roomManagement.standardCheckOutHour', Math.max(0, Math.min(23, Number(e.target.value||'0'))))} />
                   </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Night Audit & Room Charges</h4>
+              </CardHeader>
+              <CardBody className="pt-0 space-y-4">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-sm text-gray-700 font-medium">Post first night at check-in</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      When off (default), room charges post nightly via night audit only. Idempotency prevents double posting if both run.
+                    </div>
+                  </div>
+                  <Switch
+                    isSelected={!!settingsStore.roomManagement.postFirstNightAtCheckin}
+                    onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.postFirstNightAtCheckin', v)}
+                  >
+                    {settingsStore.roomManagement.postFirstNightAtCheckin ? 'On' : 'Off'}
+                  </Switch>
+                </div>
+                <div className="flex items-center justify-between gap-4 border-t pt-4">
+                  <div>
+                    <div className="text-sm text-gray-700 font-medium">Auto-run night audit at 1:00am</div>
+                    <div className="text-xs text-gray-500 mt-1">
+                      Runs automatically when the app is open. Failures notify users with the Night Manager role.
+                    </div>
+                  </div>
+                  <Switch
+                    isSelected={settingsStore.roomManagement.nightAuditAutoRun !== false}
+                    onValueChange={(v) => settingsStore.updateNestedSetting('roomManagement.nightAuditAutoRun', v)}
+                  >
+                    {settingsStore.roomManagement.nightAuditAutoRun !== false ? 'On' : 'Off'}
+                  </Switch>
                 </div>
               </CardBody>
             </Card>

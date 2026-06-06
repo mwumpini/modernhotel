@@ -2,17 +2,16 @@
 
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import {
-	Card, CardBody, CardHeader, Button, Progress,
+	Card, CardBody, Button, Progress,
 	Tabs, Tab,
 	Input, Select, SelectItem,
 	Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-	Chip, Pagination, Divider, Checkbox,
+	Chip, Pagination, Checkbox,
 	Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
 	Tooltip
 } from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
-import { GHANA_TAX_CODES } from '@/app/lib/accounting/models';
 
 // ===== EXPORT UTILITIES =====
 
@@ -142,7 +141,6 @@ export default function AccountsReceivable() {
 			VAT: { name: 'VAT', rate: 15.0 },
 			NHIL: { name: 'NHIL', rate: 2.5 },
 			GETFUND: { name: 'GETFund Levy', rate: 2.5 },
-			COVID19: { name: 'COVID-19 Levy', rate: 1.0 },
 			TOURISM: { name: 'Tourism Levy', rate: 1.0 },
 		};
 		
@@ -778,7 +776,7 @@ export default function AccountsReceivable() {
 			paidAmount: 0,
 			createdAt: new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
-			sourceModule: 'manual',
+			sourceModule: 'manual_ar_ap',
 			staffName: 'Manual Entry',
 		};
 		addInvoice(payload as any);
@@ -819,7 +817,7 @@ export default function AccountsReceivable() {
 			status: 'Posted' as const,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
-			sourceModule: 'manual',
+			sourceModule: 'manual_ar_ap',
 			staffName: 'Manual Entry',
 		};
 		addPayment(payload as any);
@@ -1861,7 +1859,7 @@ export default function AccountsReceivable() {
 						const taxBreakdown = selectedInvoice.taxBreakdown || (() => {
 							if (totalTax <= 0) return [];
 							const breakdown: { code: string; name: string; rate: number; amount: number }[] = [];
-							const taxCodes = ['NHIL', 'GETFUND', 'COVID19', 'VAT'] as const; // Order matters for Ghana
+							const taxCodes = ['NHIL', 'GETFUND', 'VAT', 'TOURISM'] as const; // Order matters for Ghana (VAT after levies in stored breakdowns)
 							let remainingTax = totalTax;
 							
 							taxCodes.forEach(code => {

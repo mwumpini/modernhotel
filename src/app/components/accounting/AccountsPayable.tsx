@@ -2,9 +2,9 @@
 
 import React, { useState, useMemo } from 'react';
 import { 
-  Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
+  Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Chip, Badge, Checkbox, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
+  Chip, Checkbox, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   Tabs, Tab, Textarea, Divider, Spinner, Alert, Progress, Pagination,
   Autocomplete, AutocompleteItem
 } from "@heroui/react";
@@ -12,6 +12,7 @@ import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useSupplierStore } from '@/app/lib/inventory/supplierStore';
 import { useStockStore } from '@/app/lib/inventory/stockStore';
+import { computePurchaseTax } from '@/app/lib/tax/engine';
 
 export default function AccountsPayablePage() {
   const {
@@ -1354,7 +1355,7 @@ export default function AccountsPayablePage() {
               <Input size="sm" type="number" label="Exchange Rate" value={form.exchangeRate ?? 1} onChange={(e) => setForm({ ...form, exchangeRate: parseFloat(e.target.value) || 1 })} />
               <Input size="sm" type="number" label="Subtotal" value={form.subtotal ?? 0} onChange={(e) => {
                 const subtotal = parseFloat(e.target.value) || 0;
-                const taxAmount = +(subtotal * 0.15).toFixed(2);
+                const taxAmount = computePurchaseTax(subtotal).totalTax;
                 setForm({ ...form, subtotal, taxAmount, total: +(subtotal + taxAmount).toFixed(2) });
               }} />
               <Input size="sm" type="number" label="Tax Amount" value={form.taxAmount ?? 0} onChange={(e) => {

@@ -14,6 +14,8 @@ export interface Room {
   capacity: number;
   rate: number;
   isActive: boolean;
+  createdAt?: Date;
+  updatedAt?: Date;
 }
 
 export interface CleaningTask {

@@ -51,6 +51,12 @@ model Tenant {
   expenseLines ExpenseLine[]
   pettyCashFunds PettyCashFund[]
   pettyCashTxns PettyCashTxn[]
+  journalEntries JournalEntry[]
+  journalEntryLines JournalEntryLine[]
+  accountingInvoices AccountingInvoice[]
+  accountingInvoiceLines AccountingInvoiceLine[]
+  accountingPayments AccountingPayment[]
+  guestFolios GuestFolio[]
 
   @@map("tenants")
 }
@@ -200,10 +206,19 @@ model Guest {
   tenantId    String
   serialNumber String  @unique
   name        String
+  firstName   String?
+  lastName    String?
   email       String?
   phone       String?
   nationality String?
   ghanaCard   String?
+  idType      String?
+  idNumber    String?
+  vipStatus   String?
+
+  // Long-tail fields (preferences, emergencyContact, address, billing contact,
+  // credit fields, dateOfBirth, gender, etc.)
+  details     Json?
   
   // Relations
   reservations Reservation[]
@@ -231,7 +246,9 @@ model Reservation {
   id            String   @id @default(cuid())
   tenantId      String
   guestId       String
+  resId         String?
   roomType      String?
+  ratePlanId    String?
   roomId        String?
   status        String   @default("pending")
   source        String?
@@ -240,6 +257,22 @@ model Reservation {
   adults        Int      @default(1)
   children      Int      @default(0)
   specialRequests String?
+
+  // Hybrid: queryable/reportable columns
+  stayReason          String?
+  isGuaranteed        Boolean  @default(false)
+  billingPersonId     String?
+  companyName         String?
+  groupId             String?
+  isGroupLeader       Boolean  @default(false)
+  linkedReservationId String?
+  groupSize           Int?
+  totalAmount         Float?
+
+  // Long-tail fields (rateBreakdown, marketCodes, internalNotes, remarksToGuest,
+  // projectCode, costCenter, stayReasonDetails, etc.)
+  details       Json?
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -250,7 +283,181 @@ model Reservation {
   @@index([tenantId, status])
   @@index([tenantId, checkInDate])
   @@index([tenantId, guestId])
+  @@index([tenantId, roomId])
+  @@index([tenantId, groupId])
   @@map("reservations")
+}
+
+model JournalEntry {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  entryNumber         String
+  date                DateTime
+  reference           String?
+  description         String?
+  totalDebit          Float     @default(0)
+  totalCredit         Float     @default(0)
+  currency            String    @default("GHS")
+  exchangeRate        Float?
+  status              String    @default("Draft")
+  postedBy            String?
+  postedAt            DateTime?
+  sourceModule        String?
+  sourceTransactionId String?
+  details             Json?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  tenant Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lines  JournalEntryLine[]
+
+  @@index([tenantId, date])
+  @@index([tenantId, status])
+  @@index([tenantId, sourceModule])
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id             String  @id @default(cuid())
+  tenantId       String
+  journalEntryId String
+  accountCode    String
+  description    String?
+  debit          Float   @default(0)
+  credit         Float   @default(0)
+  currency       String  @default("GHS")
+  exchangeRate   Float?
+  taxCode        String?
+  taxAmount      Float?
+  department     String?
+  project        String?
+  costCenter     String?
+  reference      String?
+  details        Json?
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, journalEntryId])
+  @@index([tenantId, accountCode])
+  @@map("journal_entry_lines")
+}
+
+model AccountingInvoice {
+  id                String    @id @default(cuid())
+  tenantId          String
+  invoiceNumber     String
+  type              String    @default("Sales")
+  date              DateTime
+  dueDate           DateTime?
+  businessPartnerId String?
+  reference         String?
+  description       String?
+  subtotal          Float     @default(0)
+  taxAmount         Float     @default(0)
+  total             Float     @default(0)
+  currency          String    @default("GHS")
+  exchangeRate      Float?
+  status            String    @default("Draft")
+  paidAmount        Float     @default(0)
+  paidDate          DateTime?
+  journalEntryId    String?
+  sourceModule      String?
+  details           Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  lines  AccountingInvoiceLine[]
+
+  @@index([tenantId, date])
+  @@index([tenantId, status])
+  @@index([tenantId, businessPartnerId])
+  @@map("accounting_invoices")
+}
+
+model AccountingInvoiceLine {
+  id            String  @id @default(cuid())
+  tenantId      String
+  invoiceId     String
+  itemCode      String?
+  description   String?
+  quantity      Float   @default(0)
+  unitPrice     Float   @default(0)
+  amount        Float   @default(0)
+  taxCode       String?
+  taxAmount     Float   @default(0)
+  glAccountCode String?
+  costCenter    String?
+  project       String?
+  uom           String?
+  taxRate       Float?
+  details       Json?
+
+  tenant  Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice AccountingInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, invoiceId])
+  @@map("accounting_invoice_lines")
+}
+
+model AccountingPayment {
+  id                String    @id @default(cuid())
+  tenantId          String
+  paymentNumber     String
+  date              DateTime
+  type              String    @default("Receipt")
+  businessPartnerId String?
+  invoiceId         String?
+  reference         String?
+  description       String?
+  amount            Float     @default(0)
+  currency          String    @default("GHS")
+  exchangeRate      Float?
+  paymentMethod     String?
+  bankAccountId     String?
+  checkNumber       String?
+  status            String    @default("Draft")
+  journalEntryId    String?
+  details           Json?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, date])
+  @@index([tenantId, status])
+  @@index([tenantId, invoiceId])
+  @@map("accounting_payments")
+}
+
+// Front-office guest folio (in-house subledger). The store's Folio carries a
+// small set of scalar fields plus charge/payment arrays that mutate frequently;
+// arrays live in JSON columns so each folio is a single, atomically-upserted row.
+// Named GuestFolio to avoid colliding with the legacy normalized Folio model.
+model GuestFolio {
+  id               String   @id
+  tenantId         String
+  reservationId    String
+  currency         String   @default("GHS")
+  status           String   @default("active")
+  type             String?
+  description      String?
+  responsibleParty String?
+  creditBalance    Float?
+  totalCharges     Float    @default(0)
+  totalPayments    Float    @default(0)
+  balance          Float    @default(0)
+  charges          Json?
+  payments         Json?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, reservationId])
+  @@index([tenantId, status])
+  @@map("guest_folios")
 }
 
 model AuditLog {

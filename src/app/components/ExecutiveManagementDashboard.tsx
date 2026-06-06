@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Card, CardBody, CardHeader, Button, Chip } from "@heroui/react";
+import { Card, CardBody, CardHeader, Button } from "@heroui/react";
 import { useAnalyticsStore } from '../lib/analytics/analyticsStore';
 import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { auditLogStore, AuditRecord } from '../lib/analytics/auditLogStore';

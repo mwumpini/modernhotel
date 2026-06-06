@@ -6,13 +6,7 @@ import {
   CardBody, 
   CardHeader, 
   Button, 
-  Badge, 
-  Table, 
-  TableHeader, 
-  TableColumn, 
-  TableBody, 
-  TableRow, 
-  TableCell,
+  Badge,
   Input,
   Select,
   SelectItem,
@@ -22,23 +16,15 @@ import {
   ModalBody,
   ModalFooter,
   useDisclosure,
-  Chip,
   Textarea,
   Tabs,
-  Tab,
-  Calendar,
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-  Dropdown,
-  DropdownTrigger,
-  DropdownMenu,
-  DropdownItem
+  Tab
 } from "@heroui/react";
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
-import { Reservation, GuestProfile, RoomType, RatePlan, StayReason, Nationality, IdType } from '../lib/frontoffice/types';
+import { Reservation, GuestProfile, StayReason, Nationality, IdType } from '../lib/frontoffice/types';
+import { computeSalesTaxTotal, effectiveSalesTaxRate } from '../lib/tax/engine';
 
 interface CheckInFormData {
   guestName: string;
@@ -117,25 +103,12 @@ export default function QuickCheckInManager({ onCheckInComplete, onClose }: Quic
     const ratePlan = useSettingsStore.getState().roomManagement.ratePlans.find(rp => rp.roomTypeId === roomTypeId);
     return ratePlan?.basePrice || 0;
   };
-  const getTaxRate = () => {
-    // Try reading tax from settings; fall back to 15% if not configured
-    try {
-      const settings = useSettingsStore.getState();
-      const vat = (settings as any)?.accounting?.taxRates?.vat || 0;
-      const nhil = (settings as any)?.accounting?.taxRates?.nhil || 0;
-      const levy = (settings as any)?.accounting?.taxRates?.tourismLevy || 0;
-      const total = [vat, nhil, levy].filter(Boolean).reduce((a: number, b: number) => a + b, 0);
-      return total > 0 ? total : 0.15;
-    } catch {
-      return 0.15;
-    }
-  };
   const getComputedTotals = (arrival: string, departure: string, roomTypeId: string) => {
     const nights = calculateNights(arrival, departure) || 1;
     const nightly = getNightlyRate(roomTypeId);
     const subtotal = nightly * nights;
-    const taxRate = getTaxRate();
-    const tax = Math.round(subtotal * taxRate);
+    const taxRate = effectiveSalesTaxRate();
+    const tax = computeSalesTaxTotal(subtotal);
     const grandTotal = subtotal + tax;
     return { nights, nightly, subtotal, taxRate, tax, grandTotal };
   };
@@ -554,35 +527,26 @@ export default function QuickCheckInManager({ onCheckInComplete, onClose }: Quic
               companyName: formData.companyName,
               projectCode: formData.projectCode,
               costCenter: formData.costCenter,
-              rateBreakdown: [{
-                date: bulkGuest.arrival,
-                base: totals.nightly,
-                total: totals.nightly
-              }],
+              rateBreakdown: frontOfficeStore.calculateRateBreakdown(
+                bulkGuest.roomTypeId,
+                bulkGuest.arrival,
+                bulkGuest.departure
+              ),
               createdAt: new Date().toISOString(),
               updatedAt: new Date().toISOString()
             };
 
             const reservationId = (frontOfficeStore.createReservation(reservation) as any).id;
 
-            // Assign room (specific or auto)
+            // Use the explicitly chosen room only; otherwise express check-in
+            // smart-assigns a distinct vacant room per guest (scored by guest
+            // preferences) so a single selection isn't reused across guests.
             if (selectedRoom && selectedRoom.roomTypeId === bulkGuest.roomTypeId) {
               frontOfficeStore.assignRoom(reservationId, selectedRoom.id);
-            } else {
-              // Auto-assign room
-              const availableRooms = frontOfficeStore.rooms.filter(room => 
-                !(room as any).isOutOfService && 
-                room.roomTypeId === bulkGuest.roomTypeId
-              );
-
-              if (availableRooms.length > 0) {
-                const assignedRoom = availableRooms[0];
-                frontOfficeStore.assignRoom(reservationId, assignedRoom.id);
-              }
             }
 
-            // Auto check-in
-            frontOfficeStore.updateReservationStatus(reservationId, 'checked-in');
+            // Express check-in: auto-assign + folio charges + housekeeping + accounting
+            frontOfficeStore.expressCheckIn(reservationId);
 
             results.push({ success: true, reservationId, guestName: bulkGuest.guest.name });
           } catch (error) {
@@ -695,11 +659,11 @@ export default function QuickCheckInManager({ onCheckInComplete, onClose }: Quic
         companyName: formData.companyName,
         projectCode: formData.projectCode,
         costCenter: formData.costCenter,
-        rateBreakdown: [{
-          date: formData.arrival,
-          base: totals.nightly,
-          total: totals.nightly
-        }],
+        rateBreakdown: frontOfficeStore.calculateRateBreakdown(
+          formData.roomTypeId,
+          formData.arrival,
+          formData.departure
+        ),
         // totalAmount: totals.grandTotal,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -707,24 +671,14 @@ export default function QuickCheckInManager({ onCheckInComplete, onClose }: Quic
 
       const reservationId = (frontOfficeStore.createReservation(reservation) as any).id;
 
-      // Assign room (specific or auto)
+      // Use the explicitly chosen room only; otherwise express check-in
+      // smart-assigns a preference-scored vacant room.
       if (selectedRoom && selectedRoom.roomTypeId === formData.roomTypeId) {
         frontOfficeStore.assignRoom(reservationId, selectedRoom.id);
-      } else {
-        // Auto-assign room
-        const availableRooms = frontOfficeStore.rooms.filter(room => 
-          !(room as any).isOutOfService && 
-          room.roomTypeId === formData.roomTypeId
-        );
-        
-        if (availableRooms.length > 0) {
-          const assignedRoom = availableRooms[0];
-          frontOfficeStore.assignRoom(reservationId, assignedRoom.id);
-        }
       }
 
-      // Auto check-in
-      frontOfficeStore.updateReservationStatus(reservationId, 'checked-in');
+      // Express check-in: auto-assign + folio charges + housekeeping + accounting
+      frontOfficeStore.expressCheckIn(reservationId);
 
       // Track event
       trackEvent('reservation_created' as any, {

@@ -3,10 +3,9 @@
 import React, { useState } from 'react';
 import { 
   Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
-  Tabs, Tab, Chip, Progress, Select, SelectItem, DatePicker
+  Tabs, Tab, Chip, Progress, Select, SelectItem
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
-import { trackEvent } from '../lib/analytics/trackEvent';
 
 interface KPIMetric {
   id: string;
@@ -340,7 +339,7 @@ export default function ReportsAnalyticsDashboard() {
                   <div key={metric.id} className="p-4 bg-gray-50 rounded-lg">
                     <div className="space-y-2">
                       <div className="flex justify-between text-sm">
-                        <span>VAT (12.5%):</span>
+                        <span>VAT:</span>
                         <span className="font-medium">₵{metric.ghanaTaxes.vat.toLocaleString()}</span>
                       </div>
                       <div className="flex justify-between text-sm">

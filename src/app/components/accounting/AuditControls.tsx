@@ -2,13 +2,12 @@
 
 import React, { useState, useMemo } from 'react';
 import { 
-  Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
+  Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Chip, Badge, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Tabs, Tab, Textarea, Divider, Spinner, Alert, Progress, Pagination
+  Chip,
+  Tabs, Tab, Spinner, Alert, Progress
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
-import { AuditTrail } from '@/app/lib/accounting/models';
 
 export default function AuditControlsPage() {
   const {
@@ -128,9 +127,8 @@ export default function AuditControlsPage() {
               selectedKeys={[filterAction]}
               onSelectionChange={(keys) => setFilterAction(Array.from(keys)[0] as string)}
             >
-              <SelectItem key="all">All Actions</SelectItem>
-              {actions.map(action => (
-                <SelectItem key={action}>{action}</SelectItem>
+              {['all', ...actions].map(action => (
+                <SelectItem key={action}>{action === 'all' ? 'All Actions' : action}</SelectItem>
               ))}
             </Select>
 
@@ -139,9 +137,8 @@ export default function AuditControlsPage() {
               selectedKeys={[filterTable]}
               onSelectionChange={(keys) => setFilterTable(Array.from(keys)[0] as string)}
             >
-              <SelectItem key="all">All Tables</SelectItem>
-              {tables.map(table => (
-                <SelectItem key={table}>{table}</SelectItem>
+              {['all', ...tables].map(table => (
+                <SelectItem key={table}>{table === 'all' ? 'All Tables' : table}</SelectItem>
               ))}
             </Select>
 
@@ -269,7 +266,7 @@ export default function AuditControlsPage() {
               <div className="p-6">
                 <h3 className="text-lg font-semibold mb-4">Compliance Reports</h3>
                 <Alert color="primary">
-                  For VAT/NHIL/GETFund/COVID-19 and Tourism Levy returns, use the Compliance module under ⚖️ Compliance & Reports. Accounting journal entries integrate via tax GL codes.
+                  For VAT, NHIL, GETFund, and Tourism Levy returns, use the Compliance module under ⚖️ Compliance & Reports. Accounting journal entries integrate via tax GL codes.
                 </Alert>
               </div>
             </Tab>

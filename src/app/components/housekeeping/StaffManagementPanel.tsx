@@ -4,7 +4,6 @@ import React, { useState, useEffect } from 'react';
 import { 
   Card, 
   CardBody, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -33,8 +32,7 @@ import { housekeepingStore } from '../../lib/housekeeping/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { 
   HousekeepingStaff, 
-  HousekeepingTask,
-  TaskPriority 
+  HousekeepingTask 
 } from '../../lib/housekeeping/types';
 
 export default function StaffManagementPanel() {
@@ -254,20 +252,20 @@ export default function StaffManagementPanel() {
               value={roleFilter}
               onChange={(e) => setRoleFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Roles</SelectItem>
-              <SelectItem key="housekeeper" value="housekeeper">🧹 Housekeeper</SelectItem>
-              <SelectItem key="supervisor" value="supervisor">👔 Supervisor</SelectItem>
-              <SelectItem key="inspector" value="inspector">🔍 Inspector</SelectItem>
-              <SelectItem key="maintenance" value="maintenance">🔧 Maintenance</SelectItem>
+              <SelectItem key="all">All Roles</SelectItem>
+              <SelectItem key="housekeeper">🧹 Housekeeper</SelectItem>
+              <SelectItem key="supervisor">👔 Supervisor</SelectItem>
+              <SelectItem key="inspector">🔍 Inspector</SelectItem>
+              <SelectItem key="maintenance">🔧 Maintenance</SelectItem>
             </Select>
             <Select
               placeholder="Filter by status"
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Statuses</SelectItem>
-              <SelectItem key="active" value="active">🟢 Active</SelectItem>
-              <SelectItem key="inactive" value="inactive">⚪ Inactive</SelectItem>
+              <SelectItem key="all">All Statuses</SelectItem>
+              <SelectItem key="active">🟢 Active</SelectItem>
+              <SelectItem key="inactive">⚪ Inactive</SelectItem>
             </Select>
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600">Filtered:</span>
@@ -530,10 +528,10 @@ export default function StaffManagementPanel() {
                     placeholder="Select role"
                     isRequired
                   >
-                    <SelectItem key="housekeeper" value="housekeeper">🧹 Housekeeper</SelectItem>
-                    <SelectItem key="supervisor" value="supervisor">👔 Supervisor</SelectItem>
-                    <SelectItem key="inspector" value="inspector">🔍 Inspector</SelectItem>
-                    <SelectItem key="maintenance" value="maintenance">🔧 Maintenance</SelectItem>
+                    <SelectItem key="housekeeper">🧹 Housekeeper</SelectItem>
+                    <SelectItem key="supervisor">👔 Supervisor</SelectItem>
+                    <SelectItem key="inspector">🔍 Inspector</SelectItem>
+                    <SelectItem key="maintenance">🔧 Maintenance</SelectItem>
                   </Select>
                 </div>
               </div>
@@ -543,7 +541,7 @@ export default function StaffManagementPanel() {
                 <label className="block text-sm font-medium text-gray-700 mb-2">Daily Target</label>
                 <Input
                   type="number"
-                  value={staffForm.dailyTarget}
+                  value={String(staffForm.dailyTarget)}
                   onChange={(e) => setStaffForm({...staffForm, dailyTarget: parseInt(e.target.value) || 15})}
                   placeholder="15"
                   min="1"

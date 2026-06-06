@@ -10,10 +10,7 @@ import {
   Tabs, 
   Tab, 
   Chip,
-  Progress,
-  Avatar,
-  Tooltip,
-  Divider
+  Tooltip
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useRouter } from 'next/navigation';

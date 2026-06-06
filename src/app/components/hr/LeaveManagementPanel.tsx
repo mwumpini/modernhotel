@@ -66,7 +66,7 @@ export default function LeaveManagementPanel() {
               <TableColumn>TO</TableColumn>
               <TableColumn>DAYS</TableColumn>
               <TableColumn>STATUS</TableColumn>
-              <TableColumn></TableColumn>
+              <TableColumn>{' '}</TableColumn>
             </TableHeader>
             <TableBody>
               {filtered.map((r) => {

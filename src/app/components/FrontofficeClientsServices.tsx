@@ -6,31 +6,20 @@ import {
   CardBody, 
   CardHeader, 
   Button, 
-  Badge, 
   Table,
   TableHeader,
   TableColumn,
   TableBody,
   TableRow,
   TableCell,
-  Input,
-  Select,
-  SelectItem,
   Chip,
-  Progress,
   Avatar,
-  Modal,
-  ModalContent,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
   useDisclosure,
   Tabs,
   Tab
 } from "@heroui/react";
 import OfflineIndicator from './OfflineIndicator';
 // GuestForm removed in favor of canonical client form redirect
-import { frontOfficeStore } from '../lib/frontoffice/store';
 
 interface Client {
   id: string;
@@ -104,6 +93,7 @@ export default function FrontofficeClientsServices() {
     },
     {
       id: 'C003',
+      serialNumber: 'C003',
       name: 'Kwame Asante',
       email: 'kasante@company.com',
       phone: '+233 26 555 1234',

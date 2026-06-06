@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Card, CardBody, CardHeader, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Divider, Badge, Progress, Tabs, Tab } from "@heroui/react";
+import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Progress, Tabs, Tab } from "@heroui/react";
 
 interface MenuItem {
   id: string;
@@ -359,11 +359,11 @@ export default function FoodBeverageMenuInventory() {
                     onChange={(e) => setSelectedCategory(e.target.value)}
                     className="w-64"
                   >
-                    <SelectItem key="all" value="all">All Categories</SelectItem>
-                    <SelectItem key="Appetizer" value="Appetizer">Appetizer</SelectItem>
-                    <SelectItem key="Main Course" value="Main Course">Main Course</SelectItem>
-                    <SelectItem key="Beverage" value="Beverage">Beverage</SelectItem>
-                    <SelectItem key="Dessert" value="Dessert">Dessert</SelectItem>
+                    <SelectItem key="all">All Categories</SelectItem>
+                    <SelectItem key="Appetizer">Appetizer</SelectItem>
+                    <SelectItem key="Main Course">Main Course</SelectItem>
+                    <SelectItem key="Beverage">Beverage</SelectItem>
+                    <SelectItem key="Dessert">Dessert</SelectItem>
                   </Select>
                 </div>
                 
@@ -470,11 +470,11 @@ export default function FoodBeverageMenuInventory() {
                     onChange={(e) => setSelectedInventoryStatus(e.target.value)}
                     className="w-64"
                   >
-                    <SelectItem key="all" value="all">All Status</SelectItem>
-                    <SelectItem key="sufficient" value="sufficient">Sufficient</SelectItem>
-                    <SelectItem key="low" value="low">Low Stock</SelectItem>
-                    <SelectItem key="out" value="out">Out of Stock</SelectItem>
-                    <SelectItem key="overstock" value="overstock">Overstock</SelectItem>
+                    <SelectItem key="all">All Status</SelectItem>
+                    <SelectItem key="sufficient">Sufficient</SelectItem>
+                    <SelectItem key="low">Low Stock</SelectItem>
+                    <SelectItem key="out">Out of Stock</SelectItem>
+                    <SelectItem key="overstock">Overstock</SelectItem>
                   </Select>
                 </div>
                 
@@ -675,10 +675,10 @@ export default function FoodBeverageMenuInventory() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Item Name" placeholder="Enter item name" />
                 <Select label="Category" placeholder="Select category">
-                  <SelectItem key="appetizer" value="appetizer">Appetizer</SelectItem>
-                  <SelectItem key="main-course" value="main-course">Main Course</SelectItem>
-                  <SelectItem key="beverage" value="beverage">Beverage</SelectItem>
-                  <SelectItem key="dessert" value="dessert">Dessert</SelectItem>
+                  <SelectItem key="appetizer">Appetizer</SelectItem>
+                  <SelectItem key="main-course">Main Course</SelectItem>
+                  <SelectItem key="beverage">Beverage</SelectItem>
+                  <SelectItem key="dessert">Dessert</SelectItem>
                 </Select>
               </div>
               
@@ -693,8 +693,8 @@ export default function FoodBeverageMenuInventory() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Allergens" placeholder="e.g., Peanuts, Fish, Gluten" />
                 <Select label="Seasonal Item" placeholder="Select">
-                  <SelectItem key="yes" value="yes">Yes</SelectItem>
-                  <SelectItem key="no" value="no">No</SelectItem>
+                  <SelectItem key="yes">Yes</SelectItem>
+                  <SelectItem key="no">No</SelectItem>
                 </Select>
               </div>
             </div>
@@ -719,11 +719,11 @@ export default function FoodBeverageMenuInventory() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Item Name" placeholder="Enter item name" />
                 <Select label="Category" placeholder="Select category">
-                  <SelectItem key="grains" value="grains">Grains</SelectItem>
-                  <SelectItem key="meat" value="meat">Meat</SelectItem>
-                  <SelectItem key="fish" value="fish">Fish</SelectItem>
-                  <SelectItem key="vegetables" value="vegetables">Vegetables</SelectItem>
-                  <SelectItem key="oils" value="oils">Oils</SelectItem>
+                  <SelectItem key="grains">Grains</SelectItem>
+                  <SelectItem key="meat">Meat</SelectItem>
+                  <SelectItem key="fish">Fish</SelectItem>
+                  <SelectItem key="vegetables">Vegetables</SelectItem>
+                  <SelectItem key="oils">Oils</SelectItem>
                 </Select>
               </div>
               
@@ -738,7 +738,7 @@ export default function FoodBeverageMenuInventory() {
                 <Input label="Cost per Unit (₵)" type="number" placeholder="0.00" />
                 <Select label="Supplier" placeholder="Select supplier">
                   {suppliers.map((supplier) => (
-                    <SelectItem key={supplier.id} value={supplier.name}>
+                    <SelectItem key={supplier.id}>
                       {supplier.name}
                     </SelectItem>
                   ))}
@@ -767,7 +767,7 @@ export default function FoodBeverageMenuInventory() {
             <div className="space-y-4">
               <Select label="Supplier" placeholder="Select supplier">
                 {suppliers.map((supplier) => (
-                  <SelectItem key={supplier.id} value={supplier.name}>
+                  <SelectItem key={supplier.id}>
                     {supplier.name}
                   </SelectItem>
                 ))}

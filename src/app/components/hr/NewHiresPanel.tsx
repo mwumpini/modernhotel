@@ -47,7 +47,7 @@ export default function NewHiresPanel() {
               <TableColumn>HIRED</TableColumn>
               <TableColumn>DEPARTMENT</TableColumn>
               <TableColumn>POSITION</TableColumn>
-              <TableColumn></TableColumn>
+              <TableColumn>{' '}</TableColumn>
             </TableHeader>
             <TableBody>
               {hires.map((e) => {

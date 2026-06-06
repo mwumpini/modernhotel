@@ -9,7 +9,9 @@ type SectionKey = 'tax' | 'training' | 'labor' | 'reports';
 
 export default function ComplianceDashboard({ onSelect }: { onSelect?: (k: SectionKey) => void }) {
   const score = useComplianceStore((s) => s.getComplianceScore());
-  const reports = useComplianceStore((s) => s.getActiveReports());
+  const reportCount = useComplianceStore(
+    (s) => s.reports.filter((report) => report.countryCode === s.country).length
+  );
   const programs = useTrainingStore((s) => s.programs);
 
   const go = (k: SectionKey) => onSelect?.(k);
@@ -55,7 +57,7 @@ export default function ComplianceDashboard({ onSelect }: { onSelect?: (k: Secti
           <Chip color="success" variant="flat">active</Chip>
         </CardHeader>
         <CardBody>
-          <div className="text-3xl font-semibold">{reports.length}</div>
+          <div className="text-3xl font-semibold">{reportCount}</div>
           <div className="text-xs text-gray-500">Reports</div>
         </CardBody>
       </Card>

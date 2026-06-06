@@ -207,7 +207,7 @@ class InventoryStore {
     this.transactions.push(newTransaction);
     
     // Update ingredient stock
-    this.updateIngredientStock(transaction);
+    this.updateIngredientStock(newTransaction);
     
     this.notifyListeners();
     return newTransaction;

@@ -1,8 +1,7 @@
 'use client';
 
-import { Reservation, GuestProfile, RoomType, RoomEntity, RatePlan, Folio, Charge, Payment, BillingPerson, StayReason, EventResource, EventPackage, EventBooking } from './types';
+import { GuestProfile, RoomType, RatePlan, Folio, Charge, EventResource, EventPackage, EventBooking } from './types';
 import { trackEvent } from '../analytics/trackEvent';
-import { postRoomRevenue, postPayment } from '../accounting/journal';
 import { housekeepingStore } from '../housekeeping/store';
 import { useSettingsStore } from '../settings/store';
 
@@ -44,21 +43,12 @@ interface FolioSplit {
 }
 
 export class EnhancedFrontOfficeStore {
-  reservations: Reservation[] = [];
   guests: GuestProfile[] = [];
   roomTypes: RoomType[] = [
     { id: 'rt-standard', name: 'Standard', baseRate: 600 },
     { id: 'rt-deluxe', name: 'Deluxe', baseRate: 800 },
     { id: 'rt-suite', name: 'Suite', baseRate: 1200 },
     { id: 'rt-presidential', name: 'Presidential Suite', baseRate: 2500 },
-  ];
-  rooms: RoomEntity[] = [
-    { id: '101', roomTypeId: 'rt-standard', floor: '1', accessible: false, nearElevator: false },
-    { id: '102', roomTypeId: 'rt-standard', floor: '1', accessible: true, nearElevator: false },
-    { id: '201', roomTypeId: 'rt-deluxe', floor: '2', accessible: false, nearElevator: true },
-    { id: '202', roomTypeId: 'rt-deluxe', floor: '2', accessible: false, nearElevator: false },
-    { id: '301', roomTypeId: 'rt-suite', floor: '3', accessible: false, nearElevator: false },
-    { id: '401', roomTypeId: 'rt-presidential', floor: '4', accessible: true, nearElevator: false },
   ];
   ratePlans: RatePlan[] = [
     { id: 'rp-bar', name: 'BAR', roomTypeId: 'rt-standard', basePrice: 600, isActive: true, marketSegment: 'general' },
@@ -104,56 +94,6 @@ export class EnhancedFrontOfficeStore {
   }
   
   private notify() { this.listeners.forEach(l => l()); }
-
-  // Enhanced guest creation with preferences
-  createGuest(g: Omit<GuestProfile,'id'|'serialNumber'>, preferences?: GuestPreferences) {
-    const settings = useSettingsStore.getState();
-    const serialNumber = settings.getNextClientNumber();
-    const guest: GuestProfile = { 
-      ...g, 
-      id: `G-${Date.now().toString().slice(-6)}`,
-      serialNumber 
-    };
-    
-    this.guests.push(guest);
-    
-    if (preferences) {
-      this.guestPreferences.set(guest.id, preferences);
-    }
-    
-    this.notify(); 
-    trackEvent('FO.Guest.Created', { 
-      id: guest.id, 
-      serialNumber: guest.serialNumber, 
-      name: guest.name,
-      vipStatus: preferences?.vipStatus || false
-    });
-    
-    return guest;
-  }
-
-  // Smart room assignment with HotelBiz-style algorithm
-  assignOptimalRoom(
-    guestId: string,
-    roomTypeId: string,
-    preferences?: RoomPreferences
-  ): RoomEntity | null {
-    const availableRooms = this.rooms.filter(room => 
-      room.roomTypeId === roomTypeId && 
-      this.isRoomAvailable(room.id)
-    );
-
-    if (availableRooms.length === 0) return null;
-
-    const guestPrefs = preferences || this.guestPreferences.get(guestId)?.roomPreferences;
-    
-    const scoredRooms = availableRooms.map(room => ({
-      room,
-      score: this.calculateRoomScore(room, guestPrefs)
-    }));
-
-    return scoredRooms.sort((a, b) => b.score - a.score)[0]?.room || null;
-  }
 
   // NEW: Event Rate Management Methods
   
@@ -393,79 +333,6 @@ export class EnhancedFrontOfficeStore {
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
   }
 
-  private calculateRoomScore(room: RoomEntity, preferences?: RoomPreferences): number {
-    if (!preferences) return 50; // Default score
-
-    let score = 50;
-
-    // VIP guests get higher floors
-    if (preferences.highFloor) {
-      score += parseInt(room.floor || '0', 10) * 10;
-    }
-
-    // Prefer rooms away from elevators for quiet guests
-    if (preferences.quietRoom && !room.nearElevator) {
-      score += 30;
-    }
-
-    // Accessibility considerations
-    if (preferences.accessibleRoom && room.accessible) {
-      score += 100;
-    }
-
-    // Floor preference
-    if (preferences.highFloor && parseInt(room.floor || '0', 10) >= 3) {
-      score += 20;
-    }
-
-    return score;
-  }
-
-  private isRoomAvailable(roomId: string): boolean {
-    const reservation = this.reservations.find(r => 
-      r.roomId === roomId && 
-      ['confirmed', 'checked-in'].includes(r.status)
-    );
-    return !reservation;
-  }
-
-  // Enhanced reservation creation with smart room assignment
-  createReservation(r: Omit<Reservation,'id'|'createdAt'|'updatedAt'|'status'> & { 
-    status?: Reservation['status'];
-    preferences?: RoomPreferences;
-  }) {
-    const settings = useSettingsStore.getState();
-    const res: Reservation = { 
-      ...r, 
-      id: `R-${Date.now().toString().slice(-6)}`, 
-      resId: settings.getNextReservationNumber(),
-      createdAt: new Date().toISOString(), 
-      updatedAt: new Date().toISOString(), 
-      status: r.status || 'pending' 
-    };
-
-    // Auto-assign room if preferences are provided
-    if (r.preferences && r.roomTypeId) {
-      const optimalRoom = this.assignOptimalRoom(r.guestId, r.roomTypeId, r.preferences);
-      if (optimalRoom) {
-        res.roomId = optimalRoom.id;
-      }
-    }
-
-    this.reservations.unshift(res); 
-    this.notify(); 
-    
-    trackEvent('FO.Reservation.Created', { 
-      id: res.id, 
-      guest: res.guestName, 
-      arrival: res.arrival, 
-      departure: res.departure,
-      roomAssigned: !!res.roomId
-    }); 
-    
-    return res;
-  }
-
   // Advanced folio management with HotelBiz features
   createSplitFolio(
     reservationId: string,
@@ -494,20 +361,6 @@ export class EnhancedFrontOfficeStore {
     trackEvent('FO.Folio.Split', { reservationId, splitCount: splits.length });
     
     return newFolios;
-  }
-
-  // Ghana-specific tax calculations
-  calculateTaxes(charges: Charge[]): TaxCalculation {
-    const taxableAmount = charges.reduce((sum, charge) => 
-      charge.taxable ? sum + charge.amount : sum, 0
-    );
-    
-    return {
-      vat: taxableAmount * 0.125, // 12.5% VAT
-      nhil: taxableAmount * 0.025, // 2.5% NHIL
-      getfund: taxableAmount * 0.025, // 2.5% GETFund
-      total: taxableAmount * 0.175
-    };
   }
 
   // Revenue optimization with dynamic pricing
@@ -577,89 +430,6 @@ export class EnhancedFrontOfficeStore {
     return Math.min(confidence, 100);
   }
 
-  // Enhanced check-in with express option
-  expressCheckIn(reservationId: string): boolean {
-    const reservation = this.reservations.find(r => r.id === reservationId);
-    if (!reservation || reservation.status !== 'confirmed') {
-      return false;
-    }
-
-    // Auto-assign room if not already assigned
-    if (!reservation.roomId && reservation.roomTypeId) {
-      const guestPrefs = this.guestPreferences.get(reservation.guestId);
-      const optimalRoom = this.assignOptimalRoom(
-        reservation.guestId, 
-        reservation.roomTypeId, 
-        guestPrefs?.roomPreferences
-      );
-      
-      if (optimalRoom) {
-        reservation.roomId = optimalRoom.id;
-      }
-    }
-
-    reservation.status = 'checked-in';
-    reservation.updatedAt = new Date().toISOString();
-    
-    this.notify();
-    trackEvent('FO.Reservation.ExpressCheckIn', { id: reservationId });
-    
-    return true;
-  }
-
-  // Group booking management
-  createGroupReservation(
-    groupLeader: GuestProfile,
-    groupMembers: Omit<GuestProfile, 'id'|'serialNumber'>[],
-    groupDetails: {
-      arrival: string;
-      departure: string;
-      roomTypeId: string;
-      specialRequests: string[];
-    }
-  ): Reservation[] {
-    const reservations: Reservation[] = [];
-    
-    // Create main group reservation
-    const groupReservation = this.createReservation({
-      ...groupDetails,
-      guestId: groupLeader.id,
-      guestName: groupLeader.name || `${groupLeader.firstName} ${groupLeader.lastName}`,
-      groupId: `GRP-${Date.now()}`,
-      groupSize: groupMembers.length + 1,
-      isGroupLeader: true,
-      stayReason: 'group' as any,
-      stayReasonDetails: 'Group booking'
-    });
-    
-    reservations.push(groupReservation);
-    
-    // Create individual reservations for group members
-    groupMembers.forEach((member, index) => {
-      const memberGuest = this.createGuest(member);
-      const memberReservation = this.createReservation({
-        ...groupDetails,
-        guestId: memberGuest.id,
-        guestName: memberGuest.name || `${memberGuest.firstName} ${memberGuest.lastName}`,
-        groupId: groupReservation.groupId,
-        groupSize: groupMembers.length + 1,
-        isGroupLeader: false,
-        linkedReservationId: groupReservation.id,
-        stayReason: 'group' as any,
-        stayReasonDetails: 'Group booking'
-      });
-      
-      reservations.push(memberReservation);
-    });
-    
-    trackEvent('FO.GroupReservation.Created', { 
-      groupId: groupReservation.groupId, 
-      groupSize: reservations.length 
-    });
-    
-    return reservations;
-  }
-
   // Upsell services tracking
   addUpsellService(
     reservationId: string,
@@ -696,65 +466,6 @@ export class EnhancedFrontOfficeStore {
   getNextClientNumber(): string {
     const settings = useSettingsStore.getState();
     return settings.getNextClientNumber();
-  }
-
-  updateReservation(res: Reservation) { 
-    this.reservations = this.reservations.map(r => 
-      r.id === res.id ? { ...res, updatedAt: new Date().toISOString() } : r
-    ); 
-    this.notify(); 
-    trackEvent('FO.Reservation.Updated', { id: res.id }); 
-  }
-  
-  cancelReservation(id: string) { 
-    this.reservations = this.reservations.map(r => 
-      r.id === id ? { ...r, status: 'cancelled', updatedAt: new Date().toISOString() } : r
-    ); 
-    this.notify(); 
-    trackEvent('FO.Reservation.Cancelled', { id }); 
-  }
-  
-  assignRoom(id: string, roomId: string) { 
-    this.reservations = this.reservations.map(r => 
-      r.id === id ? { ...r, roomId } : r
-    ); 
-    this.notify(); 
-  }
-  
-  checkIn(id: string) {
-    const res = this.reservations.find(r => r.id === id);
-    this.reservations = this.reservations.map(r => 
-      r.id === id ? { ...r, status: 'checked-in' } : r
-    );
-    this.notify();
-    
-    if (res?.roomId) {
-      housekeepingStore.updateRoomStatus(res.roomId, 'occupied', 'FrontDesk', `Guest ${res.guestName} checked in`);
-    }
-    
-    trackEvent('FO.Reservation.CheckedIn', { id });
-  }
-  
-  checkOut(id: string) {
-    const res = this.reservations.find(r => r.id === id);
-    this.reservations = this.reservations.map(r => 
-      r.id === id ? { ...r, status: 'checked-out' } : r
-    );
-    this.notify();
-    
-    if (res?.roomId) {
-      housekeepingStore.updateRoomStatus(res.roomId, 'dirty', 'FrontDesk', 'Guest checked out');
-      housekeepingStore.createTask({ 
-        roomNumber: res.roomId, 
-        roomTypeId: res.roomTypeId, 
-        taskType: 'turnover', 
-        priority: 'high', 
-        estimatedMinutes: 45, 
-        checklist: ['Change linens', 'Clean bathroom', 'Vacuum floor', 'Restock amenities'] 
-      });
-    }
-    
-    trackEvent('FO.Reservation.CheckedOut', { id });
   }
 
   // Folio helpers

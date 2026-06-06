@@ -6,7 +6,6 @@ import {
   Button, 
   Card, 
   CardBody,
-  Divider,
   Tooltip
 } from "@heroui/react";
 import { 
@@ -22,7 +21,6 @@ import {
   Cog6ToothIcon,
   ArrowLeftIcon,
   ArrowRightOnRectangleIcon,
-  StarIcon,
   DevicePhoneMobileIcon,
   CalculatorIcon
 } from '@heroicons/react/24/outline';

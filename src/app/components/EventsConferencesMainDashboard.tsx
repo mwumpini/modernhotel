@@ -32,10 +32,6 @@ import {
   Checkbox,
   RadioGroup,
   Radio,
-  Dropdown,
-  DropdownTrigger,
-  DropdownMenu,
-  DropdownItem,
   Tooltip,
   Popover,
   PopoverTrigger,
@@ -56,6 +52,7 @@ import { listTemplates } from '../lib/print/templates';
 import { useSettingsStore } from '../lib/settings/store';
 import { useAccountingStore } from '../lib/accounting/store';
 import { captureRevenue, capturePayment, captureProforma } from '../lib/accounting/integration';
+import { computeQuoteTax, exclusiveFromGross } from '../lib/tax/engine';
 
 type VenueStatus = 'available' | 'booked' | 'setup' | 'maintenance';
 
@@ -1414,8 +1411,8 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
 
   const computeLine = (line: QuoteServiceLine) => {
     const subtotal = (Number(line.qty) || 0) * (Number(line.unitPrice) || 0);
-    const taxInfo = calculateTaxes({ totalPrice: subtotal, taxGroup: line.taxGroup } as any, quoteTaxExempt);
-    const taxAmount = taxInfo.totalTax || 0;
+    const exempt = quoteTaxExempt || line.taxGroup === 'none';
+    const taxAmount = exempt ? 0 : computeQuoteTax(subtotal, false).totalTax;
     const total = subtotal + taxAmount;
     return { subtotal, taxAmount, total };
   };
@@ -2594,38 +2591,6 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
 
   // Comprehensive Quoting System Data Structures
   
-  // Tax Structure for Ghana
-  const ghanaTaxes = [
-    { id: 'nhil', name: 'NHIL', rate: 2.5, authority: 'National Health Insurance', appliesTo: ['all'] },
-    { id: 'getfund', name: 'GETFund Levy', rate: 2.5, authority: 'Ghana Education Trust Fund', appliesTo: ['all'] },
-    { id: 'covid', name: 'COVID-19 Levy', rate: 1.0, authority: 'Government of Ghana', appliesTo: ['all'] },
-    { id: 'vat', name: 'VAT', rate: 15.0, authority: 'Ghana Revenue Authority', appliesTo: ['all'] },
-    { id: 'gta', name: 'GTA Levy', rate: 1.0, authority: 'Ghana Tourism Authority', appliesTo: ['accommodation', 'venue', 'tourism'] }
-  ];
-  // Tax Groups for easy application
-  const taxGroups = [
-    {
-      id: 'ghana-standard',
-      name: 'Ghana Standard',
-      description: 'Full Ghana tax suite: NHIL + GETFund + COVID + VAT + GTA',
-      taxes: ['nhil', 'getfund', 'covid', 'vat', 'gta'],
-      totalRate: 22.0
-    },
-    {
-      id: 'ghana-basic',
-      name: 'Ghana Basic',
-      description: 'Basic taxes: NHIL + GETFund + COVID + VAT',
-      taxes: ['nhil', 'getfund', 'covid', 'vat'],
-      totalRate: 21.0
-    },
-    {
-      id: 'vat-only',
-      name: 'VAT Only',
-      description: 'VAT only (15%)',
-      taxes: ['vat'],
-      totalRate: 15.0
-    }
-  ];
   // Service Packages
   const servicePackages = [
     {
@@ -4308,7 +4273,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       vat: 'VAT',
       nhil: 'NHIL',
       levy: 'Tourism Levy',
-      covid: 'COVID Levy',
+      covid: 'COVID Levy (legacy)',
       gefl: 'GETFund Levy',
       gtal: 'GTA Levy'
     };
@@ -4770,33 +4735,6 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
 
   // Comprehensive Quoting System Functions
   
-  // Calculate taxes for a service line
-  const calculateTaxes = (serviceLine: any, isTaxExempt: boolean = false) => {
-    // If client is tax exempt, return no taxes
-    if (isTaxExempt) {
-      return { taxes: [], totalTax: 0, exemptionApplied: true };
-    }
-    
-    const taxGroup = taxGroups.find(tg => tg.id === serviceLine.taxGroup);
-    if (!taxGroup) return { taxes: [], totalTax: 0, exemptionApplied: false };
-    
-    const taxes = taxGroup.taxes.map(taxId => {
-      const tax = ghanaTaxes.find(t => t.id === taxId);
-      if (!tax) return null;
-      
-      const taxAmount = (serviceLine.totalPrice * tax.rate) / 100;
-      return {
-        id: tax.id,
-        name: tax.name,
-        rate: tax.rate,
-        amount: taxAmount,
-        authority: tax.authority
-      };
-    }).filter((tax): tax is NonNullable<typeof tax> => tax !== null);
-    
-    const totalTax = taxes.reduce((sum: number, tax: any) => sum + tax.amount, 0);
-    return { taxes, totalTax, exemptionApplied: false };
-  };
   // Calculate quote totals
   const calculateQuoteTotals = (quote: any) => {
     let subtotal = 0;
@@ -4807,7 +4745,8 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     quote.eventTimeline.forEach((day: any) => {
       day.services.forEach((service: any) => {
         subtotal += service.totalPrice;
-        const { taxes, exemptionApplied } = calculateTaxes(service, quote.taxExempt);
+        const exempt = quote.taxExempt || service.taxGroup === 'none';
+        const { taxes, exemptionApplied } = computeQuoteTax(service.totalPrice, exempt);
         if (exemptionApplied) hasTaxExemption = true;
         allTaxes.push(...taxes);
       });
@@ -16453,7 +16392,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     // Get budget/quote data from event
                     const budget = getQuoteBudgetSnapshot(event);
                     const budgetTotal = budget?.total || 0;
-                    const budgetSubtotal = budgetTotal / 1.125; // Assume 12.5% tax was included
+                    const budgetSubtotal = exclusiveFromGross(budgetTotal);
                     const budgetTax = budgetTotal - budgetSubtotal;
                     
                     // Create invoice from proforma

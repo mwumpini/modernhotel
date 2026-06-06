@@ -697,6 +697,7 @@ function ActualsTrackingForm({ event, actualCosts, onActualCostsChange }: Actual
           </TableHeader>
           <TableBody>
             {[
+              ...[
               { key: 'accommodation', label: 'Accommodation & Breakfast', budget: budget.accommodation, actual: actualCosts.accommodation },
               { key: 'conference', label: 'Conference', budget: budget.conference, actual: actualCosts.conference },
               { key: 'dinner', label: 'Dinner', budget: budget.dinner, actual: actualCosts.dinner },
@@ -736,8 +737,8 @@ function ActualsTrackingForm({ event, actualCosts, onActualCostsChange }: Actual
                   </TableCell>
                 </TableRow>
               );
-            })}
-            <TableRow className="bg-gray-50 font-semibold">
+            }),
+            <TableRow key="__total" className="bg-gray-50 font-semibold">
               <TableCell>TOTAL</TableCell>
               <TableCell>{formatCurrency(budgetTotal)}</TableCell>
               <TableCell>{formatCurrency(actualTotal)}</TableCell>
@@ -751,7 +752,8 @@ function ActualsTrackingForm({ event, actualCosts, onActualCostsChange }: Actual
                   {variance >= 0 ? '+' : ''}{variancePercent}%
                 </span>
               </TableCell>
-            </TableRow>
+            </TableRow>,
+            ]}
           </TableBody>
         </Table>
       </div>

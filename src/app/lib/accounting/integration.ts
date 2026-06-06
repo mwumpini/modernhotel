@@ -22,6 +22,8 @@
  */
 
 import { useAccountingStore } from './store';
+import { computeStackedTaxLines, getEffectiveTaxConfigs } from './taxFromConfig';
+import { logAccountingProcess, logAccountingProcessError } from './accountingProcessLog';
 
 // GL Account Codes for Ghana Hotel Chart of Accounts
 const GL_ACCOUNTS = {
@@ -31,13 +33,12 @@ const GL_ACCOUNTS = {
   ACCOUNTS_RECEIVABLE: '1200',
   INVENTORY: '1300',
   
-  // Liabilities
+  // Liabilities (fallback codes; tax postings use `TaxConfig.glAccountCode` when present)
   ACCOUNTS_PAYABLE: '2000',
-  VAT_PAYABLE: '2100',
-  NHIL_PAYABLE: '2110',
-  GETFUND_PAYABLE: '2120',
-  COVID_LEVY_PAYABLE: '2130',
-  TOURISM_LEVY_PAYABLE: '2140',
+  VAT_PAYABLE: '2110',
+  NHIL_PAYABLE: '2120',
+  GETFUND_PAYABLE: '2130',
+  TOURISM_LEVY_PAYABLE: '2150',
   
   // Revenue
   ROOM_REVENUE: '4100',
@@ -64,13 +65,17 @@ const REVENUE_CENTERS = {
   SERVICE_CHARGES: 'SC',
 };
 
-// Payment method to GL mapping
+// Payment method to GL mapping. Single source shared with the folio checkout
+// flow (simpleFlow.ts); covers both departmental and folio payment vocabularies.
 const PAYMENT_GL_MAP: Record<string, string> = {
   'Cash': GL_ACCOUNTS.CASH,
   'Card': GL_ACCOUNTS.BANK,
   'Mobile Money': GL_ACCOUNTS.BANK,
   'Bank Transfer': GL_ACCOUNTS.BANK,
   'Cheque': GL_ACCOUNTS.BANK,
+  'Check': GL_ACCOUNTS.BANK,
+  'Credit': GL_ACCOUNTS.BANK,
+  'Corporate Account': GL_ACCOUNTS.BANK,
 };
 
 export type DepartmentSource = 'front_office' | 'restaurant' | 'bar' | 'room_service' | 'conference' | 'spa' | 'other';
@@ -249,6 +254,11 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
     total: transaction.total,
     reference: transaction.reference,
   });
+  logAccountingProcess('AccountingCapture', `Revenue capture started — ${transaction.source}`, {
+    customer: transaction.customerName,
+    total: transaction.total,
+    reference: transaction.reference,
+  });
   
   try {
     // 1. Create Sales Invoice
@@ -267,16 +277,21 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
       glAccountCode: revenueGLAccount,
     }));
     
-    // Calculate tax breakdown if tax exists
-    const taxBreakdown = transaction.taxAmount > 0 ? (() => {
-      const subtotal = transaction.subtotal;
-      return [
-        { code: 'NHIL', name: 'NHIL', rate: 2.5, amount: subtotal * 0.025 },
-        { code: 'GETFUND', name: 'GETFund Levy', rate: 2.5, amount: subtotal * 0.025 },
-        { code: 'COVID19', name: 'COVID-19 Levy', rate: 1.0, amount: subtotal * 0.01 },
-        { code: 'VAT', name: 'VAT', rate: 15.0, amount: subtotal * 0.15 },
-      ];
-    })() : [];
+    const taxCfgs = getEffectiveTaxConfigs(store.taxConfigs);
+    const { lines: salesTaxLines } =
+      transaction.taxAmount > 0
+        ? computeStackedTaxLines(transaction.subtotal, taxCfgs, 'sales', transaction.taxAmount)
+        : { lines: [] };
+
+    const taxBreakdown =
+      transaction.taxAmount > 0
+        ? salesTaxLines.map((l) => ({
+            code: l.taxCode,
+            name: l.name,
+            rate: l.rate,
+            amount: l.amount,
+          }))
+        : [];
     
     const invoice = {
       id: invoiceId,
@@ -317,12 +332,13 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
     store.recordRevenue(revenueCenterCode, transaction.subtotal);
     console.log(`[Accounting Integration] Recorded revenue to center: ${revenueCenterCode}, Amount: ${transaction.subtotal}`);
     
-    // 3. Create Journal Entry (Dr: AR, Cr: Revenue, Cr: Tax Payable)
+    // 3. Create Journal Entry (Dr: AR, Cr: Revenue, Cr: each tax payable per TaxConfig)
     const journalEntryId = `JE-${transaction.source.toUpperCase()}-${Date.now()}`;
+    let jlSeq = 0;
+    const nextJeLineId = () => `JL-${journalEntryId}-${++jlSeq}-${Math.random().toString(36).slice(2, 7)}`;
     const journalLines: any[] = [
-      // Debit Accounts Receivable
       {
-        id: `JL-${Date.now()}-1`,
+        id: nextJeLineId(),
         journalEntryId,
         accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
         description: `AR - ${transaction.description}`,
@@ -330,9 +346,8 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
         credit: 0,
         costCenter: revenueCenterCode,
       },
-      // Credit Revenue
       {
-        id: `JL-${Date.now()}-2`,
+        id: nextJeLineId(),
         journalEntryId,
         accountCode: revenueGLAccount,
         description: `Revenue - ${transaction.description}`,
@@ -341,16 +356,15 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
         costCenter: revenueCenterCode,
       },
     ];
-    
-    // Add tax liability entries if there's tax
-    if (transaction.taxAmount > 0) {
+
+    for (const tl of salesTaxLines) {
       journalLines.push({
-        id: `JL-${Date.now()}-3`,
+        id: nextJeLineId(),
         journalEntryId,
-        accountCode: GL_ACCOUNTS.VAT_PAYABLE,
-        description: `Tax Payable - ${transaction.description}`,
+        accountCode: tl.glAccountCode,
+        description: `${tl.name} — ${transaction.description}`,
         debit: 0,
-        credit: transaction.taxAmount,
+        credit: tl.amount,
         costCenter: revenueCenterCode,
       });
     }
@@ -375,6 +389,7 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
     };
     
     store.addJournalEntry(journalEntry as any);
+    store.updateInvoice(invoiceId, { journalEntryId });
     console.log(`[Accounting Integration] Posted Journal Entry: ${journalEntry.entryNumber}`);
     
     // 4. Add Audit Trail
@@ -397,11 +412,21 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
     });
     
     console.log(`[Accounting Integration] ✅ Revenue capture complete for ${transaction.customerName}: GHS ${transaction.total.toLocaleString()}`);
+    logAccountingProcess('AccountingCapture', 'Revenue capture complete', {
+      source: transaction.source,
+      invoiceId,
+      journalEntryId,
+      total: transaction.total,
+    });
     
     return { invoiceId, journalEntryId };
     
   } catch (error) {
     console.error('[Accounting Integration] ❌ Error capturing revenue:', error);
+    logAccountingProcessError('AccountingCapture', 'Revenue capture failed', {
+      source: transaction.source,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return null;
   }
 }
@@ -563,8 +588,47 @@ export function convertProformaToInvoice(proformaId: string): { invoiceId: strin
     // Record to Revenue Center
     store.recordRevenue(revenueCenterCode, proforma.subtotal);
     
-    // Create Journal Entry (Dr: AR, Cr: Revenue)
+    const taxCfgsConv = getEffectiveTaxConfigs(store.taxConfigs);
+    const { lines: convTaxLines } =
+      proforma.taxAmount && proforma.taxAmount > 0
+        ? computeStackedTaxLines(proforma.subtotal, taxCfgsConv, 'sales', proforma.taxAmount)
+        : { lines: [] };
+
     const journalEntryId = `JE-CONV-${Date.now()}`;
+    let convSeq = 0;
+    const nextConvLineId = () => `JL-${journalEntryId}-${++convSeq}-${Math.random().toString(36).slice(2, 7)}`;
+    const convLines: any[] = [
+      {
+        id: nextConvLineId(),
+        journalEntryId,
+        accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+        description: `AR - ${(proforma as any).description}`,
+        debit: proforma.total,
+        credit: 0,
+        costCenter: revenueCenterCode,
+      },
+      {
+        id: nextConvLineId(),
+        journalEntryId,
+        accountCode: revenueGLAccount,
+        description: `Revenue - ${(proforma as any).description}`,
+        debit: 0,
+        credit: proforma.subtotal,
+        costCenter: revenueCenterCode,
+      },
+    ];
+    for (const tl of convTaxLines) {
+      convLines.push({
+        id: nextConvLineId(),
+        journalEntryId,
+        accountCode: tl.glAccountCode,
+        description: `${tl.name} — ${(proforma as any).description}`,
+        debit: 0,
+        credit: tl.amount,
+        costCenter: revenueCenterCode,
+      });
+    }
+
     const journalEntry = {
       id: journalEntryId,
       entryNumber: `JE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`,
@@ -572,26 +636,7 @@ export function convertProformaToInvoice(proformaId: string): { invoiceId: strin
       description: `Proforma converted to Invoice: ${(proforma as any).description}`,
       reference: proformaId,
       status: 'Posted' as const,
-      lines: [
-        {
-          id: `JL-${Date.now()}-1`,
-          journalEntryId,
-          accountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
-          description: `AR - ${(proforma as any).description}`,
-          debit: proforma.total,
-          credit: 0,
-          costCenter: revenueCenterCode,
-        },
-        {
-          id: `JL-${Date.now()}-2`,
-          journalEntryId,
-          accountCode: revenueGLAccount,
-          description: `Revenue - ${(proforma as any).description}`,
-          debit: 0,
-          credit: proforma.subtotal,
-          costCenter: revenueCenterCode,
-        },
-      ],
+      lines: convLines,
       totalDebit: proforma.total,
       totalCredit: proforma.total,
       createdBy: 'system',
@@ -603,19 +648,8 @@ export function convertProformaToInvoice(proformaId: string): { invoiceId: strin
       sourceTransactionId: proformaId,
     };
     
-    if (proforma.taxAmount && proforma.taxAmount > 0) {
-      (journalEntry.lines as any[]).push({
-        id: `JL-${Date.now()}-3`,
-        journalEntryId,
-        accountCode: GL_ACCOUNTS.VAT_PAYABLE,
-        description: `Tax Payable - ${(proforma as any).description}`,
-        debit: 0,
-        credit: proforma.taxAmount,
-        costCenter: revenueCenterCode,
-      });
-    }
-    
     store.addJournalEntry(journalEntry as any);
+    store.updateInvoice(proformaId, { journalEntryId });
     
     // Audit Trail
     store.addAuditTrail({
@@ -789,6 +823,7 @@ export function capturePayment(
     };
     
     store.addJournalEntry(journalEntry as any);
+    store.updatePayment(receiptId, { journalEntryId });
     console.log(`[Accounting Integration] Posted Payment Journal Entry: ${journalEntry.entryNumber}`);
     
     // 4. Add Audit Trail
@@ -909,5 +944,8 @@ export function getDepartmentAccountingSummary(source: DepartmentSource): {
 /**
  * Export GL Account codes for use in other modules
  */
-export { GL_ACCOUNTS, REVENUE_CENTERS };
+export { GL_ACCOUNTS, REVENUE_CENTERS, PAYMENT_GL_MAP };
+
+/** Expense, AP, PO, inventory, payroll, fixed assets, accruals, prepayments, tax — Menish extended architecture */
+export * from './integrationExtendedCaptures';
 

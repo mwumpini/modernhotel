@@ -27,7 +27,7 @@ export default function RateCalculator() {
     endDate: ''
   });
   
-  const [calculationResult, setCalculationResult] = useState(null);
+  const [calculationResult, setCalculationResult] = useState<any>(null);
 
   const handleCalculate = () => {
     if (calculationData.clientType === 'corporate' && calculationData.corporateClientId) {
@@ -39,7 +39,7 @@ export default function RateCalculator() {
         const result = corporateRateStore.calculateCorporateRate(
           calculationData.corporateClientId,
           [roomType],
-          calculationData.eventType,
+          calculationData.eventType as 'conference' | 'accommodation_only' | 'training' | 'workshop',
           calculationData.attendees,
           calculationData.startDate,
           calculationData.endDate
@@ -87,8 +87,8 @@ export default function RateCalculator() {
                 value={calculationData.clientType}
                 onChange={(e) => setCalculationData({...calculationData, clientType: e.target.value})}
               >
-                <SelectItem key="standard" value="standard">Standard Client</SelectItem>
-                <SelectItem key="corporate" value="corporate">Corporate Client</SelectItem>
+                <SelectItem key="standard">Standard Client</SelectItem>
+                <SelectItem key="corporate">Corporate Client</SelectItem>
               </Select>
               
               {calculationData.clientType === 'corporate' && (
@@ -98,7 +98,7 @@ export default function RateCalculator() {
                   onChange={(e) => setCalculationData({...calculationData, corporateClientId: e.target.value})}
                 >
                   {corporateRateStore.corporateClients.map((client) => (
-                    <SelectItem key={client.id} value={client.id}>
+                    <SelectItem key={client.id}>
                       {client.organizationName}
                     </SelectItem>
                   ))}
@@ -111,7 +111,7 @@ export default function RateCalculator() {
                 onChange={(e) => setCalculationData({...calculationData, roomTypeId: e.target.value})}
               >
                 {enhancedFrontOfficeStore.roomTypes.map((roomType) => (
-                  <SelectItem key={roomType.id} value={roomType.id}>
+                  <SelectItem key={roomType.id}>
                     {roomType.name} (Base: GHS {roomType.baseRate})
                   </SelectItem>
                 ))}
@@ -122,10 +122,10 @@ export default function RateCalculator() {
                 value={calculationData.eventType}
                 onChange={(e) => setCalculationData({...calculationData, eventType: e.target.value})}
               >
-                <SelectItem key="accommodation_only" value="accommodation_only">Accommodation Only</SelectItem>
-                <SelectItem key="conference" value="conference">Conference</SelectItem>
-                <SelectItem key="workshop" value="workshop">Workshop</SelectItem>
-                <SelectItem key="training" value="training">Training</SelectItem>
+                <SelectItem key="accommodation_only">Accommodation Only</SelectItem>
+                <SelectItem key="conference">Conference</SelectItem>
+                <SelectItem key="workshop">Workshop</SelectItem>
+                <SelectItem key="training">Training</SelectItem>
               </Select>
               
               <Input

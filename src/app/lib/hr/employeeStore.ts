@@ -368,7 +368,7 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
   },
 
   getEmployeesOnLeave: () => {
-    return get().employees.filter(emp => emp.status === 'on-leave');
+    return get().employees.filter(emp => emp.status === 'on_leave');
   },
 
   // Analytics
@@ -384,7 +384,7 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
     });
     const terminations = employees.filter(emp => emp.status === 'terminated');
     
-    const totalSalary = activeEmployees.reduce((sum, emp) => sum + emp.baseSalary, 0);
+    const totalSalary = activeEmployees.reduce((sum, emp) => sum + emp.salary, 0);
     const averageSalary = activeEmployees.length > 0 ? totalSalary / activeEmployees.length : 0;
     
     const turnoverRate = employees.length > 0 ? (terminations.length / employees.length) * 100 : 0;
@@ -407,7 +407,7 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
       
       employeesByStatus[emp.status] = (employeesByStatus[emp.status] || 0) + 1;
       
-      const salaryRange = emp.baseSalary < 2000 ? 'Low' : emp.baseSalary < 3000 ? 'Medium' : 'High';
+      const salaryRange = emp.salary < 2000 ? 'Low' : emp.salary < 3000 ? 'Medium' : 'High';
       salaryDistribution[salaryRange] = (salaryDistribution[salaryRange] || 0) + 1;
     });
     

@@ -132,7 +132,7 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       icon: '⚖️',
       items: [
         { title: 'Tax Calculator & Rules', href: '/compliance/tax', badge: 'Ghana' },
-        { title: 'VAT/NHIL Returns', href: '/compliance/vat', badge: '12.5%+2.5%' },
+        { title: 'VAT/NHIL Returns', href: '/compliance/vat', badge: 'Ghana' },
         { title: 'Tourism Levy & SSNIT', href: '/compliance/levy', badge: 'Auto' },
         { title: 'Operational Reports', href: '/compliance/reports', badge: 'RevPAR' },
       ]
@@ -152,7 +152,7 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
     }
   ];
 
-  const handleSelectionChange = (keys: Set<string>) => {
+  const handleSelectionChange = (keys: any) => {
     setExpandedKeys(keys);
   };
 

@@ -77,7 +77,7 @@ export default function BenefitsManagementPanel() {
                     <TableColumn>TYPE</TableColumn>
                     <TableColumn>COVERAGE</TableColumn>
                     <TableColumn>COST</TableColumn>
-                    <TableColumn></TableColumn>
+                    <TableColumn>{' '}</TableColumn>
                   </TableHeader>
                   <TableBody>
                     {packages.map((p) => (
@@ -116,7 +116,7 @@ export default function BenefitsManagementPanel() {
                     <TableColumn>PACKAGE</TableColumn>
                     <TableColumn>STATUS</TableColumn>
                     <TableColumn>COST</TableColumn>
-                    <TableColumn></TableColumn>
+                    <TableColumn>{' '}</TableColumn>
                   </TableHeader>
                   <TableBody>
                     {enrollments.map((e) => {

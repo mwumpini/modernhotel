@@ -29,7 +29,7 @@ export async function createSupplier(params: {
 	address?: Record<string, unknown>;
 }) {
 	console.log('[inventory][createSupplier]', params);
-	return prisma.supplier.create({ data: params });
+	return prisma.supplier.create({ data: params as any });
 }
 
 export async function createInventoryItem(params: {
@@ -66,8 +66,8 @@ export async function listItems(tenantId: string, q?: string) {
 				? [
 						{
 							OR: [
-								{ code: { contains: q, mode: 'insensitive' } },
-								{ name: { contains: q, mode: 'insensitive' } },
+								{ code: { contains: q } },
+								{ name: { contains: q } },
 							],
 						},
 				  ]

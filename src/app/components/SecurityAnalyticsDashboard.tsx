@@ -2,9 +2,8 @@
 
 import React, { useState, useMemo } from 'react';
 import { 
-  Card, CardBody, CardHeader, Tabs, Tab, Button, Input, Select, SelectItem, 
-  Progress, Chip, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Divider
+  Card, CardBody, CardHeader, Tabs, Tab, Input, Select, SelectItem, 
+  Progress, Chip
 } from "@heroui/react";
 import { useIncidentStore } from '../lib/security/incidentStore';
 import { usePatrolStore } from '../lib/security/patrolStore';

@@ -2,9 +2,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Tabs, Tab, Chip, Select, SelectItem, Input, Textarea, Switch, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  useDisclosure, Divider, Avatar, Tooltip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
+  Card, CardBody, CardHeader, Button,
+  Tabs, Tab, Chip, Select, SelectItem, Input, Textarea, Switch, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Divider, Avatar, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
 import { printTemplates, type PrintType } from '../lib/print/templates';
@@ -675,7 +674,7 @@ export default function TemplateBuilder() {
                 <h4 className="font-medium">Tax Compliance</h4>
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
-                    <span>Ghana VAT (12.5%)</span>
+                    <span>Ghana VAT</span>
                     <Switch 
                       isSelected={settings.documentTemplates.complianceSettings.ghanaVAT}
                       onValueChange={(checked) => {
@@ -1070,7 +1069,7 @@ export default function TemplateBuilder() {
                 <Button size="sm" variant="flat" onClick={()=> setBuilderBlocks([...builderBlocks, { type:'text', content:'Paragraph text...' }])}>Text</Button>
                 <Button size="sm" variant="flat" onClick={()=> setBuilderBlocks([...builderBlocks, { type:'table', columns:['Description','Qty','Rate','Amount'], rows:[['Item',1,100,100]] }])}>Static Table</Button>
                 <Button size="sm" variant="flat" onClick={()=> setBuilderBlocks([...builderBlocks, { type:'items', columns:[{ label:'Description', bind:'description' },{ label:'Qty', bind:'qty', align:'right' },{ label:'Rate', bind:'unitPrice', align:'right' },{ label:'Amount', bind:'amount', align:'right' }] }])}>Items Repeater</Button>
-                <Button size="sm" variant="flat" onClick={()=> setBuilderBlocks([...builderBlocks, { type:'totals', lines:[['Sub Total',0],['VAT (12.5%)',0],['Grand Total',0]] }])}>Totals</Button>
+                <Button size="sm" variant="flat" onClick={()=> setBuilderBlocks([...builderBlocks, { type:'totals', lines:[['Sub Total',0],['VAT',0],['Grand Total',0]] }])}>Totals</Button>
                 <Button size="sm" variant="flat" onClick={()=> setBuilderBlocks([...builderBlocks, { type:'sectionTitle', text:'Section Title', style:{ align:'left', marginTop:8, marginBottom:6, showLine:false, lineWeight:1, lineColor:'#dddddd' } }])}>Section Title</Button>
                 <Button size="sm" variant="flat" onClick={()=> setBuilderBlocks([...builderBlocks, { type:'columns2', left:'', right:'' }])}>Two Columns</Button>
                 <Button size="sm" variant="flat" onClick={()=> setBuilderBlocks([...builderBlocks, { type:'notes', items:['Thank you for choosing us.'] }])}>Notes</Button>
@@ -1383,9 +1382,9 @@ function presetCheckoutBill() {
       ['Tax Exclusive Value', 0],
       ['GEFL (2.5%)', 0],
       ['NHIL (2.5%)', 0],
-      ['COVID Levy (1%)', 0],
+      ['Tourism Levy (1%)', 0],
       ['Total Levy Inclusive', 0],
-      ['VAT (12.5%)', 0],
+      ['VAT', 0],
       ['GTAL (1% of 0)', 0],
       ['Total Tax Inclusive', 0]
     ]},

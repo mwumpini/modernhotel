@@ -26,14 +26,6 @@ import {
   Textarea,
   Tabs,
   Tab,
-  Calendar,
-  Popover,
-  PopoverTrigger,
-  PopoverContent,
-  Dropdown,
-  DropdownTrigger,
-  DropdownMenu,
-  DropdownItem,
   Switch,
   Pagination as HeroPagination
 } from "@heroui/react";
@@ -43,7 +35,15 @@ import { useSettingsStore } from '../lib/settings/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { logProformaDownloaded, logProformaPrinted } from '../lib/audit/auditLogger';
-import { Reservation, GuestProfile, RoomType, RatePlan, StayReason, Nationality, IdType } from '../lib/frontoffice/types';
+import { Reservation, GuestProfile, StayReason, Nationality, IdType } from '../lib/frontoffice/types';
+import {
+  effectiveSalesTaxRate,
+  exclusiveFromGross,
+  grossFromExclusive,
+} from '../lib/tax/engine';
+import { resolveNightlyGross } from '../lib/frontoffice/helpers/rates';
+import TodaysArrivalsPanel from './frontoffice/TodaysArrivalsPanel';
+import { canMarkNoShow } from '../lib/frontoffice/arrivals';
 
 interface ReservationFormData {
   guestName: string;
@@ -199,6 +199,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [assignRoomId, setAssignRoomId] = useState<string>('');
   const [assignRoomSearch, setAssignRoomSearch] = useState<string>('');
   const [assignMatchTypeOnly, setAssignMatchTypeOnly] = useState<boolean>(true);
+  const [noShowTarget, setNoShowTarget] = useState<Reservation | null>(null);
+  const { isOpen: isNoShowOpen, onOpen: onNoShowOpen, onClose: onNoShowClose } = useDisclosure();
   
   // Derived pricing helpers (bulk-only usage now)
   const getSelectedRoomType = (roomTypeId: string) =>
@@ -216,29 +218,23 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     if (roomType?.baseRate) return roomType.baseRate;
     return 0;
   };
-  const getTaxRate = () => {
-    // Try reading tax from settings; fall back to 15% if not configured
-    try {
-      const settings = useSettingsStore.getState();
-      const vat = (settings as any)?.accounting?.taxRates?.vat || 0;
-      const nhil = (settings as any)?.accounting?.taxRates?.nhil || 0;
-      const levy = (settings as any)?.accounting?.taxRates?.tourismLevy || 0;
-      const total = [vat, nhil, levy].filter(Boolean).reduce((a: number, b: number) => a + b, 0);
-      return total > 0 ? total : 0.15;
-    } catch {
-      return 0.15;
-    }
-  };
-
-  // Ghana hotel taxes full gross factor (NHIL, GETFund, COVID, VAT on levies, Tourism levy)
-  const GHANA_GROSS_FACTOR = 1.229;
-
-  // Helper to derive tax-inclusive plan price from settings plan (uniform: always base × Ghana factor)
   const getPlanGross = (plan: any): number => {
     if (!plan) return 0;
-    const base = Number(plan.basePrice || 0);
-    const gross = base * GHANA_GROSS_FACTOR;
-    return Number.isFinite(gross) ? Number(gross.toFixed(2)) : 0;
+    return resolveNightlyGross(Number(plan.basePrice || 0), (plan as any).priceType);
+  };
+
+  const getPriceTypeFromSelection = (roomTypeId: string, ratePlanId?: string) => {
+    const settingsState = useSettingsStore.getState();
+    if (ratePlanId && ratePlanId !== 'custom') {
+      const rp = (settingsState.roomManagement.ratePlans || []).find((r: any) => r.id === ratePlanId);
+      if (rp) return (rp as any).priceType || 'subtotal';
+    }
+    const defaultRpId = (settingsState.roomManagement.defaultRatePlanByRoomType || {})[roomTypeId];
+    if (defaultRpId) {
+      const rp = (settingsState.roomManagement.ratePlans || []).find((r: any) => r.id === defaultRpId);
+      if (rp) return (rp as any).priceType || 'subtotal';
+    }
+    return 'subtotal';
   };
 
   // Compute nightly rate for a specific reservation (independent of form state)
@@ -265,40 +261,91 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   };
 
   const getComputedTotalsForReservation = (reservation: Reservation) => {
-    const nights = calculateNights(reservation.arrival, reservation.departure) || 1;
-    const nightly = getNightlyRateForReservation(reservation);
-    const subtotal = nightly * nights;
-    const taxRate = getTaxRate();
-    const tax = Math.round(subtotal * taxRate);
-    const grandTotal = subtotal + tax;
-    return { nights, nightly, subtotal, taxRate, tax, grandTotal };
+    if (reservation.rateBreakdown && reservation.rateBreakdown.length > 0) {
+      const nights = reservation.rateBreakdown.length;
+      const subtotal = reservation.rateBreakdown.reduce((s, d) => s + (d.base || 0), 0);
+      const grandTotal = reservation.rateBreakdown.reduce((s, d) => s + (d.total || 0), 0);
+      const tax = grandTotal - subtotal;
+      const nightly = reservation.rateBreakdown[0]?.total || 0;
+      return { nights, nightly, subtotal, taxRate: effectiveSalesTaxRate(), tax, grandTotal };
+    }
+    const settingsState = useSettingsStore.getState();
+    const plan = reservation.ratePlanId
+      ? (settingsState.roomManagement.ratePlans || []).find((r: any) => r.id === reservation.ratePlanId)
+      : undefined;
+    if (plan?.basePrice) {
+      const breakdown = frontOfficeStore.calculateRateBreakdown(
+        reservation.roomTypeId,
+        reservation.arrival,
+        reservation.departure,
+        plan.basePrice,
+        (plan as any).priceType || 'subtotal'
+      );
+      const nights = breakdown.length;
+      const subtotal = breakdown.reduce((s, d) => s + (d.base || 0), 0);
+      const grandTotal = breakdown.reduce((s, d) => s + (d.total || 0), 0);
+      const tax = grandTotal - subtotal;
+      return { nights, nightly: breakdown[0]?.total || 0, subtotal, taxRate: effectiveSalesTaxRate(), tax, grandTotal };
+    }
+    return getComputedTotals(reservation.arrival, reservation.departure, reservation.roomTypeId);
   };
 
   // Display helper: nightly rate including taxes for reservation
   const getDisplayNightlyRateGross = (reservation: Reservation) => {
-    const settingsState = useSettingsStore.getState();
-    // Prefer explicit plan gross from settings
-    if (reservation.ratePlanId) {
-      const rp = (settingsState.roomManagement.ratePlans || []).find((r: any) => r.id === reservation.ratePlanId);
-      if (rp && typeof rp.basePrice === 'number') return getPlanGross(rp);
-    }
-    // Prefer stored breakdown totals if present
-    if (reservation.rateBreakdown && reservation.rateBreakdown.length > 0) {
-      return Math.round(reservation.rateBreakdown[0].total || reservation.rateBreakdown[0].base || 0);
-    }
-    // Fallback: compute from net + taxes
-    const nightlyNet = getNightlyRateForReservation(reservation);
-    const gross = nightlyNet * GHANA_GROSS_FACTOR;
-    return Math.round(gross);
+    return frontOfficeStore.getReservationQuote(reservation).nightlyGross;
   };
-  const getComputedTotals = (arrival: string, departure: string, roomTypeId: string) => {
-    const nights = calculateNights(arrival, departure) || 1;
-    const nightly = getNightlyRate(roomTypeId);
-    const subtotal = nightly * nights;
-    const taxRate = getTaxRate();
-    const tax = Math.round(subtotal * taxRate);
-    const grandTotal = subtotal + tax;
+
+  const getDisplayStayTotal = (reservation: Reservation) => {
+    return frontOfficeStore.getReservationQuote(reservation).grandTotal;
+  };
+
+  const getComputedTotals = (
+    arrival: string,
+    departure: string,
+    roomTypeId: string,
+    ratePlanId?: string,
+    customRate?: number
+  ) => {
+    const settingsState = useSettingsStore.getState();
+    const selectedPlan = ratePlanId && ratePlanId !== 'custom'
+      ? (settingsState.roomManagement.ratePlans || []).find((r: any) => r.id === ratePlanId)
+      : undefined;
+    const breakdown = buildRateBreakdown(
+      roomTypeId,
+      arrival,
+      departure,
+      selectedPlan,
+      typeof customRate === 'number' ? customRate : undefined
+    );
+    const nights = breakdown.length || calculateNights(arrival, departure) || 1;
+    const subtotal = breakdown.reduce((s, d) => s + (d.base || 0), 0);
+    const grandTotal = breakdown.reduce((s, d) => s + (d.total || 0), 0);
+    const tax = grandTotal - subtotal;
+    const nightly = breakdown[0]?.total || 0;
+    const taxRate = subtotal > 0 ? tax / subtotal : effectiveSalesTaxRate();
     return { nights, nightly, subtotal, taxRate, tax, grandTotal };
+  };
+
+  const buildRateBreakdown = (
+    roomTypeId: string,
+    arrival: string,
+    departure: string,
+    selectedPlan?: { basePrice?: number; priceType?: string },
+    customNet?: number
+  ) => {
+    if (typeof customNet === 'number') {
+      return frontOfficeStore.calculateRateBreakdown(roomTypeId, arrival, departure, customNet, 'subtotal');
+    }
+    if (selectedPlan?.basePrice) {
+      return frontOfficeStore.calculateRateBreakdown(
+        roomTypeId,
+        arrival,
+        departure,
+        selectedPlan.basePrice,
+        selectedPlan.priceType || 'subtotal'
+      );
+    }
+    return frontOfficeStore.calculateRateBreakdown(roomTypeId, arrival, departure);
   };
 
   // Helper to derive nightly base from a room type + selection
@@ -354,6 +401,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     arrival: string;
     departure: string;
   }>>([]);
+
+  // Link multiple guests under a shared group (shared groupId + leader)
+  const [linkAsGroup, setLinkAsGroup] = useState(false);
 
   // If multiple guests and third party is not selected, default to Guest Pays with optional confirmation
   useEffect(() => {
@@ -622,6 +672,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     setSelectedBillingPerson(null);
     setBillingPersonSearchTerm('');
     setBulkGuests([]);
+    setLinkAsGroup(false);
     setFormData({
       guestName: '',
       phone: '',
@@ -820,14 +871,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           const selectedPlan = bulkGuest.ratePlanId
             ? (useSettingsStore.getState().roomManagement.ratePlans || []).find((r: any) => r.id === bulkGuest.ratePlanId)
             : undefined;
-          const nightlyBase = (selectedPlan?.basePrice)
-            || (typeof bulkGuest.customRate === 'number' ? bulkGuest.customRate : undefined)
-            || getNightlyRate(bulkGuest.roomTypeId);
-          const rateBreakdown = frontOfficeStore.calculateRateBreakdown(
+          const rateBreakdown = buildRateBreakdown(
             bulkGuest.roomTypeId,
             bulkGuest.arrival,
             bulkGuest.departure,
-            nightlyBase
+            selectedPlan,
+            typeof bulkGuest.customRate === 'number' ? bulkGuest.customRate : undefined
           );
 
           // Create reservation with personal details from each guest
@@ -876,6 +925,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           stayReason: formData.stayReason
         });
 
+        // Link the created reservations as a group when requested
+        if (linkAsGroup && createdReservations.length > 1) {
+          frontOfficeStore.linkReservationsAsGroup(createdReservations.map(r => r.id));
+        }
+
         // If in check-in mode, immediately check-in each created reservation
         if (mode === 'checkin') {
           createdReservations.forEach((r) => {
@@ -890,14 +944,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       const selectedPlan = formData.ratePlanId && formData.ratePlanId !== 'custom'
         ? (useSettingsStore.getState().roomManagement.ratePlans || []).find((r: any) => r.id === formData.ratePlanId)
         : undefined;
-      const nightlyBase = (selectedPlan?.basePrice)
-        || (typeof formData.customRate === 'number' ? formData.customRate : undefined)
-        || getNightlyRate(formData.roomTypeId);
-      const rateBreakdown = frontOfficeStore.calculateRateBreakdown(
+      const rateBreakdown = buildRateBreakdown(
         formData.roomTypeId,
         formData.arrival,
         formData.departure,
-        nightlyBase
+        selectedPlan,
+        typeof formData.customRate === 'number' ? formData.customRate : undefined
       );
 
       const updatedReservation = {
@@ -977,6 +1029,22 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     
     loadReservations();
   };
+
+  const openNoShowConfirm = (reservation: Reservation) => {
+    setNoShowTarget(reservation);
+    onNoShowOpen();
+  };
+
+  const confirmNoShow = () => {
+    if (!noShowTarget) return;
+    frontOfficeStore.markNoShow(noShowTarget.id);
+    trackEvent('FO.Reservation.NoShowManual' as any, { reservationId: noShowTarget.id, guestName: noShowTarget.guestName });
+    onNoShowClose();
+    setNoShowTarget(null);
+    loadReservations();
+  };
+
+  const businessDate = frontOfficeStore.getBusinessDate();
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -1145,6 +1213,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         </Card>
       </div>
 
+      <TodaysArrivalsPanel
+        onCheckIn={(r) => handleQuickAction('checkin', r)}
+        onNoShow={openNoShowConfirm}
+      />
+
       {/* Filters */}
       <Card className="border-0 shadow-lg">
         <CardBody className="p-4">
@@ -1214,9 +1287,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               <TableColumn className="hidden md:table-cell">Check-in Date</TableColumn>
               <TableColumn className="hidden md:table-cell">Check-out Date</TableColumn>
               <TableColumn className="hidden md:table-cell">Nights</TableColumn>
-              <TableColumn className="hidden xl:table-cell">Rate</TableColumn>
-              <TableColumn className="hidden xl:table-cell">Amount</TableColumn>
-              <TableColumn className="hidden xl:table-cell">Rate Plan</TableColumn>
+              <TableColumn className="hidden sm:table-cell">Rate</TableColumn>
+              <TableColumn className="hidden sm:table-cell">Amount</TableColumn>
+              <TableColumn className="hidden lg:table-cell">Rate Plan</TableColumn>
               <TableColumn className="hidden xl:table-cell">Purpose</TableColumn>
               <TableColumn className="hidden xl:table-cell">Billing</TableColumn>
               <TableColumn>Status</TableColumn>
@@ -1239,10 +1312,20 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   </TableCell>
                   <TableCell>
                     <div className="max-w-[200px]">
-                      <p className="font-medium text-ghana-black truncate">{reservation.guestName}</p>
+                      <div className="flex items-center gap-1.5">
+                        <p className="font-medium text-ghana-black truncate">{reservation.guestName}</p>
+                        {reservation.groupId && (
+                          <Chip size="sm" variant="flat" color="warning" title={reservation.groupId}>
+                            {reservation.isGroupLeader ? '🔗 Group lead' : '🔗 Group'}
+                          </Chip>
+                        )}
+                      </div>
                       <p className="text-xs text-gray-500">
                         {reservation.adults || 1} adult{reservation.adults !== 1 ? 's' : ''}
                         {reservation.children ? `, ${reservation.children} child${reservation.children !== 1 ? 'ren' : ''}` : ''}
+                      </p>
+                      <p className="text-xs font-medium text-ghana-black sm:hidden">
+                        ₵{getDisplayNightlyRateGross(reservation).toFixed(2)}/night · ₵{getDisplayStayTotal(reservation).toFixed(2)}
                       </p>
                     </div>
                   </TableCell>
@@ -1266,18 +1349,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       {calculateNights(reservation.arrival, reservation.departure)}
                     </div>
                   </TableCell>
-                  <TableCell className="hidden xl:table-cell">
+                  <TableCell className="hidden sm:table-cell">
                     <span className="font-medium">₵{getDisplayNightlyRateGross(reservation).toFixed(2)}</span>
                   </TableCell>
-                  <TableCell className="hidden xl:table-cell">
-                    {(() => {
-                      const nightly = getDisplayNightlyRateGross(reservation);
-                      const nights = calculateNights(reservation.arrival, reservation.departure) || 1;
-                      const total = (Number.isFinite(nightly) ? nightly : 0) * nights;
-                      return `₵${Number(total).toFixed(2)}`;
-                    })()}
+                  <TableCell className="hidden sm:table-cell">
+                    <span className="font-medium">₵{getDisplayStayTotal(reservation).toFixed(2)}</span>
                   </TableCell>
-                  <TableCell className="hidden xl:table-cell">
+                  <TableCell className="hidden lg:table-cell">
                     {(() => {
                       const rpId = reservation.ratePlanId;
                       if (!rpId) return 'Custom Rate';
@@ -1376,7 +1454,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           🗑️ Unassign
                         </Button>
                       )}
-                      {reservation.status === 'confirmed' && (
+                      {(reservation.status === 'confirmed' || reservation.status === 'pending') && (
                         <Button
                           size="sm"
                           color="success"
@@ -1387,6 +1465,19 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           }}
                         >
                           🔑 Check In
+                        </Button>
+                      )}
+                      {canMarkNoShow(reservation, businessDate) && (
+                        <Button
+                          size="sm"
+                          color="danger"
+                          variant="bordered"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openNoShowConfirm(reservation);
+                          }}
+                        >
+                          👻 No-Show
                         </Button>
                       )}
                       {reservation.status === 'checked-in' && (
@@ -1498,7 +1589,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       </CardBody></Card>
                     </div>
                     </div>
-                    {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotals(selectedReservation.arrival, selectedReservation.departure, selectedReservation.roomTypeId); return (
+                    {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotalsForReservation(selectedReservation); return (
                       <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
                         <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toFixed(2)}</div></CardBody></Card>
                         <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
@@ -1604,7 +1695,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                 checkOut: selectedReservation ? new Date(selectedReservation.departure).toLocaleDateString() : '',
                                 roomType: frontOfficeStore.roomTypes.find(rt => rt.id === selectedReservation?.roomTypeId)?.name || 'Unknown',
                                 totalAmount: (() => {
-                                  const { grandTotal } = getComputedTotals(selectedReservation?.arrival || '', selectedReservation?.departure || '', selectedReservation?.roomTypeId || '');
+                                  const { grandTotal } = getComputedTotalsForReservation(selectedReservation!);
                                   return grandTotal;
                                 })(),
                                 currency: 'GHS'
@@ -1686,7 +1777,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       </div>
                       {/* Pricing Summary */}
                       <div className="mt-4 grid grid-cols-1 md:grid-cols-5 gap-3">
-                        {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotals(formData.arrival, formData.departure, formData.roomTypeId || ''); return (
+                        {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotals(formData.arrival, formData.departure, formData.roomTypeId || '', formData.ratePlanId, formData.customRate); return (
                           <>
                             <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toFixed(2)}</div></CardBody></Card>
                             <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
@@ -1703,9 +1794,21 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     <div className="bg-purple-50 p-4 rounded-lg border">
                       <div className="flex items-center justify-between mb-4">
                         <h4 className="font-medium text-purple-900">👥 Guest List ({bulkGuests.length} guest{bulkGuests.length !== 1 ? 's' : ''})</h4>
-                        <div className="text-sm text-purple-700">
-                          Search and add guests from the system
-                        </div>
+                        {bulkGuests.length > 1 ? (
+                          <label className="flex items-center gap-2 text-sm text-purple-800 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={linkAsGroup}
+                              onChange={(e) => setLinkAsGroup(e.target.checked)}
+                              className="rounded"
+                            />
+                            🔗 Link as one group booking
+                          </label>
+                        ) : (
+                          <div className="text-sm text-purple-700">
+                            Search and add guests from the system
+                          </div>
+                        )}
                       </div>
                       
                       {/* Guest Search for Bulk */}
@@ -1933,11 +2036,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           label="Enter Custom Rate (₵ incl. taxes)"
                           type="number"
                           placeholder="Override rate"
-                          value={(() => { const gross = (bulkGuest.customRate || 0) * GHANA_GROSS_FACTOR; return Number.isFinite(gross) ? gross.toFixed(2) : '0.00'; })()}
+                          value={(() => { const gross = grossFromExclusive(bulkGuest.customRate || 0); return Number.isFinite(gross) ? gross.toFixed(2) : '0.00'; })()}
                           onChange={(e) => {
                             const gross = parseFloat(e.target.value);
                             if (isNaN(gross) || gross < 0) { updateBulkGuest(bulkGuest.id, 'customRate', 0); return; }
-                            const net = gross / GHANA_GROSS_FACTOR;
+                            const net = exclusiveFromGross(gross);
                             updateBulkGuest(bulkGuest.id, 'customRate', Number(net.toFixed(2)));
                           }}
                           startContent="₵"
@@ -1977,7 +2080,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           const rp = bulkGuest.ratePlanId ? useSettingsStore.getState().roomManagement.ratePlans.find(r => r.id === bulkGuest.ratePlanId) : undefined;
                           const nightlyGross = rp 
                             ? getPlanGross(rp)
-                            : ((bulkGuest.customRate || baseRate) * GHANA_GROSS_FACTOR);
+                            : grossFromExclusive(bulkGuest.customRate || baseRate);
                           const amount = nightlyGross * nights;
                           return `₵${amount.toFixed(2)}`;
                         })()}
@@ -2424,6 +2527,34 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             {assignReservation?.status === 'checked-in' && (
               <Button isDisabled variant="flat">Unassign (not allowed while checked-in)</Button>
             )}
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={isNoShowOpen} onClose={onNoShowClose}>
+        <ModalContent>
+          <ModalHeader>Mark no-show</ModalHeader>
+          <ModalBody>
+            {noShowTarget && (
+              <div className="space-y-3 text-sm">
+                <p>
+                  Mark <strong>{noShowTarget.guestName}</strong> ({noShowTarget.resId || noShowTarget.id}) as a no-show?
+                </p>
+                <p className="text-gray-600">
+                  This posts the no-show penalty to the folio, records GL directly (not checkout), closes the folio
+                  {noShowTarget.isGuaranteed ? ', and charges the guaranteed card if applicable' : ''}.
+                </p>
+                {!useSettingsStore.getState().roomManagement.noShowPolicyEnabled && (
+                  <p className="text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 text-xs">
+                    No-show policy is disabled — status will update but no penalty charge will apply.
+                  </p>
+                )}
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={onNoShowClose}>Cancel</Button>
+            <Button color="danger" onPress={confirmNoShow}>Confirm no-show</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

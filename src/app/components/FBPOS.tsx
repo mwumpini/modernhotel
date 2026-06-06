@@ -35,6 +35,7 @@ import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { storesStore } from '../lib/stores/store';
 import { useAccountingStore } from '../lib/accounting/store';
 import { captureCompleteSale, type DepartmentSource } from '../lib/accounting/integration';
+import { computeSalesTax } from '../lib/tax/engine';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { customerStore } from '../lib/fb/customerStore';
 
@@ -182,7 +183,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const filteredRooms = useMemo(() => {
     if (!roomSearchTerm) return availableRooms;
     return availableRooms.filter(room => 
-      room.roomId.toLowerCase().includes(roomSearchTerm.toLowerCase()) ||
+      (room.roomId || '').toLowerCase().includes(roomSearchTerm.toLowerCase()) ||
       room.guestName.toLowerCase().includes(roomSearchTerm.toLowerCase())
     );
   }, [availableRooms, roomSearchTerm]);
@@ -635,13 +636,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     }
 
     try {
-      // Calculate totals with Ghanaian taxes
       const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-      const vatAmount = subtotal * 0.15; // 15% VAT
-      const nhilAmount = subtotal * 0.025; // 2.5% NHIL
-      const getFundAmount = subtotal * 0.025; // 2.5% GETFund
-      const tourismLevy = (subtotal + vatAmount + nhilAmount + getFundAmount) * 0.01; // 1% Tourism Levy
-      const total = subtotal + vatAmount + nhilAmount + getFundAmount + tourismLevy;
+      const { totalTax, gross: total } = computeSalesTax(subtotal);
 
       // Persist order in shared store as paid
       const newId = `ORD-${Date.now().toString().slice(-6)}`;
@@ -689,7 +685,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       });
 
       // ===== ACCOUNTING INTEGRATION =====
-      // Auto-capture complete sale (revenue + payment) to AR, Sales Invoice, Receipt, and GL
+      // Cash/card/MoMo: post to GL immediately. Room charge: folio only until guest checkout.
+      if (paymentMethod !== 'Room Charge') {
       try {
         // Determine department source based on venue
         const departmentSource: DepartmentSource = venue === 'Restaurant' ? 'restaurant' 
@@ -704,13 +701,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() 
             : 'Walk-in Customer';
         
-        // Map payment method for accounting
-        const accountingPaymentMethod = paymentMethod === 'Room Charge' 
-          ? 'Bank Transfer' as const
-          : paymentMethod as 'Cash' | 'Card' | 'Mobile Money';
+        // Map payment method for accounting (Room Charge excluded above — folio only until checkout)
+        const accountingPaymentMethod = paymentMethod as 'Cash' | 'Card' | 'Mobile Money';
         
-        // Calculate tax breakdown
-        const taxPercent = ((vatAmount + nhilAmount + getFundAmount + tourismLevy) / subtotal) * 100;
+        const taxPercent = subtotal > 0 ? (totalTax / subtotal) * 100 : 0;
         
         // Get current waiter/staff info
         const currentWaiter = waiters.find(w => w.id === waiterId);
@@ -735,7 +729,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
               taxPercent: taxPercent,
             })),
             subtotal: subtotal,
-            taxAmount: vatAmount + nhilAmount + getFundAmount + tourismLevy,
+            taxAmount: totalTax,
             total: total,
             // Staff tracking
             ...staffInfo,
@@ -757,6 +751,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         }
       } catch (err) {
         console.error('[F&B POS] ❌ Accounting integration error:', err);
+      }
       }
 
       // Add to guest folio if room charge
@@ -814,7 +809,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       table: order.table,
       waiterId: order.waiterId,
       items: order.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: '', route: i.route })),
-      status: order.status,
+      status: order.status as PendingOrder['status'],
       customerType: order.customerType as CustomerType,
       venue: order.venue as VenueMode,
       notes: order.notes,
@@ -1102,7 +1097,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                   </Button>
                 </div>
               </CardHeader>
-              <CardBody ref={cartRef}>
+              <CardBody {...({ ref: cartRef } as any)}>
                 <div className="space-y-3">
                   {cart.length === 0 && (
                     <div className="text-sm text-gray-500">No items added.</div>
@@ -1573,7 +1568,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     onChange={(e) => setSettleRoomSearch(e.target.value)}
                     startContent={<span>🏨</span>}
                   />
-                  {settleRoomSearch && filteredRooms.filter(r => r.roomId.toLowerCase().includes(settleRoomSearch.toLowerCase()) || r.guestName.toLowerCase().includes(settleRoomSearch.toLowerCase())).slice(0, 10).map(r => (
+                  {settleRoomSearch && filteredRooms.filter(r => (r.roomId || '').toLowerCase().includes(settleRoomSearch.toLowerCase()) || r.guestName.toLowerCase().includes(settleRoomSearch.toLowerCase())).slice(0, 10).map(r => (
                     <div key={r.roomId} className="p-2 border-b text-sm cursor-pointer hover:bg-gray-50" onClick={() => { setSettleSelectedRoom(r as any); setSettleRoomSearch(`${r.roomId} - ${r.guestName}`); }}>
                       Room {r.roomId} • {r.guestName}
                     </div>
@@ -1593,7 +1588,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 </div>
               </div>
             )}
-                {(customerType === 'Walk-in' || customerType === 'Takeout') && (
+                {((customerType as string) === 'Walk-in' || (customerType as string) === 'Takeout') && (
                   <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-200 text-sm">
                     <div className="flex items-center justify-between">
                       <span>Customer</span>
@@ -1889,7 +1884,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     loadOrderIntoCart(mapped);
                     setActivitySelected(null);
                   }}>Edit in Cart</Button>
-                  <Button variant="flat" className="bg-red-50 text-red-700 border border-red-200" onClick={activityCancel}>Cancel Item</Button>
+                  <Button variant="flat" className="bg-red-50 text-red-700 border border-red-200" onClick={() => cancelReasonModal.onOpen()}>Cancel Item</Button>
                   <Button variant="flat" className="bg-gray-100 text-red-600" onClick={() => { if (activitySelected) requestDeleteWithPin(activitySelected.order.id); }}>Delete Order</Button>
                 </div>
               </div>

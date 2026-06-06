@@ -16,25 +16,6 @@
     "id": "1762039432172"
   },
   {
-    "countryCode": "GH",
-    "name": "Flat Rate",
-    "description": "",
-    "domain": "purchases",
-    "operation": "external",
-    "id": "1762039437336"
-  },
-  {
-    "countryCode": "GH",
-    "name": "Ghana Sales (VAT+Levies)",
-    "description": "Auto-created from template ghana_sales_standard",
-    "domain": "sales",
-    "operation": "external",
-    "tags": [
-      "template:ghana_sales_standard"
-    ],
-    "id": "1762106053354"
-  },
-  {
     "countryCode": "ZW",
     "name": "Zimbabwe VAT (15%)",
     "description": "Auto-created from template zimbabwe_vat_standard",
@@ -76,17 +57,6 @@
     "tags": [
       "template:ghana_sales_standard"
     ],
-    "id": "1762123144804"
-  },
-  {
-    "countryCode": "GH",
-    "name": "Ghana Sales (VAT+Levies)",
-    "description": "Auto-created from template ghana_sales_standard",
-    "domain": "sales",
-    "operation": "external",
-    "tags": [
-      "template:ghana_sales_standard"
-    ],
-    "id": "1767797767261"
+    "id": "1774039061292"
   }
 ]

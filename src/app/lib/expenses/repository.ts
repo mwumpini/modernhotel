@@ -19,7 +19,7 @@ export async function listOverdueVouchers(tenantId: string, minDaysOverdue: numb
 		take: 1000
 	});
 
-	return vouchers.map(v => ({
+	return vouchers.map((v: any) => ({
 		id: v.id,
 		date: v.date,
 		reference: v.reference,

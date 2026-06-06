@@ -123,6 +123,25 @@ async function main() {
     }
   })
 
+  await prisma.user.upsert({
+    where: {
+      tenantId_email: {
+        tenantId: demoTenant.id,
+        email: 'night@demohotel.com',
+      },
+    },
+    update: {},
+    create: {
+      tenantId: demoTenant.id,
+      email: 'night@demohotel.com',
+      name: 'Night Manager',
+      password: hashedPassword,
+      role: 'night_manager',
+      permissions: ['frontdesk', 'reports', 'night_audit'],
+      isActive: true,
+    },
+  })
+
   console.log('✅ Created demo users')
 
   // Create demo rooms
@@ -240,7 +259,9 @@ async function main() {
         defaultStatus: 'clean',
         statuses: ['clean', 'occupied', 'dirty', 'inspected', 'ooo'],
         roomTypes: ['standard', 'deluxe', 'suite'],
-        features: ['king_bed', 'queen_bed', 'ocean_view', 'balcony', 'jacuzzi']
+        features: ['king_bed', 'queen_bed', 'ocean_view', 'balcony', 'jacuzzi'],
+        postFirstNightAtCheckin: false,
+        nightAuditAutoRun: true,
       },
       financialSettings: {
         currency: 'GHS',
@@ -256,19 +277,22 @@ async function main() {
         requireGhanaCard: false,
         captureMarketingInfo: true
       },
-      invoiceSettings: {
-        invoiceNumberPrefix: 'INV',
-        invoiceNumberFormat: 'INV-####',
-        autoGenerateNumber: true,
-        defaultTerms: 'Payment due within 30 days',
-        includeTax: true
-      },
-      receiptSettings: {
-        receiptNumberPrefix: 'RCP',
-        receiptNumberFormat: 'RCP-####',
-        autoGenerateNumber: true,
-        includeLogo: true,
-        includeQRCode: true
+      saasSettings: {
+        plan: 'demo',
+        invoiceSettings: {
+          invoiceNumberPrefix: 'INV',
+          invoiceNumberFormat: 'INV-####',
+          autoGenerateNumber: true,
+          defaultTerms: 'Payment due within 30 days',
+          includeTax: true
+        },
+        receiptSettings: {
+          receiptNumberPrefix: 'RCP',
+          receiptNumberFormat: 'RCP-####',
+          autoGenerateNumber: true,
+          includeLogo: true,
+          includeQRCode: true
+        }
       }
     }
   })
@@ -281,6 +305,7 @@ async function main() {
   console.log('Admin: admin@demohotel.com / password123')
   console.log('Manager: manager@demohotel.com / password123')
   console.log('Staff: staff@demohotel.com / password123')
+  console.log('Night Manager: night@demohotel.com / password123')
 }
 
 main()

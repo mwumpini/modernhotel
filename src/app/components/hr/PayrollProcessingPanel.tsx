@@ -339,20 +339,22 @@ export default function PayrollProcessingPanel() {
                   <TableColumn>AMOUNT IN WORDS</TableColumn>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((r) => (
-                    <TableRow key={r.label} className="cursor-pointer hover:bg-gray-50" onClick={() => handleOpenAdvice(r.label)}>
-                      <TableCell>{r.label}</TableCell>
-                      <TableCell>{r.count}</TableCell>
-                      <TableCell>{fmtCurrency(r.total)}</TableCell>
-                      <TableCell>{amountToWordsGhana(r.total)}</TableCell>
-                    </TableRow>
-                  ))}
-                  <TableRow>
-                    <TableCell><strong>TOTAL</strong></TableCell>
-                    <TableCell><strong>{rows.reduce((s, r) => s + r.count, 0)}</strong></TableCell>
-                    <TableCell><strong>{fmtCurrency(grand)}</strong></TableCell>
-                    <TableCell><strong>{amountToWordsGhana(grand)}</strong></TableCell>
-                  </TableRow>
+                  {[
+                    ...rows.map((r) => (
+                      <TableRow key={r.label} className="cursor-pointer hover:bg-gray-50" onClick={() => handleOpenAdvice(r.label)}>
+                        <TableCell>{r.label}</TableCell>
+                        <TableCell>{r.count}</TableCell>
+                        <TableCell>{fmtCurrency(r.total)}</TableCell>
+                        <TableCell>{amountToWordsGhana(r.total)}</TableCell>
+                      </TableRow>
+                    )),
+                    <TableRow key="__total">
+                      <TableCell><strong>TOTAL</strong></TableCell>
+                      <TableCell><strong>{rows.reduce((s, r) => s + r.count, 0)}</strong></TableCell>
+                      <TableCell><strong>{fmtCurrency(grand)}</strong></TableCell>
+                      <TableCell><strong>{amountToWordsGhana(grand)}</strong></TableCell>
+                    </TableRow>,
+                  ]}
                 </TableBody>
               </Table>
             );
@@ -430,7 +432,7 @@ export default function PayrollProcessingPanel() {
                         <TableColumn className="w-[18%] text-right">NET (GHS)</TableColumn>
                       </TableHeader>
                       <TableBody>
-                        {rows.map((r, idx) => (
+                        {rows.map((r: any, idx: number) => (
                           <TableRow key={idx}>
                             <TableCell className="w-[12%] text-center">{idx + 1}</TableCell>
                             <TableCell className="w-[40%] pr-8">{r.employeeName}</TableCell>
@@ -439,9 +441,9 @@ export default function PayrollProcessingPanel() {
                           </TableRow>
                         ))}
                         <TableRow>
-                          <TableCell></TableCell>
+                          <TableCell>{' '}</TableCell>
                           <TableCell><strong>Total</strong></TableCell>
-                          <TableCell></TableCell>
+                          <TableCell>{' '}</TableCell>
                           <TableCell className="text-right"><strong>{fmtCurrency(total)}</strong></TableCell>
                         </TableRow>
                         <TableRow>

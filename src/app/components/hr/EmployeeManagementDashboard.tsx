@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Card, CardHeader, CardBody, Button, Chip, Tooltip } from '@heroui/react';
+import { Card, CardHeader, CardBody, Chip, Tooltip } from '@heroui/react';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useEmployeeChangesStore } from '@/app/lib/hr/employeeChangesStore';
 import { usePerformanceStore } from '@/app/lib/hr/performanceStore';

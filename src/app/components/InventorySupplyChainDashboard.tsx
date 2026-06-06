@@ -11,7 +11,7 @@ import { trackEvent } from '../lib/analytics/trackEvent';
 import { useStockStore } from '../lib/inventory/stockStore';
 import { useSupplierStore } from '../lib/inventory/supplierStore';
 import { useAccountingStore } from '../lib/accounting/store';
-import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, StockMovement, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
+import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
 import { BusinessPartner } from '../lib/accounting/models';
 
 interface InventoryItem {
@@ -449,7 +449,7 @@ export default function InventorySupplyChainDashboard() {
     { value: 'vat', label: 'VAT (15%)', rate: 15 },
     { value: 'nhil', label: 'NHIL (2.5%)', rate: 2.5 },
     { value: 'getfund', label: 'GETFund (2.5%)', rate: 2.5 },
-    { value: 'covid', label: 'COVID-19 Levy (1%)', rate: 1 },
+    { value: 'tourism', label: 'Tourism Levy (1%)', rate: 1 },
     { value: 'custom', label: 'Custom Rate', rate: 0 }
   ];
   const [poSearchTerm, setPOSearchTerm] = useState('');

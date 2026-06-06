@@ -12,9 +12,7 @@ import {
   Tab, 
   Chip,
   Progress,
-  Avatar,
-  Tooltip,
-  Divider
+  Tooltip
 } from "@heroui/react";
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
@@ -31,7 +29,6 @@ import RoomStatusGrid from './housekeeping/RoomStatusGrid';
 import TaskManagementPanel from './housekeeping/TaskManagementPanel';
 import StaffManagementPanel from './housekeeping/StaffManagementPanel';
 import MaintenancePanel from './housekeeping/MaintenancePanel';
-import SupplyManagementPanel from './housekeeping/SupplyManagementPanel';
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {

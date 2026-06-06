@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Room, CleaningTask, CleaningChecklistItem, CleaningSupply } from './models';
+import { Room, CleaningTask } from './models';
 
 interface RoomStore {
   rooms: Room[];

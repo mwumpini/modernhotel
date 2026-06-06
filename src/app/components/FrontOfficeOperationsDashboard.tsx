@@ -776,7 +776,7 @@ export default function FrontOfficeOperationsDashboard() {
                 <Input label="Room Number" placeholder="e.g., 305" id="fo-room-num" />
                 <Select label="Room Type" placeholder="Select type" id="fo-room-type">
                   {roomTypes.map(rt => (
-                    <SelectItem key={rt.id} value={rt.id}>{rt.name}</SelectItem>
+                    <SelectItem key={rt.id}>{rt.name}</SelectItem>
                   ))}
                 </Select>
                 <Input label="Floor" placeholder="e.g., 3" id="fo-room-floor" />
@@ -1183,7 +1183,7 @@ export default function FrontOfficeOperationsDashboard() {
                 <label className="text-sm font-medium">Select Room</label>
                 <Select placeholder="Choose available room">
                   {rooms.map(room => (
-                    <SelectItem key={room.id} value={room.id}>Room {room.id}</SelectItem>
+                    <SelectItem key={room.id}>Room {room.id}</SelectItem>
                   ))}
                 </Select>
               </div>
@@ -1213,9 +1213,9 @@ export default function FrontOfficeOperationsDashboard() {
               <div>
                 <label className="text-sm font-medium">Payment Method</label>
                 <Select placeholder="Select payment method">
-                  <SelectItem key="cash" value="cash">Cash</SelectItem>
-                  <SelectItem key="card" value="card">Card</SelectItem>
-                  <SelectItem key="mobile-money" value="mobile-money">Mobile Money</SelectItem>
+                  <SelectItem key="cash">Cash</SelectItem>
+                  <SelectItem key="card">Card</SelectItem>
+                  <SelectItem key="mobile-money">Mobile Money</SelectItem>
                 </Select>
               </div>
               <div>
@@ -1244,9 +1244,9 @@ export default function FrontOfficeOperationsDashboard() {
               <div>
                 <label className="text-sm font-medium">Payment Method</label>
                 <Select placeholder="Select payment method">
-                  <SelectItem key="cash" value="cash">Cash</SelectItem>
-                  <SelectItem key="card" value="card">Card</SelectItem>
-                  <SelectItem key="mobile-money" value="mobile-money">Mobile Money</SelectItem>
+                  <SelectItem key="cash">Cash</SelectItem>
+                  <SelectItem key="card">Card</SelectItem>
+                  <SelectItem key="mobile-money">Mobile Money</SelectItem>
                 </Select>
               </div>
               <div>

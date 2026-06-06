@@ -15,8 +15,18 @@ export default function Home() {
   React.useEffect(() => {
     try {
       if (!initialSetupCompleted) {
-        router.replace('/setup');
-        return;
+        // Cross-check the persisted value before redirecting. The store hydrates
+        // from localStorage on the client, so a render that observes the default
+        // `false` must not bounce a user who has already completed setup.
+        let persistedComplete = false;
+        try {
+          const raw = window.localStorage.getItem('system.settings');
+          persistedComplete = !!(raw && JSON.parse(raw)?.initialSetupCompleted);
+        } catch {}
+        if (!persistedComplete) {
+          router.replace('/setup');
+          return;
+        }
       }
     } catch {}
     try {

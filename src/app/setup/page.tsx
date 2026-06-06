@@ -11,7 +11,6 @@ import {
   Select,
   SelectItem,
   Switch,
-  Textarea,
   Divider,
   Chip
 } from '@heroui/react';
@@ -46,7 +45,7 @@ export default function SetupWizardPage() {
       currencySymbol: '₵',
       timezone: 'Africa/Accra',
       localization: { language: 'en', dateFormat: 'DD/MM/YYYY', timeFormat: 'HH:mm' },
-      taxes: { vat: 12.5, nhil: 2.5, tourismLevy: 1.0 },
+      taxes: { vat: 15, nhil: 2.5, tourismLevy: 1.0 },
       priceDisplayFormat: 'symbol',
       roundingRule: 'nearest',
       defaultTaxScheme: 'Ghana Standard'
@@ -96,8 +95,8 @@ export default function SetupWizardPage() {
   // Tax Schemes per country (linked to compliance tax rates)
   const TAX_SCHEMES: Record<string, Array<{ key: string; name: string; rates: { vat?: number; nhil?: number; tourismLevy?: number } }>> = {
     GH: [
-      { key: 'GH_STANDARD', name: 'Ghana Standard', rates: { vat: 12.5, nhil: 2.5, tourismLevy: 1.0 } },
-      { key: 'GH_VAT_ONLY', name: 'Ghana VAT Only', rates: { vat: 12.5 } },
+      { key: 'GH_STANDARD', name: 'Ghana Standard', rates: { vat: 15, nhil: 2.5, tourismLevy: 1.0 } },
+      { key: 'GH_VAT_ONLY', name: 'Ghana VAT Only', rates: { vat: 15 } },
       { key: 'GH_ZERO', name: 'Zero-Rated', rates: { vat: 0, nhil: 0, tourismLevy: 0 } },
     ],
     NG: [
@@ -161,7 +160,7 @@ export default function SetupWizardPage() {
     roundToNearest: settings.financialSettings.roundToNearest,
     roundingRule: settings.financialSettings.roundingRule || 'nearest',
     priceDisplayFormat: settings.financialSettings.priceDisplayFormat || 'symbol',
-    vat: settings.countryCompliance[settings.defaultCountry || 'GH']?.taxRates?.vat ?? 12.5,
+    vat: settings.countryCompliance[settings.defaultCountry || 'GH']?.taxRates?.vat ?? 15,
     nhil: settings.countryCompliance[settings.defaultCountry || 'GH']?.taxRates?.nhil ?? 2.5,
     tourismLevy: settings.countryCompliance[settings.defaultCountry || 'GH']?.taxRates?.tourismLevy ?? 1.0,
   }));
@@ -231,7 +230,8 @@ export default function SetupWizardPage() {
     dataRetentionDays: settings.complianceSettings.dataRetentionDays,
   }));
 
-  const goNext = () => setStep(prev => Math.min(prev + 1, 5));
+  const TOTAL_STEPS = 4;
+  const goNext = () => setStep(prev => Math.min(prev + 1, TOTAL_STEPS));
   const goBack = () => setStep(prev => Math.max(prev - 1, 1));
 
   // Auto-detect country from IP on first load (non-blocking)
@@ -416,7 +416,7 @@ export default function SetupWizardPage() {
 
   const StepHeader = () => (
     <div className="flex items-center gap-2 mb-4">
-      <Chip color="primary" variant="flat">Step {step} / 5</Chip>
+      <Chip color="primary" variant="flat">Step {step} / {TOTAL_STEPS}</Chip>
       <span className="text-sm text-gray-600">System Setup</span>
     </div>
   );
@@ -438,7 +438,7 @@ export default function SetupWizardPage() {
         {step === 1 && (
           <Card>
             <CardHeader>
-              <h2 className="text-xl font-semibold">Company & Legal Structure</h2>
+              <h2 className="text-xl font-semibold">Company Profile & Localization</h2>
             </CardHeader>
             <CardBody className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -490,7 +490,6 @@ export default function SetupWizardPage() {
                     }}
                   />
                 </div>
-                <Input label="Company Logo URL" value={company.logoUrl || ''} onChange={e => setCompany((v: any) => ({ ...v, logoUrl: e.target.value }))} />
                 <Input label="Registration Number" value={company.registrationNumber} onChange={e => setCompany((v: any) => ({ ...v, registrationNumber: e.target.value }))} />
                 <Input label="Tax ID (TIN/VAT)" value={company.taxId} onChange={e => setCompany((v: any) => ({ ...v, taxId: e.target.value }))} />
                 <Input label="Phone" value={company.contact.phone} onChange={e => setCompany((v: any) => ({ ...v, contact: { ...v.contact, phone: e.target.value } }))} />
@@ -554,150 +553,26 @@ export default function SetupWizardPage() {
         {step === 2 && (
           <Card>
             <CardHeader>
-              <h2 className="text-xl font-semibold">Regional & Localization</h2>
+              <div>
+                <h2 className="text-xl font-semibold">Document Numbering</h2>
+                <p className="text-sm text-gray-600">Just the essentials to start issuing documents. Every other series uses a sensible default you can change anytime in Settings → Numbering.</p>
+              </div>
             </CardHeader>
             <CardBody className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input label="Country Code" value={regional.country} onChange={e => setRegional((v: any) => ({ ...v, country: e.target.value }))} />
-                <Input label="Timezone" value={regional.timezone} onChange={e => setRegional((v: any) => ({ ...v, timezone: e.target.value }))} />
-                <Input label="Date Format" value={regional.dateFormat} onChange={e => setRegional((v: any) => ({ ...v, dateFormat: e.target.value }))} />
-                <Input label="Time Format" value={regional.timeFormat} onChange={e => setRegional((v: any) => ({ ...v, timeFormat: e.target.value }))} />
-                <Input label="Language" value={regional.language} onChange={e => setRegional((v: any) => ({ ...v, language: e.target.value }))} />
-              </div>
-              <Textarea label="Address Format Template" value={regional.addressFormatTemplate} onChange={e => setRegional((v: any) => ({ ...v, addressFormatTemplate: e.target.value }))} />
-            </CardBody>
-          </Card>
-        )}
-
-        {/* Step 3 removed per request: Financial & Taxation moved to Company step via presets & selectors */}
-
-        {/* Step 4 removed per request; Hotel classification moved to Company step */}
-
-        {step === 3 && (
-          <Card>
-            <CardHeader>
-              <h2 className="text-xl font-semibold">System-Wide Numbering & Formats</h2>
-            </CardHeader>
-            <CardBody className="space-y-8">
-              {/* Accounting & Finance */}
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Accounting & Finance</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Input label="Invoice Prefix" value={numbering.invoicePrefix} onChange={e => setNumbering(v => ({ ...v, invoicePrefix: e.target.value }))} />
                 <Input label="Invoice Format" value={numbering.invoiceFormat} onChange={e => setNumbering(v => ({ ...v, invoiceFormat: e.target.value }))} />
                 <Input type="number" label="Invoice Next" value={String(numbering.invoiceNext)} onChange={e => setNumbering(v => ({ ...v, invoiceNext: Number(e.target.value) }))} />
-
                 <Input label="Receipt Prefix" value={numbering.receiptPrefix} onChange={e => setNumbering(v => ({ ...v, receiptPrefix: e.target.value }))} />
                 <Input label="Receipt Format" value={numbering.receiptFormat} onChange={e => setNumbering(v => ({ ...v, receiptFormat: e.target.value }))} />
                 <Input type="number" label="Receipt Next" value={String(numbering.receiptNext)} onChange={e => setNumbering(v => ({ ...v, receiptNext: Number(e.target.value) }))} />
-                <Input label="Credit Note Prefix" value={moduleNumbering.accounting.creditNote.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, accounting: { ...m.accounting, creditNote: { ...m.accounting.creditNote, prefix: e.target.value } } }))} />
-                <Input label="Credit Note Format" value={moduleNumbering.accounting.creditNote.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, accounting: { ...m.accounting, creditNote: { ...m.accounting.creditNote, numberFormat: e.target.value } } }))} />
-                <Input type="number" label="Credit Note Next" value={String(moduleNumbering.accounting.creditNote.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, accounting: { ...m.accounting, creditNote: { ...m.accounting.creditNote, nextNumber: Number(e.target.value) } } }))} />
-                  <Input label="Debit Note Prefix" value={moduleNumbering.accounting.debitNote.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, accounting: { ...m.accounting, debitNote: { ...m.accounting.debitNote, prefix: e.target.value } } }))} />
-                  <Input label="Debit Note Format" value={moduleNumbering.accounting.debitNote.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, accounting: { ...m.accounting, debitNote: { ...m.accounting.debitNote, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Debit Note Next" value={String(moduleNumbering.accounting.debitNote.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, accounting: { ...m.accounting, debitNote: { ...m.accounting.debitNote, nextNumber: Number(e.target.value) } } }))} />
-                </div>
               </div>
-
-              {/* Front Office */}
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Front Office</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input label="Reservation Prefix" value={numbering.reservationPrefix} onChange={e => setNumbering(v => ({ ...v, reservationPrefix: e.target.value }))} />
-                  <Input label="Reservation Format" value={numbering.reservationFormat} onChange={e => setNumbering(v => ({ ...v, reservationFormat: e.target.value }))} />
-                  <Input type="number" label="Reservation Next" value={String(numbering.reservationNext)} onChange={e => setNumbering(v => ({ ...v, reservationNext: Number(e.target.value) }))} />
-                  <Input label="Folio Prefix" value={moduleNumbering.frontOffice.folio.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, frontOffice: { ...m.frontOffice, folio: { ...m.frontOffice.folio, prefix: e.target.value } } }))} />
-                  <Input label="Folio Format" value={moduleNumbering.frontOffice.folio.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, frontOffice: { ...m.frontOffice, folio: { ...m.frontOffice.folio, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Folio Next" value={String(moduleNumbering.frontOffice.folio.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, frontOffice: { ...m.frontOffice, folio: { ...m.frontOffice.folio, nextNumber: Number(e.target.value) } } }))} />
-                  <Input label="Goods Receipt Prefix" value={moduleNumbering.inventory.goodsReceipt.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, inventory: { ...m.inventory, goodsReceipt: { ...m.inventory.goodsReceipt, prefix: e.target.value } } }))} />
-                  <Input label="Goods Receipt Format" value={moduleNumbering.inventory.goodsReceipt.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, inventory: { ...m.inventory, goodsReceipt: { ...m.inventory.goodsReceipt, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Goods Receipt Next" value={String(moduleNumbering.inventory.goodsReceipt.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, inventory: { ...m.inventory, goodsReceipt: { ...m.inventory.goodsReceipt, nextNumber: Number(e.target.value) } } }))} />
-                </div>
-              </div>
-
-              {/* Guest Profiles */}
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Guest Profiles</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input label="Guest Profile Prefix" value={numbering.clientPrefix} onChange={e => setNumbering(v => ({ ...v, clientPrefix: e.target.value }))} />
-                  <Input label="Guest Profile Format" value={numbering.clientFormat} onChange={e => setNumbering(v => ({ ...v, clientFormat: e.target.value }))} />
-                  <Input type="number" label="Guest Profile Next" value={String(numbering.clientNext)} onChange={e => setNumbering(v => ({ ...v, clientNext: Number(e.target.value) }))} />
-                  <Input label="Timesheet Prefix" value={moduleNumbering.hr.timesheet.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, hr: { ...m.hr, timesheet: { ...m.hr.timesheet, prefix: e.target.value } } }))} />
-                  <Input label="Timesheet Format" value={moduleNumbering.hr.timesheet.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, hr: { ...m.hr, timesheet: { ...m.hr.timesheet, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Timesheet Next" value={String(moduleNumbering.hr.timesheet.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, hr: { ...m.hr, timesheet: { ...m.hr.timesheet, nextNumber: Number(e.target.value) } } }))} />
-                </div>
-              </div>
-
-              {/* Food & Beverage */}
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Food & Beverage</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input label="Order Prefix" value={moduleNumbering.foodBeverage.order.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, foodBeverage: { ...m.foodBeverage, order: { ...m.foodBeverage.order, prefix: e.target.value } } }))} />
-                  <Input label="Order Format" value={moduleNumbering.foodBeverage.order.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, foodBeverage: { ...m.foodBeverage, order: { ...m.foodBeverage.order, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Order Next" value={String(moduleNumbering.foodBeverage.order.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, foodBeverage: { ...m.foodBeverage, order: { ...m.foodBeverage.order, nextNumber: Number(e.target.value) } } }))} />
-                  <Input label="KOT Prefix" value={moduleNumbering.foodBeverage.kitchenOrderTicket.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, foodBeverage: { ...m.foodBeverage, kitchenOrderTicket: { ...m.foodBeverage.kitchenOrderTicket, prefix: e.target.value } } }))} />
-                  <Input label="KOT Format" value={moduleNumbering.foodBeverage.kitchenOrderTicket.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, foodBeverage: { ...m.foodBeverage, kitchenOrderTicket: { ...m.foodBeverage.kitchenOrderTicket, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="KOT Next" value={String(moduleNumbering.foodBeverage.kitchenOrderTicket.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, foodBeverage: { ...m.foodBeverage, kitchenOrderTicket: { ...m.foodBeverage.kitchenOrderTicket, nextNumber: Number(e.target.value) } } }))} />
-                </div>
-              </div>
-
-              {/* Inventory & Stores */}
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Inventory & Stores</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input label="Requisition Prefix" value={moduleNumbering.inventory.requisition.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, inventory: { ...m.inventory, requisition: { ...m.inventory.requisition, prefix: e.target.value } } }))} />
-                  <Input label="Requisition Format" value={moduleNumbering.inventory.requisition.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, inventory: { ...m.inventory, requisition: { ...m.inventory.requisition, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Requisition Next" value={String(moduleNumbering.inventory.requisition.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, inventory: { ...m.inventory, requisition: { ...m.inventory.requisition, nextNumber: Number(e.target.value) } } }))} />
-                  <Input label="Stock Transfer Prefix" value={moduleNumbering.inventory.stockTransfer.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, inventory: { ...m.inventory, stockTransfer: { ...m.inventory.stockTransfer, prefix: e.target.value } } }))} />
-                  <Input label="Stock Transfer Format" value={moduleNumbering.inventory.stockTransfer.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, inventory: { ...m.inventory, stockTransfer: { ...m.inventory.stockTransfer, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Stock Transfer Next" value={String(moduleNumbering.inventory.stockTransfer.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, inventory: { ...m.inventory, stockTransfer: { ...m.inventory.stockTransfer, nextNumber: Number(e.target.value) } } }))} />
-                </div>
-              </div>
-
-              {/* Events & Conferences */}
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Events & Conferences</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input label="Event Booking Prefix" value={moduleNumbering.events.eventBooking.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, events: { ...m.events, eventBooking: { ...m.events.eventBooking, prefix: e.target.value } } }))} />
-                  <Input label="Event Booking Format" value={moduleNumbering.events.eventBooking.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, events: { ...m.events, eventBooking: { ...m.events.eventBooking, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Event Booking Next" value={String(moduleNumbering.events.eventBooking.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, events: { ...m.events, eventBooking: { ...m.events.eventBooking, nextNumber: Number(e.target.value) } } }))} />
-                </div>
-              </div>
-
-              {/* Maintenance */}
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Maintenance</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input label="Work Order Prefix" value={moduleNumbering.maintenance.workOrder.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, maintenance: { ...m.maintenance, workOrder: { ...m.maintenance.workOrder, prefix: e.target.value } } }))} />
-                  <Input label="Work Order Format" value={moduleNumbering.maintenance.workOrder.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, maintenance: { ...m.maintenance, workOrder: { ...m.maintenance.workOrder, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Work Order Next" value={String(moduleNumbering.maintenance.workOrder.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, maintenance: { ...m.maintenance, workOrder: { ...m.maintenance.workOrder, nextNumber: Number(e.target.value) } } }))} />
-                </div>
-              </div>
-
-              {/* Security & Compliance */}
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Security & Compliance</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input label="Incident Report Prefix" value={moduleNumbering.security.incidentReport.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, security: { ...m.security, incidentReport: { ...m.security.incidentReport, prefix: e.target.value } } }))} />
-                  <Input label="Incident Report Format" value={moduleNumbering.security.incidentReport.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, security: { ...m.security, incidentReport: { ...m.security.incidentReport, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Incident Report Next" value={String(moduleNumbering.security.incidentReport.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, security: { ...m.security, incidentReport: { ...m.security.incidentReport, nextNumber: Number(e.target.value) } } }))} />
-                </div>
-              </div>
-
-              {/* Human Resources */}
-              <div>
-                <h3 className="text-lg font-semibold mb-3">Human Resources</h3>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input label="Employee ID Prefix" value={moduleNumbering.hr.employeeId.prefix} onChange={e => setModuleNumbering((m: any) => ({ ...m, hr: { ...m.hr, employeeId: { ...m.hr.employeeId, prefix: e.target.value } } }))} />
-                  <Input label="Employee ID Format" value={moduleNumbering.hr.employeeId.numberFormat} onChange={e => setModuleNumbering((m: any) => ({ ...m, hr: { ...m.hr, employeeId: { ...m.hr.employeeId, numberFormat: e.target.value } } }))} />
-                  <Input type="number" label="Employee ID Next" value={String(moduleNumbering.hr.employeeId.nextNumber)} onChange={e => setModuleNumbering((m: any) => ({ ...m, hr: { ...m.hr, employeeId: { ...m.hr.employeeId, nextNumber: Number(e.target.value) } } }))} />
-                </div>
-              </div>
+              <p className="text-xs text-gray-500">Tokens: {'{YEAR}'} inserts the current year, {'{NUMBER}'} the running sequence.</p>
             </CardBody>
           </Card>
         )}
 
-        {step === 4 && (
+        {step === 3 && (
           <Card>
             <CardHeader>
               <h2 className="text-xl font-semibold">User & Security</h2>
@@ -716,7 +591,7 @@ export default function SetupWizardPage() {
           </Card>
         )}
 
-        {step === 5 && (
+        {step === 4 && (
           <Card>
             <CardHeader>
               <h2 className="text-xl font-semibold">Review & Complete</h2>
@@ -735,7 +610,7 @@ export default function SetupWizardPage() {
 
         <div className="flex items-center justify-between pt-2">
           <Button variant="flat" onPress={goBack} isDisabled={step === 1}>Back</Button>
-          {step < 5 ? (
+          {step < TOTAL_STEPS ? (
             <Button color="primary" onPress={goNext}>Next</Button>
           ) : (
             <Button color="success" onPress={handleComplete}>Complete Setup</Button>

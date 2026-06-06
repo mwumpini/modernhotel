@@ -1,7 +1,8 @@
 import { create } from 'zustand';
-import { Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck, QualityCheckItem } from './models';
+import { Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, GoodsReceiptNote, SupplierInvoice, QualityCheck } from './models';
 import type { BusinessPartner } from '../accounting/models';
 import { useStockStore } from './stockStore';
+import { computePurchaseTax } from '../tax/engine';
 
 interface SupplierStore {
   suppliers: Supplier[];
@@ -830,7 +831,7 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
 
     // Calculate totals
     const subtotal = poItems.reduce((sum, item) => sum + item.totalCost, 0);
-    const tax = subtotal * 0.15; // 15% VAT
+    const tax = computePurchaseTax(subtotal).totalTax;
     const finalAmount = subtotal + tax;
 
     const newPO: PurchaseOrder = {

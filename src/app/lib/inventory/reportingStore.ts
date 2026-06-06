@@ -283,8 +283,8 @@ export const useInventoryReportingStore = create<InventoryReportingStore>((set, 
     
     // Generate trends (simplified for demo)
     const trends = [
-      { period: 'Previous', score: totalInventoryValue * 0.9, change: -10, percentageChange: -10 },
-      { period: 'Current', score: totalInventoryValue, change: 0, percentageChange: 0 }
+      { period: 'Previous', value: totalInventoryValue * 0.9, change: -10, percentageChange: -10 },
+      { period: 'Current', value: totalInventoryValue, change: 0, percentageChange: 0 }
     ];
     
     return {
@@ -302,7 +302,7 @@ export const useInventoryReportingStore = create<InventoryReportingStore>((set, 
       locationEfficiency,
       supplierPerformance,
       trends
-    };
+    } as unknown as InventoryAnalytics;
   },
 
   generateCostAnalysis: (period, startDate, endDate) => {
@@ -360,7 +360,7 @@ export const useInventoryReportingStore = create<InventoryReportingStore>((set, 
     const lowStockItems = stockStore.getLowStockItems();
     
     const items = lowStockItems.map(item => {
-      const urgency = item.currentStock === 0 ? 'critical' :
+      const urgency: 'critical' | 'high' | 'medium' | 'low' = item.currentStock === 0 ? 'critical' :
                      item.currentStock <= item.reorderPoint * 0.5 ? 'high' :
                      item.currentStock <= item.reorderPoint * 0.8 ? 'medium' : 'low';
       
@@ -370,7 +370,7 @@ export const useInventoryReportingStore = create<InventoryReportingStore>((set, 
         category: item.category,
         currentStock: item.currentStock,
         reorderPoint: item.reorderPoint,
-        supplierName: item.supplierName,
+        supplierName: item.supplierName || '',
         lastOrderDate: undefined, // Would get from purchase orders
         urgency
       };
@@ -409,7 +409,7 @@ export const useInventoryReportingStore = create<InventoryReportingStore>((set, 
         daysUntilExpiry,
         unitCost: item.unitCost,
         totalValue: item.currentStock * item.unitCost,
-        supplierName: item.supplierName
+        supplierName: item.supplierName || ''
       };
     });
     
@@ -621,7 +621,7 @@ export const useInventoryReportingStore = create<InventoryReportingStore>((set, 
       const lowStockItems = items.filter(item => item.currentStock <= item.reorderPoint).length;
       const overstockItems = items.filter(item => item.currentStock > item.maximumStock * 0.8).length;
       
-      const suppliers = [...new Set(items.map(item => item.supplierName))];
+      const suppliers = [...new Set(items.map(item => item.supplierName).filter((s): s is string => !!s))];
       
       return {
         name,

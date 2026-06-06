@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Progress } from "@heroui/react";
+import { Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from "@heroui/react";
 import DashboardWrapper from './DashboardWrapper';
 import FBPOS from './FBPOS';
 import { trackEvent } from '../lib/analytics/trackEvent';

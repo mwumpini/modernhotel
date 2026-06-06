@@ -22,8 +22,7 @@ export default function FrontofficeRoomGrid() {
         <h3 className="text-lg font-semibold text-ghana-black">Rooms</h3>
         <div className="flex gap-2">
           <Select size="sm" label="Room Type" selectedKeys={[filterType]} onSelectionChange={(k)=> setFilterType(Array.from(k as Set<string>)[0] || 'all')}>
-            <SelectItem key="all">All</SelectItem>
-            {roomTypes.map(rt => <SelectItem key={rt.id}>{rt.name}</SelectItem>)}
+            {[{ id: 'all', name: 'All' }, ...roomTypes].map(rt => <SelectItem key={rt.id}>{rt.name}</SelectItem>)}
           </Select>
           <Input size="sm" label="Search by room" value={search} onChange={(e)=> setSearch(e.target.value)} />
         </div>

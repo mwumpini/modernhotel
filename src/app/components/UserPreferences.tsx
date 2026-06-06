@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { 
   Card, 
   CardBody, 
@@ -13,7 +13,6 @@ import {
   SelectItem,
   Switch,
   Divider,
-  Chip,
   Avatar,
   Textarea
 } from "@heroui/react";

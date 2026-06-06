@@ -33,6 +33,7 @@ import { openPrintPreview } from '../../../lib/print/engine';
 import { listTemplates } from '../../../lib/print/templates';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
 import { logAudit } from '../../../lib/analytics/auditLogStore';
+import { computeSalesTaxTotal } from '../../../lib/tax/engine';
 
 interface InvoiceItem {
   id: string;
@@ -127,6 +128,12 @@ export default function InvoicesPaymentsPage() {
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure();
   const { isOpen: isAddPaymentOpen, onOpen: onAddPaymentOpen, onClose: onAddPaymentClose } = useDisclosure();
   const { isOpen: isCorpOpen, onOpen: onCorpOpen, onClose: onCorpClose } = useDisclosure();
+  const { isOpen: isSplitOpen, onOpen: onSplitOpen, onClose: onSplitClose } = useDisclosure();
+
+  const [splitChargeId, setSplitChargeId] = useState<string>('');
+  const [splitTargetReservationId, setSplitTargetReservationId] = useState<string>('');
+  const [splitAmount, setSplitAmount] = useState<number>(0);
+  const [splitNote, setSplitNote] = useState<string>('');
 
   // Payment form state
   const [paymentForm, setPaymentForm] = useState({
@@ -212,17 +219,21 @@ export default function InvoicesPaymentsPage() {
     console.log('[INVOICE-PAYMENT] Total reservations:', frontOfficeStore.reservations.length);
     
     frontOfficeStore.reservations.forEach(res => {
+      frontOfficeStore.ensureReservationRates(res);
+      if (res.status === 'checked-in') {
+        try { frontOfficeStore.ensureFolioRoomCharges(res.id); } catch {}
+      }
       const folio = frontOfficeStore.getOrCreateFolio(res.id);
       const guest = frontOfficeStore.guests.find(g => g.id === res.guestId);
       
       // Update folio balances
       frontOfficeStore.updateFolioBalances(folio);
       
-      const subtotal = folio.totalCharges || 0;
+      const subtotal = folio.charges.reduce((s, c) => s + (c.amount || 0), 0);
       const taxAmount = folio.charges.reduce((s, c) => s + (c.tax || 0), 0);
       const totalAmount = subtotal + taxAmount;
       const paid = folio.totalPayments || 0;
-      const balance = folio.balance || Math.max(0, totalAmount - paid);
+      const balance = folio.balance ?? (totalAmount - paid);
       
       console.log(`[INVOICE-PAYMENT] Reservation ${res.id}: total=${totalAmount}, paid=${paid}, balance=${balance}, payments=${folio.payments.length}`);
       
@@ -570,7 +581,7 @@ export default function InvoicesPaymentsPage() {
 
   const calculateInvoiceTotals = () => {
     const subtotal = newInvoice.items.reduce((sum, item) => sum + item.totalPrice, 0);
-    const taxAmount = subtotal * 0.15;
+    const taxAmount = computeSalesTaxTotal(subtotal);
     const totalAmount = subtotal + taxAmount;
     return { subtotal, taxAmount, totalAmount };
   };
@@ -610,6 +621,40 @@ export default function InvoicesPaymentsPage() {
       console.error('Adjustment processing error:', error);
       alert('Adjustment failed. Please try again.');
     }
+  };
+
+  const handleSplitCharge = () => {
+    if (!selectedFolio || !splitChargeId || !splitTargetReservationId || splitAmount <= 0) {
+      alert('Select target folio and enter a valid split amount');
+      return;
+    }
+    const ok = frontOfficeStore.splitCharge(
+      selectedFolio.id,
+      splitChargeId,
+      splitTargetReservationId,
+      splitAmount,
+      splitNote.trim() || undefined,
+    );
+    if (ok) {
+      try { trackEvent('Folio.ChargeSplit' as any, { from: selectedFolio.id, to: splitTargetReservationId, amount: splitAmount }); } catch {}
+      try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: selectedFolio.id, details: `Split ₵${splitAmount} to ${splitTargetReservationId}`, severity: 'medium' }); } catch {}
+      recomputeBillingFromStore();
+      onSplitClose();
+      setSplitChargeId('');
+      setSplitTargetReservationId('');
+      setSplitAmount(0);
+      setSplitNote('');
+    } else {
+      alert('Split failed — check amount and charge');
+    }
+  };
+
+  const openSplitModal = (chargeId: string, maxAmount: number) => {
+    setSplitChargeId(chargeId);
+    setSplitAmount(maxAmount);
+    setSplitTargetReservationId('');
+    setSplitNote('');
+    onSplitOpen();
   };
 
   const handleCreateInvoice = () => {
@@ -1872,6 +1917,7 @@ export default function InvoicesPaymentsPage() {
                                   <TableCell>
                                     <div className="flex gap-2">
                                       <Button size="sm" variant="light" onPress={() => frontOfficeStore.voidCharge(selectedFolio.id, charge.id, 'User action')}>Void</Button>
+                                      <Button size="sm" variant="light" color="secondary" onPress={() => openSplitModal(charge.id, charge.amount)}>Split</Button>
                                       {reservations.length > 0 && (
                                         <Button size="sm" variant="light" onPress={() => frontOfficeStore.transferCharge(selectedFolio.id, charge.id, reservations[0].id, 'User action')}>Transfer</Button>
                                       )}
@@ -1990,6 +2036,53 @@ export default function InvoicesPaymentsPage() {
               startContent={<span>⚡</span>}
             >
               Process Adjustment
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={isSplitOpen} onClose={onSplitClose}>
+        <ModalContent>
+          <ModalHeader>Split charge</ModalHeader>
+          <ModalBody className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Move part of this charge to another guest folio. Tax is allocated proportionally.
+            </p>
+            <Input
+              type="number"
+              label="Amount to move (₵)"
+              value={splitAmount > 0 ? String(splitAmount) : ''}
+              onValueChange={(v) => setSplitAmount(parseFloat(v) || 0)}
+              min={0}
+            />
+            <Select
+              label="Target reservation"
+              placeholder="Select guest folio"
+              selectedKeys={splitTargetReservationId ? [splitTargetReservationId] : []}
+              onSelectionChange={(keys) => {
+                const k = Array.from(keys)[0];
+                setSplitTargetReservationId(k ? String(k) : '');
+              }}
+            >
+              {frontOfficeStore.reservations
+                .filter((r) => selectedFolio && r.id !== selectedFolio.id && r.status === 'checked-in')
+                .map((r) => (
+                  <SelectItem key={r.id} textValue={`${r.guestName} (${r.id})`}>
+                    {r.guestName} — {r.id}
+                  </SelectItem>
+                ))}
+            </Select>
+            <Input
+              label="Note (optional)"
+              value={splitNote}
+              onValueChange={setSplitNote}
+              placeholder="e.g. Shared corporate billing"
+            />
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={onSplitClose}>Cancel</Button>
+            <Button color="primary" onPress={handleSplitCharge} isDisabled={!splitTargetReservationId || splitAmount <= 0}>
+              Split charge
             </Button>
           </ModalFooter>
         </ModalContent>

@@ -11,7 +11,6 @@ import {
   Select, 
   SelectItem, 
   Textarea,
-  Chip,
   Avatar,
   Modal,
   ModalContent,
@@ -22,9 +21,7 @@ import {
   Tabs,
   Tab,
   Divider,
-  Progress,
-  Switch,
-  Checkbox
+  Switch
 } from '@heroui/react';
 import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
 import { trackEvent } from '../lib/analytics/trackEvent';
@@ -154,7 +151,7 @@ export default function GuestExperienceManager() {
   useEffect(() => {
     if (selectedGuest) {
       const prefs = guestPrefs.get(selectedGuest);
-      setGuestPreferences(prefs || null);
+      setGuestPreferences((prefs as any) || null);
     }
   }, [selectedGuest, guestPrefs]);
 
@@ -534,7 +531,7 @@ export default function GuestExperienceManager() {
             className="w-full md:w-80"
           >
             {guests.map(guest => (
-              <SelectItem key={guest.id} value={guest.id}>
+              <SelectItem key={guest.id}>
                 <div className="flex items-center space-x-3">
                   <Avatar 
                     name={guest.name} 

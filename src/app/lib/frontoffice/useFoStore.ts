@@ -7,10 +7,10 @@ import { frontOfficeStore } from './store';
 // Falls back to basic useSyncExternalStore if the shim isn't available
 let useSyncExternalStoreWithSelector: any;
 try {
-	// eslint-disable-next-line @typescript-eslint/no-var-requires
+	 
 	useSyncExternalStoreWithSelector = require('use-sync-external-store/shim/with-selector').useSyncExternalStoreWithSelector;
 } catch {
-	// eslint-disable-next-line @typescript-eslint/no-var-requires
+	 
 	useSyncExternalStoreWithSelector = require('use-sync-external-store/shim').useSyncExternalStore;
 }
 

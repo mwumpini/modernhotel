@@ -58,7 +58,7 @@ export async function searchCustomers(params: {
 	const [guests, companies] = await Promise.all([fetchGuests, fetchCompanies])
 
 	let unified: UnifiedCustomer[] = [
-		...guests.map((g) => ({
+		...guests.map((g: any) => ({
 			id: g.id,
 			type: 'guest' as const,
 			name: g.name,
@@ -66,7 +66,7 @@ export async function searchCustomers(params: {
 			phone: g.phone ?? null,
 			serialNumber: g.serialNumber,
 		})),
-		...companies.map((c) => ({
+		...companies.map((c: any) => ({
 			id: c.id,
 			type: 'company' as const,
 			name: c.name,

@@ -25,11 +25,7 @@ import {
   TableCell,
   Progress,
   Avatar,
-  Tooltip,
-  Checkbox,
-  Tabs,
-  Tab,
-  Divider
+  Checkbox
 } from "@heroui/react";
 import { housekeepingStore } from '../../lib/housekeeping/store';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
@@ -446,22 +442,22 @@ export default function TaskManagementPanel() {
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Statuses</SelectItem>
-              <SelectItem key="pending" value="pending">⏳ Pending</SelectItem>
-              <SelectItem key="in-progress" value="in-progress">🔄 In Progress</SelectItem>
-              <SelectItem key="completed" value="completed">✅ Completed</SelectItem>
-              <SelectItem key="verified" value="verified">🔍 Verified</SelectItem>
+              <SelectItem key="all">All Statuses</SelectItem>
+              <SelectItem key="pending">⏳ Pending</SelectItem>
+              <SelectItem key="in-progress">🔄 In Progress</SelectItem>
+              <SelectItem key="completed">✅ Completed</SelectItem>
+              <SelectItem key="verified">🔍 Verified</SelectItem>
             </Select>
             <Select
               placeholder="Filter by priority"
               value={priorityFilter}
               onChange={(e) => setPriorityFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Priorities</SelectItem>
-              <SelectItem key="low" value="low">Low</SelectItem>
-              <SelectItem key="medium" value="medium">Medium</SelectItem>
-              <SelectItem key="high" value="high">High</SelectItem>
-              <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
+              <SelectItem key="all">All Priorities</SelectItem>
+              <SelectItem key="low">Low</SelectItem>
+              <SelectItem key="medium">Medium</SelectItem>
+              <SelectItem key="high">High</SelectItem>
+              <SelectItem key="urgent">Urgent</SelectItem>
             </Select>
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600">Total:</span>
@@ -565,7 +561,7 @@ export default function TaskManagementPanel() {
                           onChange={(e) => handleAssignTask(task.id, e.target.value)}
                         >
                           {staff.filter(s => s.active).map(s => (
-                            <SelectItem key={s.id} value={s.id}>
+                            <SelectItem key={s.id}>
                               {s.name}
                             </SelectItem>
                           ))}
@@ -577,10 +573,10 @@ export default function TaskManagementPanel() {
                         value={task.status}
                         onChange={(e) => handleUpdateTaskStatus(task.id, e.target.value as TaskStatus)}
                       >
-                        <SelectItem key="pending" value="pending">⏳ Pending</SelectItem>
-                        <SelectItem key="in-progress" value="in-progress">🔄 In Progress</SelectItem>
-                        <SelectItem key="completed" value="completed">✅ Completed</SelectItem>
-                        <SelectItem key="verified" value="verified">🔍 Verified</SelectItem>
+                        <SelectItem key="pending">⏳ Pending</SelectItem>
+                        <SelectItem key="in-progress">🔄 In Progress</SelectItem>
+                        <SelectItem key="completed">✅ Completed</SelectItem>
+                        <SelectItem key="verified">🔍 Verified</SelectItem>
                       </Select>
                     </div>
                   </TableCell>
@@ -614,7 +610,7 @@ export default function TaskManagementPanel() {
                 required
               >
                 {frontOfficeStore.roomTypes.map(type => (
-                  <SelectItem key={type.id} value={type.id}>
+                  <SelectItem key={type.id}>
                     {type.name}
                   </SelectItem>
                 ))}
@@ -626,11 +622,11 @@ export default function TaskManagementPanel() {
                 onChange={(e) => setTaskForm({...taskForm, taskType: e.target.value as any})}
                 required
               >
-                <SelectItem key="daily" value="daily">Daily Cleaning</SelectItem>
-                <SelectItem key="turnover" value="turnover">Room Turnover</SelectItem>
-                <SelectItem key="deep-clean" value="deep-clean">Deep Cleaning</SelectItem>
-                <SelectItem key="maintenance" value="maintenance">Maintenance Support</SelectItem>
-                <SelectItem key="inspection" value="inspection">Inspection</SelectItem>
+                <SelectItem key="daily">Daily Cleaning</SelectItem>
+                <SelectItem key="turnover">Room Turnover</SelectItem>
+                <SelectItem key="deep-clean">Deep Cleaning</SelectItem>
+                <SelectItem key="maintenance">Maintenance Support</SelectItem>
+                <SelectItem key="inspection">Inspection</SelectItem>
               </Select>
               <Select
                 label="Priority"
@@ -639,16 +635,16 @@ export default function TaskManagementPanel() {
                 onChange={(e) => setTaskForm({...taskForm, priority: e.target.value as any})}
                 required
               >
-                <SelectItem key="low" value="low">Low</SelectItem>
-                <SelectItem key="medium" value="medium">Medium</SelectItem>
-                <SelectItem key="high" value="high">High</SelectItem>
-                <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
+                <SelectItem key="low">Low</SelectItem>
+                <SelectItem key="medium">Medium</SelectItem>
+                <SelectItem key="high">High</SelectItem>
+                <SelectItem key="urgent">Urgent</SelectItem>
               </Select>
               <Input
                 label="Estimated Time (minutes)"
                 type="number"
                 placeholder="30"
-                value={taskForm.estimatedMinutes}
+                value={String(taskForm.estimatedMinutes)}
                 onChange={(e) => setTaskForm({...taskForm, estimatedMinutes: parseInt(e.target.value)})}
                 required
               />
@@ -658,10 +654,9 @@ export default function TaskManagementPanel() {
                 value={taskForm.assignedTo}
                 onChange={(e) => setTaskForm({...taskForm, assignedTo: e.target.value})}
               >
-                <SelectItem key="" value="">Unassigned</SelectItem>
-                {staff.filter(s => s.active).map(s => (
-                  <SelectItem key={s.id} value={s.id}>
-                    {s.name} ({s.role})
+                {[{ id: '', name: 'Unassigned', role: '' }, ...staff.filter(s => s.active)].map(s => (
+                  <SelectItem key={s.id}>
+                    {s.id === '' ? 'Unassigned' : `${s.name} (${s.role})`}
                   </SelectItem>
                 ))}
               </Select>
@@ -823,10 +818,9 @@ export default function TaskManagementPanel() {
                   value={bulkTaskForm.assignedTo}
                   onChange={(e) => setBulkTaskForm({...bulkTaskForm, assignedTo: e.target.value})}
                 >
-                  <SelectItem key="" value="">Unassigned</SelectItem>
-                  {staff.filter(s => s.active).map(s => (
-                    <SelectItem key={s.id} value={s.id}>
-                      {s.name} ({s.role})
+                  {[{ id: '', name: 'Unassigned', role: '' }, ...staff.filter(s => s.active)].map(s => (
+                    <SelectItem key={s.id}>
+                      {s.id === '' ? 'Unassigned' : `${s.name} (${s.role})`}
                     </SelectItem>
                   ))}
                 </Select>
@@ -836,10 +830,10 @@ export default function TaskManagementPanel() {
                   value={bulkTaskForm.priority}
                   onChange={(e) => setBulkTaskForm({...bulkTaskForm, priority: e.target.value as any})}
                 >
-                  <SelectItem key="low" value="low">Low</SelectItem>
-                  <SelectItem key="medium" value="medium">Medium</SelectItem>
-                  <SelectItem key="high" value="high">High</SelectItem>
-                  <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
+                  <SelectItem key="low">Low</SelectItem>
+                  <SelectItem key="medium">Medium</SelectItem>
+                  <SelectItem key="high">High</SelectItem>
+                  <SelectItem key="urgent">Urgent</SelectItem>
                 </Select>
                 <div className="flex items-center gap-2">
                   <Checkbox

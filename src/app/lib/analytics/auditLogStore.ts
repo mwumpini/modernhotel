@@ -1,7 +1,7 @@
 'use client';
 
 export type AuditArea = 'frontdesk' | 'f&b' | 'kitchen' | 'housekeeping' | 'inventory' | 'security' | 'hr' | 'accounting' | 'settings' | 'system';
-export type AuditAction = 'create' | 'update' | 'delete' | 'status' | 'assign' | 'print' | 'export' | 'login' | 'logout' | 'view' | 'other';
+export type AuditAction = 'create' | 'update' | 'delete' | 'status' | 'assign' | 'print' | 'export' | 'login' | 'logout' | 'view' | 'void' | 'refund' | 'other';
 
 export interface AuditRecord {
 	 id: string;

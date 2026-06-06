@@ -4,8 +4,7 @@ import React, { useState, useMemo } from 'react';
 import { 
   Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Chip, Badge, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Tabs, Tab, Textarea, Divider, Spinner, Alert, Pagination
+  Chip, Badge, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure, Textarea, Spinner, Alert, Pagination
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { ChartOfAccounts as ChartOfAccountsType } from '@/app/lib/accounting/models';

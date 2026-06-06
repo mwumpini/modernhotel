@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Card, CardBody, CardHeader, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Divider, Badge, Progress, Tabs, Tab } from "@heroui/react";
+import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Tabs, Tab } from "@heroui/react";
 import { ordersStore } from '../lib/fb/ordersStore';
 import DepartmentActivityLog from './DepartmentActivityLog';
 
@@ -397,9 +397,8 @@ export default function FoodBeverageRestaurantBar() {
                     onChange={(e) => setSelectedCategory(e.target.value)}
                     className="w-64"
                   >
-                    <SelectItem key="all" value="all">All Categories</SelectItem>
-                    {menuCategories.map((category) => (
-                      <SelectItem key={category.id} value={category.name}>
+                    {[{ id: 'all', name: 'All Categories' }, ...menuCategories].map((category) => (
+                      <SelectItem key={category.id}>
                         {category.name}
                       </SelectItem>
                     ))}
@@ -523,7 +522,7 @@ export default function FoodBeverageRestaurantBar() {
               
               <Select label="Table Preference" placeholder="Select table">
                 {tables.filter(t => t.status === 'available').map((table) => (
-                  <SelectItem key={table.id} value={table.number}>
+                  <SelectItem key={table.id}>
                     Table {table.number} ({table.capacity} guests)
                   </SelectItem>
                 ))}
@@ -553,7 +552,7 @@ export default function FoodBeverageRestaurantBar() {
                 <Input label="Item Name" placeholder="Enter item name" />
                 <Select label="Category" placeholder="Select category">
                   {menuCategories.map((category) => (
-                    <SelectItem key={category.id} value={category.name}>
+                    <SelectItem key={category.id}>
                       {category.name}
                     </SelectItem>
                   ))}
@@ -566,8 +565,8 @@ export default function FoodBeverageRestaurantBar() {
                 <Input label="Price (₵)" type="number" placeholder="0.00" />
                 <Input label="Preparation Time (min)" type="number" placeholder="15" />
                 <Select label="Availability" placeholder="Select status">
-                  <SelectItem key="available" value="available">Available</SelectItem>
-                  <SelectItem key="unavailable" value="unavailable">Unavailable</SelectItem>
+                  <SelectItem key="available">Available</SelectItem>
+                  <SelectItem key="unavailable">Unavailable</SelectItem>
                 </Select>
               </div>
               

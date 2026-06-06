@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Card, CardBody, CardHeader, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Divider, Badge, Progress, Tabs, Tab } from "@heroui/react";
+import { Card, CardBody, CardHeader, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Progress, Tabs, Tab } from "@heroui/react";
 
 interface Staff {
   id: string;
@@ -492,11 +492,11 @@ export default function FoodBeverageStaffReports() {
                       onChange={(e) => setSelectedDepartment(e.target.value)}
                       className="w-48"
                     >
-                      <SelectItem key="all" value="all">All Departments</SelectItem>
-                      <SelectItem key="kitchen" value="kitchen">Kitchen</SelectItem>
-                      <SelectItem key="service" value="service">Service</SelectItem>
-                      <SelectItem key="bar" value="bar">Bar</SelectItem>
-                      <SelectItem key="management" value="management">Management</SelectItem>
+                      <SelectItem key="all">All Departments</SelectItem>
+                      <SelectItem key="kitchen">Kitchen</SelectItem>
+                      <SelectItem key="service">Service</SelectItem>
+                      <SelectItem key="bar">Bar</SelectItem>
+                      <SelectItem key="management">Management</SelectItem>
                     </Select>
                     <Select
                       label="Filter by Status"
@@ -505,10 +505,10 @@ export default function FoodBeverageStaffReports() {
                       onChange={(e) => setSelectedStatus(e.target.value)}
                       className="w-48"
                     >
-                      <SelectItem key="all" value="all">All Status</SelectItem>
-                      <SelectItem key="active" value="active">Active</SelectItem>
-                      <SelectItem key="inactive" value="inactive">Inactive</SelectItem>
-                      <SelectItem key="on-leave" value="on-leave">On Leave</SelectItem>
+                      <SelectItem key="all">All Status</SelectItem>
+                      <SelectItem key="active">Active</SelectItem>
+                      <SelectItem key="inactive">Inactive</SelectItem>
+                      <SelectItem key="on-leave">On Leave</SelectItem>
                     </Select>
                   </div>
                 </div>
@@ -862,27 +862,27 @@ export default function FoodBeverageStaffReports() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Input label="Full Name" placeholder="Enter full name" />
                 <Select label="Position" placeholder="Select position">
-                  <SelectItem key="head-chef" value="head-chef">Head Chef</SelectItem>
-                  <SelectItem key="chef" value="chef">Chef</SelectItem>
-                  <SelectItem key="kitchen-assistant" value="kitchen-assistant">Kitchen Assistant</SelectItem>
-                  <SelectItem key="server" value="server">Server</SelectItem>
-                  <SelectItem key="bartender" value="bartender">Bartender</SelectItem>
-                  <SelectItem key="manager" value="manager">Manager</SelectItem>
+                  <SelectItem key="head-chef">Head Chef</SelectItem>
+                  <SelectItem key="chef">Chef</SelectItem>
+                  <SelectItem key="kitchen-assistant">Kitchen Assistant</SelectItem>
+                  <SelectItem key="server">Server</SelectItem>
+                  <SelectItem key="bartender">Bartender</SelectItem>
+                  <SelectItem key="manager">Manager</SelectItem>
                 </Select>
               </div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Select label="Department" placeholder="Select department">
-                  <SelectItem key="kitchen" value="kitchen">Kitchen</SelectItem>
-                  <SelectItem key="service" value="service">Service</SelectItem>
-                  <SelectItem key="bar" value="bar">Bar</SelectItem>
-                  <SelectItem key="management" value="management">Management</SelectItem>
+                  <SelectItem key="kitchen">Kitchen</SelectItem>
+                  <SelectItem key="service">Service</SelectItem>
+                  <SelectItem key="bar">Bar</SelectItem>
+                  <SelectItem key="management">Management</SelectItem>
                 </Select>
                 <Select label="Shift" placeholder="Select shift">
-                  <SelectItem key="morning" value="morning">Morning</SelectItem>
-                  <SelectItem key="afternoon" value="afternoon">Afternoon</SelectItem>
-                  <SelectItem key="evening" value="evening">Evening</SelectItem>
-                  <SelectItem key="night" value="night">Night</SelectItem>
+                  <SelectItem key="morning">Morning</SelectItem>
+                  <SelectItem key="afternoon">Afternoon</SelectItem>
+                  <SelectItem key="evening">Evening</SelectItem>
+                  <SelectItem key="night">Night</SelectItem>
                 </Select>
               </div>
               
@@ -922,10 +922,10 @@ export default function FoodBeverageStaffReports() {
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Select label="Category" placeholder="Select category">
-                  <SelectItem key="food-safety" value="food-safety">Food Safety</SelectItem>
-                  <SelectItem key="customer-service" value="customer-service">Customer Service</SelectItem>
-                  <SelectItem key="management" value="management">Management</SelectItem>
-                  <SelectItem key="technical" value="technical">Technical</SelectItem>
+                  <SelectItem key="food-safety">Food Safety</SelectItem>
+                  <SelectItem key="customer-service">Customer Service</SelectItem>
+                  <SelectItem key="management">Management</SelectItem>
+                  <SelectItem key="technical">Technical</SelectItem>
                 </Select>
                 <Input label="Duration (hours)" type="number" placeholder="4" />
               </div>
@@ -939,7 +939,7 @@ export default function FoodBeverageStaffReports() {
               
               <Select label="Staff Members" placeholder="Select staff members" selectionMode="multiple">
                 {staff.map((member) => (
-                  <SelectItem key={member.id} value={member.name}>
+                  <SelectItem key={member.id}>
                     {member.name} - {member.position}
                   </SelectItem>
                 ))}

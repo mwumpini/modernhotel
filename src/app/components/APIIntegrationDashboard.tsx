@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { 
   Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
-  Tabs, Tab, Chip, Switch, Input, Textarea
+  Tabs, Tab, Chip, Switch
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
 import { trackEvent } from '../lib/analytics/trackEvent';

@@ -9,7 +9,6 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Card, 
   CardBody, 
-  CardHeader, 
   Button, 
   Badge, 
   Table, 
@@ -28,12 +27,6 @@ import {
   ModalBody,
   ModalFooter,
   useDisclosure,
-  Chip,
-  Avatar,
-  Dropdown,
-  DropdownTrigger,
-  DropdownMenu,
-  DropdownItem,
   Textarea,
   Accordion,
   AccordionItem
@@ -43,6 +36,8 @@ import { openPrintPreview } from '../../lib/print/engine';
 import { listTemplates } from '../../lib/print/templates';
 import { useSettingsStore } from '../../lib/settings/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
+import { salesTaxBreakdown } from '../../lib/tax/engine';
+import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
 
 interface CheckOutData {
   id: string; // Reservation ID
@@ -152,16 +147,20 @@ export default function CheckOutsPage() {
   // Compute accurate folio totals for a reservation
   const getFolioTotals = (reservationId: string) => {
     const folio = frontOfficeStore.getOrCreateFolio(reservationId);
-    const serviceKeywords = ['service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar', 'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch', 'dinner', 'snack', 'beverage', 'drink', 'food', 'meal'];
-    const serviceCharges = folio.charges?.filter(c => serviceKeywords.some(k => (c.description || '').toLowerCase().includes(k)))
-      .reduce((s, c) => s + (c.amount || 0), 0) || 0;
-    const otherCharges = folio.charges?.filter(c => !serviceKeywords.some(k => (c.description || '').toLowerCase().includes(k)))
-      .reduce((s, c) => s + (c.amount || 0), 0) || 0;
-    const taxTotal = folio.charges?.reduce((s, c) => s + (c.tax || 0), 0) || 0;
-    const totalCharges = (folio.charges || []).reduce((s, c) => s + (c.amount || 0) + (c.tax || 0), 0);
-    const totalPayments = (folio.payments || []).filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
-    const outstandingBalance = Math.max(0, totalCharges - totalPayments);
-    return { totalCharges, totalPayments, outstandingBalance, serviceCharges, otherCharges, taxTotal };
+    frontOfficeStore.updateFolioBalances(folio);
+    const totals = getFolioDisplayTotals(folio);
+    return {
+      totalCharges: totals.totalCharges,
+      totalPayments: totals.totalPayments,
+      outstandingBalance: totals.outstandingBalance,
+      balance: totals.balance,
+      serviceCharges: totals.serviceCharges,
+      serviceChargesInclusive: totals.serviceChargesInclusive,
+      otherCharges: totals.otherCharges,
+      taxTotal: totals.taxTotal,
+      roomCharges: totals.roomCharges,
+      roomChargesInclusive: totals.roomChargesInclusive,
+    };
   };
 
   const loadCheckOuts = () => {
@@ -172,20 +171,14 @@ export default function CheckOutsPage() {
       const checkInDate = new Date(reservation.arrival);
       const checkOutDate = new Date(reservation.departure);
       const nightsStayed = Math.max(1, Math.ceil((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24)));
+      frontOfficeStore.ensureReservationRates(reservation);
+      frontOfficeStore.ensureFolioRoomCharges(reservation.id);
       const folioTotals = getFolioTotals(reservation.id);
       const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
-      // Prefer gross (tax-inclusive) nightly; fallback by applying current local tax rates
-      const baseCandidate = reservation.rateBreakdown?.[0]?.base || roomType?.baseRate || 0;
-      const taxRates = (() => {
-        try {
-          const fn = (frontOfficeStore as any).getTaxRates;
-          if (typeof fn === 'function') return fn();
-          return { vat: 12.5, nhil: 2.5, levy: 1.0 };
-        } catch { return { vat: 12.5, nhil: 2.5, levy: 1.0 }; }
-      })();
-      const grossFactor = 1 + ((taxRates.vat + taxRates.nhil + taxRates.levy) / 100);
-      const roomRate = Math.max(0, Math.round((reservation.rateBreakdown?.[0]?.total || (baseCandidate * grossFactor)) * 100) / 100);
-      const roomTotal = roomRate * nightsStayed;
+      const quote = frontOfficeStore.getReservationQuote(reservation);
+      // Table: tax-inclusive for front-desk quotes; folio accordion keeps net + tax columns.
+      const roomRate = quote.nightlyGross;
+      const roomTotal = folioTotals.roomChargesInclusive || quote.grandTotal;
 
       const status: 'pending' | 'processing' | 'completed' | 'extended' =
         reservation.status === 'checked-out'
@@ -212,7 +205,7 @@ export default function CheckOutsPage() {
         totalCharges: folioTotals.totalCharges,
         totalPayments: folioTotals.totalPayments,
         outstandingBalance: folioTotals.outstandingBalance,
-        serviceCharges: folioTotals.serviceCharges,
+        serviceCharges: folioTotals.serviceChargesInclusive,
         otherCharges: folioTotals.otherCharges,
         taxTotal: folioTotals.taxTotal,
         roomTotal,
@@ -454,6 +447,8 @@ export default function CheckOutsPage() {
   const checkoutStats = getCheckoutStats();
 
   const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('en-GH', { year: 'numeric', month: 'short', day: 'numeric' });
+  const formatMoney = (amount: number) =>
+    amount.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const formatTime = (dateString: string) => new Date(dateString).toLocaleTimeString('en-GH', { hour: '2-digit', minute: '2-digit', hour12: true });
 
   const getAnalyticsData = (checkOut: CheckOutData) => ({
@@ -483,16 +478,8 @@ export default function CheckOutsPage() {
     const items = (folio.charges || []).map((c) => ({ description: c.description || 'Charge', amount: (c.amount || 0) + (c.tax || 0), unitPrice: c.amount, qty: 1 }));
     const baseSum = (folio.charges || []).reduce((s, c) => s + (c.amount || 0), 0);
     const taxSum = (folio.charges || []).reduce((s, c) => s + (c.tax || 0), 0);
-    // Ghana tax split approximation using stored local rates
-    const vatRate = Number((typeof localStorage !== 'undefined' && localStorage.getItem('tax.vat')) || '12.5');
-    const nhilRate = Number((typeof localStorage !== 'undefined' && localStorage.getItem('tax.nhil')) || '2.5');
-    const levyRate = Number((typeof localStorage !== 'undefined' && localStorage.getItem('tax.tourism')) || '1.0');
-    const totalRate = vatRate + nhilRate + levyRate;
-    const taxes = totalRate > 0 ? {
-      vat: baseSum * (vatRate / 100),
-      nhil: baseSum * (nhilRate / 100),
-      levy: baseSum * (levyRate / 100)
-    } : { vat: 0, nhil: 0, levy: 0 };
+    const breakdown = salesTaxBreakdown(baseSum);
+    const taxes = { vat: breakdown.vat, nhil: breakdown.nhil, levy: breakdown.tourism };
     const payments = (folio.payments || []).filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
     const subTotal = baseSum;
     const grandTotal = baseSum + taxSum;
@@ -639,6 +626,14 @@ export default function CheckOutsPage() {
             </CardBody>
           </Card>
 
+          <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg mb-4">
+            <strong>Column Guide:</strong>
+            <span className="ml-2">RATE/NIGHT = Per night room rate (incl. tax)</span>
+            <span className="ml-4">ROOM TOTAL = Posted room charges (incl. tax)</span>
+            <span className="ml-4">SERVICE CHARGES = Services (incl. tax)</span>
+            <span className="ml-4">AMOUNT = Total charges incl. tax — open View for folio breakdown</span>
+          </div>
+
           <Table aria-label="Check-outs table" className="min-w-full">
             <TableHeader>
               <TableColumn className="w-28">ID</TableColumn>
@@ -696,14 +691,14 @@ export default function CheckOutsPage() {
                   <TableCell className="text-center">{formatDate(checkOut.checkInDate)}</TableCell>
                   <TableCell className="text-center">{formatDate(checkOut.checkOutDate)}</TableCell>
                   <TableCell className="text-center">{checkOut.nightsStayed}</TableCell>
-                  <TableCell className="text-center font-semibold">₵{checkOut.roomRate.toLocaleString()}</TableCell>
-                  <TableCell className="text-center font-semibold text-purple-600">₵{(checkOut.roomTotal || 0).toLocaleString()}</TableCell>
-                  <TableCell className="text-center font-semibold text-orange-600">₵{(checkOut.serviceCharges || 0).toLocaleString()}</TableCell>
-                  <TableCell className="text-center font-semibold text-blue-600">₵{(checkOut.totalCharges || 0).toLocaleString()}</TableCell>
-                  <TableCell className="text-center text-green-600 font-semibold">₵{(checkOut.totalPayments || 0).toLocaleString()}</TableCell>
+                  <TableCell className="text-center font-semibold">₵{formatMoney(checkOut.roomRate)}</TableCell>
+                  <TableCell className="text-center font-semibold text-purple-600">₵{formatMoney(checkOut.roomTotal || 0)}</TableCell>
+                  <TableCell className="text-center font-semibold text-orange-600">₵{formatMoney(checkOut.serviceCharges || 0)}</TableCell>
+                  <TableCell className="text-center font-semibold text-blue-600">₵{formatMoney(checkOut.totalCharges || 0)}</TableCell>
+                  <TableCell className="text-center text-green-600 font-semibold">₵{formatMoney(checkOut.totalPayments || 0)}</TableCell>
                   <TableCell className="text-center">
                     <span className={`font-semibold ${(checkOut.outstandingBalance || 0) > 0 ? 'text-red-600' : (checkOut.outstandingBalance || 0) < 0 ? 'text-green-600' : 'text-gray-500'}`}>
-                      ₵{(checkOut.outstandingBalance || 0).toLocaleString()}
+                      ₵{formatMoney(checkOut.outstandingBalance || 0)}
                     </span>
                   </TableCell>
                   <TableCell className="text-center">

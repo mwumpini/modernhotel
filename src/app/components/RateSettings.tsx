@@ -104,7 +104,7 @@ export default function RateSettings() {
   ]);
 
   // NEW: Dynamic pricing rules
-  const [dynamicPricingRules, setDynamicPricingRules] = useState([
+  const [dynamicPricingRules, setDynamicPricingRules] = useState<any[]>([
     {
       id: 'weekend_premium',
       name: 'Weekend Premium',

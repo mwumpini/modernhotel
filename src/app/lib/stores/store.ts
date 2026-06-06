@@ -3,15 +3,12 @@
 import { 
   InventoryItem, 
   Supplier, 
-  PurchaseOrder, 
-  PurchaseOrderItem,
+  PurchaseOrder,
   StockMovement,
   StockCount,
-  StockCountItem,
   InventoryCategory,
   CostCenter,
   InventoryAlert,
-  StockStatus,
   PurchaseOrderStatus,
   StockMovementType
 } from './types';
@@ -108,7 +105,7 @@ class StoresStore {
         lastUpdated: new Date().toISOString(),
         reorderPoint: 60,
         leadTime: 7,
-        taxRate: 12.5
+        taxRate: 15
       },
       {
         id: 'item2',
@@ -128,7 +125,7 @@ class StoresStore {
         lastUpdated: new Date().toISOString(),
         reorderPoint: 25,
         leadTime: 2,
-        taxRate: 12.5
+        taxRate: 15
       },
       {
         id: 'item3',
@@ -147,7 +144,7 @@ class StoresStore {
         lastUpdated: new Date().toISOString(),
         reorderPoint: 40,
         leadTime: 5,
-        taxRate: 12.5
+        taxRate: 15
       },
       {
         id: 'item4',
@@ -166,7 +163,7 @@ class StoresStore {
         lastUpdated: new Date().toISOString(),
         reorderPoint: 120,
         leadTime: 10,
-        taxRate: 12.5
+        taxRate: 15
       }
     ];
 

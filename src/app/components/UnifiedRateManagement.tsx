@@ -7,8 +7,7 @@ import {
   CardHeader, 
   Button,
   Tabs,
-  Tab,
-  Divider
+  Tab
 } from "@heroui/react";
 import { 
   BuildingOfficeIcon,

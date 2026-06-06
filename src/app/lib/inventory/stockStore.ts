@@ -448,11 +448,12 @@ export const useStockStore = create<StockStore>((set, get) => ({
     const breakdown: Record<string, { count: number; value: number }> = {};
     
     get().stockItems.forEach(item => {
-      if (!breakdown[item.supplierName]) {
-        breakdown[item.supplierName] = { count: 0, value: 0 };
+      const supplier = item.supplierName || 'Unknown';
+      if (!breakdown[supplier]) {
+        breakdown[supplier] = { count: 0, value: 0 };
       }
-      breakdown[item.supplierName].count += item.currentStock;
-      breakdown[item.supplierName].value += item.currentStock * item.unitCost;
+      breakdown[supplier].count += item.currentStock;
+      breakdown[supplier].value += item.currentStock * item.unitCost;
     });
     
     return breakdown;

@@ -209,7 +209,7 @@ class CustomerStore {
     const customer = this.getCustomer(customerId);
     if (!customer) return false;
     
-    customer.preferences = { ...customer.preferences, ...preferences };
+    customer.preferences = { ...customer.preferences, ...preferences } as Customer['preferences'];
     this.notifyListeners();
     return true;
   }

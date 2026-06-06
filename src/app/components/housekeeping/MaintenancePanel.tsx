@@ -24,9 +24,7 @@ import {
   TableRow,
   TableCell,
   Avatar,
-  Tooltip,
-  Tabs,
-  Tab
+  Tooltip
 } from "@heroui/react";
 import { housekeepingStore } from '../../lib/housekeeping/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
@@ -313,37 +311,37 @@ export default function MaintenancePanel() {
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Statuses</SelectItem>
-              <SelectItem key="reported" value="reported">📝 Reported</SelectItem>
-              <SelectItem key="assigned" value="assigned">👥 Assigned</SelectItem>
-              <SelectItem key="in-progress" value="in-progress">🔄 In Progress</SelectItem>
-              <SelectItem key="completed" value="completed">✅ Completed</SelectItem>
-              <SelectItem key="verified" value="verified">🔍 Verified</SelectItem>
+              <SelectItem key="all">All Statuses</SelectItem>
+              <SelectItem key="reported">📝 Reported</SelectItem>
+              <SelectItem key="assigned">👥 Assigned</SelectItem>
+              <SelectItem key="in-progress">🔄 In Progress</SelectItem>
+              <SelectItem key="completed">✅ Completed</SelectItem>
+              <SelectItem key="verified">🔍 Verified</SelectItem>
             </Select>
             <Select
               placeholder="Filter by priority"
               value={priorityFilter}
               onChange={(e) => setPriorityFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Priorities</SelectItem>
-              <SelectItem key="low" value="low">Low</SelectItem>
-              <SelectItem key="medium" value="medium">Medium</SelectItem>
-              <SelectItem key="high" value="high">High</SelectItem>
-              <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
+              <SelectItem key="all">All Priorities</SelectItem>
+              <SelectItem key="low">Low</SelectItem>
+              <SelectItem key="medium">Medium</SelectItem>
+              <SelectItem key="high">High</SelectItem>
+              <SelectItem key="urgent">Urgent</SelectItem>
             </Select>
             <Select
               placeholder="Filter by category"
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Categories</SelectItem>
-              <SelectItem key="plumbing" value="plumbing">🚰 Plumbing</SelectItem>
-              <SelectItem key="electrical" value="electrical">⚡ Electrical</SelectItem>
-              <SelectItem key="hvac" value="hvac">❄️ HVAC</SelectItem>
-              <SelectItem key="furniture" value="furniture">🪑 Furniture</SelectItem>
-              <SelectItem key="appliances" value="appliances">🔌 Appliances</SelectItem>
-              <SelectItem key="structural" value="structural">🏗️ Structural</SelectItem>
-              <SelectItem key="other" value="other">🔧 Other</SelectItem>
+              <SelectItem key="all">All Categories</SelectItem>
+              <SelectItem key="plumbing">🚰 Plumbing</SelectItem>
+              <SelectItem key="electrical">⚡ Electrical</SelectItem>
+              <SelectItem key="hvac">❄️ HVAC</SelectItem>
+              <SelectItem key="furniture">🪑 Furniture</SelectItem>
+              <SelectItem key="appliances">🔌 Appliances</SelectItem>
+              <SelectItem key="structural">🏗️ Structural</SelectItem>
+              <SelectItem key="other">🔧 Other</SelectItem>
             </Select>
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600">Filtered:</span>
@@ -516,7 +514,7 @@ export default function MaintenancePanel() {
                   isRequired
                 >
                   {rooms.map((room) => (
-                    <SelectItem key={room.roomNumber} value={room.roomNumber}>
+                    <SelectItem key={room.roomNumber}>
                       Room {room.roomNumber}
                     </SelectItem>
                   ))}
@@ -533,13 +531,13 @@ export default function MaintenancePanel() {
                     placeholder="Select category"
                     isRequired
                   >
-                    <SelectItem key="plumbing" value="plumbing">🚰 Plumbing</SelectItem>
-                    <SelectItem key="electrical" value="electrical">⚡ Electrical</SelectItem>
-                    <SelectItem key="hvac" value="hvac">❄️ HVAC</SelectItem>
-                    <SelectItem key="furniture" value="furniture">🪑 Furniture</SelectItem>
-                    <SelectItem key="appliances" value="appliances">🔌 Appliances</SelectItem>
-                    <SelectItem key="structural" value="structural">🏗️ Structural</SelectItem>
-                    <SelectItem key="other" value="other">🔧 Other</SelectItem>
+                    <SelectItem key="plumbing">🚰 Plumbing</SelectItem>
+                    <SelectItem key="electrical">⚡ Electrical</SelectItem>
+                    <SelectItem key="hvac">❄️ HVAC</SelectItem>
+                    <SelectItem key="furniture">🪑 Furniture</SelectItem>
+                    <SelectItem key="appliances">🔌 Appliances</SelectItem>
+                    <SelectItem key="structural">🏗️ Structural</SelectItem>
+                    <SelectItem key="other">🔧 Other</SelectItem>
                   </Select>
                 </div>
                 <div>
@@ -550,10 +548,10 @@ export default function MaintenancePanel() {
                     placeholder="Select priority"
                     isRequired
                   >
-                    <SelectItem key="low" value="low">Low</SelectItem>
-                    <SelectItem key="medium" value="medium">Medium</SelectItem>
-                    <SelectItem key="high" value="high">High</SelectItem>
-                    <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
+                    <SelectItem key="low">Low</SelectItem>
+                    <SelectItem key="medium">Medium</SelectItem>
+                    <SelectItem key="high">High</SelectItem>
+                    <SelectItem key="urgent">Urgent</SelectItem>
                   </Select>
                 </div>
               </div>
@@ -576,7 +574,7 @@ export default function MaintenancePanel() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">Estimated Cost</label>
                   <Input
                     type="number"
-                    value={maintenanceForm.estimatedCost}
+                    value={String(maintenanceForm.estimatedCost)}
                     onChange={(e) => setMaintenanceForm({...maintenanceForm, estimatedCost: parseFloat(e.target.value) || 0})}
                     placeholder="0.00"
                     startContent={<span className="text-gray-400">$</span>}
@@ -590,7 +588,7 @@ export default function MaintenancePanel() {
                     placeholder="Select staff member"
                   >
                     {staff.filter(s => s.active && s.role === 'maintenance').map((member) => (
-                      <SelectItem key={member.id} value={member.id}>
+                      <SelectItem key={member.id}>
                         {member.name} ({member.role})
                       </SelectItem>
                     ))}

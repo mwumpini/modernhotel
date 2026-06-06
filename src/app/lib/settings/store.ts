@@ -896,6 +896,11 @@ export interface RoomManagementSettings {
   noShowChargeValue?: number;
   noShowCutoffHour?: number; // hour after scheduled arrival to mark no-show
 
+  /** Post first night room charge at check-in (default false — night audit posts nightly). */
+  postFirstNightAtCheckin?: boolean;
+  /** Auto-run night audit at 1:00am (default true). */
+  nightAuditAutoRun?: boolean;
+
   // Cancellation Policy
   cancellationPolicyEnabled?: boolean;
   freeCancellationHours?: number; // hours before arrival
@@ -1239,8 +1244,9 @@ const defaultGhanaCompliance: CountryCompliance = {
   numberFormat: '#,##0.00',
   
   taxRates: {
-    vat: 12.5,
+    vat: 15,
     nhil: 2.5,
+    getfundLevy: 2.5,
     tourismLevy: 1.0,
     ssnit: 5.5,
   },
@@ -1320,6 +1326,20 @@ const defaultRoles: UserRole[] = [
       'frontdesk.checkout',
       'housekeeping.view',
       'f&b.pos',
+    ],
+    isActive: true,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  {
+    id: 'night_manager',
+    name: 'Night Manager',
+    description: 'Night audit and end-of-day front office operations',
+    permissions: [
+      'dashboard.view',
+      'frontdesk.*',
+      'reports.view',
+      'settings.view',
     ],
     isActive: true,
     createdAt: new Date().toISOString(),
@@ -1426,7 +1446,47 @@ const defaultSettings: SystemSettings = {
         accountLocked: false,
         twoFactorEnabled: false,
       },
-    }
+    },
+    {
+      id: 'night_mgr_001',
+      username: 'nightmgr',
+      email: 'night@demohotel.com',
+      firstName: 'Night',
+      lastName: 'Manager',
+      roleId: 'night_manager',
+      isActive: true,
+      lastLogin: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      preferences: {
+        theme: 'light',
+        language: 'en',
+        timezone: 'Africa/Accra',
+        dateFormat: 'DD/MM/YYYY',
+        currency: 'GHS',
+        notifications: { email: true, push: true, sms: false, sound: true },
+        dashboard: {
+          defaultView: 'overview',
+          quickActions: ['check-in', 'night-audit', 'reports'],
+          widgets: ['recent-activity', 'notifications'],
+        },
+        accessibility: { fontSize: 'medium', highContrast: false, reduceMotion: false },
+      },
+      profile: {
+        phone: '+233 30 555 0101',
+        address: 'Accra, Ghana',
+        department: 'Front Office',
+        position: 'Night Manager',
+        employeeId: 'EMP-NM01',
+        hireDate: '2024-01-01',
+      },
+      security: {
+        passwordLastChanged: new Date().toISOString(),
+        failedLoginAttempts: 0,
+        accountLocked: false,
+        twoFactorEnabled: false,
+      },
+    },
   ],
   roles: defaultRoles,
   currentUser: {
@@ -3243,6 +3303,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     noShowChargeType: 'first_night',
     noShowChargeValue: 0,
     noShowCutoffHour: 23,
+    postFirstNightAtCheckin: false,
+    nightAuditAutoRun: true,
     cancellationPolicyEnabled: false,
     freeCancellationHours: 24,
     lateCancellationFeeType: 'first_night',

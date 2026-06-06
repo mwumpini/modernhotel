@@ -1,10 +1,9 @@
 "use client";
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Card,
   CardBody,
-  CardHeader,
   Button,
   Input,
   Select,
@@ -20,7 +19,6 @@ import {
   ModalHeader,
   ModalBody,
   ModalFooter,
-  useDisclosure,
   Badge,
   Chip,
   Textarea,
@@ -32,6 +30,14 @@ import { useSettingsStore } from '../../lib/settings/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { openPrintPreview } from '../../lib/print/engine';
 import { listTemplates } from '../../lib/print/templates';
+import { computeSalesTaxTotal } from '../../lib/tax/engine';
+
+const formatMoney = (amount: number) =>
+  amount.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Line total incl. Ghana stacked taxes (table / guest-facing amounts). */
+const serviceChargeGross = (netLineAmount: number) =>
+  netLineAmount + computeSalesTaxTotal(netLineAmount);
 
 interface ServiceCharge {
   id: string;
@@ -350,7 +356,7 @@ export default function ServiceChargesPage() {
     setSelectedCharge(charge);
     setPaymentData(prev => ({
       ...prev,
-      amount: charge.amount
+      amount: serviceChargeGross(charge.amount)
     }));
     setIsPaymentModalOpen(true);
   };
@@ -428,25 +434,25 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-blue-600">
-              ₵{serviceCharges.reduce((sum, charge) => sum + charge.amount, 0).toLocaleString()}
+              ₵{formatMoney(serviceCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
             </div>
-            <div className="text-sm text-gray-600">Total Charges</div>
+            <div className="text-sm text-gray-600">Total Charges (incl. tax)</div>
           </CardBody>
         </Card>
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-green-600">
-              ₵{serviceCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + charge.amount, 0).toLocaleString()}
+              ₵{formatMoney(serviceCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
             </div>
-            <div className="text-sm text-gray-600">Paid Amount</div>
+            <div className="text-sm text-gray-600">Paid Amount (incl. tax)</div>
           </CardBody>
         </Card>
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-orange-600">
-              ₵{serviceCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + charge.amount, 0).toLocaleString()}
+              ₵{formatMoney(serviceCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
             </div>
-            <div className="text-sm text-gray-600">Outstanding</div>
+            <div className="text-sm text-gray-600">Outstanding (incl. tax)</div>
           </CardBody>
         </Card>
         <Card>
@@ -462,6 +468,11 @@ export default function ServiceChargesPage() {
       {/* Service Charges Table */}
       <Card>
         <CardBody>
+          <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg mb-4">
+            <strong>Column Guide:</strong>
+            <span className="ml-2">AMOUNT = Line total incl. tax (VAT + NHIL + GETFund + Tourism)</span>
+            <span className="ml-4">Folio posting uses excl. tax — open View for details</span>
+          </div>
           <Table aria-label="Service charges table">
             <TableHeader>
               <TableColumn>CUSTOMER</TableColumn>
@@ -520,7 +531,12 @@ export default function ServiceChargesPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="font-semibold">₵{(charge.amount * charge.quantity).toLocaleString()}</div>
+                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount))}</div>
+                        {charge.quantity > 1 && (
+                          <div className="text-xs text-gray-500">
+                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity))} / unit
+                          </div>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge color={getStatusColor(charge.status)} variant="flat">
@@ -810,17 +826,24 @@ export default function ServiceChargesPage() {
 
                 <div className="grid grid-cols-3 gap-4">
                   <div>
-                    <label className="text-sm font-medium text-gray-500">Unit Price</label>
-                    <div className="text-lg font-semibold">₵{selectedCharge.amount.toLocaleString()}</div>
+                    <label className="text-sm font-medium text-gray-500">Unit Price (incl. tax)</label>
+                    <div className="text-lg font-semibold">
+                      ₵{formatMoney(serviceChargeGross(
+                        selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount
+                      ))}
+                    </div>
                   </div>
                   <div>
                     <label className="text-sm font-medium text-gray-500">Quantity</label>
                     <div className="text-lg font-semibold">{selectedCharge.quantity}</div>
                   </div>
                   <div>
-                    <label className="text-sm font-medium text-gray-500">Total Amount</label>
+                    <label className="text-sm font-medium text-gray-500">Total Amount (incl. tax)</label>
                     <div className="text-lg font-semibold text-ghana-gold">
-                      ₵{(selectedCharge.amount * selectedCharge.quantity).toLocaleString()}
+                      ₵{formatMoney(serviceChargeGross(selectedCharge.amount))}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(computeSalesTaxTotal(selectedCharge.amount))} tax
                     </div>
                   </div>
                 </div>
@@ -887,9 +910,9 @@ export default function ServiceChargesPage() {
                         <div className="font-medium">{selectedCharge.description}</div>
                       </div>
                       <div>
-                        <span className="text-gray-600">Amount:</span>
+                        <span className="text-gray-600">Amount (incl. tax):</span>
                         <div className="font-medium text-lg text-ghana-gold">
-                          ₵{selectedCharge.amount.toLocaleString()}
+                          ₵{formatMoney(serviceChargeGross(selectedCharge.amount))}
                         </div>
                       </div>
                     </div>
@@ -955,16 +978,23 @@ export default function ServiceChargesPage() {
                         ₵{paymentData.amount.toLocaleString()}
                       </span>
                     </div>
-                    {paymentData.amount < selectedCharge.amount && (
-                      <div className="text-sm text-orange-600 mt-1">
-                        ⚠️ Partial payment - Balance: ₵{(selectedCharge.amount - paymentData.amount).toLocaleString()}
-                      </div>
-                    )}
-                    {paymentData.amount > selectedCharge.amount && (
-                      <div className="text-sm text-green-600 mt-1">
-                        💰 Overpayment - Change: ₵{(paymentData.amount - selectedCharge.amount).toLocaleString()}
-                      </div>
-                    )}
+                    {(() => {
+                      const due = serviceChargeGross(selectedCharge.amount);
+                      return (
+                        <>
+                          {paymentData.amount < due && (
+                            <div className="text-sm text-orange-600 mt-1">
+                              ⚠️ Partial payment - Balance: ₵{formatMoney(due - paymentData.amount)}
+                            </div>
+                          )}
+                          {paymentData.amount > due && (
+                            <div className="text-sm text-green-600 mt-1">
+                              💰 Overpayment - Change: ₵{formatMoney(paymentData.amount - due)}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
                   <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
                     <Select label="Receipt Template" selectedKeys={[receiptTpl]} onSelectionChange={(keys)=> setReceiptTpl(Array.from(keys)[0] as string)}>
                       {receiptTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}

@@ -57,7 +57,7 @@ export async function computeFolioBalance(folioId: string): Promise<{
 		else totalCharges += amt;
 	}
 
-	const totalPayments = payments.reduce((s, p) => s + toNumber(p.amount), 0);
+	const totalPayments = payments.reduce((s: number, p: any) => s + toNumber(p.amount), 0);
 	const balance = totalCharges - (totalCredits + totalPayments);
 	return { totalCharges, totalCredits, totalPayments, balance };
 }

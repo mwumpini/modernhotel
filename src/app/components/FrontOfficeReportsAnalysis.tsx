@@ -2,9 +2,9 @@
 
 import React, { useState, useMemo } from 'react';
 import { 
-  Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
-  Tabs, Tab, Chip, Progress, Select, SelectItem, Input, DatePicker, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
-  useDisclosure, Textarea, Divider, Spinner, Alert, Avatar, Tooltip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
+  Card, CardBody, CardHeader, Button, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
+  Tabs, Tab, Select, SelectItem, Input, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
+  useDisclosure, Textarea, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
 } from '@heroui/react';
 import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { useSettingsStore } from '../lib/settings/store';

@@ -28,6 +28,13 @@ import {
   Tooltip
 } from "@heroui/react";
 import { useComplianceStore } from '@/app/lib/compliance/store';
+import { useAccountingStore } from '@/app/lib/accounting/store';
+import {
+  chartHasGlCode,
+  resyncCountryTaxRulesToAccounting,
+  removeTaxRuleFromAccounting,
+  syncTaxRuleFromApiResponse,
+} from '@/app/lib/accounting/taxRuleAccountingSync';
 import { useCalculateTax } from '@/app/hooks/useCalculateTax';
 import { TaxRule } from '@/app/lib/models';
 
@@ -83,7 +90,6 @@ const commonTaxTypes = [
   { name: 'Sales Tax', description: 'General Sales Tax' },
   { name: 'NHIL', description: 'National Health Insurance Levy' },
   { name: 'GETFund Levy', description: 'Ghana Education Trust Fund' },
-  { name: 'COVID-19 Levy', description: 'COVID-19 Recovery Levy' },
   { name: 'Tourism Levy', description: 'Tourism Development Levy' },
   { name: 'Hotel Tax', description: 'Hotel Accommodation Tax' },
   { name: 'Income Tax', description: 'Income Tax' },
@@ -97,6 +103,14 @@ export default function TaxRateBuilder() {
   const { isOpen: isAssignOpen, onOpen: onOpenAssign, onClose: onCloseAssign } = useDisclosure();
   const { taxRules, taxTypes, setCountry } = useComplianceStore();
   const calcTax = useCalculateTax();
+
+  const flushAccountingSyncForCountry = React.useCallback((country: string, silent?: boolean) => {
+    const fresh = useComplianceStore.getState().taxRules.filter((r) => r.countryCode === country);
+    const errs = resyncCountryTaxRulesToAccounting(fresh, country);
+    if (errs.length && !silent && typeof window !== 'undefined') {
+      alert(`Some tax rules did not sync to accounting:\n${errs.join('\n')}`);
+    }
+  }, []);
   const [selectedCountry, setSelectedCountry] = useState('GH');
   const [filterOperation, setFilterOperation] = useState<'internal' | 'external' | 'both'>('both');
   const [filterDomain, setFilterDomain] = useState<'sales' | 'purchases' | 'payroll' | 'corporate' | 'custom'>('sales');
@@ -251,7 +265,7 @@ export default function TaxRateBuilder() {
     }
   };
 
-  const ghanaSpecificNames = new Set(['NHIL','GETFund Levy','COVID-19 Levy','VAT (Standard Rate)','Tourism Levy','Withholding - Services']);
+  const ghanaSpecificNames = new Set(['NHIL','GETFund Levy','VAT (Standard Rate)','Tourism Levy','Withholding - Services']);
   const hasMismatchedGhanaRules = selectedCountry !== 'GH' && taxRules.some(r => r.countryCode === selectedCountry && ghanaSpecificNames.has(r.name));
 
   const resetCountryToDefaults = async () => {
@@ -261,17 +275,19 @@ export default function TaxRateBuilder() {
     // Delete all rules for the selected country
     const rulesForCountry = taxRules.filter(r => r.countryCode === selectedCountry);
     for (const r of rulesForCountry) {
+      removeTaxRuleFromAccounting(r.id);
       try { await fetch(`/api/compliance/taxes/manage?id=${encodeURIComponent(r.id)}`, { method: 'DELETE' }); } catch {}
     }
     await setCountry(selectedCountry);
     // Apply defaults for country
     const keys = getDefaultTemplatesForCountry(selectedCountry);
     for (const k of keys) {
-      await applyTemplate(k, { silent: true, skipFilterSync: true });
+      await applyTemplate(k, { silent: true, skipFilterSync: true, skipAccountingResync: true });
     }
+    await setCountry(selectedCountry);
+    flushAccountingSyncForCountry(selectedCountry, true);
     setFilterDomain('sales');
     setFilterOperation('external');
-    setFilterEffect('all');
     try { alert(`Reset complete for ${selectedCountry}.`); } catch {}
   };
 
@@ -436,6 +452,17 @@ export default function TaxRateBuilder() {
 
   const handleSave = async () => {
     try {
+      const chart = useAccountingStore.getState().chartOfAccounts;
+      if (String(formData.glCode || '').trim() && !chartHasGlCode(chart, formData.glCode)) {
+        const ok =
+          typeof window !== 'undefined'
+            ? window.confirm(
+                `GL code "${formData.glCode}" is not on the chart of accounts yet. The rule will be saved for compliance, but accounting will not sync until that account exists. Continue?`
+              )
+            : true;
+        if (!ok) return;
+      }
+
       const ruleData = {
         id: formData.id || undefined,
         countryCode: selectedCountry,
@@ -486,10 +513,17 @@ export default function TaxRateBuilder() {
 
       const savedRule = await response.json();
       console.log('Tax rule saved:', savedRule);
-      
+
+      const syncRes = syncTaxRuleFromApiResponse(savedRule);
+      if (!syncRes.ok && syncRes.error) {
+        try {
+          alert(`Tax rule saved. Accounting sync: ${syncRes.error}`);
+        } catch {}
+      }
+
       // Refresh the tax rules
       await setCountry(selectedCountry);
-      
+
       onClose();
       setFormData({
         id: '',
@@ -521,7 +555,9 @@ export default function TaxRateBuilder() {
 
         const result = await response.json();
         console.log('Tax rule deleted:', result);
-        
+
+        removeTaxRuleFromAccounting(ruleId);
+
         // Refresh the tax rules
         await setCountry(selectedCountry);
       } catch (error) {
@@ -545,12 +581,14 @@ export default function TaxRateBuilder() {
       } catch {}
     }
     await setCountry(selectedCountry);
+    flushAccountingSyncForCountry(selectedCountry, true);
     setSelectedRuleIds(new Set());
   };
 
   const bulkDelete = async () => {
     const ids = Array.from(selectedRuleIds);
     for (const id of ids) {
+      removeTaxRuleFromAccounting(id);
       try { await fetch(`/api/compliance/taxes/manage?id=${id}`, { method: 'DELETE' }); } catch {}
     }
     await setCountry(selectedCountry);
@@ -588,6 +626,7 @@ export default function TaxRateBuilder() {
       } catch {}
     }
     await setCountry(selectedCountry);
+    flushAccountingSyncForCountry(selectedCountry, true);
   };
 
   // Template builder
@@ -596,15 +635,14 @@ export default function TaxRateBuilder() {
     switch (templateKey) {
       case 'ghana_sales_standard':
         return [
-          { countryCode: cc, name: 'NHIL', rate: 2.5, glCode: '2150', appliesTo: ['ALL'], description: 'National Health Insurance Levy', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'GETFund Levy', rate: 2.5, glCode: '2151', appliesTo: ['ALL'], description: 'Ghana Education Trust Fund Levy', enabled: true, priority: 11, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'COVID-19 Levy', rate: 1.0, glCode: '2152', appliesTo: ['ALL'], description: 'COVID-19 Recovery Levy', enabled: true, priority: 12, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'VAT (Standard Rate)', rate: 15.0, glCode: '2153', appliesTo: ['ALL'], description: 'VAT on (subtotal + levies)', enabled: true, priority: 20, calculationBase: 'subtotal_plus_applied', method: 'rate', stacking: 'compound', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'Tourism Levy', rate: 1.0, glCode: '2154', appliesTo: ['ROOM','HOTEL'], description: 'Tourism development levy', enabled: true, priority: 30, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add', isSeparate: true },
+          { countryCode: cc, name: 'NHIL', rate: 2.5, glCode: '2120', appliesTo: ['ALL'], description: 'National Health Insurance Levy', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
+          { countryCode: cc, name: 'GETFund Levy', rate: 2.5, glCode: '2130', appliesTo: ['ALL'], description: 'Ghana Education Trust Fund Levy', enabled: true, priority: 11, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
+          { countryCode: cc, name: 'VAT (Standard Rate)', rate: 15.0, glCode: '2110', appliesTo: ['ALL'], description: 'VAT on (subtotal + levies)', enabled: true, priority: 20, calculationBase: 'subtotal_plus_applied', method: 'rate', stacking: 'compound', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
+          { countryCode: cc, name: 'Tourism Levy', rate: 1.0, glCode: '2150', appliesTo: ['ROOM','HOTEL'], description: 'Tourism development levy', enabled: true, priority: 30, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add', isSeparate: true },
         ];
       case 'withholding_services':
         return [
-          { countryCode: cc, name: 'Withholding - Services', rate: 7.5, glCode: '2300', appliesTo: ['SERVICE'], description: 'Service withholding tax', enabled: true, priority: 5, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'subtract' },
+          { countryCode: cc, name: 'Withholding - Services', rate: 7.5, glCode: '2160', appliesTo: ['SERVICE'], description: 'Service withholding tax', enabled: true, priority: 5, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'subtract' },
         ];
       case 'purchases_vat':
         return [
@@ -681,7 +719,7 @@ export default function TaxRateBuilder() {
     }
   };
 
-  const applyTemplate = async (templateKey: string, options?: { silent?: boolean; skipFilterSync?: boolean; forceTypeId?: string }) => {
+  const applyTemplate = async (templateKey: string, options?: { silent?: boolean; skipFilterSync?: boolean; forceTypeId?: string; skipAccountingResync?: boolean }) => {
     if (isApplyingTemplate) return;
     setIsApplyingTemplate(true);
     const rules = buildTemplateRules(templateKey);
@@ -692,7 +730,13 @@ export default function TaxRateBuilder() {
     let typeIdForTemplate: string | null = options?.forceTypeId || null;
     try {
       if (!typeIdForTemplate) {
-        const existing = (taxTypes || []).find(t => t.countryCode === selectedCountry && t.name === typeName);
+        const templateTag = `template:${templateKey}`;
+        const existing = (taxTypes || []).find(t => {
+          if (t.countryCode !== selectedCountry) return false;
+          const tags = (t as any).tags as string[] | undefined;
+          if (Array.isArray(tags) && tags.includes(templateTag)) return true;
+          return (t.name || '').trim() === (typeName || '').trim();
+        });
         if (existing) {
           typeIdForTemplate = String((existing as any).id);
         } else {
@@ -726,6 +770,9 @@ export default function TaxRateBuilder() {
       } catch {}
     }
     await setCountry(selectedCountry);
+    if (!options?.skipAccountingResync) {
+      flushAccountingSyncForCountry(selectedCountry, !!options?.silent);
+    }
     // Set filters to relevant context after apply (generic via templateMeta)
     if (!options?.skipFilterSync) {
       if (meta) {
@@ -791,6 +838,52 @@ export default function TaxRateBuilder() {
     return dup;
   }, [taxRules, selectedCountry, selectedTypeId, filterOperation, filterDomain, searchTerm]);
 
+  /** Extra tax type cards beyond one per template tag or per name (same country). */
+  const duplicateTaxTypesCount = React.useMemo(() => {
+    const list = (taxTypes || []).filter((t) => t.countryCode === selectedCountry);
+    const normalizeName = (s: string) =>
+      String(s || '')
+        .trim()
+        .replace(/\s+/g, ' ')
+        .toLowerCase();
+    const keyOf = (t: any) => {
+      const tag = (t.tags || []).find((x: string) => typeof x === 'string' && x.startsWith('template:'));
+      if (tag) return `tag:${tag}`;
+      return `name:${normalizeName(t.name)}`;
+    };
+    const buckets: Record<string, number> = {};
+    list.forEach((t) => {
+      const k = keyOf(t);
+      buckets[k] = (buckets[k] || 0) + 1;
+    });
+    return Object.values(buckets).reduce((sum, n) => sum + Math.max(0, n - 1), 0);
+  }, [taxTypes, selectedCountry]);
+
+  const mergeDuplicateTaxTypes = async () => {
+    if (!selectedCountry || duplicateTaxTypesCount === 0) return;
+    const ok = typeof window !== 'undefined' ? window.confirm(
+      `Merge ${duplicateTaxTypesCount} duplicate tax type(s) for this country? Rules will be moved to the kept type (the one with the most rules).`
+    ) : true;
+    if (!ok) return;
+    try {
+      const res = await fetch('/api/compliance/tax-types/dedupe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ countryCode: selectedCountry }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || 'Merge failed');
+      await setCountry(selectedCountry);
+      try {
+        alert(`Merged duplicate tax types. Removed ${data.removed ?? 0} extra type(s).`);
+      } catch {}
+    } catch (e: any) {
+      try {
+        alert(e?.message || 'Merge failed');
+      } catch {}
+    }
+  };
+
   const removeDuplicates = async () => {
     const list = getFilteredRulesForDedup().sort((a: any, b: any) => (a.priority ?? 100) - (b.priority ?? 100));
     const keepByKey: Record<string, string> = {};
@@ -800,9 +893,11 @@ export default function TaxRateBuilder() {
       if (!keepByKey[key]) keepByKey[key] = String(r.id); else toDelete.push(String(r.id));
     }
     for (const id of toDelete) {
+      removeTaxRuleFromAccounting(id);
       try { await fetch(`/api/compliance/taxes/manage?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
     }
     await setCountry(selectedCountry);
+    flushAccountingSyncForCountry(selectedCountry, true);
   };
 
   const restoreGhanaCoreRules = async () => {
@@ -844,6 +939,7 @@ export default function TaxRateBuilder() {
       } catch {}
     }
     await setCountry(selectedCountry);
+    flushAccountingSyncForCountry(selectedCountry, true);
   };
 
   const calculateTotalTax = (amount: number) => {
@@ -852,7 +948,7 @@ export default function TaxRateBuilder() {
       // Ghana-specific calculation
       const subtotal = amount;
       const levyRules = rules.filter(rule => 
-        ['NHIL', 'GETFund Levy', 'COVID-19 Levy'].includes(rule.name)
+        ['NHIL', 'GETFund Levy'].includes(rule.name)
       );
       const totalLevies = levyRules.reduce((sum, rule) => sum + (subtotal * rule.rate / 100), 0);
       const amountAfterLevies = subtotal + totalLevies;
@@ -973,8 +1069,19 @@ export default function TaxRateBuilder() {
               <h3 className="text-lg font-semibold">Tax Types</h3>
               <Chip size="sm" variant="flat">{(taxTypes || []).filter(t => t.countryCode === selectedCountry).length}</Chip>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <Input className="w-64" placeholder="Search tax types" value={typeSearch} onChange={(e) => setTypeSearch(e.target.value)} variant="bordered" />
+              <Tooltip content="Merges duplicate types (same template or same name). Keeps the type with the most rules and reassigns the rest.">
+                <Button
+                  size="sm"
+                  variant="flat"
+                  className={duplicateTaxTypesCount > 0 ? 'bg-amber-100 text-amber-900' : ''}
+                  onPress={mergeDuplicateTaxTypes}
+                  isDisabled={duplicateTaxTypesCount === 0}
+                >
+                  Merge duplicate types{duplicateTaxTypesCount > 0 ? ` (${duplicateTaxTypesCount})` : ''}
+                </Button>
+              </Tooltip>
               <Button size="sm" variant="bordered" onPress={() => { setIsEditingType(false); setEditingTypeId(null); setTypeForm({ countryCode: selectedCountry, name: '', description: '', domain: 'sales', operation: 'both' }); onOpenType(); }}>+ Create Tax Type</Button>
             </div>
           </div>

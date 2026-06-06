@@ -19,9 +19,9 @@ export default function FrontofficeCalendar() {
   const reservations = frontOfficeStore.reservations.filter(r => roomTypeId==='all' || r.roomTypeId===roomTypeId);
 
   const createQuick = (date: string) => {
-    const guest = frontOfficeStore.createGuest({ name: 'Walk-in' });
+    const guest = frontOfficeStore.createGuest({ name: 'Walk-in' } as any);
     const rt = roomTypeId==='all' ? frontOfficeStore.roomTypes[0].id : roomTypeId;
-    frontOfficeStore.createReservation({ guestId: guest.id, guestName: 'Walk-in', roomTypeId: rt, arrival: date, departure: date, source: 'Direct' });
+    frontOfficeStore.createReservation({ guestId: guest.id, guestName: 'Walk-in', roomTypeId: rt, arrival: date, departure: date, source: 'Direct' } as any);
   };
 
   return (
@@ -30,8 +30,7 @@ export default function FrontofficeCalendar() {
          <h3 className="text-lg font-semibold text-ghana-black">Reservation Calendar (Next {days} days)</h3>
          <div className="flex gap-4">
            <Select size="md" label="Room Type" className="min-w-[180px]" selectedKeys={[roomTypeId]} onSelectionChange={(k)=> setRoomTypeId(Array.from(k as Set<string>)[0] || 'all')}>
-             <SelectItem key="all">All Room Types</SelectItem>
-             {frontOfficeStore.roomTypes.map(rt => <SelectItem key={rt.id}>{rt.name}</SelectItem>)}
+            {[{ id: 'all', name: 'All Room Types' }, ...frontOfficeStore.roomTypes].map(rt => <SelectItem key={rt.id}>{rt.name}</SelectItem>)}
            </Select>
            <Select size="md" label="Date Range" className="min-w-[150px]" selectedKeys={[String(days)]} onSelectionChange={(k)=> setDays(Number(Array.from(k as Set<string>)[0] || 14))}>
              <SelectItem key="7">7 Days</SelectItem>

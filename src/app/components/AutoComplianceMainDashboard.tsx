@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Card, 
   CardBody, 
@@ -10,23 +10,20 @@ import {
   Tabs, 
   Tab, 
   Chip,
-  Progress,
-  Avatar,
   Tooltip,
   Divider
 } from "@heroui/react";
 import { useComplianceStore } from '../lib/compliance/store';
-import { useComplianceSummary } from '../hooks/useCalculateTax';
+import { useSettingsStore } from '../lib/settings/store';
+import { frontOfficeStore } from '../lib/frontoffice/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
 
 
 // Import specialized compliance components
 import CountrySelector from './CountrySelector';
-import Checkout from './Checkout';
 import ComplianceReports from './ComplianceReports';
 import TaxRateBuilder from './TaxRateBuilder';
 import PayrollBuilderPanel from './PayrollBuilderPanel';
-import GhanaCompliance from './GhanaCompliance';
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {
@@ -81,40 +78,112 @@ const InfoIcon = ({ description }: { description: string }) => {
 
 export default function AutoComplianceMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
-  const { country, taxRules, reportingRules, isLoading, error } = useComplianceStore();
-  const getComplianceSummary = useComplianceSummary();
-  const [summary, setSummary] = useState(getComplianceSummary());
-  
-  // Sample compliance data - in real app, this would come from stores
-  const totalTaxRules = 24;
-  const activeComplianceChecks = 18;
-  const pendingAudits = 3;
-  const regulatoryUpdates = 2;
-  
-  // Compliance scores
-  const taxCompliance = 94;
-  const regulatoryCompliance = 97;
-  const auditCompliance = 91;
-  const overallCompliance = 94;
-  
-  // Operational metrics
-  const countriesSupported = 3;
-  const taxCalculationsToday = 156;
-  const complianceChecksToday = 23;
-  const reportsGeneratedToday = 8;
-  
-  // Risk indicators
-  const highRiskItems = 2;
-  const mediumRiskItems = 5;
-  const lowRiskItems = 12;
-  const noRiskItems = 18;
+  const { country, taxRules, reportingRules, reports, transactions, getComplianceScore, isLoading, error } = useComplianceStore();
+  const supportedCountries = useSettingsStore(s => s.supportedCountries);
 
-  // Today's operations
   const today = new Date().toISOString().slice(0, 10);
-  const newComplianceChecks = 5;
-  const taxReturnsFiled = 3;
-  const regulatoryUpdatesApplied = 1;
-  const auditFindingsResolved = 2;
+  const isToday = (iso?: string) => !!iso && iso.slice(0, 10) === today;
+
+  // Ghana Card verification is owned by Front Office. The front office store is a
+  // non-reactive singleton, so sample it after mount to avoid SSR/hydration mismatch.
+  const [guestIdStats, setGuestIdStats] = useState({ ghanaCards: 0, missing: 0 });
+  useEffect(() => {
+    const guests = frontOfficeStore.guests || [];
+    setGuestIdStats({
+      ghanaCards: guests.filter(g => g.idType === 'ghana_card' && g.idNumber).length,
+      missing: guests.filter(g => !g.idNumber).length,
+    });
+  }, []);
+
+  // All compliance figures are derived from live store data (tax rules, reporting
+  // rules, report submissions and tax transactions) scoped to the active country.
+  const metrics = useMemo(() => {
+    const activeRules = taxRules.filter(r => r.countryCode === country);
+    const countryReports = reports.filter(r => r.countryCode === country);
+    const countryReportingRules = reportingRules.filter(r => r.countryCode === country);
+    const countryTransactions = transactions.filter(t => t.countryCode === country);
+
+    const submittedCount = (rs: typeof countryReports) =>
+      rs.filter(r => r.status === 'submitted' || r.status === 'approved').length;
+    const scoreOf = (rs: typeof countryReports) =>
+      rs.length === 0 ? 100 : Math.round((submittedCount(rs) / rs.length) * 100);
+    const byType = (type: string) => countryReports.filter(r => r.reportType === type).length;
+    const isOverdue = (r: typeof countryReports[number]) =>
+      r.status === 'pending' && new Date(r.dueDate) < new Date();
+
+    const taxReportTypes = ['VAT', 'NHIL', 'Tourism', 'Hotel Tax', 'Sales Tax', 'IncomeTax'];
+    const taxReports = countryReports.filter(r => taxReportTypes.includes(r.reportType));
+    const recentlyUpdatedRules = countryReportingRules.filter(r => {
+      const days = (Date.now() - new Date(r.lastUpdated).getTime()) / 86400000;
+      return Number.isFinite(days) && days <= 30;
+    });
+
+    const taxCalculationsToday = countryTransactions.filter(t => isToday(t.timestamp)).length;
+    const reportsGeneratedToday = countryReports.filter(r => isToday(r.submittedDate)).length;
+    const overall = getComplianceScore();
+
+    return {
+      // Counts
+      totalTaxRules: activeRules.length,
+      activeComplianceChecks: countryReportingRules.filter(r => r.isActive).length,
+      pendingAudits: countryReports.filter(r => r.status === 'pending').length,
+      regulatoryUpdates: recentlyUpdatedRules.length,
+      countriesSupported: supportedCountries.length,
+
+      // Scores
+      overallCompliance: overall,
+      taxCompliance: scoreOf(taxReports),
+      regulatoryCompliance: scoreOf(countryReports),
+      auditCompliance: overall,
+      vatCompliance: scoreOf(countryReports.filter(r => r.reportType === 'VAT')),
+      taxReturns: taxReports.length,
+      auditPassed: countryReports.every(r => r.status !== 'rejected'),
+
+      // Risk indicators
+      highRiskItems: countryReports.filter(r => r.status === 'rejected' || isOverdue(r)).length,
+      mediumRiskItems: countryReports.filter(r => r.status === 'pending' && !isOverdue(r)).length,
+      lowRiskItems: activeRules.filter(r => r.enabled === false).length,
+      noRiskItems: activeRules.filter(r => r.enabled !== false).length + submittedCount(countryReports),
+
+      // Today's operations
+      taxCalculationsToday,
+      reportsGeneratedToday,
+      complianceChecksToday: taxCalculationsToday + reportsGeneratedToday,
+      taxReturnsFiled: taxReports.filter(r => isToday(r.submittedDate)).length,
+      regulatoryUpdatesApplied: countryReportingRules.filter(r => isToday(r.lastUpdated)).length,
+      auditFindingsResolved: countryReports.filter(r => r.status === 'approved' && isToday(r.submittedDate)).length,
+
+      // Regulatory report breakdown
+      vatReports: byType('VAT'),
+      nhilReports: byType('NHIL'),
+      payeReports: byType('PAYE'),
+      ssnitReports: byType('SSNIT'),
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taxRules, reportingRules, reports, transactions, country, supportedCountries, getComplianceScore]);
+
+  const {
+    totalTaxRules,
+    activeComplianceChecks,
+    pendingAudits,
+    regulatoryUpdates,
+    countriesSupported,
+    overallCompliance,
+    taxCompliance,
+    regulatoryCompliance,
+    auditCompliance,
+    highRiskItems,
+    mediumRiskItems,
+    lowRiskItems,
+    noRiskItems,
+    taxCalculationsToday,
+    complianceChecksToday,
+    reportsGeneratedToday,
+    taxReturnsFiled,
+    regulatoryUpdatesApplied,
+    auditFindingsResolved,
+  } = metrics;
+  const newComplianceChecks = complianceChecksToday;
 
   // Operational items following the uniform pattern
   const operationalItems = [
@@ -256,15 +325,15 @@ export default function AutoComplianceMainDashboard() {
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex justify-between">
                   <span>VAT Compliance</span>
-                  <span className="font-medium">98%</span>
+                  <span className="font-medium">{metrics.vatCompliance}%</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Tax Returns</span>
-                  <span className="font-medium">24</span>
+                  <span className="font-medium">{metrics.taxReturns}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Audit Status</span>
-                  <span className="font-medium">Passed</span>
+                  <span className="font-medium">{metrics.auditPassed ? 'Passed' : 'Review'}</span>
                 </div>
               </div>
             </CardBody>
@@ -496,15 +565,15 @@ export default function AutoComplianceMainDashboard() {
                           <h4 className="text-lg font-semibold text-ghana-black">Tax Reports</h4>
                           <div className="w-3 h-3 bg-green-500 rounded-full"></div>
                         </div>
-                        <div className="text-3xl font-bold text-green-600 mb-3">3</div>
+                        <div className="text-3xl font-bold text-green-600 mb-3">{metrics.taxReturns}</div>
                         <div className="space-y-1 text-sm text-gray-600">
                           <div className="flex justify-between">
                             <span>VAT Reports</span>
-                            <span className="font-medium">2</span>
+                            <span className="font-medium">{metrics.vatReports}</span>
                           </div>
                           <div className="flex justify-between">
                             <span>NHIL Reports</span>
-                            <span className="font-medium">1</span>
+                            <span className="font-medium">{metrics.nhilReports}</span>
                           </div>
                         </div>
                       </CardBody>
@@ -516,15 +585,15 @@ export default function AutoComplianceMainDashboard() {
                           <h4 className="text-lg font-semibold text-ghana-black">HR Compliance</h4>
                           <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
                         </div>
-                        <div className="text-3xl font-bold text-orange-600 mb-3">2</div>
+                        <div className="text-3xl font-bold text-orange-600 mb-3">{metrics.payeReports + metrics.ssnitReports}</div>
                         <div className="space-y-1 text-sm text-gray-600">
                           <div className="flex justify-between">
                             <span>PAYE Reports</span>
-                            <span className="font-medium">1</span>
+                            <span className="font-medium">{metrics.payeReports}</span>
                           </div>
                           <div className="flex justify-between">
                             <span>SSNIT Reports</span>
-                            <span className="font-medium">1</span>
+                            <span className="font-medium">{metrics.ssnitReports}</span>
                           </div>
                         </div>
                       </CardBody>
@@ -536,15 +605,15 @@ export default function AutoComplianceMainDashboard() {
                           <h4 className="text-lg font-semibold text-ghana-black">Ghana Cards</h4>
                           <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
                         </div>
-                        <div className="text-3xl font-bold text-purple-600 mb-3">3</div>
+                        <div className="text-3xl font-bold text-purple-600 mb-3">{guestIdStats.ghanaCards}</div>
                         <div className="space-y-1 text-sm text-gray-600">
                           <div className="flex justify-between">
                             <span>Active Cards</span>
-                            <span className="font-medium">3</span>
+                            <span className="font-medium">{guestIdStats.ghanaCards}</span>
                           </div>
                           <div className="flex justify-between">
-                            <span>Verification</span>
-                            <span className="font-medium">Pending</span>
+                            <span>Missing ID</span>
+                            <span className="font-medium">{guestIdStats.missing}</span>
                           </div>
                         </div>
                       </CardBody>
@@ -567,93 +636,16 @@ export default function AutoComplianceMainDashboard() {
                     </Button>
                   </div>
 
-                  {/* Tax Rates Configuration */}
-                  <Card className="border-0 shadow-lg">
-                    <CardHeader className="pb-3">
-                      <div className="flex items-center justify-between">
-                        <h4 className="text-xl font-semibold text-ghana-black">Tax Rates Configuration</h4>
-                        <Button color="success" variant="solid" size="sm">
-                          + Add Tax Rate
-                        </Button>
+                  {/* Tax rates are managed in the Tax Management tab (single source: TaxRateBuilder) */}
+                  <Card className="border border-dashed border-gray-300 shadow-none bg-gray-50">
+                    <CardBody className="flex items-center justify-between gap-4">
+                      <div>
+                        <h4 className="font-semibold text-ghana-black">Tax Rates</h4>
+                        <p className="text-sm text-gray-600">VAT, NHIL, Tourism Levy, WHT and PAYE bands are configured in one place under Tax Management.</p>
                       </div>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                          <div className="flex items-center gap-3">
-                            <Chip color="success" variant="flat">12.5%</Chip>
-                            <div>
-                              <p className="font-medium">Value Added Tax (VAT)</p>
-                              <p className="text-sm text-gray-600">Standard VAT rate for goods and services</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm text-gray-500">Last updated: 2024-01-15</span>
-                            <Badge color="success" variant="flat">Active</Badge>
-                            <Button size="sm" variant="flat">Edit</Button>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                          <div className="flex items-center gap-3">
-                            <Chip color="success" variant="flat">2.5%</Chip>
-                            <div>
-                              <p className="font-medium">National Health Insurance Levy (NHIL)</p>
-                              <p className="text-sm text-gray-600">NHIL for healthcare funding</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm text-gray-500">Last updated: 2024-01-15</span>
-                            <Badge color="success" variant="flat">Active</Badge>
-                            <Button size="sm" variant="flat">Edit</Button>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                          <div className="flex items-center gap-3">
-                            <Chip color="success" variant="flat">1%</Chip>
-                            <div>
-                              <p className="font-medium">Tourism Levy</p>
-                              <p className="text-sm text-gray-600">Tourism development levy</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm text-gray-500">Last updated: 2024-01-15</span>
-                            <Badge color="success" variant="flat">Active</Badge>
-                            <Button size="sm" variant="flat">Edit</Button>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                          <div className="flex items-center gap-3">
-                            <Chip color="success" variant="flat">15%</Chip>
-                            <div>
-                              <p className="font-medium">Withholding Tax (WHT)</p>
-                              <p className="text-sm text-gray-600">Withholding tax on services</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm text-gray-500">Last updated: 2024-01-15</span>
-                            <Badge color="success" variant="flat">Active</Badge>
-                            <Button size="sm" variant="flat">Edit</Button>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                          <div className="flex items-center gap-3">
-                            <Chip color="success" variant="flat">0%</Chip>
-                            <div>
-                              <p className="font-medium">PAYE</p>
-                              <p className="text-sm text-gray-600">Pay As You Earn - calculated based on income bands</p>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-sm text-gray-500">Last updated: 2024-01-15</span>
-                            <Badge color="success" variant="flat">Active</Badge>
-                            <Button size="sm" variant="flat">Edit</Button>
-                          </div>
-                        </div>
-                      </div>
+                      <Button color="primary" variant="flat" onClick={() => setSelectedTab('tax')}>
+                        Open Tax Management
+                      </Button>
                     </CardBody>
                   </Card>
                 </div>

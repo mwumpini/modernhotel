@@ -1,7 +1,8 @@
 'use client';
 
-import { CorporateClient, CorporateRateAgreement, EventPackage, EventBooking, RoomType } from './types';
+import { CorporateClient, CorporateRateAgreement, EventPackage, RoomType } from './types';
 import { trackEvent } from '../analytics/trackEvent';
+import { computeSalesTaxTotal } from '../tax/engine';
 
 export interface RateCalculationResult {
   accommodation: {
@@ -853,11 +854,7 @@ export class CorporateRateStore {
   }
 
   private calculateTaxes(subtotal: number): number {
-    // Ghana tax rates: VAT 12.5%, NHIL 2.5%, GETFund 2.5%
-    const vat = subtotal * 0.125;
-    const nhil = subtotal * 0.025;
-    const getfund = subtotal * 0.025;
-    return vat + nhil + getfund;
+    return computeSalesTaxTotal(subtotal);
   }
 
   private getRoomTypePercentageKey(roomTypeName: string): 'standardRoom' | 'deluxeRoom' | 'suiteRoom' | 'presidentialRoom' | null {

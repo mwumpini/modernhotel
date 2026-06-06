@@ -7,14 +7,12 @@ import {
   CardHeader, 
   Button, 
   Input,
-  Select,
-  SelectItem,
   Textarea,
-  Chip,
   Divider
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
-import { GuestProfile, StayReason, Nationality, IdType } from '../../lib/frontoffice/types';
+import { GuestProfile } from '../../lib/frontoffice/types';
+import { trackEvent } from '../../lib/analytics/trackEvent';
 
 interface SelfCheckinFormData {
   confirmArrival: boolean;
@@ -23,7 +21,8 @@ interface SelfCheckinFormData {
   emergencyContact?: string;
 }
 
-export default function SelfCheckinPage({ params }: { params: { token: string } }) {
+export default function SelfCheckinPage({ params }: { params: Promise<{ token: string }> }) {
+  const { token } = React.use(params);
   const [guest, setGuest] = useState<GuestProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isValidToken, setIsValidToken] = useState(false);
@@ -39,7 +38,7 @@ export default function SelfCheckinPage({ params }: { params: { token: string } 
   useEffect(() => {
     const validateToken = async () => {
       try {
-        const guestProfile = frontOfficeStore.getGuestBySelfCheckinToken(params.token);
+        const guestProfile = frontOfficeStore.getGuestBySelfCheckinToken(token);
         if (guestProfile) {
           setGuest(guestProfile);
           setIsValidToken(true);
@@ -55,7 +54,7 @@ export default function SelfCheckinPage({ params }: { params: { token: string } 
     };
 
     validateToken();
-  }, [params.token]);
+  }, [token]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,15 +62,23 @@ export default function SelfCheckinPage({ params }: { params: { token: string } 
 
     setIsSubmitting(true);
     try {
-      // Process self-checkin using the token
-      const result = frontOfficeStore.processSelfCheckin(params.token, {
-        specialRequests: formData.specialRequests,
-        vehicleInfo: formData.vehicleInfo,
-        emergencyContact: formData.emergencyContact
+      const reservation = frontOfficeStore.reservations.find(
+        (r) =>
+          r.guestId === guest.id &&
+          (r.status === 'confirmed' || r.status === 'pending'),
+      );
+      if (!reservation) {
+        throw new Error('No active reservation found for this guest');
+      }
+      const ok = frontOfficeStore.expressCheckIn(reservation.id);
+      if (!ok) {
+        throw new Error('Check-in could not be completed');
+      }
+      trackEvent('FO.Guest.SelfCheckinProcessed', {
+        guest: `${guest.firstName} ${guest.lastName}`,
+        token,
+        reservationId: reservation.id,
       });
-      
-      console.log('Self-checkin processed:', result);
-
       setSuccess(true);
     } catch (error) {
       console.error('Error processing self-checkin:', error);

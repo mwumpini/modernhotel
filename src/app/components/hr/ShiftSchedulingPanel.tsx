@@ -45,7 +45,7 @@ export default function ShiftSchedulingPanel() {
               <TableColumn>START</TableColumn>
               <TableColumn>END</TableColumn>
               <TableColumn>LOCATION</TableColumn>
-              <TableColumn></TableColumn>
+              <TableColumn>{' '}</TableColumn>
             </TableHeader>
             <TableBody>
               {shifts.map((s) => {

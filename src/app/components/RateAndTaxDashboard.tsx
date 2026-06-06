@@ -1,9 +1,8 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { Card, CardHeader, CardBody } from '@heroui/react';
 import { Tabs, Tab } from '@heroui/react';
-import { Badge } from '@heroui/react';
 import { Chip } from '@heroui/react';
 import TaxCalculationPreview from './TaxCalculationPreview';
 import CurrencyExchangeManager from './CurrencyExchangeManager';
@@ -319,7 +318,7 @@ export default function RateAndTaxDashboard() {
                   <span>📋</span>
                   <span>Tax Exemptions</span>
                   {dashboardStats.pendingApprovals > 0 && (
-                    <Badge content={dashboardStats.pendingApprovals} color="warning" size="sm" />
+                    <Chip color="warning" size="sm" variant="flat">{dashboardStats.pendingApprovals}</Chip>
                   )}
                 </div>
               }

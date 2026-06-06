@@ -1,5 +1,15 @@
 import { create } from 'zustand';
 import { TaxRule, ReportingRule, ComplianceTransaction, ComplianceReport, TaxType } from '../models';
+import { computeSalesTax } from '../tax/engine';
+
+export interface TaxLineItem {
+  name: string;
+  amount: number;
+  glCode: string;
+  rate: number;
+  isExempt?: boolean;
+  exemptionReason?: string;
+}
 
 function evalCondition(context: Record<string, any>, cond: NonNullable<TaxRule['condition']>): boolean {
   const lhs = context?.[cond.field];
@@ -84,7 +94,7 @@ interface ComplianceState {
     amount: number,
     category?: string,
     context?: Record<string, any>
-  ) => { taxes: Array<{ name: string; amount: number; glCode: string }>; total: number };
+  ) => { taxes: TaxLineItem[]; total: number };
   getComplianceScore: () => number;
 }
 
@@ -202,54 +212,18 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
     const activeRules = sortedRules.filter(r => isEffective(r) && inScope(r));
     
     if (country === 'GH') {
-      // Ghana-specific calculation order
-      const subtotal = amount;
-      
-      // Step 1: Calculate levies on subtotal (NHIL, GETFund, COVID-19)
-      const levyRules = activeRules.filter(rule => 
-        ['NHIL', 'GETFund Levy', 'COVID-19 Levy'].includes(rule.name)
-      );
-      
-      const levies = levyRules.map(rule => ({
-        name: rule.name,
-        amount: subtotal * (rule.rate / 100),
-        glCode: rule.glCode
+      const { lines, totalTax, gross } = computeSalesTax(amount);
+      const taxes: TaxLineItem[] = lines.map((l) => ({
+        name: l.name,
+        amount: l.amount,
+        glCode: l.glAccountCode,
+        rate: l.rate,
       }));
-      
-      const totalLevies = levies.reduce((sum, levy) => sum + levy.amount, 0);
-      const amountAfterLevies = subtotal + totalLevies; // 106 for 100 subtotal
-      
-      // Step 2: Calculate VAT on amount after levies
-      const vatRule = activeRules.find(rule => rule.name === 'VAT (Standard Rate)');
-      const vatAmount = vatRule ? amountAfterLevies * (vatRule.rate / 100) : 0;
-      const vatTax = vatRule ? {
-        name: vatRule.name,
-        amount: vatAmount,
-        glCode: vatRule.glCode
-      } : null;
-      
-      // Step 3: Calculate Tourism Levy on original subtotal
-      const tourismRule = activeRules.find(rule => rule.name === 'Tourism Levy');
-      const tourismAmount = tourismRule ? subtotal * (tourismRule.rate / 100) : 0;
-      const tourismTax = tourismRule ? {
-        name: tourismRule.name,
-        amount: tourismAmount,
-        glCode: tourismRule.glCode
-      } : null;
-      
-      // Combine all taxes
-      const allTaxes = [...levies];
-      if (vatTax) allTaxes.push(vatTax);
-      if (tourismTax) allTaxes.push(tourismTax);
-      
-      const totalTax = allTaxes.reduce((sum, tax) => sum + tax.amount, 0);
-      const total = subtotal + totalTax;
-      
-      return { taxes: allTaxes, total };
+      return { taxes, total: gross };
     } else {
       // General rule engine: respects calculationBase, method, tiers, stacking, rounding, and effect
       let runningBase = amount;
-      const taxes: Array<{ name: string; amount: number; glCode: string }> = [];
+      const taxes: TaxLineItem[] = [];
       let addTotal = 0;
       let subtractTotal = 0;
       for (const rule of activeRules) {
@@ -271,7 +245,7 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
           if (rule.rounding === 'down') raw = Math.floor(raw * m) / m;
           if (rule.rounding === 'up') raw = Math.ceil(raw * m) / m;
         }
-        taxes.push({ name: rule.name, amount: raw, glCode: rule.glCode });
+        taxes.push({ name: rule.name, amount: raw, glCode: rule.glCode, rate: rule.rate ?? 0 });
         const effect = rule.effect || 'add';
         if (effect === 'add') addTotal += raw;
         else if (effect === 'subtract') subtractTotal += raw;

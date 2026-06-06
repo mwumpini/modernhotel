@@ -12,10 +12,9 @@ import {
   Tab, 
   Chip,
   Progress,
-  Avatar,
   Tooltip,
-  Divider,
-  Switch
+  Switch,
+  Input
 } from "@heroui/react";
 import { useSettingsStore } from '../lib/settings/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
@@ -25,6 +24,7 @@ import { useRouter } from 'next/navigation';
 import RoomConfigurationDashboard from './RoomConfigurationDashboard';
 import UserManagementUnified from './UserManagementUnified';
 import UnifiedRateManagement from './UnifiedRateManagement';
+import NumberingSettingsPanel from './settings/NumberingSettingsPanel';
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {
@@ -83,6 +83,7 @@ export default function SystemSettingsMainDashboard() {
   const [showRateManagement, setShowRateManagement] = useState(false);
   const router = useRouter();
   const settings = useSettingsStore();
+  const updateNestedSetting = useSettingsStore(s => s.updateNestedSetting);
   const initialSetupCompleted = useSettingsStore(s => s.initialSetupCompleted);
   
   // Sample system data - in real app, this would come from stores
@@ -265,26 +266,26 @@ export default function SystemSettingsMainDashboard() {
           </CardBody>
         </Card>
 
-        {/* Security & Compliance */}
+        {/* Security (compliance & audit live in Compliance & Reports) */}
         <Card className="border-0 shadow-lg border-l-4 border-l-purple-500">
           <CardBody className="p-4">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="text-lg font-semibold text-ghana-black">Security & Compliance</h4>
+              <h4 className="text-lg font-semibold text-ghana-black">Security</h4>
               <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
             </div>
             <div className="text-3xl font-bold text-purple-600 mb-3">{securityScore}%</div>
             <div className="space-y-1 text-sm text-gray-600">
               <div className="flex justify-between">
-                <span>Security Score</span>
-                <span className="font-medium">{securityScore}%</span>
+                <span>Two-Factor Auth</span>
+                <span className="font-medium">{settings.security.twoFactorAuth ? 'Enabled' : 'Disabled'}</span>
               </div>
               <div className="flex justify-between">
-                <span>Compliance</span>
-                <span className="font-medium">98%</span>
+                <span>Password Min Length</span>
+                <span className="font-medium">{settings.security.passwordPolicy.minLength}</span>
               </div>
               <div className="flex justify-between">
-                <span>Audit Status</span>
-                <span className="font-medium">Passed</span>
+                <span>Session Timeout</span>
+                <span className="font-medium">{settings.security.sessionTimeout}m</span>
               </div>
             </div>
           </CardBody>
@@ -445,6 +446,10 @@ export default function SystemSettingsMainDashboard() {
               <RoomConfigurationDashboard />
             </Tab>
 
+            <Tab key="numbering" title="🔢 Numbering">
+              <NumberingSettingsPanel />
+            </Tab>
+
             <Tab key="rate-management" title="💰 Rate Management">
               <div className="space-y-6 mt-4">
                 <div className="flex justify-between items-center">
@@ -501,20 +506,52 @@ export default function SystemSettingsMainDashboard() {
               <div className="space-y-6 mt-4">
                 <h3 className="text-xl font-semibold">Security Settings</h3>
                 <div className="space-y-4">
-                                     <div className="flex items-center justify-between p-4 border rounded-lg">
-                     <div>
-                       <h4 className="font-medium">Two-Factor Authentication</h4>
-                       <p className="text-sm text-gray-600">Require 2FA for all users</p>
-                     </div>
-                     <Switch defaultSelected />
-                   </div>
-                                     <div className="flex items-center justify-between p-4 border rounded-lg">
-                     <div>
-                       <h4 className="font-medium">Session Timeout</h4>
-                       <p className="text-sm text-gray-600">Auto-logout after inactivity</p>
-                     </div>
-                     <Switch defaultSelected />
-                   </div>
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <h4 className="font-medium">Two-Factor Authentication</h4>
+                      <p className="text-sm text-gray-600">Require 2FA for all users</p>
+                    </div>
+                    <Switch
+                      isSelected={settings.security.twoFactorAuth}
+                      onValueChange={(v) => updateNestedSetting('security.twoFactorAuth', v)}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <h4 className="font-medium">Session Timeout</h4>
+                      <p className="text-sm text-gray-600">Auto-logout after inactivity (minutes)</p>
+                    </div>
+                    <Input
+                      type="number"
+                      className="max-w-[120px]"
+                      value={String(settings.security.sessionTimeout)}
+                      onChange={(e) => updateNestedSetting('security.sessionTimeout', Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <h4 className="font-medium">Password Minimum Length</h4>
+                      <p className="text-sm text-gray-600">Minimum characters required for passwords</p>
+                    </div>
+                    <Input
+                      type="number"
+                      className="max-w-[120px]"
+                      value={String(settings.security.passwordPolicy.minLength)}
+                      onChange={(e) => updateNestedSetting('security.passwordPolicy.minLength', Number(e.target.value))}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between p-4 border rounded-lg">
+                    <div>
+                      <h4 className="font-medium">Password Expiry</h4>
+                      <p className="text-sm text-gray-600">Days before passwords must be changed</p>
+                    </div>
+                    <Input
+                      type="number"
+                      className="max-w-[120px]"
+                      value={String(settings.security.passwordPolicy.expiryDays)}
+                      onChange={(e) => updateNestedSetting('security.passwordPolicy.expiryDays', Number(e.target.value))}
+                    />
+                  </div>
                 </div>
               </div>
             </Tab>

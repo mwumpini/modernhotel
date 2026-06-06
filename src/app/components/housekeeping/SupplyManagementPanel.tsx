@@ -4,7 +4,6 @@ import React, { useState, useEffect } from 'react';
 import { 
   Card, 
   CardBody, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -28,7 +27,6 @@ import {
   Tabs,
   Tab
 } from "@heroui/react";
-import { housekeepingStore } from '../../lib/housekeeping/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 
 interface SupplyItem {
@@ -391,22 +389,22 @@ export default function SupplyManagementPanel() {
               value={categoryFilter}
               onChange={(e) => setCategoryFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Categories</SelectItem>
-              <SelectItem key="cleaning" value="cleaning">🧹 Cleaning</SelectItem>
-              <SelectItem key="bathroom" value="bathroom">🚽 Bathroom</SelectItem>
-              <SelectItem key="linens" value="linens">🛏️ Linens</SelectItem>
-              <SelectItem key="amenities" value="amenities">🛁 Amenities</SelectItem>
-              <SelectItem key="tools" value="tools">🔧 Tools</SelectItem>
+              <SelectItem key="all">All Categories</SelectItem>
+              <SelectItem key="cleaning">🧹 Cleaning</SelectItem>
+              <SelectItem key="bathroom">🚽 Bathroom</SelectItem>
+              <SelectItem key="linens">🛏️ Linens</SelectItem>
+              <SelectItem key="amenities">🛁 Amenities</SelectItem>
+              <SelectItem key="tools">🔧 Tools</SelectItem>
             </Select>
             <Select
               placeholder="Filter by stock level"
               value={stockFilter}
               onChange={(e) => setStockFilter(e.target.value)}
             >
-              <SelectItem key="all" value="all">All Stock Levels</SelectItem>
-              <SelectItem key="low" value="low">⚠️ Low Stock</SelectItem>
-              <SelectItem key="normal" value="normal">✅ Normal Stock</SelectItem>
-              <SelectItem key="high" value="high">📦 High Stock</SelectItem>
+              <SelectItem key="all">All Stock Levels</SelectItem>
+              <SelectItem key="low">⚠️ Low Stock</SelectItem>
+              <SelectItem key="normal">✅ Normal Stock</SelectItem>
+              <SelectItem key="high">📦 High Stock</SelectItem>
             </Select>
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600">Filtered:</span>
@@ -437,7 +435,7 @@ export default function SupplyManagementPanel() {
                               color={getStockStatusColor(getStockStatus(supply)) as any}
                               size="sm"
                             >
-                              {getStockStatusIcon(getStockStatus(supply))} {getStockStatus(getStockStatus(supply)).charAt(0).toUpperCase() + getStockStatus(getStockStatus(supply)).slice(1)}
+                              {getStockStatusIcon(getStockStatus(supply))} {getStockStatus(supply).charAt(0).toUpperCase() + getStockStatus(supply).slice(1)}
                             </Badge>
                           </div>
                           
@@ -558,7 +556,7 @@ export default function SupplyManagementPanel() {
                                 variant="flat"
                                 size="sm"
                               >
-                                {getStockStatusIcon(getStockStatus(supply))} {getStockStatus(getStockStatus(supply))}
+                                {getStockStatusIcon(getStockStatus(supply))} {getStockStatus(supply)}
                               </Badge>
                             </div>
                           </div>
@@ -659,11 +657,11 @@ export default function SupplyManagementPanel() {
                     placeholder="Select category"
                     isRequired
                   >
-                    <SelectItem key="cleaning" value="cleaning">🧹 Cleaning</SelectItem>
-                    <SelectItem key="bathroom" value="bathroom">🚽 Bathroom</SelectItem>
-                    <SelectItem key="linens" value="linens">🛏️ Linens</SelectItem>
-                    <SelectItem key="amenities" value="amenities">🛁 Amenities</SelectItem>
-                    <SelectItem key="tools" value="tools">🔧 Tools</SelectItem>
+                    <SelectItem key="cleaning">🧹 Cleaning</SelectItem>
+                    <SelectItem key="bathroom">🚽 Bathroom</SelectItem>
+                    <SelectItem key="linens">🛏️ Linens</SelectItem>
+                    <SelectItem key="amenities">🛁 Amenities</SelectItem>
+                    <SelectItem key="tools">🔧 Tools</SelectItem>
                   </Select>
                 </div>
               </div>
@@ -674,7 +672,7 @@ export default function SupplyManagementPanel() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">Current Stock</label>
                   <Input
                     type="number"
-                    value={supplyForm.currentStock}
+                    value={String(supplyForm.currentStock)}
                     onChange={(e) => setSupplyForm({...supplyForm, currentStock: parseInt(e.target.value) || 0})}
                     placeholder="0"
                     min="0"
@@ -684,7 +682,7 @@ export default function SupplyManagementPanel() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">Minimum Stock</label>
                   <Input
                     type="number"
-                    value={supplyForm.minimumStock}
+                    value={String(supplyForm.minimumStock)}
                     onChange={(e) => setSupplyForm({...supplyForm, minimumStock: parseInt(e.target.value) || 10})}
                     placeholder="10"
                     min="0"
@@ -694,7 +692,7 @@ export default function SupplyManagementPanel() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">Maximum Stock</label>
                   <Input
                     type="number"
-                    value={supplyForm.maximumStock}
+                    value={String(supplyForm.maximumStock)}
                     onChange={(e) => setSupplyForm({...supplyForm, maximumStock: parseInt(e.target.value) || 100})}
                     placeholder="100"
                     min="0"
@@ -711,18 +709,18 @@ export default function SupplyManagementPanel() {
                     onChange={(e) => setSupplyForm({...supplyForm, unit: e.target.value})}
                     placeholder="Select unit"
                   >
-                    <SelectItem key="pieces" value="pieces">Pieces</SelectItem>
-                    <SelectItem key="rolls" value="rolls">Rolls</SelectItem>
-                    <SelectItem key="bottles" value="bottles">Bottles</SelectItem>
-                    <SelectItem key="boxes" value="boxes">Boxes</SelectItem>
-                    <SelectItem key="packs" value="packs">Packs</SelectItem>
+                    <SelectItem key="pieces">Pieces</SelectItem>
+                    <SelectItem key="rolls">Rolls</SelectItem>
+                    <SelectItem key="bottles">Bottles</SelectItem>
+                    <SelectItem key="boxes">Boxes</SelectItem>
+                    <SelectItem key="packs">Packs</SelectItem>
                   </Select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">Cost per Unit</label>
                   <Input
                     type="number"
-                    value={supplyForm.costPerUnit}
+                    value={String(supplyForm.costPerUnit)}
                     onChange={(e) => setSupplyForm({...supplyForm, costPerUnit: parseFloat(e.target.value) || 0})}
                     placeholder="0.00"
                     min="0"

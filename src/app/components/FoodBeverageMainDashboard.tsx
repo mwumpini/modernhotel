@@ -10,10 +10,7 @@ import {
   Tabs, 
   Tab, 
   Chip,
-  Progress,
-  Avatar,
-  Tooltip,
-  Divider
+  Tooltip
 } from "@heroui/react";
 import { ordersStore } from '../lib/fb/ordersStore';
 import { trackEvent } from '../lib/analytics/trackEvent';
@@ -101,7 +98,7 @@ export default function FoodBeverageMainDashboard() {
   const completedOrders = allOrders.filter(o => o.status === 'paid');
 
   // Calculate key metrics
-  const totalRevenue = completedOrders.reduce((sum, order) => sum + order.total, 0);
+  const totalRevenue = completedOrders.reduce((sum, order) => sum + (order.total || 0), 0);
   const averageOrderValue = completedOrders.length > 0 ? totalRevenue / completedOrders.length : 0;
   const pendingOrders = activeOrders.filter(o => o.status === 'pending').length;
   const preparingOrders = activeOrders.filter(o => o.status === 'preparing').length;
@@ -109,7 +106,7 @@ export default function FoodBeverageMainDashboard() {
   // Today's operations
   const today = new Date().toISOString().slice(0, 10);
   const todayOrders = completedOrders.filter(o => o.createdAt?.startsWith(today));
-  const todayRevenue = todayOrders.reduce((sum, order) => sum + order.total, 0);
+  const todayRevenue = todayOrders.reduce((sum, order) => sum + (order.total || 0), 0);
 
   // Operational items following the uniform pattern
   const operationalItems = [
@@ -301,7 +298,7 @@ export default function FoodBeverageMainDashboard() {
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex justify-between">
                   <span>Urgent</span>
-                  <span className="font-medium">{kitchenOrders.filter(o => o.status === 'urgent').length}</span>
+                  <span className="font-medium">{kitchenOrders.filter(o => o.priority === 'urgent').length}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Preparing</span>

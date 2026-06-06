@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSettingsStore } from '../lib/settings/store';
 import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
-import { EventResource, EventPackage, EventBooking } from '../lib/frontoffice/types';
+import { EventResource, EventPackage } from '../lib/frontoffice/types';
 
 interface EventRateManagementProps {
   onClose?: () => void;

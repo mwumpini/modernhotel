@@ -6,7 +6,6 @@ import {
   Tabs, Tab, Chip, Avatar
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
-import { trackEvent } from '../lib/analytics/trackEvent';
 
 interface User {
   id: string;

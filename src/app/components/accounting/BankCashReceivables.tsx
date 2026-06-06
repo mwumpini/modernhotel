@@ -2,13 +2,13 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
+  Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Chip, Badge, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
-  Tabs, Tab, Textarea, Divider, Spinner, Alert, Progress, Pagination
+  Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
+  Tabs, Tab, Spinner, Alert, Progress, Pagination
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
-import { BankAccount, BankTransaction } from '@/app/lib/accounting/models';
+import BankReconciliation from './BankReconciliation';
 
 export default function BankCashManagementPage() {
   const {
@@ -33,11 +33,7 @@ export default function BankCashManagementPage() {
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
   const [page, setPage] = useState(1);
   const rowsPerPage = 10;
-  
-  // Reconciliation state
-  const [statementDate, setStatementDate] = useState('');
-  const [statementBalance, setStatementBalance] = useState<number>(0);
-  const [reconciliationDifference, setReconciliationDifference] = useState<number>(0);
+  const [reconAccountId, setReconAccountId] = useState<string | undefined>();
   
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [editingItem, setEditingItem] = useState<any>(null);
@@ -49,6 +45,21 @@ export default function BankCashManagementPage() {
       initializeAccounting().catch(() => {});
     }
   }, [bankAccounts.length, bankTransactions.length, initializeAccounting]);
+
+  useEffect(() => {
+    try {
+      const sub = localStorage.getItem('accounting.banking.subtab');
+      const acct = localStorage.getItem('bankRecon.accountId');
+      if (sub) {
+        setSelectedTab(sub);
+        localStorage.removeItem('accounting.banking.subtab');
+      }
+      if (acct) {
+        setReconAccountId(acct);
+        localStorage.removeItem('bankRecon.accountId');
+      }
+    } catch {}
+  }, []);
 
   // Calculate totals
   const totalBankBalance = useMemo(() => {
@@ -70,33 +81,6 @@ export default function BankCashManagementPage() {
       .filter(account => account.accountName.toLowerCase().includes('cash'))
       .reduce((sum, account) => sum + account.currentBalance, 0);
   }, [bankAccounts]);
-
-  // Calculate reconciliation difference
-  useEffect(() => {
-    if (statementBalance !== 0) {
-      const difference = statementBalance - totalBankBalance;
-      setReconciliationDifference(difference);
-    } else {
-      setReconciliationDifference(0);
-    }
-  }, [statementBalance, totalBankBalance]);
-
-  // Handle reconciliation
-  const handleReconcile = () => {
-    if (!statementDate || statementBalance === 0) {
-      alert('Please enter both statement date and balance');
-      return;
-    }
-
-    // Here you would typically save the reconciliation record
-    // For now, we'll just show a success message
-    alert(`Reconciliation completed!\nStatement Balance: ₵${statementBalance.toLocaleString()}\nBook Balance: ₵${totalBankBalance.toLocaleString()}\nDifference: ₵${reconciliationDifference.toLocaleString()}`);
-    
-    // Reset form
-    setStatementDate('');
-    setStatementBalance(0);
-    setReconciliationDifference(0);
-  };
 
   // Pagination logic for different tabs
   const accountsToShow = useMemo(() => {
@@ -226,6 +210,7 @@ export default function BankCashManagementPage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
+                            <Button size="sm" variant="bordered" onPress={() => { setReconAccountId(acc.id); setSelectedTab('reconciliation'); }}>Reconcile</Button>
                             <Button size="sm" variant="bordered" onClick={() => { setIsEditMode(true); setEditingItem(acc); onOpen(); }}>✏️ Edit</Button>
                             <Button size="sm" color="danger" variant="bordered" onClick={() => deleteBankAccount(acc.id)}>🗑️ Delete</Button>
                           </div>
@@ -335,74 +320,7 @@ export default function BankCashManagementPage() {
             </Tab>
 
             <Tab key="reconciliation" title="🔄 Reconciliation">
-              <div className="p-6">
-                <div className="flex justify-between items-center mb-4">
-                  <h3 className="text-lg font-semibold">Bank Reconciliation</h3>
-                  <Button 
-                    color="primary" 
-                    startContent={<span>🔄</span>}
-                    onClick={handleReconcile}
-                    isDisabled={!statementDate || statementBalance === 0}
-                  >
-                    Reconcile
-                  </Button>
-                </div>
-
-                <Card>
-                  <CardBody>
-                    <div className="space-y-4">
-                      <div className="grid grid-cols-2 gap-4">
-                        <Input 
-                          label="Statement Date" 
-                          type="date" 
-                          value={statementDate}
-                          onChange={(e) => setStatementDate(e.target.value)}
-                        />
-                        <Input 
-                          label="Statement Balance" 
-                          type="number" 
-                          placeholder="0.00"
-                          value={statementBalance ? String(statementBalance) : ''}
-                          onChange={(e) => setStatementBalance(parseFloat(e.target.value) || 0)}
-                        />
-                      </div>
-                      
-                      <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
-                        <div>
-                          <div className="text-sm text-gray-600">Book Balance</div>
-                          <div className="text-lg font-semibold">₵{totalBankBalance.toLocaleString()}</div>
-                        </div>
-                        <div>
-                          <div className="text-sm text-gray-600">Difference</div>
-                          <div className={`text-lg font-semibold ${reconciliationDifference === 0 ? 'text-green-600' : reconciliationDifference > 0 ? 'text-blue-600' : 'text-red-600'}`}>
-                            ₵{reconciliationDifference.toLocaleString()}
-                          </div>
-                        </div>
-                      </div>
-
-                      {statementBalance > 0 && (
-                        <Alert 
-                          color={reconciliationDifference === 0 ? "success" : reconciliationDifference > 0 ? "primary" : "warning"} 
-                          title={reconciliationDifference === 0 ? "Balances Match!" : reconciliationDifference > 0 ? "Statement Higher" : "Book Balance Higher"}
-                        >
-                          {reconciliationDifference === 0 
-                            ? "Your bank statement matches the book balance perfectly."
-                            : reconciliationDifference > 0 
-                            ? `Statement is ₵${Math.abs(reconciliationDifference).toLocaleString()} higher than book balance.`
-                            : `Book balance is ₵${Math.abs(reconciliationDifference).toLocaleString()} higher than statement.`
-                          }
-                        </Alert>
-                      )}
-
-                      {statementBalance === 0 && (
-                        <Alert color="primary" title="Ready to Reconcile">
-                          Enter your bank statement details to begin reconciliation.
-                        </Alert>
-                      )}
-                    </div>
-                  </CardBody>
-                </Card>
-              </div>
+              <BankReconciliation embedded initialAccountId={reconAccountId || bankAccounts[0]?.id} />
             </Tab>
           </Tabs>
         </CardBody>

@@ -10,13 +10,9 @@ import {
   Tabs, 
   Tab, 
   Chip,
-  Progress,
-  Avatar,
-  Tooltip,
-  Divider
+  Tooltip
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
-import { useRouter } from 'next/navigation';
 
 // Import specialized accounting components
 import ChartOfAccounts from './accounting/ChartOfAccounts';
@@ -27,7 +23,7 @@ import AccountsReceivable from './accounting/AccountsReceivable';
 import InventoryFixedAssets from './accounting/InventoryFixedAssets';
 import FinancialReports from './accounting/FinancialReports';
 import AuditControls from './accounting/AuditControls';
-import ViewActivities from './accounting/ViewActivities';
+import BankReconciliation from './accounting/BankReconciliation';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
@@ -95,6 +91,20 @@ export default function AccountingMainDashboard() {
       }
     } catch {}
   }, []);
+
+  useEffect(() => {
+    const onNavigate = () => {
+      try {
+        const wanted = localStorage.getItem('accounting.tab');
+        if (wanted) {
+          setSelectedTab(wanted);
+          localStorage.removeItem('accounting.tab');
+        }
+      } catch {}
+    };
+    window.addEventListener('accounting-navigate', onNavigate);
+    return () => window.removeEventListener('accounting-navigate', onNavigate);
+  }, []);
   
   // Sample accounting data - in real app, this would come from stores
   const totalAssets = 2847500;
@@ -141,8 +151,8 @@ export default function AccountingMainDashboard() {
       items: [
         { title: 'Accounts Receivable', icon: '📝', description: 'Customer invoices and payments', status: 'active', count: pendingInvoices },
         { title: 'Accounts Payable', icon: '🧾', description: 'Vendor bills and payments', status: 'active', count: overduePayments },
-        { title: 'Inventory Assets', icon: '📦', description: 'Fixed assets and inventory tracking', status: 'active', count: 0 },
-        { title: 'Trial Balance', icon: '⚖️', description: 'Account balances and reconciliation', status: 'active', count: pendingReconciliations },
+        { title: 'PPE & Assets', icon: '🏗️', description: 'Property, plant & equipment and capital allowance', status: 'active', count: 0 },
+        { title: 'Trial Balance', icon: '⚖️', description: 'Account balances in financial reports', status: 'active', count: pendingReconciliations },
       ]
     },
     {
@@ -160,7 +170,7 @@ export default function AccountingMainDashboard() {
         { title: 'Daily Transactions', icon: '🔄', description: 'Journal entries and postings', status: 'active', count: transactionsToday },
         { title: 'Invoice Generation', icon: '📄', description: 'Customer and vendor invoices', status: 'active', count: invoicesGeneratedToday },
         { title: 'Payment Processing', icon: '💳', description: 'Payment receipts and disbursements', status: 'active', count: paymentsReceivedToday },
-        { title: 'Reconciliations', icon: '✅', description: 'Account and bank reconciliations', status: 'active', count: reconciliationsCompletedToday },
+        { title: 'Bank Reconciliation', icon: '✅', description: 'Statement vs cashbook (GL)', status: 'active', count: reconciliationsCompletedToday },
       ]
     }
   ];
@@ -169,7 +179,7 @@ export default function AccountingMainDashboard() {
     trackEvent('accounting.quick_action', { action });
     switch (action) {
       case 'new_transaction':
-        setSelectedTab('transactions');
+        setSelectedTab('reconciliation');
         break;
       case 'generate_invoice':
         setSelectedTab('receivables');
@@ -381,8 +391,6 @@ export default function AccountingMainDashboard() {
             </CardBody>
           </Card>
 
-
-
           {/* Main Operations Interface - Following Uniform Pattern */}
           <Card className="border-0 shadow-lg">
             <CardHeader className="pb-3">
@@ -422,9 +430,11 @@ export default function AccountingMainDashboard() {
                                     setSelectedTab('receivables');
                                   } else if (item.title.includes('Accounts Payable')) {
                                     setSelectedTab('payables');
-                                  } else if (item.title.includes('Inventory Assets')) {
+                                  } else if (item.title.includes('PPE & Assets')) {
                                     setSelectedTab('assets');
                                   } else if (item.title.includes('Trial Balance')) {
+                                    setSelectedTab('reports');
+                                  } else if (item.title.includes('Bank Reconciliation')) {
                                     setSelectedTab('reconciliation');
                                   }
                                 }}
@@ -483,7 +493,7 @@ export default function AccountingMainDashboard() {
                 </Tab>
 
                 {!leanMode && (
-                <Tab key="assets" title="📦 Inventory & Assets">
+                <Tab key="assets" title="🏗️ PPE & Assets">
                   <InventoryFixedAssets />
                 </Tab>
                 )}
@@ -506,8 +516,8 @@ export default function AccountingMainDashboard() {
                 </Tab>
                 )}
 
-                <Tab key="reconciliation" title="⚖️ Reconciliation">
-                  <ViewActivities />
+                <Tab key="reconciliation" title="⚖️ Bank Recon">
+                  <BankReconciliation />
                 </Tab>
               </Tabs>
 

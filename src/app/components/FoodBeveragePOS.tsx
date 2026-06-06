@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Card, CardBody, CardHeader, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Divider, Badge, Progress } from "@heroui/react";
+import { Card, CardBody, CardHeader, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Divider, Badge } from "@heroui/react";
 
 interface MenuItem {
   id: string;
@@ -416,7 +416,7 @@ export default function FoodBeveragePOS() {
                 onChange={(e) => setSelectedTable(e.target.value)}
               >
                 {tables.map((table) => (
-                  <SelectItem key={table} value={table}>
+                  <SelectItem key={table}>
                     {table}
                   </SelectItem>
                 ))}

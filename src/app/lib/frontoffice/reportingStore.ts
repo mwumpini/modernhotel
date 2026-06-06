@@ -2,7 +2,6 @@
 
 import { create } from 'zustand';
 import { frontOfficeStore } from './store';
-import { housekeepingStore } from '../housekeeping/store';
 import { trackEvent } from '../analytics/trackEvent';
 
 // Report Types

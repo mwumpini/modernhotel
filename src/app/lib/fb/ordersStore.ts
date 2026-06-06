@@ -12,6 +12,7 @@ export interface MenuItemRef {
 
 export interface OrderItem extends MenuItemRef {
   qty: number;
+  category?: string;
   status?: 'pending' | 'preparing' | 'ready' | 'served';
   prepMinutes?: number;
   startedAt?: string;
@@ -32,7 +33,7 @@ export interface FBOrder {
   table: string;
   waiterId: string;
   items: OrderItem[];
-  status: 'pending' | 'sent' | 'served' | 'paid';
+  status: 'pending' | 'sent' | 'served' | 'paid' | 'preparing' | 'ready';
   customerType: CustomerType;
   venue: VenueMode;
   priority?: 'low' | 'medium' | 'high' | 'urgent';
@@ -40,6 +41,8 @@ export interface FBOrder {
   roomNumber?: string;
   tabName?: string;
   preAuthLast4?: string;
+  total?: number;
+  timestamp?: string;
   createdAt?: string;
   updatedAt?: string;
   urgent?: boolean;

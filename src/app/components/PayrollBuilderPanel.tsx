@@ -265,7 +265,7 @@ export default function PayrollBuilderPanel() {
     const baseCfg = JSON.parse(JSON.stringify((builder as any).payrollConfigs.get(runtimeId)));
     (builder as any).payrollConfigs.set(runtimeId, baseCfg);
 
-    let totals = { gross: 0, net: 0, tax: 0, deductions: 0 } as any;
+    const totals = { gross: 0, net: 0, tax: 0, deductions: 0 } as any;
     activeEmployees.forEach((emp: any) => {
       // Create or update employee profile for the run
       const eid = emp.id || emp.employeeNumber || `EMP-${Math.floor(Math.random() * 10000)}`;

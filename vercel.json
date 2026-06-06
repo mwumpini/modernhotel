@@ -2,6 +2,12 @@
   "installCommand": "npm ci",
   "buildCommand": "sh -c \"if [ -n \\\"$DATABASE_URL\\\" ]; then npm run vercel-build; else npm run build; fi\"",
   "framework": "nextjs",
-  "outputDirectory": ".next"
+  "outputDirectory": ".next",
+  "crons": [
+    {
+      "path": "/api/cron/night-audit",
+      "schedule": "0 1 * * *"
+    }
+  ]
 }
 

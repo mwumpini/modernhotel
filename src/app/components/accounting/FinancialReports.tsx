@@ -9,19 +9,19 @@ import {
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { GHANA_CHART_OF_ACCOUNTS } from '@/app/lib/accounting/models';
-
-// ==================== TYPES ====================
-interface AccountNode {
-  code: string;
-  name: string;
-  type: string;
-  category: string;
-  level: number;
-  balance: number;
-  debit: number;
-  credit: number;
-  children: AccountNode[];
-}
+import {
+  buildFinancialAccountTree,
+  computeCashFlowFromJournals,
+  type AccountNode,
+  type RollupCoa,
+} from '@/app/lib/accounting/financialReportRollup';
+import { buildStatementOfChangesInEquity } from '@/app/lib/accounting/statementOfChangesInEquity';
+import {
+  buildProfitLossCloseEntry,
+  hasPeriodCloseForDate,
+  RETAINED_EARNINGS_GL,
+} from '@/app/lib/accounting/periodClose';
+import { logAccountingProcess } from '@/app/lib/accounting/accountingProcessLog';
 
 type PeriodType = 'custom' | 'month' | 'quarter' | 'year' | 'ytd';
 type ReportFormat = 'summary' | 'detailed';
@@ -76,12 +76,12 @@ const getPeriodDates = (periodType: PeriodType, selectedMonth: string, selectedQ
 };
 
 // Generate PDF HTML for printing - Professional accounting style
-const generateReportHTML = (title: string, companyName: string, period: string, content: string) => `
+const generateReportHTML = (title: string, period: string, content: string) => `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
-  <title>${title} - ${companyName}</title>
+  <title>${title}</title>
   <style>
     @page { size: A4; margin: 15mm; }
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -112,8 +112,7 @@ const generateReportHTML = (title: string, companyName: string, period: string, 
 </head>
 <body>
   <div class="header">
-    <h1>${companyName}</h1>
-    <h2>${title}</h2>
+    <h1>${title}</h1>
     <p>${period}</p>
   </div>
   ${content}
@@ -159,14 +158,17 @@ export default function FinancialReportsPage() {
   const {
     chartOfAccounts,
     journalEntries,
-    payments,
     initializeAccounting,
     isLoading,
+    addJournalEntry,
+    addAuditTrail,
   } = useAccountingStore();
 
   // ==================== STATE ====================
   const [selectedTab, setSelectedTab] = useState("overview");
-  const [companyName] = useState("MENISH HOTEL LIMITED");
+  const [closeAsOfDate, setCloseAsOfDate] = useState('');
+  const [closeMessage, setCloseMessage] = useState<string | null>(null);
+  const [closeBusy, setCloseBusy] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   // Period Selection
@@ -209,20 +211,18 @@ export default function FinancialReportsPage() {
     });
   };
 
-  const expandAll = () => setExpandedSections(new Set(['all', ...chartOfAccounts.map(a => a.code)]));
-  const collapseAll = () => setExpandedSections(new Set());
-
   // ==================== PERIOD CALCULATIONS ====================
   const { startDate, endDate } = useMemo(() => 
     getPeriodDates(periodType, selectedMonth, selectedQuarter, selectedYear, customDateFrom, customDateTo),
     [periodType, selectedMonth, selectedQuarter, selectedYear, customDateFrom, customDateTo]
   );
 
-  const periodLabel = useMemo(() => {
+  const periodRangeLabel = useMemo(() => {
     const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
-    if (periodType === 'ytd') {
-      return `Year to Date (${startDate.toLocaleDateString('en-GB', options)} - ${endDate.toLocaleDateString('en-GB', options)})`;
-    }
+    return `${startDate.toLocaleDateString('en-GB', options)} – ${endDate.toLocaleDateString('en-GB', options)}`;
+  }, [startDate, endDate]);
+
+  const periodLabel = useMemo(() => {
     if (periodType === 'month') {
       return startDate.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
     }
@@ -230,120 +230,95 @@ export default function FinancialReportsPage() {
       return `${selectedQuarter} ${selectedYear}`;
     }
     if (periodType === 'year') {
-      return `Year Ended 31 December ${selectedYear}`;
+      return `Year ended 31 December ${selectedYear}`;
     }
-    return `${startDate.toLocaleDateString('en-GB', options)} to ${endDate.toLocaleDateString('en-GB', options)}`;
-  }, [periodType, startDate, endDate, selectedQuarter, selectedYear]);
+    if (periodType === 'ytd') {
+      return `Year to Date — ${periodRangeLabel}`;
+    }
+    return periodRangeLabel;
+  }, [periodType, startDate, endDate, selectedQuarter, selectedYear, periodRangeLabel]);
 
-  // ==================== BUILD ACCOUNT TREE FROM COA ====================
-  const accountTree = useMemo(() => {
-    // Use chart of accounts from store or default Ghana COA
-    const allAccounts = chartOfAccounts.length > 0 ? chartOfAccounts : GHANA_CHART_OF_ACCOUNTS;
-    
-    // Build account balances from journal entries within period
-    const accountBalances: Record<string, { debit: number; credit: number }> = {};
-    
-    // Initialize all accounts with zero
-    allAccounts.forEach(acc => {
-      accountBalances[acc.code] = { debit: 0, credit: 0 };
-    });
+  // ==================== COA + ROLL-UPS (IFRS-style) ====================
+  /** Profit or loss: movement in selected period. Statement of financial position: cumulative through reporting date. */
+  const rollupCoa: RollupCoa[] = useMemo(() => {
+    const raw = chartOfAccounts.length > 0 ? chartOfAccounts : GHANA_CHART_OF_ACCOUNTS;
+    return raw.map((a) => ({
+      code: a.code,
+      name: a.name,
+      type: a.type as RollupCoa['type'],
+      category: a.category,
+      level: a.level,
+    }));
+  }, [chartOfAccounts]);
 
-    // Sum journal entries within date range
-    journalEntries
-      .filter(je => je.status === 'Posted')
-      .filter(je => {
-        const jeDate = new Date(je.date);
-        return jeDate >= startDate && jeDate <= endDate;
-      })
-      .forEach(je => {
-        je.lines.forEach(line => {
-          if (!accountBalances[line.accountCode]) {
-            accountBalances[line.accountCode] = { debit: 0, credit: 0 };
-          }
-          accountBalances[line.accountCode].debit += line.debit || 0;
-          accountBalances[line.accountCode].credit += line.credit || 0;
-        });
-      });
+  const expandAll = () =>
+    setExpandedSections(new Set(['all', ...rollupCoa.map((a) => a.code)]));
+  const collapseAll = () => setExpandedSections(new Set());
 
-    // Build hierarchical tree - Level 1 are root nodes
-    const buildTree = (parentCode?: string, parentLevel?: number): AccountNode[] => {
-      const targetLevel = parentLevel !== undefined ? parentLevel + 1 : 1;
-      
-      // Find accounts at target level that belong to parent
-      const children = allAccounts.filter(acc => {
-        if (acc.level !== targetLevel) return false;
-        if (!parentCode) return true; // Level 1 - no parent filter
-        // Check if this account is under the parent (same first digits based on level)
-        const parentPrefix = parentCode.slice(0, parentLevel === 1 ? 2 : parentLevel === 2 ? 3 : 4);
-        return acc.code.startsWith(parentPrefix);
-      });
+  const accountTreePeriod = useMemo(
+    () => buildFinancialAccountTree(rollupCoa, journalEntries, { kind: 'period', startDate, endDate }),
+    [rollupCoa, journalEntries, startDate, endDate]
+  );
 
-      return children.map(acc => {
-        const bal = accountBalances[acc.code] || { debit: 0, credit: 0 };
-        const childNodes = buildTree(acc.code, acc.level);
-        
-        // Sum up children balances
-        const childrenDebit = childNodes.reduce((s, c) => s + c.debit, 0);
-        const childrenCredit = childNodes.reduce((s, c) => s + c.credit, 0);
-        const totalDebit = bal.debit + childrenDebit;
-        const totalCredit = bal.credit + childrenCredit;
-        
-        // Calculate net balance based on normal balance for account type
-        let balance = 0;
-        if (acc.type === 'Asset' || acc.type === 'Expense') {
-          balance = totalDebit - totalCredit; // Debit normal
-        } else {
-          balance = totalCredit - totalDebit; // Credit normal
-        }
+  const accountTreeCumulative = useMemo(
+    () => buildFinancialAccountTree(rollupCoa, journalEntries, { kind: 'cumulative', endDate }),
+    [rollupCoa, journalEntries, endDate]
+  );
 
-        return {
-          code: acc.code,
-          name: acc.name,
-          type: acc.type,
-          category: acc.category || '',
-          level: acc.level,
-          debit: totalDebit,
-          credit: totalCredit,
-          balance,
-          children: childNodes,
-        };
-      });
-    };
+  const getAccountsByType = useCallback((tree: AccountNode[], type: string) => tree.filter((node) => node.type === type), []);
 
-    return buildTree();
-  }, [chartOfAccounts, journalEntries, startDate, endDate]);
+  const assetAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Asset'), [accountTreeCumulative, getAccountsByType]);
+  const liabilityAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Liability'), [accountTreeCumulative, getAccountsByType]);
+  const equityAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Equity'), [accountTreeCumulative, getAccountsByType]);
+  const revenueAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Revenue'), [accountTreePeriod, getAccountsByType]);
+  const expenseAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Expense'), [accountTreePeriod, getAccountsByType]);
 
-  // Filter tree by type
-  const getAccountsByType = useCallback((type: string) => accountTree.filter(node => node.type === type), [accountTree]);
-  
-  const assetAccounts = useMemo(() => getAccountsByType('Asset'), [getAccountsByType]);
-  const liabilityAccounts = useMemo(() => getAccountsByType('Liability'), [getAccountsByType]);
-  const equityAccounts = useMemo(() => getAccountsByType('Equity'), [getAccountsByType]);
-  const revenueAccounts = useMemo(() => getAccountsByType('Revenue'), [getAccountsByType]);
-  const expenseAccounts = useMemo(() => getAccountsByType('Expense'), [getAccountsByType]);
+  const cashFlow = useMemo(
+    () => computeCashFlowFromJournals(journalEntries, startDate, endDate),
+    [journalEntries, startDate, endDate]
+  );
 
   // ==================== CALCULATIONS ====================
   const totals = useMemo(() => {
     const sumBalance = (nodes: AccountNode[]): number => nodes.reduce((s, n) => s + n.balance, 0);
-    
+
     const totalAssets = sumBalance(assetAccounts);
     const totalLiabilities = sumBalance(liabilityAccounts);
-    const totalEquity = sumBalance(equityAccounts);
+    const totalEquityLedger = sumBalance(equityAccounts);
     const totalRevenue = sumBalance(revenueAccounts);
     const totalExpenses = sumBalance(expenseAccounts);
     const netIncome = totalRevenue - totalExpenses;
-    
+
+    const totalEquity = totalAssets - totalLiabilities;
+    const accumulatedUnclosedPlug = totalEquity - totalEquityLedger;
+    const totalLiabAndEquity = totalLiabilities + totalEquity;
+
     return {
       totalAssets,
       totalLiabilities,
+      totalEquityLedger,
       totalEquity,
-      totalEquityWithIncome: totalEquity + netIncome,
+      accumulatedUnclosedPlug,
       totalRevenue,
       totalExpenses,
       netIncome,
-      totalLiabAndEquity: totalLiabilities + totalEquity + netIncome,
+      totalLiabAndEquity,
     };
   }, [assetAccounts, liabilityAccounts, equityAccounts, revenueAccounts, expenseAccounts]);
+
+  useEffect(() => {
+    setCloseAsOfDate(endDate.toISOString().slice(0, 10));
+  }, [endDate]);
+
+  const socie = useMemo(
+    () => buildStatementOfChangesInEquity(journalEntries, rollupCoa, startDate, endDate, totals.netIncome),
+    [journalEntries, rollupCoa, startDate, endDate, totals.netIncome]
+  );
+
+  const closeAlreadyPosted = useMemo(
+    () => (closeAsOfDate ? hasPeriodCloseForDate(journalEntries, closeAsOfDate) : false),
+    [journalEntries, closeAsOfDate]
+  );
 
   // Trial Balance flat list
   const trialBalanceRows = useMemo(() => {
@@ -367,8 +342,8 @@ export default function FinancialReportsPage() {
       });
       return rows;
     };
-    return flattenTree(accountTree);
-  }, [accountTree, showZeroBalances, expandedSections]);
+    return flattenTree(accountTreeCumulative);
+  }, [accountTreeCumulative, showZeroBalances, expandedSections]);
 
   const trialBalanceTotals = useMemo(() => ({
     debit: trialBalanceRows.reduce((s, r) => s + (r.debit || 0), 0),
@@ -391,38 +366,43 @@ export default function FinancialReportsPage() {
       const fontClass = indent === 0 ? 'font-semibold' : indent === 1 ? 'font-medium' : '';
       const bgClass = indent === 0 ? 'bg-gray-50' : '';
       
+      const accountCell = (
+        <TableCell className={paddingClass}>
+          <div className="flex items-center gap-2">
+            {hasChildren && (
+              <button 
+                onClick={(e) => { e.stopPropagation(); toggleSection(node.code); }}
+                className="w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xs"
+              >
+                {isExpanded ? '▼' : '▶'}
+              </button>
+            )}
+            {!hasChildren && indent > 0 && <span className="w-4" />}
+            <span className={`font-mono text-xs text-gray-400 ${indent === 0 ? 'font-medium' : ''}`}>{node.code}</span>
+            <span className={fontClass}>{node.name}</span>
+          </div>
+        </TableCell>
+      );
+
       rows.push(
-        <TableRow key={node.code} className={`hover:bg-slate-50 ${bgClass}`}>
-          <TableCell className={paddingClass}>
-            <div className="flex items-center gap-2">
-              {hasChildren && (
-                <button 
-                  onClick={(e) => { e.stopPropagation(); toggleSection(node.code); }}
-                  className="w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 text-xs"
-                >
-                  {isExpanded ? '▼' : '▶'}
-                </button>
-              )}
-              {!hasChildren && indent > 0 && <span className="w-4" />}
-              <span className={`font-mono text-xs text-gray-400 ${indent === 0 ? 'font-medium' : ''}`}>{node.code}</span>
-              <span className={fontClass}>{node.name}</span>
-            </div>
-          </TableCell>
-          {showDebitCredit ? (
-            <>
-              <TableCell className="text-right font-mono text-sm">
-                {node.debit > node.credit ? formatCurrency(node.debit - node.credit) : '-'}
-              </TableCell>
-              <TableCell className="text-right font-mono text-sm">
-                {node.credit > node.debit ? formatCurrency(node.credit - node.debit) : '-'}
-              </TableCell>
-            </>
-          ) : (
+        showDebitCredit ? (
+          <TableRow key={node.code} className={`hover:bg-slate-50 ${bgClass}`}>
+            {accountCell}
+            <TableCell className="text-right font-mono text-sm">
+              {node.debit > node.credit ? formatCurrency(node.debit - node.credit) : '-'}
+            </TableCell>
+            <TableCell className="text-right font-mono text-sm">
+              {node.credit > node.debit ? formatCurrency(node.credit - node.debit) : '-'}
+            </TableCell>
+          </TableRow>
+        ) : (
+          <TableRow key={node.code} className={`hover:bg-slate-50 ${bgClass}`}>
+            {accountCell}
             <TableCell className={`text-right font-mono text-sm ${node.balance < 0 ? 'text-rose-600' : ''}`}>
               {formatCurrencyWithSign(node.balance)}
             </TableCell>
-          )}
-        </TableRow>
+          </TableRow>
+        )
       );
       
       // Render children if expanded
@@ -470,7 +450,7 @@ export default function FinancialReportsPage() {
       <table>
         <thead><tr><th>Code</th><th>Account Name</th><th>Type</th><th class="text-right">Debit</th><th class="text-right">Credit</th></tr></thead>
         <tbody>
-          ${renderRows(accountTree)}
+          ${renderRows(accountTreeCumulative)}
           <tr class="total-row">
             <td colspan="3" class="font-bold">TOTAL</td>
             <td class="text-right font-mono font-bold double-underline">${formatCurrency(trialBalanceTotals.debit)}</td>
@@ -479,8 +459,8 @@ export default function FinancialReportsPage() {
         </tbody>
       </table>
     `;
-    openPrintPreview(generateReportHTML('TRIAL BALANCE', companyName, periodLabel, content));
-  }, [accountTree, trialBalanceTotals, companyName, periodLabel]);
+    openPrintPreview(generateReportHTML('TRIAL BALANCE', periodLabel, content));
+  }, [accountTreeCumulative, trialBalanceTotals, periodLabel]);
 
   const printIncomeStatement = useCallback(() => {
     const renderSection = (nodes: AccountNode[], isExpense = false): string => {
@@ -513,8 +493,8 @@ export default function FinancialReportsPage() {
         </tbody></table>
       </div>
     `;
-    openPrintPreview(generateReportHTML('STATEMENT OF COMPREHENSIVE INCOME', companyName, periodLabel, content));
-  }, [revenueAccounts, expenseAccounts, totals, companyName, periodLabel]);
+    openPrintPreview(generateReportHTML('STATEMENT OF PROFIT OR LOSS', periodLabel, content));
+  }, [revenueAccounts, expenseAccounts, totals, periodLabel]);
 
   const printBalanceSheet = useCallback(() => {
     const renderSection = (nodes: AccountNode[]): string => {
@@ -543,118 +523,263 @@ export default function FinancialReportsPage() {
       <div class="section">
         <div class="section-title">Equity</div>
         <table><tbody>${renderSection(equityAccounts)}
-          <tr class="level-2"><td>Retained Earnings (Current Period)</td><td class="text-right font-mono">${formatCurrency(totals.netIncome)}</td></tr>
-          <tr class="subtotal-row"><td class="font-bold">Total Equity</td><td class="text-right font-mono font-bold underline">${formatCurrency(totals.totalEquityWithIncome)}</td></tr>
+          ${Math.abs(totals.accumulatedUnclosedPlug) >= 0.01 ? `<tr class="level-2"><td><em>Accumulated results (unclosed P&amp;L)</em></td><td class="text-right font-mono">${formatCurrencyWithSign(totals.accumulatedUnclosedPlug)}</td></tr>` : ''}
+          <tr class="level-2"><td colspan="2" style="font-size:9px;color:#666">Profit/(loss) for period (SoPL): ${formatCurrencyWithSign(totals.netIncome)} — reference only.</td></tr>
+          <tr class="subtotal-row"><td class="font-bold">Total Equity</td><td class="text-right font-mono font-bold underline">${formatCurrency(totals.totalEquity)}</td></tr>
           <tr class="total-row"><td class="font-bold">TOTAL LIABILITIES AND EQUITY</td><td class="text-right font-mono font-bold double-underline">${formatCurrency(totals.totalLiabAndEquity)}</td></tr>
         </tbody></table>
       </div>
     `;
-    openPrintPreview(generateReportHTML('STATEMENT OF FINANCIAL POSITION', companyName, periodLabel, content));
-  }, [assetAccounts, liabilityAccounts, equityAccounts, totals, companyName, periodLabel]);
+    openPrintPreview(generateReportHTML('STATEMENT OF FINANCIAL POSITION', periodLabel, content));
+  }, [assetAccounts, liabilityAccounts, equityAccounts, totals, periodLabel]);
 
-  // ==================== PERIOD SELECTOR COMPONENT ====================
-  const PeriodSelector = () => (
-    <Card className="mb-4 shadow-sm">
-      <CardBody className="py-3">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[180px]">
-            <label className="text-xs font-medium text-gray-500 mb-1 block">Period Type</label>
-            <Select
-              selectedKeys={[periodType]}
-              onSelectionChange={(keys) => setPeriodType(Array.from(keys)[0] as PeriodType)}
-              size="sm"
-              className="w-full"
-              variant="bordered"
-            >
-              <SelectItem key="ytd">Year to Date</SelectItem>
-              <SelectItem key="month">Specific Month</SelectItem>
-              <SelectItem key="quarter">Quarter</SelectItem>
-              <SelectItem key="year">Full Year</SelectItem>
-              <SelectItem key="custom">Custom Range</SelectItem>
-            </Select>
-          </div>
+  const printCashFlow = useCallback(() => {
+    const cf = cashFlow;
+    const content = `
+      <div class="section">
+        <div class="section-title">Cash and cash equivalents — movement (from general ledger)</div>
+        <p style="font-size:10px;color:#555;margin-bottom:10px">IAS 7 — simplified direct classification by journal entry (cash accounts 1000, 1100, 1110, 1120).</p>
+        <table><tbody>
+          <tr><td>Opening cash and cash equivalents</td><td class="text-right font-mono">${formatCurrency(cf.openingCash)}</td></tr>
+          <tr class="subtotal-row"><td colspan="2"><strong>Operating activities</strong></td></tr>
+          <tr><td style="padding-left:16px">Net cash flows (classified operating)</td><td class="text-right font-mono">${formatCurrencyWithSign(cf.operating)}</td></tr>
+          <tr class="subtotal-row"><td colspan="2"><strong>Investing activities</strong></td></tr>
+          <tr><td style="padding-left:16px">Net cash flows (PPE-related)</td><td class="text-right font-mono">${formatCurrencyWithSign(cf.investing)}</td></tr>
+          <tr class="subtotal-row"><td colspan="2"><strong>Financing activities</strong></td></tr>
+          <tr><td style="padding-left:16px">Net cash flows (equity capital)</td><td class="text-right font-mono">${formatCurrencyWithSign(cf.financing)}</td></tr>
+          <tr class="total-row"><td class="font-bold">Net increase / (decrease) in cash (sum of above)</td><td class="text-right font-mono font-bold">${formatCurrencyWithSign(cf.operating + cf.investing + cf.financing)}</td></tr>
+          <tr><td>Closing cash and cash equivalents (GL)</td><td class="text-right font-mono">${formatCurrency(cf.closingCash)}</td></tr>
+          <tr class="level-2"><td colspan="2" style="font-size:9px;color:#666">Cross-check: closing − opening = ${formatCurrencyWithSign(cf.netChange)}. Classification residual: ${formatCurrencyWithSign(cf.reconciliationDiff)}</td></tr>
+        </tbody></table>
+      </div>
+    `;
+    openPrintPreview(generateReportHTML('STATEMENT OF CASH FLOWS', periodLabel, content));
+  }, [cashFlow, periodLabel]);
 
-          {periodType === 'month' && (
-            <div className="flex-1 min-w-[150px]">
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Month</label>
-              <Input type="month" value={selectedMonth} onValueChange={setSelectedMonth} size="sm" variant="bordered" />
-            </div>
-          )}
+  const exportSocieCSV = useCallback(() => {
+    downloadCSV(
+      socie.rows.map((r) => ({
+        description: r.label,
+        shareCapital: r.shareCapital,
+        retainedAndOther: r.retainedAndOther,
+        totalEquity: r.total,
+      })),
+      'statement_of_changes_in_equity',
+      [
+        { key: 'description', label: 'Description' },
+        { key: 'shareCapital', label: 'Share capital' },
+        { key: 'retainedAndOther', label: 'Retained & other' },
+        { key: 'totalEquity', label: 'Total equity' },
+      ]
+    );
+  }, [socie.rows]);
 
-          {periodType === 'quarter' && (
-            <>
-              <div className="w-24">
-                <label className="text-xs font-medium text-gray-500 mb-1 block">Quarter</label>
-                <Select selectedKeys={[selectedQuarter]} onSelectionChange={(keys) => setSelectedQuarter(Array.from(keys)[0] as string)} size="sm" variant="bordered">
-                  <SelectItem key="Q1">Q1</SelectItem>
-                  <SelectItem key="Q2">Q2</SelectItem>
-                  <SelectItem key="Q3">Q3</SelectItem>
-                  <SelectItem key="Q4">Q4</SelectItem>
-                </Select>
-              </div>
-              <div className="w-28">
-                <label className="text-xs font-medium text-gray-500 mb-1 block">Year</label>
-                <Select selectedKeys={[selectedYear]} onSelectionChange={(keys) => setSelectedYear(Array.from(keys)[0] as string)} size="sm" variant="bordered">
-                  {[2024, 2025, 2026].map(y => (<SelectItem key={String(y)}>{y}</SelectItem>))}
-                </Select>
-              </div>
-            </>
-          )}
+  const printSocie = useCallback(() => {
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const body = socie.rows
+      .map(
+        (r) =>
+          `<tr class="${r.key === 'close' ? 'total-row' : ''}"><td>${esc(r.label)}</td><td class="text-right font-mono">${formatCurrency(r.shareCapital)}</td><td class="text-right font-mono">${formatCurrencyWithSign(r.retainedAndOther)}</td><td class="text-right font-mono">${formatCurrencyWithSign(r.total)}</td></tr>`
+      )
+      .join('');
+    const content = `
+      <div class="section">
+        <p style="font-size:10px;color:#555;margin-bottom:10px">Share capital (3100); retained &amp; other is the residual of total equity (assets − liabilities) after share capital. Profit for the period matches the statement of profit or loss for the same dates.</p>
+        <table>
+          <thead><tr><th>Description</th><th class="text-right">Share capital</th><th class="text-right">Retained &amp; other</th><th class="text-right">Total equity</th></tr></thead>
+          <tbody>${body}</tbody>
+        </table>
+      </div>`;
+    openPrintPreview(generateReportHTML('STATEMENT OF CHANGES IN EQUITY', periodLabel, content));
+  }, [socie, periodLabel]);
 
-          {periodType === 'year' && (
-            <div className="w-28">
-              <label className="text-xs font-medium text-gray-500 mb-1 block">Year</label>
-              <Select selectedKeys={[selectedYear]} onSelectionChange={(keys) => setSelectedYear(Array.from(keys)[0] as string)} size="sm" variant="bordered">
-                {[2024, 2025, 2026].map(y => (<SelectItem key={String(y)}>{y}</SelectItem>))}
-              </Select>
-            </div>
-          )}
-
-          {periodType === 'custom' && (
-            <>
-              <div className="flex-1 min-w-[140px]">
-                <label className="text-xs font-medium text-gray-500 mb-1 block">From</label>
-                <Input type="date" value={customDateFrom} onValueChange={setCustomDateFrom} size="sm" variant="bordered" />
-              </div>
-              <div className="flex-1 min-w-[140px]">
-                <label className="text-xs font-medium text-gray-500 mb-1 block">To</label>
-                <Input type="date" value={customDateTo} onValueChange={setCustomDateTo} size="sm" variant="bordered" />
-              </div>
-            </>
-          )}
-
-          <Button isIconOnly variant="light" onPress={handleRefresh} isDisabled={isRefreshing} size="sm" className="text-gray-500">
-            {isRefreshing ? <Spinner size="sm" /> : '🔄'}
-          </Button>
-        </div>
-        
-        <div className="mt-2 text-sm text-gray-600">
-          <span className="font-medium">Reporting Period:</span> {periodLabel}
-        </div>
-      </CardBody>
-    </Card>
-  );
+  const handlePostPeriodClose = useCallback(() => {
+    setCloseMessage(null);
+    if (!closeAsOfDate) {
+      setCloseMessage('Choose a closing date.');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Post profit/loss close to retained earnings (GL ${RETAINED_EARNINGS_GL}) as at ${closeAsOfDate}? This creates a posted journal entry.`
+      )
+    ) {
+      return;
+    }
+    setCloseBusy(true);
+    try {
+      const result = buildProfitLossCloseEntry(journalEntries, rollupCoa, closeAsOfDate);
+      if (!result.ok) {
+        setCloseMessage(result.error);
+        return;
+      }
+      addJournalEntry(result.entry);
+      logAccountingProcess('PeriodClose', 'P&L close posted to retained earnings', {
+        date: closeAsOfDate,
+        entryNumber: result.entry.entryNumber,
+        reference: result.entry.reference,
+        retainedEarningsGl: RETAINED_EARNINGS_GL,
+      });
+      addAuditTrail({
+        id: `AT-PLC-${Date.now()}`,
+        tableName: 'PeriodClose',
+        recordId: result.entry.id,
+        action: 'Create',
+        oldValues: undefined,
+        newValues: {
+          type: 'PeriodClose',
+          date: closeAsOfDate,
+          entryNumber: result.entry.entryNumber,
+          reference: result.entry.reference,
+        },
+        userId: 'system',
+        timestamp: new Date().toISOString(),
+      });
+      setCloseMessage(`Posted ${result.entry.entryNumber}. Ledger refreshed.`);
+      void handleRefresh();
+    } finally {
+      setCloseBusy(false);
+    }
+  }, [closeAsOfDate, journalEntries, rollupCoa, addJournalEntry, addAuditTrail, handleRefresh]);
 
   // ==================== REPORT OPTIONS ====================
   const ReportOptions = () => (
-    <div className="flex flex-wrap items-center gap-4 mb-4 p-3 bg-slate-50 rounded-lg border border-slate-100">
-      <div className="flex items-center gap-2">
-        <span className="text-sm text-gray-600">View:</span>
-        <RadioGroup orientation="horizontal" value={reportFormat} onValueChange={(v) => setReportFormat(v as ReportFormat)} size="sm">
-          <Radio value="summary">Summary</Radio>
-          <Radio value="detailed">Detailed</Radio>
-        </RadioGroup>
-      </div>
-      <Divider orientation="vertical" className="h-5" />
-      <Checkbox size="sm" isSelected={showZeroBalances} onValueChange={setShowZeroBalances} className="text-gray-600">
-        Show zero balances
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3 py-2 px-3 bg-slate-50 rounded-md border border-slate-100 text-sm">
+      <RadioGroup orientation="horizontal" value={reportFormat} onValueChange={(v) => setReportFormat(v as ReportFormat)} size="sm" classNames={{ label: 'text-gray-600 text-xs' }}>
+        <Radio value="summary" classNames={{ label: 'text-xs' }}>Summary</Radio>
+        <Radio value="detailed" classNames={{ label: 'text-xs' }}>Detailed</Radio>
+      </RadioGroup>
+      <Divider orientation="vertical" className="h-4 hidden sm:block" />
+      <Checkbox size="sm" isSelected={showZeroBalances} onValueChange={setShowZeroBalances} classNames={{ label: 'text-xs text-gray-600' }}>
+        Zero balances
       </Checkbox>
-      <Divider orientation="vertical" className="h-5" />
-      <div className="flex gap-2">
-        <Button size="sm" variant="flat" onPress={expandAll} className="text-gray-600">+ Expand</Button>
-        <Button size="sm" variant="flat" onPress={collapseAll} className="text-gray-600">− Collapse</Button>
+      <div className="flex gap-1 ml-auto">
+        <Button size="sm" variant="light" onPress={expandAll} className="text-gray-600 min-w-0 px-2 h-7 text-xs">Expand</Button>
+        <Button size="sm" variant="light" onPress={collapseAll} className="text-gray-600 min-w-0 px-2 h-7 text-xs">Collapse</Button>
       </div>
     </div>
+  );
+
+  const periodControls = (
+    <>
+      <Select
+        selectedKeys={[periodType]}
+        onSelectionChange={(keys) => setPeriodType(Array.from(keys)[0] as PeriodType)}
+        size="sm"
+        className="w-[9.5rem]"
+        variant="bordered"
+        aria-label="Period type"
+        classNames={{ trigger: 'h-8 min-h-8' }}
+      >
+        <SelectItem key="ytd">Year to Date</SelectItem>
+        <SelectItem key="month">Specific Month</SelectItem>
+        <SelectItem key="quarter">Quarter</SelectItem>
+        <SelectItem key="year">Full Year</SelectItem>
+        <SelectItem key="custom">Custom Range</SelectItem>
+      </Select>
+
+      {periodType === 'month' && (
+        <Input
+          type="month"
+          value={selectedMonth}
+          onValueChange={setSelectedMonth}
+          size="sm"
+          variant="bordered"
+          aria-label="Month"
+          className="w-[9.5rem]"
+          classNames={{ inputWrapper: 'h-8 min-h-8' }}
+        />
+      )}
+
+      {periodType === 'quarter' && (
+        <>
+          <Select
+            selectedKeys={[selectedQuarter]}
+            onSelectionChange={(keys) => setSelectedQuarter(Array.from(keys)[0] as string)}
+            size="sm"
+            variant="bordered"
+            aria-label="Quarter"
+            className="w-20"
+            classNames={{ trigger: 'h-8 min-h-8' }}
+          >
+            <SelectItem key="Q1">Q1</SelectItem>
+            <SelectItem key="Q2">Q2</SelectItem>
+            <SelectItem key="Q3">Q3</SelectItem>
+            <SelectItem key="Q4">Q4</SelectItem>
+          </Select>
+          <Select
+            selectedKeys={[selectedYear]}
+            onSelectionChange={(keys) => setSelectedYear(Array.from(keys)[0] as string)}
+            size="sm"
+            variant="bordered"
+            aria-label="Year"
+            className="w-20"
+            classNames={{ trigger: 'h-8 min-h-8' }}
+          >
+            {[2024, 2025, 2026].map((y) => (
+              <SelectItem key={String(y)}>{y}</SelectItem>
+            ))}
+          </Select>
+        </>
+      )}
+
+      {periodType === 'year' && (
+        <Select
+          selectedKeys={[selectedYear]}
+          onSelectionChange={(keys) => setSelectedYear(Array.from(keys)[0] as string)}
+          size="sm"
+          variant="bordered"
+          aria-label="Year"
+          className="w-20"
+          classNames={{ trigger: 'h-8 min-h-8' }}
+        >
+          {[2024, 2025, 2026].map((y) => (
+            <SelectItem key={String(y)}>{y}</SelectItem>
+          ))}
+        </Select>
+      )}
+
+      {periodType === 'custom' && (
+        <>
+          <Input
+            type="date"
+            value={customDateFrom}
+            onValueChange={setCustomDateFrom}
+            size="sm"
+            variant="bordered"
+            aria-label="From date"
+            className="w-[8.5rem]"
+            classNames={{ inputWrapper: 'h-8 min-h-8' }}
+          />
+          <Input
+            type="date"
+            value={customDateTo}
+            onValueChange={setCustomDateTo}
+            size="sm"
+            variant="bordered"
+            aria-label="To date"
+            className="w-[8.5rem]"
+            classNames={{ inputWrapper: 'h-8 min-h-8' }}
+          />
+        </>
+      )}
+
+      <Chip size="sm" variant="flat" color="default" className="hidden md:flex text-xs">
+        {periodRangeLabel}
+      </Chip>
+
+      <Button
+        isIconOnly
+        variant="light"
+        onPress={handleRefresh}
+        isDisabled={isRefreshing}
+        size="sm"
+        className="text-gray-500 min-w-8 w-8 h-8"
+        aria-label="Refresh reports"
+      >
+        {isRefreshing ? <Spinner size="sm" /> : '🔄'}
+      </Button>
+    </>
   );
 
   if (isLoading) {
@@ -666,31 +791,36 @@ export default function FinancialReportsPage() {
   }
 
   return (
-    <div className="p-4 md:p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-4">
-        <h1 className="text-2xl md:text-3xl font-bold text-gray-800">📊 Financial Reports</h1>
-        <p className="text-gray-500 mt-1">{companyName}</p>
-      </div>
-
-      {/* Period Selector */}
-      <PeriodSelector />
-
-      {/* Main Tabs */}
+    <div className="p-3 md:p-5 max-w-7xl mx-auto">
       <Card className="shadow-sm">
+        <div className="border-b border-slate-200 px-3 md:px-4 py-2.5">
+          <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+            <h1 className="text-lg md:text-xl font-bold text-gray-800 shrink-0">📊 Financial Reports</h1>
+            <div className="flex flex-wrap items-center gap-2">{periodControls}</div>
+          </div>
+          <p className="text-xs text-gray-500 mt-1.5 md:hidden">{periodRangeLabel}</p>
+        </div>
+
         <CardBody className="p-0">
           <Tabs
             selectedKey={selectedTab}
             onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
-            classNames={{ tabList: "flex-wrap bg-slate-50 border-b" }}
+            size="sm"
             variant="underlined"
+            classNames={{
+              tabList: 'gap-0 px-2 bg-slate-50/80 border-b border-slate-200 overflow-x-auto flex-nowrap scrollbar-thin',
+              tab: 'px-2.5 sm:px-3 min-w-fit text-xs sm:text-sm',
+              tabContent: 'text-xs sm:text-sm',
+              cursor: 'bg-ghana-green',
+              panel: 'p-0',
+            }}
           >
             {/* ==================== OVERVIEW TAB ==================== */}
-            <Tab key="overview" title="📈 Overview">
-              <div className="p-4 md:p-6">
+            <Tab key="overview" title="Overview">
+              <div className="p-3 md:p-5">
                 {/* Key Metrics - Mild colors */}
-                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 md:gap-3 mb-4">
                   <Card className="bg-slate-50 border border-slate-200 shadow-none">
                     <CardBody className="py-4 text-center">
                       <div className="text-lg md:text-2xl font-bold text-slate-700">{formatCurrency(totals.totalRevenue, true)}</div>
@@ -745,7 +875,7 @@ export default function FinancialReportsPage() {
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between"><span className="text-gray-600">Total Assets</span><span className="font-mono">{formatCurrency(totals.totalAssets, true)}</span></div>
                         <div className="flex justify-between"><span className="text-gray-600">Total Liabilities</span><span className="font-mono">{formatCurrency(totals.totalLiabilities, true)}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-600">Total Equity</span><span className="font-mono">{formatCurrency(totals.totalEquityWithIncome, true)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">Total Equity</span><span className="font-mono">{formatCurrency(totals.totalEquity, true)}</span></div>
                         <Divider />
                         <div className="flex justify-between font-semibold">
                           <span>Liabilities + Equity</span>
@@ -771,12 +901,14 @@ export default function FinancialReportsPage() {
             </Tab>
 
             {/* ==================== INCOME STATEMENT TAB ==================== */}
-            <Tab key="income-statement" title="📈 Income Statement">
-              <div className="p-4 md:p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            <Tab key="income-statement" title="Income Statement">
+              <div className="p-3 md:p-5">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-800">Statement of Comprehensive Income</h3>
-                    <p className="text-sm text-gray-500">{periodLabel}</p>
+                    <h3 className="text-base font-semibold text-gray-800">Statement of profit or loss</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Posted journal activity in the selected period only.
+                    </p>
                   </div>
                   <Dropdown>
                     <DropdownTrigger><Button variant="bordered" size="sm">📥 Export</Button></DropdownTrigger>
@@ -835,12 +967,14 @@ export default function FinancialReportsPage() {
             </Tab>
 
             {/* ==================== BALANCE SHEET TAB ==================== */}
-            <Tab key="balance-sheet" title="⚖️ Balance Sheet">
-              <div className="p-4 md:p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            <Tab key="balance-sheet" title="Balance Sheet">
+              <div className="p-3 md:p-5">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-800">Statement of Financial Position</h3>
-                    <p className="text-sm text-gray-500">As at {endDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                    <h3 className="text-base font-semibold text-gray-800">Statement of financial position</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      As at {endDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })} — cumulative posted balances.
+                    </p>
                   </div>
                   <Dropdown>
                     <DropdownTrigger><Button variant="bordered" size="sm">📥 Export</Button></DropdownTrigger>
@@ -901,16 +1035,29 @@ export default function FinancialReportsPage() {
                           <TableBody>
                             {[
                               ...renderAccountRows(equityAccounts),
-                              <TableRow key="retained-earnings">
-                                <TableCell className="pl-6 italic text-gray-600">Retained Earnings (Current Period)</TableCell>
-                                <TableCell className="text-right font-mono text-sm">{formatCurrency(totals.netIncome, true)}</TableCell>
-                              </TableRow>
+                              ...(Math.abs(totals.accumulatedUnclosedPlug) >= 0.01
+                                ? [
+                                    <TableRow key="accumulated-plug">
+                                      <TableCell className="pl-6 italic text-gray-600">
+                                        Accumulated results (unclosed P&amp;L to equity GL)
+                                      </TableCell>
+                                      <TableCell className="text-right font-mono text-sm">
+                                        {formatCurrencyWithSign(totals.accumulatedUnclosedPlug)}
+                                      </TableCell>
+                                    </TableRow>,
+                                  ]
+                                : []),
                             ]}
                           </TableBody>
                         </Table>
+                        <p className="text-xs text-gray-500 px-4 py-2 border-b border-slate-100">
+                          Profit / (loss) for the selected period (SoPL):{' '}
+                          <span className="font-mono">{formatCurrencyWithSign(totals.netIncome)}</span> — informational; total equity
+                          reconciles assets less liabilities (IAS 1).
+                        </p>
                         <div className="bg-slate-100 px-4 py-1 flex justify-between font-semibold text-sm">
                           <span>Total Equity</span>
-                          <span className="font-mono">{formatCurrency(totals.totalEquityWithIncome, true)}</span>
+                          <span className="font-mono">{formatCurrency(totals.totalEquity, true)}</span>
                         </div>
                       </div>
                       <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300">
@@ -937,53 +1084,206 @@ export default function FinancialReportsPage() {
               </div>
             </Tab>
 
-            {/* ==================== CASH FLOW TAB ==================== */}
-            <Tab key="cash-flow" title="💸 Cash Flow">
-              <div className="p-4 md:p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            {/* ==================== CHANGES IN EQUITY + PERIOD CLOSE ==================== */}
+            <Tab key="changes-in-equity" title="Changes in equity">
+              <div className="p-3 md:p-5 space-y-3">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-800">Statement of Cash Flows</h3>
-                    <p className="text-sm text-gray-500">{periodLabel}</p>
+                    <h3 className="text-base font-semibold text-gray-800">Statement of changes in equity</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Post period close below to move P&amp;L into retained earnings ({RETAINED_EARNINGS_GL}).
+                    </p>
+                  </div>
+                  <Dropdown>
+                    <DropdownTrigger>
+                      <Button variant="bordered" size="sm">
+                        📥 Export
+                      </Button>
+                    </DropdownTrigger>
+                    <DropdownMenu>
+                      <DropdownItem key="csv" onPress={exportSocieCSV}>
+                        📄 Download CSV
+                      </DropdownItem>
+                      <DropdownItem key="print" onPress={printSocie}>
+                        🖨️ Print PDF
+                      </DropdownItem>
+                    </DropdownMenu>
+                  </Dropdown>
+                </div>
+
+                <Card className="shadow-none border border-slate-200 bg-slate-50/40">
+                  <CardHeader className="py-3 border-b border-slate-200">
+                    <h4 className="font-semibold text-gray-800 text-sm">Period close — P&amp;L to retained earnings</h4>
+                  </CardHeader>
+                  <CardBody className="py-4 space-y-3">
+                    <div className="flex flex-wrap items-end gap-3">
+                      <div className="min-w-[200px]">
+                        <label className="text-xs font-medium text-gray-500 mb-1 block">Close as at (date)</label>
+                        <Input
+                          type="date"
+                          value={closeAsOfDate}
+                          onValueChange={setCloseAsOfDate}
+                          size="sm"
+                          variant="bordered"
+                          aria-label="Period close as-of date"
+                        />
+                      </div>
+                      <Button
+                        color="primary"
+                        size="sm"
+                        isDisabled={closeBusy || closeAlreadyPosted || !closeAsOfDate}
+                        isLoading={closeBusy}
+                        onPress={handlePostPeriodClose}
+                      >
+                        Post P&amp;L to retained earnings
+                      </Button>
+                      {closeAlreadyPosted && (
+                        <Chip size="sm" variant="flat" color="warning">
+                          Close already posted for this date
+                        </Chip>
+                      )}
+                    </div>
+                    {closeMessage && (
+                      <p className={`text-sm ${closeMessage.startsWith('Posted') ? 'text-emerald-700' : 'text-rose-700'}`}>
+                        {closeMessage}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-500">
+                      One posted close per calendar date. Reversals are not automated — void or adjust manually if needed.
+                    </p>
+                  </CardBody>
+                </Card>
+
+                <Card className="shadow-none border overflow-hidden">
+                  <CardBody className="p-0">
+                    <Table removeWrapper aria-label="Statement of changes in equity" classNames={{ th: 'bg-slate-50 text-gray-600' }}>
+                      <TableHeader>
+                        <TableColumn>Description</TableColumn>
+                        <TableColumn width={140} className="text-right">
+                          Share capital
+                        </TableColumn>
+                        <TableColumn width={160} className="text-right">
+                          Retained &amp; other
+                        </TableColumn>
+                        <TableColumn width={140} className="text-right">
+                          Total equity
+                        </TableColumn>
+                      </TableHeader>
+                      <TableBody>
+                        {socie.rows.map((r) => (
+                          <TableRow
+                            key={r.key}
+                            className={r.key === 'close' ? 'bg-slate-100 font-semibold' : ''}
+                          >
+                            <TableCell className="text-sm max-w-md">{r.label}</TableCell>
+                            <TableCell className="text-right font-mono text-sm">{formatCurrency(r.shareCapital)}</TableCell>
+                            <TableCell className="text-right font-mono text-sm">{formatCurrencyWithSign(r.retainedAndOther)}</TableCell>
+                            <TableCell className="text-right font-mono text-sm">{formatCurrencyWithSign(r.total)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardBody>
+                </Card>
+              </div>
+            </Tab>
+
+            {/* ==================== CASH FLOW TAB ==================== */}
+            <Tab key="cash-flow" title="Cash Flow">
+              <div className="p-3 md:p-5">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
+                  <div>
+                    <h3 className="text-base font-semibold text-gray-800">Statement of cash flows</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Cash and bank accounts (1000, 1100, 1110, 1120) — operating / investing / financing split.
+                    </p>
                   </div>
                   <Dropdown>
                     <DropdownTrigger><Button variant="bordered" size="sm">📥 Export</Button></DropdownTrigger>
                     <DropdownMenu>
-                      <DropdownItem key="print">🖨️ Print PDF</DropdownItem>
+                      <DropdownItem key="print" onPress={printCashFlow}>
+                        🖨️ Print PDF
+                      </DropdownItem>
                     </DropdownMenu>
                   </Dropdown>
                 </div>
 
                 <div className="space-y-4">
                   <Card className="shadow-none border overflow-hidden">
-                    <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm">Cash Flows from Operating Activities</h4></CardHeader>
-                    <CardBody>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between pl-4"><span className="text-gray-600">Cash received from customers</span><span className="font-mono">{formatCurrency(payments.filter(p => p.type === 'Receipt').reduce((s, p) => s + p.amount, 0), true)}</span></div>
-                        <div className="flex justify-between pl-4"><span className="text-gray-600">Cash paid to suppliers</span><span className="font-mono">({formatCurrency(payments.filter(p => p.type === 'Payment').reduce((s, p) => s + p.amount, 0), true)})</span></div>
-                        <Divider />
-                        <div className="flex justify-between font-semibold"><span>Net cash from operating activities</span><span className="font-mono">{formatCurrency(payments.filter(p => p.type === 'Receipt').reduce((s, p) => s + p.amount, 0) - payments.filter(p => p.type === 'Payment').reduce((s, p) => s + p.amount, 0), true)}</span></div>
+                    <CardHeader className="bg-slate-100 py-2 border-b">
+                      <h4 className="font-semibold text-gray-700 text-sm">Cash and cash equivalents</h4>
+                    </CardHeader>
+                    <CardBody className="text-sm space-y-2">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Opening (start of period)</span>
+                        <span className="font-mono">{formatCurrency(cashFlow.openingCash, true)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Closing (through reporting date)</span>
+                        <span className="font-mono">{formatCurrency(cashFlow.closingCash, true)}</span>
+                      </div>
+                      <Divider />
+                      <div className="flex justify-between font-semibold">
+                        <span>Net change (GL)</span>
+                        <span className="font-mono">{formatCurrencyWithSign(cashFlow.netChange)}</span>
                       </div>
                     </CardBody>
                   </Card>
                   <Card className="shadow-none border overflow-hidden">
-                    <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm">Cash Flows from Investing Activities</h4></CardHeader>
-                    <CardBody><div className="text-sm text-gray-400 text-center py-2">No investing activities recorded</div></CardBody>
+                    <CardHeader className="bg-slate-100 py-2 border-b">
+                      <h4 className="font-semibold text-gray-700 text-sm">Operating activities</h4>
+                    </CardHeader>
+                    <CardBody>
+                      <div className="flex justify-between font-semibold text-sm">
+                        <span>Net cash from operating activities</span>
+                        <span className="font-mono">{formatCurrencyWithSign(cashFlow.operating)}</span>
+                      </div>
+                    </CardBody>
                   </Card>
                   <Card className="shadow-none border overflow-hidden">
-                    <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm">Cash Flows from Financing Activities</h4></CardHeader>
-                    <CardBody><div className="text-sm text-gray-400 text-center py-2">No financing activities recorded</div></CardBody>
+                    <CardHeader className="bg-slate-100 py-2 border-b">
+                      <h4 className="font-semibold text-gray-700 text-sm">Investing activities</h4>
+                    </CardHeader>
+                    <CardBody>
+                      <div className="flex justify-between font-semibold text-sm">
+                        <span>Net cash from investing activities</span>
+                        <span className="font-mono">{formatCurrencyWithSign(cashFlow.investing)}</span>
+                      </div>
+                    </CardBody>
                   </Card>
+                  <Card className="shadow-none border overflow-hidden">
+                    <CardHeader className="bg-slate-100 py-2 border-b">
+                      <h4 className="font-semibold text-gray-700 text-sm">Financing activities</h4>
+                    </CardHeader>
+                    <CardBody>
+                      <div className="flex justify-between font-semibold text-sm">
+                        <span>Net cash from financing activities</span>
+                        <span className="font-mono">{formatCurrencyWithSign(cashFlow.financing)}</span>
+                      </div>
+                    </CardBody>
+                  </Card>
+                  {Math.abs(cashFlow.reconciliationDiff) >= 0.01 && (
+                    <Card className="shadow-none border border-amber-200 bg-amber-50/50">
+                      <CardBody className="text-xs text-amber-900 py-3">
+                        Classification total differs from net GL change by{' '}
+                        <span className="font-mono">{formatCurrency(cashFlow.reconciliationDiff, true)}</span> — refine journal
+                        tagging or expand activity rules if you need a full IAS 7 reconciliation.
+                      </CardBody>
+                    </Card>
+                  )}
                 </div>
               </div>
             </Tab>
 
             {/* ==================== TRIAL BALANCE TAB ==================== */}
-            <Tab key="trial-balance" title="📋 Trial Balance">
-              <div className="p-4 md:p-6">
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 mb-4">
+            <Tab key="trial-balance" title="Trial Balance">
+              <div className="p-3 md:p-5">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 mb-3">
                   <div>
-                    <h3 className="text-lg font-semibold text-gray-800">Trial Balance</h3>
-                    <p className="text-sm text-gray-500">{periodLabel}</p>
+                    <h3 className="text-base font-semibold text-gray-800">Trial balance</h3>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      Cumulative posted balances through the reporting date.
+                    </p>
                   </div>
                   <Dropdown>
                     <DropdownTrigger><Button variant="bordered" size="sm">📥 Export</Button></DropdownTrigger>
@@ -1004,8 +1304,8 @@ export default function FinancialReportsPage() {
                         <TableColumn width={150} className="text-right">Debit</TableColumn>
                         <TableColumn width={150} className="text-right">Credit</TableColumn>
                       </TableHeader>
-                      <TableBody emptyContent="No transactions recorded for this period.">
-                        {renderAccountRows(accountTree, true)}
+                      <TableBody emptyContent="No posted journal activity through the reporting date.">
+                        {renderAccountRows(accountTreeCumulative, true)}
                       </TableBody>
                     </Table>
                     

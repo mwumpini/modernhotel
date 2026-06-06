@@ -11,8 +11,6 @@ import {
   Select, 
   SelectItem, 
   Textarea,
-  Chip,
-  Avatar,
   Modal,
   ModalContent,
   ModalHeader,
@@ -21,11 +19,7 @@ import {
   useDisclosure,
   Tabs,
   Tab,
-  Divider,
-  Switch,
-  Progress,
-  Accordion,
-  AccordionItem
+  Switch
 } from '@heroui/react';
 import { trackEvent } from '../lib/analytics/trackEvent';
 

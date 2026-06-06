@@ -21,14 +21,12 @@ import {
   ModalHeader,
   ModalBody,
   ModalFooter,
-  useDisclosure,
   Chip,
   Textarea,
   Tabs,
   Tab,
   Progress,
   Avatar,
-  Tooltip,
   Dropdown,
   DropdownTrigger,
   DropdownMenu,
@@ -394,14 +392,14 @@ export default function RoomStatusMaintenanceTracker() {
                     value={statusFilter}
                     onChange={(e) => setStatusFilter(e.target.value)}
                   >
-                    <SelectItem key="all" value="all">All Statuses</SelectItem>
-                    <SelectItem key="occupied" value="occupied">🟢 Occupied</SelectItem>
-                    <SelectItem key="vacant" value="vacant">⚪ Vacant</SelectItem>
-                    <SelectItem key="dirty" value="dirty">🟡 Dirty</SelectItem>
-                    <SelectItem key="clean" value="clean">🔵 Clean</SelectItem>
-                    <SelectItem key="inspected" value="inspected">🟣 Inspected</SelectItem>
-                    <SelectItem key="out-of-order" value="out-of-order">🔴 Out of Order</SelectItem>
-                    <SelectItem key="maintenance" value="maintenance">🟠 Maintenance</SelectItem>
+                    <SelectItem key="all">All Statuses</SelectItem>
+                    <SelectItem key="occupied">🟢 Occupied</SelectItem>
+                    <SelectItem key="vacant">⚪ Vacant</SelectItem>
+                    <SelectItem key="dirty">🟡 Dirty</SelectItem>
+                    <SelectItem key="clean">🔵 Clean</SelectItem>
+                    <SelectItem key="inspected">🟣 Inspected</SelectItem>
+                    <SelectItem key="out-of-order">🔴 Out of Order</SelectItem>
+                    <SelectItem key="maintenance">🟠 Maintenance</SelectItem>
                   </Select>
                   <div className="flex items-center space-x-2">
                     <span className="text-sm text-gray-600">Filtered:</span>
@@ -541,11 +539,11 @@ export default function RoomStatusMaintenanceTracker() {
                     value={taskFilter}
                     onChange={(e) => setTaskFilter(e.target.value)}
                   >
-                    <SelectItem key="all" value="all">All Statuses</SelectItem>
-                    <SelectItem key="pending" value="pending">⏳ Pending</SelectItem>
-                    <SelectItem key="in-progress" value="in-progress">🔄 In Progress</SelectItem>
-                    <SelectItem key="completed" value="completed">✅ Completed</SelectItem>
-                    <SelectItem key="verified" value="verified">🔍 Verified</SelectItem>
+                    <SelectItem key="all">All Statuses</SelectItem>
+                    <SelectItem key="pending">⏳ Pending</SelectItem>
+                    <SelectItem key="in-progress">🔄 In Progress</SelectItem>
+                    <SelectItem key="completed">✅ Completed</SelectItem>
+                    <SelectItem key="verified">🔍 Verified</SelectItem>
                   </Select>
                   <div className="flex items-center space-x-2">
                     <span className="text-sm text-gray-600">Total Tasks:</span>
@@ -860,11 +858,11 @@ export default function RoomStatusMaintenanceTracker() {
                       placeholder="Select task type"
                       isRequired
                     >
-                      <SelectItem key="daily" value="daily">Daily Cleaning</SelectItem>
-                      <SelectItem key="turnover" value="turnover">Turnover</SelectItem>
-                      <SelectItem key="deep-clean" value="deep-clean">Deep Clean</SelectItem>
-                      <SelectItem key="maintenance" value="maintenance">Maintenance</SelectItem>
-                      <SelectItem key="inspection" value="inspection">Inspection</SelectItem>
+                      <SelectItem key="daily">Daily Cleaning</SelectItem>
+                      <SelectItem key="turnover">Turnover</SelectItem>
+                      <SelectItem key="deep-clean">Deep Clean</SelectItem>
+                      <SelectItem key="maintenance">Maintenance</SelectItem>
+                      <SelectItem key="inspection">Inspection</SelectItem>
                     </Select>
                   </div>
                   <div>
@@ -875,17 +873,17 @@ export default function RoomStatusMaintenanceTracker() {
                       placeholder="Select priority"
                       isRequired
                     >
-                      <SelectItem key="low" value="low">Low</SelectItem>
-                      <SelectItem key="medium" value="medium">Medium</SelectItem>
-                      <SelectItem key="high" value="high">High</SelectItem>
-                      <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
+                      <SelectItem key="low">Low</SelectItem>
+                      <SelectItem key="medium">Medium</SelectItem>
+                      <SelectItem key="high">High</SelectItem>
+                      <SelectItem key="urgent">Urgent</SelectItem>
                     </Select>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Estimated Minutes *</label>
                     <Input
                       type="number"
-                      value={selectedTask.estimatedMinutes}
+                      value={String(selectedTask.estimatedMinutes)}
                       onChange={(e) => setSelectedTask({...selectedTask, estimatedMinutes: parseInt(e.target.value) || 30})}
                       placeholder="30"
                       isRequired
@@ -956,13 +954,13 @@ export default function RoomStatusMaintenanceTracker() {
                       placeholder="Select category"
                       isRequired
                     >
-                      <SelectItem key="plumbing" value="plumbing">Plumbing</SelectItem>
-                      <SelectItem key="electrical" value="electrical">Electrical</SelectItem>
-                      <SelectItem key="hvac" value="hvac">HVAC</SelectItem>
-                      <SelectItem key="furniture" value="furniture">Furniture</SelectItem>
-                      <SelectItem key="appliances" value="appliances">Appliances</SelectItem>
-                      <SelectItem key="structural" value="structural">Structural</SelectItem>
-                      <SelectItem key="other" value="other">Other</SelectItem>
+                      <SelectItem key="plumbing">Plumbing</SelectItem>
+                      <SelectItem key="electrical">Electrical</SelectItem>
+                      <SelectItem key="hvac">HVAC</SelectItem>
+                      <SelectItem key="furniture">Furniture</SelectItem>
+                      <SelectItem key="appliances">Appliances</SelectItem>
+                      <SelectItem key="structural">Structural</SelectItem>
+                      <SelectItem key="other">Other</SelectItem>
                     </Select>
                   </div>
                   <div>
@@ -973,10 +971,10 @@ export default function RoomStatusMaintenanceTracker() {
                       placeholder="Select priority"
                       isRequired
                     >
-                      <SelectItem key="low" value="low">Low</SelectItem>
-                      <SelectItem key="medium" value="medium">Medium</SelectItem>
-                      <SelectItem key="high" value="high">High</SelectItem>
-                      <SelectItem key="urgent" value="urgent">Urgent</SelectItem>
+                      <SelectItem key="low">Low</SelectItem>
+                      <SelectItem key="medium">Medium</SelectItem>
+                      <SelectItem key="high">High</SelectItem>
+                      <SelectItem key="urgent">Urgent</SelectItem>
                     </Select>
                   </div>
                   <div>

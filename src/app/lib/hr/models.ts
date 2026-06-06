@@ -79,13 +79,15 @@ export interface Employee {
 export interface Department {
   id: string;
   name: string;
-  code: string;
+  code?: string;
   description: string;
   managerId?: string;
   parentDepartmentId?: string;
   budget: number;
   location: string;
-  isActive: boolean;
+  isActive?: boolean;
+  employeeCount?: number;
+  status?: 'active' | 'inactive';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -93,14 +95,16 @@ export interface Department {
 export interface Position {
   id: string;
   title: string;
-  code: string;
+  code?: string;
   departmentId: string;
   description: string;
   requirements: string[];
-  responsibilities: string[];
-  minSalary: number;
-  maxSalary: number;
-  isActive: boolean;
+  responsibilities?: string[];
+  minSalary?: number;
+  maxSalary?: number;
+  baseSalary?: number;
+  isActive?: boolean;
+  status?: 'active' | 'inactive';
   createdAt: Date;
   updatedAt: Date;
 }
