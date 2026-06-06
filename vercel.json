@@ -1,6 +1,6 @@
 {
   "installCommand": "npm ci",
-  "buildCommand": "sh -c \"if [ -n \\\"$DATABASE_URL\\\" ]; then npm run vercel-build; else npm run build; fi\"",
+  "buildCommand": "npm run build",
   "framework": "nextjs",
   "outputDirectory": ".next",
   "crons": [
