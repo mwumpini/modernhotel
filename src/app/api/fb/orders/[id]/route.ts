@@ -55,6 +55,7 @@ export async function PATCH(
         status: body.status ?? existing.status,
         notes: body.notes ?? existing.notes,
         serverName: body.serverName ?? existing.serverName,
+        tableNumber: body.tableNumber ?? existing.tableNumber,
         ...(body.status === 'served' ? { servedAt: now } : {}),
       },
       include: { items: true },

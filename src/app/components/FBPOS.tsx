@@ -72,7 +72,7 @@ interface PendingOrder {
   table: string;
   waiterId: string;
   items: CartItem[];
-  status: 'pending' | 'sent' | 'served' | 'paid';
+  status: 'pending' | 'preparing' | 'ready' | 'sent' | 'served' | 'billed' | 'paid' | 'cancelled';
   customerType: CustomerType;
   venue: VenueMode;
   notes?: string;
@@ -104,9 +104,19 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [priority, setPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>(() => {
     try { return (localStorage.getItem('kitchen.priority.filter') as any) || 'high'; } catch { return 'high'; }
   });
-  const [ordersPriorityFilter, setOrdersPriorityFilter] = useState<'all' | 'low' | 'medium' | 'high' | 'urgent'>(() => {
-    try { return (localStorage.getItem('kitchen.priority.filter') as any) || 'high'; } catch { return 'high'; }
-  });
+
+  const [isSending, setIsSending] = useState(false);
+  // Track the DB order created by "Send to Kitchen" so Pay reuses it instead of creating a duplicate
+  const [sentOrderData, setSentOrderData] = useState<{
+    id: string; subtotal: number; taxAmount: number; total: number;
+  } | null>(null);
+  // Tenant info loaded from API
+  const [hotelName, setHotelName] = useState('Hotel');
+  const [waiters, setWaiters] = useState<Waiter[]>([
+    { id: 'W1', name: 'Ama' },
+    { id: 'W2', name: 'Kwame' },
+    { id: 'W3', name: 'Efua' },
+  ]);
 
   const paymentModal = useDisclosure();
   const aliasModal = useDisclosure();
@@ -244,44 +254,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     }
   };
 
-  // Add charges to guest folio
-  const addToGuestFolio = (orderId: string, total: number, items: any[]) => {
-    if (customerType !== 'In-house' || !selectedGuest) return;
-
-    // Find the reservation for this guest
-    const reservation = frontOfficeStore.reservations.find(r => 
-      r.guestId === selectedGuest.guestId && r.status === 'checked-in'
-    );
-
-    if (reservation) {
-      // Create folio charges
-      const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
-      
-      // Add F&B charges
-      items.forEach(item => {
-        frontOfficeStore.addFolioCharge(folio.id, {
-          id: `charge-${Date.now()}-${Math.random()}`,
-          description: `${item.name} (${item.qty}x)`,
-          amount: item.price * item.qty,
-          category: 'F&B',
-          date: new Date().toISOString(),
-          reference: orderId
-        });
-      });
-
-      // Update folio balances
-      frontOfficeStore.updateFolioBalances(folio);
-      
-      // Track the event
-      trackEvent('FB.RoomCharge', { 
-        orderId, 
-        roomNumber, 
-        guestName, 
-        total, 
-        itemCount: items.length 
-      }, { sourceModule: 'F&B' });
-    }
-  };
 
   React.useEffect(() => {
     try {
@@ -298,12 +270,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   }, []);
 
   const [selectedOrder, setSelectedOrder] = useState<PendingOrder | null>(null);
-
-  const waiters: Waiter[] = [
-    { id: 'W1', name: 'Ama' },
-    { id: 'W2', name: 'Kwame' },
-    { id: 'W3', name: 'Efua' },
-  ];
 
   const tables = Array.from({ length: 20 }).map((_, i) => `T${String(i + 1).padStart(2, '0')}`);
 
@@ -353,6 +319,29 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     fetchMenu();
     return () => { cancelled = true; };
   // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load tenant info: hotel name + staff list for waiter select
+  React.useEffect(() => {
+    let cancelled = false;
+    async function fetchTenantInfo() {
+      try {
+        const sub = window.location.hostname.split('.')[0] || 'default';
+        const res = await fetch('/api/tenant', { headers: { 'x-tenant-id': sub } });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        if (data.hotelName) setHotelName(data.hotelName);
+        if (Array.isArray(data.staff) && data.staff.length > 0) {
+          setWaiters(data.staff.map((s: any) => ({ id: s.id, name: s.name })));
+          // Default waiterId to first staff member
+          setWaiterId(data.staff[0].id);
+        }
+      } catch {
+        // Keep default fallback values
+      }
+    }
+    fetchTenantInfo();
+    return () => { cancelled = true; };
   }, []);
 
   type AliasesMap = Record<string, string[]>; // menuId -> aliases
@@ -490,7 +479,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     if (!activitySelected) return;
     const { order: o, item: it } = activitySelected;
     previewReceipt({
-      hotelName: 'Ghana Hotel',
+      hotelName,
       code: `${o.id}-${it.id}`,
       datetime: new Date().toLocaleString(),
       items: [{ name: it.name, qty: it.qty, price: it.price }],
@@ -503,7 +492,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     logAudit({ area: 'f&b', action: 'print', entity: 'Receipt', entityId: `${o.id}-${it.id}`, details: `Printed receipt for ${it.name}`, meta: { table: o.table, waiter: o.waiterId }});
   };
 
-  const activityEdit = () => {
+  const activityEdit = async () => {
     if (!activitySelected) return;
     const { order: o, item: it } = activitySelected;
     ordersStore.updateItem(o.id, it.id, { qty: activityQty });
@@ -511,6 +500,18 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       ordersStore.updateOrder(o.id, { table: activityTable, venue: activityVenue as any, waiterId: activityWaiter });
     }
     logAudit({ area: 'f&b', action: 'update', entity: 'OrderItem', entityId: `${o.id}-${it.id}`, details: `Edited qty to ${activityQty}`, meta: { table: activityTable, waiter: activityWaiter, venue: activityVenue }});
+    // Persist to DB — PATCH order-level fields (table, serverName)
+    try {
+      const sub = window.location.hostname.split('.')[0] || 'default';
+      await fetch(`/api/fb/orders/${o.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-id': sub },
+        body: JSON.stringify({
+          tableNumber: activityTable,
+          serverName: waiters.find(w => w.id === activityWaiter)?.name || activityWaiter,
+        }),
+      });
+    } catch { /* silent — in-memory store already updated */ }
     setActivitySelected(null);
   };
 
@@ -550,13 +551,17 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       .filter(ci => ci.qty > 0));
   };
 
-  const clearCart = () => setCart([]);
+  /** Clear cart items. Pass keepSentOrder=true after Send so the Pay flow can reuse the DB order. */
+  const clearCart = (keepSentOrder = false) => {
+    setCart([]);
+    if (!keepSentOrder) setSentOrderData(null);
+  };
 
   const rawServiceChargeAmount = cart.reduce((sum, ci) => sum + (ci.serviceChargePerUnit || 0) * ci.qty, 0);
   const serviceChargeAmount = orderMode === 'Dine-in' ? rawServiceChargeAmount : 0;
   const subtotal = cart.reduce((sum, ci) => sum + ci.price * ci.qty, 0);
   const itemDiscountAmount = cart.reduce((sum, ci) => sum + (ci.discountPerUnit || 0) * ci.qty, 0);
-  const orderDiscountAmount = Math.round((subtotal * discountPercent) * 100) / 100 / 100;
+  const orderDiscountAmount = Math.round(subtotal * discountPercent / 100 * 100) / 100;
   const totalBeforeTip = Math.max(0, subtotal - itemDiscountAmount - orderDiscountAmount + serviceChargeAmount + (orderMode === 'Takeaway' ? (packagingFee || 0) : 0));
   const total = Math.max(0, totalBeforeTip);
   const grandTotal = Math.max(0, total + (tipAmount || 0));
@@ -564,7 +569,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const splitRemaining = Math.max(0, grandTotal - splitPaid);
 
   // Distribute order-level discount across items as per-unit discounts for activity log/store
-  const distributeOrderDiscountPerUnit = (items: { id: string; price: number; qty: number; discountPerUnit?: number; serviceChargePerUnit?: number; isRoomService?: boolean; name: string; route: 'kitchen'|'bar' }[]) => {
+  const distributeOrderDiscountPerUnit = (items: CartItem[]) => {
     if (!discountPercent || subtotal <= 0) {
       return items.map(i => ({ ...i, discountPerUnit: i.discountPerUnit || 0 }));
     }
@@ -594,6 +599,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       alert('Please select a room and guest for in-house orders');
       return;
     }
+    setIsSending(true);
 
     const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
     const guestDisplayName = customerType === 'In-house'
@@ -631,10 +637,20 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       if (res.ok) {
         const data = await res.json();
         apiId = data.order?.id ?? null;
+        if (apiId && data.order) {
+          // Store for Pay flow — avoid duplicate POST in handlePayment
+          setSentOrderData({
+            id: apiId,
+            subtotal: Number(data.order.subtotal),
+            taxAmount: Number(data.order.taxAmount),
+            total: Number(data.order.total),
+          });
+        }
       }
     } catch (err) {
       console.warn('[FBPOS] sendOrder API error (using in-memory fallback):', err);
     }
+    // isSending stays true until function completes (reset at end)
 
     // ── Mirror to in-memory store for immediate UI reactivity ───────────────
     const id = apiId ?? `ORD-${Date.now().toString().slice(-6)}`;
@@ -667,9 +683,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     });
     trackEvent('FB.OrderPlaced', { id, table: tableNumber, waiterId, items: itemsWithOrderDiscount.map(i => ({ id: i.id, qty: i.qty, discountPerUnit: i.discountPerUnit || 0 })), venue, customerType }, { sourceModule: 'F&B' });
     trackEvent('FB.KOT.Created', { id, urgent: priority === 'urgent' }, { sourceModule: 'F&B' });
-    clearCart();
+    clearCart(true); // keepSentOrder=true — Pay flow will reuse this DB order
     setOrderNotes('');
     setPriority('high');
+    setIsSending(false);
   };
 
   const openPayment = () => paymentModal.onOpen();
@@ -690,66 +707,84 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         ? guestName
         : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : 'Walk-in Customer');
 
-      // ── POST order to DB API — API computes correct Ghana stacked taxes ─────
+      // ── Resolve DB order ─────────────────────────────────────────────────────
+      // If waiter already clicked "Send to Kitchen", reuse that order (no duplicate POST).
+      // If paying without sending (express pay), create the order now.
       let apiOrder: any = null;
       let finalSubtotal = subtotal;
       let totalTax = 0;
-      let total = subtotal; // fallback — will be replaced by API response
+      let total = subtotal; // fallback — replaced by API data
 
-      try {
-        const res = await fetch('/api/fb/orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
-          body: JSON.stringify({
-            venue: venue.toLowerCase(),
-            tableNumber,
-            roomNumber: customerType === 'In-house' ? roomNumber : undefined,
-            guestId: selectedGuest?.guestId,
-            serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
-            notes: orderNotes,
-            covers: 1,
-            discountAmount: orderDiscountAmount,
-            serviceCharge: serviceChargeAmount,
-            items: itemsWithOrderDiscount.map(i => ({
-              menuItemId: i.id,
-              name: i.name,
-              category: i.category,
-              quantity: i.qty,
-              unitPrice: i.price,
-              notes: i.note,
-              route: i.route,
-            })),
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          apiOrder = data.order;
-          finalSubtotal = Number(apiOrder.subtotal);
-          totalTax = Number(apiOrder.taxAmount);
-          total = Number(apiOrder.total);
+      if (sentOrderData) {
+        // Reuse existing DB order created by sendOrder()
+        apiOrder = { id: sentOrderData.id };
+        finalSubtotal = sentOrderData.subtotal;
+        totalTax = sentOrderData.taxAmount;
+        total = sentOrderData.total;
+      } else {
+        // Express pay: create order now (single-step: order + pay)
+        try {
+          const res = await fetch('/api/fb/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
+            body: JSON.stringify({
+              venue: venue.toLowerCase(),
+              tableNumber,
+              roomNumber: customerType === 'In-house' ? roomNumber : undefined,
+              guestId: selectedGuest?.guestId,
+              serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
+              notes: orderNotes,
+              covers: 1,
+              discountAmount: orderDiscountAmount,
+              serviceCharge: serviceChargeAmount,
+              items: itemsWithOrderDiscount.map(i => ({
+                menuItemId: i.id,
+                name: i.name,
+                category: i.category,
+                quantity: i.qty,
+                unitPrice: i.price,
+                notes: i.note,
+                route: i.route,
+              })),
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            apiOrder = data.order;
+            finalSubtotal = Number(apiOrder.subtotal);
+            totalTax = Number(apiOrder.taxAmount);
+            total = Number(apiOrder.total);
+          }
+        } catch (err) {
+          console.warn('[FBPOS] handlePayment API error:', err);
+          // Fallback: Ghana flat-rate approximation (21% all-in)
+          totalTax = Math.round(subtotal * 0.21 * 100) / 100;
+          total = subtotal + totalTax;
         }
-      } catch (err) {
-        console.warn('[FBPOS] handlePayment API error:', err);
-        // Fallback: use Ghana flat-rate approximation (21% all-in: VAT 15% + NHIL 2.5% + GET 2.5% + Tourism 1%)
-        totalTax = Math.round(subtotal * 0.21 * 100) / 100;
-        total = subtotal + totalTax;
       }
 
-      // For Room Charge: advance to 'served' then 'billed' to trigger folio posting
-      if (paymentMethod === 'Room Charge' && apiOrder?.id) {
+      // For any payment: advance order through state machine to 'billed'
+      // State machine requires: pending→preparing→ready→served→billed
+      // We step through all required transitions in sequence.
+      if (apiOrder?.id) {
+        const patchStatus = async (status: string) => {
+          await fetch(`/api/fb/orders/${apiOrder.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
+            body: JSON.stringify({ status }),
+          });
+        };
         try {
-          await fetch(`/api/fb/orders/${apiOrder.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
-            body: JSON.stringify({ status: 'served' }),
-          });
-          await fetch(`/api/fb/orders/${apiOrder.id}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
-            body: JSON.stringify({ status: 'billed' }),
-          });
+          // Determine current status — sentOrderData means order is 'pending'
+          // Express pay also starts at 'pending'
+          const currentStatus = sentOrderData ? 'pending' : 'pending';
+          if (currentStatus === 'pending') await patchStatus('preparing');
+          await patchStatus('ready');
+          await patchStatus('served');
+          await patchStatus('billed');
+          // 'billed' PATCH triggers auto-folio posting for Room Charge orders
         } catch (err) {
-          console.warn('[FBPOS] folio posting error:', err);
+          console.warn('[FBPOS] order state transition error:', err);
         }
       }
 
@@ -762,12 +797,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         waiterId,
         items: itemsWithOrderDiscount.map(i => ({
           id: i.id, name: i.name, price: i.price, qty: i.qty, route: i.route,
-          status: 'paid', prepMinutes: i.route === 'kitchen' ? 15 : 2,
+          status: 'billed', prepMinutes: i.route === 'kitchen' ? 15 : 2,
           isRoomService: i.isRoomService || false,
           discountPerUnit: i.discountPerUnit || 0,
           serviceChargePerUnit: i.serviceChargePerUnit || 0,
         })),
-        status: 'paid',
+        status: 'billed',
         customerType,
         venue,
         notes: orderNotes,
@@ -856,8 +891,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       // Print receipt for immediate payments
       if (paymentMethod !== 'Room Charge') {
         printReceipt({
-          hotelName: 'Ghana Hotel',
-          contact: 'Accra • +233',
+          hotelName,
+          contact: 'Accra, Ghana',
           code: `RCPT-${newId}`,
           datetime: new Date().toLocaleString(),
           items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
@@ -925,9 +960,18 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     } as any);
   };
 
-  const changeOrderStatus = (orderId: string, status: PendingOrder['status']) => {
+  const changeOrderStatus = async (orderId: string, status: PendingOrder['status']) => {
     setPendingOrders(prev => prev.map(o => o.id === orderId ? { ...o, status } : o));
+    ordersStore.update({ id: orderId, status } as any);
     trackEvent('FB.OrderStatusChanged', { id: orderId, status }, { sourceModule: 'F&B' });
+    try {
+      const sub = window.location.hostname.split('.')[0] || 'default';
+      await fetch(`/api/fb/orders/${orderId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-id': sub },
+        body: JSON.stringify({ status }),
+      });
+    } catch { /* silent — in-memory store already updated */ }
     const found = pendingOrders.find(o => o.id === orderId);
     if (found) {
       ordersStore.update({ ...found, status } as any);
@@ -1203,7 +1247,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => updateQty(ci.id, -1)}>-</Button>
                           <div className="w-6 text-center text-sm">{ci.qty}</div>
                           <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => updateQty(ci.id, 1)}>+</Button>
-                          <div className="w-16 text-right text-sm">₵{(ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty}</div>
+                          <div className="w-16 text-right text-sm">₵{((ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty).toFixed(2)}</div>
                         </div>
                       </div>
                       {showItemDiscounts && (
@@ -1226,9 +1270,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <span>Discount (%)</span>
                     <Input className="w-24" type="number" value={String(discountPercent)} onChange={(e) => setDiscountPercent(Number(e.target.value || 0))} />
                   </div>
-                  <div className="flex justify-between"><span>Discount</span><span>₵{orderDiscountAmount.toFixed(2)}</span></div>
+                  <div className="flex justify-between"><span>Discount</span><span>-₵{orderDiscountAmount.toFixed(2)}</span></div>
                   <div className="flex justify-between"><span>Service Charge</span><span>₵{serviceChargeAmount.toFixed(2)}</span></div>
-                  <div className="flex justify-between font-semibold text-ghana-black"><span>Total</span><span>₵{total.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-gray-500"><span>Pre-tax Total</span><span>₵{total.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-xs text-gray-400"><span>~Ghana Tax (VAT+NHIL+GETFund+Tourism)</span><span>₵{(total * 0.21).toFixed(2)}</span></div>
+                  <div className="flex justify-between font-bold text-ghana-black border-t pt-1 mt-1"><span>Est. Total (incl. tax)</span><span>₵{(total * 1.21).toFixed(2)}</span></div>
                 </div>
                 <div className="mt-4 grid grid-cols-2 gap-2">
                   <Button variant="flat" className="bg-ghana-green text-white" onClick={() => {
@@ -1274,22 +1320,19 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       return;
                     }
                     sendOrder();
-                  }}>{editingOrderId ? 'Update' : 'Send'}</Button>
-                  <Button variant="flat" className="bg-gray-200" onClick={clearCart}>Clear</Button>
+                  }} isLoading={isSending} isDisabled={isSending || cart.length === 0}>{editingOrderId ? 'Update' : (isSending ? 'Sending…' : 'Send to Kitchen')}</Button>
+                  <Button variant="flat" className="bg-gray-200" onClick={() => clearCart()}>Clear</Button>
                   <Button variant="flat" className="bg-blue-600 text-white" onClick={openPayment}>Pay</Button>
-                  <Button variant="flat" className="bg-indigo-600 text-white" onClick={() => {
+                  <Button variant="flat" className="bg-indigo-600 text-white" isDisabled={cart.length === 0} onClick={() => {
                     const html = buildReceiptHtml({
-                      hotelName: 'Ghana Hotel',
-                      contact: 'Accra • +233',
+                      hotelName,
+                      contact: 'Accra, Ghana',
                       code: `RCPT-${Date.now().toString().slice(-6)}`,
                       datetime: new Date().toLocaleString(),
-                      items: cart.length > 0 ? cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })) : [
-                        { name: 'Jollof Rice', qty: 1, price: 65 },
-                        { name: 'Club Beer', qty: 2, price: 20 },
-                      ],
-                      subtotal: cart.length > 0 ? subtotal : 105,
-                      discount: cart.length > 0 ? orderDiscountAmount : 0,
-                      total: cart.length > 0 ? total : 105,
+                      items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
+                      subtotal,
+                      discount: orderDiscountAmount,
+                      total,
                       table: tableNumber,
                       waiter: waiters.find(w => w.id === waiterId)?.name,
                     });
@@ -1572,11 +1615,20 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                                 variant="flat"
                                 className={`${(it.status || o.status) === 'served' ? 'bg-green-600 text-white' : 'bg-orange-50 text-orange-700 border border-orange-200'}`}
                                 isDisabled={(it.status || o.status) === 'served'}
-                                onClick={() => {
+                                onClick={async () => {
                                   if ((it.status || o.status) === 'served') return;
                                   ordersStore.updateItem(o.id, it.id, { status: 'served' });
                                   kitchenOpsStore.add({ orderId: o.id, table: o.table, waiterId: o.waiterId, itemId: it.id, itemName: it.name, action: 'status', fromStatus: (it.status as any) || 'pending', toStatus: 'served', priority: (o.priority || (o.urgent ? 'urgent' : 'low')) as any });
                                   trackEvent('FB.OrderStatusChanged', { id: o.id, itemId: it.id, status: 'served' }, { sourceModule: 'F&B' });
+                                  // Persist to DB — attempt PATCH (silent fail if in-memory-only ID)
+                                  try {
+                                    const sub = window.location.hostname.split('.')[0] || 'default';
+                                    await fetch(`/api/fb/orders/${o.id}`, {
+                                      method: 'PATCH',
+                                      headers: { 'Content-Type': 'application/json', 'x-tenant-id': sub },
+                                      body: JSON.stringify({ status: 'served' }),
+                                    });
+                                  } catch { /* silent — in-memory store already updated */ }
                                 }}
                               >
                                 {(it.status || o.status) === 'served' ? 'Served' : 'Serve'}
@@ -1747,25 +1799,119 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" className="bg-gray-200" onClick={paymentModal.onClose}>Close</Button>
-            <Button color="primary" isDisabled={splitPayments.length > 0 && splitRemaining > 0} onClick={() => {
-              // Process split including room charges
-              // Minimal: rely on events and receipt; advanced GL hooks can be added later
-              (async () => {
+            <Button color="primary" isDisabled={splitPayments.length > 0 && splitRemaining > 0} onClick={async () => {
+              if (splitPayments.length === 0) return;
+
+              // Validate room charge has a room selected
+              const hasRoom = splitPayments.some(p => p.method === 'Room Charge' && Number(p.amount) > 0);
+              if (hasRoom && !settleSelectedRoom && !(selectedGuest && roomNumber)) {
+                alert('Select room to charge before completing payment.');
+                return;
+              }
+
+              const subdomain = window.location.hostname.split('.')[0] || 'default';
+              const guestDisplayName = customerType === 'In-house'
+                ? guestName
+                : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : 'Walk-in Customer');
+
+              // Resolve or create DB order
+              let orderId = sentOrderData?.id ?? null;
+              let finalSubtotal = sentOrderData?.subtotal ?? subtotal;
+              let finalTax = sentOrderData?.taxAmount ?? Math.round(subtotal * 0.21 * 100) / 100;
+              let finalTotal = sentOrderData?.total ?? (subtotal + finalTax);
+
+              if (!orderId) {
                 try {
-                  // Simulate combined processing
-                  const hasRoom = splitPayments.some(p => p.method === 'Room Charge' && Number(p.amount) > 0);
-                  if (hasRoom && !settleSelectedRoom && !(selectedGuest && roomNumber)) {
-                    alert('Select room to charge or choose In-house with room.');
-                    return;
+                  const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
+                  const res = await fetch('/api/fb/orders', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
+                    body: JSON.stringify({
+                      venue: venue.toLowerCase(), tableNumber,
+                      roomNumber: customerType === 'In-house' ? roomNumber : undefined,
+                      guestId: selectedGuest?.guestId,
+                      serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
+                      notes: orderNotes, covers: 1,
+                      discountAmount: orderDiscountAmount, serviceCharge: serviceChargeAmount,
+                      items: itemsWithOrderDiscount.map(i => ({
+                        menuItemId: i.id, name: i.name, category: i.category,
+                        quantity: i.qty, unitPrice: i.price, notes: i.note, route: i.route,
+                      })),
+                    }),
+                  });
+                  if (res.ok) {
+                    const d = await res.json();
+                    orderId = d.order?.id ?? null;
+                    if (d.order) {
+                      finalSubtotal = Number(d.order.subtotal);
+                      finalTax = Number(d.order.taxAmount);
+                      finalTotal = Number(d.order.total);
+                    }
                   }
-                } finally {
-                }
-              })().then(()=>{
-                // Fallback to single flow function for now
-                // Use aggregate grandTotal as receipt total; folio posting handled in handlePayment when needed
-                // For now, just close and clear
+                } catch { /* fallback totals already set */ }
+              }
+
+              // Advance order through state machine → billed
+              if (orderId) {
+                const patch = async (s: string) => fetch(`/api/fb/orders/${orderId}`, {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
+                  body: JSON.stringify({ status: s }),
+                });
+                try {
+                  await patch('preparing'); await patch('ready');
+                  await patch('served');    await patch('billed');
+                } catch { /* silent */ }
+              }
+
+              // GL capture for each non-room-charge split
+              const departmentSource: DepartmentSource = venue === 'Restaurant' ? 'restaurant' : 'bar';
+              const taxPercent = finalSubtotal > 0 ? (finalTax / finalSubtotal) * 100 : 0;
+              const currentWaiter = waiters.find(w => w.id === waiterId);
+              const staffInfo = { staffId: waiterId, staffName: currentWaiter?.name || waiterId, staffRole: 'Waiter/Cashier' as const };
+
+              for (const split of splitPayments) {
+                if (split.method === 'Room Charge') continue; // handled via folio PATCH above
+                if (Number(split.amount) <= 0) continue;
+                try {
+                  captureCompleteSale(
+                    {
+                      id: orderId ?? `SPLIT-${Date.now()}`, source: departmentSource,
+                      customerName: guestDisplayName, reference: orderId ?? '',
+                      description: `${venue} Split — ${split.method}`,
+                      items: cart.map(item => ({ description: item.name, quantity: item.qty, unitPrice: item.price, taxPercent })),
+                      subtotal: finalSubtotal, taxAmount: finalTax, total: finalTotal, ...staffInfo,
+                    },
+                    {
+                      id: `SPLIT-${split.method}-${Date.now()}`, customerName: guestDisplayName,
+                      amount: Number(split.amount), paymentMethod: split.method as 'Cash' | 'Card' | 'Mobile Money',
+                      reference: orderId ?? '', description: `Split payment: ${split.method}`, ...staffInfo,
+                    }
+                  );
+                } catch { /* silent GL error — order already billed */ }
+              }
+
+              // Print combined receipt
+              printReceipt({
+                hotelName,
+                contact: 'Accra, Ghana',
+                code: `RCPT-${orderId ?? Date.now().toString().slice(-6)}`,
+                datetime: new Date().toLocaleString(),
+                items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
+                subtotal: finalSubtotal,
+                discount: orderDiscountAmount,
+                total: finalTotal + (tipAmount || 0),
+                table: tableNumber,
+                waiter: waiters.find(w => w.id === waiterId)?.name,
               });
-              // Basic finalize to avoid blocking UX
+
+              trackEvent('Payment.Received', { orderId, venue, customerType, total: finalTotal, splits: splitPayments.length }, { sourceModule: 'F&B' });
+              setSentOrderData(null);
+              setCart([]);
+              setDiscountPercent(0);
+              setSplitPayments([]);
+              setTipAmount(0);
+              setOrderNotes('');
               paymentModal.onClose();
             }}>Complete Payment</Button>
           </ModalFooter>
@@ -1842,9 +1988,9 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                   </TableBody>
                 </Table>
                 <div className="flex items-center gap-2">
-                  <Button variant="flat" className="bg-blue-600 text-white" onClick={() => changeOrderStatus(selectedOrder.id, 'sent')}>Mark Sent</Button>
+                  <Button variant="flat" className="bg-blue-600 text-white" onClick={() => changeOrderStatus(selectedOrder.id, 'preparing')}>Mark Preparing</Button>
                   <Button variant="flat" className="bg-green-600 text-white" onClick={() => changeOrderStatus(selectedOrder.id, 'served')}>Mark Served</Button>
-                  <Button variant="flat" className="bg-ghana-gold text-white" onClick={() => changeOrderStatus(selectedOrder.id, 'paid')}>Mark Paid</Button>
+                  <Button variant="flat" className="bg-ghana-gold text-white" onClick={() => changeOrderStatus(selectedOrder.id, 'billed')}>Mark Billed</Button>
                   <Button variant="flat" className="bg-gray-700 text-white" onClick={() => { loadOrderIntoCart(selectedOrder); orderDetailModal.onClose(); }}>Edit in Cart</Button>
                   <Button variant="flat" className="bg-red-600 text-white" onClick={() => { requestDeleteWithPin(selectedOrder.id); }}>Delete</Button>
                 </div>

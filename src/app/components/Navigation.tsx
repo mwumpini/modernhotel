@@ -67,6 +67,17 @@ interface NavigationProps {
 }
 
 type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'user-preferences' | 'compliance' | 'inventory' | 'user-management' | 'user-management-dashboard' | 'user-management-unified' | 'theme-test' | 'offline-management' | 'api-integration' | 'performance-optimization' | 'template-builder' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'room-management' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'room-configuration' | 'rate-management';
+/** Redirects to /kitchen-display via useEffect — never calls router.push during render */
+function KitchenRedirect() {
+  const router = useRouter();
+  React.useEffect(() => { router.push('/kitchen-display'); }, [router]);
+  return (
+    <div className="p-6 text-center text-gray-500 animate-pulse">
+      Opening Kitchen Display…
+    </div>
+  );
+}
+
 export default function Navigation({ onLogout }: NavigationProps) {
   const router = useRouter();
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
@@ -481,12 +492,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar...</div>}><FoodBeverageRestaurantBar /></Suspense>;
       case 'fb-kitchen':
       case 'kitchen': // alias — both navigate to the real KDS page
-        return (
-          <div className="p-6 text-center space-y-4">
-            <p className="text-gray-600">Opening Kitchen Display System…</p>
-            {(() => { router.push('/kitchen-display'); return null; })()}
-          </div>
-        );
+        return <KitchenRedirect />;
       case 'fb-menu-inventory':
         return <Suspense fallback={<div className="p-6 text-center">Loading Menu & Inventory...</div>}><FoodBeverageMenuInventory /></Suspense>;
       case 'fb-staff-reports':

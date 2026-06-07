@@ -34,7 +34,6 @@ import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
-import { logProformaDownloaded, logProformaPrinted } from '../lib/audit/auditLogger';
 import { Reservation, GuestProfile, StayReason, Nationality, IdType } from '../lib/frontoffice/types';
 import {
   effectiveSalesTaxRate,
@@ -1635,10 +1634,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
                     <div className="flex flex-wrap gap-2 justify-end pt-4">
                       <Button variant="flat" onClick={() => {
-                        logProformaPrinted(selectedReservation?.id || '', {
-                          guestName: selectedReservation?.guestName,
-                          reservationId: selectedReservation?.resId || selectedReservation?.id
-                        });
+                        trackEvent('Proforma.Printed', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName }, { sourceModule: 'FrontOffice' });
                         window.print();
                       }}>🖨️ Print</Button>
                       <Button variant="flat" onClick={async () => {
@@ -1653,19 +1649,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           const filename = `reservation-${selectedReservation?.resId || selectedReservation?.id || 'summary'}.pdf`;
                           h2p().set({ filename, jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).save();
                           
-                          // Log PDF download
-                          logProformaDownloaded(selectedReservation?.id || '', {
-                            guestName: selectedReservation?.guestName,
-                            reservationId: selectedReservation?.resId || selectedReservation?.id,
-                            filename
-                          });
-                        } catch { 
-                          logProformaPrinted(selectedReservation?.id || '', {
-                            guestName: selectedReservation?.guestName,
-                            reservationId: selectedReservation?.resId || selectedReservation?.id,
-                            fallbackToPrint: true
-                          });
-                          window.print(); 
+                          trackEvent('Proforma.Downloaded', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName, filename }, { sourceModule: 'FrontOffice' });
+                        } catch {
+                          trackEvent('Proforma.Printed', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName, fallbackToPrint: true }, { sourceModule: 'FrontOffice' });
+                          window.print();
                         }
                       }}>⬇️ Download PDF</Button>
                       <Button color="primary" onClick={async () => {
