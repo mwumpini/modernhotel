@@ -91,12 +91,17 @@ export default function CheckOutsPage() {
   const [balanceFilter, setBalanceFilter] = useState<string>('all'); // all | zero | outstanding
   const [billingFilter, setBillingFilter] = useState<string>('all'); // all | guest | corporate | credit
   const [sourceFilter, setSourceFilter] = useState<string>('all'); // market/source
-  const [dateFilter, setDateFilter] = useState<{ from?: string; to?: string }>({});
+  const [dateFilterMode, setDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('today');
+  const [dateFilterSingle, setDateFilterSingle] = useState('');
+  const [dateFilterFrom, setDateFilterFrom] = useState('');
+  const [dateFilterTo, setDateFilterTo] = useState('');
   // remove duplicate page declaration if present
   const [rowsPerPage] = useState(10);
   const [page, setPage] = useState(1);
   const [selectedCheckOut, setSelectedCheckOut] = useState<CheckOutData | null>(null);
   const { isOpen, onOpen, onClose } = useDisclosure();
+  const { isOpen: isBalanceWarnOpen, onOpen: onBalanceWarnOpen, onClose: onBalanceWarnClose } = useDisclosure();
+  const [balanceWarnAmount, setBalanceWarnAmount] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [checkoutNotes, setCheckoutNotes] = useState('');
   const [quickSettlementMethod, setQuickSettlementMethod] = useState<'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'>('Cash');
@@ -127,7 +132,7 @@ export default function CheckOutsPage() {
 
   useEffect(() => {
     filterCheckOuts();
-  }, [checkOuts, searchTerm, statusFilter, balanceFilter, billingFilter, sourceFilter, dateFilter.from, dateFilter.to]);
+  }, [checkOuts, searchTerm, statusFilter, balanceFilter, billingFilter, sourceFilter, dateFilterMode, dateFilterSingle, dateFilterFrom, dateFilterTo]);
 
   // Reset to first page whenever the filtered list changes size
   useEffect(() => {
@@ -183,7 +188,7 @@ export default function CheckOutsPage() {
       const status: 'pending' | 'processing' | 'completed' | 'extended' =
         reservation.status === 'checked-out'
           ? 'completed'
-          : (folioTotals.outstandingBalance || 0) > 0
+          : (folioTotals.outstandingBalance || 0) > 0   // use clamped value for status only
           ? 'pending'
           : 'processing';
 
@@ -202,13 +207,13 @@ export default function CheckOutsPage() {
         checkoutDateTime: (reservation as any).checkOutTime,
         status,
         nightsStayed,
-        totalCharges: folioTotals.totalCharges,
+        totalCharges: folioTotals.totalCharges,       // gross incl. tax
         totalPayments: folioTotals.totalPayments,
-        outstandingBalance: folioTotals.outstandingBalance,
-        serviceCharges: folioTotals.serviceChargesInclusive,
+        outstandingBalance: folioTotals.balance,      // true Amount−Payments; negative = credit/overpayment
+        serviceCharges: folioTotals.serviceChargesInclusive, // gross incl. tax
         otherCharges: folioTotals.otherCharges,
         taxTotal: folioTotals.taxTotal,
-        roomTotal,
+        roomTotal,                                     // gross incl. tax
         discount: 0,
         finalPaymentMethod: reservation.paymentMethod || 'Not specified',
         confirmationNumber: undefined,
@@ -274,11 +279,18 @@ export default function CheckOutsPage() {
       filtered = filtered.filter(c => (c.source || '').toUpperCase() === sourceFilter.toUpperCase());
     }
 
-    if (dateFilter.from) {
-      filtered = filtered.filter(c => new Date(c.checkOutDate) >= new Date(dateFilter.from!));
-    }
-    if (dateFilter.to) {
-      filtered = filtered.filter(c => new Date(c.checkOutDate) <= new Date(dateFilter.to!));
+    const today = new Date().toISOString().slice(0, 10);
+    if (dateFilterMode === 'today') {
+      filtered = filtered.filter(c => c.checkOutDate?.slice(0, 10) === today);
+    } else if (dateFilterMode === 'specific' && dateFilterSingle) {
+      filtered = filtered.filter(c => c.checkOutDate?.slice(0, 10) === dateFilterSingle);
+    } else if (dateFilterMode === 'range') {
+      filtered = filtered.filter(c => {
+        const d = c.checkOutDate?.slice(0, 10) ?? '';
+        if (dateFilterFrom && d < dateFilterFrom) return false;
+        if (dateFilterTo   && d > dateFilterTo)   return false;
+        return true;
+      });
     }
 
     setFilteredCheckOuts(filtered);
@@ -304,8 +316,9 @@ export default function CheckOutsPage() {
       // Prevent checkout if there is an outstanding balance and pay later is NOT allowed (or not selected)
       const { outstandingBalance } = getFolioTotals(checkOut.id);
       if (outstandingBalance > 0 && !(payLaterAllowed && usePayLater)) {
-        const ok = confirm(`Outstanding balance ₵${outstandingBalance.toFixed(2)}. Settle before checkout?`);
-        if (!ok) { setIsProcessing(false); return; }
+        setBalanceWarnAmount(outstandingBalance);
+        onBalanceWarnOpen();
+        setIsProcessing(false);
         return;
       }
 
@@ -324,6 +337,29 @@ export default function CheckOutsPage() {
       setCheckoutNotes('');
     } catch (error) {
       console.error('Error processing check-out:', error);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // Called when staff confirm "proceed anyway" from balance-warning modal
+  const handleBalanceWarnConfirm = () => {
+    onBalanceWarnClose();
+    if (!selectedCheckOut) return;
+    setIsProcessing(true);
+    try {
+      frontOfficeStore.processCheckout(selectedCheckOut.id, checkoutNotes);
+      trackEvent('FO.Reservation.CheckedOut', {
+        reservationId: selectedCheckOut.id,
+        guestName: selectedCheckOut.guestName,
+        roomNumber: selectedCheckOut.roomNumber,
+        nightsStayed: selectedCheckOut.nightsStayed
+      });
+      onClose();
+      setSelectedCheckOut(null);
+      setCheckoutNotes('');
+    } catch (err) {
+      console.error('Error processing check-out:', err);
     } finally {
       setIsProcessing(false);
     }
@@ -435,16 +471,14 @@ export default function CheckOutsPage() {
     }
   };
 
-  const getCheckoutStats = () => {
-    const totalPending = checkOuts.filter(c => c.status === 'pending').length;
-    const totalCompleted = checkOuts.filter(c => c.status === 'completed').length;
-    const totalExtended = checkOuts.filter(c => c.status === 'extended').length;
-    const totalRevenue = checkOuts.reduce((sum, checkOut) => sum + checkOut.totalCharges, 0);
-    
+  // Stats always reflect the filtered list so KPI cards match the table rows
+  const checkoutStats = useMemo(() => {
+    const totalPending   = filteredCheckOuts.filter(c => c.status === 'pending').length;
+    const totalCompleted = filteredCheckOuts.filter(c => c.status === 'completed').length;
+    const totalExtended  = filteredCheckOuts.filter(c => c.status === 'extended').length;
+    const totalRevenue   = filteredCheckOuts.reduce((sum, c) => sum + c.totalCharges, 0);
     return { totalPending, totalCompleted, totalExtended, totalRevenue };
-  };
-
-  const checkoutStats = getCheckoutStats();
+  }, [filteredCheckOuts]);
 
   const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('en-GH', { year: 'numeric', month: 'short', day: 'numeric' });
   const formatMoney = (amount: number) =>
@@ -483,7 +517,7 @@ export default function CheckOutsPage() {
     const payments = (folio.payments || []).filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
     const subTotal = baseSum;
     const grandTotal = baseSum + taxSum;
-    const balance = Math.max(0, grandTotal - payments);
+    const balance = grandTotal - payments; // true balance: negative = credit/overpayment
     return {
       org,
       guest: {
@@ -598,7 +632,7 @@ export default function CheckOutsPage() {
                   <SelectItem key="Bank Transfer">Bank Transfer</SelectItem>
                 </Select>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mt-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-3">
                 <Select placeholder="Balance" value={balanceFilter} onChange={(e)=> setBalanceFilter(e.target.value)}>
                   <SelectItem key="all">All</SelectItem>
                   <SelectItem key="zero">Zero</SelectItem>
@@ -610,7 +644,7 @@ export default function CheckOutsPage() {
                   <SelectItem key="corporate">Corporate</SelectItem>
                   <SelectItem key="credit">Credit</SelectItem>
                 </Select>
-                <Select 
+                <Select
                   placeholder="Source"
                   selectedKeys={[sourceFilter]}
                   onSelectionChange={(keys)=> setSourceFilter(Array.from(keys)[0] as string)}
@@ -618,21 +652,34 @@ export default function CheckOutsPage() {
                 >
                   {(item: any) => (<SelectItem key={item.key}>{item.label}</SelectItem>)}
                 </Select>
-                <div className="flex gap-2">
-                  <Input type="date" labelPlacement="outside" placeholder="From" value={dateFilter.from || ''} onChange={(e)=> setDateFilter(prev=>({ ...prev, from: e.target.value }))} />
-                  <Input type="date" labelPlacement="outside" placeholder="To" value={dateFilter.to || ''} onChange={(e)=> setDateFilter(prev=>({ ...prev, to: e.target.value }))} />
-                </div>
+              </div>
+              {/* Date filter pills */}
+              <div className="flex flex-wrap items-center gap-2 mt-3">
+                <span className="text-sm font-medium text-gray-500 mr-1">📅 Check-out Date:</span>
+                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
+                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
+                  return (
+                    <button key={mode} onClick={() => setDateFilterMode(mode)}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${dateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
+                    >{labels[mode]}</button>
+                  );
+                })}
+                {dateFilterMode === 'specific' && (
+                  <input type="date" value={dateFilterSingle} onChange={(e) => setDateFilterSingle(e.target.value)}
+                    className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                )}
+                {dateFilterMode === 'range' && (
+                  <div className="flex items-center gap-2 ml-2">
+                    <input type="date" value={dateFilterFrom} onChange={(e) => setDateFilterFrom(e.target.value)}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <span className="text-gray-400 text-sm">→</span>
+                    <input type="date" value={dateFilterTo} onChange={(e) => setDateFilterTo(e.target.value)}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  </div>
+                )}
               </div>
             </CardBody>
           </Card>
-
-          <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg mb-4">
-            <strong>Column Guide:</strong>
-            <span className="ml-2">RATE/NIGHT = Per night room rate (incl. tax)</span>
-            <span className="ml-4">ROOM TOTAL = Posted room charges (incl. tax)</span>
-            <span className="ml-4">SERVICE CHARGES = Services (incl. tax)</span>
-            <span className="ml-4">AMOUNT = Total charges incl. tax — open View for folio breakdown</span>
-          </div>
 
           <Table aria-label="Check-outs table" className="min-w-full">
             <TableHeader>
@@ -1048,6 +1095,32 @@ export default function CheckOutsPage() {
         </Modal>
 
         {/* Folio Management Modal removed - handled in Invoices & Payments page */}
+
+        {/* Balance Warning Modal */}
+        <Modal isOpen={isBalanceWarnOpen} onClose={onBalanceWarnClose} size="sm">
+          <ModalContent>
+            <ModalHeader className="bg-amber-50 border-b border-amber-200">
+              <div className="flex items-center gap-2 text-amber-800">
+                <span className="text-xl">⚠️</span> Outstanding Balance
+              </div>
+            </ModalHeader>
+            <ModalBody className="py-4">
+              <p className="text-gray-700">
+                This guest has an outstanding balance of{' '}
+                <span className="font-bold text-red-600">₵{balanceWarnAmount.toFixed(2)}</span>.
+              </p>
+              <p className="text-sm text-gray-500 mt-2">
+                Do you want to proceed with checkout anyway and handle payment separately?
+              </p>
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="flat" onPress={onBalanceWarnClose}>Cancel — Settle First</Button>
+              <Button color="warning" onPress={handleBalanceWarnConfirm} isLoading={isProcessing}>
+                Proceed with Checkout
+              </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
       </div>
   );
 }

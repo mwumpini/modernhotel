@@ -41,7 +41,6 @@ import {
   grossFromExclusive,
 } from '../lib/tax/engine';
 import { resolveNightlyGross } from '../lib/frontoffice/helpers/rates';
-import TodaysArrivalsPanel from './frontoffice/TodaysArrivalsPanel';
 import { canMarkNoShow } from '../lib/frontoffice/arrivals';
 
 interface ReservationFormData {
@@ -188,6 +187,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const resRowsPerPage = 10;
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [purposeFilter, setPurposeFilter] = useState<string>('all');
+  const [billingFilter, setBillingFilter] = useState<string>('all');
+  // Date filter: 'all' | 'today' | 'specific' | 'range'
+  const [dateFilterMode, setDateFilterMode]   = useState<'all' | 'today' | 'specific' | 'range'>('all');
+  const [dateFilterSingle, setDateFilterSingle] = useState<string>('');   // YYYY-MM-DD
+  const [dateFilterFrom,   setDateFilterFrom]   = useState<string>('');   // YYYY-MM-DD
+  const [dateFilterTo,     setDateFilterTo]     = useState<string>('');   // YYYY-MM-DD
   const [selectedReservation, setSelectedReservation] = useState<Reservation | null>(null);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -461,7 +467,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
   useEffect(() => {
     filterReservations();
-  }, [reservations, searchTerm, statusFilter]);
+  }, [reservations, searchTerm, statusFilter, purposeFilter, billingFilter, dateFilterMode, dateFilterSingle, dateFilterFrom, dateFilterTo]);
 
   // Filter guests based on search term with enhanced validation
   useEffect(() => {
@@ -646,16 +652,48 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const filterReservations = () => {
     let filtered = reservations;
 
+    // Search
     if (searchTerm) {
-      filtered = filtered.filter(reservation => 
-        reservation.guestName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        reservation.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        reservation.roomId?.toLowerCase().includes(searchTerm.toLowerCase())
+      const term = searchTerm.toLowerCase();
+      filtered = filtered.filter(r =>
+        r.guestName.toLowerCase().includes(term) ||
+        r.id.toLowerCase().includes(term) ||
+        (r.roomId ?? '').toLowerCase().includes(term)
       );
     }
 
+    // Status
     if (statusFilter !== 'all') {
-      filtered = filtered.filter(reservation => reservation.status === statusFilter);
+      filtered = filtered.filter(r => r.status === statusFilter);
+    }
+
+    // Purpose
+    if (purposeFilter !== 'all') {
+      filtered = filtered.filter(r => (r as any).stayReason === purposeFilter);
+    }
+
+    // Billing
+    if (billingFilter !== 'all') {
+      if (billingFilter === 'third_party') {
+        filtered = filtered.filter(r => !!(r as any).billingPersonId);
+      } else if (billingFilter === 'guest') {
+        filtered = filtered.filter(r => !(r as any).billingPersonId);
+      }
+    }
+
+    // Date filter — filters by arrival (check-in) date
+    const today = new Date().toISOString().slice(0, 10);
+    if (dateFilterMode === 'today') {
+      filtered = filtered.filter(r => r.arrival?.slice(0, 10) === today);
+    } else if (dateFilterMode === 'specific' && dateFilterSingle) {
+      filtered = filtered.filter(r => r.arrival?.slice(0, 10) === dateFilterSingle);
+    } else if (dateFilterMode === 'range' && (dateFilterFrom || dateFilterTo)) {
+      filtered = filtered.filter(r => {
+        const arrDate = r.arrival?.slice(0, 10) ?? '';
+        if (dateFilterFrom && arrDate < dateFilterFrom) return false;
+        if (dateFilterTo   && arrDate > dateFilterTo)   return false;
+        return true;
+      });
     }
 
     setFilteredReservations(filtered);
@@ -1212,14 +1250,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         </Card>
       </div>
 
-      <TodaysArrivalsPanel
-        onCheckIn={(r) => handleQuickAction('checkin', r)}
-        onNoShow={openNoShowConfirm}
-      />
-
       {/* Filters */}
       <Card className="border-0 shadow-lg">
-        <CardBody className="p-4">
+        <CardBody className="p-4 space-y-3">
+          {/* Row 1 — search + status + purpose + billing + count */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4">
             <Input
               placeholder="Search reservations, guests, or room numbers..."
@@ -1242,8 +1276,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             </Select>
             <Select
               placeholder="Filter by purpose"
-              value={formData.stayReason}
-              onChange={(e) => setFormData({...formData, stayReason: e.target.value as StayReason})}
+              value={purposeFilter}
+              onChange={(e) => setPurposeFilter(e.target.value)}
             >
               <SelectItem key="all">All Purposes</SelectItem>
               <SelectItem key="personal">👤 Personal</SelectItem>
@@ -1257,8 +1291,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             </Select>
             <Select
               placeholder="Filter by billing"
-              value={useBillingPerson ? 'third_party' : 'guest'}
-              onChange={(e) => setUseBillingPerson(e.target.value === 'third_party')}
+              value={billingFilter}
+              onChange={(e) => setBillingFilter(e.target.value)}
             >
               <SelectItem key="all">All Billing Types</SelectItem>
               <SelectItem key="guest">Guest Pays</SelectItem>
@@ -1268,6 +1302,58 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
               <span className="text-sm text-gray-600">Filtered:</span>
               <Badge color="primary" variant="flat">{filteredReservations.length}</Badge>
             </div>
+          </div>
+
+          {/* Row 2 — Date filter tab bar */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-gray-500 mr-1">📅 Date:</span>
+            {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
+              const labels: Record<string, string> = {
+                all: 'All Dates',
+                today: 'Today',
+                specific: 'Specific Date',
+                range: 'Date Range',
+              };
+              return (
+                <button
+                  key={mode}
+                  onClick={() => setDateFilterMode(mode)}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                    dateFilterMode === mode
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                  }`}
+                >
+                  {labels[mode]}
+                </button>
+              );
+            })}
+            {/* Conditional date inputs */}
+            {dateFilterMode === 'specific' && (
+              <input
+                type="date"
+                value={dateFilterSingle}
+                onChange={(e) => setDateFilterSingle(e.target.value)}
+                className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            )}
+            {dateFilterMode === 'range' && (
+              <div className="flex items-center gap-2 ml-2">
+                <input
+                  type="date"
+                  value={dateFilterFrom}
+                  onChange={(e) => setDateFilterFrom(e.target.value)}
+                  className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+                <span className="text-gray-400 text-sm">→</span>
+                <input
+                  type="date"
+                  value={dateFilterTo}
+                  onChange={(e) => setDateFilterTo(e.target.value)}
+                  className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                />
+              </div>
+            )}
           </div>
         </CardBody>
       </Card>

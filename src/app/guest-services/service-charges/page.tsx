@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   Card,
   CardBody,
@@ -59,6 +59,10 @@ export default function ServiceChargesPage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [dateFilterMode, setDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('today');
+  const [dateFilterSingle, setDateFilterSingle] = useState('');
+  const [dateFilterFrom, setDateFilterFrom] = useState('');
+  const [dateFilterTo, setDateFilterTo] = useState('');
   const [selectedCharge, setSelectedCharge] = useState<ServiceCharge | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -99,7 +103,12 @@ export default function ServiceChargesPage() {
   // Get service charges from settings store
   const serviceChargesConfig = roomManagement.serviceCharges || [];
 
-  // Get available guests (checked-in only)
+  // Get available guests (checked-in only) — subscribe so list updates on new check-ins
+  const [storeVersion, setStoreVersion] = useState(0);
+  useEffect(() => {
+    const unsub = frontOfficeStore.subscribe(() => setStoreVersion(v => v + 1));
+    return unsub;
+  }, []);
   const availableGuests = useMemo(() => {
     return frontOfficeStore.reservations
       .filter(r => r.status === 'checked-in' && r.roomId && r.roomId !== 'TBD')
@@ -109,10 +118,11 @@ export default function ServiceChargesPage() {
         roomNumber: r.roomId,
         roomType: frontOfficeStore.roomTypes.find(rt => rt.id === r.roomTypeId)?.name || 'Unknown'
       }))
-      .filter((guest, index, self) => 
+      .filter((guest, index, self) =>
         index === self.findIndex(g => g.guestId === guest.guestId)
       );
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeVersion]);
 
   // Mock service charges data (in real app, this would come from a store)
   const [serviceCharges, setServiceCharges] = useState<ServiceCharge[]>([]);
@@ -125,15 +135,26 @@ export default function ServiceChargesPage() {
 
   // Filtered charges
   const filteredCharges = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
     return serviceCharges.filter(charge => {
       const matchesSearch = charge.guestName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            charge.roomNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            charge.description.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesStatus = statusFilter === 'all' || charge.status === statusFilter;
       const matchesCategory = categoryFilter === 'all' || charge.category === categoryFilter;
-      return matchesSearch && matchesStatus && matchesCategory;
+      const chargeDate = charge.date?.slice(0, 10) ?? '';
+      let matchesDate = true;
+      if (dateFilterMode === 'today') {
+        matchesDate = chargeDate === today;
+      } else if (dateFilterMode === 'specific' && dateFilterSingle) {
+        matchesDate = chargeDate === dateFilterSingle;
+      } else if (dateFilterMode === 'range') {
+        if (dateFilterFrom && chargeDate < dateFilterFrom) matchesDate = false;
+        if (dateFilterTo   && chargeDate > dateFilterTo)   matchesDate = false;
+      }
+      return matchesSearch && matchesStatus && matchesCategory && matchesDate;
     });
-  }, [serviceCharges, searchTerm, statusFilter, categoryFilter]);
+  }, [serviceCharges, searchTerm, statusFilter, categoryFilter, dateFilterMode, dateFilterSingle, dateFilterFrom, dateFilterTo]);
 
   // Pagination state
   const [page, setPage] = useState(1);
@@ -312,24 +333,16 @@ export default function ServiceChargesPage() {
       );
       
       if (reservation) {
-        const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
-        const payment = {
-          id: `payment-${Date.now()}-${Math.random()}`,
-          amount: paymentData.amount,
-          method: paymentData.paymentMethod as 'Cash' | 'Bank Transfer' | 'Mobile Money' | 'Check' | 'Corporate Account' | 'Credit' | 'Card',
-          date: new Date().toISOString(),
-          reference: paymentData.reference,
-          description: `Payment for ${selectedCharge.description}`,
-          processedBy: 'Current User',
-          status: 'completed' as const
-        };
-        
-        // Update folio payments array
-        const updatedFolio = {
-          ...folio,
-          payments: [...(folio.payments || []), payment]
-        };
-        frontOfficeStore.updateFolioBalances(updatedFolio);
+        frontOfficeStore.addPayment(
+          reservation.id,
+          paymentData.paymentMethod as 'Cash' | 'Card' | 'Mobile Money' | 'Credit' | 'Corporate Account' | 'Bank Transfer' | 'Check',
+          paymentData.amount,
+          {
+            notes: `Payment for ${selectedCharge.description}`,
+            processedBy: 'Front Desk',
+            ref: paymentData.reference || undefined
+          }
+        );
       }
     }
 
@@ -389,7 +402,7 @@ export default function ServiceChargesPage() {
 
       {/* Filters */}
       <Card>
-        <CardBody>
+        <CardBody className="space-y-3">
           <div className="flex flex-col sm:flex-row gap-4">
             <Input
               placeholder="Search by guest name, room number, or description..."
@@ -418,7 +431,7 @@ export default function ServiceChargesPage() {
             >
               <SelectItem key="all">All Categories</SelectItem>
               <>
-                {categories.map(category => 
+                {categories.map(category =>
                   <SelectItem key={category} textValue={category}>
                     {category}
                   </SelectItem>
@@ -426,15 +439,40 @@ export default function ServiceChargesPage() {
               </>
             </Select>
           </div>
+          {/* Date filter pills */}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-gray-500 mr-1">📅 Charge Date:</span>
+            {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
+              const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
+              return (
+                <button key={mode} onClick={() => setDateFilterMode(mode)}
+                  className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${dateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
+                >{labels[mode]}</button>
+              );
+            })}
+            {dateFilterMode === 'specific' && (
+              <input type="date" value={dateFilterSingle} onChange={(e) => setDateFilterSingle(e.target.value)}
+                className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            )}
+            {dateFilterMode === 'range' && (
+              <div className="flex items-center gap-2 ml-2">
+                <input type="date" value={dateFilterFrom} onChange={(e) => setDateFilterFrom(e.target.value)}
+                  className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                <span className="text-gray-400 text-sm">→</span>
+                <input type="date" value={dateFilterTo} onChange={(e) => setDateFilterTo(e.target.value)}
+                  className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              </div>
+            )}
+          </div>
         </CardBody>
       </Card>
 
-      {/* Payment Summary */}
+      {/* Payment Summary — totals reflect the active filter so cards match table rows */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-blue-600">
-              ₵{formatMoney(serviceCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
+              ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
             </div>
             <div className="text-sm text-gray-600">Total Charges (incl. tax)</div>
           </CardBody>
@@ -442,7 +480,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-green-600">
-              ₵{formatMoney(serviceCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
+              ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
             </div>
             <div className="text-sm text-gray-600">Paid Amount (incl. tax)</div>
           </CardBody>
@@ -450,7 +488,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-orange-600">
-              ₵{formatMoney(serviceCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
+              ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
             </div>
             <div className="text-sm text-gray-600">Outstanding (incl. tax)</div>
           </CardBody>
@@ -458,7 +496,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-purple-600">
-              {serviceCharges.filter(c => c.status === 'paid').length}/{serviceCharges.length}
+              {filteredCharges.filter(c => c.status === 'paid').length}/{filteredCharges.length}
             </div>
             <div className="text-sm text-gray-600">Paid/Total</div>
           </CardBody>
@@ -468,11 +506,6 @@ export default function ServiceChargesPage() {
       {/* Service Charges Table */}
       <Card>
         <CardBody>
-          <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg mb-4">
-            <strong>Column Guide:</strong>
-            <span className="ml-2">AMOUNT = Line total incl. tax (VAT + NHIL + GETFund + Tourism)</span>
-            <span className="ml-4">Folio posting uses excl. tax — open View for details</span>
-          </div>
           <Table aria-label="Service charges table">
             <TableHeader>
               <TableColumn>CUSTOMER</TableColumn>
@@ -485,14 +518,8 @@ export default function ServiceChargesPage() {
               <TableColumn>DATE</TableColumn>
               <TableColumn>ACTIONS</TableColumn>
             </TableHeader>
-            <TableBody>
-              {filteredCharges.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center text-gray-500 py-8">
-                    No service charges found
-                  </TableCell>
-                </TableRow>
-              ) : (
+            <TableBody emptyContent={<div className="text-center text-gray-500 py-8">No service charges found</div>}>
+              {filteredCharges.length === 0 ? [] as any : (
                 filteredCharges
                   .slice((page - 1) * rowsPerPage, page * rowsPerPage)
                   .map((charge) => {

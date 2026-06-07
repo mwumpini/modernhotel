@@ -95,7 +95,10 @@ export default function InvoicesPaymentsPage() {
   const [activeTab, setActiveTab] = useState('payments');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [dateFilter, setDateFilter] = useState('all');
+  const [dateFilterMode, setDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('today');
+  const [dateFilterSingle, setDateFilterSingle] = useState('');
+  const [dateFilterFrom, setDateFilterFrom] = useState('');
+  const [dateFilterTo, setDateFilterTo] = useState('');
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const settings = useSettingsStore();
@@ -134,6 +137,11 @@ export default function InvoicesPaymentsPage() {
   const [splitTargetReservationId, setSplitTargetReservationId] = useState<string>('');
   const [splitAmount, setSplitAmount] = useState<number>(0);
   const [splitNote, setSplitNote] = useState<string>('');
+  const [inlineNotification, setInlineNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
+  const showNotification = (type: 'success' | 'error' | 'warning', message: string) => {
+    setInlineNotification({ type, message });
+    setTimeout(() => setInlineNotification(null), 4000);
+  };
 
   // Payment form state
   const [paymentForm, setPaymentForm] = useState({
@@ -203,9 +211,10 @@ export default function InvoicesPaymentsPage() {
     setFolioPage(1);
   }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFrom, folioDateTo]);
 
-  const totalFolioPages = Math.max(1, Math.ceil(
+  const totalFolioPages = useMemo(() => Math.max(1, Math.ceil(
     frontOfficeStore.reservations.filter(matchesFolioFilters).length / itemsPerPage
-  ));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  )), [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFrom, folioDateTo, itemsPerPage]);
 
   // Live folio-backed invoices & payments derived from frontOfficeStore
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -341,16 +350,39 @@ export default function InvoicesPaymentsPage() {
     };
   }, []);
 
+  // Derive a filtered invoice list so stats and table always agree
+  const filteredInvoices = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return invoices
+      .filter(inv => statusFilter === 'all' ? true : inv.status === statusFilter)
+      .filter(inv => {
+        if (!searchTerm.trim()) return true;
+        const hay = `${inv.guestName} ${inv.roomNumber} ${inv.invoiceNumber}`.toLowerCase();
+        return hay.includes(searchTerm.toLowerCase());
+      })
+      .filter(inv => {
+        const d = inv.createdAt?.slice(0, 10) ?? '';
+        if (dateFilterMode === 'today') return d === today;
+        if (dateFilterMode === 'specific' && dateFilterSingle) return d === dateFilterSingle;
+        if (dateFilterMode === 'range') {
+          if (dateFilterFrom && d < dateFilterFrom) return false;
+          if (dateFilterTo   && d > dateFilterTo)   return false;
+        }
+        return true;
+      });
+  }, [invoices, statusFilter, searchTerm, dateFilterMode, dateFilterSingle, dateFilterFrom, dateFilterTo]);
+
+  // Stats always reflect the filtered list so KPI cards match the table rows
   const stats = useMemo(() => {
-    const totalInvoices = invoices.length;
-    const totalAmount = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
-    const totalCollected = invoices.reduce((sum, inv) => sum + (inv.totalAmount - inv.balance), 0);
-    const totalOutstanding = invoices.reduce((sum, inv) => sum + inv.balance, 0);
-    const overdueInvoices = invoices.filter(inv => inv.status === 'overdue').length;
-    const overdueAmount = invoices.filter(inv => inv.status === 'overdue').reduce((sum, inv) => sum + inv.balance, 0);
-    const collectionRate = totalAmount > 0 ? ((totalCollected / totalAmount) * 100) : 0;
+    const totalInvoices   = filteredInvoices.length;
+    const totalAmount     = filteredInvoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+    const totalCollected  = filteredInvoices.reduce((sum, inv) => sum + (inv.totalAmount - inv.balance), 0);
+    const totalOutstanding = filteredInvoices.reduce((sum, inv) => sum + inv.balance, 0);
+    const overdueInvoices = filteredInvoices.filter(inv => inv.status === 'overdue').length;
+    const overdueAmount   = filteredInvoices.filter(inv => inv.status === 'overdue').reduce((sum, inv) => sum + inv.balance, 0);
+    const collectionRate  = totalAmount > 0 ? ((totalCollected / totalAmount) * 100) : 0;
     return { totalInvoices, totalAmount, totalCollected, totalOutstanding, overdueInvoices, overdueAmount, collectionRate };
-  }, [invoices]);
+  }, [filteredInvoices]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -597,7 +629,7 @@ export default function InvoicesPaymentsPage() {
 
   const handleProcessAdjustment = async () => {
     if (!selectedFolio || adjustmentAmount <= 0 || !adjustmentReason.trim()) {
-      alert('Please enter valid adjustment details');
+      showNotification('warning', 'Please enter valid adjustment details');
       return;
     }
 
@@ -614,18 +646,18 @@ export default function InvoicesPaymentsPage() {
       try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: selectedFolio.id, details: `Adjustment (${adjustmentType}) ₵${adjustmentAmount} - ${adjustmentReason}`, severity: 'low' }); } catch {}
 
       recomputeBillingFromStore();
-      alert('Adjustment processed successfully');
+      showNotification('success', 'Adjustment processed successfully');
       setAdjustmentAmount(0);
       setAdjustmentReason('');
     } catch (error) {
       console.error('Adjustment processing error:', error);
-      alert('Adjustment failed. Please try again.');
+      showNotification('error', 'Adjustment failed. Please try again.');
     }
   };
 
   const handleSplitCharge = () => {
     if (!selectedFolio || !splitChargeId || !splitTargetReservationId || splitAmount <= 0) {
-      alert('Select target folio and enter a valid split amount');
+      showNotification('warning', 'Select target folio and enter a valid split amount');
       return;
     }
     const ok = frontOfficeStore.splitCharge(
@@ -645,7 +677,7 @@ export default function InvoicesPaymentsPage() {
       setSplitAmount(0);
       setSplitNote('');
     } else {
-      alert('Split failed — check amount and charge');
+      showNotification('error', 'Split failed — check amount and charge');
     }
   };
 
@@ -725,6 +757,11 @@ export default function InvoicesPaymentsPage() {
 
   return (
     <div className="p-6 space-y-6">
+      {inlineNotification && (
+        <div className={`px-4 py-3 rounded-lg text-sm font-medium flex items-center gap-2 ${inlineNotification.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : inlineNotification.type === 'warning' ? 'bg-amber-50 text-amber-800 border border-amber-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
+          {inlineNotification.type === 'success' ? '✅' : inlineNotification.type === 'warning' ? '⚠️' : '❌'} {inlineNotification.message}
+        </div>
+      )}
       <div className="flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Invoices & Payments</h1>
@@ -739,11 +776,11 @@ export default function InvoicesPaymentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Total Invoices</p>
-                <p className="text-2xl font-bold text-gray-900">{invoices.length}</p>
+                <p className="text-2xl font-bold text-gray-900">{stats.totalInvoices}</p>
               </div>
               <div className="text-blue-500 text-2xl">📄</div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">All time</p>
+            <p className="text-xs text-gray-500 mt-1">{invoices.length} total</p>
           </CardBody>
         </Card>
 
@@ -752,11 +789,11 @@ export default function InvoicesPaymentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Collected</p>
-                <p className="text-2xl font-bold text-green-600">₵{(invoices.reduce((s, i) => s + (i.totalAmount - i.balance), 0)).toLocaleString()}</p>
+                <p className="text-2xl font-bold text-green-600">₵{stats.totalCollected.toLocaleString()}</p>
               </div>
               <div className="text-green-500 text-2xl">💰</div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">{((invoices.reduce((s, i) => s + (i.totalAmount - i.balance), 0) / invoices.reduce((s, i) => s + i.totalAmount, 0)) * 100 || 0).toFixed(1)}% collection rate</p>
+            <p className="text-xs text-gray-500 mt-1">{stats.collectionRate.toFixed(1)}% collection rate</p>
           </CardBody>
         </Card>
 
@@ -765,7 +802,7 @@ export default function InvoicesPaymentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Outstanding</p>
-                <p className="text-2xl font-bold text-orange-600">₵{(invoices.reduce((s, i) => s + i.balance, 0)).toLocaleString()}</p>
+                <p className="text-2xl font-bold text-orange-600">₵{stats.totalOutstanding.toLocaleString()}</p>
               </div>
               <div className="text-orange-500 text-2xl">⏰</div>
             </div>
@@ -778,11 +815,11 @@ export default function InvoicesPaymentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Overdue</p>
-                <p className="text-2xl font-bold text-red-600">₵{(invoices.filter(i => i.status === 'overdue').reduce((s, i) => s + i.balance, 0)).toLocaleString()}</p>
+                <p className="text-2xl font-bold text-red-600">₵{stats.overdueAmount.toLocaleString()}</p>
               </div>
               <div className="text-red-500 text-2xl">🚨</div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">{invoices.filter(i => i.status === 'overdue').length} invoices</p>
+            <p className="text-xs text-gray-500 mt-1">{stats.overdueInvoices} invoices</p>
           </CardBody>
         </Card>
       </div>
@@ -827,29 +864,56 @@ export default function InvoicesPaymentsPage() {
 
           {activeTab === 'invoices' ? (
             <>
-            <div className="flex items-center gap-3 mb-3">
-              <Input
-                placeholder="Search guest or room..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-64"
-                startContent={<span>🔎</span>}
-              />
-              <Select
-                selectedKeys={new Set([statusFilter])}
-                onSelectionChange={(keys) => setStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
-                className="w-52"
-                aria-label="Filter status"
-              >
-                <SelectItem key="all">All statuses</SelectItem>
-                <SelectItem key="draft">Draft</SelectItem>
-                <SelectItem key="pending">Pending</SelectItem>
-                <SelectItem key="partially_paid">Partially Paid</SelectItem>
-                <SelectItem key="paid">Paid</SelectItem>
-                <SelectItem key="overdue">Overdue</SelectItem>
-                <SelectItem key="cancelled">Cancelled</SelectItem>
-                <SelectItem key="refunded">Refunded</SelectItem>
-              </Select>
+            <div className="space-y-3 mb-3">
+              <div className="flex items-center gap-3">
+                <Input
+                  placeholder="Search guest or room..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="w-64"
+                  startContent={<span>🔎</span>}
+                />
+                <Select
+                  selectedKeys={new Set([statusFilter])}
+                  onSelectionChange={(keys) => setStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
+                  className="w-52"
+                  aria-label="Filter status"
+                >
+                  <SelectItem key="all">All statuses</SelectItem>
+                  <SelectItem key="draft">Draft</SelectItem>
+                  <SelectItem key="pending">Pending</SelectItem>
+                  <SelectItem key="partially_paid">Partially Paid</SelectItem>
+                  <SelectItem key="paid">Paid</SelectItem>
+                  <SelectItem key="overdue">Overdue</SelectItem>
+                  <SelectItem key="cancelled">Cancelled</SelectItem>
+                  <SelectItem key="refunded">Refunded</SelectItem>
+                </Select>
+              </div>
+              {/* Date filter pills */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-gray-500 mr-1">📅 Invoice Date:</span>
+                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
+                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
+                  return (
+                    <button key={mode} onClick={() => setDateFilterMode(mode)}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${dateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
+                    >{labels[mode]}</button>
+                  );
+                })}
+                {dateFilterMode === 'specific' && (
+                  <input type="date" value={dateFilterSingle} onChange={(e) => setDateFilterSingle(e.target.value)}
+                    className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                )}
+                {dateFilterMode === 'range' && (
+                  <div className="flex items-center gap-2 ml-2">
+                    <input type="date" value={dateFilterFrom} onChange={(e) => setDateFilterFrom(e.target.value)}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <span className="text-gray-400 text-sm">→</span>
+                    <input type="date" value={dateFilterTo} onChange={(e) => setDateFilterTo(e.target.value)}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  </div>
+                )}
+              </div>
             </div>
             <Table aria-label="Invoices table">
               <TableHeader>
@@ -873,13 +937,7 @@ export default function InvoicesPaymentsPage() {
                 <TableColumn>ACTIONS</TableColumn>
               </TableHeader>
               <TableBody>
-                {[...invoices]
-                  .filter(inv => (statusFilter === 'all' ? true : inv.status === statusFilter))
-                  .filter(inv => {
-                    if (!searchTerm.trim()) return true;
-                    const hay = `${inv.guestName} ${inv.roomNumber} ${inv.invoiceNumber}`.toLowerCase();
-                    return hay.includes(searchTerm.toLowerCase());
-                  })
+                {[...filteredInvoices]
                   .sort((a, b) => {
                     const keyA = sortBy === 'createdAt' ? a.createdAt : a.updatedAt;
                     const keyB = sortBy === 'createdAt' ? b.createdAt : b.updatedAt;
@@ -974,7 +1032,7 @@ export default function InvoicesPaymentsPage() {
             <div className="flex justify-end mt-3">
               <Pagination 
                 page={invoicePage}
-                total={Math.max(1, Math.ceil(invoices.length / itemsPerPage))}
+                total={Math.max(1, Math.ceil(filteredInvoices.length / itemsPerPage))}
                 onChange={setInvoicePage}
                 showControls
                 size="sm"
@@ -983,33 +1041,6 @@ export default function InvoicesPaymentsPage() {
             </>
           ) : activeTab === 'payments' ? (
             <>
-            <div className="mb-4 p-3 bg-blue-50 rounded-lg">
-              <div className="flex justify-between items-center">
-                <div>
-                  <p className="text-sm text-blue-700">
-                    <strong>Debug Info:</strong> Total payments: {payments.length} | 
-                    Showing page {paymentPage} of {Math.max(1, Math.ceil(payments.length / itemsPerPage))} | 
-                    Items per page: {itemsPerPage}
-                  </p>
-                  {payments.length > 0 && (
-                    <p className="text-xs text-blue-600 mt-1">
-                      Payment IDs: {payments.map(p => p.id).join(', ')}
-                    </p>
-                  )}
-                </div>
-                <Button 
-                  size="sm" 
-                  color="primary" 
-                  variant="flat"
-                  onPress={() => {
-                    console.log('[INVOICE-PAYMENT] Manual refresh triggered');
-                    recomputeBillingFromStore();
-                  }}
-                >
-                  🔄 Refresh
-                </Button>
-              </div>
-            </div>
             <Table aria-label="Payments table">
               <TableHeader>
                 <TableColumn>TRANSACTION</TableColumn>
@@ -1333,7 +1364,7 @@ export default function InvoicesPaymentsPage() {
                   selectedKeys={new Set([settings.printing.invoice || 'ghana-top-class-invoice'])}
                   onSelectionChange={(keys) => {
                     const key = Array.from(keys as Set<string>)[0];
-                    settings.printing.invoice = key as any;
+                    useSettingsStore.getState().updateNestedSetting('printing', { ...settings.printing, invoice: key });
                   }}
                   className="w-80"
                 >
@@ -1908,8 +1939,8 @@ export default function InvoicesPaymentsPage() {
                             {(() => {
                               const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
                               const reservations = frontOfficeStore.reservations.filter(r => r.id !== selectedFolio.id);
-                              return folio.charges.map((charge, index) => (
-                                <TableRow key={index}>
+                              return folio.charges.map((charge) => (
+                                <TableRow key={charge.id}>
                                   <TableCell>{new Date(charge.date).toLocaleDateString()}</TableCell>
                                   <TableCell>{charge.description}</TableCell>
                                   <TableCell className="text-right">₵{charge.amount.toLocaleString()}</TableCell>
@@ -1945,8 +1976,8 @@ export default function InvoicesPaymentsPage() {
                           <TableBody>
                             {(() => {
                               const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
-                              return folio.payments.map((payment, index) => (
-                                <TableRow key={index}>
+                              return folio.payments.map((payment) => (
+                                <TableRow key={payment.id}>
                                   <TableCell>{new Date(payment.date).toLocaleDateString()}</TableCell>
                                   <TableCell>{payment.method}</TableCell>
                                   <TableCell className="text-right">₵{payment.amount.toLocaleString()}</TableCell>

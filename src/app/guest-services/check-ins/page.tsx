@@ -45,8 +45,8 @@ import {
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
 import { calculateStayNights } from '../../lib/frontoffice/helpers/rates';
+import { postRoomChargeForDate, isRoomLine } from '../../lib/frontoffice/roomCharges';
 import { trackEvent } from '../../lib/analytics/trackEvent';
-import TodaysArrivalsPanel from '../../components/frontoffice/TodaysArrivalsPanel';
 import type { Reservation } from '../../lib/frontoffice/types';
 
 interface CheckInGuest {
@@ -117,8 +117,17 @@ function CheckInsSection() {
     type: 'deposit' // 'deposit', 'payment', 'prepayment'
   });
   const [transferModalOpen, setTransferModalOpen] = useState(false);
+  const [dateFilterMode, setDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('today');
+  const [dateFilterSingle, setDateFilterSingle] = useState('');
+  const [dateFilterFrom, setDateFilterFrom] = useState('');
+  const [dateFilterTo, setDateFilterTo] = useState('');
   const [noShowTarget, setNoShowTarget] = useState<Reservation | null>(null);
   const { isOpen: isNoShowOpen, onOpen: onNoShowOpen, onClose: onNoShowClose } = useDisclosure();
+  const [inlineNotification, setInlineNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const showNotification = (type: 'success' | 'error', message: string) => {
+    setInlineNotification({ type, message });
+    setTimeout(() => setInlineNotification(null), 4000);
+  };
 
   // Quick intake state (Reservation search + Walk-in form)
   const [reservationSearchTerm, setReservationSearchTerm] = useState('');
@@ -200,13 +209,13 @@ function CheckInsSection() {
           paymentMethod: reservation.paymentMethod,
           creditBalance,
           bookedNights,
-          totalCharges: totals.totalCharges,
+          totalCharges: totals.totalCharges,      // gross incl. tax
           totalPayments: totals.totalPayments,
-          balance: totals.outstandingBalance,
-          serviceCharges: totals.serviceChargesInclusive,
+          balance: totals.balance,               // true Amount−Payments; negative = credit
+          serviceCharges: totals.serviceChargesInclusive, // gross incl. tax
           otherCharges: totals.otherCharges,
           taxTotal: totals.taxTotal,
-          roomTotal,
+          roomTotal,                              // gross incl. tax
         } as CheckInGuest;
       });
     setGuests(data);
@@ -234,27 +243,43 @@ function CheckInsSection() {
   }, []);
 
   useEffect(() => {
+    const today = new Date().toISOString().slice(0, 10);
     let filtered = guests;
     if (searchTerm) {
+      const term = searchTerm.toLowerCase();
       filtered = filtered.filter(g =>
-        g.guestName.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        g.roomNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        g.guestName.toLowerCase().includes(term) ||
+        g.roomNumber.toLowerCase().includes(term) ||
         g.phone?.includes(searchTerm) ||
-        g.email?.toLowerCase().includes(searchTerm.toLowerCase())
+        g.email?.toLowerCase().includes(term)
       );
     }
     if (statusFilter !== 'all') filtered = filtered.filter(g => g.status === statusFilter);
+    // Date filter on check-in (arrival) date
+    if (dateFilterMode === 'today') {
+      filtered = filtered.filter(g => g.checkInDate?.slice(0, 10) === today);
+    } else if (dateFilterMode === 'specific' && dateFilterSingle) {
+      filtered = filtered.filter(g => g.checkInDate?.slice(0, 10) === dateFilterSingle);
+    } else if (dateFilterMode === 'range') {
+      filtered = filtered.filter(g => {
+        const d = g.checkInDate?.slice(0, 10) ?? '';
+        if (dateFilterFrom && d < dateFilterFrom) return false;
+        if (dateFilterTo   && d > dateFilterTo)   return false;
+        return true;
+      });
+    }
     setFilteredGuests(filtered);
     setPage(1);
-  }, [guests, searchTerm, statusFilter]);
+  }, [guests, searchTerm, statusFilter, dateFilterMode, dateFilterSingle, dateFilterFrom, dateFilterTo]);
 
-  const totalRoomRevenue = useMemo(() => guests.reduce((s,g) => s + (g.roomRate || 0), 0), [guests]);
-  const totalRoomAmount = useMemo(() => guests.reduce((s,g) => s + (g.roomTotal || 0), 0), [guests]);
-  const totalServiceCharges = useMemo(() => guests.reduce((s,g) => s + (g.serviceCharges || 0), 0), [guests]);
-  const totalCharges = useMemo(() => guests.reduce((s,g) => s + (g.totalCharges || 0), 0), [guests]);
-  const totalPayments = useMemo(() => guests.reduce((s,g) => s + (g.totalPayments || 0), 0), [guests]);
-  const totalOutstanding = useMemo(() => guests.reduce((s,g) => s + (g.balance || 0), 0), [guests]);
-  const avgNights = useMemo(() => guests.length ? (guests.reduce((s,g)=>s+g.nightsStayed,0)/guests.length).toFixed(1) : '0.0', [guests]);
+  // All KPI totals track filteredGuests so cards match the table rows
+  const totalRoomRevenue    = useMemo(() => filteredGuests.reduce((s,g) => s + (g.roomRate || 0), 0), [filteredGuests]);
+  const totalRoomAmount     = useMemo(() => filteredGuests.reduce((s,g) => s + (g.roomTotal || 0), 0), [filteredGuests]);
+  const totalServiceCharges = useMemo(() => filteredGuests.reduce((s,g) => s + (g.serviceCharges || 0), 0), [filteredGuests]);
+  const totalCharges        = useMemo(() => filteredGuests.reduce((s,g) => s + (g.totalCharges || 0), 0), [filteredGuests]);
+  const totalPayments       = useMemo(() => filteredGuests.reduce((s,g) => s + (g.totalPayments || 0), 0), [filteredGuests]);
+  const totalOutstanding    = useMemo(() => filteredGuests.reduce((s,g) => s + (g.balance || 0), 0), [filteredGuests]);
+  const avgNights           = useMemo(() => filteredGuests.length ? (filteredGuests.reduce((s,g)=>s+g.nightsStayed,0)/filteredGuests.length).toFixed(1) : '0.0', [filteredGuests]);
 
   const handleEarlyCheckout = async (guest: CheckInGuest) => {
     setIsProcessing(true);
@@ -270,20 +295,69 @@ function CheckInsSection() {
   };
 
   const handleExtendStay = async (guest: CheckInGuest, nights: number) => {
-    frontOfficeStore.extendStay(guest.id, nights);
-    trackEvent('FO.Reservation.Updated', { reservationId: guest.id, guestName: guest.guestName, additionalNights: nights, source: 'check-ins' });
+    const oldDeparture = guest.checkOutDate.slice(0, 10);
+    const result = frontOfficeStore.extendStay(guest.id, nights);
+    if (!result) {
+      showNotification('error', 'Could not update stay — reservation not found');
+      return;
+    }
+
+    const newDeparture = result.departure.slice(0, 10);
+
+    if (nights > 0) {
+      // Post room charge(s) for the newly added night(s) immediately so the folio is up to date
+      for (let i = 0; i < nights; i++) {
+        const d = new Date(oldDeparture);
+        d.setDate(d.getDate() + i);
+        postRoomChargeForDate(frontOfficeStore as any, guest.id, d.toISOString().slice(0, 10));
+      }
+    } else if (nights < 0) {
+      // Void any room charge(s) that were already posted for the now-removed night(s)
+      const folio = frontOfficeStore.getOrCreateFolio(guest.id);
+      const toVoid = (folio.charges || []).filter((c: any) => {
+        if (!isRoomLine(c.description)) return false;
+        const chargeDate = (c.date || '').slice(0, 10);
+        // The removed nights are between newDeparture (inclusive) and oldDeparture (exclusive)
+        return chargeDate >= newDeparture && chargeDate < oldDeparture;
+      });
+      for (const charge of toVoid) {
+        frontOfficeStore.voidCharge(guest.id, (charge as any).id, `Stay shortened — night of ${(charge as any).date?.slice(0, 10)} removed`);
+      }
+    }
+
+    trackEvent('FO.Reservation.Updated', {
+      reservationId: guest.id,
+      guestName: guest.guestName,
+      additionalNights: nights,
+      oldDeparture,
+      newDeparture,
+      source: 'check-ins'
+    });
+
     loadGuests();
     onClose();
     setSelectedGuest(null);
+
+    const bookedNights = calculateStayNights(result.arrival, result.departure);
+    const formattedDate = new Date(newDeparture).toLocaleDateString('en-GH', { day: 'numeric', month: 'short', year: 'numeric' });
+    showNotification(
+      'success',
+      nights > 0
+        ? `✅ Stay extended for ${guest.guestName} — checkout now ${formattedDate} (${bookedNights} nights)`
+        : `✅ Stay shortened for ${guest.guestName} — checkout now ${formattedDate} (${bookedNights} nights)`
+    );
   };
 
   const handleApplyCredit = (guest: CheckInGuest) => {
     if (!guest.creditBalance || guest.creditBalance <= 0) return;
     const amount = guest.creditBalance; // Simplified - apply full credit balance
     const ok = frontOfficeStore.applyCreditPayment(guest.id, amount, 'Credit applied from unified Check-Ins');
-    if (ok) setTimeout(() => {
-      // Credit applied successfully
-    }, 50);
+    if (ok) {
+      loadGuests();
+      showNotification('success', `Credit of ₵${amount.toLocaleString()} applied to ${guest.guestName}'s account`);
+    } else {
+      showNotification('error', 'Failed to apply credit. Please try again.');
+    }
   };
 
   const handleViewFolio = (guest: CheckInGuest) => {
@@ -347,12 +421,11 @@ function CheckInsSection() {
       // Refresh data
       loadGuests();
       
-      // Show success message
-      alert(`Payment of ₵${paymentData.amount.toLocaleString()} processed successfully!`);
-      
+      showNotification('success', `Payment of ₵${paymentData.amount.toLocaleString()} processed successfully!`);
+
     } catch (error) {
       console.error('Payment processing error:', error);
-      alert('Payment processing failed. Please try again.');
+      showNotification('error', 'Payment processing failed. Please try again.');
     } finally {
       setIsProcessing(false);
     }
@@ -434,17 +507,57 @@ function CheckInsSection() {
 
   return (
     <div className="space-y-6">
+      {inlineNotification && (
+        <div className={`px-4 py-3 rounded-lg text-sm font-medium flex items-center gap-2 ${inlineNotification.type === 'success' ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-red-50 text-red-800 border border-red-200'}`}>
+          {inlineNotification.type === 'success' ? '✅' : '❌'} {inlineNotification.message}
+        </div>
+      )}
       <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Guests</p><p className="text-2xl font-bold text-ghana-black">{guests.length}</p></div><div className="text-2xl">👥</div></div></CardBody></Card>
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Avg Rate/Night</p><p className="text-2xl font-bold text-ghana-black">₵{guests.length > 0 ? formatMoney(totalRoomRevenue / guests.length) : '0.00'}</p></div><div className="text-2xl">💰</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Guests</p><p className="text-2xl font-bold text-ghana-black">{filteredGuests.length}</p></div><div className="text-2xl">👥</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Avg Rate/Night</p><p className="text-2xl font-bold text-ghana-black">₵{filteredGuests.length > 0 ? formatMoney(totalRoomRevenue / filteredGuests.length) : '0.00'}</p></div><div className="text-2xl">💰</div></div></CardBody></Card>
         <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Room Total</p><p className="text-2xl font-bold text-purple-600">₵{totalRoomAmount.toLocaleString()}</p></div><div className="text-2xl">🏨</div></div></CardBody></Card>
         <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Service Charges</p><p className="text-2xl font-bold text-orange-600">₵{totalServiceCharges.toLocaleString()}</p></div><div className="text-2xl">🏊</div></div></CardBody></Card>
         <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Amount</p><p className="text-2xl font-bold text-blue-600">₵{totalCharges.toLocaleString()}</p></div><div className="text-2xl">📊</div></div></CardBody></Card>
         <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Payments</p><p className="text-2xl font-bold text-green-600">₵{totalPayments.toLocaleString()}</p></div><div className="text-2xl">💳</div></div></CardBody></Card>
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Outstanding</p><p className="text-2xl font-bold text-red-600">₵{totalOutstanding.toLocaleString()}</p></div><div className="text-2xl">⏰</div></div></CardBody></Card>
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Net Balance</p><p className={`text-2xl font-bold ${totalOutstanding > 0 ? 'text-red-600' : totalOutstanding < 0 ? 'text-green-600' : 'text-gray-500'}`}>₵{totalOutstanding.toLocaleString()}</p></div><div className="text-2xl">⚖️</div></div></CardBody></Card>
         </div>
 
-      <Card className="mb-2"><CardBody className="p-4"><div className="flex flex-col sm:flex-row gap-4"><Input placeholder="Search by guest name, room number, phone, or email..." onChange={(e) => setSearchTerm(e.target.value)} className="flex-1" startContent={<span className="text-gray-400">🔍</span>} /><Select placeholder="Filter by status" onChange={(e) => setStatusFilter(e.target.value)} className="w-full sm:w-48"><SelectItem key="all">All Statuses</SelectItem><SelectItem key="checked-in">Checked In</SelectItem><SelectItem key="extended">Extended</SelectItem><SelectItem key="early-checkout">Early Checkout</SelectItem></Select><Button color="primary" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white" onPress={() => setTransferModalOpen(true)}>🔄 Room Transfer</Button></div></CardBody></Card>
+      <Card className="mb-2"><CardBody className="p-4 space-y-3">
+        <div className="flex flex-col sm:flex-row gap-4">
+          <Input placeholder="Search by guest name, room number, phone, or email..." onChange={(e) => setSearchTerm(e.target.value)} className="flex-1" startContent={<span className="text-gray-400">🔍</span>} />
+          <Select placeholder="Filter by status" onChange={(e) => setStatusFilter(e.target.value)} className="w-full sm:w-48">
+            <SelectItem key="all">All Statuses</SelectItem>
+            <SelectItem key="checked-in">Checked In</SelectItem>
+            <SelectItem key="extended">Extended</SelectItem>
+            <SelectItem key="early-checkout">Early Checkout</SelectItem>
+          </Select>
+          <Button color="primary" className="bg-gradient-to-r from-blue-600 to-purple-600 text-white" onPress={() => setTransferModalOpen(true)}>🔄 Room Transfer</Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-medium text-gray-500 mr-1">📅 Check-in Date:</span>
+          {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
+            const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
+            return (
+              <button key={mode} onClick={() => setDateFilterMode(mode)}
+                className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${dateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
+              >{labels[mode]}</button>
+            );
+          })}
+          {dateFilterMode === 'specific' && (
+            <input type="date" value={dateFilterSingle} onChange={(e) => setDateFilterSingle(e.target.value)}
+              className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          )}
+          {dateFilterMode === 'range' && (
+            <div className="flex items-center gap-2 ml-2">
+              <input type="date" value={dateFilterFrom} onChange={(e) => setDateFilterFrom(e.target.value)}
+                className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <span className="text-gray-400 text-sm">→</span>
+              <input type="date" value={dateFilterTo} onChange={(e) => setDateFilterTo(e.target.value)}
+                className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+          )}
+        </div>
+      </CardBody></Card>
 
       <Card><CardBody>
         <Tabs selectedKey={activeTab} onSelectionChange={(k)=>setActiveTab(k as string)} className="mb-4"><Tab key="quick" title="⚡ Quick Check-In" /><Tab key="overview" title="📊 Overview" /><Tab key="analytics" title="📈 Analytics" /></Tabs>
@@ -602,20 +715,6 @@ function CheckInsSection() {
 
         {activeTab === 'overview' && (
           <div className="space-y-4">
-            <TodaysArrivalsPanel
-              compact
-              onCheckIn={checkInReservation}
-              onNoShow={openNoShowConfirm}
-            />
-            <div className="text-sm text-gray-600 bg-blue-50 p-3 rounded-lg">
-              <strong>Column Guide:</strong> 
-              <span className="ml-2">RATE/NIGHT = Per night room rate (incl. tax)</span>
-              <span className="ml-4">ROOM TOTAL = Posted room charges (incl. tax)</span>
-              <span className="ml-4">SERVICE CHARGES = Services (incl. tax)</span>
-              <span className="ml-4">AMOUNT = Total charges incl. tax — click Folio for excl. breakdown</span>
-              <span className="ml-4">PAYMENTS = Total payments received</span>
-              <span className="ml-4">BALANCE = Amount - Payments</span>
-            </div>
             <Table aria-label="In-house guests table" className="min-w-full">
                     <TableHeader>
               <TableColumn className="w-28">ID</TableColumn>
@@ -687,14 +786,29 @@ function CheckInsSection() {
                       >
                         📊 Folio
                                   </Button>
-                      <Button 
-                        size="sm" 
-                        color="success" 
+                      <Button
+                        size="sm"
+                        color="success"
                         variant="solid"
                         className="bg-green-600 text-white font-semibold px-3 py-1"
                         onClick={() => handleExtendStay(guest, 1)}
                       >
                         +1 Night
+                      </Button>
+                      <Button
+                        size="sm"
+                        color="warning"
+                        variant="solid"
+                        className="text-white font-semibold px-3 py-1"
+                        isDisabled={(() => {
+                          const today = new Date(); today.setHours(0, 0, 0, 0);
+                          const dep = new Date(guest.checkOutDate); dep.setHours(0, 0, 0, 0);
+                          const remainingNights = Math.round((dep.getTime() - today.getTime()) / 86400000);
+                          return remainingNights <= 1; // must keep at least 1 night remaining
+                        })()}
+                        onClick={() => handleExtendStay(guest, -1)}
+                      >
+                        −1 Night
                       </Button>
                       <Button 
                         size="sm" 
@@ -726,8 +840,8 @@ function CheckInsSection() {
 
         {activeTab === 'analytics' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-2">
-            <Card><CardHeader><h3 className="text-lg font-semibold">Room Rate Distribution</h3></CardHeader><CardBody>{guests.map(g => (<div key={g.id} className="flex justify-between text-sm mb-2"><span>{g.guestName}</span><span className="font-medium">₵{(g.roomRate || 0).toLocaleString()}</span></div>))}</CardBody></Card>
-            <Card><CardHeader><h3 className="text-lg font-semibold">Stay Duration</h3></CardHeader><CardBody>{guests.map(g => (<div key={g.id} className="flex justify-between text-sm mb-2"><span>{g.guestName}</span><span className="font-medium">{g.nightsStayed + 1} nights</span></div>))}</CardBody></Card>
+            <Card><CardHeader><h3 className="text-lg font-semibold">Room Rate Distribution</h3></CardHeader><CardBody>{filteredGuests.map(g => (<div key={g.id} className="flex justify-between text-sm mb-2"><span>{g.guestName}</span><span className="font-medium">₵{(g.roomRate || 0).toLocaleString()}</span></div>))}</CardBody></Card>
+            <Card><CardHeader><h3 className="text-lg font-semibold">Stay Duration</h3></CardHeader><CardBody>{filteredGuests.map(g => (<div key={g.id} className="flex justify-between text-sm mb-2"><span>{g.guestName}</span><span className="font-medium">{g.nightsStayed + 1} nights</span></div>))}</CardBody></Card>
                 </div>
         )}
       </CardBody></Card>
