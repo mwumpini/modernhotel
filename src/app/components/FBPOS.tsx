@@ -35,7 +35,6 @@ import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { storesStore } from '../lib/stores/store';
 import { useAccountingStore } from '../lib/accounting/store';
 import { captureCompleteSale, type DepartmentSource } from '../lib/accounting/integration';
-import { computeSalesTax } from '../lib/tax/engine';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { customerStore } from '../lib/fb/customerStore';
 
@@ -308,28 +307,53 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   const tables = Array.from({ length: 20 }).map((_, i) => `T${String(i + 1).padStart(2, '0')}`);
 
-  const [menu, setMenu] = useState<MenuItem[]>([
-    { id: 'M1', name: 'Jollof Rice', price: 65, category: 'Mains', route: 'kitchen' },
-    { id: 'M2', name: 'Banku & Tilapia', price: 85, category: 'Mains', route: 'kitchen' },
-    { id: 'M3', name: 'Waakye Pack', price: 50, category: 'Mains', route: 'kitchen' },
-    { id: 'M4', name: 'Chicken Wings', price: 45, category: 'Starters', route: 'kitchen' },
-    { id: 'M5', name: 'Garden Salad', price: 38, category: 'Starters', route: 'kitchen' },
-    { id: 'D1', name: 'Club Beer', price: 20, category: 'Drinks', route: 'bar' },
-    { id: 'D2', name: 'Fresh Juice', price: 25, category: 'Drinks', route: 'bar' },
-    { id: 'D3', name: 'Cocktail', price: 55, category: 'Drinks', route: 'bar' },
-    { id: 'DS1', name: 'Chocolate Cake', price: 30, category: 'Desserts', route: 'kitchen' },
-  ]);
-
-  React.useEffect(() => {
+  const [menuLoading, setMenuLoading] = useState(true);
+  const [menu, setMenu] = useState<MenuItem[]>(() => {
+    // Seed from localStorage as offline fallback while API loads
     try {
       const raw = localStorage.getItem('fbpos.menu');
-      if (raw) setMenu(JSON.parse(raw));
+      if (raw) return JSON.parse(raw);
     } catch {}
-  }, []);
+    return [];
+  });
 
+  // Load menu from DB API; fall back to localStorage cache if request fails
   React.useEffect(() => {
-    localStorage.setItem('fbpos.menu', JSON.stringify(menu));
-  }, [menu]);
+    let cancelled = false;
+    async function fetchMenu() {
+      try {
+        const subdomain = window.location.hostname.split('.')[0] || 'default';
+        const res = await fetch('/api/fb/menu?available=true', {
+          headers: { 'x-tenant-id': subdomain },
+        });
+        if (!res.ok) throw new Error(`Menu API ${res.status}`);
+        const data = await res.json();
+        if (cancelled) return;
+        const mapped: MenuItem[] = (data.items || []).map((it: any) => ({
+          id: it.id,
+          code: it.code,
+          name: it.name,
+          price: Number(it.unitPrice),
+          category: it.category,
+          venue: it.venue,
+          route: (it.route || (it.category?.toLowerCase().includes('drink') || it.category?.toLowerCase().includes('bever') ? 'bar' : 'kitchen')) as 'kitchen' | 'bar',
+        }));
+        if (mapped.length > 0) {
+          setMenu(mapped);
+          // Update offline cache
+          try { localStorage.setItem('fbpos.menu', JSON.stringify(mapped)); } catch {}
+        }
+      } catch (err) {
+        // API unavailable — keep localStorage fallback silently
+        console.warn('[FBPOS] Menu API unavailable, using local cache:', err);
+      } finally {
+        if (!cancelled) setMenuLoading(false);
+      }
+    }
+    fetchMenu();
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   type AliasesMap = Record<string, string[]>; // menuId -> aliases
   const [aliases, setAliases] = useState<AliasesMap>(() => {
@@ -564,60 +588,84 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     return withPerUnit;
   };
 
-  const sendOrder = () => {
+  const sendOrder = async () => {
     if (cart.length === 0) return;
-    
-    // Validate in-house customer selection
     if (customerType === 'In-house' && (!roomNumber || !guestName)) {
       alert('Please select a room and guest for in-house orders');
       return;
     }
-    // For walk-in or takeout, allow optional client but set name if selected
-    const id = `ORD-${Date.now().toString().slice(-6)}`;
-    const newOrder: PendingOrder = {
+
+    const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
+    const guestDisplayName = customerType === 'In-house'
+      ? guestName
+      : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : undefined);
+
+    // ── POST to database API (source of truth for KDS) ─────────────────────
+    const subdomain = window.location.hostname.split('.')[0] || 'default';
+    let apiId: string | null = null;
+    try {
+      const res = await fetch('/api/fb/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
+        body: JSON.stringify({
+          venue: venue.toLowerCase(),
+          tableNumber,
+          roomNumber: customerType === 'In-house' ? roomNumber : undefined,
+          guestId: selectedGuest?.guestId,
+          serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
+          notes: orderNotes,
+          covers: 1,
+          discountAmount: orderDiscountAmount,
+          serviceCharge: serviceChargeAmount,
+          items: itemsWithOrderDiscount.map(i => ({
+            menuItemId: (i as any).code ? undefined : i.id,
+            name: i.name,
+            category: i.category,
+            quantity: i.qty,
+            unitPrice: i.price,
+            notes: i.note,
+            route: i.route,
+          })),
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        apiId = data.order?.id ?? null;
+      }
+    } catch (err) {
+      console.warn('[FBPOS] sendOrder API error (using in-memory fallback):', err);
+    }
+
+    // ── Mirror to in-memory store for immediate UI reactivity ───────────────
+    const id = apiId ?? `ORD-${Date.now().toString().slice(-6)}`;
+    const newOrder: PendingOrder = { id, table: tableNumber, waiterId, items: cart, status: 'pending', customerType, venue, notes: orderNotes, urgent: priority === 'urgent', priority };
+    setPendingOrders(prev => [newOrder, ...prev]);
+    ordersStore.add({
       id,
       table: tableNumber,
       waiterId,
-      items: cart,
+      items: itemsWithOrderDiscount.map(i => ({
+        id: i.id, name: i.name, price: i.price, qty: i.qty, route: i.route,
+        status: 'pending', prepMinutes: i.route === 'kitchen' ? 15 : 2,
+        isRoomService: i.isRoomService || false,
+        discountPerUnit: i.discountPerUnit || 0,
+        serviceChargePerUnit: i.serviceChargePerUnit || 0,
+      })),
       status: 'pending',
       customerType,
       venue,
       notes: orderNotes,
       urgent: priority === 'urgent',
       priority,
-    };
-    setPendingOrders(prev => [newOrder, ...prev]);
-    const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
-    ordersStore.add({
-      id: newOrder.id,
-      table: newOrder.table,
-      waiterId: newOrder.waiterId,
-      items: itemsWithOrderDiscount.map(i => ({ 
-        id: i.id, 
-        name: i.name, 
-        price: i.price, 
-        qty: i.qty, 
-        route: i.route, 
-        status: 'pending', 
-        prepMinutes: i.route === 'kitchen' ? 15 : 2, 
-        isRoomService: i.isRoomService || false,
-        discountPerUnit: i.discountPerUnit || 0,
-        serviceChargePerUnit: i.serviceChargePerUnit || 0
-      })),
-      status: newOrder.status,
-      customerType: newOrder.customerType,
-      venue: newOrder.venue,
-      notes: orderNotes,
-      urgent: priority === 'urgent',
-      priority,
-      guestName: customerType === 'In-house' ? guestName : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : undefined),
+      guestName: guestDisplayName,
       roomNumber: customerType === 'In-house' ? roomNumber : undefined,
     } as any);
-    // Auto-issue items to Stores (demo)
+
+    // Auto-issue items to Stores
     cart.forEach(i => {
       storesIssueBus.issue({ sku: i.id, name: i.name, qty: i.qty, uom: 'ea', department: i.route === 'bar' ? 'Bar' : 'Kitchen', referenceId: id });
     });
-      trackEvent('FB.OrderPlaced', { id, table: tableNumber, waiterId, items: itemsWithOrderDiscount.map(i => ({ id: i.id, qty: i.qty, discountPerUnit: i.discountPerUnit || 0 })), venue, customerType }, { sourceModule: 'F&B' });
+    trackEvent('FB.OrderPlaced', { id, table: tableNumber, waiterId, items: itemsWithOrderDiscount.map(i => ({ id: i.id, qty: i.qty, discountPerUnit: i.discountPerUnit || 0 })), venue, customerType }, { sourceModule: 'F&B' });
     trackEvent('FB.KOT.Created', { id, urgent: priority === 'urgent' }, { sourceModule: 'F&B' });
     clearCart();
     setOrderNotes('');
@@ -636,27 +684,88 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     }
 
     try {
-      const subtotal = cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
-      const { totalTax, gross: total } = computeSalesTax(subtotal);
-
-      // Persist order in shared store as paid
-      const newId = `ORD-${Date.now().toString().slice(-6)}`;
       const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
+      const subdomain = window.location.hostname.split('.')[0] || 'default';
+      const guestDisplayName = customerType === 'In-house'
+        ? guestName
+        : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : 'Walk-in Customer');
+
+      // ── POST order to DB API — API computes correct Ghana stacked taxes ─────
+      let apiOrder: any = null;
+      let finalSubtotal = subtotal;
+      let totalTax = 0;
+      let total = subtotal; // fallback — will be replaced by API response
+
+      try {
+        const res = await fetch('/api/fb/orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
+          body: JSON.stringify({
+            venue: venue.toLowerCase(),
+            tableNumber,
+            roomNumber: customerType === 'In-house' ? roomNumber : undefined,
+            guestId: selectedGuest?.guestId,
+            serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
+            notes: orderNotes,
+            covers: 1,
+            discountAmount: orderDiscountAmount,
+            serviceCharge: serviceChargeAmount,
+            items: itemsWithOrderDiscount.map(i => ({
+              menuItemId: i.id,
+              name: i.name,
+              category: i.category,
+              quantity: i.qty,
+              unitPrice: i.price,
+              notes: i.note,
+              route: i.route,
+            })),
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          apiOrder = data.order;
+          finalSubtotal = Number(apiOrder.subtotal);
+          totalTax = Number(apiOrder.taxAmount);
+          total = Number(apiOrder.total);
+        }
+      } catch (err) {
+        console.warn('[FBPOS] handlePayment API error:', err);
+        // Fallback: use Ghana flat-rate approximation (21% all-in: VAT 15% + NHIL 2.5% + GET 2.5% + Tourism 1%)
+        totalTax = Math.round(subtotal * 0.21 * 100) / 100;
+        total = subtotal + totalTax;
+      }
+
+      // For Room Charge: advance to 'served' then 'billed' to trigger folio posting
+      if (paymentMethod === 'Room Charge' && apiOrder?.id) {
+        try {
+          await fetch(`/api/fb/orders/${apiOrder.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
+            body: JSON.stringify({ status: 'served' }),
+          });
+          await fetch(`/api/fb/orders/${apiOrder.id}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', 'x-tenant-id': subdomain },
+            body: JSON.stringify({ status: 'billed' }),
+          });
+        } catch (err) {
+          console.warn('[FBPOS] folio posting error:', err);
+        }
+      }
+
+      const newId = apiOrder?.id ?? `ORD-${Date.now().toString().slice(-6)}`;
+
+      // ── Mirror to in-memory store for immediate UI reactivity ───────────────
       ordersStore.add({
         id: newId,
         table: tableNumber,
         waiterId,
         items: itemsWithOrderDiscount.map(i => ({
-          id: i.id,
-          name: i.name,
-          price: i.price,
-          qty: i.qty,
-          route: i.route,
-          status: 'paid',
-          prepMinutes: i.route === 'kitchen' ? 15 : 2,
+          id: i.id, name: i.name, price: i.price, qty: i.qty, route: i.route,
+          status: 'paid', prepMinutes: i.route === 'kitchen' ? 15 : 2,
           isRoomService: i.isRoomService || false,
           discountPerUnit: i.discountPerUnit || 0,
-          serviceChargePerUnit: i.serviceChargePerUnit || 0
+          serviceChargePerUnit: i.serviceChargePerUnit || 0,
         })),
         status: 'paid',
         customerType,
@@ -664,9 +773,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         notes: orderNotes,
         urgent: priority === 'urgent',
         priority,
-        guestName: customerType === 'In-house' ? guestName : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : undefined),
+        guestName: guestDisplayName,
         roomNumber: customerType === 'In-house' ? roomNumber : undefined,
-        
       } as any);
 
       // Update inventory (demo issue movements)
@@ -685,78 +793,56 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       });
 
       // ===== ACCOUNTING INTEGRATION =====
-      // Cash/card/MoMo: post to GL immediately. Room charge: folio only until guest checkout.
+      // Cash/card/MoMo: capture in GL immediately.
+      // Room Charge: folio posting already handled above via API PATCH to 'billed'.
       if (paymentMethod !== 'Room Charge') {
-      try {
-        // Determine department source based on venue
-        const departmentSource: DepartmentSource = venue === 'Restaurant' ? 'restaurant' 
-          : venue === 'Bar' ? 'bar' 
-          : venue === 'Room Service' ? 'room_service' 
-          : 'restaurant';
-        
-        // Get customer name
-        const fbCustomerName = customerType === 'In-house' 
-          ? guestName 
-          : selectedWalkIn 
-            ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() 
-            : 'Walk-in Customer';
-        
-        // Map payment method for accounting (Room Charge excluded above — folio only until checkout)
-        const accountingPaymentMethod = paymentMethod as 'Cash' | 'Card' | 'Mobile Money';
-        
-        const taxPercent = subtotal > 0 ? (totalTax / subtotal) * 100 : 0;
-        
-        // Get current waiter/staff info
-        const currentWaiter = waiters.find(w => w.id === waiterId);
-        const staffInfo = {
-          staffId: waiterId,
-          staffName: currentWaiter?.name || waiterId,
-          staffRole: venue === 'Bar' ? 'Bartender' : 'Waiter/Cashier',
-        };
-        
-        const result = captureCompleteSale(
-          {
-            id: newId,
-            source: departmentSource,
-            customerId: customerType === 'In-house' && roomNumber ? `ROOM-${roomNumber}` : undefined,
-            customerName: fbCustomerName,
-            reference: newId,
-            description: `${venue} Sale - Table ${tableNumber || 'N/A'}`,
-            items: cart.map(item => ({
-              description: item.name,
-              quantity: item.qty,
-              unitPrice: item.price,
-              taxPercent: taxPercent,
-            })),
-            subtotal: subtotal,
-            taxAmount: totalTax,
-            total: total,
-            // Staff tracking
-            ...staffInfo,
-          },
-          {
-            id: `PAY-${newId}`,
-            customerName: fbCustomerName,
-            amount: total,
-            paymentMethod: accountingPaymentMethod,
-            reference: newId,
-            description: `Payment for ${venue} order ${newId}`,
-            // Staff tracking
-            ...staffInfo,
+        try {
+          const departmentSource: DepartmentSource = venue === 'Restaurant' ? 'restaurant'
+            : venue === 'Bar' ? 'bar'
+            : 'restaurant';
+          const accountingPaymentMethod = paymentMethod as 'Cash' | 'Card' | 'Mobile Money';
+          const taxPercent = finalSubtotal > 0 ? (totalTax / finalSubtotal) * 100 : 0;
+          const currentWaiter = waiters.find(w => w.id === waiterId);
+          const staffInfo = {
+            staffId: waiterId,
+            staffName: currentWaiter?.name || waiterId,
+            staffRole: venue === 'Bar' ? 'Bartender' : 'Waiter/Cashier',
+          };
+          const result = captureCompleteSale(
+            {
+              id: newId,
+              source: departmentSource,
+              customerId: customerType === 'In-house' && roomNumber ? `ROOM-${roomNumber}` : undefined,
+              customerName: guestDisplayName,
+              reference: newId,
+              description: `${venue} Sale - Table ${tableNumber || 'N/A'}`,
+              items: cart.map(item => ({
+                description: item.name,
+                quantity: item.qty,
+                unitPrice: item.price,
+                taxPercent,
+              })),
+              subtotal: finalSubtotal,
+              taxAmount: totalTax,
+              total,
+              ...staffInfo,
+            },
+            {
+              id: `PAY-${newId}`,
+              customerName: guestDisplayName,
+              amount: total,
+              paymentMethod: accountingPaymentMethod,
+              reference: newId,
+              description: `Payment for ${venue} order ${newId}`,
+              ...staffInfo,
+            }
+          );
+          if (result) {
+            console.log(`[F&B POS] ✅ Accounting captured - Invoice: ${result.invoiceId}, Receipt: ${result.receiptId}`);
           }
-        );
-        
-        if (result) {
-          console.log(`[F&B POS] ✅ Accounting captured - Invoice: ${result.invoiceId}, Receipt: ${result.receiptId}`);
+        } catch (err) {
+          console.error('[F&B POS] ❌ Accounting integration error:', err);
         }
-      } catch (err) {
-        console.error('[F&B POS] ❌ Accounting integration error:', err);
-      }
-      }
-
-      // Add to guest folio if room charge
-      if (paymentMethod === 'Room Charge' && customerType === 'In-house') {
-        addToGuestFolio(newId, total, cart);
       }
 
       // Track payment received
@@ -772,10 +858,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         printReceipt({
           hotelName: 'Ghana Hotel',
           contact: 'Accra • +233',
-          code: `RCPT-${Date.now().toString().slice(-6)}`,
+          code: `RCPT-${newId}`,
           datetime: new Date().toLocaleString(),
           items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
-          subtotal,
+          subtotal: finalSubtotal,
           discount: orderDiscountAmount,
           total,
           table: tableNumber,
@@ -1059,7 +1145,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
           <div className="lg:col-span-2 space-y-4">
             <Card className="border-0 shadow-lg">
-              <CardHeader className="pb-2"><h3 className="font-semibold text-ghana-black">Menu</h3></CardHeader>
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h3 className="font-semibold text-ghana-black">Menu</h3>
+                {menuLoading && <span className="text-xs text-gray-400 animate-pulse">Loading from database…</span>}
+                {!menuLoading && menu.length === 0 && <span className="text-xs text-orange-500">No menu items found. Run accounting setup to seed.</span>}
+              </CardHeader>
               <CardBody>
                 <Tabs aria-label="Menu categories">
                   {categories.map(cat => (

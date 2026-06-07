@@ -56,6 +56,7 @@ model Tenant {
   accountingInvoiceLines AccountingInvoiceLine[]
   accountingPayments     AccountingPayment[]
   guestFolios            GuestFolio[]
+  fbMenuItems            FBMenuItem[]
   fbOrders               FBOrder[]
   fbOrderItems           FBOrderItem[]
   housekeepingTasks      HousekeepingTask[]
@@ -851,6 +852,33 @@ model PettyCashTxn {
 
 // ─── F&B / POS ────────────────────────────────────────────────────────────────
 
+model FBMenuItem {
+  id            String   @id @default(cuid())
+  tenantId      String
+  code          String
+  name          String
+  description   String?
+  category      String   // food | beverage | dessert | snack | special
+  venue         String   // restaurant | bar | room_service | all
+  route         String   @default("kitchen") // kitchen | bar
+  unitPrice     Decimal
+  costPrice     Decimal  @default(0)
+  glAccountCode String   @default("4200")
+  isAvailable   Boolean  @default(true)
+  allergens     String?
+  prepMinutes   Int      @default(10)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, venue])
+  @@index([tenantId, category])
+  @@map("fb_menu_items")
+}
+
 model FBOrder {
   id           String      @id @default(cuid())
   tenantId     String
@@ -863,11 +891,16 @@ model FBOrder {
   reservationId String?
   folioId      String?     // set when billed to folio
   serverName   String?
+  covers       Int         @default(1)
   subtotal     Decimal     @default(0)
   taxAmount    Decimal     @default(0)
   total        Decimal     @default(0)
+  taxLines     Json?       // stores per-tax breakdown: [{taxCode, name, rate, amount, glAccountCode}]
+  discountAmount Decimal   @default(0)
+  serviceCharge  Decimal   @default(0)
   notes        String?
   billedAt     DateTime?
+  servedAt     DateTime?
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 

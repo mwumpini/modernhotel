@@ -73,6 +73,7 @@ const navGroups: NavGroup[] = [
     label: 'Operations',
     items: [
       { title: 'Inventory', href: '/tools-support', icon: CubeIcon },
+      { title: 'Kitchen Display', href: '/kitchen-display', icon: ClipboardDocumentListIcon },
       { title: 'Events & Conferences', href: '/events-conferences', icon: CalendarIcon },
     ],
   },

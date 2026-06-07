@@ -9,9 +9,10 @@ const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
 const ExecutiveManagementDashboard = lazy(() => import('./ExecutiveManagementDashboard'));
 const HousekeepingMainDashboard = lazy(() => import('./HousekeepingMainDashboard'));
 const FBPOS = lazy(() => import('./FBPOS').then(module => ({ default: module.default })));
+// RestaurantManagement and BarManagement both just wrap FBPOS — kept for backward compat
 const RestaurantManagement = lazy(() => import('./RestaurantManagement'));
 const BarManagement = lazy(() => import('./BarManagement'));
-const KitchenDisplay = lazy(() => import('./KitchenDisplay'));
+// KitchenDisplay (old in-memory) removed — use /kitchen-display page instead
 const OfflineIndicator = lazy(() => import('./OfflineIndicator'));
 const OfflineManager = lazy(() => import('./OfflineManager'));
 const ActivityLog = lazy(() => import('./ActivityLog'));
@@ -438,8 +439,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Guest Experience Manager...</div>}><GuestExperienceManager /></Suspense>;
       case 'mobile-guest-services':
         return <Suspense fallback={<div className="p-6 text-center">Loading Mobile Guest Services...</div>}><MobileGuestServices /></Suspense>;
-      case 'food-beverage':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Dashboard...</div>}><FoodBeverageMainDashboard /></Suspense>;
+      // 'food-beverage' alias handled in the F&B section below
       case 'accounting-management':
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;
       case 'hr-payroll-management':
@@ -468,28 +468,33 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Dashboard...</div>}><HousekeepingMainDashboard /></Suspense>;
       case 'housekeeping-analytics':
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Analytics...</div>}><HousekeepingAnalyticsDashboard /></Suspense>;
+      // ── Food & Beverage ────────────────────────────────────────────────────
       case 'f&b':
+      case 'food-beverage': // alias — kept for deep-link compat
         return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Dashboard...</div>}><FoodBeverageMainDashboard /></Suspense>;
       case 'fb-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Activities...</div>}><DepartmentActivityLog area="f&b" title="Food & Beverage - View Activities" /></Suspense>;
       case 'fb-pos':
+      case 'pos': // alias
         return <Suspense fallback={<div className="p-6 text-center">Loading POS Terminal...</div>}><FBPOS onClose={() => setActiveSection('f&b')} /></Suspense>;
       case 'fb-restaurant-bar':
         return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar...</div>}><FoodBeverageRestaurantBar /></Suspense>;
       case 'fb-kitchen':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Kitchen Display...</div>}><FoodBeverageKitchen /></Suspense>;
+      case 'kitchen': // alias — both navigate to the real KDS page
+        return (
+          <div className="p-6 text-center space-y-4">
+            <p className="text-gray-600">Opening Kitchen Display System…</p>
+            {(() => { router.push('/kitchen-display'); return null; })()}
+          </div>
+        );
       case 'fb-menu-inventory':
         return <Suspense fallback={<div className="p-6 text-center">Loading Menu & Inventory...</div>}><FoodBeverageMenuInventory /></Suspense>;
       case 'fb-staff-reports':
         return <Suspense fallback={<div className="p-6 text-center">Loading Staff Reports...</div>}><FoodBeverageStaffReports /></Suspense>;
       case 'fb-analytics':
         return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Analytics...</div>}><FoodBeverageAnalyticsDashboard /></Suspense>;
-      case 'pos':
-        return <Suspense fallback={<div className="p-6 text-center">Loading POS Terminal...</div>}><FBPOS onClose={() => setActiveSection('f&b')} /></Suspense>;
       case 'restaurant':
         return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant Management...</div>}><RestaurantManagement /></Suspense>;
-      case 'kitchen':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Kitchen Display...</div>}><KitchenDisplay /></Suspense>;
       case 'security':
         return <Suspense fallback={<div className="p-6 text-center">Loading Security Dashboard...</div>}><SecurityMainDashboard /></Suspense>;
       case 'security-analytics':

@@ -338,6 +338,9 @@ async function main() {
     { code: '4000', name: 'Operating Revenue', type: 'Revenue', category: 'Revenue', level: 1 },
     { code: '4100', name: 'Room Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
     { code: '4200', name: 'Food and Beverage Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
+    { code: '4210', name: 'Restaurant Food Revenue', type: 'Revenue', category: 'Revenue', level: 3 },
+    { code: '4220', name: 'Bar & Beverage Revenue', type: 'Revenue', category: 'Revenue', level: 3 },
+    { code: '4230', name: 'Room Service Revenue', type: 'Revenue', category: 'Revenue', level: 3 },
     { code: '4300', name: 'Other Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
     { code: '4400', name: 'Service Charges', type: 'Revenue', category: 'Revenue', level: 2 },
     { code: '4500', name: 'Miscellaneous Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
@@ -426,6 +429,64 @@ async function main() {
     })
   }
   console.log(`✅ Seeded ${paymentMethods.length} payment methods`)
+
+  // ── F&B Menu Items ─────────────────────────────────────────────────────────
+  const menuItems = [
+    // ── RESTAURANT — Food (GL 4210) ──────────────────────────────────────────
+    { code: 'RST-001', name: 'Jollof Rice & Chicken', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 85, costPrice: 28, glAccountCode: '4210', prepMinutes: 20, sortOrder: 1 },
+    { code: 'RST-002', name: 'Banku & Tilapia', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 95, costPrice: 32, glAccountCode: '4210', prepMinutes: 25, sortOrder: 2 },
+    { code: 'RST-003', name: 'Waakye with Stew', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 65, costPrice: 20, glAccountCode: '4210', prepMinutes: 15, sortOrder: 3 },
+    { code: 'RST-004', name: 'Grilled Whole Tilapia', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 120, costPrice: 45, glAccountCode: '4210', prepMinutes: 30, sortOrder: 4 },
+    { code: 'RST-005', name: 'Fried Rice & Chicken', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 80, costPrice: 25, glAccountCode: '4210', prepMinutes: 20, sortOrder: 5 },
+    { code: 'RST-006', name: 'Fufu & Light Soup', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 75, costPrice: 22, glAccountCode: '4210', prepMinutes: 25, sortOrder: 6 },
+    { code: 'RST-007', name: 'Kelewele', category: 'snack', venue: 'restaurant', route: 'kitchen', unitPrice: 30, costPrice: 8, glAccountCode: '4210', prepMinutes: 10, sortOrder: 7 },
+    { code: 'RST-008', name: 'Club Sandwich', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 70, costPrice: 22, glAccountCode: '4210', prepMinutes: 15, sortOrder: 8 },
+    { code: 'RST-009', name: 'Beef Burger & Fries', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 90, costPrice: 30, glAccountCode: '4210', prepMinutes: 18, sortOrder: 9 },
+    { code: 'RST-010', name: 'Garden Salad', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 45, costPrice: 12, glAccountCode: '4210', prepMinutes: 8, sortOrder: 10 },
+    { code: 'RST-011', name: 'Continental Breakfast', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 95, costPrice: 30, glAccountCode: '4210', prepMinutes: 15, sortOrder: 11 },
+    { code: 'RST-012', name: 'Full English Breakfast', category: 'food', venue: 'restaurant', route: 'kitchen', unitPrice: 120, costPrice: 40, glAccountCode: '4210', prepMinutes: 20, sortOrder: 12 },
+    // ── RESTAURANT — Desserts ──────────────────────────────────────────────
+    { code: 'RST-D01', name: 'Chocolate Cake', category: 'dessert', venue: 'restaurant', route: 'kitchen', unitPrice: 40, costPrice: 12, glAccountCode: '4210', prepMinutes: 5, sortOrder: 20 },
+    { code: 'RST-D02', name: 'Fruit Salad', category: 'dessert', venue: 'restaurant', route: 'kitchen', unitPrice: 35, costPrice: 10, glAccountCode: '4210', prepMinutes: 5, sortOrder: 21 },
+    { code: 'RST-D03', name: 'Ice Cream (2 scoops)', category: 'dessert', venue: 'restaurant', route: 'kitchen', unitPrice: 30, costPrice: 8, glAccountCode: '4210', prepMinutes: 3, sortOrder: 22 },
+    // ── BAR — Beverages (GL 4220) ─────────────────────────────────────────
+    { code: 'BAR-001', name: 'Star Beer (Bottle)', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 25, costPrice: 10, glAccountCode: '4220', prepMinutes: 2, sortOrder: 1 },
+    { code: 'BAR-002', name: 'Club Beer (Bottle)', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 25, costPrice: 10, glAccountCode: '4220', prepMinutes: 2, sortOrder: 2 },
+    { code: 'BAR-003', name: 'Guinness (Bottle)', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 28, costPrice: 11, glAccountCode: '4220', prepMinutes: 2, sortOrder: 3 },
+    { code: 'BAR-004', name: 'Whisky (Single)', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 45, costPrice: 15, glAccountCode: '4220', prepMinutes: 2, sortOrder: 4 },
+    { code: 'BAR-005', name: 'Gin & Tonic', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 40, costPrice: 12, glAccountCode: '4220', prepMinutes: 3, sortOrder: 5 },
+    { code: 'BAR-006', name: 'Rum & Coke', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 40, costPrice: 12, glAccountCode: '4220', prepMinutes: 3, sortOrder: 6 },
+    { code: 'BAR-007', name: 'Red Wine (Glass)', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 55, costPrice: 20, glAccountCode: '4220', prepMinutes: 2, sortOrder: 7 },
+    { code: 'BAR-008', name: 'White Wine (Glass)', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 55, costPrice: 20, glAccountCode: '4220', prepMinutes: 2, sortOrder: 8 },
+    { code: 'BAR-009', name: 'Cocktail of the Day', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 60, costPrice: 18, glAccountCode: '4220', prepMinutes: 5, sortOrder: 9 },
+    { code: 'BAR-010', name: 'Fresh Fruit Juice', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 30, costPrice: 8, glAccountCode: '4220', prepMinutes: 5, sortOrder: 10 },
+    { code: 'BAR-011', name: 'Soft Drink (Can)', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 15, costPrice: 5, glAccountCode: '4220', prepMinutes: 1, sortOrder: 11 },
+    { code: 'BAR-012', name: 'Water (500ml)', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 10, costPrice: 3, glAccountCode: '4220', prepMinutes: 1, sortOrder: 12 },
+    { code: 'BAR-013', name: 'Water (1.5L)', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 18, costPrice: 5, glAccountCode: '4220', prepMinutes: 1, sortOrder: 13 },
+    { code: 'BAR-014', name: 'Coffee', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 25, costPrice: 6, glAccountCode: '4220', prepMinutes: 5, sortOrder: 14 },
+    { code: 'BAR-015', name: 'Tea', category: 'beverage', venue: 'bar', route: 'bar', unitPrice: 20, costPrice: 4, glAccountCode: '4220', prepMinutes: 4, sortOrder: 15 },
+    // ── ROOM SERVICE (GL 4230) — same items, higher price ─────────────────
+    { code: 'RS-001', name: 'Jollof Rice & Chicken (Room Service)', category: 'food', venue: 'room_service', route: 'kitchen', unitPrice: 100, costPrice: 28, glAccountCode: '4230', prepMinutes: 30, sortOrder: 1 },
+    { code: 'RS-002', name: 'Club Sandwich (Room Service)', category: 'food', venue: 'room_service', route: 'kitchen', unitPrice: 85, costPrice: 22, glAccountCode: '4230', prepMinutes: 20, sortOrder: 2 },
+    { code: 'RS-003', name: 'Beef Burger & Fries (Room Service)', category: 'food', venue: 'room_service', route: 'kitchen', unitPrice: 105, costPrice: 30, glAccountCode: '4230', prepMinutes: 25, sortOrder: 3 },
+    { code: 'RS-004', name: 'Continental Breakfast (Room Service)', category: 'food', venue: 'room_service', route: 'kitchen', unitPrice: 115, costPrice: 30, glAccountCode: '4230', prepMinutes: 20, sortOrder: 4 },
+    { code: 'RS-005', name: 'Beer (Room Service)', category: 'beverage', venue: 'room_service', route: 'bar', unitPrice: 35, costPrice: 10, glAccountCode: '4230', prepMinutes: 5, sortOrder: 5 },
+    { code: 'RS-006', name: 'Soft Drink (Room Service)', category: 'beverage', venue: 'room_service', route: 'bar', unitPrice: 20, costPrice: 5, glAccountCode: '4230', prepMinutes: 3, sortOrder: 6 },
+    { code: 'RS-007', name: 'Water (Room Service)', category: 'beverage', venue: 'room_service', route: 'bar', unitPrice: 15, costPrice: 3, glAccountCode: '4230', prepMinutes: 2, sortOrder: 7 },
+  ]
+
+  for (const item of menuItems) {
+    await prisma.fBMenuItem.upsert({
+      where: { tenantId_code: { tenantId: demoTenant.id, code: item.code } },
+      update: { unitPrice: item.unitPrice, isAvailable: true },
+      create: {
+        tenantId: demoTenant.id,
+        ...item,
+        isAvailable: true,
+      },
+    })
+  }
+  console.log(`✅ Seeded ${menuItems.length} F&B menu items`)
 
   console.log('🎉 Database seeding completed successfully!')
   console.log('\n📋 Demo Credentials:')

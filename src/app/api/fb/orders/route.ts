@@ -1,6 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { prisma } from '@/app/lib/database/client'
+import { computeStackedTaxLines, taxConfigsFromGhanaTemplate } from '@/app/lib/accounting/taxFromConfig'
+
+function round2(n: number) { return Math.round((n + Number.EPSILON) * 100) / 100 }
+
+/** Map venue to correct GL revenue account */
+function venueGL(venue: string): string {
+  switch (venue) {
+    case 'restaurant': return '4210'
+    case 'bar':
+    case 'pool_bar':   return '4220'
+    case 'room_service': return '4230'
+    default:           return '4200'
+  }
+}
 
 // GET /api/fb/orders — list orders, optionally filter by status/venue
 export async function GET(request: NextRequest) {
@@ -34,7 +48,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/fb/orders — create a new F&B order
+// POST /api/fb/orders — create a new F&B order with correct Ghana tax calculation
 export async function POST(request: NextRequest) {
   try {
     const subdomain = getTenantFromRequest(request)
@@ -48,12 +62,51 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Order must have at least one item' }, { status: 400 })
     }
 
+    // ── Order numbering ───────────────────────────────────────────────────────
     const orderCount = await prisma.fBOrder.count({ where: { tenantId: ctx.tenantId } })
     const orderNumber = `FB-${new Date().getFullYear()}-${String(orderCount + 1).padStart(4, '0')}`
 
-    const subtotal = body.items.reduce((s: number, i: any) => s + (i.amount || i.unitPrice * i.quantity), 0)
-    const taxAmount = body.taxAmount ?? subtotal * 0.21 // default Ghana composite tax ~21%
-    const total = subtotal + taxAmount
+    // ── Subtotal ──────────────────────────────────────────────────────────────
+    const subtotal = round2(
+      body.items.reduce((s: number, i: any) => s + round2((i.unitPrice ?? 0) * (i.quantity ?? 1)), 0)
+    )
+    const discountAmount = round2(body.discountAmount ?? 0)
+    const serviceCharge = round2(body.serviceCharge ?? 0)
+    const taxableAmount = round2(subtotal - discountAmount + serviceCharge)
+
+    // ── Ghana stacked tax calculation ─────────────────────────────────────────
+    // Load active tax configs from DB or fall back to Ghana template
+    let taxConfigs = taxConfigsFromGhanaTemplate()
+    try {
+      const dbTaxes = await prisma.tax.findMany({ where: { tenantId: ctx.tenantId, isActive: true } })
+      if (dbTaxes.length > 0) {
+        taxConfigs = dbTaxes.map((t: any) => ({
+          id: t.id,
+          code: t.code,
+          name: t.name,
+          rate: Number(t.rate),
+          type: t.type as any,
+          glAccountCode: t.type === 'VAT' ? '2110'
+            : t.type === 'NHIL' ? '2120'
+            : t.type === 'GETFund' ? '2130'
+            : t.type === 'Tourism' ? '2150'
+            : '2110',
+          isRecoverable: true,
+          isActive: true,
+          effectiveFrom: new Date().toISOString(),
+          countryCode: 'GH',
+          applyOnSales: true,
+          applyOnPurchases: true,
+        }))
+      }
+    } catch { /* use template fallback */ }
+
+    const { lines: taxLines, totalTax } = computeStackedTaxLines(taxableAmount, taxConfigs, 'sales')
+    const taxAmount = round2(totalTax)
+    const total = round2(taxableAmount + taxAmount)
+
+    // ── Determine GL code per item based on venue ─────────────────────────────
+    const revenueGL = venueGL(body.venue)
 
     const order = await prisma.fBOrder.create({
       data: {
@@ -66,30 +119,42 @@ export async function POST(request: NextRequest) {
         reservationId: body.reservationId,
         serverName: body.serverName,
         notes: body.notes,
+        covers: body.covers ?? 1,
         subtotal,
+        discountAmount,
+        serviceCharge,
         taxAmount,
         total,
-        status: 'pending',
+        taxLines: taxLines as any,
+        // Allow 'served' for express/quick-pay orders created by the POS cashier
+        status: (body.status === 'served' ? 'served' : 'pending'),
         items: {
           create: body.items.map((item: any) => ({
             tenantId: ctx.tenantId,
-            menuItemId: item.menuItemId,
+            menuItemId: item.menuItemId ?? item.id,
             name: item.name,
             category: item.category,
-            quantity: item.quantity,
-            unitPrice: item.unitPrice,
-            amount: item.amount || item.unitPrice * item.quantity,
-            taxAmount: item.taxAmount ?? 0,
+            quantity: item.quantity ?? 1,
+            unitPrice: item.unitPrice ?? 0,
+            amount: round2((item.unitPrice ?? 0) * (item.quantity ?? 1)),
+            taxAmount: 0, // tax tracked at order level
             notes: item.notes,
-            glAccountCode: item.glAccountCode || '4200',
+            glAccountCode: revenueGL,
           })),
         },
       },
       include: { items: true },
     })
 
-    await createAuditLog(ctx.tenantId, null, 'FB_ORDER_CREATED', 'FBOrder', order.id, undefined, { orderNumber, venue: order.venue, total }, request)
-    return NextResponse.json({ order }, { status: 201 })
+    await createAuditLog(
+      ctx.tenantId, null,
+      'FB_ORDER_CREATED', 'FBOrder', order.id,
+      undefined,
+      { orderNumber, venue: order.venue, subtotal, taxAmount, total },
+      request
+    )
+
+    return NextResponse.json({ order, taxBreakdown: taxLines }, { status: 201 })
   } catch (error) {
     console.error('[fb/orders][POST] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

@@ -2,7 +2,22 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { prisma } from '@/app/lib/database/client'
 
-// PATCH /api/fb/orders/[id] — update status; when status='billed' posts charge to guest folio
+// ── Order state machine ───────────────────────────────────────────────────────
+// Valid forward transitions only. Cancellation allowed from any non-billed state.
+const VALID_TRANSITIONS: Record<string, string[]> = {
+  pending:    ['preparing', 'ready', 'cancelled'],
+  preparing:  ['ready', 'cancelled'],
+  ready:      ['served', 'cancelled'],
+  served:     ['billed'],
+  billed:     [], // terminal — no further changes
+  cancelled:  [], // terminal
+}
+
+function canTransition(from: string, to: string): boolean {
+  return (VALID_TRANSITIONS[from] ?? []).includes(to)
+}
+
+// PATCH /api/fb/orders/[id] — update status with state machine enforcement
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -22,17 +37,30 @@ export async function PATCH(
     })
     if (!existing) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
 
+    // ── Validate status transition ─────────────────────────────────────────
+    if (body.status && body.status !== existing.status) {
+      if (!canTransition(existing.status, body.status)) {
+        return NextResponse.json({
+          error: `Invalid status transition: '${existing.status}' → '${body.status}'. Allowed next steps: [${(VALID_TRANSITIONS[existing.status] ?? []).join(', ') || 'none'}]`,
+          currentStatus: existing.status,
+          allowedTransitions: VALID_TRANSITIONS[existing.status] ?? [],
+        }, { status: 400 })
+      }
+    }
+
+    const now = new Date()
     const updated = await prisma.fBOrder.update({
       where: { id },
       data: {
         status: body.status ?? existing.status,
         notes: body.notes ?? existing.notes,
-        ...(body.status === 'served' ? { billedAt: new Date() } : {}),
+        serverName: body.serverName ?? existing.serverName,
+        ...(body.status === 'served' ? { servedAt: now } : {}),
       },
       include: { items: true },
     })
 
-    // When an order is served for a guest in-house, post charge to their folio
+    // ── When billed: post charge to guest folio ────────────────────────────
     if (body.status === 'billed' && existing.guestId && existing.reservationId) {
       const folio = await prisma.guestFolio.findFirst({
         where: {
@@ -46,19 +74,28 @@ export async function PATCH(
         const charges = (folio.charges as any[]) || []
         const payments = (folio.payments as any[]) || []
 
+        // Build folio charge with per-tax breakdown stored in reference
+        const taxLines = (existing.taxLines as any[]) || []
         const newCharge = {
           id: `FB-${existing.orderNumber}`,
-          date: new Date().toISOString(),
-          description: `F&B — ${existing.venue} Order ${existing.orderNumber}`,
+          date: now.toISOString(),
+          description: `F&B — ${existing.venue.replace('_', ' ')} ${existing.orderNumber}`,
           amount: Number(existing.subtotal),
           tax: Number(existing.taxAmount),
+          taxLines,
+          discountAmount: Number(existing.discountAmount ?? 0),
+          serviceCharge: Number(existing.serviceCharge ?? 0),
           category: 'F&B',
+          venue: existing.venue,
           reference: existing.orderNumber,
-          glAccountCode: '4200',
+          glAccountCode: venueGL(existing.venue),
+          covers: existing.covers ?? 1,
         }
 
         charges.push(newCharge)
-        const totalCharges = charges.reduce((s: number, c: any) => s + c.amount + (c.tax || 0), 0)
+        const totalCharges = charges.reduce(
+          (s: number, c: any) => s + (c.amount ?? 0) + (c.tax ?? 0) + (c.serviceCharge ?? 0), 0
+        )
         const totalPayments = payments
           .filter((p: any) => p.status === 'completed')
           .reduce((s: number, p: any) => s + p.amount, 0)
@@ -73,17 +110,18 @@ export async function PATCH(
           },
         })
 
-        // Mark order as billed
         await prisma.fBOrder.update({
           where: { id },
-          data: { folioId: folio.id, status: 'billed', billedAt: new Date() },
+          data: { folioId: folio.id, billedAt: now },
         })
 
-        await createAuditLog(ctx.tenantId, null, 'FB_ORDER_BILLED_TO_FOLIO', 'FBOrder', id, undefined, {
-          folioId: folio.id,
-          amount: Number(existing.total),
-          orderNumber: existing.orderNumber,
-        }, request)
+        await createAuditLog(
+          ctx.tenantId, null,
+          'FB_ORDER_BILLED_TO_FOLIO', 'FBOrder', id,
+          undefined,
+          { folioId: folio.id, amount: Number(existing.total), orderNumber: existing.orderNumber },
+          request
+        )
       }
     }
 
@@ -116,5 +154,15 @@ export async function GET(
   } catch (error) {
     console.error('[fb/orders/[id]][GET] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}
+
+function venueGL(venue: string): string {
+  switch (venue) {
+    case 'restaurant': return '4210'
+    case 'bar':
+    case 'pool_bar':   return '4220'
+    case 'room_service': return '4230'
+    default:           return '4200'
   }
 }
