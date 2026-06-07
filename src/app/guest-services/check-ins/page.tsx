@@ -279,7 +279,7 @@ function CheckInsSection() {
   const totalCharges        = useMemo(() => filteredGuests.reduce((s,g) => s + (g.totalCharges || 0), 0), [filteredGuests]);
   const totalPayments       = useMemo(() => filteredGuests.reduce((s,g) => s + (g.totalPayments || 0), 0), [filteredGuests]);
   const totalOutstanding    = useMemo(() => filteredGuests.reduce((s,g) => s + (g.balance || 0), 0), [filteredGuests]);
-  const avgNights           = useMemo(() => filteredGuests.length ? (filteredGuests.reduce((s,g)=>s+g.nightsStayed,0)/filteredGuests.length).toFixed(1) : '0.0', [filteredGuests]);
+  const avgNights           = useMemo(() => filteredGuests.length ? (filteredGuests.reduce((s,g)=>s+(g.bookedNights ?? g.nightsStayed),0)/filteredGuests.length).toFixed(1) : '0.0', [filteredGuests]);
 
   const handleEarlyCheckout = async (guest: CheckInGuest) => {
     setIsProcessing(true);
@@ -763,7 +763,7 @@ function CheckInsSection() {
                   <TableCell className="text-center">{guest.children}</TableCell>
                   <TableCell className="text-center">{formatDate(guest.checkInDate)}<br/><span className="text-xs text-gray-500">{formatTime(guest.checkInDateTime)}</span></TableCell>
                   <TableCell className="text-center">{formatDate(guest.checkOutDate)}</TableCell>
-                  <TableCell className="text-center">{guest.nightsStayed}</TableCell>
+                  <TableCell className="text-center">{guest.bookedNights ?? guest.nightsStayed}</TableCell>
                   <TableCell className="text-center font-semibold">₵{formatMoney(guest.roomRate)}</TableCell>
                   <TableCell className="text-center font-semibold text-purple-600">₵{formatMoney(guest.roomTotal || 0)}</TableCell>
                   <TableCell className="text-center font-semibold text-orange-600">₵{formatMoney(guest.serviceCharges || 0)}</TableCell>
@@ -841,7 +841,7 @@ function CheckInsSection() {
         {activeTab === 'analytics' && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-2">
             <Card><CardHeader><h3 className="text-lg font-semibold">Room Rate Distribution</h3></CardHeader><CardBody>{filteredGuests.map(g => (<div key={g.id} className="flex justify-between text-sm mb-2"><span>{g.guestName}</span><span className="font-medium">₵{(g.roomRate || 0).toLocaleString()}</span></div>))}</CardBody></Card>
-            <Card><CardHeader><h3 className="text-lg font-semibold">Stay Duration</h3></CardHeader><CardBody>{filteredGuests.map(g => (<div key={g.id} className="flex justify-between text-sm mb-2"><span>{g.guestName}</span><span className="font-medium">{g.nightsStayed + 1} nights</span></div>))}</CardBody></Card>
+            <Card><CardHeader><h3 className="text-lg font-semibold">Stay Duration</h3></CardHeader><CardBody>{filteredGuests.map(g => (<div key={g.id} className="flex justify-between text-sm mb-2"><span>{g.guestName}</span><span className="font-medium">{g.bookedNights ?? g.nightsStayed} nights</span></div>))}</CardBody></Card>
                 </div>
         )}
       </CardBody></Card>
