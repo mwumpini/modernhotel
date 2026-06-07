@@ -1,78 +1,65 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { auditLogger } from '@/app/lib/audit/auditLogger';
+import { NextRequest, NextResponse } from 'next/server'
+import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
+import { prisma } from '@/app/lib/database/client'
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id: reservationId } = await params;
-    
+    const subdomain = getTenantFromRequest(request)
+    if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
+    const ctx = await getTenantContext(subdomain)
+    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+
+    const { id: reservationId } = await params
     if (!reservationId) {
-      return NextResponse.json(
-        { error: 'Reservation ID is required' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Reservation ID is required' }, { status: 400 })
     }
 
-    // Get all audit logs for this reservation
-    const logs = auditLogger.getLogs('reservation', reservationId);
-    
-    // Filter for proforma-related logs
-    const proformaLogs = logs.filter(log => 
-      log.action.includes('proforma')
-    );
+    const logs = await prisma.auditLog.findMany({
+      where: { tenantId: ctx.tenantId, entity: 'Reservation', entityId: reservationId },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    const proformaLogs = logs.filter(log => log.action.toLowerCase().includes('proforma'))
 
     return NextResponse.json({
       success: true,
       reservationId,
       totalLogs: logs.length,
       proformaLogs: proformaLogs.length,
-      logs: proformaLogs
-    });
-
+      logs: proformaLogs,
+    })
   } catch (error) {
-    console.error('Error fetching audit logs:', error);
-    
-    return NextResponse.json(
-      { 
-        error: 'Failed to fetch audit logs',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    console.error('Error fetching audit logs:', error)
+    return NextResponse.json({ error: 'Failed to fetch audit logs' }, { status: 500 })
   }
 }
 
-// Get all audit logs (for admin purposes)
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { entity, entityId, action } = body;
+    const subdomain = getTenantFromRequest(request)
+    if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
+    const ctx = await getTenantContext(subdomain)
+    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
 
-    const logs = auditLogger.getLogs(entity, entityId);
-    
-    let filteredLogs = logs;
-    
-    if (action) {
-      filteredLogs = filteredLogs.filter(log => log.action === action);
-    }
+    const body = await request.json()
+    const { entity, entityId, action } = body
 
-    return NextResponse.json({
-      success: true,
-      totalLogs: filteredLogs.length,
-      logs: filteredLogs
-    });
+    const where: any = { tenantId: ctx.tenantId }
+    if (entity) where.entity = entity
+    if (entityId) where.entityId = entityId
+    if (action) where.action = action
 
+    const logs = await prisma.auditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+    })
+
+    return NextResponse.json({ success: true, totalLogs: logs.length, logs })
   } catch (error) {
-    console.error('Error fetching audit logs:', error);
-    
-    return NextResponse.json(
-      { 
-        error: 'Failed to fetch audit logs',
-        details: error instanceof Error ? error.message : 'Unknown error'
-      },
-      { status: 500 }
-    );
+    console.error('Error fetching audit logs:', error)
+    return NextResponse.json({ error: 'Failed to fetch audit logs' }, { status: 500 })
   }
 }

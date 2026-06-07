@@ -180,7 +180,7 @@ export async function isRoomAvailable(
       tenantId,
       roomId,
       ...(excludeReservationId ? { id: { not: excludeReservationId } } : {}),
-      status: { in: ['confirmed', 'checked-in'] },
+      status: { in: ['pending', 'confirmed', 'checked-in'] },
       checkInDate: { lt: new Date(departure) },
       checkOutDate: { gt: new Date(arrival) },
     },

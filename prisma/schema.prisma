@@ -56,6 +56,11 @@ model Tenant {
   accountingInvoiceLines AccountingInvoiceLine[]
   accountingPayments     AccountingPayment[]
   guestFolios            GuestFolio[]
+  fbOrders               FBOrder[]
+  fbOrderItems           FBOrderItem[]
+  housekeepingTasks      HousekeepingTask[]
+  roomStatusLogs         RoomStatusLog[]
+  maintenanceRequests    MaintenanceRequest[]
 
   @@map("tenants")
 }
@@ -842,4 +847,127 @@ model PettyCashTxn {
 
   @@index([tenantId, date])
   @@map("petty_cash_txns")
+}
+
+// ─── F&B / POS ────────────────────────────────────────────────────────────────
+
+model FBOrder {
+  id           String      @id @default(cuid())
+  tenantId     String
+  orderNumber  String
+  venue        String      // restaurant | bar | room_service | pool_bar
+  status       String      @default("pending") // pending | preparing | ready | served | cancelled | billed
+  tableNumber  String?
+  roomNumber   String?
+  guestId      String?
+  reservationId String?
+  folioId      String?     // set when billed to folio
+  serverName   String?
+  subtotal     Decimal     @default(0)
+  taxAmount    Decimal     @default(0)
+  total        Decimal     @default(0)
+  notes        String?
+  billedAt     DateTime?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  FBOrderItem[]
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, guestId])
+  @@index([tenantId, folioId])
+  @@map("fb_orders")
+}
+
+model FBOrderItem {
+  id          String   @id @default(cuid())
+  tenantId    String
+  orderId     String
+  menuItemId  String?
+  name        String
+  category    String?
+  quantity    Int
+  unitPrice   Decimal
+  amount      Decimal
+  taxAmount   Decimal  @default(0)
+  notes       String?
+  glAccountCode String? @default("4200")
+  createdAt   DateTime @default(now())
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  FBOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, orderId])
+  @@map("fb_order_items")
+}
+
+// ─── Housekeeping ─────────────────────────────────────────────────────────────
+
+model HousekeepingTask {
+  id           String    @id @default(cuid())
+  tenantId     String
+  roomId       String?
+  roomNumber   String?
+  taskType     String    // cleaning | inspection | turndown | maintenance | deep_clean
+  status       String    @default("pending") // pending | in_progress | completed | skipped
+  priority     String    @default("normal")  // low | normal | high | urgent
+  assignedTo   String?
+  assignedName String?
+  notes        String?
+  scheduledFor DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, roomId])
+  @@index([tenantId, assignedTo])
+  @@map("housekeeping_tasks")
+}
+
+model RoomStatusLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  roomId     String
+  roomNumber String
+  fromStatus String
+  toStatus   String
+  changedBy  String?
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, roomId])
+  @@index([tenantId, createdAt])
+  @@map("room_status_logs")
+}
+
+model MaintenanceRequest {
+  id           String    @id @default(cuid())
+  tenantId     String
+  roomId       String?
+  roomNumber   String?
+  location     String?
+  category     String    // plumbing | electrical | hvac | furniture | appliance | other
+  priority     String    @default("normal")
+  status       String    @default("open") // open | in_progress | completed | cancelled
+  description  String
+  reportedBy   String?
+  assignedTo   String?
+  resolvedAt   DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, roomId])
+  @@map("maintenance_requests")
 }

@@ -1,0 +1,65 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { prisma } from '@/app/lib/database/client'
+
+export async function GET(request: NextRequest) {
+  try {
+    const subdomain = getTenantFromRequest(request)
+    if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
+    const ctx = await getTenantContext(subdomain)
+    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+
+    const { searchParams } = new URL(request.url)
+    const status = searchParams.get('status')
+    const assignedTo = searchParams.get('assignedTo')
+    const roomId = searchParams.get('roomId')
+
+    const tasks = await prisma.housekeepingTask.findMany({
+      where: {
+        tenantId: ctx.tenantId,
+        ...(status ? { status } : {}),
+        ...(assignedTo ? { assignedTo } : {}),
+        ...(roomId ? { roomId } : {}),
+      },
+      orderBy: [{ priority: 'desc' }, { scheduledFor: 'asc' }, { createdAt: 'asc' }],
+    })
+
+    return NextResponse.json({ tasks })
+  } catch (error) {
+    console.error('[housekeeping/tasks][GET] error', error)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}
+
+export async function POST(request: NextRequest) {
+  try {
+    const subdomain = getTenantFromRequest(request)
+    if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
+    const ctx = await getTenantContext(subdomain)
+    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+
+    const body = await request.json()
+    if (!body.taskType) return NextResponse.json({ error: 'taskType is required' }, { status: 400 })
+
+    const task = await prisma.housekeepingTask.create({
+      data: {
+        tenantId: ctx.tenantId,
+        roomId: body.roomId,
+        roomNumber: body.roomNumber,
+        taskType: body.taskType,
+        status: body.status || 'pending',
+        priority: body.priority || 'normal',
+        assignedTo: body.assignedTo,
+        assignedName: body.assignedName,
+        notes: body.notes,
+        scheduledFor: body.scheduledFor ? new Date(body.scheduledFor) : undefined,
+      },
+    })
+
+    await createAuditLog(ctx.tenantId, null, 'HOUSEKEEPING_TASK_CREATED', 'HousekeepingTask', task.id, undefined, { taskType: task.taskType, roomNumber: task.roomNumber }, request)
+    return NextResponse.json({ task }, { status: 201 })
+  } catch (error) {
+    console.error('[housekeeping/tasks][POST] error', error)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}

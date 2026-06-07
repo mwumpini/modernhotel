@@ -188,6 +188,10 @@ export function updateFolioBalances(self: StoreLike, folio: Folio) {
 export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: string; description: string; amount: number; date?: string; tax?: number; category?: string; reference?: string; staffId?: string; staffName?: string; }) {
 	const folio = getFolioById(self, folioId);
 	if (!folio) return;
+	if (folio.status === 'closed') {
+		console.warn(`[folio] Attempted to add charge to closed folio ${folioId} — rejected`);
+		return;
+	}
 	
 	// Layered Ghana computation sourced from Settings compliance
 	const tax = typeof charge.tax === 'number' ? charge.tax : computeSalesTaxTotal(charge.amount);

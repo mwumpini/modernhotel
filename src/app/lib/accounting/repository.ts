@@ -61,6 +61,13 @@ export async function listJournalEntries(tenantId: string): Promise<JournalEntry
 
 export async function createJournalEntry(tenantId: string, je: Partial<JournalEntry>): Promise<JournalEntry> {
   if (!je.entryNumber) throw new Error('entryNumber is required')
+  const totalDebit = je.totalDebit ?? 0
+  const totalCredit = je.totalCredit ?? 0
+  if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    throw new Error(
+      `Journal entry is unbalanced: debits ${totalDebit.toFixed(2)} ≠ credits ${totalCredit.toFixed(2)}`
+    )
+  }
   const row = await prisma.journalEntry.create({
     data: {
       tenantId,

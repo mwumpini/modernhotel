@@ -10,6 +10,7 @@ import {
   paymentNeedsGlPost,
 } from './accountingProcessPolicy';
 import { logAccountingProcess, logAccountingProcessWarn } from './accountingProcessLog';
+import { computeStackedTaxLines, taxConfigsFromGhanaTemplate } from './taxFromConfig';
 
 const GL = {
   AR: '1200',
@@ -107,16 +108,35 @@ export function buildSalesInvoiceJournalEntry(
   }
 
   if (tax > 0.005) {
-    lines.push({
-      id: jl(),
-      journalEntryId: entryId,
-      accountCode: GL.VAT,
-      description: `Output VAT — ${invoice.invoiceNumber}`,
-      debit: 0,
-      credit: tax,
-      currency: invoice.currency || 'GHS',
-      reference: invoice.invoiceNumber,
-    });
+    const taxConfigs = taxConfigsFromGhanaTemplate()
+    const { lines: taxLines } = computeStackedTaxLines(subtotal, taxConfigs, 'sales', tax)
+    if (taxLines.length > 0) {
+      for (const tl of taxLines) {
+        lines.push({
+          id: jl(),
+          journalEntryId: entryId,
+          accountCode: tl.glAccountCode || GL.VAT,
+          description: `${tl.name} — ${invoice.invoiceNumber}`,
+          debit: 0,
+          credit: tl.amount,
+          currency: invoice.currency || 'GHS',
+          reference: invoice.invoiceNumber,
+          taxCode: tl.taxCode,
+        })
+      }
+    } else {
+      // Fallback: post full tax to VAT account if configs produce no lines
+      lines.push({
+        id: jl(),
+        journalEntryId: entryId,
+        accountCode: GL.VAT,
+        description: `Output Tax — ${invoice.invoiceNumber}`,
+        debit: 0,
+        credit: tax,
+        currency: invoice.currency || 'GHS',
+        reference: invoice.invoiceNumber,
+      })
+    }
   }
 
   const totalDebit = lines.reduce((s, l) => s + (l.debit || 0), 0);

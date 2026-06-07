@@ -1,19 +1,28 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { ComplianceDB } from '@/app/lib/compliance/db';
+import { NextRequest, NextResponse } from 'next/server'
+import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
+import { prisma } from '@/app/lib/database/client'
 
-export const runtime = 'nodejs';
-
-export async function GET(req: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(req.url);
-    const country = searchParams.get('country') || undefined;
-    const items = ComplianceDB.getTaxes(country);
-    console.log('[API] GET /api/compliance/taxes', { country, count: items.length });
-    return NextResponse.json(items);
-  } catch (e: any) {
-    console.error('[API] GET /api/compliance/taxes error', e);
-    return NextResponse.json({ error: e?.message || 'Failed to load taxes' }, { status: 500 });
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
+    const subdomain = getTenantFromRequest(request)
+    if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
+    const ctx = await getTenantContext(subdomain)
+    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+
+    const { searchParams } = new URL(request.url)
+    const type = searchParams.get('type') || undefined
+
+    const taxes = await prisma.tax.findMany({
+      where: { tenantId: ctx.tenantId, ...(type ? { type } : {}) },
+      orderBy: { code: 'asc' },
+    })
+
+    return NextResponse.json(taxes)
+  } catch (error) {
+    console.error('[compliance/taxes][GET] error', error)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }
-
-

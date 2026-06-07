@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listReservations, createReservationRow, isRoomAvailable } from '@/app/lib/frontoffice/repository'
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -19,6 +22,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -28,6 +33,9 @@ export async function POST(request: NextRequest) {
     if (!body.guestId) return NextResponse.json({ error: 'guestId is required' }, { status: 400 })
     if (!body.arrival || !body.departure) {
       return NextResponse.json({ error: 'arrival and departure are required' }, { status: 400 })
+    }
+    if (new Date(body.arrival) >= new Date(body.departure)) {
+      return NextResponse.json({ error: 'Departure must be after arrival' }, { status: 400 })
     }
 
     // Double-booking guard when a specific room is requested
