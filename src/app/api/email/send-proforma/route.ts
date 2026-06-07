@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import nodemailer from 'nodemailer';
-import { logProformaGenerated, logProformaSent } from '@/app/lib/audit/auditLogger';
 
 // Email configuration from environment variables
 const emailConfig = {
@@ -85,12 +84,6 @@ export async function POST(request: NextRequest) {
       </div>
     `;
 
-    // Log proforma generation
-    logProformaGenerated(reservationId, guestEmail, {
-      hotelName,
-      reservationDetails,
-      pdfSize: pdfAttachment.length
-    });
 
     // Send email
     const mailOptions = {
@@ -109,12 +102,6 @@ export async function POST(request: NextRequest) {
 
     const result = await transporter.sendMail(mailOptions);
 
-    // Log the email send event
-    logProformaSent(reservationId, guestEmail, result.messageId, {
-      hotelName,
-      reservationDetails,
-      pdfSize: pdfAttachment.length
-    });
 
     console.log('Proforma email sent successfully:', {
       reservationId,
