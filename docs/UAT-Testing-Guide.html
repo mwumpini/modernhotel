@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ghana Hotel Management — UAT Testing Guide</title>
+  <style>
+    :root { --text: #1a1a1a; --muted: #555; --border: #ccc; --accent: #0f766e; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", Calibri, Arial, sans-serif;
+      font-size: 11pt;
+      line-height: 1.45;
+      color: var(--text);
+      max-width: 210mm;
+      margin: 0 auto;
+      padding: 18mm 16mm;
+    }
+    h1 { font-size: 22pt; color: var(--accent); margin: 0 0 4px; border-bottom: 3px solid var(--accent); padding-bottom: 8px; }
+    h2 { font-size: 14pt; margin-top: 22px; page-break-after: avoid; color: #134e4a; }
+    h3 { font-size: 12pt; margin-top: 16px; page-break-after: avoid; }
+    p, li { margin: 0.4em 0; }
+    .meta { color: var(--muted); font-size: 10pt; margin-bottom: 20px; }
+    .meta strong { color: var(--text); }
+    a { color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 10pt; }
+    th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+    th { background: #f0fdfa; font-weight: 600; }
+    ol.steps { padding-left: 22px; }
+    ol.steps li { margin-bottom: 6px; }
+    .box {
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      padding: 10px 12px;
+      margin: 12px 0;
+      background: #f8fafc;
+    }
+    .pass { color: #166534; font-weight: 600; }
+    .warn { color: #a16207; font-weight: 600; }
+    .page-break { page-break-before: always; }
+    @media print {
+      body { padding: 12mm; }
+      a { color: var(--text); text-decoration: none; }
+      .no-print { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<p class="no-print box"><strong>Save as PDF:</strong> Press Ctrl+P (or Cmd+P) → choose <em>Save as PDF</em> / <em>Microsoft Print to PDF</em>. Enable “Background graphics” for best results.</p>
+
+<h1>Ghana Hotel Management</h1>
+<p class="meta"><strong>User Acceptance Testing (UAT) Guide</strong> · Version 1.0 · June 2026<br />
+<strong>Production URL:</strong> <a href="https://ghana-hotel-management.vercel.app">https://ghana-hotel-management.vercel.app</a></p>
+
+<h2>1. Purpose</h2>
+<p>This guide walks testers through the main hotel processes on the <strong>live deployed app</strong> so critical flows are not missed before the next development phase.</p>
+<p><strong>Time:</strong> 45–60 minutes per person (focus on one role).</p>
+
+<h2>2. Before you start</h2>
+<table>
+  <tr><th>Item</th><th>Instruction</th></tr>
+  <tr><td>Browser</td><td>Chrome or Edge on a laptop (desktop layout).</td></tr>
+  <tr><td>Private window</td><td>Use Incognito/Private mode for a clean start.</td></tr>
+  <tr><td>Internet</td><td>Stable connection required.</td></tr>
+  <tr><td>Data note</td><td>Data is stored in <strong>your browser</strong> for now. Other devices won’t see your test reservations. Expected.</td></tr>
+  <tr><td>Screenshots</td><td>Capture every error, blank screen, or wrong total.</td></tr>
+</table>
+
+<h2>3. How to report issues</h2>
+<ol>
+  <li>Tester name &amp; date/time</li>
+  <li>Module (Front Office, F&amp;B, Accounting, etc.)</li>
+  <li>Steps (in order)</li>
+  <li>Expected vs Actual</li>
+  <li>Severity: Blocker / Major / Minor / Suggestion</li>
+  <li>Screenshot attached</li>
+</ol>
+
+<div class="page-break"></div>
+
+<h2>Test A — First visit &amp; setup (~10 min)</h2>
+<p><strong>Everyone.</strong> Goal: app loads and setup completes.</p>
+<ol class="steps">
+  <li>Open <a href="https://ghana-hotel-management.vercel.app">https://ghana-hotel-management.vercel.app</a></li>
+  <li>If redirected to <strong>Setup</strong>, complete the wizard (hotel name, Ghana, GHS, finish).</li>
+  <li>Confirm main <strong>dashboard</strong> with sidebar appears.</li>
+  <li>Open <strong>Help</strong> (<a href="https://ghana-hotel-management.vercel.app/help">/help</a>) — must load.</li>
+</ol>
+<p class="pass">Pass: Setup completes, no crash.</p>
+<p class="warn">Fail: Blank screen, endless loading, unrecoverable error.</p>
+
+<h2>Test B — Front desk: reservation → check-in → checkout (~20 min)</h2>
+<p><strong>Role:</strong> Reception / Front Office<br />
+<strong>Link:</strong> <a href="https://ghana-hotel-management.vercel.app/guest-services/check-ins">/guest-services/check-ins</a></p>
+
+<h3>B1 — Create reservation</h3>
+<ol class="steps">
+  <li>Reservations / Bookings tab → New reservation.</li>
+  <li>Guest: <em>Test Guest [your initials]</em>, arrival <strong>today</strong>, departure <strong>tomorrow</strong>, confirmed.</li>
+  <li>Save; confirm it appears in the list.</li>
+</ol>
+
+<h3>B2 — Check in</h3>
+<ol class="steps">
+  <li>Today’s Arrivals → <strong>Check in</strong> your guest.</li>
+  <li>Assign room if prompted; status = checked-in.</li>
+</ol>
+
+<h3>B3 — Folio charge</h3>
+<ol class="steps">
+  <li>Open guest folio; add charge (e.g. Laundry GHS 50).</li>
+  <li>Confirm balance increases.</li>
+</ol>
+
+<h3>B4 — Check out</h3>
+<ol class="steps">
+  <li>Check-outs tab → check out guest.</li>
+  <li>Note final total; complete payment if prompted.</li>
+</ol>
+<p class="pass">Pass: Full stay cycle without error.</p>
+
+<div class="page-break"></div>
+
+<h2>Test C — F&amp;B POS (~15 min)</h2>
+<p><strong>Role:</strong> Restaurant / Bar · Sidebar → Food &amp; Beverage → POS</p>
+
+<h3>C1 — Walk-in cash sale</h3>
+<ol class="steps">
+  <li>Walk-in order, add items, pay <strong>Cash</strong> or <strong>Card</strong>, complete.</li>
+</ol>
+
+<h3>C2 — In-house room charge</h3>
+<ol class="steps">
+  <li>In-house guest order, pay <strong>Room Charge</strong> (not cash).</li>
+  <li>Complete sale.</li>
+</ol>
+<p class="warn">Report if: duplicate accounting or folio looks wrong after room charge.</p>
+
+<h2>Test D — Night audit &amp; no-show (~15 min)</h2>
+<p><strong>Role:</strong> Night Manager · Front Office → Night Audit</p>
+<ol class="steps">
+  <li>Review Room Configuration → Night Audit settings (auto-run on, first night at check-in off = default).</li>
+  <li>Run <strong>Night Audit</strong> manually; note room charges posted.</li>
+  <li>Optional: create today’s reservation, do not check in, mark <strong>No-show</strong>.</li>
+</ol>
+<p class="box"><strong>Known:</strong> Auto audit at 1:00 AM only if browser tab stays open overnight.</p>
+
+<h2>Test E — Accounting (~15 min)</h2>
+<p><strong>Role:</strong> Finance · Sidebar → Accounting</p>
+<ol class="steps">
+  <li><strong>Accounts Receivable:</strong> New sales invoice (Posted), e.g. GHS 1,000.</li>
+  <li><strong>Receipt:</strong> Record payment on invoice.</li>
+  <li><strong>Financial Reports:</strong> Open Income Statement or Trial Balance — must render.</li>
+</ol>
+
+<h2>Test F — Room configuration (~10 min)</h2>
+<ol class="steps">
+  <li>Room Configuration → view types &amp; night audit policies.</li>
+  <li>Rate Management → rates load for room types.</li>
+</ol>
+
+<h2>Test G — Smoke URLs</h2>
+<table>
+  <tr><th>Path</th><th>Expect</th></tr>
+  <tr><td>/</td><td>Main app</td></tr>
+  <tr><td>/setup</td><td>Setup or redirect</td></tr>
+  <tr><td>/help</td><td>Help page</td></tr>
+  <tr><td>/guest-services/check-ins</td><td>Check-ins hub</td></tr>
+  <tr><td>/management</td><td>Management view</td></tr>
+</table>
+
+<div class="page-break"></div>
+
+<h2>Known limitations (not bugs unless different)</h2>
+<ul>
+  <li>Data is per browser until cloud DB is connected.</li>
+  <li>Reports may show demo/zero figures.</li>
+  <li>Lean mode may hide some menu items.</li>
+</ul>
+
+<h2>Feedback log</h2>
+<table>
+  <tr><th>#</th><th>Module</th><th>Steps</th><th>Expected</th><th>Actual</th><th>Severity</th></tr>
+  <tr><td>1</td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>2</td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>3</td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>4</td><td></td><td></td><td></td><td></td><td></td></tr>
+  <tr><td>5</td><td></td><td></td><td></td><td></td><td></td></tr>
+</table>
+
+<h2>Sign-off checklist</h2>
+<table>
+  <tr><th>Test</th><th>Initials</th><th>Date</th><th>Pass / Fail</th></tr>
+  <tr><td>A — Setup</td><td></td><td></td><td></td></tr>
+  <tr><td>B — FO stay cycle</td><td></td><td></td><td></td></tr>
+  <tr><td>C — F&amp;B POS</td><td></td><td></td><td></td></tr>
+  <tr><td>D — Night audit</td><td></td><td></td><td></td></tr>
+  <tr><td>E — Accounting</td><td></td><td></td><td></td></tr>
+  <tr><td>F — Room config</td><td></td><td></td><td></td></tr>
+  <tr><td>G — Smoke URLs</td><td></td><td></td><td></td></tr>
+</table>
+<p><strong>Overall:</strong> ☐ Ready for next phase &nbsp; ☐ Needs fixes first</p>
+<p><em>Send completed feedback to the project owner. Thank you for testing.</em></p>
+
+</body>
+</html>
