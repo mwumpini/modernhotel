@@ -31,6 +31,7 @@ import {
   Badge
 } from "@heroui/react";
 import { useSettingsStore } from '../lib/settings/store';
+import { applyTheme, type AppTheme } from '../lib/theme/applyTheme';
 import type { UserPreferences } from '../lib/settings/store';
 
 export default function UserManagementUnified() {
@@ -50,81 +51,14 @@ export default function UserManagementUnified() {
     isActive: true,
   });
 
-  // Function to apply theme
-  const applyTheme = (theme: string) => {
-    console.log('🔧 [UserManagementUnified] Applying theme:', theme);
-    
-    // Set data-theme attribute
-    document.documentElement.setAttribute('data-theme', theme);
-    
-    // Apply CSS variables directly for immediate effect
-    if (theme === 'dark') {
-      document.documentElement.style.setProperty('--background', '#0a0a0a');
-      document.documentElement.style.setProperty('--foreground', '#ededed');
-      document.documentElement.style.setProperty('--card-background', '#1a1a1a');
-      document.documentElement.style.setProperty('--card-border', '#374151');
-      document.documentElement.style.setProperty('--text-primary', '#ededed');
-      document.documentElement.style.setProperty('--text-secondary', '#9ca3af');
-    } else if (theme === 'light') {
-      document.documentElement.style.setProperty('--background', '#ffffff');
-      document.documentElement.style.setProperty('--foreground', '#171717');
-      document.documentElement.style.setProperty('--card-background', '#ffffff');
-      document.documentElement.style.setProperty('--card-border', '#e5e7eb');
-      document.documentElement.style.setProperty('--text-primary', '#171717');
-      document.documentElement.style.setProperty('--text-secondary', '#6b7280');
-    } else if (theme === 'auto') {
-      // Auto theme - check system preference
-      const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      if (isDark) {
-        document.documentElement.style.setProperty('--background', '#0a0a0a');
-        document.documentElement.style.setProperty('--foreground', '#ededed');
-        document.documentElement.style.setProperty('--card-background', '#1a1a1a');
-        document.documentElement.style.setProperty('--card-border', '#374151');
-        document.documentElement.style.setProperty('--text-primary', '#ededed');
-        document.documentElement.style.setProperty('--text-secondary', '#9ca3af');
-      } else {
-        document.documentElement.style.setProperty('--background', '#ffffff');
-        document.documentElement.style.setProperty('--foreground', '#171717');
-        document.documentElement.style.setProperty('--card-background', '#ffffff');
-        document.documentElement.style.setProperty('--card-border', '#e5e7eb');
-        document.documentElement.style.setProperty('--text-primary', '#171717');
-        document.documentElement.style.setProperty('--text-secondary', '#6b7280');
-      }
-    }
-  };
-
-  // Log component initialization and apply theme
+  // Log component initialization
   useEffect(() => {
     console.log('🔧 [UserManagementUnified] Component initialized with:', { 
       totalUsers: users.length, 
       totalRoles: roles.length, 
       currentUser: currentUser?.username 
     });
-    
-    // Apply current theme if available
-    if (currentUser?.preferences?.theme) {
-      console.log('🔧 [UserManagementUnified] Applying theme from user preferences:', currentUser.preferences.theme);
-      applyTheme(currentUser.preferences.theme);
-    } else {
-      // Set default theme if none exists
-      console.log('🔧 [UserManagementUnified] Setting default theme: light');
-      applyTheme('light');
-    }
   }, [users.length, roles.length, currentUser]);
-
-  // Listen for system theme changes when using auto theme
-  useEffect(() => {
-    if (currentUser?.preferences?.theme === 'auto') {
-      const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      const handleChange = (e: MediaQueryListEvent) => {
-        console.log('🔧 [UserManagementUnified] System theme changed:', e.matches ? 'dark' : 'light');
-        applyTheme('auto');
-      };
-      
-      mediaQuery.addEventListener('change', handleChange);
-      return () => mediaQuery.removeEventListener('change', handleChange);
-    }
-  }, [currentUser?.preferences?.theme]);
   
   const [userForm, setUserForm] = useState({
     username: '',
@@ -322,7 +256,7 @@ export default function UserManagementUnified() {
     });
     // Settings are automatically saved via the store
     // Apply theme immediately
-    document.documentElement.setAttribute('data-theme', userPreferences.theme);
+    applyTheme(userPreferences.theme as AppTheme);
   };
 
   const handleSaveProfile = () => {
@@ -382,7 +316,7 @@ export default function UserManagementUnified() {
       // Apply theme immediately if it's a theme change
       if (path === 'theme') {
         console.log('🔧 [UserManagementUnified] Applying theme immediately:', value);
-        applyTheme(value as string);
+        applyTheme(value as AppTheme);
       }
       
       // Force a re-render by updating the component state

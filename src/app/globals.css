@@ -3,62 +3,77 @@
 @source '../../node_modules/@heroui/theme/dist/**/*.{js,ts,jsx,tsx}';
 @source './**/*.{js,ts,jsx,tsx}';
 
+/* Use class-based dark mode so theme is controlled by ThemeProvider, not OS alone */
+@custom-variant dark (&:where(.dark, .dark *));
+
 :root {
+  color-scheme: light;
+
   --background: #ffffff;
   --foreground: #171717;
-  
+  --card-background: #ffffff;
+  --card-border: #e5e7eb;
+  --text-primary: #171717;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --surface: #f9fafb;
+  --surface-elevated: #ffffff;
+  --input-background: #ffffff;
+  --input-border: #d1d5db;
+
   /* Ghana-inspired color palette */
   --ghana-gold: #FCD116;
   --ghana-red: #CE1126;
   --ghana-green: #006B3F;
   --ghana-black: #000000;
   --ghana-white: #FFFFFF;
-}
-
-/* Light theme (default) */
-[data-theme="light"] {
-  --background: #ffffff;
-  --foreground: #171717;
-  --card-background: #ffffff;
-  --card-border: #e5e7eb;
-  --text-primary: #171717;
-  --text-secondary: #6b7280;
   --accent: #006B3F;
   --accent-foreground: #ffffff;
 }
 
-/* Dark theme */
-[data-theme="dark"] {
+[data-theme="light"],
+.light {
+  color-scheme: light;
+}
+
+[data-theme="dark"],
+.dark {
+  color-scheme: dark;
+
   --background: #0a0a0a;
   --foreground: #ededed;
   --card-background: #1a1a1a;
   --card-border: #374151;
   --text-primary: #ededed;
   --text-secondary: #9ca3af;
+  --text-muted: #6b7280;
+  --surface: #111111;
+  --surface-elevated: #1a1a1a;
+  --input-background: #262626;
+  --input-border: #4b5563;
   --accent: #FCD116;
   --accent-foreground: #000000;
 }
 
-/* Auto theme - follows system preference */
 [data-theme="auto"] {
-  --background: #ffffff;
-  --foreground: #171717;
-  --card-background: #ffffff;
-  --card-border: #e5e7eb;
-  --text-primary: #171717;
-  --text-secondary: #6b7280;
-  --accent: #006B3F;
-  --accent-foreground: #ffffff;
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   [data-theme="auto"] {
+    color-scheme: dark;
+
     --background: #0a0a0a;
     --foreground: #ededed;
     --card-background: #1a1a1a;
     --card-border: #374151;
     --text-primary: #ededed;
     --text-secondary: #9ca3af;
+    --text-muted: #6b7280;
+    --surface: #111111;
+    --surface-elevated: #1a1a1a;
+    --input-background: #262626;
+    --input-border: #4b5563;
     --accent: #FCD116;
     --accent-foreground: #000000;
   }
@@ -76,35 +91,27 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 12px; /* compact density for comfortable 100% zoom */
+  font-size: 12px;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-/* Apply theme to html element */
 html {
   transition: background-color 0.3s ease, color 0.3s ease;
-  font-size: 12px; /* ensure consistent root size */
+  font-size: 12px;
 }
 
-/* Ensure cards and other components use theme colors */
-.card, [class*="Card"] {
+/* HeroUI cards and shared surfaces */
+.card,
+[class*="Card"] {
   background: var(--card-background);
   border-color: var(--card-border);
   color: var(--text-primary);
 }
 
-/* Text colors */
 .text-primary {
   color: var(--text-primary);
 }
@@ -113,8 +120,149 @@ html {
   color: var(--text-secondary);
 }
 
-/* Accent colors */
 .accent {
   background: var(--accent);
   color: var(--accent-foreground);
+}
+
+/* Dark theme overrides for hardcoded Tailwind utility classes used across the app */
+.dark .text-ghana-black,
+[data-theme="dark"] .text-ghana-black {
+  color: var(--text-primary);
+}
+
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-gray-700,
+.dark .text-gray-600,
+.dark .text-gray-500,
+.dark .text-gray-400,
+[data-theme="dark"] .text-gray-900,
+[data-theme="dark"] .text-gray-800,
+[data-theme="dark"] .text-gray-700,
+[data-theme="dark"] .text-gray-600,
+[data-theme="dark"] .text-gray-500,
+[data-theme="dark"] .text-gray-400 {
+  color: var(--text-secondary);
+}
+
+.dark .text-gray-900,
+.dark .text-gray-800,
+.dark .text-ghana-black,
+[data-theme="dark"] .text-gray-900,
+[data-theme="dark"] .text-gray-800,
+[data-theme="dark"] .text-ghana-black {
+  color: var(--text-primary);
+}
+
+.dark .bg-white,
+.dark .bg-gray-50,
+.dark .bg-gray-100,
+[data-theme="dark"] .bg-white,
+[data-theme="dark"] .bg-gray-50,
+[data-theme="dark"] .bg-gray-100 {
+  background-color: var(--surface-elevated);
+}
+
+.dark .bg-gradient-to-br.from-gray-50,
+.dark .bg-gradient-to-br.from-gray-50.via-white.to-gray-50,
+[data-theme="dark"] .bg-gradient-to-br.from-gray-50,
+[data-theme="dark"] .bg-gradient-to-br.from-gray-50.via-white.to-gray-50 {
+  background: var(--surface);
+}
+
+.dark .border-gray-100,
+.dark .border-gray-200,
+.dark .border-gray-300,
+[data-theme="dark"] .border-gray-100,
+[data-theme="dark"] .border-gray-200,
+[data-theme="dark"] .border-gray-300 {
+  border-color: var(--card-border);
+}
+
+.dark input:not([type="checkbox"]):not([type="radio"]),
+.dark select,
+.dark textarea,
+[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
+[data-theme="dark"] select,
+[data-theme="dark"] textarea {
+  background-color: var(--input-background);
+  border-color: var(--input-border);
+  color: var(--text-primary);
+}
+
+.dark .hover\:bg-gray-100:hover,
+[data-theme="dark"] .hover\:bg-gray-100:hover {
+  background-color: color-mix(in srgb, var(--surface-elevated) 80%, white 20%);
+}
+
+.dark .bg-blue-50,
+.dark .bg-green-50,
+.dark .bg-yellow-50,
+.dark .bg-red-50,
+.dark .bg-gray-50,
+[data-theme="dark"] .bg-blue-50,
+[data-theme="dark"] .bg-green-50,
+[data-theme="dark"] .bg-yellow-50,
+[data-theme="dark"] .bg-red-50,
+[data-theme="dark"] .bg-gray-50 {
+  background-color: color-mix(in srgb, var(--surface-elevated) 85%, currentColor 15%);
+}
+
+.dark .border-blue-200,
+.dark .border-green-200,
+.dark .border-yellow-200,
+.dark .border-red-200,
+.dark .border-gray-200,
+[data-theme="dark"] .border-blue-200,
+[data-theme="dark"] .border-green-200,
+[data-theme="dark"] .border-yellow-200,
+[data-theme="dark"] .border-red-200,
+[data-theme="dark"] .border-gray-200 {
+  border-color: var(--card-border);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] .text-ghana-black {
+    color: var(--text-primary);
+  }
+
+  [data-theme="auto"] .text-gray-900,
+  [data-theme="auto"] .text-gray-800,
+  [data-theme="auto"] .text-gray-700,
+  [data-theme="auto"] .text-gray-600,
+  [data-theme="auto"] .text-gray-500,
+  [data-theme="auto"] .text-gray-400 {
+    color: var(--text-secondary);
+  }
+
+  [data-theme="auto"] .text-gray-900,
+  [data-theme="auto"] .text-gray-800,
+  [data-theme="auto"] .text-ghana-black {
+    color: var(--text-primary);
+  }
+
+  [data-theme="auto"] .bg-white,
+  [data-theme="auto"] .bg-gray-50,
+  [data-theme="auto"] .bg-gray-100 {
+    background-color: var(--surface-elevated);
+  }
+
+  [data-theme="auto"] .border-gray-100,
+  [data-theme="auto"] .border-gray-200,
+  [data-theme="auto"] .border-gray-300 {
+    border-color: var(--card-border);
+  }
+
+  [data-theme="auto"] input:not([type="checkbox"]):not([type="radio"]),
+  [data-theme="auto"] select,
+  [data-theme="auto"] textarea {
+    background-color: var(--input-background);
+    border-color: var(--input-border);
+    color: var(--text-primary);
+  }
+
+  [data-theme="auto"] .hover\:bg-gray-100:hover {
+    background-color: color-mix(in srgb, var(--surface-elevated) 80%, white 20%);
+  }
 }

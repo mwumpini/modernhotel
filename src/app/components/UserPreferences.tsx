@@ -17,6 +17,7 @@ import {
   Textarea
 } from "@heroui/react";
 import { useSettingsStore } from '../lib/settings/store';
+import { applyTheme, type AppTheme } from '../lib/theme/applyTheme';
 
 export default function UserPreferences() {
   const [selectedTab, setSelectedTab] = useState("profile");
@@ -66,7 +67,7 @@ export default function UserPreferences() {
   const savePreferences = () => {
     // Settings are automatically saved via the store
     // Apply theme immediately
-    document.documentElement.setAttribute('data-theme', userPreferences.theme);
+    applyTheme(userPreferences.theme as AppTheme);
   };
 
   const updatePreference = (path: string, value: any) => {
@@ -342,8 +343,9 @@ export default function UserPreferences() {
                          label="Theme"
                          selectedKeys={[userPreferences.theme]}
                          onSelectionChange={(keys) => {
-                           const theme = Array.from(keys)[0] as string;
+                           const theme = Array.from(keys)[0] as AppTheme;
                            updatePreference('theme', theme);
+                           applyTheme(theme);
                          }}
                        >
                         <SelectItem key="light">Light Theme</SelectItem>
