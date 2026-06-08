@@ -98,13 +98,7 @@ export default function AccountsPayablePage() {
     return Object.keys(e).length === 0;
   };
 
-  // Calculate totals
-  const totalPayables = useMemo(() => {
-    return businessPartners
-      .filter(partner => partner.type === 'Supplier' || partner.type === 'Both')
-      .reduce((sum, partner) => sum + partner.balance, 0);
-  }, [businessPartners]);
-
+  // Calculate totals — derive from invoices and per-invoice payments to avoid double-counting
   const totalInvoices = useMemo(() => {
     return invoices
       .filter(invoice => invoice.type === 'Purchase')
@@ -117,7 +111,14 @@ export default function AccountsPayablePage() {
       .reduce((sum, payment) => sum + payment.amount, 0);
   }, [payments]);
 
-  const outstandingPayables = totalPayables - totalPayments;
+  // Outstanding = sum of per-invoice balances (total − paidAmount on each invoice)
+  const totalPayables = useMemo(() => {
+    return invoices
+      .filter(invoice => invoice.type === 'Purchase')
+      .reduce((sum, invoice) => sum + Math.max(0, (invoice.total || 0) - (invoice.paidAmount || 0)), 0);
+  }, [invoices]);
+
+  const outstandingPayables = totalPayables;
 
   // Filter suppliers
   const suppliers = useMemo(() => {
@@ -217,7 +218,9 @@ export default function AccountsPayablePage() {
     return purchaseInvoices.filter(invoice => {
       // Status filter
       if (statusFilter !== 'all') {
-        const paidAmount = supplierPayments.filter(p => p.businessPartnerId === invoice.businessPartnerId).reduce((sum, p) => sum + p.amount, 0);
+        const paidAmount = (invoice.paidAmount != null)
+          ? invoice.paidAmount
+          : supplierPayments.filter(p => p.invoiceId === invoice.id).reduce((sum, p) => sum + p.amount, 0);
         const balance = invoice.total - paidAmount;
         const dueDate = new Date(invoice.dueDate);
         const today = new Date();
@@ -686,7 +689,10 @@ export default function AccountsPayablePage() {
                   <TableBody emptyContent="No purchase invoices found.">
                     {paginatedInvoices.map((invoice) => {
                       const supplier = suppliers.find(s => s.id === invoice.businessPartnerId);
-                      const paidAmount = supplierPayments.filter(p => p.businessPartnerId === invoice.businessPartnerId).reduce((sum, p) => sum + p.amount, 0);
+                      // Use per-invoice paidAmount from store; fall back to invoice-linked payments
+                      const paidAmount = (invoice.paidAmount != null)
+                        ? invoice.paidAmount
+                        : supplierPayments.filter(p => p.invoiceId === invoice.id).reduce((sum, p) => sum + p.amount, 0);
                       const balance = invoice.total - paidAmount;
                       const dueDate = new Date(invoice.dueDate);
                       const today = new Date();
@@ -1053,34 +1059,10 @@ export default function AccountsPayablePage() {
             } else {
               addPayment(payload as any);
             }
-            // Post the payment to create JE and bank txn (optional)
+            // Post the payment to create JE and bank transaction
             if (postOnSave) {
-              try {
-                const { useAccountingStore } = require('@/app/lib/accounting/store');
-                const { postPayment } = useAccountingStore.getState();
-                postPayment(payload.id);
-              } catch {}
+              try { postPayment(payload.id); } catch {}
             }
-            
-            // Record expense to cost center based on invoice department
-            try {
-              const { useAccountingStore } = require('@/app/lib/accounting/store');
-              const { recordExpense } = useAccountingStore.getState();
-              const invoice = invoices.find(inv => inv.id === form.invoiceId);
-              
-              // Map department to cost center
-              const costCenterMap: Record<string, string> = {
-                'housekeeping': 'HK',
-                'kitchen': 'KT',
-                'food_beverage': 'FB',
-                'front_office': 'FO',
-                'maintenance': 'MT',
-                'accounting': 'AC'
-              };
-              
-              const costCenter = (invoice?.department && costCenterMap[invoice.department]) || 'FO';
-              recordExpense(costCenter, payload.amount);
-            } catch {}
           }
           setIsOpen(false);
           setEditing(null);

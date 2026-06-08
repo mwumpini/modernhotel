@@ -969,9 +969,22 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         }
         return p;
       });
+
+      // Update invoice.paidAmount when a payment targets a specific invoice
+      let updatedInvoices = state.invoices;
+      if (payment.invoiceId) {
+        updatedInvoices = state.invoices.map(inv => {
+          if (inv.id !== payment.invoiceId) return inv;
+          const newPaid = +((inv.paidAmount || 0) + payment.amount).toFixed(2);
+          const newStatus = newPaid >= inv.total ? 'Paid' : inv.status === 'Paid' ? 'Posted' : inv.status;
+          return { ...inv, paidAmount: newPaid, status: newStatus as any, updatedAt: new Date().toISOString() };
+        });
+      }
+
       persistPayment(payment);
       return {
         businessPartners: updatedPartners,
+        invoices: updatedInvoices,
         payments: [...state.payments, payment]
       };
     });
