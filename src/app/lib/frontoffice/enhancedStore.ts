@@ -4,6 +4,7 @@ import { GuestProfile, RoomType, RatePlan, Folio, Charge, EventResource, EventPa
 import { trackEvent } from '../analytics/trackEvent';
 import { housekeepingStore } from '../housekeeping/store';
 import { useSettingsStore } from '../settings/store';
+import { computeSalesTax } from '../tax/engine';
 
 // HotelBiz-style enhanced interfaces
 interface RoomPreferences {
@@ -155,10 +156,8 @@ export class EnhancedFrontOfficeStore {
       }
     }
     
-    // Calculate taxes (using existing compliance settings)
-    const compliance = settings.getCurrentCountryCompliance();
-    const taxRate = (compliance?.taxRates.vat || 0) / 100;
-    const taxes = (totalRoomCost + packageCost) * taxRate;
+    // Calculate taxes using the canonical stacked tax engine (NHIL + GETFund + Tourism + VAT)
+    const taxes = computeSalesTax(totalRoomCost + packageCost).totalTax;
     
     const totalCost = totalRoomCost + packageCost + taxes;
     
