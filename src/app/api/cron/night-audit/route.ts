@@ -58,7 +58,20 @@ export async function GET(request: NextRequest) {
             ? await prisma.reservation.findFirst({ where: { id: folio.reservationId, tenantId } })
             : null
 
-          const nightlyRate = reservation ? Number(reservation.rateAmount ?? 0) : 0
+          const nights =
+            reservation && reservation.checkInDate && reservation.checkOutDate
+              ? Math.max(
+                  1,
+                  Math.ceil(
+                    (reservation.checkOutDate.getTime() - reservation.checkInDate.getTime()) /
+                      (1000 * 60 * 60 * 24)
+                  )
+                )
+              : 1
+          const details = (reservation?.details as { rateAmount?: number } | null) ?? null
+          const nightlyRate = reservation
+            ? Number(details?.rateAmount ?? reservation.totalAmount ?? 0) / nights
+            : 0
           if (nightlyRate <= 0) continue
 
           // Compute Ghana taxes on room rate (~21% composite)

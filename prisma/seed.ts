@@ -1,7 +1,15 @@
-import { PrismaClient } from '@prisma/client'
+import { PrismaClient, AccountType } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 
 const prisma = new PrismaClient()
+
+const ACCOUNT_TYPE_MAP: Record<string, AccountType> = {
+  Asset: AccountType.ASSET,
+  Liability: AccountType.LIABILITY,
+  Equity: AccountType.EQUITY,
+  Revenue: AccountType.REVENUE,
+  Expense: AccountType.EXPENSE,
+}
 
 async function main() {
   console.log('🌱 Starting database seeding...')
@@ -370,9 +378,7 @@ async function main() {
         tenantId: demoTenant.id,
         code: account.code,
         name: account.name,
-        type: account.type,
-        category: account.category,
-        level: account.level,
+        type: ACCOUNT_TYPE_MAP[account.type],
         isActive: true,
       },
     })

@@ -57,6 +57,12 @@ model Tenant {
   accountingInvoiceLines AccountingInvoiceLine[]
   accountingPayments AccountingPayment[]
   guestFolios GuestFolio[]
+  fbMenuItems FBMenuItem[]
+  fbOrders FBOrder[]
+  fbOrderItems FBOrderItem[]
+  housekeepingTasks HousekeepingTask[]
+  maintenanceRequests MaintenanceRequest[]
+  roomStatusLogs RoomStatusLog[]
 
   @@map("tenants")
 }
@@ -624,6 +630,8 @@ model InventoryItem {
   barcode       String?
   defaultCost   Decimal? @db.Decimal(10, 2)
   sellingPrice  Decimal? @db.Decimal(10, 2)
+  quantityOnHand Decimal @default(0) @db.Decimal(10, 3)
+  reorderLevel  Decimal  @default(0) @db.Decimal(10, 3)
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -842,4 +850,155 @@ model Payment {
 
   @@index([tenantId, status])
   @@map("payments")
+}
+
+model FBMenuItem {
+  id            String   @id @default(cuid())
+  tenantId      String
+  code          String
+  name          String
+  description   String?
+  category      String
+  venue         String
+  route         String   @default("kitchen")
+  unitPrice     Decimal  @db.Decimal(10, 2)
+  costPrice     Decimal  @default(0) @db.Decimal(10, 2)
+  glAccountCode String   @default("4200")
+  isAvailable   Boolean  @default(true)
+  allergens     String?
+  prepMinutes   Int      @default(10)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, venue])
+  @@index([tenantId, category])
+  @@map("fb_menu_items")
+}
+
+model FBOrder {
+  id              String    @id @default(cuid())
+  tenantId        String
+  orderNumber     String
+  venue           String
+  status          String    @default("pending")
+  tableNumber     String?
+  roomNumber      String?
+  guestId         String?
+  reservationId   String?
+  folioId         String?
+  serverName      String?
+  covers          Int       @default(1)
+  subtotal        Decimal   @default(0) @db.Decimal(12, 2)
+  taxAmount       Decimal   @default(0) @db.Decimal(12, 2)
+  total           Decimal   @default(0) @db.Decimal(12, 2)
+  taxLines        Json?
+  discountAmount  Decimal   @default(0) @db.Decimal(12, 2)
+  serviceCharge   Decimal   @default(0) @db.Decimal(12, 2)
+  notes           String?
+  billedAt        DateTime?
+  servedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  FBOrderItem[]
+
+  @@unique([tenantId, orderNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, guestId])
+  @@index([tenantId, folioId])
+  @@map("fb_orders")
+}
+
+model FBOrderItem {
+  id            String   @id @default(cuid())
+  tenantId      String
+  orderId       String
+  menuItemId    String?
+  name          String
+  category      String?
+  quantity      Int
+  unitPrice     Decimal  @db.Decimal(10, 2)
+  amount        Decimal  @db.Decimal(12, 2)
+  taxAmount     Decimal  @default(0) @db.Decimal(12, 2)
+  notes         String?
+  glAccountCode String?  @default("4200")
+  createdAt     DateTime @default(now())
+
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  order  FBOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, orderId])
+  @@map("fb_order_items")
+}
+
+model HousekeepingTask {
+  id           String    @id @default(cuid())
+  tenantId     String
+  roomId       String?
+  roomNumber   String?
+  taskType     String
+  status       String    @default("pending")
+  priority     String    @default("normal")
+  assignedTo   String?
+  assignedName String?
+  notes        String?
+  scheduledFor DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, roomId])
+  @@index([tenantId, assignedTo])
+  @@map("housekeeping_tasks")
+}
+
+model RoomStatusLog {
+  id         String   @id @default(cuid())
+  tenantId   String
+  roomId     String
+  roomNumber String
+  fromStatus String
+  toStatus   String
+  changedBy  String?
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, roomId])
+  @@index([tenantId, createdAt])
+  @@map("room_status_logs")
+}
+
+model MaintenanceRequest {
+  id           String    @id @default(cuid())
+  tenantId     String
+  roomId       String?
+  roomNumber   String?
+  location     String?
+  category     String
+  priority     String    @default("normal")
+  status       String    @default("open")
+  description  String
+  reportedBy   String?
+  assignedTo   String?
+  resolvedAt   DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, roomId])
+  @@map("maintenance_requests")
 }

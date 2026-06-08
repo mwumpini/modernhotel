@@ -1,6 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { AccountType } from '@prisma/client'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
 import { prisma } from '@/app/lib/database/client'
+
+const ACCOUNT_TYPE_MAP: Record<string, AccountType> = {
+  Asset: AccountType.ASSET,
+  Liability: AccountType.LIABILITY,
+  Equity: AccountType.EQUITY,
+  Revenue: AccountType.REVENUE,
+  Expense: AccountType.EXPENSE,
+}
 
 const CHART_OF_ACCOUNTS = [
   { code: '1000', name: 'Current Assets', type: 'Asset', category: 'Current Assets', level: 1 },
@@ -71,13 +80,13 @@ const GHANA_TAXES = [
 ]
 
 const PAYMENT_METHODS = [
-  { code: 'CASH', name: 'Cash' },
-  { code: 'CARD', name: 'Credit/Debit Card' },
-  { code: 'MOMO', name: 'Mobile Money' },
-  { code: 'BANK', name: 'Bank Transfer' },
-  { code: 'CHEQUE', name: 'Cheque' },
-  { code: 'CREDIT', name: 'Credit (Guest Account)' },
-  { code: 'CORP', name: 'Corporate Billing' },
+  { code: 'CASH', name: 'Cash', type: 'cash' },
+  { code: 'CARD', name: 'Credit/Debit Card', type: 'card' },
+  { code: 'MOMO', name: 'Mobile Money', type: 'mobile_money' },
+  { code: 'BANK', name: 'Bank Transfer', type: 'bank_transfer' },
+  { code: 'CHEQUE', name: 'Cheque', type: 'cheque' },
+  { code: 'CREDIT', name: 'Credit (Guest Account)', type: 'credit' },
+  { code: 'CORP', name: 'Corporate Billing', type: 'corporate' },
 ]
 
 // POST /api/accounting/setup — idempotent, safe to call multiple times
@@ -95,7 +104,13 @@ export async function POST(request: NextRequest) {
       await prisma.account.upsert({
         where: { tenantId_code: { tenantId, code: account.code } },
         update: { name: account.name },
-        create: { tenantId, ...account, isActive: true },
+        create: {
+          tenantId,
+          code: account.code,
+          name: account.name,
+          type: ACCOUNT_TYPE_MAP[account.type],
+          isActive: true,
+        },
       })
     }
 
