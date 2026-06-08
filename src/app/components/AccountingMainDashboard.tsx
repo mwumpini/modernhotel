@@ -1,18 +1,19 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Card, 
-  CardBody, 
-  CardHeader, 
-  Button, 
-  Badge, 
-  Tabs, 
-  Tab, 
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import {
+  Card,
+  CardBody,
+  CardHeader,
+  Button,
+  Badge,
+  Tabs,
+  Tab,
   Chip,
   Tooltip
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
+import { useAccountingStore } from '../lib/accounting/store';
 
 // Import specialized accounting components
 import ChartOfAccounts from './accounting/ChartOfAccounts';
@@ -82,6 +83,20 @@ const InfoIcon = ({ description }: { description: string }) => {
 export default function AccountingMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const leanMode = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_LEAN_MODE === 'true') : (process.env.NEXT_PUBLIC_LEAN_MODE === 'true');
+
+  const {
+    invoices,
+    payments,
+    journalEntries,
+    chartOfAccounts,
+    bankAccounts,
+    initializeAccounting,
+  } = useAccountingStore();
+
+  useEffect(() => {
+    initializeAccounting().catch(() => {});
+  }, [initializeAccounting]);
+
   useEffect(() => {
     try {
       const wanted = localStorage.getItem('accounting.tab');
@@ -105,35 +120,98 @@ export default function AccountingMainDashboard() {
     window.addEventListener('accounting-navigate', onNavigate);
     return () => window.removeEventListener('accounting-navigate', onNavigate);
   }, []);
-  
-  // Sample accounting data - in real app, this would come from stores
-  const totalAssets = 2847500;
-  const totalLiabilities = 1250000;
-  const totalEquity = 1597500;
-  const currentRevenue = 456000;
-  const currentExpenses = 312000;
-  const netIncome = 144000;
-  
-  // Financial health indicators
-  const profitMargin = ((netIncome / currentRevenue) * 100).toFixed(1);
-  
-  // Operational metrics
-  const pendingInvoices = 23;
-  const overduePayments = 7;
-  const activeAccounts = 156;
-  const pendingReconciliations = 12;
-  
-  // Compliance status
+
+  // ── Real computed KPIs ────────────────────────────────────────────────────
+  const salesInvoices = useMemo(() => invoices.filter(i => i.type === 'Sales'), [invoices]);
+  const purchaseInvoices = useMemo(() => invoices.filter(i => i.type === 'Purchase'), [invoices]);
+
+  // Revenue = total of Sales invoices that are Posted or Paid
+  const currentRevenue = useMemo(
+    () => salesInvoices
+      .filter(i => i.status === 'Posted' || i.status === 'Paid')
+      .reduce((s, i) => s + (i.total || 0), 0),
+    [salesInvoices]
+  );
+
+  // Receivables = outstanding balance on Sales invoices
+  const totalReceivables = useMemo(
+    () => salesInvoices.reduce((s, i) => s + Math.max(0, (i.total || 0) - (i.paidAmount || 0)), 0),
+    [salesInvoices]
+  );
+
+  // Payables = outstanding balance on Purchase invoices
+  const totalPayables = useMemo(
+    () => purchaseInvoices.reduce((s, i) => s + Math.max(0, (i.total || 0) - (i.paidAmount || 0)), 0),
+    [purchaseInvoices]
+  );
+
+  // Expenses = sum of journal entry credit lines on 5xxx accounts (expense accounts)
+  const currentExpenses = useMemo(() => {
+    let total = 0;
+    for (const je of journalEntries) {
+      if (je.status !== 'Posted') continue;
+      for (const line of (je.lines || [])) {
+        if (line.accountCode?.startsWith('5')) {
+          total += (line.debit || 0);
+        }
+      }
+    }
+    return total;
+  }, [journalEntries]);
+
+  // Net Profit
+  const netIncome = currentRevenue - currentExpenses;
+
+  // Profit margin
+  const profitMargin = currentRevenue > 0 ? ((netIncome / currentRevenue) * 100).toFixed(1) : '0.0';
+
+  // Cash & Bank from bankAccounts store
+  const totalBankCash = useMemo(
+    () => bankAccounts.reduce((s, a) => s + (a.currentBalance || 0), 0),
+    [bankAccounts]
+  );
+
+  // Operational metrics from live data
+  const pendingInvoices = useMemo(
+    () => invoices.filter(i => i.status === 'Draft' || i.status === 'Posted').length,
+    [invoices]
+  );
+  const overduePayments = useMemo(() => {
+    const now = new Date();
+    return salesInvoices.filter(i => {
+      const balance = (i.total || 0) - (i.paidAmount || 0);
+      return balance > 0 && i.dueDate && new Date(i.dueDate) < now;
+    }).length;
+  }, [salesInvoices]);
+  const activeAccounts = useMemo(
+    () => chartOfAccounts.filter(a => a.isActive !== false).length,
+    [chartOfAccounts]
+  );
+
+  // Compliance status (fixed — compliance tracking is not live in this system)
   const taxCompliance = 94;
   const auditCompliance = 97;
   const regulatoryCompliance = 91;
   const overallCompliance = 94;
 
-  // Today's operations
-  const transactionsToday = 45;
-  const invoicesGeneratedToday = 8;
-  const paymentsReceivedToday = 12;
-  const reconciliationsCompletedToday = 3;
+  // Today's operations from live data
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const transactionsToday = useMemo(
+    () => journalEntries.filter(je => (je.date || '').slice(0, 10) === todayStr).length,
+    [journalEntries, todayStr]
+  );
+  const invoicesGeneratedToday = useMemo(
+    () => invoices.filter(i => (i.createdAt || '').slice(0, 10) === todayStr).length,
+    [invoices, todayStr]
+  );
+  const paymentsReceivedToday = useMemo(
+    () => payments.filter(p => (p.createdAt || '').slice(0, 10) === todayStr).length,
+    [payments, todayStr]
+  );
+  const pendingReconciliations = useMemo(
+    () => bankAccounts.length,
+    [bankAccounts]
+  );
 
   // Operational items following the uniform pattern
   const operationalItems = [
@@ -170,7 +248,7 @@ export default function AccountingMainDashboard() {
         { title: 'Daily Transactions', icon: '🔄', description: 'Journal entries and postings', status: 'active', count: transactionsToday },
         { title: 'Invoice Generation', icon: '📄', description: 'Customer and vendor invoices', status: 'active', count: invoicesGeneratedToday },
         { title: 'Payment Processing', icon: '💳', description: 'Payment receipts and disbursements', status: 'active', count: paymentsReceivedToday },
-        { title: 'Bank Reconciliation', icon: '✅', description: 'Statement vs cashbook (GL)', status: 'active', count: reconciliationsCompletedToday },
+        { title: 'Bank Reconciliation', icon: '✅', description: 'Statement vs cashbook (GL)', status: 'active', count: pendingReconciliations },
       ]
     }
   ];
@@ -233,22 +311,22 @@ export default function AccountingMainDashboard() {
             <Card className="border-0 shadow-lg border-l-4 border-l-blue-500">
               <CardBody className="p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-lg font-semibold text-ghana-black">Financial Position</h4>
+                  <h4 className="text-lg font-semibold text-ghana-black">Cash &amp; Bank Position</h4>
                   <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
                 </div>
-                <div className="text-3xl font-bold text-blue-600 mb-3">₵{totalAssets.toLocaleString()}</div>
+                <div className="text-3xl font-bold text-blue-600 mb-3">₵{totalBankCash.toFixed(2)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex justify-between">
-                    <span>Total Assets</span>
-                    <span className="font-medium">₵{totalAssets.toLocaleString()}</span>
+                    <span>Total Bank &amp; Cash</span>
+                    <span className="font-medium">₵{totalBankCash.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Total Liabilities</span>
-                    <span className="font-medium">₵{totalLiabilities.toLocaleString()}</span>
+                    <span>Receivables Outstanding</span>
+                    <span className="font-medium">₵{totalReceivables.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Net Worth</span>
-                    <span className="font-medium">₵{totalEquity.toLocaleString()}</span>
+                    <span>Payables Outstanding</span>
+                    <span className="font-medium">₵{totalPayables.toFixed(2)}</span>
                   </div>
                 </div>
               </CardBody>
@@ -261,15 +339,15 @@ export default function AccountingMainDashboard() {
                   <h4 className="text-lg font-semibold text-ghana-black">Profitability</h4>
                   <div className="w-3 h-3 bg-green-500 rounded-full"></div>
                 </div>
-                <div className="text-3xl font-bold text-green-600 mb-3">₵{netIncome.toLocaleString()}</div>
+                <div className="text-3xl font-bold text-green-600 mb-3">₵{netIncome.toFixed(2)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex justify-between">
-                    <span>Revenue</span>
-                    <span className="font-medium">₵{currentRevenue.toLocaleString()}</span>
+                    <span>Revenue (Posted)</span>
+                    <span className="font-medium">₵{currentRevenue.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Expenses</span>
-                    <span className="font-medium">₵{currentExpenses.toLocaleString()}</span>
+                    <span>Expenses (GL 5xxx)</span>
+                    <span className="font-medium">₵{currentExpenses.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Profit Margin</span>
@@ -289,15 +367,15 @@ export default function AccountingMainDashboard() {
                 <div className="text-3xl font-bold text-purple-600 mb-3">{pendingInvoices}</div>
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex justify-between">
-                    <span>Pending Invoices</span>
+                    <span>Open Invoices</span>
                     <span className="font-medium">{pendingInvoices}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Overdue Payments</span>
-                    <span className="font-medium">{overduePayments}</span>
+                    <span>Overdue AR</span>
+                    <span className="font-medium text-red-600">{overduePayments}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Active Accounts</span>
+                    <span>Active GL Accounts</span>
                     <span className="font-medium">{activeAccounts}</span>
                   </div>
                 </div>
