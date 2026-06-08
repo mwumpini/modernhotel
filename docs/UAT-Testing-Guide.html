@@ -3,205 +3,1200 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Ghana Hotel Management — UAT Testing Guide</title>
+  <title>Akwaaba Grand Hotel — System Audit & Testing Guide</title>
   <style>
-    :root { --text: #1a1a1a; --muted: #555; --border: #ccc; --accent: #0f766e; }
-    * { box-sizing: border-box; }
+    :root {
+      --green: #006B3F;
+      --gold: #FCD116;
+      --red: #CE1126;
+      --black: #1a1a1a;
+      --bg: #f8f9fa;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --step-bg: #f0fdf4;
+      --expect-bg: #eff6ff;
+      --warn-bg: #fffbeb;
+      --danger-bg: #fef2f2;
+      --code-bg: #1e293b;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: "Segoe UI", Calibri, Arial, sans-serif;
-      font-size: 11pt;
-      line-height: 1.45;
-      color: var(--text);
-      max-width: 210mm;
-      margin: 0 auto;
-      padding: 18mm 16mm;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--black);
+      line-height: 1.6;
     }
-    h1 { font-size: 22pt; color: var(--accent); margin: 0 0 4px; border-bottom: 3px solid var(--accent); padding-bottom: 8px; }
-    h2 { font-size: 14pt; margin-top: 22px; page-break-after: avoid; color: #134e4a; }
-    h3 { font-size: 12pt; margin-top: 16px; page-break-after: avoid; }
-    p, li { margin: 0.4em 0; }
-    .meta { color: var(--muted); font-size: 10pt; margin-bottom: 20px; }
-    .meta strong { color: var(--text); }
-    a { color: var(--accent); }
-    table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 10pt; }
-    th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
-    th { background: #f0fdfa; font-weight: 600; }
-    ol.steps { padding-left: 22px; }
-    ol.steps li { margin-bottom: 6px; }
-    .box {
+
+    /* ── HERO ── */
+    .hero {
+      background: linear-gradient(135deg, var(--green) 0%, #004d2e 100%);
+      color: white;
+      padding: 48px 32px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; inset: 0;
+      background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.04'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+    }
+    .flag-bar { font-size: 2rem; margin-bottom: 12px; letter-spacing: 4px; }
+    .hero h1 { font-size: 2.4rem; font-weight: 800; margin-bottom: 8px; position: relative; }
+    .hero .subtitle { font-size: 1.1rem; opacity: 0.85; position: relative; }
+    .hero .version { margin-top: 16px; display: inline-block; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); padding: 4px 16px; border-radius: 999px; font-size: 0.8rem; position: relative; }
+
+    /* ── LAYOUT ── */
+    .container { max-width: 960px; margin: 0 auto; padding: 32px 20px; }
+
+    /* ── TOC ── */
+    .toc {
+      background: var(--card);
       border: 1px solid var(--border);
-      border-left: 4px solid var(--accent);
-      padding: 10px 12px;
-      margin: 12px 0;
-      background: #f8fafc;
+      border-left: 4px solid var(--green);
+      border-radius: 8px;
+      padding: 24px;
+      margin-bottom: 32px;
     }
-    .pass { color: #166534; font-weight: 600; }
-    .warn { color: #a16207; font-weight: 600; }
-    .page-break { page-break-before: always; }
+    .toc h3 { color: var(--green); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; }
+    .toc ol { padding-left: 20px; }
+    .toc li { margin-bottom: 6px; }
+    .toc a { color: var(--green); text-decoration: none; font-weight: 500; }
+    .toc a:hover { text-decoration: underline; }
+
+    /* ── INTRO CARD ── */
+    .intro-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px 32px;
+      margin-bottom: 32px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .intro-card h2 { color: var(--green); margin-bottom: 12px; font-size: 1.3rem; }
+    .intro-card p { color: #374151; margin-bottom: 12px; }
+    .intro-card p:last-child { margin-bottom: 0; }
+
+    /* ── SECTION ── */
+    .section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 28px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+    }
+    .section-header {
+      background: var(--green);
+      color: white;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .section-num {
+      background: rgba(255,255,255,0.2);
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 0.9rem; flex-shrink: 0;
+    }
+    .section-header h2 { font-size: 1.15rem; font-weight: 700; }
+    .section-header .section-sub { font-size: 0.8rem; opacity: 0.8; }
+    .section-body { padding: 24px; }
+
+    /* ── STEPS ── */
+    .step {
+      display: flex;
+      gap: 14px;
+      margin-bottom: 20px;
+      padding: 16px;
+      background: var(--step-bg);
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+    }
+    .step-badge {
+      background: var(--green);
+      color: white;
+      font-weight: 800;
+      font-size: 0.75rem;
+      min-width: 28px; height: 28px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; margin-top: 2px;
+    }
+    .step-content h4 { font-size: 0.95rem; font-weight: 600; color: #065f46; margin-bottom: 4px; }
+    .step-content p { font-size: 0.9rem; color: #374151; margin-bottom: 6px; }
+    .step-content p:last-child { margin-bottom: 0; }
+
+    /* ── EXPECT ── */
+    .expect {
+      background: var(--expect-bg);
+      border: 1px solid #bfdbfe;
+      border-left: 4px solid #3b82f6;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 20px;
+    }
+    .expect-label { font-size: 0.75rem; font-weight: 700; color: #1d4ed8; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .expect p, .expect li { font-size: 0.88rem; color: #1e40af; }
+    .expect ul { padding-left: 18px; }
+    .expect li { margin-bottom: 3px; }
+
+    /* ── WARNING ── */
+    .warn {
+      background: var(--warn-bg);
+      border: 1px solid #fde68a;
+      border-left: 4px solid #f59e0b;
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 20px;
+    }
+    .warn-label { font-size: 0.75rem; font-weight: 700; color: #92400e; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .warn p { font-size: 0.88rem; color: #78350f; }
+
+    /* ── DATA TABLE ── */
+    .data-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 0.88rem; }
+    .data-table th { background: var(--green); color: white; padding: 10px 12px; text-align: left; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    .data-table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:nth-child(even) td { background: #f8fffe; }
+    .data-table .field { font-weight: 600; color: #374151; white-space: nowrap; }
+    .data-table .value { color: #1a1a1a; font-family: monospace; font-size: 0.85rem; }
+    .data-table .note { color: #6b7280; font-size: 0.8rem; }
+
+    /* ── TAX BOX ── */
+    .tax-stack {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .tax-chip {
+      border-radius: 10px;
+      padding: 14px 16px;
+      border: 1px solid;
+    }
+    .tax-chip.nhil { background: #fef9c3; border-color: #fde047; }
+    .tax-chip.getfund { background: #e0f2fe; border-color: #7dd3fc; }
+    .tax-chip.vat { background: #dcfce7; border-color: #86efac; }
+    .tax-chip.tourism { background: #fae8ff; border-color: #d8b4fe; }
+    .tax-chip.wht { background: #fee2e2; border-color: #fca5a5; }
+    .tax-chip .rate { font-size: 1.6rem; font-weight: 800; }
+    .tax-chip .name { font-size: 0.75rem; font-weight: 700; margin-bottom: 2px; }
+    .tax-chip .desc { font-size: 0.72rem; color: #4b5563; line-height: 1.4; }
+
+    /* ── MATH BOX ── */
+    .math-box {
+      background: var(--code-bg);
+      color: #e2e8f0;
+      border-radius: 8px;
+      padding: 16px 20px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.82rem;
+      margin-bottom: 20px;
+      line-height: 1.8;
+    }
+    .math-box .comment { color: #64748b; }
+    .math-box .label { color: #93c5fd; }
+    .math-box .value { color: #86efac; }
+    .math-box .total { color: var(--gold); font-weight: 700; }
+    .math-box .divider { border-top: 1px solid #334155; margin: 8px 0; }
+
+    /* ── CHECKLIST ── */
+    .checklist { list-style: none; padding: 0; margin-bottom: 20px; }
+    .checklist li {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.88rem;
+    }
+    .checklist li:last-child { border-bottom: none; }
+    .check-box {
+      width: 20px; height: 20px;
+      border: 2px solid #d1d5db;
+      border-radius: 4px;
+      flex-shrink: 0; margin-top: 1px;
+      cursor: pointer;
+    }
+    .check-box:checked { accent-color: var(--green); }
+    .checklist label { cursor: pointer; color: #374151; line-height: 1.5; }
+
+    /* ── SAMPLE TAG ── */
+    .sample { display: inline-block; background: #fef3c7; border: 1px solid #fcd34d; color: #92400e; padding: 1px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; font-family: monospace; white-space: nowrap; }
+    .nav { display: inline-block; background: #e0f2fe; border: 1px solid #7dd3fc; color: #0369a1; padding: 1px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; white-space: nowrap; }
+    .btn-sample { display: inline-block; background: var(--green); color: white; padding: 2px 10px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; }
+    .result-tag { display: inline-block; background: #dcfce7; border: 1px solid #86efac; color: #166534; padding: 1px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; }
+    .fail-tag { display: inline-block; background: #fee2e2; border: 1px solid #fca5a5; color: #991b1b; padding: 1px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: 600; }
+
+    /* ── DIVIDER ── */
+    .sub-header { font-size: 1rem; font-weight: 700; color: var(--green); margin: 24px 0 12px; padding-bottom: 6px; border-bottom: 2px solid #bbf7d0; }
+
+    /* ── FOOTER ── */
+    footer { text-align: center; padding: 32px 20px; color: #9ca3af; font-size: 0.8rem; }
+    footer strong { color: var(--green); }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 600px) {
+      .hero h1 { font-size: 1.7rem; }
+      .tax-stack { grid-template-columns: repeat(2, 1fr); }
+      .section-body { padding: 16px; }
+    }
+
+    /* ── PRINT ── */
     @media print {
-      body { padding: 12mm; }
-      a { color: var(--text); text-decoration: none; }
-      .no-print { display: none; }
+      .hero { background: var(--green) !important; -webkit-print-color-adjust: exact; }
+      .section-header { background: var(--green) !important; -webkit-print-color-adjust: exact; }
     }
   </style>
 </head>
 <body>
 
-<p class="no-print box"><strong>Save as PDF:</strong> Press Ctrl+P (or Cmd+P) → choose <em>Save as PDF</em> / <em>Microsoft Print to PDF</em>. Enable “Background graphics” for best results.</p>
+<!-- HERO -->
+<div class="hero">
+  <div class="flag-bar">🇬🇭 🏨 🇬🇭</div>
+  <h1>Akwaaba Grand Hotel</h1>
+  <div class="subtitle">System Audit &amp; Testing Guide — Friend &amp; Stakeholder Edition</div>
+  <div class="version">Ghana Hotel Management System · June 2026</div>
+</div>
 
-<h1>Ghana Hotel Management</h1>
-<p class="meta"><strong>User Acceptance Testing (UAT) Guide</strong> · Version 1.0 · June 2026<br />
-<strong>Production URL:</strong> <a href="https://ghana-hotel-management.vercel.app">https://ghana-hotel-management.vercel.app</a></p>
+<div class="container">
 
-<h2>1. Purpose</h2>
-<p>This guide walks testers through the main hotel processes on the <strong>live deployed app</strong> so critical flows are not missed before the next development phase.</p>
-<p><strong>Time:</strong> 45–60 minutes per person (focus on one role).</p>
+  <!-- INTRO -->
+  <div class="intro-card">
+    <h2>Welcome — Before You Start, Please Read This</h2>
+    <p>
+      We are inviting you to help us test the <strong>Akwaaba Grand Hotel Management System</strong> — a full hotel
+      operations platform built specifically for Ghana's hospitality industry. Your job as an auditor is to walk
+      through the system from beginning to end, following the steps in this guide, and tell us honestly what works,
+      what feels confusing, and what breaks.
+    </p>
+    <p>
+      You do <strong>not</strong> need any accounting or hotel management experience. Every step tells you exactly
+      what to click, what to type, and what result you should see. If the system gives you a different result than
+      what we describe — that is valuable feedback. Write it down.
+    </p>
+    <p>
+      We have pre-filled this guide with <strong>real Ghana tax rates</strong> (GRA 2024), a fictional test hotel
+      called <em>Akwaaba Grand Hotel, Accra</em>, sample guest names, room types, staff records, and supplier
+      invoices. Use exactly the data we provide so your results match our expected outputs. By the end of your session,
+      you will have created bookings, checked guests in and out, processed restaurant bills, paid a supplier invoice,
+      run payroll, and verified the tax calculations.
+    </p>
+    <p>
+      <strong>Estimated time:</strong> 60–90 minutes for a full walkthrough. You can also test one section at a time.
+    </p>
+  </div>
 
-<h2>2. Before you start</h2>
-<table>
-  <tr><th>Item</th><th>Instruction</th></tr>
-  <tr><td>Browser</td><td>Chrome or Edge on a laptop (desktop layout).</td></tr>
-  <tr><td>Private window</td><td>Use Incognito/Private mode for a clean start.</td></tr>
-  <tr><td>Internet</td><td>Stable connection required.</td></tr>
-  <tr><td>Data note</td><td>Data is stored in <strong>your browser</strong> for now. Other devices won’t see your test reservations. Expected.</td></tr>
-  <tr><td>Screenshots</td><td>Capture every error, blank screen, or wrong total.</td></tr>
-</table>
+  <!-- TABLE OF CONTENTS -->
+  <div class="toc">
+    <h3>Contents</h3>
+    <ol>
+      <li><a href="#s1">System Setup &amp; Hotel Profile</a></li>
+      <li><a href="#s2">Settings — Taxes, Rooms &amp; Configuration</a></li>
+      <li><a href="#s3">Ghana Tax Stack Explained</a></li>
+      <li><a href="#s4">Room Management — Create Room Types &amp; Rooms</a></li>
+      <li><a href="#s5">Front Office — Booking, Check-In &amp; Check-Out</a></li>
+      <li><a href="#s6">Restaurant / F&amp;B — Post Charges to a Room</a></li>
+      <li><a href="#s7">Accounting — KPIs, Payables &amp; Receivables</a></li>
+      <li><a href="#s8">Tax &amp; Compliance — Verify the Levy Stack</a></li>
+      <li><a href="#s9">HR &amp; Payroll — Add Staff, Run PAYE</a></li>
+      <li><a href="#s10">Final Checklist &amp; Feedback</a></li>
+    </ol>
+  </div>
 
-<h2>3. How to report issues</h2>
-<ol>
-  <li>Tester name &amp; date/time</li>
-  <li>Module (Front Office, F&amp;B, Accounting, etc.)</li>
-  <li>Steps (in order)</li>
-  <li>Expected vs Actual</li>
-  <li>Severity: Blocker / Major / Minor / Suggestion</li>
-  <li>Screenshot attached</li>
-</ol>
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 1 — SETUP
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s1">
+    <div class="section-header">
+      <div class="section-num">1</div>
+      <div>
+        <h2>System Setup &amp; Hotel Profile</h2>
+        <div class="section-sub">First launch · Create your hotel · Choose Ghana preset</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="warn">
+        <div class="warn-label">Before you begin</div>
+        <p>Open the system in your browser. If a <strong>Setup Wizard</strong> appears automatically, great — follow it. If you are already on the dashboard, go to <span class="nav">Settings → Setup Wizard</span> or click <span class="nav">Get Started</span>.</p>
+      </div>
 
-<div class="page-break"></div>
+      <div class="step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <h4>Enter Hotel Details</h4>
+          <p>On the setup screen, fill in the hotel profile using the sample data below. Type exactly as shown.</p>
+        </div>
+      </div>
 
-<h2>Test A — First visit &amp; setup (~10 min)</h2>
-<p><strong>Everyone.</strong> Goal: app loads and setup completes.</p>
-<ol class="steps">
-  <li>Open <a href="https://ghana-hotel-management.vercel.app">https://ghana-hotel-management.vercel.app</a></li>
-  <li>If redirected to <strong>Setup</strong>, complete the wizard (hotel name, Ghana, GHS, finish).</li>
-  <li>Confirm main <strong>dashboard</strong> with sidebar appears.</li>
-  <li>Open <strong>Help</strong> (<a href="https://ghana-hotel-management.vercel.app/help">/help</a>) — must load.</li>
-</ol>
-<p class="pass">Pass: Setup completes, no crash.</p>
-<p class="warn">Fail: Blank screen, endless loading, unrecoverable error.</p>
+      <table class="data-table">
+        <tr><th class="field" style="width:35%">Field</th><th>Enter This</th></tr>
+        <tr><td class="field">Hotel Name</td><td class="value">Akwaaba Grand Hotel</td></tr>
+        <tr><td class="field">Tagline / Slogan</td><td class="value">Your Home Away From Home in Accra</td></tr>
+        <tr><td class="field">Address Line 1</td><td class="value">14 Independence Avenue</td></tr>
+        <tr><td class="field">City</td><td class="value">Accra</td></tr>
+        <tr><td class="field">Country</td><td class="value">Ghana</td></tr>
+        <tr><td class="field">Phone</td><td class="value">+233 30 200 0001</td></tr>
+        <tr><td class="field">Email</td><td class="value">info@akwaabagrand.com.gh</td></tr>
+        <tr><td class="field">Currency</td><td class="value">GHS (Ghana Cedi)</td></tr>
+        <tr><td class="field">Number of Rooms</td><td class="value">45</td></tr>
+        <tr><td class="field">Star Rating</td><td class="value">4 Stars</td></tr>
+      </table>
 
-<h2>Test B — Front desk: reservation → check-in → checkout (~20 min)</h2>
-<p><strong>Role:</strong> Reception / Front Office<br />
-<strong>Link:</strong> <a href="https://ghana-hotel-management.vercel.app/guest-services/check-ins">/guest-services/check-ins</a></p>
+      <div class="step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <h4>Select Ghana Tax Scheme</h4>
+          <p>When the wizard asks about tax scheme, select <span class="sample">Ghana Standard (NHIL+GETFund+Tourism+VAT)</span>. This loads the correct GRA 2024 levy stack automatically.</p>
+        </div>
+      </div>
 
-<h3>B1 — Create reservation</h3>
-<ol class="steps">
-  <li>Reservations / Bookings tab → New reservation.</li>
-  <li>Guest: <em>Test Guest [your initials]</em>, arrival <strong>today</strong>, departure <strong>tomorrow</strong>, confirmed.</li>
-  <li>Save; confirm it appears in the list.</li>
-</ol>
+      <div class="step">
+        <div class="step-badge">3</div>
+        <div class="step-content">
+          <h4>Complete Setup</h4>
+          <p>Click <span class="btn-sample">Save &amp; Continue</span> through each wizard step. At the end, click <span class="btn-sample">Go to Dashboard</span>.</p>
+        </div>
+      </div>
 
-<h3>B2 — Check in</h3>
-<ol class="steps">
-  <li>Today’s Arrivals → <strong>Check in</strong> your guest.</li>
-  <li>Assign room if prompted; status = checked-in.</li>
-</ol>
+      <div class="expect">
+        <div class="expect-label">✓ What you should see</div>
+        <ul>
+          <li>Dashboard shows <strong>Akwaaba Grand Hotel</strong> in the top navigation</li>
+          <li>Currency symbol shows <strong>GHS</strong> or <strong>₵</strong> throughout</li>
+          <li>No error messages or red alerts on the dashboard</li>
+        </ul>
+      </div>
+    </div>
+  </div>
 
-<h3>B3 — Folio charge</h3>
-<ol class="steps">
-  <li>Open guest folio; add charge (e.g. Laundry GHS 50).</li>
-  <li>Confirm balance increases.</li>
-</ol>
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 2 — SETTINGS
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s2">
+    <div class="section-header">
+      <div class="section-num">2</div>
+      <div>
+        <h2>Settings — Taxes, Rooms &amp; Configuration</h2>
+        <div class="section-sub">Verify country settings · Check tax display</div>
+      </div>
+    </div>
+    <div class="section-body">
 
-<h3>B4 — Check out</h3>
-<ol class="steps">
-  <li>Check-outs tab → check out guest.</li>
-  <li>Note final total; complete payment if prompted.</li>
-</ol>
-<p class="pass">Pass: Full stay cycle without error.</p>
+      <div class="step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <h4>Open Country &amp; Tax Settings</h4>
+          <p>Go to <span class="nav">Settings</span> in the left menu. Look for the <strong>Country &amp; Compliance</strong> or <strong>Localization</strong> section. Select <strong>Ghana 🇬🇭</strong> if not already selected.</p>
+        </div>
+      </div>
 
-<div class="page-break"></div>
+      <div class="expect">
+        <div class="expect-label">✓ What you should see — Tax Rate display</div>
+        <ul>
+          <li>Tax rates are shown as <strong>read-only chips</strong> (not editable boxes)</li>
+          <li>You see: <span class="result-tag">VAT 20%</span> <span class="result-tag">NHIL 2.5%</span> <span class="result-tag">GETFund 2.5%</span> <span class="result-tag">Tourism 1%</span></li>
+          <li>A <strong>"Manage Tax Rates →"</strong> button redirects you to the Tax Rate Builder in Accounting</li>
+        </ul>
+      </div>
 
-<h2>Test C — F&amp;B POS (~15 min)</h2>
-<p><strong>Role:</strong> Restaurant / Bar · Sidebar → Food &amp; Beverage → POS</p>
+      <div class="warn">
+        <div class="warn-label">Important — Do NOT edit rates here</div>
+        <p>The rates shown in Settings are display-only references. The actual rates used in calculations live in <span class="nav">Accounting → Tax Rate Builder</span>. If you want to verify or change rates, use the button provided.</p>
+      </div>
 
-<h3>C1 — Walk-in cash sale</h3>
-<ol class="steps">
-  <li>Walk-in order, add items, pay <strong>Cash</strong> or <strong>Card</strong>, complete.</li>
-</ol>
+      <div class="step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <h4>Check General Settings</h4>
+          <p>Review these settings are correctly configured for a Ghana hotel:</p>
+        </div>
+      </div>
 
-<h3>C2 — In-house room charge</h3>
-<ol class="steps">
-  <li>In-house guest order, pay <strong>Room Charge</strong> (not cash).</li>
-  <li>Complete sale.</li>
-</ol>
-<p class="warn">Report if: duplicate accounting or folio looks wrong after room charge.</p>
+      <table class="data-table">
+        <tr><th>Setting</th><th>Expected Value</th></tr>
+        <tr><td class="field">Currency</td><td class="value">GHS — Ghana Cedi</td></tr>
+        <tr><td class="field">Date Format</td><td class="value">DD/MM/YYYY</td></tr>
+        <tr><td class="field">Time Zone</td><td class="value">Africa/Accra (GMT+0)</td></tr>
+        <tr><td class="field">Default Check-in Time</td><td class="value">14:00</td></tr>
+        <tr><td class="field">Default Check-out Time</td><td class="value">12:00</td></tr>
+        <tr><td class="field">Tax Registration (TIN)</td><td class="value">C000123456789 (or your test TIN)</td></tr>
+      </table>
+    </div>
+  </div>
 
-<h2>Test D — Night audit &amp; no-show (~15 min)</h2>
-<p><strong>Role:</strong> Night Manager · Front Office → Night Audit</p>
-<ol class="steps">
-  <li>Review Room Configuration → Night Audit settings (auto-run on, first night at check-in off = default).</li>
-  <li>Run <strong>Night Audit</strong> manually; note room charges posted.</li>
-  <li>Optional: create today’s reservation, do not check in, mark <strong>No-show</strong>.</li>
-</ol>
-<p class="box"><strong>Known:</strong> Auto audit at 1:00 AM only if browser tab stays open overnight.</p>
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 3 — TAX EXPLAINED
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s3">
+    <div class="section-header">
+      <div class="section-num">3</div>
+      <div>
+        <h2>Ghana Tax Stack — Plain English Explanation</h2>
+        <div class="section-sub">What each levy means · How they stack · What to expect on guest bills</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <p style="margin-bottom:16px; color:#374151;">Ghana's hotel industry is governed by the <strong>Ghana Revenue Authority (GRA)</strong>. Every guest bill carries four levies that stack on top of each other in a specific order. Here is what each one means:</p>
 
-<h2>Test E — Accounting (~15 min)</h2>
-<p><strong>Role:</strong> Finance · Sidebar → Accounting</p>
-<ol class="steps">
-  <li><strong>Accounts Receivable:</strong> New sales invoice (Posted), e.g. GHS 1,000.</li>
-  <li><strong>Receipt:</strong> Record payment on invoice.</li>
-  <li><strong>Financial Reports:</strong> Open Income Statement or Trial Balance — must render.</li>
-</ol>
+      <div class="tax-stack">
+        <div class="tax-chip nhil">
+          <div class="name">NHIL</div>
+          <div class="rate">2.5%</div>
+          <div class="desc">National Health Insurance Levy. Funds Ghana's national health system. Applied on the room/service cost before VAT.</div>
+        </div>
+        <div class="tax-chip getfund">
+          <div class="name">GETFund</div>
+          <div class="rate">2.5%</div>
+          <div class="desc">Ghana Education Trust Fund. Funds education infrastructure. Applied on the room/service cost before VAT.</div>
+        </div>
+        <div class="tax-chip vat">
+          <div class="name">VAT</div>
+          <div class="rate">20%</div>
+          <div class="desc">Value Added Tax. The main consumption tax. Applied on (room cost + NHIL + GETFund) — it stacks on top of the levies.</div>
+        </div>
+        <div class="tax-chip tourism">
+          <div class="name">Tourism Levy</div>
+          <div class="rate">1%</div>
+          <div class="desc">Tourism Development Levy. Funds Ghana Tourism Authority. Applied on room/accommodation charges only, not on food.</div>
+        </div>
+        <div class="tax-chip wht">
+          <div class="name">WHT</div>
+          <div class="rate">5%</div>
+          <div class="desc">Withholding Tax. Deducted from payments to suppliers for services. Does NOT appear on guest bills.</div>
+        </div>
+      </div>
 
-<h2>Test F — Room configuration (~10 min)</h2>
-<ol class="steps">
-  <li>Room Configuration → view types &amp; night audit policies.</li>
-  <li>Rate Management → rates load for room types.</li>
-</ol>
+      <div class="sub-header">How the Numbers Stack — Worked Example</div>
+      <p style="margin-bottom:12px; color:#374151;">If a guest books a room for <strong>GHS 1,000 per night</strong>, here is how their total bill is calculated:</p>
 
-<h2>Test G — Smoke URLs</h2>
-<table>
-  <tr><th>Path</th><th>Expect</th></tr>
-  <tr><td>/</td><td>Main app</td></tr>
-  <tr><td>/setup</td><td>Setup or redirect</td></tr>
-  <tr><td>/help</td><td>Help page</td></tr>
-  <tr><td>/guest-services/check-ins</td><td>Check-ins hub</td></tr>
-  <tr><td>/management</td><td>Management view</td></tr>
-</table>
+      <div class="math-box">
+        <span class="comment">── Room rate (tax-exclusive) ──────────────────────</span><br>
+        <span class="label">Room cost              </span>  <span class="value">GHS 1,000.00</span><br>
+        <br>
+        <span class="comment">── Step 1: Apply NHIL &amp; GETFund on room cost ──────</span><br>
+        <span class="label">NHIL (2.5%)            </span>  <span class="value">GHS    25.00</span><br>
+        <span class="label">GETFund (2.5%)         </span>  <span class="value">GHS    25.00</span><br>
+        <span class="label">Sub-total after levies </span>  <span class="value">GHS 1,050.00</span><br>
+        <br>
+        <span class="comment">── Step 2: Apply VAT on (room + NHIL + GETFund) ─────</span><br>
+        <span class="label">VAT 20% × 1,050.00     </span>  <span class="value">GHS   210.00</span><br>
+        <br>
+        <span class="comment">── Step 3: Tourism Levy on original room cost ───────</span><br>
+        <span class="label">Tourism (1%) × 1,000   </span>  <span class="value">GHS    10.00</span><br>
+        <br>
+        <div class="divider"></div>
+        <span class="total">TOTAL GUEST BILL       </span>  <span class="total">GHS 1,245.00</span><br>
+        <span class="comment">Effective rate: 24.5% on top of room cost</span>
+      </div>
 
-<div class="page-break"></div>
+      <div class="warn">
+        <div class="warn-label">Key Points to Remember</div>
+        <p>
+          1. NHIL and GETFund are <strong>non-creditable</strong> — the hotel cannot recover them on supplier purchases.<br>
+          2. VAT is <strong>creditable</strong> — the hotel can offset input VAT paid to suppliers against output VAT collected from guests.<br>
+          3. The Tourism Levy applies to <strong>room charges only</strong>, not to restaurant food or spa services.<br>
+          4. WHT (5%) is deducted only when the hotel pays service contractors/suppliers — guests never see it.
+        </p>
+      </div>
+    </div>
+  </div>
 
-<h2>Known limitations (not bugs unless different)</h2>
-<ul>
-  <li>Data is per browser until cloud DB is connected.</li>
-  <li>Reports may show demo/zero figures.</li>
-  <li>Lean mode may hide some menu items.</li>
-</ul>
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 4 — ROOMS
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s4">
+    <div class="section-header">
+      <div class="section-num">4</div>
+      <div>
+        <h2>Room Management — Create Room Types &amp; Rooms</h2>
+        <div class="section-sub">Go to: Rooms / Room Management</div>
+      </div>
+    </div>
+    <div class="section-body">
 
-<h2>Feedback log</h2>
-<table>
-  <tr><th>#</th><th>Module</th><th>Steps</th><th>Expected</th><th>Actual</th><th>Severity</th></tr>
-  <tr><td>1</td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><td>2</td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><td>3</td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><td>4</td><td></td><td></td><td></td><td></td><td></td></tr>
-  <tr><td>5</td><td></td><td></td><td></td><td></td><td></td></tr>
-</table>
+      <div class="step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <h4>Create Three Room Types</h4>
+          <p>Navigate to <span class="nav">Rooms → Room Types</span>. Click <span class="btn-sample">+ Add Room Type</span> and create each of the following:</p>
+        </div>
+      </div>
 
-<h2>Sign-off checklist</h2>
-<table>
-  <tr><th>Test</th><th>Initials</th><th>Date</th><th>Pass / Fail</th></tr>
-  <tr><td>A — Setup</td><td></td><td></td><td></td></tr>
-  <tr><td>B — FO stay cycle</td><td></td><td></td><td></td></tr>
-  <tr><td>C — F&amp;B POS</td><td></td><td></td><td></td></tr>
-  <tr><td>D — Night audit</td><td></td><td></td><td></td></tr>
-  <tr><td>E — Accounting</td><td></td><td></td><td></td></tr>
-  <tr><td>F — Room config</td><td></td><td></td><td></td></tr>
-  <tr><td>G — Smoke URLs</td><td></td><td></td><td></td></tr>
-</table>
-<p><strong>Overall:</strong> ☐ Ready for next phase &nbsp; ☐ Needs fixes first</p>
-<p><em>Send completed feedback to the project owner. Thank you for testing.</em></p>
+      <table class="data-table">
+        <tr><th>Room Type</th><th>Rate / Night (GHS)</th><th>Max Guests</th><th>Description</th></tr>
+        <tr>
+          <td class="field">Standard Room</td>
+          <td class="value">450</td>
+          <td>2</td>
+          <td class="note">Air-conditioned room with queen bed, Wi-Fi, TV</td>
+        </tr>
+        <tr>
+          <td class="field">Deluxe Room</td>
+          <td class="value">650</td>
+          <td>2</td>
+          <td class="note">Larger room with king bed, city view, minibar</td>
+        </tr>
+        <tr>
+          <td class="field">Executive Suite</td>
+          <td class="value">1,200</td>
+          <td>4</td>
+          <td class="note">Luxury suite with separate living area, premium amenities</td>
+        </tr>
+      </table>
+
+      <div class="step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <h4>Create Individual Rooms</h4>
+          <p>Go to <span class="nav">Rooms → Room List</span> and create at least 6 rooms. Assign them to the room types you just created:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th>Room No.</th><th>Floor</th><th>Type</th><th>Status</th></tr>
+        <tr><td class="value">101</td><td>1st</td><td>Standard Room</td><td><span class="result-tag">Available</span></td></tr>
+        <tr><td class="value">102</td><td>1st</td><td>Standard Room</td><td><span class="result-tag">Available</span></td></tr>
+        <tr><td class="value">201</td><td>2nd</td><td>Deluxe Room</td><td><span class="result-tag">Available</span></td></tr>
+        <tr><td class="value">202</td><td>2nd</td><td>Deluxe Room</td><td><span class="result-tag">Available</span></td></tr>
+        <tr><td class="value">301</td><td>3rd</td><td>Executive Suite</td><td><span class="result-tag">Available</span></td></tr>
+        <tr><td class="value">302</td><td>3rd</td><td>Executive Suite</td><td><span class="result-tag">Available</span></td></tr>
+      </table>
+
+      <div class="expect">
+        <div class="expect-label">✓ What you should see</div>
+        <ul>
+          <li>All 6 rooms appear in the room list with status <strong>Available</strong></li>
+          <li>Room rates shown in <strong>GHS</strong></li>
+          <li>Room type filters work (filter by Standard, Deluxe, Suite)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 5 — FRONT OFFICE
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s5">
+    <div class="section-header">
+      <div class="section-num">5</div>
+      <div>
+        <h2>Front Office — Booking, Check-In &amp; Check-Out</h2>
+        <div class="section-sub">Create reservation → Check in → Post charges → Check out → Generate folio</div>
+      </div>
+    </div>
+    <div class="section-body">
+
+      <div class="sub-header">Guest A — Standard 3-Night Stay</div>
+
+      <div class="step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <h4>Create a Reservation</h4>
+          <p>Go to <span class="nav">Front Office → New Booking</span>. Enter the guest details below:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th style="width:35%">Field</th><th>Value</th></tr>
+        <tr><td class="field">Guest Name</td><td class="value">Kwame Asante</td></tr>
+        <tr><td class="field">Email</td><td class="value">k.asante@gmail.com</td></tr>
+        <tr><td class="field">Phone</td><td class="value">+233 24 100 2020</td></tr>
+        <tr><td class="field">Nationality</td><td class="value">Ghanaian</td></tr>
+        <tr><td class="field">ID Type</td><td class="value">Ghana Card</td></tr>
+        <tr><td class="field">ID Number</td><td class="value">GHA-000111222-3</td></tr>
+        <tr><td class="field">Room</td><td class="value">Room 201 (Deluxe Room — GHS 650/night)</td></tr>
+        <tr><td class="field">Check-in Date</td><td class="value">Today's date</td></tr>
+        <tr><td class="field">Check-out Date</td><td class="value">Today + 3 nights</td></tr>
+        <tr><td class="field">Adults</td><td class="value">2</td></tr>
+        <tr><td class="field">Payment Method</td><td class="value">Cash</td></tr>
+      </table>
+
+      <div class="expect">
+        <div class="expect-label">✓ Booking summary you should see (before taxes)</div>
+        <ul>
+          <li>Room: GHS 650 × 3 nights = <strong>GHS 1,950.00</strong></li>
+          <li>NHIL (2.5%): <strong>GHS 48.75</strong></li>
+          <li>GETFund (2.5%): <strong>GHS 48.75</strong></li>
+          <li>VAT 20% on (1,950 + 48.75 + 48.75 = 2,047.50): <strong>GHS 409.50</strong></li>
+          <li>Tourism Levy (1%): <strong>GHS 19.50</strong></li>
+          <li><strong>Total: GHS 2,427.50</strong> (or approximately this — small rounding differences are acceptable)</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <h4>Check In the Guest</h4>
+          <p>Find the reservation in <span class="nav">Front Office → Reservations</span>. Click <span class="btn-sample">Check In</span>. Confirm room assignment. Room 201 status should change.</p>
+        </div>
+      </div>
+
+      <div class="expect">
+        <div class="expect-label">✓ What you should see after check-in</div>
+        <ul>
+          <li>Reservation status changes to <strong>Checked In</strong></li>
+          <li>Room 201 status changes from <strong>Available → Occupied</strong></li>
+          <li>Guest appears on the <strong>In-House Guests</strong> list</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <div class="step-badge">3</div>
+        <div class="step-content">
+          <h4>Post a Charge to the Room</h4>
+          <p>Open the guest folio (click the guest name or <span class="btn-sample">View Folio</span>). Add a miscellaneous charge:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th style="width:35%">Field</th><th>Value</th></tr>
+        <tr><td class="field">Charge Type</td><td class="value">Laundry Service</td></tr>
+        <tr><td class="field">Amount</td><td class="value">GHS 80.00</td></tr>
+        <tr><td class="field">Description</td><td class="value">Same-day laundry — 3 items</td></tr>
+      </table>
+
+      <div class="step">
+        <div class="step-badge">4</div>
+        <div class="step-content">
+          <h4>Check Out the Guest</h4>
+          <p>Click <span class="btn-sample">Check Out</span> on the reservation. Review the final folio — it should show all charges. Post a payment of the full amount in <strong>Cash</strong>, then confirm checkout.</p>
+        </div>
+      </div>
+
+      <div class="expect">
+        <div class="expect-label">✓ What you should see after checkout</div>
+        <ul>
+          <li>Reservation status changes to <strong>Checked Out</strong></li>
+          <li>Room 201 status changes to <strong>Dirty</strong> (awaiting housekeeping)</li>
+          <li>Folio shows <strong>GHS 0.00 balance</strong> (fully settled)</li>
+          <li>A <strong>guest invoice</strong> is generated and viewable</li>
+          <li>The payment appears in <span class="nav">Accounting → Accounts Receivable</span></li>
+        </ul>
+      </div>
+
+      <div class="sub-header">Guest B — Corporate Guest (Credit)</div>
+
+      <div class="step">
+        <div class="step-badge">5</div>
+        <div class="step-content">
+          <h4>Book a Second Guest on Credit</h4>
+          <p>Repeat the booking process for a corporate guest who will pay by invoice (not cash upfront):</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th style="width:35%">Field</th><th>Value</th></tr>
+        <tr><td class="field">Guest Name</td><td class="value">Abena Mensah</td></tr>
+        <tr><td class="field">Company</td><td class="value">Accra Business Ventures Ltd</td></tr>
+        <tr><td class="field">Email</td><td class="value">abena.mensah@abv.com.gh</td></tr>
+        <tr><td class="field">Room</td><td class="value">Room 301 (Executive Suite — GHS 1,200/night)</td></tr>
+        <tr><td class="field">Nights</td><td class="value">2 nights</td></tr>
+        <tr><td class="field">Payment Method</td><td class="value">Invoice / Credit</td></tr>
+      </table>
+
+      <div class="expect">
+        <div class="expect-label">✓ Suite 2-night tax calculation</div>
+        <ul>
+          <li>Room: GHS 1,200 × 2 = <strong>GHS 2,400.00</strong></li>
+          <li>NHIL 2.5%: <strong>GHS 60.00</strong></li>
+          <li>GETFund 2.5%: <strong>GHS 60.00</strong></li>
+          <li>VAT 20% × (2,400 + 120): <strong>GHS 504.00</strong></li>
+          <li>Tourism 1%: <strong>GHS 24.00</strong></li>
+          <li><strong>Total: GHS 3,048.00</strong></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 6 — RESTAURANT
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s6">
+    <div class="section-header">
+      <div class="section-num">6</div>
+      <div>
+        <h2>Restaurant / F&amp;B — Post Charges to a Room</h2>
+        <div class="section-sub">Go to: Restaurant or Point of Sale</div>
+      </div>
+    </div>
+    <div class="section-body">
+
+      <div class="warn">
+        <div class="warn-label">Note on Tourism Levy</div>
+        <p>Restaurant food and beverage charges are <strong>NOT</strong> subject to the 1% Tourism Levy. Only accommodation (room charges) attract that levy. VAT, NHIL, and GETFund still apply to F&amp;B.</p>
+      </div>
+
+      <div class="step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <h4>Post F&amp;B Charge to Kwame Asante's Room</h4>
+          <p>While Guest A (Kwame Asante) is still checked in, go to <span class="nav">Restaurant / F&amp;B</span>. Create a charge and post it to <strong>Room 201</strong>:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th>Item</th><th>Qty</th><th>Unit Price (GHS)</th><th>Total (GHS)</th></tr>
+        <tr><td>Jollof Rice &amp; Chicken</td><td>2</td><td class="value">45.00</td><td class="value">90.00</td></tr>
+        <tr><td>Kelewele (side)</td><td>2</td><td class="value">15.00</td><td class="value">30.00</td></tr>
+        <tr><td>Club Beer (330ml)</td><td>2</td><td class="value">18.00</td><td class="value">36.00</td></tr>
+        <tr><td>Mineral Water</td><td>2</td><td class="value">8.00</td><td class="value">16.00</td></tr>
+        <tr><td colspan="3" style="font-weight:700; text-align:right">F&amp;B Subtotal</td><td class="value" style="font-weight:700">172.00</td></tr>
+      </table>
+
+      <div class="expect">
+        <div class="expect-label">✓ F&amp;B tax calculation (no Tourism Levy)</div>
+        <ul>
+          <li>Subtotal: <strong>GHS 172.00</strong></li>
+          <li>NHIL 2.5%: <strong>GHS 4.30</strong></li>
+          <li>GETFund 2.5%: <strong>GHS 4.30</strong></li>
+          <li>VAT 20% × (172 + 8.60): <strong>GHS 36.12</strong></li>
+          <li>Tourism Levy: <strong>GHS 0.00</strong> (food — not applicable)</li>
+          <li><strong>F&amp;B Total: GHS 216.42</strong></li>
+          <li>This charge appears on the guest's room folio</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <h4>Verify on Guest Folio</h4>
+          <p>Go back to the guest folio for Kwame Asante. The F&amp;B charge should appear as a separate line item on the folio alongside the room rate.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 7 — ACCOUNTING
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s7">
+    <div class="section-header">
+      <div class="section-num">7</div>
+      <div>
+        <h2>Accounting — KPIs, Payables &amp; Receivables</h2>
+        <div class="section-sub">Go to: Accounting in the main navigation</div>
+      </div>
+    </div>
+    <div class="section-body">
+
+      <div class="sub-header">Dashboard KPIs</div>
+
+      <div class="step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <h4>Review the Accounting Dashboard</h4>
+          <p>Open <span class="nav">Accounting</span>. The dashboard shows key financial metrics. After completing the front office steps, these should reflect real data — not zeros.</p>
+        </div>
+      </div>
+
+      <div class="expect">
+        <div class="expect-label">✓ What should be live (not hardcoded zeros)</div>
+        <ul>
+          <li><strong>Total Revenue</strong> — sum of all guest invoices generated</li>
+          <li><strong>Accounts Receivable</strong> — outstanding balance from Abena Mensah's invoice</li>
+          <li><strong>Net Income</strong> — revenue minus expenses recorded</li>
+          <li><strong>Occupancy</strong> — count of currently occupied rooms</li>
+        </ul>
+      </div>
+
+      <div class="sub-header">Accounts Payable — Pay a Supplier</div>
+
+      <div class="step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <h4>Create a Supplier (Business Partner)</h4>
+          <p>Go to <span class="nav">Accounting → Accounts Payable</span>. Click <span class="btn-sample">+ New Vendor</span> and enter:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th style="width:35%">Field</th><th>Value</th></tr>
+        <tr><td class="field">Supplier Name</td><td class="value">Fresh Foods Ghana Ltd</td></tr>
+        <tr><td class="field">Type</td><td class="value">Supplier / Vendor</td></tr>
+        <tr><td class="field">TIN</td><td class="value">C000999888777</td></tr>
+        <tr><td class="field">Phone</td><td class="value">+233 20 500 6060</td></tr>
+        <tr><td class="field">Payment Terms</td><td class="value">Net 30</td></tr>
+      </table>
+
+      <div class="step">
+        <div class="step-badge">3</div>
+        <div class="step-content">
+          <h4>Record a Supplier Invoice</h4>
+          <p>Click <span class="btn-sample">+ New Bill</span> for <strong>Fresh Foods Ghana Ltd</strong> and enter the purchase invoice:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th>Field</th><th>Value</th></tr>
+        <tr><td class="field">Invoice Number</td><td class="value">FFG-2026-0045</td></tr>
+        <tr><td class="field">Invoice Date</td><td class="value">Today</td></tr>
+        <tr><td class="field">Due Date</td><td class="value">Today + 30 days</td></tr>
+        <tr><td class="field">Line Item 1</td><td class="value">Fresh Produce — GHS 800.00</td></tr>
+        <tr><td class="field">Line Item 2</td><td class="value">Beverages Stock — GHS 400.00</td></tr>
+        <tr><td class="field">Tax Rate</td><td class="value">VAT 20% (creditable input VAT only)</td></tr>
+      </table>
+
+      <div class="expect">
+        <div class="expect-label">✓ Invoice totals you should see</div>
+        <ul>
+          <li>Subtotal: <strong>GHS 1,200.00</strong></li>
+          <li>VAT (creditable, 20%): <strong>GHS 240.00</strong></li>
+          <li>Note: NHIL &amp; GETFund do <strong>not</strong> apply on purchases (non-creditable rule)</li>
+          <li><strong>Invoice Total: GHS 1,440.00</strong></li>
+          <li>Status shows <strong>Outstanding</strong></li>
+          <li>Total Payables KPI increases by GHS 1,440.00</li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <div class="step-badge">4</div>
+        <div class="step-content">
+          <h4>Record Payment to Supplier</h4>
+          <p>On the bill, click <span class="btn-sample">Record Payment</span>. Enter a partial payment first:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th>Field</th><th>Value</th></tr>
+        <tr><td class="field">Amount</td><td class="value">GHS 720.00 (half payment)</td></tr>
+        <tr><td class="field">Payment Method</td><td class="value">Bank Transfer</td></tr>
+        <tr><td class="field">Reference</td><td class="value">TRF-20260608-001</td></tr>
+      </table>
+
+      <div class="expect">
+        <div class="expect-label">✓ After partial payment</div>
+        <ul>
+          <li>Invoice status changes to <strong>Partial</strong></li>
+          <li>Outstanding balance shows <strong>GHS 720.00</strong> (not GHS 1,440.00)</li>
+          <li>Total Payables KPI updates to reflect the remaining GHS 720.00</li>
+          <li>Payment appears in the payment history for that invoice</li>
+        </ul>
+      </div>
+
+      <div class="sub-header">Accounts Receivable — Collect from Corporate Guest</div>
+
+      <div class="step">
+        <div class="step-badge">5</div>
+        <div class="step-content">
+          <h4>Collect Payment from Abena Mensah</h4>
+          <p>Go to <span class="nav">Accounting → Accounts Receivable</span>. Find the invoice for <strong>Abena Mensah / Accra Business Ventures Ltd</strong>. Record full payment:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th>Field</th><th>Value</th></tr>
+        <tr><td class="field">Amount</td><td class="value">GHS 3,048.00 (full suite invoice)</td></tr>
+        <tr><td class="field">Payment Method</td><td class="value">Bank Transfer</td></tr>
+        <tr><td class="field">Reference</td><td class="value">ABV-PAY-001</td></tr>
+      </table>
+
+      <div class="expect">
+        <div class="expect-label">✓ After full payment collected</div>
+        <ul>
+          <li>Invoice status changes to <strong>Paid</strong></li>
+          <li>AR outstanding balance drops by GHS 3,048.00</li>
+          <li>Revenue KPI on the dashboard reflects this income</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 8 — TAX COMPLIANCE
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s8">
+    <div class="section-header">
+      <div class="section-num">8</div>
+      <div>
+        <h2>Tax &amp; Compliance — Verify the Levy Stack</h2>
+        <div class="section-sub">Go to: Accounting → Tax Rate Builder</div>
+      </div>
+    </div>
+    <div class="section-body">
+
+      <div class="step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <h4>Open the Tax Rate Builder</h4>
+          <p>Go to <span class="nav">Accounting → Taxes</span> (or click <strong>Manage Tax Rates →</strong> from Settings). You should be in the <strong>Tax Rate Builder</strong> tab. Country should be set to <strong>🇬🇭 Ghana</strong>.</p>
+        </div>
+      </div>
+
+      <div class="step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <h4>Check the Ghana Quick-Setup Banner</h4>
+          <p>At the top you should see a green banner showing Ghana's 4 levies. Verify these rates are correct:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th>Levy</th><th>GL Code</th><th>Expected Rate</th><th>Applied On</th></tr>
+        <tr><td class="field">NHIL</td><td class="value">2120</td><td class="value">2.5%</td><td class="note">Subtotal (before VAT)</td></tr>
+        <tr><td class="field">GETFund</td><td class="value">2130</td><td class="value">2.5%</td><td class="note">Subtotal (before VAT)</td></tr>
+        <tr><td class="field">VAT</td><td class="value">2110</td><td class="value">20%</td><td class="note">Subtotal + NHIL + GETFund</td></tr>
+        <tr><td class="field">Tourism Levy</td><td class="value">2150</td><td class="value">1%</td><td class="note">Rooms &amp; accommodation only</td></tr>
+        <tr><td class="field">WHT (Withholding)</td><td class="value">2160</td><td class="value">5%</td><td class="note">Supplier service payments only</td></tr>
+      </table>
+
+      <div class="step">
+        <div class="step-badge">3</div>
+        <div class="step-content">
+          <h4>Use the Tax Simulator</h4>
+          <p>Scroll down to the <strong>Unified Tax Simulator</strong>. Enter <strong>GHS 1,000</strong> as the amount, category <strong>HOTEL</strong>, domain <strong>Sales</strong>. Click calculate.</p>
+        </div>
+      </div>
+
+      <div class="expect">
+        <div class="expect-label">✓ Simulator should show</div>
+        <ul>
+          <li>NHIL: <strong>GHS 25.00</strong></li>
+          <li>GETFund: <strong>GHS 25.00</strong></li>
+          <li>VAT: <strong>GHS 210.00</strong></li>
+          <li>Tourism: <strong>GHS 10.00</strong></li>
+          <li>Total: <strong>GHS 1,270.00</strong> (or GHS 1,245.00 if Tourism is excluded from the stack — both are valid depending on configuration)</li>
+          <li>Effective rate shown: approximately <strong>24.5% – 27%</strong></li>
+        </ul>
+      </div>
+
+      <div class="step">
+        <div class="step-badge">4</div>
+        <div class="step-content">
+          <h4>Check Tax Rules Table</h4>
+          <p>In the <strong>Tax Rules</strong> table (set filter to Domain: Sales, Operation: Revenue Centre), verify that all 4 Ghana levy rules appear and are <strong>Active</strong>.</p>
+        </div>
+      </div>
+
+      <div class="expect">
+        <div class="expect-label">✓ Rules you should see in the table</div>
+        <ul>
+          <li>NHIL — 2.5% — Priority 10 — Base: subtotal — <span class="result-tag">Active</span></li>
+          <li>GETFund Levy — 2.5% — Priority 11 — Base: subtotal — <span class="result-tag">Active</span></li>
+          <li>VAT (Standard Rate) — 20% — Priority 20 — Base: subtotal_plus_applied — <span class="result-tag">Active</span></li>
+          <li>Tourism Levy — 1% — Priority 30 — Applies To: ROOM, HOTEL — <span class="result-tag">Active</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 9 — HR & PAYROLL
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s9">
+    <div class="section-header">
+      <div class="section-num">9</div>
+      <div>
+        <h2>HR &amp; Payroll — Add Staff, Run PAYE</h2>
+        <div class="section-sub">Go to: HR / Human Resources</div>
+      </div>
+    </div>
+    <div class="section-body">
+
+      <div class="sub-header">Add Two Employees</div>
+
+      <div class="step">
+        <div class="step-badge">1</div>
+        <div class="step-content">
+          <h4>Add Front Desk Agent</h4>
+          <p>Go to <span class="nav">HR → Employees → Add Employee</span>. Enter the details below:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th style="width:35%">Field</th><th>Value</th></tr>
+        <tr><td class="field">First Name</td><td class="value">Emmanuel</td></tr>
+        <tr><td class="field">Last Name</td><td class="value">Boateng</td></tr>
+        <tr><td class="field">Department</td><td class="value">Front Office</td></tr>
+        <tr><td class="field">Position</td><td class="value">Front Desk Agent</td></tr>
+        <tr><td class="field">Employment Type</td><td class="value">Full-time</td></tr>
+        <tr><td class="field">Basic Salary</td><td class="value">GHS 3,500 / month</td></tr>
+        <tr><td class="field">SSNIT Number</td><td class="value">G00012345678</td></tr>
+        <tr><td class="field">Tax Filing Status</td><td class="value">Single</td></tr>
+        <tr><td class="field">Transport Allowance</td><td class="value">GHS 300 / month (non-taxable)</td></tr>
+      </table>
+
+      <div class="step">
+        <div class="step-badge">2</div>
+        <div class="step-content">
+          <h4>Add Accountant</h4>
+          <p>Add a second employee:</p>
+        </div>
+      </div>
+
+      <table class="data-table">
+        <tr><th style="width:35%">Field</th><th>Value</th></tr>
+        <tr><td class="field">First Name</td><td class="value">Akosua</td></tr>
+        <tr><td class="field">Last Name</td><td class="value">Owusu</td></tr>
+        <tr><td class="field">Department</td><td class="value">Finance</td></tr>
+        <tr><td class="field">Position</td><td class="value">Accounts Officer</td></tr>
+        <tr><td class="field">Basic Salary</td><td class="value">GHS 5,000 / month</td></tr>
+        <tr><td class="field">SSNIT Number</td><td class="value">G00098765432</td></tr>
+        <tr><td class="field">Tax Filing Status</td><td class="value">Married</td></tr>
+        <tr><td class="field">Transport Allowance</td><td class="value">GHS 300 / month (non-taxable)</td></tr>
+      </table>
+
+      <div class="sub-header">Run Monthly Payroll</div>
+
+      <div class="step">
+        <div class="step-badge">3</div>
+        <div class="step-content">
+          <h4>Open the Payroll Builder</h4>
+          <p>Go to <span class="nav">HR → Payroll</span> or <span class="nav">Payroll Builder</span>. Click <span class="btn-sample">Load Template</span> and select <strong>Ghana</strong>. Then click <span class="btn-sample">Process Monthly Payroll</span>.</p>
+        </div>
+      </div>
+
+      <div class="sub-header">Understanding PAYE Calculations (GRA 2024)</div>
+
+      <p style="margin-bottom:12px; color:#374151;">Here is how Ghana PAYE (Pay As You Earn income tax) is calculated on a monthly salary. The tax is progressive — different rates apply to different bands:</p>
+
+      <table class="data-table">
+        <tr><th>Monthly Income Band</th><th>Annual Equivalent</th><th>Rate</th></tr>
+        <tr><td class="field">First GHS 365</td><td class="note">GHS 4,380 / yr</td><td><span class="result-tag">0% — Personal Relief</span></td></tr>
+        <tr><td class="field">Next GHS 110 (up to GHS 475)</td><td class="note">GHS 1,320 / yr</td><td class="value">5%</td></tr>
+        <tr><td class="field">Next GHS 130 (up to GHS 605)</td><td class="note">GHS 1,560 / yr</td><td class="value">10%</td></tr>
+        <tr><td class="field">Next GHS 3,000 (up to GHS 3,605)</td><td class="note">GHS 36,000 / yr</td><td class="value">17.5%</td></tr>
+        <tr><td class="field">Next GHS 16,395 (up to GHS 20,000)</td><td class="note">GHS 196,740 / yr</td><td class="value">25%</td></tr>
+        <tr><td class="field">Remainder above GHS 20,000</td><td class="note">Above GHS 240,000 / yr</td><td class="value">30%</td></tr>
+      </table>
+
+      <div class="expect">
+        <div class="expect-label">✓ Payroll result for Emmanuel Boateng (GHS 3,500 basic)</div>
+        <ul>
+          <li>Gross: <strong>GHS 3,800.00</strong> (3,500 + 300 transport allowance)</li>
+          <li>SSNIT Employee (5.5% of gross): <strong>−GHS 209.00</strong></li>
+          <li>Taxable income after SSNIT deduction: <strong>GHS 3,591.00</strong></li>
+          <li>Personal relief deducted: <strong>−GHS 365.00</strong></li>
+          <li>Income tax (PAYE on remaining GHS 3,226): approximately <strong>−GHS 380–430</strong></li>
+          <li>Net Pay: approximately <strong>GHS 3,160 – 3,210</strong></li>
+          <li>SSNIT Employer contribution (13%): <strong>GHS 494.00</strong> (hotel's cost, not deducted from employee)</li>
+        </ul>
+      </div>
+
+      <div class="expect">
+        <div class="expect-label">✓ Payroll result for Akosua Owusu (GHS 5,000 basic)</div>
+        <ul>
+          <li>Gross: <strong>GHS 5,300.00</strong> (5,000 + 300 transport)</li>
+          <li>SSNIT Employee (5.5%): <strong>−GHS 291.50</strong></li>
+          <li>Taxable after SSNIT: <strong>GHS 5,008.50</strong></li>
+          <li>Personal relief: <strong>−GHS 365.00</strong></li>
+          <li>PAYE on remaining GHS 4,643.50: approximately <strong>−GHS 590–630</strong></li>
+          <li>Net Pay: approximately <strong>GHS 4,380 – 4,420</strong></li>
+        </ul>
+      </div>
+
+      <div class="warn">
+        <div class="warn-label">Transport Allowance Note</div>
+        <p>The GHS 300 transport allowance is <strong>non-taxable</strong> and is included in gross pay but excluded from the PAYE calculation. This is correct per GRA guidelines.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       SECTION 10 — FINAL CHECKLIST
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s10">
+    <div class="section-header">
+      <div class="section-num">10</div>
+      <div>
+        <h2>Final Checklist &amp; Feedback</h2>
+        <div class="section-sub">Tick each item you verified · Note anything that failed or felt wrong</div>
+      </div>
+    </div>
+    <div class="section-body">
+
+      <div class="sub-header">Setup &amp; Configuration</div>
+      <ul class="checklist">
+        <li><input type="checkbox" class="check-box"><label> Hotel profile created with correct name, country, and currency (GHS)</label></li>
+        <li><input type="checkbox" class="check-box"><label> Ghana tax preset applied during setup wizard</label></li>
+        <li><input type="checkbox" class="check-box"><label> Settings shows read-only tax rate chips (not editable boxes)</label></li>
+        <li><input type="checkbox" class="check-box"><label> "Manage Tax Rates →" button redirects to Accounting Tax Builder</label></li>
+      </ul>
+
+      <div class="sub-header">Room Management</div>
+      <ul class="checklist">
+        <li><input type="checkbox" class="check-box"><label> Created 3 room types: Standard (GHS 450), Deluxe (GHS 650), Executive Suite (GHS 1,200)</label></li>
+        <li><input type="checkbox" class="check-box"><label> Created 6 rooms (101, 102, 201, 202, 301, 302) all showing Available</label></li>
+        <li><input type="checkbox" class="check-box"><label> Rates display in GHS throughout</label></li>
+      </ul>
+
+      <div class="sub-header">Front Office</div>
+      <ul class="checklist">
+        <li><input type="checkbox" class="check-box"><label> Booking created for Kwame Asante — Room 201 — 3 nights</label></li>
+        <li><input type="checkbox" class="check-box"><label> Tax breakdown visible on booking confirmation</label></li>
+        <li><input type="checkbox" class="check-box"><label> Check-in changed room status to Occupied</label></li>
+        <li><input type="checkbox" class="check-box"><label> Laundry charge of GHS 80 posted to folio</label></li>
+        <li><input type="checkbox" class="check-box"><label> Checkout generated invoice with GHS 0 balance after payment</label></li>
+        <li><input type="checkbox" class="check-box"><label> Room 201 changed to Dirty after checkout</label></li>
+        <li><input type="checkbox" class="check-box"><label> Booked Abena Mensah — Suite — 2 nights on credit</label></li>
+      </ul>
+
+      <div class="sub-header">Restaurant / F&amp;B</div>
+      <ul class="checklist">
+        <li><input type="checkbox" class="check-box"><label> F&amp;B charge of GHS 172 posted to Room 201</label></li>
+        <li><input type="checkbox" class="check-box"><label> Tourism Levy shows GHS 0.00 on F&amp;B charges (correct — not applicable to food)</label></li>
+        <li><input type="checkbox" class="check-box"><label> F&amp;B charge appears on guest folio</label></li>
+      </ul>
+
+      <div class="sub-header">Accounting</div>
+      <ul class="checklist">
+        <li><input type="checkbox" class="check-box"><label> Accounting dashboard shows real revenue (not zeros)</label></li>
+        <li><input type="checkbox" class="check-box"><label> Supplier "Fresh Foods Ghana Ltd" created</label></li>
+        <li><input type="checkbox" class="check-box"><label> Bill FFG-2026-0045 for GHS 1,440 recorded (GHS 1,200 + 20% VAT)</label></li>
+        <li><input type="checkbox" class="check-box"><label> Partial payment of GHS 720 reduced outstanding to GHS 720 (not still showing GHS 1,440)</label></li>
+        <li><input type="checkbox" class="check-box"><label> Abena Mensah invoice collected — status changed to Paid</label></li>
+        <li><input type="checkbox" class="check-box"><label> AR balance reduced after collection</label></li>
+      </ul>
+
+      <div class="sub-header">Tax &amp; Compliance</div>
+      <ul class="checklist">
+        <li><input type="checkbox" class="check-box"><label> Tax Rate Builder shows Ghana banner with NHIL 2.5%, GETFund 2.5%, VAT 20%, Tourism 1%</label></li>
+        <li><input type="checkbox" class="check-box"><label> Tax simulator on GHS 1,000 HOTEL gives NHIL=25, GETFund=25, VAT=210, Tourism=10</label></li>
+        <li><input type="checkbox" class="check-box"><label> 4 Ghana tax rules visible in the rules table and marked Active</label></li>
+      </ul>
+
+      <div class="sub-header">HR &amp; Payroll</div>
+      <ul class="checklist">
+        <li><input type="checkbox" class="check-box"><label> Emmanuel Boateng added — GHS 3,500 basic — Front Office</label></li>
+        <li><input type="checkbox" class="check-box"><label> Akosua Owusu added — GHS 5,000 basic — Finance</label></li>
+        <li><input type="checkbox" class="check-box"><label> Ghana template loaded in payroll builder — brackets show GRA 2024 bands</label></li>
+        <li><input type="checkbox" class="check-box"><label> SSNIT shows: Employee 5.5%, Employer 13%, Ceiling GHS 17,500</label></li>
+        <li><input type="checkbox" class="check-box"><label> Monthly payroll processed — net pay figures reasonable (see expected ranges above)</label></li>
+        <li><input type="checkbox" class="check-box"><label> Payroll records appear in payroll history</label></li>
+      </ul>
+
+      <div style="margin-top: 28px; padding: 20px; background: #f0fdf4; border: 1px solid #86efac; border-radius: 10px;">
+        <div style="font-weight: 700; color: var(--green); margin-bottom: 10px; font-size: 1rem;">📝 Feedback Notes</div>
+        <p style="font-size: 0.88rem; color: #374151; margin-bottom: 12px;">Please note below anything that:</p>
+        <ul style="font-size: 0.88rem; color: #374151; padding-left: 18px; margin-bottom: 16px;">
+          <li>Gave an unexpected result or wrong number</li>
+          <li>Was confusing or unclear to navigate</li>
+          <li>Crashed, threw an error, or showed a blank screen</li>
+          <li>Felt slow or unresponsive</li>
+          <li>Looked good or worked exactly as expected (positive feedback counts too!)</li>
+        </ul>
+        <div style="background: white; border: 1px solid var(--border); border-radius: 6px; padding: 60px 16px; color: #9ca3af; font-size: 0.85rem; text-align: center;">
+          [Write your notes here — or use a separate sheet of paper / voice note]
+        </div>
+      </div>
+
+      <div style="margin-top: 24px; padding: 16px 20px; background: var(--warn-bg); border: 1px solid #fde68a; border-radius: 8px;">
+        <div style="font-weight: 700; color: #92400e; margin-bottom: 6px;">Thank you for your time!</div>
+        <p style="font-size: 0.88rem; color: #78350f;">
+          Send your completed checklist and feedback notes back to the developer. Screenshots of any errors are very helpful.
+          Your feedback directly shapes how the system is improved before it goes live.
+        </p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<footer>
+  <p><strong>Akwaaba Grand Hotel Management System</strong> — Friend &amp; Stakeholder Audit Guide</p>
+  <p style="margin-top:4px;">Ghana Revenue Authority tax rates current as at GRA 2024 gazette · Document generated June 2026</p>
+</footer>
 
 </body>
 </html>
