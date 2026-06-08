@@ -138,10 +138,10 @@ export default function AccountsReceivable() {
 	// Get active tax rates from config or use defaults
 	const activeTaxRates = useMemo(() => {
 		const defaultRates = {
-			VAT: { name: 'VAT', rate: 15.0 },
-			NHIL: { name: 'NHIL', rate: 2.5 },
-			GETFUND: { name: 'GETFund Levy', rate: 2.5 },
-			TOURISM: { name: 'Tourism Levy', rate: 1.0 },
+			VAT:     { name: 'VAT',          rate: 20.0 },
+			NHIL:    { name: 'NHIL',         rate: 2.5  },
+			GETFUND: { name: 'GETFund Levy', rate: 2.5  },
+			TOURISM: { name: 'Tourism Levy', rate: 1.0  },
 		};
 		
 		if (taxConfigs && taxConfigs.length > 0) {

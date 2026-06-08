@@ -15,13 +15,16 @@ function ensureFiles() {
   if (!fs.existsSync(typesFile)) fs.writeFileSync(typesFile, JSON.stringify([], null, 2));
 }
 
+// Ghana hospitality levy stack (GRA rates):
+//   NHIL 2.5% + GETFund 2.5% + Tourism 1.0% on exclusive base (non-creditable)
+//   VAT 20% on (exclusive + pre-VAT levies) — total ≈ 26%
 function seedTaxes() {
   const now = Date.now();
   return [
-    { id: `${now}-nhil`, countryCode: 'GH', name: 'NHIL', rate: 2.5, glCode: '2150', appliesTo: ['ALL'] },
-    { id: `${now}-getfund`, countryCode: 'GH', name: 'GETFund Levy', rate: 2.5, glCode: '2151', appliesTo: ['ALL'] },
-    { id: `${now}-vat`, countryCode: 'GH', name: 'VAT (Standard Rate)', rate: 15, glCode: '2153', appliesTo: ['ALL'] },
-    { id: `${now}-tourism`, countryCode: 'GH', name: 'Tourism Levy', rate: 1.0, glCode: '2154', appliesTo: ['ROOM', 'F&B'] },
+    { id: `${now}-nhil`,    countryCode: 'GH', name: 'NHIL',             rate: 2.5,  glCode: '2120', appliesTo: ['ALL'],          isRecoverable: false },
+    { id: `${now}-getfund`, countryCode: 'GH', name: 'GETFund Levy',     rate: 2.5,  glCode: '2130', appliesTo: ['ALL'],          isRecoverable: false },
+    { id: `${now}-tourism`, countryCode: 'GH', name: 'Tourism Levy',     rate: 1.0,  glCode: '2150', appliesTo: ['ROOM', 'F&B'], isRecoverable: false },
+    { id: `${now}-vat`,     countryCode: 'GH', name: 'VAT (Standard Rate)', rate: 20, glCode: '2110', appliesTo: ['ALL'],         isRecoverable: true  },
   ];
 }
 

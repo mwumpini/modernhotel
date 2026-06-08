@@ -619,7 +619,7 @@ export default function AccountsPayablePage() {
                       taxAmount: 0,
                       total: 0,
                       description: '',
-                      lines: [{ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 15, glAccountCode: '5100' }]
+                      lines: [{ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 20, glAccountCode: '5100' }]
                     });
                     setIsOpen(true);
                   }}>
@@ -1410,7 +1410,7 @@ export default function AccountsPayablePage() {
                 <h4 className="font-semibold">Line Items</h4>
                 <Button size="sm" variant="bordered" onClick={() => {
                   const next = [...(form.lines || [])];
-                  next.push({ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 15, glAccountCode: '5100', uom: 'Each', costCenter: '' });
+                  next.push({ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 20, glAccountCode: '5100', uom: 'Each', costCenter: '' });
                   const subtotal = next.reduce((s, l) => s + (Number(l.quantity||0)*Number(l.unitPrice||0)), 0);
                   const taxAmount = next.reduce((s, l) => s + ((Number(l.quantity||0)*Number(l.unitPrice||0)) * Number(l.taxPercent||0) / 100), 0);
                   setForm({ ...form, lines: next, subtotal: +subtotal.toFixed(2), taxAmount: +taxAmount.toFixed(2), total: +(subtotal+taxAmount).toFixed(2) });

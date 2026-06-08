@@ -63,7 +63,10 @@ export function taxConfigsFromGhanaTemplate(): TaxConfig[] {
                 : key === 'NHIL'
                   ? 'NHIL'
                   : 'Other';
-    const applyOnPurchases = type !== 'Withholding';
+    // NHIL, GETFund and Tourism are non-creditable — businesses cannot claim input tax
+    // relief on them. They appear on sales invoices but are a cost (not recoverable) on purchases.
+    const nonCreditable = type === 'NHIL' || type === 'GETFund' || type === 'Tourism';
+    const applyOnPurchases = !nonCreditable && type !== 'Withholding';
     const applyOnSales = type !== 'Withholding';
     return {
       id: String(index + 1),
@@ -72,7 +75,7 @@ export function taxConfigsFromGhanaTemplate(): TaxConfig[] {
       rate: tax.rate,
       type,
       glAccountCode: tax.glCode,
-      isRecoverable: type !== 'Withholding',
+      isRecoverable: !nonCreditable && type !== 'Withholding',
       isActive: tax.rate > 0 || type === 'COVID19',
       effectiveFrom: new Date().toISOString(),
       countryCode: 'GH',

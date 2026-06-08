@@ -536,14 +536,18 @@ export interface AuditTrail {
 
 // Ghana-Specific Tax Codes
 /** Default rates + **leaf** GL codes (must match `GHANA_CHART_OF_ACCOUNTS` tax payables). */
+// Ghana hospitality levy stack (effective rates per GRA / Tourism Act):
+//   NHIL 2.5% + GETFund 2.5% + Tourism 1.0% applied on tax-exclusive base (NON-creditable)
+//   VAT 20% applied on (exclusive + pre-VAT levies) — total effective burden ≈ 26%
+// NHIL, GETFund and Tourism are not creditable on purchases (no input tax relief).
 export const GHANA_TAX_CODES = {
-  VAT: { code: 'VAT', name: 'Value Added Tax', rate: 15.0, glCode: '2110' },
-  NHIL: { code: 'NHIL', name: 'National Health Insurance Levy', rate: 2.5, glCode: '2120' },
-  GETFUND: { code: 'GETFUND', name: 'Ghana Education Trust Fund', rate: 2.5, glCode: '2130' },
+  VAT:         { code: 'VAT',         name: 'Value Added Tax',                rate: 20.0, glCode: '2110' },
+  NHIL:        { code: 'NHIL',        name: 'National Health Insurance Levy', rate: 2.5,  glCode: '2120' },
+  GETFUND:     { code: 'GETFUND',     name: 'GETFund Levy',                   rate: 2.5,  glCode: '2130' },
   /** @deprecated Abolished; retained for historical invoices only */
-  COVID19: { code: 'COVID19', name: 'COVID-19 Recovery Levy (legacy)', rate: 0, glCode: '2140' },
-  TOURISM: { code: 'TOURISM', name: 'Tourism Development Levy', rate: 1.0, glCode: '2150' },
-  WITHHOLDING: { code: 'WITHHOLDING', name: 'Withholding Tax', rate: 5.0, glCode: '2160' }
+  COVID19:     { code: 'COVID19',     name: 'COVID-19 Recovery Levy (legacy)', rate: 0,   glCode: '2140' },
+  TOURISM:     { code: 'TOURISM',     name: 'Tourism Development Levy',       rate: 1.0,  glCode: '2150' },
+  WITHHOLDING: { code: 'WITHHOLDING', name: 'Withholding Tax',                rate: 5.0,  glCode: '2160' },
 };
 
 // Standard Chart of Accounts for Ghana Hotels
