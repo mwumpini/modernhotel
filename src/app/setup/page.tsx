@@ -45,10 +45,10 @@ export default function SetupWizardPage() {
       currencySymbol: '₵',
       timezone: 'Africa/Accra',
       localization: { language: 'en', dateFormat: 'DD/MM/YYYY', timeFormat: 'HH:mm' },
-      taxes: { vat: 15, nhil: 2.5, tourismLevy: 1.0 },
+      taxes: { vat: 20, nhil: 2.5, tourismLevy: 1.0 },
       priceDisplayFormat: 'symbol',
       roundingRule: 'nearest',
-      defaultTaxScheme: 'Ghana Standard'
+      defaultTaxScheme: 'Ghana Standard (NHIL+GETFund+Tourism+VAT)'
     },
     NG: {
       name: 'Nigeria',
@@ -95,8 +95,8 @@ export default function SetupWizardPage() {
   // Tax Schemes per country (linked to compliance tax rates)
   const TAX_SCHEMES: Record<string, Array<{ key: string; name: string; rates: { vat?: number; nhil?: number; tourismLevy?: number } }>> = {
     GH: [
-      { key: 'GH_STANDARD', name: 'Ghana Standard', rates: { vat: 15, nhil: 2.5, tourismLevy: 1.0 } },
-      { key: 'GH_VAT_ONLY', name: 'Ghana VAT Only', rates: { vat: 15 } },
+      { key: 'GH_STANDARD', name: 'Ghana Standard (NHIL+GETFund+Tourism+VAT)', rates: { vat: 20, nhil: 2.5, tourismLevy: 1.0 } },
+      { key: 'GH_VAT_ONLY', name: 'Ghana VAT Only', rates: { vat: 20 } },
       { key: 'GH_ZERO', name: 'Zero-Rated', rates: { vat: 0, nhil: 0, tourismLevy: 0 } },
     ],
     NG: [

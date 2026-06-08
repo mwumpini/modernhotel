@@ -1,10 +1,11 @@
 'use client';
 
 import React, { useState } from 'react';
-import { 
-  Card, 
-  CardBody, 
-  CardHeader, 
+import { useRouter } from 'next/navigation';
+import {
+  Card,
+  CardBody,
+  CardHeader,
   Button,
   Input,
   Select,
@@ -27,9 +28,13 @@ import {
   Textarea
 } from "@heroui/react";
 import { useSettingsStore, CountryCompliance } from '../lib/settings/store';
+import { getCanonicalTaxRates } from '../lib/tax/engine';
 
 export default function CountryManagement() {
-  const { 
+  const router = useRouter();
+  const liveRates = getCanonicalTaxRates();
+
+  const {
     defaultCountry,
     supportedCountries,
     countryCompliance,
@@ -38,6 +43,11 @@ export default function CountryManagement() {
     removeCountry,
     updateNestedSetting
   } = useSettingsStore();
+
+  const goToTaxSettings = () => {
+    try { localStorage.setItem('accounting.tab', 'taxes'); } catch {}
+    router.push('/accounting');
+  };
   
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [selectedCountry, setSelectedCountry] = useState<string>('');
@@ -333,41 +343,24 @@ export default function CountryManagement() {
 
               <Divider />
 
-              {/* Tax Configuration */}
+              {/* Tax Configuration — read-only display; edit via Accounting → Tax Settings */}
               <div>
-                <h5 className="font-semibold mb-3">Tax Configuration</h5>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Input
-                    label="VAT Rate (%)"
-                    type="number"
-                    step="0.1"
-                    value={String(newCountry.taxRates?.vat || '')}
-                    onChange={(e) => setNewCountry({
-                      ...newCountry, 
-                      taxRates: {...newCountry.taxRates, vat: parseFloat(e.target.value) || 0}
-                    })}
-                  />
-                  <Input
-                    label="GST Rate (%)"
-                    type="number"
-                    step="0.1"
-                    value={String(newCountry.taxRates?.gst || '')}
-                    onChange={(e) => setNewCountry({
-                      ...newCountry, 
-                      taxRates: {...newCountry.taxRates, gst: parseFloat(e.target.value) || 0}
-                    })}
-                  />
-                  <Input
-                    label="Sales Tax (%)"
-                    type="number"
-                    step="0.1"
-                    value={String(newCountry.taxRates?.salesTax || '')}
-                    onChange={(e) => setNewCountry({
-                      ...newCountry, 
-                      taxRates: {...newCountry.taxRates, salesTax: parseFloat(e.target.value) || 0}
-                    })}
-                  />
+                <div className="flex items-center justify-between mb-3">
+                  <h5 className="font-semibold">Tax Configuration</h5>
+                  <Button size="sm" variant="flat" color="primary" onPress={goToTaxSettings}>
+                    Manage Tax Rates →
+                  </Button>
                 </div>
+                <div className="flex flex-wrap gap-2 p-3 bg-gray-50 rounded-lg border border-dashed border-gray-300">
+                  <Chip variant="flat" color="primary">VAT {liveRates.vat}%</Chip>
+                  <Chip variant="flat" color="secondary">NHIL {liveRates.nhil}%</Chip>
+                  <Chip variant="flat" color="secondary">GETFund {liveRates.getfund}%</Chip>
+                  <Chip variant="flat" color="warning">Tourism {liveRates.tourismLevy}%</Chip>
+                  <Chip variant="flat" color="default">WHT {liveRates.withholding}%</Chip>
+                </div>
+                <p className="text-xs text-gray-500 mt-2">
+                  Live rates from the accounting engine. Click "Manage Tax Rates" to add, edit, or deactivate levies in the Tax Rate Builder.
+                </p>
               </div>
 
               <Divider />
