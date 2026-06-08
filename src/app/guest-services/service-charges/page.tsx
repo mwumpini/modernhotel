@@ -566,9 +566,18 @@ export default function ServiceChargesPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Badge color={getStatusColor(charge.status)} variant="flat">
-                          {charge.status.toUpperCase()}
-                        </Badge>
+                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold
+                          ${charge.status === 'paid' ? 'bg-green-100 text-green-700 border border-green-200'
+                          : charge.status === 'approved' ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                          : charge.status === 'billed' ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                          : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full
+                            ${charge.status === 'paid' ? 'bg-green-500'
+                            : charge.status === 'approved' ? 'bg-blue-500'
+                            : charge.status === 'billed' ? 'bg-purple-500'
+                            : 'bg-amber-500'}`} />
+                          {charge.status.charAt(0).toUpperCase() + charge.status.slice(1)}
+                        </span>
                       </TableCell>
                       <TableCell>
                         <div className="text-sm">
@@ -579,10 +588,12 @@ export default function ServiceChargesPage() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        <div className="flex gap-2">
+                        <div className="flex gap-1">
                           <Button
                             size="sm"
-                            variant="flat"
+                            color="primary"
+                            variant="solid"
+                            className="bg-blue-600 text-white font-semibold px-3 py-1"
                             onClick={() => {
                               setSelectedCharge(charge);
                               setIsViewModalOpen(true);
@@ -594,16 +605,18 @@ export default function ServiceChargesPage() {
                             <Button
                               size="sm"
                               color="success"
-                              variant="flat"
+                              variant="solid"
+                              className="bg-green-600 text-white font-semibold px-3 py-1"
                               onClick={() => handlePaymentClick(charge)}
                             >
-                              💳 Pay
+                              Pay
                             </Button>
                           )}
                           <Button
                             size="sm"
-                            color="primary"
-                            variant="flat"
+                            color="default"
+                            variant="solid"
+                            className="bg-gray-600 text-white font-semibold px-3 py-1"
                             onClick={() => {
                               setSelectedCharge(charge);
                               setIsEditModalOpen(true);

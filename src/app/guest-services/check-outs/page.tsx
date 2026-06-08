@@ -7,8 +7,9 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Card, 
-  CardBody, 
+  Card,
+  CardHeader,
+  CardBody,
   Button, 
   Badge, 
   Table, 
@@ -749,17 +750,47 @@ export default function CheckOutsPage() {
                     </span>
                   </TableCell>
                   <TableCell className="text-center">
-                    <Badge color={getStatusColor(checkOut.status)} variant="flat" className="font-medium">
-                        {getStatusText(checkOut.status)}
-                      </Badge>
+                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold
+                      ${checkOut.status === 'completed' ? 'bg-green-100 text-green-700 border border-green-200'
+                      : checkOut.status === 'processing' ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                      : checkOut.status === 'extended' ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                      : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
+                      <span className={`w-1.5 h-1.5 rounded-full
+                        ${checkOut.status === 'completed' ? 'bg-green-500'
+                        : checkOut.status === 'processing' ? 'bg-blue-500'
+                        : checkOut.status === 'extended' ? 'bg-purple-500'
+                        : 'bg-amber-500'}`} />
+                      {getStatusText(checkOut.status)}
+                    </span>
                   </TableCell>
                   <TableCell>
                     <div className="flex gap-1 justify-center">
-                      <Button size="sm" variant="light" onClick={() => openCheckOutModal(checkOut)}>View</Button>
+                      <Button
+                        size="sm"
+                        color="primary"
+                        variant="solid"
+                        className="bg-blue-600 text-white font-semibold px-3 py-1"
+                        onClick={() => openCheckOutModal(checkOut)}
+                      >
+                        View
+                      </Button>
                       {(checkOut.outstandingBalance || 0) > 0 && (
-                        <Button size="sm" color="success" variant="flat" onClick={() => handleManageFolio(checkOut)}>Add Payment</Button>
+                        <Button
+                          size="sm"
+                          color="success"
+                          variant="solid"
+                          className="bg-green-600 text-white font-semibold px-3 py-1"
+                          onClick={() => handleManageFolio(checkOut)}
+                        >
+                          Pay
+                        </Button>
                       )}
-                      <Button size="sm" variant="light" onClick={() => {
+                      <Button
+                        size="sm"
+                        color="default"
+                        variant="solid"
+                        className="bg-gray-600 text-white font-semibold px-3 py-1"
+                        onClick={() => {
                         const inv = {
                           id: checkOut.id,
                           invoiceNumber: `INV-${checkOut.id}`,
@@ -800,7 +831,19 @@ export default function CheckOutsPage() {
                           } as any;
                           openPrintPreview('invoice' as any, settings.printing.invoice || 'ghana-top-class-invoice', data);
                         } catch {}
-                      }}>Print</Button>
+                      }}
+                      >
+                        Print
+                      </Button>
+                      <Button
+                        size="sm"
+                        color="danger"
+                        variant="solid"
+                        className="bg-red-600 text-white font-semibold px-3 py-1"
+                        onClick={() => openCheckOutModal(checkOut)}
+                      >
+                        Check Out
+                      </Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -818,189 +861,251 @@ export default function CheckOutsPage() {
           </div>
         </div>
 
-        <Modal isOpen={isOpen} onClose={onClose} size="4xl">
+        <Modal isOpen={isOpen} onClose={onClose} size="5xl" scrollBehavior="inside">
           <ModalContent>
-            <ModalHeader>Process Check-out</ModalHeader>
-            <ModalBody>
+            <ModalHeader className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white p-0">
+              <div className="flex items-center gap-3 px-6 py-4 w-full">
+                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center flex-shrink-0">
+                  <span className="text-xl">🚪</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h2 className="text-xl font-bold">Process Check-out</h2>
+                  <p className="text-emerald-100 text-sm truncate">
+                    {selectedCheckOut?.guestName} • Room {selectedCheckOut?.roomNumber} • {selectedCheckOut?.nightsStayed} night{selectedCheckOut?.nightsStayed !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                <div className="flex-shrink-0 text-right">
+                  <p className="text-xs text-emerald-200">Check-in</p>
+                  <p className="text-sm font-semibold text-white">{selectedCheckOut ? new Date(selectedCheckOut.checkInDate).toLocaleDateString('en-GH', { day: 'numeric', month: 'short' }) : ''}</p>
+                </div>
+                <div className="text-emerald-300 text-lg mx-1">→</div>
+                <div className="flex-shrink-0 text-right">
+                  <p className="text-xs text-emerald-200">Check-out</p>
+                  <p className="text-sm font-semibold text-white">{selectedCheckOut ? new Date(selectedCheckOut.checkOutDate).toLocaleDateString('en-GH', { day: 'numeric', month: 'short' }) : ''}</p>
+                </div>
+              </div>
+            </ModalHeader>
+            <ModalBody className="p-6">
               {selectedCheckOut && (() => {
                 const settingsState = useSettingsStore.getState();
                 const policy = settingsState.roomManagement?.payLaterPolicy || 'both';
                 const res = frontOfficeStore.reservations.find(r => r.id === selectedCheckOut.id);
                 const isCorporate = !!(res?.companyName || res?.billingPersonName);
                 const payLaterAllowed = (policy === 'both') || (policy === 'corporate' && isCorporate) || (policy === 'individual' && !isCorporate);
+                const folio = frontOfficeStore.getOrCreateFolio(selectedCheckOut.id);
+                frontOfficeStore.updateFolioBalances(folio);
+                const folioTotals = getFolioDisplayTotals(folio);
+                const balance = selectedCheckOut.outstandingBalance; // true balance, can be negative
+                const reservation = frontOfficeStore.reservations.find(r => r.id === selectedCheckOut.id);
+                const guestProfile = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
+                const creditBalance = guestProfile?.creditBalance || 0;
                 return (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Guest Name</label>
-                      <p className="text-lg font-semibold">{selectedCheckOut.guestName}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Room Number</label>
-                      <p className="text-lg font-semibold">{selectedCheckOut.roomNumber}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Check-in Date</label>
-                      <p className="text-lg">{new Date(selectedCheckOut.checkInDate).toLocaleDateString()}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Check-out Date</label>
-                      <p className="text-lg">{new Date(selectedCheckOut.checkOutDate).toLocaleDateString()}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Nights Stayed</label>
-                      <p className="text-lg">{selectedCheckOut.nightsStayed}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Total Charges</label>
-                      <p className="text-lg font-semibold text-green-600">₵{selectedCheckOut.totalCharges.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Total Payments</label>
-                      <p className="text-lg font-semibold text-blue-600">₵{selectedCheckOut.totalPayments.toLocaleString()}</p>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Outstanding Balance</label>
-                      <p className="text-lg font-semibold text-red-600">₵{selectedCheckOut.outstandingBalance.toLocaleString()}</p>
-                    </div>
-                    {(() => {
-                      const reservation = frontOfficeStore.reservations.find(r => r.id === selectedCheckOut.id);
-                      const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
-                      const creditBalance = guest?.creditBalance || 0;
-                      return creditBalance > 0 ? (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">Available Credit</label>
-                          <p className="text-lg font-semibold text-green-600">₵{creditBalance.toLocaleString()}</p>
+                <div className="space-y-6">
+
+                  {/* ── KPI Summary Cards ── */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
+                      <CardBody className="text-center p-4">
+                        <div className="text-2xl font-bold text-blue-600">₵{folioTotals.roomChargesInclusive.toLocaleString()}</div>
+                        <div className="text-sm text-blue-700 font-medium">Room Charges</div>
+                        <div className="text-xs text-blue-500 mt-1">incl. tax</div>
+                      </CardBody>
+                    </Card>
+                    <Card className="bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200">
+                      <CardBody className="text-center p-4">
+                        <div className="text-2xl font-bold text-orange-600">₵{folioTotals.serviceChargesInclusive.toLocaleString()}</div>
+                        <div className="text-sm text-orange-700 font-medium">Service Charges</div>
+                        <div className="text-xs text-orange-500 mt-1">incl. tax</div>
+                      </CardBody>
+                    </Card>
+                    <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
+                      <CardBody className="text-center p-4">
+                        <div className="text-2xl font-bold text-green-600">₵{folioTotals.totalPayments.toLocaleString()}</div>
+                        <div className="text-sm text-green-700 font-medium">Payments</div>
+                        <div className="text-xs text-green-500 mt-1">{folio.payments?.length || 0} transactions</div>
+                      </CardBody>
+                    </Card>
+                    <Card className={`${balance > 0 ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' : balance < 0 ? 'bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200' : 'bg-gradient-to-br from-gray-50 to-gray-100 border-gray-200'}`}>
+                      <CardBody className="text-center p-4">
+                        <div className={`text-2xl font-bold ${balance > 0 ? 'text-red-600' : balance < 0 ? 'text-emerald-600' : 'text-gray-500'}`}>
+                          ₵{Math.abs(balance).toLocaleString()}
                         </div>
-                      ) : null;
-                    })()}
-                  </div>
-                  
-                  {selectedCheckOut.specialRequests && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Special Requests</label>
-                      <p className="text-gray-600">{selectedCheckOut.specialRequests}</p>
-                    </div>
-                  )}
-                  
-                  {selectedCheckOut.billingPerson && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Billing Person</label>
-                      <p className="text-gray-600">{selectedCheckOut.billingPerson}</p>
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Check-out Notes</label>
-                    <Textarea
-                      placeholder="Add any notes about the guest's stay or checkout..."
-                      value={checkoutNotes}
-                      onChange={(e) => setCheckoutNotes(e.target.value)}
-                      className="w-full"
-                      rows={3}
-                    />
+                        <div className={`text-sm font-medium ${balance > 0 ? 'text-red-700' : balance < 0 ? 'text-emerald-700' : 'text-gray-600'}`}>
+                          {balance > 0 ? 'Outstanding' : balance < 0 ? 'Credit / Overpaid' : 'Settled'}
+                        </div>
+                        <div className={`text-xs mt-1 ${balance > 0 ? 'text-red-500' : balance < 0 ? 'text-emerald-500' : 'text-gray-400'}`}>
+                          {balance > 0 ? 'Amount owed' : balance < 0 ? 'Refund owed' : 'Fully paid'}
+                        </div>
+                      </CardBody>
+                    </Card>
                   </div>
 
-                  {/* Folio Details */}
-                  <div className="border-t pt-3">
-                    <h4 className="text-sm font-semibold text-gray-800 mb-2">Folio</h4>
-                    <Accordion>
-                      <AccordionItem key="charges" aria-label="Charges" title="View Folio Charges">
-                        <div className="space-y-2">
-                          {(() => {
-                            const folio = frontOfficeStore.getOrCreateFolio(selectedCheckOut.id);
-                            if (!folio.charges.length) {
-                              return <p className="text-sm text-gray-500">No charges posted.</p>;
-                            }
-                            return (
-                              <Table aria-label="Folio charges">
+                  {/* ── Charges & Payments Breakdown ── */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <Card className="border-0 shadow-lg">
+                      <CardHeader className="bg-gray-50">
+                        <h3 className="text-base font-bold text-gray-800 flex items-center gap-2">
+                          <span className="text-blue-600">💰</span> Charges Breakdown
+                        </h3>
+                      </CardHeader>
+                      <CardBody className="p-0">
+                        <div className="space-y-1 p-4">
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-sm text-gray-600">Room Charges</span>
+                            <span className="font-semibold text-blue-600">₵{folioTotals.roomChargesInclusive.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-sm text-gray-600">Service Charges</span>
+                            <span className="font-semibold text-orange-600">₵{folioTotals.serviceChargesInclusive.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-sm text-gray-600">Other Charges</span>
+                            <span className="font-semibold text-purple-600">₵{folioTotals.otherCharges.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-sm text-gray-600">Taxes (VAT + NHIL + GETFund + Tourism)</span>
+                            <span className="font-semibold text-red-600">₵{folioTotals.taxTotal.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-3 bg-gray-50 rounded-lg px-3 mt-2">
+                            <span className="font-bold text-gray-800 text-sm">Total Charges (Incl. Tax)</span>
+                            <span className="font-bold text-base text-gray-800">₵{folioTotals.totalCharges.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      </CardBody>
+                    </Card>
+
+                    <Card className="border-0 shadow-lg">
+                      <CardHeader className="bg-gray-50">
+                        <h3 className="text-base font-bold text-gray-800 flex items-center gap-2">
+                          <span className="text-green-600">💳</span> Payment Summary
+                        </h3>
+                      </CardHeader>
+                      <CardBody className="p-0">
+                        <div className="space-y-1 p-4">
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-sm text-gray-600">Total Payments</span>
+                            <span className="font-semibold text-green-600">₵{folioTotals.totalPayments.toFixed(2)}</span>
+                          </div>
+                          <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                            <span className="text-sm text-gray-600">Payment Methods</span>
+                            <span className="text-sm text-gray-500 text-right max-w-[180px] truncate">
+                              {folio.payments?.filter(p => p.status === 'completed').map(p => p.method).join(', ') || 'None'}
+                            </span>
+                          </div>
+                          {creditBalance > 0 && (
+                            <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                              <span className="text-sm text-gray-600">Available Credit</span>
+                              <span className="font-semibold text-emerald-600">₵{creditBalance.toFixed(2)}</span>
+                            </div>
+                          )}
+                          {selectedCheckOut.billingPerson && (
+                            <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                              <span className="text-sm text-gray-600">Billed To</span>
+                              <span className="text-sm text-gray-700 font-medium">{selectedCheckOut.billingPerson}</span>
+                            </div>
+                          )}
+                          <div className={`flex justify-between items-center py-3 rounded-lg px-3 mt-2 ${balance > 0 ? 'bg-red-50' : balance < 0 ? 'bg-emerald-50' : 'bg-gray-50'}`}>
+                            <span className="font-bold text-gray-800 text-sm">{balance < 0 ? 'Credit Balance' : 'Current Balance'}</span>
+                            <span className={`font-bold text-base ${balance > 0 ? 'text-red-600' : balance < 0 ? 'text-emerald-600' : 'text-gray-500'}`}>
+                              {balance < 0 ? '-' : ''}₵{Math.abs(balance).toFixed(2)}
+                            </span>
+                          </div>
+                        </div>
+                      </CardBody>
+                    </Card>
+                  </div>
+
+                  {/* ── Folio Line Items (Accordion) ── */}
+                  <Card className="border-0 shadow-lg">
+                    <CardHeader className="bg-gray-50">
+                      <h3 className="text-base font-bold text-gray-800 flex items-center gap-2">
+                        <span className="text-purple-600">📋</span> Folio Line Items
+                      </h3>
+                    </CardHeader>
+                    <CardBody className="p-2">
+                      <Accordion>
+                        <AccordionItem key="charges" aria-label="Charges" title={`Charges (${folio.charges?.length || 0})`}>
+                          <div className="max-h-52 overflow-y-auto">
+                            {folio.charges?.length ? (
+                              <Table aria-label="Folio charges" removeWrapper>
                                 <TableHeader>
                                   <TableColumn>DATE</TableColumn>
                                   <TableColumn>DESCRIPTION</TableColumn>
-                                  <TableColumn align="end">AMOUNT</TableColumn>
+                                  <TableColumn align="end">NET</TableColumn>
                                   <TableColumn align="end">TAX</TableColumn>
                                 </TableHeader>
                                 <TableBody>
                                   {folio.charges.map(c => (
                                     <TableRow key={c.id}>
-                                      <TableCell>{new Date(c.date).toLocaleDateString()}</TableCell>
-                                      <TableCell>{c.description}</TableCell>
-                                      <TableCell>₵{c.amount.toFixed(2)}</TableCell>
-                                      <TableCell>₵{(c.tax || 0).toFixed(2)}</TableCell>
+                                      <TableCell className="text-xs text-gray-500">{new Date(c.date).toLocaleDateString('en-GH', { day: 'numeric', month: 'short' })}</TableCell>
+                                      <TableCell className="text-sm">{c.description}</TableCell>
+                                      <TableCell className={`text-sm font-medium text-right ${c.amount < 0 ? 'text-emerald-600' : ''}`}>₵{c.amount.toFixed(2)}</TableCell>
+                                      <TableCell className="text-sm text-right text-gray-500">₵{(c.tax || 0).toFixed(2)}</TableCell>
                                     </TableRow>
                                   ))}
                                 </TableBody>
                               </Table>
-                            );
-                          })()}
-                        </div>
-                      </AccordionItem>
-                      <AccordionItem key="payments" aria-label="Payments" title="View Payments">
-                        <div className="space-y-2">
-                          {(() => {
-                            const folio = frontOfficeStore.getOrCreateFolio(selectedCheckOut.id);
-                            if (!folio.payments.length) {
-                              return <p className="text-sm text-gray-500">No payments received.</p>;
-                            }
-                            return (
-                              <Table aria-label="Folio payments">
+                            ) : <p className="text-sm text-gray-500 py-3 text-center">No charges posted</p>}
+                          </div>
+                        </AccordionItem>
+                        <AccordionItem key="payments" aria-label="Payments" title={`Payments (${folio.payments?.length || 0})`}>
+                          <div className="max-h-52 overflow-y-auto">
+                            {folio.payments?.length ? (
+                              <Table aria-label="Folio payments" removeWrapper>
                                 <TableHeader>
                                   <TableColumn>DATE</TableColumn>
                                   <TableColumn>METHOD</TableColumn>
                                   <TableColumn align="end">AMOUNT</TableColumn>
                                   <TableColumn>STATUS</TableColumn>
-                                  <TableColumn>REFERENCE</TableColumn>
+                                  <TableColumn>REF</TableColumn>
                                 </TableHeader>
                                 <TableBody>
                                   {folio.payments.map(p => (
                                     <TableRow key={p.id}>
-                                      <TableCell>{new Date(p.date).toLocaleDateString()}</TableCell>
-                                      <TableCell>
-                                        <div>
-                                          <span>{p.method}</span>
-                                          {p.creditApplied && p.creditApplied > 0 && (
-                                            <p className="text-xs text-green-600">Credit: ₵{p.creditApplied.toFixed(2)}</p>
-                                          )}
-                                        </div>
+                                      <TableCell className="text-xs text-gray-500">{new Date(p.date).toLocaleDateString('en-GH', { day: 'numeric', month: 'short' })}</TableCell>
+                                      <TableCell className="text-sm">
+                                        {p.method}
+                                        {p.creditApplied && p.creditApplied > 0 && <p className="text-xs text-emerald-600">Credit: ₵{p.creditApplied.toFixed(2)}</p>}
                                       </TableCell>
-                                      <TableCell>₵{p.amount.toFixed(2)}</TableCell>
+                                      <TableCell className={`text-sm font-medium text-right ${p.amount < 0 ? 'text-red-500' : 'text-green-600'}`}>₵{p.amount.toFixed(2)}</TableCell>
                                       <TableCell>
-                                        <Badge 
-                                          color={p.status === 'completed' ? 'success' : p.status === 'pending' ? 'warning' : 'danger'} 
-                                          variant="flat" 
-                                          size="sm"
-                                        >
+                                        <Badge color={p.status === 'completed' ? 'success' : p.status === 'pending' ? 'warning' : 'danger'} variant="flat" size="sm">
                                           {p.status || 'completed'}
                                         </Badge>
                                       </TableCell>
-                                      <TableCell>
-                                        <span className="text-xs text-gray-500">{p.ref || p.id}</span>
-                                      </TableCell>
+                                      <TableCell><span className="text-xs text-gray-400">{p.ref || '—'}</span></TableCell>
                                     </TableRow>
                                   ))}
                                 </TableBody>
                               </Table>
-                            );
-                          })()}
-                        </div>
-                      </AccordionItem>
-                    </Accordion>
-                    {/* Settlement within Folio */}
-                    {(() => {
-                      const { outstandingBalance } = getFolioTotals(selectedCheckOut.id);
-                      return (
-                        <div className="mt-4 border rounded-lg p-3 bg-gray-50">
-                          <div className="flex items-center justify-between mb-3">
-                            <div className="text-sm text-gray-700">Outstanding Balance</div>
-                            <div className={`font-bold ${outstandingBalance > 0 ? 'text-red-600' : 'text-gray-600'}`}>₵{outstandingBalance.toLocaleString()}</div>
+                            ) : <p className="text-sm text-gray-500 py-3 text-center">No payments received</p>}
                           </div>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <Select label="Payment Method" selectedKeys={[usePayLater ? 'Pay Later' : settlementMethod]} onSelectionChange={(keys)=> {
-                      const k = Array.from(keys)[0] as string;
-                      if (k === 'Pay Later') { setUsePayLater(true); setSettlementAmount(0); setSettlementMethod('Credit'); }
-                      else { setUsePayLater(false); setSettlementMethod(k as any); }
-                    }}>
-                      <SelectItem key="Pay Later">Pay Later</SelectItem>
+                        </AccordionItem>
+                      </Accordion>
+                    </CardBody>
+                  </Card>
+
+                  {/* ── Settlement ── */}
+                  {(() => {
+                    const { outstandingBalance } = getFolioTotals(selectedCheckOut.id);
+                    return (
+                      <Card className="border-0 shadow-lg">
+                        <CardHeader className="bg-gray-50">
+                          <h3 className="text-base font-bold text-gray-800 flex items-center gap-2">
+                            <span className="text-emerald-600">⚖️</span> Settlement
+                            <span className={`ml-auto text-base font-bold ${outstandingBalance > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                              {outstandingBalance > 0 ? `₵${outstandingBalance.toFixed(2)} due` : 'Settled ✓'}
+                            </span>
+                          </h3>
+                        </CardHeader>
+                        <CardBody className="p-4 space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <Select label="Payment Method" selectedKeys={[usePayLater ? 'Pay Later' : settlementMethod]} onSelectionChange={(keys) => {
+                              const k = Array.from(keys)[0] as string;
+                              if (k === 'Pay Later') { setUsePayLater(true); setSettlementAmount(0); setSettlementMethod('Credit'); }
+                              else { setUsePayLater(false); setSettlementMethod(k as any); }
+                            }}>
+                              <SelectItem key="Pay Later">Pay Later</SelectItem>
                               <SelectItem key="Cash">Cash</SelectItem>
                               <SelectItem key="Card">Card</SelectItem>
                               <SelectItem key="Mobile Money">Mobile Money</SelectItem>
@@ -1009,55 +1114,72 @@ export default function CheckOutsPage() {
                               <SelectItem key="Corporate Account">Corporate Account</SelectItem>
                               <SelectItem key="Credit">Credit</SelectItem>
                             </Select>
-                    <Input label="Amount (GHS)" type="number" value={String(usePayLater ? 0 : settlementAmount)} onChange={(e)=> setSettlementAmount(parseFloat(e.target.value || '0'))} isDisabled={usePayLater} />
-                            <Input label="Reference" value={settlementRef} onChange={(e)=> setSettlementRef(e.target.value)} />
+                            <Input label="Amount (GHS)" type="number" value={String(usePayLater ? 0 : settlementAmount)} onChange={(e) => setSettlementAmount(parseFloat(e.target.value || '0'))} isDisabled={usePayLater} />
+                            <Input label="Reference" value={settlementRef} onChange={(e) => setSettlementRef(e.target.value)} />
                           </div>
-                  {usePayLater && (
-                    <div className="text-xs text-gray-600">Pay Later selected. Amount is set to 0. For corporate, enter PO/Project/Cost Center in Reference.</div>
-                  )}
-                  {payLaterAllowed && (
-                    <div className="p-3 bg-yellow-50 rounded-md border border-yellow-200 text-sm text-yellow-800">
-                      Pay Later is enabled ({policy}). Corporate accounts require a PO/Project/Cost Center reference.
-                    </div>
-                  )}
-                          <div className="mt-3 grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
-                            <div>
-                              <Select label="Receipt Template" selectedKeys={[receiptTpl]} onSelectionChange={(keys)=> setReceiptTpl(Array.from(keys)[0] as string)}>
-                                {receiptTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
-                              </Select>
+                          {usePayLater && <p className="text-xs text-gray-500">Pay Later selected. For corporate accounts enter PO / Cost Center in Reference.</p>}
+                          {payLaterAllowed && (
+                            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-sm text-amber-800">
+                              ℹ️ Pay Later is enabled ({policy}). Corporate accounts require a PO/Project/Cost Center reference.
                             </div>
-                            <div>
-                              <Select label="Invoice Template" selectedKeys={[invoiceTpl]} onSelectionChange={(keys)=> setInvoiceTpl(Array.from(keys)[0] as string)}>
-                                {invoiceTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
-                              </Select>
-                            </div>
-                            <div className="flex gap-2 justify-start">
-                              <Button variant="flat" onPress={()=> handlePrintReceipt(selectedCheckOut)}>🧾 Print Receipt</Button>
-                              <Button variant="flat" onPress={()=> handlePrintInvoice(selectedCheckOut)}>🧾 Print Invoice</Button>
-                            </div>
-                            <div className="flex justify-end">
-                              <Button color="success" className="bg-green-600 text-white"
-                                isDisabled={outstandingBalance <= 0 || settlementAmount <= 0}
-                                onPress={() => {
-                                  frontOfficeStore.addPayment(selectedCheckOut.id, settlementMethod, settlementAmount, { notes: 'Folio settlement during checkout', processedBy: 'Front Desk', ref: settlementRef });
-                                  try { handlePrintReceipt(selectedCheckOut); } catch {}
-                                  setTimeout(() => loadCheckOuts(), 50);
-                                }}
-                              >
-                                Process Payment
-                              </Button>
-                            </div>
+                          )}
+                          <div className="flex items-end gap-3 pt-1">
+                            <Select label="Receipt Template" className="flex-1" selectedKeys={[receiptTpl]} onSelectionChange={(keys) => setReceiptTpl(Array.from(keys)[0] as string)}>
+                              {receiptTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
+                            </Select>
+                            <Select label="Invoice Template" className="flex-1" selectedKeys={[invoiceTpl]} onSelectionChange={(keys) => setInvoiceTpl(Array.from(keys)[0] as string)}>
+                              {invoiceTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
+                            </Select>
+                            <Button variant="flat" onPress={() => handlePrintReceipt(selectedCheckOut)} className="mb-0.5">🧾 Receipt</Button>
+                            <Button variant="flat" onPress={() => handlePrintInvoice(selectedCheckOut)} className="mb-0.5">🧾 Invoice</Button>
+                            <Button color="success" className="bg-emerald-600 text-white mb-0.5"
+                              isDisabled={outstandingBalance <= 0 || settlementAmount <= 0}
+                              onPress={() => {
+                                frontOfficeStore.addPayment(selectedCheckOut.id, settlementMethod, settlementAmount, { notes: 'Folio settlement during checkout', processedBy: 'Front Desk', ref: settlementRef });
+                                try { handlePrintReceipt(selectedCheckOut); } catch {}
+                                setTimeout(() => loadCheckOuts(), 50);
+                              }}
+                            >
+                              💳 Process Payment
+                            </Button>
                           </div>
-                            
-                          </div>
-                      );
-                    })()}
-                  </div>
+                        </CardBody>
+                      </Card>
+                    );
+                  })()}
+
+                  {/* ── Notes ── */}
+                  <Card className="border-0 shadow-lg">
+                    <CardHeader className="bg-gray-50">
+                      <h3 className="text-base font-bold text-gray-800 flex items-center gap-2">
+                        <span className="text-gray-500">📝</span> Check-out Notes
+                        {selectedCheckOut.specialRequests && <span className="ml-2 text-xs text-amber-600 font-normal">⚠️ Special requests on file</span>}
+                      </h3>
+                    </CardHeader>
+                    <CardBody className="p-4 space-y-3">
+                      {selectedCheckOut.specialRequests && (
+                        <div className="p-3 bg-amber-50 rounded-lg border border-amber-200 text-sm text-amber-800">
+                          <span className="font-medium">Special Requests: </span>{selectedCheckOut.specialRequests}
+                        </div>
+                      )}
+                      <Textarea
+                        placeholder="Add any notes about the guest's stay or checkout..."
+                        value={checkoutNotes}
+                        onChange={(e) => setCheckoutNotes(e.target.value)}
+                        className="w-full"
+                        rows={3}
+                      />
+                    </CardBody>
+                  </Card>
+
                 </div>
                 );
               })()}
             </ModalBody>
-            <ModalFooter>
+            <ModalFooter className="bg-gray-50 border-t">
+              <div className="flex justify-between items-center w-full">
+                <div className="text-xs text-gray-400">Last updated: {new Date().toLocaleString()}</div>
+                <div className="flex gap-2">
               <Button variant="flat" onPress={onClose}>
                 Cancel
               </Button>
@@ -1083,13 +1205,16 @@ export default function CheckOutsPage() {
                   </Button>
                 ) : null;
               })()}
-              <Button 
-                color="primary" 
+              <Button
+                color="primary"
+                className="bg-emerald-600 text-white"
                 onPress={() => selectedCheckOut && handleCheckOut(selectedCheckOut)}
                 isLoading={isProcessing}
               >
-                Process Check-out
+                🚪 Process Check-out
               </Button>
+                </div>
+              </div>
             </ModalFooter>
           </ModalContent>
         </Modal>

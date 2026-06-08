@@ -774,7 +774,12 @@ function CheckInsSection() {
                       ₵{formatMoney(guest.balance || 0)}
                     </span>
                             </TableCell>
-                  <TableCell className="text-center"><Badge color="success" variant="flat">Checked In</Badge></TableCell>
+                  <TableCell className="text-center">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-700 border border-green-200">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                      Checked In
+                    </span>
+                  </TableCell>
                             <TableCell>
                     <div className="flex gap-1 justify-center">
                       <Button 

@@ -92,7 +92,7 @@ interface Invoice {
 }
 
 export default function InvoicesPaymentsPage() {
-  const [activeTab, setActiveTab] = useState('payments');
+  const [activeTab, setActiveTab] = useState('folios');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [dateFilterMode, setDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('today');
@@ -111,8 +111,16 @@ export default function InvoicesPaymentsPage() {
   const [balanceFilter, setBalanceFilter] = useState<'all'|'zero'|'positive'>('all');
   const [folioSortBy, setFolioSortBy] = useState<'balance'|'updatedAt'>('balance');
   const [folioSortOrder, setFolioSortOrder] = useState<'asc'|'desc'>('desc');
+  const [folioDateFilterMode, setFolioDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
+  const [folioDateSingle, setFolioDateSingle] = useState('');
   const [folioDateFrom, setFolioDateFrom] = useState<string>('');
   const [folioDateTo, setFolioDateTo] = useState<string>('');
+
+  // Payment Ledger date filter
+  const [paymentDateFilterMode, setPaymentDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
+  const [paymentDateSingle, setPaymentDateSingle] = useState('');
+  const [paymentDateFrom, setPaymentDateFrom] = useState('');
+  const [paymentDateTo, setPaymentDateTo] = useState('');
   const { isOpen: isFolioModalOpen, onOpen: onFolioModalOpen, onClose: onFolioModalClose } = useDisclosure();
   const [adjustmentAmount, setAdjustmentAmount] = useState<number>(0);
   const [adjustmentReason, setAdjustmentReason] = useState<string>('');
@@ -133,11 +141,16 @@ export default function InvoicesPaymentsPage() {
   const { isOpen: isCorpOpen, onOpen: onCorpOpen, onClose: onCorpClose } = useDisclosure();
   const { isOpen: isSplitOpen, onOpen: onSplitOpen, onClose: onSplitClose } = useDisclosure();
 
+  const [corpPayerName, setCorpPayerName] = useState('');
+  const [corpAmount, setCorpAmount] = useState('');
+  const [corpReference, setCorpReference] = useState('');
   const [splitChargeId, setSplitChargeId] = useState<string>('');
   const [splitTargetReservationId, setSplitTargetReservationId] = useState<string>('');
   const [splitAmount, setSplitAmount] = useState<number>(0);
   const [splitNote, setSplitNote] = useState<string>('');
   const [inlineNotification, setInlineNotification] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
+  // Increments whenever the store notifies — forces useMemos that read store directly to recompute
+  const [storeVersion, setStoreVersion] = useState(0);
   const showNotification = (type: 'success' | 'error' | 'warning', message: string) => {
     setInlineNotification({ type, message });
     setTimeout(() => setInlineNotification(null), 4000);
@@ -200,21 +213,29 @@ export default function InvoicesPaymentsPage() {
     const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
     const bal = folio.balance || 0;
     const matchesBalance = balanceFilter === 'all' || (balanceFilter === 'zero' ? bal === 0 : bal > 0);
-    // Date range filter: show reservations whose stay overlaps the selected range
-    const fromOk = !folioDateFrom || new Date(reservation.departure) >= new Date(folioDateFrom);
-    const toOk = !folioDateTo || new Date(reservation.arrival) <= new Date(folioDateTo);
-    return matchesSearch && matchesStatus && matchesPayer && matchesBalance && fromOk && toOk;
-  }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFrom, folioDateTo]);
+    // Date filter: match by check-in date
+    const today = new Date().toISOString().slice(0, 10);
+    const arrivalDate = reservation.arrival?.slice(0, 10) ?? '';
+    let dateOk = true;
+    if (folioDateFilterMode === 'today') dateOk = arrivalDate === today;
+    else if (folioDateFilterMode === 'specific' && folioDateSingle) dateOk = arrivalDate === folioDateSingle;
+    else if (folioDateFilterMode === 'range') {
+      if (folioDateFrom && arrivalDate < folioDateFrom) dateOk = false;
+      if (folioDateTo   && arrivalDate > folioDateTo)   dateOk = false;
+    }
+    return matchesSearch && matchesStatus && matchesPayer && matchesBalance && dateOk;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFilterMode, folioDateSingle, folioDateFrom, folioDateTo, storeVersion]);
 
   // Reset folio page when filters change
   useEffect(() => {
     setFolioPage(1);
-  }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFrom, folioDateTo]);
+  }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFilterMode, folioDateSingle, folioDateFrom, folioDateTo]);
 
   const totalFolioPages = useMemo(() => Math.max(1, Math.ceil(
     frontOfficeStore.reservations.filter(matchesFolioFilters).length / itemsPerPage
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  )), [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFrom, folioDateTo, itemsPerPage]);
+  )), [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFilterMode, folioDateSingle, folioDateFrom, folioDateTo, itemsPerPage, storeVersion]);
 
   // Live folio-backed invoices & payments derived from frontOfficeStore
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -290,7 +311,7 @@ export default function InvoicesPaymentsPage() {
         taxAmount,
         discountAmount: 0,
         totalAmount,
-        status: balance === 0 ? 'paid' : (paid > 0 ? 'partially_paid' : 'pending'),
+        status: balance <= 0 ? 'paid' : (paid > 0 ? 'partially_paid' : 'pending'),
         paymentMethod: res.paymentMethod,
         dueDate: res.departure,
         createdAt: res.createdAt || new Date().toISOString(),
@@ -343,6 +364,7 @@ export default function InvoicesPaymentsPage() {
     const unsub = frontOfficeStore.subscribe(() => {
       console.log('[INVOICE-PAYMENT] Store changed, recomputing...');
       recomputeBillingFromStore();
+      setStoreVersion(v => v + 1);
     });
     return () => {
       console.log('[INVOICE-PAYMENT] Component unmounting, unsubscribing...');
@@ -371,6 +393,22 @@ export default function InvoicesPaymentsPage() {
         return true;
       });
   }, [invoices, statusFilter, searchTerm, dateFilterMode, dateFilterSingle, dateFilterFrom, dateFilterTo]);
+
+  const filteredPayments = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10);
+    return [...payments]
+      .filter(p => {
+        const d = (p.processedAt || '').slice(0, 10);
+        if (paymentDateFilterMode === 'today') return d === today;
+        if (paymentDateFilterMode === 'specific' && paymentDateSingle) return d === paymentDateSingle;
+        if (paymentDateFilterMode === 'range') {
+          if (paymentDateFrom && d < paymentDateFrom) return false;
+          if (paymentDateTo   && d > paymentDateTo)   return false;
+        }
+        return true;
+      })
+      .sort((a, b) => new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime());
+  }, [payments, paymentDateFilterMode, paymentDateSingle, paymentDateFrom, paymentDateTo]);
 
   // Stats always reflect the filtered list so KPI cards match the table rows
   const stats = useMemo(() => {
@@ -532,7 +570,7 @@ export default function InvoicesPaymentsPage() {
   };
 
   // Add payment to specific invoice
-  const handleAddPaymentToInvoice = (invoice: Invoice, amount: number, method: string, notes?: string) => {
+  const handleAddPaymentToInvoice = (invoice: Invoice, amount: number, method: string, notes?: string, reference?: string) => {
     // Find the reservation for this invoice
     const reservation = frontOfficeStore.reservations.find(r => r.id === invoice.id);
     if (!reservation) return;
@@ -551,19 +589,17 @@ export default function InvoicesPaymentsPage() {
       }
     };
 
-    // Add payment using the enhanced store method
+    // Add payment using the enhanced store method — use the user-entered reference, fall back to auto-id
     frontOfficeStore.addPayment(reservation.id, mapToStoreMethod(method), amount, {
       notes: notes || `Payment added to invoice ${invoice.invoiceNumber}`,
       processedBy: 'Front Desk',
-      ref: `PAY-${Date.now()}`,
+      ref: reference?.trim() || `PAY-${Date.now()}`,
       invoiceId: invoice.id
     });
 
-    try { trackEvent('Invoice.PaymentAdded' as any, { reservationId: reservation.id, invoiceId: invoice.id, amount, method }); } catch {}
-    try { logAudit({ area: 'frontdesk', action: 'create', entity: 'Payment', entityId: invoice.id, details: `Added payment ₵${amount} (${method}) to ${invoice.invoiceNumber}`, severity: 'low' }); } catch {}
-
-    // Refresh the data
-    setTimeout(() => recomputeBillingFromStore(), 100);
+    try { trackEvent('Invoice.PaymentAdded' as any, { reservationId: reservation.id, invoiceId: invoice.id, amount, method, reference }); } catch {}
+    try { logAudit({ area: 'frontdesk', action: 'create', entity: 'Payment', entityId: invoice.id, details: `Added payment ₵${amount} (${method}) to ${invoice.invoiceNumber}${reference ? ` ref: ${reference}` : ''}`, severity: 'low' }); } catch {}
+    // Store already calls notify() → subscription re-runs recomputeBillingFromStore automatically
   };
 
   // Apply credit payment to invoice
@@ -829,34 +865,33 @@ export default function InvoicesPaymentsPage() {
 
       <Card>
         <CardBody>
-            <div className="flex gap-4 mb-4 items-center">
-            {/* Keep Payments default */}
+            <div className="flex gap-3 mb-4 items-center">
+            <Button
+              variant={activeTab === 'folios' ? 'solid' : 'light'}
+              color="primary"
+              className={activeTab === 'folios' ? 'bg-indigo-600 text-white font-semibold' : ''}
+              onPress={() => setActiveTab('folios')}
+            >
+              Folios ({frontOfficeStore.reservations.length})
+            </Button>
+            <Button
+              variant={activeTab === 'invoices' ? 'solid' : 'light'}
+              color="primary"
+              className={activeTab === 'invoices' ? 'bg-indigo-600 text-white font-semibold' : ''}
+              onPress={() => setActiveTab('invoices')}
+            >
+              Invoices ({invoices.length})
+            </Button>
             <Button
               variant={activeTab === 'payments' ? 'solid' : 'light'}
               color="primary"
+              className={activeTab === 'payments' ? 'bg-indigo-600 text-white font-semibold' : ''}
               onPress={() => setActiveTab('payments')}
             >
-              Payments ({payments.length})
+              Payment Ledger ({payments.length})
             </Button>
-            <Button
-              variant={activeTab === 'folios' ? 'solid' : 'light'}
-              color="secondary"
-              onPress={() => setActiveTab('folios')}
-            >
-              📊 Folio Management ({frontOfficeStore.reservations.length})
-            </Button>
-              <Button
-                variant={activeTab === 'print' ? 'solid' : 'light'}
-                color="secondary"
-                onPress={() => setActiveTab('print')}
-              >
-                🧾 Print Invoice
-              </Button>
-            <div className="ml-auto">
-              <Button size="sm" variant="light" onPress={() => setActiveTab('invoices')}>
-                View Invoices ({invoices.length})
-              </Button>
-              <Button size="sm" color="secondary" variant="flat" className="ml-2" onPress={onCorpOpen}>
+            <div className="ml-auto flex gap-2">
+              <Button size="sm" color="secondary" variant="solid" className="bg-purple-600 text-white font-semibold px-3" onPress={onCorpOpen}>
                 Post Corporate Receipt
               </Button>
             </div>
@@ -980,29 +1015,41 @@ export default function InvoicesPaymentsPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge color={getStatusColor(invoice.status)} variant="flat">
-                        {invoice.status.replace('_', ' ')}
-                      </Badge>
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold
+                        ${invoice.status === 'paid' ? 'bg-green-100 text-green-700 border border-green-200'
+                        : invoice.status === 'overdue' ? 'bg-red-100 text-red-700 border border-red-200'
+                        : invoice.status === 'partially_paid' ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                        : invoice.status === 'cancelled' || invoice.status === 'refunded' ? 'bg-gray-100 text-gray-600 border border-gray-200'
+                        : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full
+                          ${invoice.status === 'paid' ? 'bg-green-500'
+                          : invoice.status === 'overdue' ? 'bg-red-500'
+                          : invoice.status === 'partially_paid' ? 'bg-blue-500'
+                          : invoice.status === 'cancelled' || invoice.status === 'refunded' ? 'bg-gray-400'
+                          : 'bg-amber-500'}`} />
+                        {invoice.status.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <span className="text-sm">{invoice.dueDate}</span>
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button size="sm" variant="light" onPress={() => handleViewInvoice(invoice)}>
+                        <Button size="sm" color="primary" variant="solid" className="bg-blue-600 text-white font-semibold px-3 py-1" onPress={() => handleViewInvoice(invoice)}>
                           View
                         </Button>
                         {invoice.balance > 0 && (
-                          <Button 
-                            size="sm" 
-                            color="success" 
-                            variant="flat"
+                          <Button
+                            size="sm"
+                            color="success"
+                            variant="solid"
+                            className="bg-green-600 text-white font-semibold px-3 py-1"
                             onPress={() => {
                               setSelectedInvoice(invoice);
-                              onPaymentOpen();
+                              onAddPaymentOpen();
                             }}
                           >
-                            Add Payment
+                            Pay
                           </Button>
                         )}
                         {(() => {
@@ -1010,19 +1057,13 @@ export default function InvoicesPaymentsPage() {
                           const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
                           const creditBalance = guest?.creditBalance || 0;
                           const canUseCredit = creditBalance > 0 && invoice.balance > 0;
-                          
                           return canUseCredit ? (
-                            <Button 
-                              size="sm" 
-                              color="primary" 
-                              variant="flat"
-                              onPress={() => handleApplyCreditToInvoice(invoice)}
-                            >
-                              Apply Credit
+                            <Button size="sm" color="warning" variant="solid" className="text-white font-semibold px-3 py-1" onPress={() => handleApplyCreditToInvoice(invoice)}>
+                              Credit
                             </Button>
                           ) : null;
                         })()}
-                        <Button size="sm" variant="light" onPress={() => handlePrintInvoice(invoice)}>Print</Button>
+                        <Button size="sm" color="default" variant="solid" className="bg-gray-600 text-white font-semibold px-3 py-1" onPress={() => handlePrintInvoice(invoice)}>Print</Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1041,6 +1082,37 @@ export default function InvoicesPaymentsPage() {
             </>
           ) : activeTab === 'payments' ? (
             <>
+            {/* Payment Ledger filters */}
+            <div className="mb-4 p-4 bg-gray-50 rounded-lg space-y-3">
+              <div>
+                <h3 className="text-base font-semibold text-gray-800">Payment Ledger</h3>
+                <p className="text-sm text-gray-500">All recorded payment transactions across guest folios</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-gray-500">📅 Payment Date:</span>
+                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
+                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
+                  return (
+                    <button key={mode} onClick={() => { setPaymentDateFilterMode(mode); setPaymentPage(1); }}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${paymentDateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
+                    >{labels[mode]}</button>
+                  );
+                })}
+                {paymentDateFilterMode === 'specific' && (
+                  <input type="date" value={paymentDateSingle} onChange={(e) => { setPaymentDateSingle(e.target.value); setPaymentPage(1); }}
+                    className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                )}
+                {paymentDateFilterMode === 'range' && (
+                  <div className="flex items-center gap-2">
+                    <input type="date" value={paymentDateFrom} onChange={(e) => { setPaymentDateFrom(e.target.value); setPaymentPage(1); }}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <span className="text-gray-400 text-sm">→</span>
+                    <input type="date" value={paymentDateTo} onChange={(e) => { setPaymentDateTo(e.target.value); setPaymentPage(1); }}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  </div>
+                )}
+              </div>
+            </div>
             <Table aria-label="Payments table">
               <TableHeader>
                 <TableColumn>TRANSACTION</TableColumn>
@@ -1055,19 +1127,17 @@ export default function InvoicesPaymentsPage() {
                 <TableColumn>ACTIONS</TableColumn>
               </TableHeader>
               <TableBody>
-                {payments.length === 0 ? (
+                {filteredPayments.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={10} className="text-center py-8">
                       <div className="text-gray-500">
                         <p className="text-lg">No payments found</p>
-                        <p className="text-sm">Payments will appear here when they are added to invoices</p>
+                        <p className="text-sm">{payments.length > 0 ? 'Try a different date filter' : 'Payments will appear here when they are added to invoices'}</p>
                       </div>
                     </TableCell>
                   </TableRow>
                 ) : (
-                  [...payments]
-                    .sort((a, b) => new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime())
-                    .slice((paymentPage - 1) * itemsPerPage, paymentPage * itemsPerPage)
+                  filteredPayments.slice((paymentPage - 1) * itemsPerPage, paymentPage * itemsPerPage)
                     .map((payment) => (
                   <TableRow key={payment.id}>
                     <TableCell>
@@ -1097,7 +1167,14 @@ export default function InvoicesPaymentsPage() {
                     </TableCell>
                     <TableCell>
                       <div>
-                        <span className="font-medium">₵{payment.amount.toFixed(2)}</span>
+                        {payment.amount < 0 ? (
+                          <span className="font-semibold text-purple-600">−₵{Math.abs(payment.amount).toFixed(2)}</span>
+                        ) : (
+                          <span className="font-medium text-gray-900">₵{payment.amount.toFixed(2)}</span>
+                        )}
+                        {payment.amount < 0 && (
+                          <p className="text-xs text-purple-500 font-medium">Refund</p>
+                        )}
                         {payment.creditApplied && payment.creditApplied > 0 && (
                           <p className="text-xs text-green-600">Credit: ₵{payment.creditApplied.toFixed(2)}</p>
                         )}
@@ -1116,7 +1193,20 @@ export default function InvoicesPaymentsPage() {
                       <Chip size="sm" variant="flat">{getPaymentMethodLabel(payment.paymentMethod)}</Chip>
                     </TableCell>
                     <TableCell>
-                      <Badge color={getPaymentStatusColor(payment.status)} variant="flat">{payment.status}</Badge>
+                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold
+                        ${payment.status === 'completed' ? 'bg-green-100 text-green-700 border border-green-200'
+                        : payment.status === 'failed' ? 'bg-red-100 text-red-700 border border-red-200'
+                        : payment.status === 'refunded' ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                        : payment.status === 'cancelled' ? 'bg-gray-100 text-gray-600 border border-gray-200'
+                        : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full
+                          ${payment.status === 'completed' ? 'bg-green-500'
+                          : payment.status === 'failed' ? 'bg-red-500'
+                          : payment.status === 'refunded' ? 'bg-purple-500'
+                          : payment.status === 'cancelled' ? 'bg-gray-400'
+                          : 'bg-amber-500'}`} />
+                        {payment.status.charAt(0).toUpperCase() + payment.status.slice(1)}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <div>
@@ -1126,8 +1216,8 @@ export default function InvoicesPaymentsPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex gap-1">
-                        <Button size="sm" variant="light" onPress={() => handleViewPayment(payment)}>View</Button>
-                        <Button size="sm" variant="light" onPress={() => handlePrintReceipt(payment)}>Receipt</Button>
+                        <Button size="sm" color="primary" variant="solid" className="bg-blue-600 text-white font-semibold px-3 py-1" onPress={() => handleViewPayment(payment)}>View</Button>
+                        <Button size="sm" color="default" variant="solid" className="bg-gray-600 text-white font-semibold px-3 py-1" onPress={() => handlePrintReceipt(payment)}>Receipt</Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1136,9 +1226,9 @@ export default function InvoicesPaymentsPage() {
               </TableBody>
             </Table>
             <div className="flex justify-end mt-3">
-              <Pagination 
+              <Pagination
                 page={paymentPage}
-                total={Math.max(1, Math.ceil(payments.length / itemsPerPage))}
+                total={Math.max(1, Math.ceil(filteredPayments.length / itemsPerPage))}
                 onChange={setPaymentPage}
                 showControls
                 size="sm"
@@ -1147,27 +1237,28 @@ export default function InvoicesPaymentsPage() {
             </>
           ) : activeTab === 'folios' ? (
             <>
-            <div className="mb-4 p-3 bg-purple-50 rounded-lg">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-lg font-semibold text-purple-800">📊 Folio Management</h3>
-                  <p className="text-sm text-purple-600">Manage guest folios, adjustments, and bulk operations</p>
-                </div>
-                <div className="flex gap-2">
+            <div className="mb-4 p-4 bg-indigo-50 rounded-lg space-y-2">
+              {/* Row 1: title */}
+              <h3 className="text-lg font-semibold text-indigo-800">Guest Folios</h3>
+
+              {/* Row 2: subtitle left, filters right */}
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm text-indigo-600 shrink-0">Live charge ledger per guest — add payments, print invoices, or manage adjustments</p>
+                <div className="flex items-center gap-2 flex-wrap justify-end">
                   <Input
-                    placeholder="Search folios..."
+                    placeholder="Search guest, room..."
                     value={folioSearchTerm}
                     onChange={(e) => setFolioSearchTerm(e.target.value)}
-                    className="w-64"
-                    startContent={<span>🔍</span>}
+                    className="w-48"
+                    startContent={<span className="text-gray-400 text-sm">🔍</span>}
+                    size="sm"
                   />
-                  <Input type="date" aria-label="From" value={folioDateFrom} onChange={(e)=> setFolioDateFrom(e.target.value)} className="w-36" />
-                  <Input type="date" aria-label="To" value={folioDateTo} onChange={(e)=> setFolioDateTo(e.target.value)} className="w-36" />
                   <Select
-                    placeholder="Filter by status"
+                    placeholder="Status"
                     selectedKeys={new Set([folioStatusFilter])}
                     onSelectionChange={(keys) => setFolioStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
-                    className="w-48"
+                    className="w-36"
+                    size="sm"
                   >
                     <SelectItem key="all">All Status</SelectItem>
                     <SelectItem key="checked-in">Checked In</SelectItem>
@@ -1178,7 +1269,8 @@ export default function InvoicesPaymentsPage() {
                     placeholder="Payer"
                     selectedKeys={new Set([payerFilter])}
                     onSelectionChange={(keys) => setPayerFilter((Array.from(keys as Set<string>)[0] as any) || 'all')}
-                    className="w-40"
+                    className="w-32"
+                    size="sm"
                   >
                     <SelectItem key="all">All Payers</SelectItem>
                     <SelectItem key="guest">Guest</SelectItem>
@@ -1188,13 +1280,40 @@ export default function InvoicesPaymentsPage() {
                     placeholder="Balance"
                     selectedKeys={new Set([balanceFilter])}
                     onSelectionChange={(keys) => setBalanceFilter((Array.from(keys as Set<string>)[0] as any) || 'all')}
-                    className="w-40"
+                    className="w-32"
+                    size="sm"
                   >
                     <SelectItem key="all">All Balances</SelectItem>
                     <SelectItem key="positive">Outstanding</SelectItem>
                     <SelectItem key="zero">Zero</SelectItem>
                   </Select>
                 </div>
+              </div>
+
+              {/* Row 3: date pills */}
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <span className="text-sm font-medium text-gray-500">📅 Check-in Date:</span>
+                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
+                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
+                  return (
+                    <button key={mode} onClick={() => setFolioDateFilterMode(mode)}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${folioDateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
+                    >{labels[mode]}</button>
+                  );
+                })}
+                {folioDateFilterMode === 'specific' && (
+                  <input type="date" value={folioDateSingle} onChange={(e) => setFolioDateSingle(e.target.value)}
+                    className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                )}
+                {folioDateFilterMode === 'range' && (
+                  <div className="flex items-center gap-2">
+                    <input type="date" value={folioDateFrom} onChange={(e) => setFolioDateFrom(e.target.value)}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <span className="text-gray-400 text-sm">→</span>
+                    <input type="date" value={folioDateTo} onChange={(e) => setFolioDateTo(e.target.value)}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1305,25 +1424,22 @@ export default function InvoicesPaymentsPage() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex space-x-1">
-                            <Button
-                              size="sm"
-                              color="primary"
-                              variant="flat"
-                              onClick={() => handleManageFolio(reservation)}
-                              startContent={<span>📊</span>}
-                            >
-                              Manage
-                            </Button>
-                            <Button
-                              size="sm"
-                              color="secondary"
-                              variant="flat"
-                              onClick={() => window.print()}
-                              startContent={<span>🖨️</span>}
-                            >
-                              Print
-                            </Button>
+                          <div className="flex gap-1">
+                            <Button size="sm" color="primary" variant="solid" className="bg-blue-600 text-white font-semibold px-3 py-1" onPress={() => handleManageFolio(reservation)}>Manage</Button>
+                            {(() => {
+                              const inv = invoices.find(i => i.id === reservation.id);
+                              return inv ? (
+                                <Button size="sm" color="default" variant="solid" className="bg-gray-600 text-white font-semibold px-3 py-1" onPress={() => handlePrintInvoice(inv)}>Print</Button>
+                              ) : null;
+                            })()}
+                            {(() => {
+                              const inv = invoices.find(i => i.id === reservation.id);
+                              const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
+                              const bal = folio.balance || 0;
+                              return (bal > 0 && inv) ? (
+                                <Button size="sm" color="success" variant="solid" className="bg-green-600 text-white font-semibold px-3 py-1" onPress={() => { setSelectedInvoice(inv); onAddPaymentOpen(); }}>Pay</Button>
+                              ) : null;
+                            })()}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -1550,39 +1666,53 @@ export default function InvoicesPaymentsPage() {
           <ModalHeader>Post Corporate Receipt</ModalHeader>
           <ModalBody>
             <div className="space-y-4">
-              <Input label="Payer (Company)" placeholder="e.g., Ghana Telecom Ltd" value={paymentForm.notes}
-                onChange={(e) => setPaymentForm({ ...paymentForm, notes: e.target.value })} />
-              <Input label="Amount" type="number" startContent={<span>₵</span>} value={paymentForm.amount}
-                onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} />
-              <Input label="Reference" placeholder="e.g., BANK-REF-123" value={paymentForm.reference}
-                onChange={(e) => setPaymentForm({ ...paymentForm, reference: e.target.value })} />
-              <div className="text-sm text-gray-600">The payment will be auto-allocated to selected outstanding folios by highest balance.</div>
+              <Input label="Payer (Company)" placeholder="e.g., Ghana Telecom Ltd" isRequired value={corpPayerName}
+                onChange={(e) => setCorpPayerName(e.target.value)} />
+              <Input label="Amount" type="number" startContent={<span>₵</span>} isRequired value={corpAmount}
+                onChange={(e) => setCorpAmount(e.target.value)} />
+              <Input label="Bank Reference / LPO / PO Number" placeholder="e.g., BANK-REF-123 or LPO-456" value={corpReference}
+                onChange={(e) => setCorpReference(e.target.value)} />
+              <div className="text-sm text-gray-600 bg-blue-50 px-3 py-2 rounded">
+                Payment will be auto-allocated to outstanding folios below — highest balance first.
+              </div>
               <div className="max-h-56 overflow-auto border rounded-md p-2">
                 {[...frontOfficeStore.reservations]
                   .filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0)
+                  .sort((a, b) => (frontOfficeStore.getOrCreateFolio(b.id).balance || 0) - (frontOfficeStore.getOrCreateFolio(a.id).balance || 0))
                   .map(r => (
-                    <div key={r.id} className="flex items-center justify-between py-1 text-sm">
+                    <div key={r.id} className="flex items-center justify-between py-1 text-sm border-b last:border-0">
                       <div>
                         <span className="font-medium mr-2">{r.guestName}</span>
                         <span className="text-gray-500">Room {r.roomId || 'TBD'}</span>
+                        {(r.companyName || r.billingPersonName) && (
+                          <span className="ml-2 text-xs text-indigo-600">{r.companyName || r.billingPersonName}</span>
+                        )}
                       </div>
-                      <div className="text-right">₵{(frontOfficeStore.getOrCreateFolio(r.id).balance || 0).toLocaleString()}</div>
+                      <div className="text-right font-semibold text-red-600">₵{(frontOfficeStore.getOrCreateFolio(r.id).balance || 0).toLocaleString()}</div>
                     </div>
                 ))}
+                {frontOfficeStore.reservations.filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0).length === 0 && (
+                  <div className="text-center py-4 text-gray-500 text-sm">No outstanding balances</div>
+                )}
               </div>
             </div>
           </ModalBody>
           <ModalFooter>
-            <Button variant="flat" onClick={onCorpClose}>Cancel</Button>
-            <Button color="primary" onClick={() => {
-              const payer = paymentForm.notes || 'Corporate Payer';
-              const amount = Number(paymentForm.amount || 0);
+            <Button variant="flat" onPress={onCorpClose}>Cancel</Button>
+            <Button color="primary" variant="solid" className="bg-purple-600 text-white font-semibold" isDisabled={!corpPayerName.trim() || Number(corpAmount) <= 0} onPress={() => {
+              const payer = corpPayerName.trim() || 'Corporate Payer';
+              const amount = Number(corpAmount || 0);
               if (amount <= 0) return;
               const outstanding = frontOfficeStore.reservations
                 .filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0)
                 .map(r => r.id);
-              const result = frontOfficeStore.postCorporateReceipt(payer, outstanding, amount, paymentForm.reference);
+              const result = frontOfficeStore.postCorporateReceipt(payer, outstanding, amount, corpReference.trim() || undefined);
               try { trackEvent('Invoice.CorporateReceipt' as any, { payer, amount, appliedTo: result.allocations?.length || 0 }); } catch {}
+              try { logAudit({ area: 'accounting', action: 'create', entity: 'Payment', entityId: `CORP-${Date.now()}`, details: `Corporate receipt ₵${amount} from ${payer}${corpReference ? ` ref: ${corpReference}` : ''}, allocated to ${result.allocations?.length || 0} folios`, severity: 'medium' }); } catch {}
+              showNotification('success', `Corporate receipt ₵${amount.toLocaleString()} from ${payer} allocated to ${result.allocations?.length || 0} folio(s). Unallocated: ₵${result.remaining?.toFixed(2) || '0.00'}`);
+              setCorpPayerName('');
+              setCorpAmount('');
+              setCorpReference('');
               onCorpClose();
             }}>Post Receipt</Button>
           </ModalFooter>
@@ -1739,8 +1869,8 @@ export default function InvoicesPaymentsPage() {
                   />
                   <Select
                     label="Payment Method"
-                    value={paymentForm.method}
-                    onChange={(e) => setPaymentForm(prev => ({ ...prev, method: e.target.value }))}
+                    selectedKeys={new Set([paymentForm.method])}
+                    onSelectionChange={(keys) => setPaymentForm(prev => ({ ...prev, method: Array.from(keys as Set<string>)[0] || 'cash' }))}
                     isRequired
                   >
                     <SelectItem key="cash">Cash</SelectItem>
@@ -1817,8 +1947,10 @@ export default function InvoicesPaymentsPage() {
                       selectedInvoice,
                       amount,
                       paymentForm.method,
-                      paymentForm.notes || undefined
+                      paymentForm.notes || undefined,
+                      paymentForm.reference || undefined
                     );
+                    showNotification('success', `Payment of ₵${amount.toFixed(2)} recorded for ${selectedInvoice.invoiceNumber}`);
                     setPaymentForm({ amount: '', method: 'cash', notes: '', reference: '' });
                     onAddPaymentClose();
                   }
