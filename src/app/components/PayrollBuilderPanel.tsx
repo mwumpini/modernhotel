@@ -423,9 +423,24 @@ export default function PayrollBuilderPanel() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <Card>
                 <CardHeader>
-                  <h5 className="font-medium">Income Tax Brackets</h5>
+                  <div className="flex items-center justify-between w-full">
+                    <h5 className="font-medium">Income Tax Brackets</h5>
+                    {editableConfig?.country === 'GH' && (
+                      <Tooltip content="GRA 2024: 0% up to GHS 4,380/yr, then 5%, 10%, 17.5%, 25%, 30%. Bracket[0].threshold = personal relief (GHS 365/mo).">
+                        <span className="text-xs text-ghana-green cursor-help border border-ghana-green/30 rounded px-1">GRA 2024</span>
+                      </Tooltip>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardBody>
+                  {editableConfig?.country === 'GH' && (
+                    <div className="mb-3 text-xs text-gray-500 bg-gray-50 rounded p-2 space-y-0.5">
+                      <div className="font-medium text-gray-700 mb-1">Ghana PAYE bands (monthly, GRA 2024)</div>
+                      <div>Row 1 threshold = personal relief deducted before bands</div>
+                      <div>365 · 0% → 475 · 5% → 605 · 10% → 3,605 · 17.5% → 20,000 · 25% → 999,999 · 30%</div>
+                      <div className="mt-1">SSNIT employee 5.5% deducted before income tax</div>
+                    </div>
+                  )}
                   <Table aria-label="brackets">
                   <TableHeader>
                     <TableColumn>
@@ -460,9 +475,30 @@ export default function PayrollBuilderPanel() {
                       ))}
                     </TableBody>
                   </Table>
-                  <div className="mt-2 flex gap-2">
+                  <div className="mt-2 flex gap-2 flex-wrap">
                     <Button size="sm" variant="flat" onPress={addBracket}>+ Add Bracket</Button>
                     <Button size="sm" color="primary" onPress={handleRun}>Recalculate</Button>
+                    {editableConfig?.country === 'GH' && (
+                      <Button size="sm" variant="flat" color="warning" onPress={() => {
+                        setEditableConfig((prev: any) => ({
+                          ...prev,
+                          taxConfig: {
+                            ...prev.taxConfig,
+                            income: {
+                              ...(prev.taxConfig?.income || {}),
+                              brackets: [
+                                { threshold: 365, rate: 0 },
+                                { threshold: 475, rate: 5 },
+                                { threshold: 605, rate: 10 },
+                                { threshold: 3605, rate: 17.5 },
+                                { threshold: 20000, rate: 25 },
+                                { threshold: 999999, rate: 30 }
+                              ]
+                            }
+                          }
+                        }));
+                      }}>Reset to GRA 2024</Button>
+                    )}
                   </div>
                 </CardBody>
               </Card>
@@ -497,9 +533,9 @@ export default function PayrollBuilderPanel() {
                               <SelectItem key={opt.name}>{opt.name}</SelectItem>
                             ))}
                           </Select>
-                          <Input label="Emp %" type="number" value={String(ss.employeeRate || 0)} onChange={(e) => { setSS.call(null, 'employeeRate', parseFloat(e.target.value || '0')); }} variant="bordered" />
-                          <Input label="Er %" type="number" value={String(ss.employerRate || 0)} onChange={(e) => { setSS.call(null, 'employerRate', parseFloat(e.target.value || '0')); }} variant="bordered" />
-                          <Input label="Ceiling" type="number" value={String(ss.ceiling ?? 0)} onChange={(e) => { setSS.call(null, 'ceiling', parseFloat(e.target.value || '0')); }} variant="bordered" />
+                          <Input label="Emp %" type="number" value={String(ss.employeeRate || 0)} onChange={(e) => { const next = { ...editableConfig } as any; next.socialSecurity[key] = { ...(next.socialSecurity[key] || {}), employeeRate: parseFloat(e.target.value || '0') }; setEditableConfig(next); }} variant="bordered" />
+                          <Input label="Er %" type="number" value={String(ss.employerRate || 0)} onChange={(e) => { const next = { ...editableConfig } as any; next.socialSecurity[key] = { ...(next.socialSecurity[key] || {}), employerRate: parseFloat(e.target.value || '0') }; setEditableConfig(next); }} variant="bordered" />
+                          <Input label="Ceiling" type="number" value={String(ss.ceiling ?? 0)} onChange={(e) => { const next = { ...editableConfig } as any; next.socialSecurity[key] = { ...(next.socialSecurity[key] || {}), ceiling: parseFloat(e.target.value || '0') || null }; setEditableConfig(next); }} variant="bordered" />
                           <Button size="sm" variant="flat" color="danger" onPress={() => removeSSItem(key)}>Remove</Button>
                         </div>
                       ))}

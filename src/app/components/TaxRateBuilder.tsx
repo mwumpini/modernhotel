@@ -637,16 +637,16 @@ export default function TaxRateBuilder() {
         return [
           { countryCode: cc, name: 'NHIL', rate: 2.5, glCode: '2120', appliesTo: ['ALL'], description: 'National Health Insurance Levy', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
           { countryCode: cc, name: 'GETFund Levy', rate: 2.5, glCode: '2130', appliesTo: ['ALL'], description: 'Ghana Education Trust Fund Levy', enabled: true, priority: 11, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'VAT (Standard Rate)', rate: 15.0, glCode: '2110', appliesTo: ['ALL'], description: 'VAT on (subtotal + levies)', enabled: true, priority: 20, calculationBase: 'subtotal_plus_applied', method: 'rate', stacking: 'compound', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'Tourism Levy', rate: 1.0, glCode: '2150', appliesTo: ['ROOM','HOTEL'], description: 'Tourism development levy', enabled: true, priority: 30, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add', isSeparate: true },
+          { countryCode: cc, name: 'VAT (Standard Rate)', rate: 20.0, glCode: '2110', appliesTo: ['ALL'], description: 'VAT 20% on (subtotal + NHIL + GETFund) — GRA 2024', enabled: true, priority: 20, calculationBase: 'subtotal_plus_applied', method: 'rate', stacking: 'compound', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
+          { countryCode: cc, name: 'Tourism Levy', rate: 1.0, glCode: '2150', appliesTo: ['ROOM','HOTEL'], description: 'Tourism Development Levy — rooms & F&B only', enabled: true, priority: 30, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add', isSeparate: true },
         ];
       case 'withholding_services':
         return [
-          { countryCode: cc, name: 'Withholding - Services', rate: 7.5, glCode: '2160', appliesTo: ['SERVICE'], description: 'Service withholding tax', enabled: true, priority: 5, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'subtract' },
+          { countryCode: cc, name: 'Withholding Tax (Services)', rate: 5.0, glCode: '2160', appliesTo: ['SERVICE'], description: 'WHT 5% on services paid to suppliers (GRA)', enabled: true, priority: 5, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'internal', effect: 'subtract' },
         ];
       case 'purchases_vat':
         return [
-          { countryCode: cc, name: 'Purchases VAT', rate: 15.0, glCode: '2400', appliesTo: ['ALL'], description: 'Input VAT on purchases', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'external', effect: 'add' },
+          { countryCode: cc, name: 'Purchases VAT', rate: 20.0, glCode: '2400', appliesTo: ['ALL'], description: 'Input VAT on purchases (creditable, offset against output VAT)', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'external', effect: 'add' },
         ];
       case 'payroll_paye':
         return [
@@ -987,6 +987,45 @@ export default function TaxRateBuilder() {
         </Button>
         </div>
       </div>
+
+      {/* Ghana quick-reference banner */}
+      {selectedCountry === 'GH' && (
+        <Card className="border border-ghana-green/30 bg-ghana-green/5">
+          <CardBody>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="font-semibold text-ghana-black mb-1">🇬🇭 Ghana GRA Tax Stack (2024)</div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mt-2">
+                  <div className="bg-white rounded p-2 border">
+                    <div className="text-xs text-gray-500 mb-1">NHIL · GL 2120</div>
+                    <div className="font-bold text-lg">2.5%</div>
+                    <div className="text-xs text-gray-500">on subtotal</div>
+                  </div>
+                  <div className="bg-white rounded p-2 border">
+                    <div className="text-xs text-gray-500 mb-1">GETFund · GL 2130</div>
+                    <div className="font-bold text-lg">2.5%</div>
+                    <div className="text-xs text-gray-500">on subtotal</div>
+                  </div>
+                  <div className="bg-white rounded p-2 border">
+                    <div className="text-xs text-gray-500 mb-1">VAT · GL 2110</div>
+                    <div className="font-bold text-lg">20%</div>
+                    <div className="text-xs text-gray-500">on (subtotal + levies)</div>
+                  </div>
+                  <div className="bg-white rounded p-2 border">
+                    <div className="text-xs text-gray-500 mb-1">Tourism · GL 2150</div>
+                    <div className="font-bold text-lg">1%</div>
+                    <div className="text-xs text-gray-500">rooms & F&B only</div>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500 mt-2">WHT: 5% on supplier service payments · NHIL & GETFund are non-creditable on purchases</div>
+              </div>
+              <Button size="sm" className="bg-ghana-green text-white shrink-0" onPress={() => applyTemplate('ghana_sales_standard')}>
+                Apply Ghana Stack
+              </Button>
+            </div>
+          </CardBody>
+        </Card>
+      )}
 
       {/* Context Filters: Operation + Domain */}
       <Card>
