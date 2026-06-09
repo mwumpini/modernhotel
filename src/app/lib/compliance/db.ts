@@ -4,16 +4,35 @@ import { getSeedReports, getSeedTaxes } from './config';
 
 type JsonObject = Record<string, any>;
 
-const dataDir = path.join(process.cwd(), 'prisma');
+/** Vercel serverless only allows writes under /tmp. */
+const isServerless = process.env.VERCEL === '1';
+const dataDir = isServerless
+  ? path.join('/tmp', 'compliance-data')
+  : path.join(process.cwd(), 'prisma');
 const taxesFile = path.join(dataDir, 'compliance.taxes.json');
 const reportsFile = path.join(dataDir, 'compliance.reports.json');
 const typesFile = path.join(dataDir, 'compliance.taxTypes.json');
 
+function safeWriteJson(filePath: string, data: unknown): boolean {
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+    return true;
+  } catch (err) {
+    console.warn('[ComplianceDB] write failed:', filePath, err);
+    return false;
+  }
+}
+
 function ensureFiles() {
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-  if (!fs.existsSync(taxesFile)) fs.writeFileSync(taxesFile, JSON.stringify(getSeedTaxes(), null, 2));
-  if (!fs.existsSync(reportsFile)) fs.writeFileSync(reportsFile, JSON.stringify(getSeedReports(), null, 2));
-  if (!fs.existsSync(typesFile)) fs.writeFileSync(typesFile, JSON.stringify([], null, 2));
+  try {
+    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+    if (!fs.existsSync(taxesFile)) safeWriteJson(taxesFile, getSeedTaxes());
+    if (!fs.existsSync(reportsFile)) safeWriteJson(reportsFile, getSeedReports());
+    if (!fs.existsSync(typesFile)) safeWriteJson(typesFile, []);
+  } catch (err) {
+    console.warn('[ComplianceDB] ensureFiles skipped:', err);
+  }
 }
 
 function migrateLegacyGhanaRates(items: JsonObject[]): JsonObject[] {
@@ -34,7 +53,7 @@ function migrateLegacyGhanaRates(items: JsonObject[]): JsonObject[] {
     }
     return t;
   });
-  if (changed) writeJson(taxesFile, next);
+  if (changed) safeWriteJson(taxesFile, next);
   return next;
 }
 
@@ -67,33 +86,45 @@ function migrateSeedReports(items: JsonObject[]): JsonObject[] {
   if (missing.length) {
     changed = true;
     const merged = [...patched, ...missing];
-    writeJson(reportsFile, merged);
+    safeWriteJson(reportsFile, merged);
     return merged;
   }
-  if (changed) writeJson(reportsFile, patched);
+  if (changed) safeWriteJson(reportsFile, patched);
   return patched;
+}
+
+function seedForFile(filePath: string): any[] {
+  if (filePath === taxesFile) return migrateLegacyGhanaRates(getSeedTaxes());
+  if (filePath === reportsFile) return migrateSeedReports(getSeedReports());
+  if (filePath === typesFile) return [];
+  return [];
 }
 
 export function readJson(filePath: string): any[] {
   ensureFiles();
   try {
-    const raw = fs.readFileSync(filePath, 'utf8');
-    const parsed = JSON.parse(raw);
-    if (filePath === taxesFile && Array.isArray(parsed)) {
-      return migrateLegacyGhanaRates(parsed);
+    if (fs.existsSync(filePath)) {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      const parsed = JSON.parse(raw);
+      if (filePath === taxesFile && Array.isArray(parsed)) {
+        return migrateLegacyGhanaRates(parsed);
+      }
+      if (filePath === reportsFile && Array.isArray(parsed)) {
+        return migrateSeedReports(parsed);
+      }
+      return parsed;
     }
-    if (filePath === reportsFile && Array.isArray(parsed)) {
-      return migrateSeedReports(parsed);
-    }
-    return parsed;
-  } catch {
-    return [];
+  } catch (err) {
+    console.warn('[ComplianceDB] readJson failed:', filePath, err);
   }
+  return seedForFile(filePath);
 }
 
 export function writeJson(filePath: string, data: any[]) {
   ensureFiles();
-  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  if (!safeWriteJson(filePath, data)) {
+    throw new Error(`Unable to persist compliance data at ${filePath}`);
+  }
 }
 
 function normalizeTypeName(s: unknown): string {
