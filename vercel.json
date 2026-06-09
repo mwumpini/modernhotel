@@ -1,8 +1,7 @@
 {
   "installCommand": "npm ci",
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run vercel-build",
   "framework": "nextjs",
-  "outputDirectory": ".next",
   "crons": [
     {
       "path": "/api/cron/night-audit",

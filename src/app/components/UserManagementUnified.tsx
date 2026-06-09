@@ -40,6 +40,16 @@ export default function UserManagementUnified() {
   const [selectedUser, setSelectedUser] = useState<{ id: string; username: string; email: string; firstName: string; lastName: string; roleId: string; isActive: boolean; profile?: { phone?: string; address?: string; department?: string; position?: string; employeeId?: string; bio?: string } } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedTab, setSelectedTab] = useState("overview");
+
+  useEffect(() => {
+    try {
+      const sub = localStorage.getItem('settings.usersSubTab');
+      if (sub) {
+        setSelectedTab(sub);
+        localStorage.removeItem('settings.usersSubTab');
+      }
+    } catch {}
+  }, []);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [isEditingRole, setIsEditingRole] = useState(false);

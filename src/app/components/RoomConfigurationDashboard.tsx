@@ -1335,8 +1335,8 @@ export default function RoomConfigurationDashboard() {
       })()}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-ghana-black">🏠 Room Configuration</h1>
-          <p className="text-gray-600">Manage room types, amenities, and pricing</p>
+          <h1 className="text-3xl font-bold text-ghana-black">🏠 Rooms & Pricing</h1>
+          <p className="text-gray-600">Manage room types, rate plans, seasonal pricing, and event rates</p>
         </div>
         <div className="flex gap-3">
           <Button 

@@ -30,3 +30,14 @@ export {
   type TaxPeriodRow,
   type TaxLedgerSummary,
 } from './ledgerRollup';
+
+export {
+  resolveClientTaxConfigs,
+} from './resolveConfigs.client';
+
+export {
+  resolveTaxConfigs,
+  taxConfigsFromComplianceCountry,
+  mapPrismaTaxRowToConfig,
+  type PrismaTaxRow,
+} from './resolveConfigs';

@@ -5,6 +5,8 @@ import { Card, CardHeader, CardBody, Button, Input, Select, SelectItem, Table, T
 import UniversalPayrollBuilder from '@/app/lib/payroll/builder';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
+import { useComplianceStore } from '@/app/lib/compliance/store';
+import { syncPayrollRunToComplianceFiling } from '@/app/lib/compliance/payrollSync';
 
 export default function PayrollBuilderPanel() {
   const builder = useMemo(() => new UniversalPayrollBuilder(), []);
@@ -12,7 +14,8 @@ export default function PayrollBuilderPanel() {
   const createPayrollPeriod = usePayrollStore((s: any) => s.createPayrollPeriod);
   const updatePayrollPeriod = usePayrollStore((s: any) => s.updatePayrollPeriod);
   const createPayrollRecord = usePayrollStore((s: any) => s.createPayrollRecord);
-  const [selectedTemplate, setSelectedTemplate] = useState('ghana');
+  const complianceCountry = useComplianceStore((s) => s.country);
+  const [selectedTemplate, setSelectedTemplate] = useState(complianceCountry);
   const [configId, setConfigId] = useState<string>('');
   const [employeeId, setEmployeeId] = useState<string>('');
   const [result, setResult] = useState<any>(null);
@@ -31,12 +34,52 @@ export default function PayrollBuilderPanel() {
   const [runYear, setRunYear] = useState<number>(new Date().getFullYear());
   const [markPaid, setMarkPaid] = useState<boolean>(true);
 
-  // Master lists to align with HR add-employee form semantics
-  const socialSecurityOptions = [
-    { key: 'SSNIT', name: 'Social Security', employeeRate: 5.5, employerRate: 13.0, ceiling: 17500 },
-    { key: 'Pension', name: 'Pension', employeeRate: 5, employerRate: 5, ceiling: null },
-    { key: 'NHIF', name: 'NHIF', employeeRate: 2, employerRate: 2, ceiling: null },
-  ];
+  React.useEffect(() => {
+    void useComplianceStore.getState().syncCountryFromSetup();
+  }, []);
+
+  React.useEffect(() => {
+    setSelectedTemplate(complianceCountry);
+  }, [complianceCountry]);
+
+  React.useEffect(() => {
+    if (!editableConfig && complianceCountry) {
+      try {
+        const cfg = builder.getCountryTemplate(complianceCountry);
+        builder.payrollConfigs.set(cfg.id, cfg);
+        setConfigId(cfg.id);
+        const saved = typeof window !== 'undefined' ? localStorage.getItem(`payroll.config.${cfg.country}`) : null;
+        setEditableConfig(saved ? JSON.parse(saved) : JSON.parse(JSON.stringify(cfg)));
+      } catch {
+        /* template not available for country */
+      }
+    }
+  }, [complianceCountry, editableConfig, builder]);
+  const templateOptions = useMemo(() => builder.listCountryTemplates(), [builder]);
+
+  const resetFromTemplate = () => {
+    const cfg = builder.getCountryTemplate(selectedTemplate || complianceCountry);
+    builder.payrollConfigs.set(cfg.id, cfg);
+    setConfigId(cfg.id);
+    setEditableConfig(JSON.parse(JSON.stringify(cfg)));
+  };
+
+  const incomeBracketSummary = useMemo(() => {
+    const brackets = editableConfig?.taxConfig?.income?.brackets || [];
+    if (!brackets.length) return null;
+    return brackets.map((b: { threshold: number; rate: number }) => `${b.threshold} @ ${b.rate}%`).join(' → ');
+  }, [editableConfig]);
+
+  const socialSecurityPresets = useMemo(() => {
+    if (!editableConfig?.socialSecurity) return [];
+    return Object.entries(editableConfig.socialSecurity).map(([key, ss]: [string, any]) => ({
+      key,
+      name: ss.name,
+      employeeRate: ss.employeeRate,
+      employerRate: ss.employerRate,
+      ceiling: ss.ceiling,
+    }));
+  }, [editableConfig]);
 
   const earningOptions = [
     { key: 'BASIC', name: 'Basic Salary', calculationType: 'fixed', amount: 0, taxable: true },
@@ -50,8 +93,7 @@ export default function PayrollBuilderPanel() {
   ];
 
   const handleLoadTemplate = () => {
-    const key = (selectedTemplate || 'ghana');
-    const cfg = builder.getCountryTemplate(key);
+    const cfg = builder.getCountryTemplate(selectedTemplate || complianceCountry);
     builder.payrollConfigs.set(cfg.id, cfg);
     setConfigId(cfg.id);
     const saved = typeof window !== 'undefined' ? localStorage.getItem(`payroll.config.${cfg.country}`) : null;
@@ -77,8 +119,7 @@ export default function PayrollBuilderPanel() {
   const handleRun = () => {
     // Auto-load template if not loaded
     if (!configId && !editableConfig) {
-      const key = (selectedTemplate || 'ghana');
-      const cfg = builder.getCountryTemplate(key);
+      const cfg = builder.getCountryTemplate(selectedTemplate || complianceCountry);
       builder.payrollConfigs.set(cfg.id, cfg);
       setConfigId(cfg.id);
       setEditableConfig(JSON.parse(JSON.stringify(cfg)));
@@ -227,8 +268,7 @@ export default function PayrollBuilderPanel() {
 
   const ensureConfigLoaded = () => {
     if (!configId && !editableConfig) {
-      const key = (selectedTemplate || 'ghana');
-      const cfg = builder.getCountryTemplate(key);
+      const cfg = builder.getCountryTemplate(selectedTemplate || complianceCountry);
       builder.payrollConfigs.set(cfg.id, cfg);
       setConfigId(cfg.id);
       setEditableConfig(JSON.parse(JSON.stringify(cfg)));
@@ -265,7 +305,7 @@ export default function PayrollBuilderPanel() {
     const baseCfg = JSON.parse(JSON.stringify((builder as any).payrollConfigs.get(runtimeId)));
     (builder as any).payrollConfigs.set(runtimeId, baseCfg);
 
-    const totals = { gross: 0, net: 0, tax: 0, deductions: 0 } as any;
+    const totals = { gross: 0, net: 0, tax: 0, ssnit: 0, deductions: 0 } as any;
     activeEmployees.forEach((emp: any) => {
       // Create or update employee profile for the run
       const eid = emp.id || emp.employeeNumber || `EMP-${Math.floor(Math.random() * 10000)}`;
@@ -294,6 +334,8 @@ export default function PayrollBuilderPanel() {
       totals.gross += calc.summary.gross;
       totals.net += calc.summary.net;
       totals.tax += calc.taxes.employee;
+      const ssnitAmt = calc.taxes.items.filter((t: any) => t.type === 'social').reduce((s: number, t: any) => s + (t.amount || 0), 0);
+      totals.ssnit += ssnitAmt;
       const deductionsSum = (calc.deductions?.total || 0);
       totals.deductions += deductionsSum;
 
@@ -337,6 +379,15 @@ export default function PayrollBuilderPanel() {
       approvedAt: markPaid ? new Date() : undefined,
       approvedBy: markPaid ? 'system' : undefined
     } as any);
+
+    syncPayrollRunToComplianceFiling({
+      countryCode: complianceCountry,
+      period: `${runYear}-${String(runMonth).padStart(2, '0')}`,
+      payeTotal: totals.tax,
+      ssnitTotal: totals.ssnit,
+      employeeCount: activeEmployees.length,
+    });
+
     alert(`Monthly payroll processed for ${activeEmployees.length} employee(s).`);
   };
 
@@ -347,11 +398,9 @@ export default function PayrollBuilderPanel() {
           <h4 className="font-semibold">Universal Payroll Builder (PAYE)</h4>
           <div className="flex gap-2">
             <Select selectedKeys={[selectedTemplate]} onSelectionChange={(k) => setSelectedTemplate(Array.from(k)[0] as string)} className="w-48" variant="bordered">
-              <SelectItem key="ghana">Ghana</SelectItem>
-              <SelectItem key="nigeria">Nigeria</SelectItem>
-              <SelectItem key="south_africa">South Africa</SelectItem>
-              <SelectItem key="usa">USA</SelectItem>
-              <SelectItem key="uk">UK</SelectItem>
+              {templateOptions.map((t) => (
+                <SelectItem key={t.country}>{t.name}</SelectItem>
+              ))}
             </Select>
             <Button className="bg-ghana-green text-white" onPress={handleLoadTemplate}>Load Template</Button>
             <Button variant="flat" onPress={handleCreateDemoEmployee}>Create Demo Employee</Button>
@@ -423,23 +472,13 @@ export default function PayrollBuilderPanel() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               <Card>
                 <CardHeader>
-                  <div className="flex items-center justify-between w-full">
-                    <h5 className="font-medium">Income Tax Brackets</h5>
-                    {editableConfig?.country === 'GH' && (
-                      <Tooltip content="GRA 2024: 0% up to GHS 4,380/yr, then 5%, 10%, 17.5%, 25%, 30%. Bracket[0].threshold = personal relief (GHS 365/mo).">
-                        <span className="text-xs text-ghana-green cursor-help border border-ghana-green/30 rounded px-1">GRA 2024</span>
-                      </Tooltip>
-                    )}
-                  </div>
+                  <h5 className="font-medium">Income Tax Brackets</h5>
                 </CardHeader>
                 <CardBody>
-                  {editableConfig?.country === 'GH' && (
-                    <div className="mb-3 text-xs text-gray-500 bg-gray-50 rounded p-2 space-y-0.5">
-                      <div className="font-medium text-gray-700 mb-1">Ghana PAYE bands (monthly, GRA 2024)</div>
-                      <div>Row 1 threshold = personal relief deducted before bands</div>
-                      <div>365 · 0% → 475 · 5% → 605 · 10% → 3,605 · 17.5% → 20,000 · 25% → 999,999 · 30%</div>
-                      <div className="mt-1">SSNIT employee 5.5% deducted before income tax</div>
-                    </div>
+                  {incomeBracketSummary && (
+                    <p className="mb-3 text-xs text-gray-500 bg-gray-50 rounded p-2">
+                      Current bands: {incomeBracketSummary}
+                    </p>
                   )}
                   <Table aria-label="brackets">
                   <TableHeader>
@@ -478,27 +517,7 @@ export default function PayrollBuilderPanel() {
                   <div className="mt-2 flex gap-2 flex-wrap">
                     <Button size="sm" variant="flat" onPress={addBracket}>+ Add Bracket</Button>
                     <Button size="sm" color="primary" onPress={handleRun}>Recalculate</Button>
-                    {editableConfig?.country === 'GH' && (
-                      <Button size="sm" variant="flat" color="warning" onPress={() => {
-                        setEditableConfig((prev: any) => ({
-                          ...prev,
-                          taxConfig: {
-                            ...prev.taxConfig,
-                            income: {
-                              ...(prev.taxConfig?.income || {}),
-                              brackets: [
-                                { threshold: 365, rate: 0 },
-                                { threshold: 475, rate: 5 },
-                                { threshold: 605, rate: 10 },
-                                { threshold: 3605, rate: 17.5 },
-                                { threshold: 20000, rate: 25 },
-                                { threshold: 999999, rate: 30 }
-                              ]
-                            }
-                          }
-                        }));
-                      }}>Reset to GRA 2024</Button>
-                    )}
+                    <Button size="sm" variant="flat" onPress={resetFromTemplate}>Reset from template</Button>
                   </div>
                 </CardBody>
               </Card>
@@ -516,9 +535,9 @@ export default function PayrollBuilderPanel() {
                     <div className="space-y-2">
                       {Object.entries(editableConfig.socialSecurity || {}).map(([key, ss]: any) => (
                         <div key={key} className="grid grid-cols-6 gap-2 items-start">
-                          <Select label="Name" selectedKeys={[String((() => { const m = socialSecurityOptions.find(o => o.name === ss.name || o.key === ss.name); return m?.name || ss.name || key; })())]} onSelectionChange={(k) => {
+                          <Select label="Name" selectedKeys={[String((() => { const m = socialSecurityPresets.find(o => o.name === ss.name || o.key === ss.name); return m?.name || ss.name || key; })())]} onSelectionChange={(k) => {
                             const selected = String(Array.from(k)[0] || 'Social Security');
-                            const preset = socialSecurityOptions.find(o => o.name === selected || o.key === selected);
+                            const preset = socialSecurityPresets.find(o => o.name === selected || o.key === selected);
                             const next = { ...editableConfig } as any;
                             next.socialSecurity[key] = {
                               ...(next.socialSecurity[key] || {}),
@@ -529,7 +548,7 @@ export default function PayrollBuilderPanel() {
                             };
                             setEditableConfig(next);
                           }} variant="bordered">
-                            {socialSecurityOptions.map(opt => (
+                            {socialSecurityPresets.map(opt => (
                               <SelectItem key={opt.name}>{opt.name}</SelectItem>
                             ))}
                           </Select>

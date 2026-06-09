@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Universal Payroll Builder - integrated as a library module
 
+import ghanaPayrollConfig from '../compliance/config/payroll/ghana.json';
+
 export default class UniversalPayrollBuilder {
   payrollConfigs: Map<string, any>;
   employeeProfiles: Map<string, any>;
@@ -339,31 +341,30 @@ export default class UniversalPayrollBuilder {
   }
 
   createGhanaTemplate() {
+    const cfg = ghanaPayrollConfig as any;
     return this.createPayrollConfig({
-      id: 'ghana_standard', name: 'Ghana Standard Payroll', country: 'GH', currency: 'GHS', payFrequency: 'monthly',
+      id: cfg.id,
+      name: cfg.name,
+      country: cfg.country,
+      currency: cfg.currency,
+      payFrequency: cfg.payFrequency,
       earnings: [
         this.createEarningComponent({ name: 'Basic Salary', code: 'BASIC', category: 'regular', calculationType: 'fixed', taxable: true }),
         this.createEarningComponent({ name: 'Transport Allowance', code: 'TRANSPORT', category: 'allowance', calculationType: 'fixed', amount: 300, taxable: false }),
-        this.createEarningComponent({ name: 'Overtime', code: 'OVERTIME', category: 'overtime', calculationType: 'hourly', rate: 1.5, taxable: true })
+        this.createEarningComponent({ name: 'Overtime', code: 'OVERTIME', category: 'overtime', calculationType: 'hourly', rate: 1.5, taxable: true }),
       ],
-      deductions: [
-        this.createDeductionComponent({ name: 'SSNIT Employee', code: 'SSNIT_EMP', category: 'statutory', calculationType: 'percentage', rate: 5.5, base: 'gross', taxable: false, limits: { ceiling: 17500 } })
-      ],
+      deductions: (cfg.deductions || []).map((d: any) => this.createDeductionComponent(d)),
       socialSecurity: {
-        ssnit: this.createSocialSecurityConfig({ name: 'SSNIT', type: 'pension', employeeRate: 5.5, employerRate: 13.0, ceiling: 17500 })
+        ssnit: this.createSocialSecurityConfig(cfg.socialSecurity?.ssnit || {}),
       },
       taxConfig: {
-        // GRA 2024 PAYE bands (monthly). Bracket[0].threshold = personal relief deducted first.
-        // Annual bands: 0% GHS4380 | 5% GHS1320 | 10% GHS1560 | 17.5% GHS36000 | 25% GHS196740 | 30% remainder
-        income: this.createTaxConfig({ name: 'Ghana Income Tax (GRA 2024)', type: 'income', calculationMethod: 'progressive', brackets: [
-          { threshold: 365, rate: 0 },   // personal relief: GHS 4,380/yr ÷ 12 = GHS 365/mo
-          { threshold: 475, rate: 5 },   // next GHS 110/mo (GHS 1,320/yr)
-          { threshold: 605, rate: 10 },  // next GHS 130/mo (GHS 1,560/yr)
-          { threshold: 3605, rate: 17.5 },// next GHS 3,000/mo (GHS 36,000/yr)
-          { threshold: 20000, rate: 25 },// next GHS 16,395/mo (GHS 196,740/yr)
-          { threshold: 999999, rate: 30 }// remainder at 30%
-        ] })
-      }
+        income: this.createTaxConfig({
+          name: cfg.taxConfig?.income?.name || 'Ghana Income Tax',
+          type: 'income',
+          calculationMethod: 'progressive',
+          brackets: cfg.taxConfig?.income?.brackets || [],
+        }),
+      },
     });
   }
 

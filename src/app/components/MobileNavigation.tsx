@@ -54,7 +54,6 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
         { title: 'Group Blocking', href: '/frontdesk/groups', badge: 'Tool' },
         { title: 'Check-In/Out', href: '/frontdesk/checkin', badge: 'Ghana Card' },
         { title: 'Guest Services', href: '/frontdesk/services', badge: 'Tracking' },
-        { title: 'Rate Management', href: '/frontdesk/rates', badge: 'Dynamic' },
         { title: 'Billing Persons', href: '/billing-persons', badge: 'Corporate' },
       ]
     },
@@ -131,10 +130,9 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       title: '⚖️ Compliance & Reports',
       icon: '⚖️',
       items: [
-        { title: 'Tax Calculator & Rules', href: '/compliance/tax', badge: 'Ghana' },
-        { title: 'VAT/NHIL Returns', href: '/compliance/vat', badge: 'Ghana' },
-        { title: 'Tourism Levy & SSNIT', href: '/compliance/levy', badge: 'Auto' },
-        { title: 'Operational Reports', href: '/compliance/reports', badge: 'RevPAR' },
+        { title: 'Tax Management', href: '/', badge: 'Rules', complianceTab: 'tax' },
+        { title: 'PAYE', href: '/', badge: 'Payroll', complianceTab: 'payroll' },
+        { title: 'Reports & Filing', href: '/', badge: 'VAT', complianceTab: 'reports' },
       ]
     },
     {
@@ -142,12 +140,11 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       title: '⚙️ System Settings',
       icon: '⚙️',
       items: [
-        { title: 'User Management & Preferences', href: '/settings/users', badge: 'Security' },
-        { title: 'Theme Test', href: '/settings/theme-test', badge: 'Test' },
-        { title: 'Activity Logs', href: '/settings/logs', badge: 'Audit' },
-        { title: 'Offline Management', href: '/settings/offline', badge: 'Sync' },
-        { title: 'Tax Rules & APIs', href: '/settings/tax', badge: 'Ghana' },
-        { title: 'Localization & Templates', href: '/settings/localization', badge: 'Twi' },
+        { title: 'Users & Roles', href: '/', badge: 'Admin', settingsTab: 'users' },
+        { title: 'Rooms & Pricing', href: '/', badge: 'Rates', settingsTab: 'rooms' },
+        { title: 'Document Numbering', href: '/', badge: 'IDs', settingsTab: 'numbering' },
+        { title: 'Security', href: '/', badge: 'Policy', settingsTab: 'security' },
+        { title: 'System Setup', href: '/setup', badge: 'Wizard' },
       ]
     }
   ];
@@ -234,7 +231,24 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
                       key={index}
                       href={item.href}
                       className="w-full flex items-center justify-between px-4 py-3 rounded-lg transition-all duration-200 text-sm text-ghana-black hover:bg-ghana-gold/20 hover:text-ghana-green"
-                      onClick={onClose}
+                      onClick={(e) => {
+                        if ('settingsTab' in item && item.settingsTab) {
+                          e.preventDefault();
+                          try {
+                            localStorage.setItem('nav.section', 'settings');
+                            localStorage.setItem('settings.tab', item.settingsTab as string);
+                          } catch {}
+                          window.location.href = '/';
+                        } else if ('complianceTab' in item && item.complianceTab) {
+                          e.preventDefault();
+                          try {
+                            localStorage.setItem('nav.section', 'compliance');
+                            localStorage.setItem('compliance.tab', item.complianceTab as string);
+                          } catch {}
+                          window.location.href = '/';
+                        }
+                        onClose();
+                      }}
                     >
                       <span className="font-medium">{item.title}</span>
                       <Badge

@@ -541,13 +541,13 @@ export interface AuditTrail {
 //   VAT 20% applied on (exclusive + pre-VAT levies) — total effective burden ≈ 26%
 // NHIL, GETFund and Tourism are not creditable on purchases (no input tax relief).
 export const GHANA_TAX_CODES = {
-  VAT:         { code: 'VAT',         name: 'Value Added Tax',                rate: 20.0, glCode: '2110' },
+  VAT:         { code: 'VAT',         name: 'Value Added Tax',                rate: 15.0, glCode: '2110' },
   NHIL:        { code: 'NHIL',        name: 'National Health Insurance Levy', rate: 2.5,  glCode: '2120' },
   GETFUND:     { code: 'GETFUND',     name: 'GETFund Levy',                   rate: 2.5,  glCode: '2130' },
-  /** @deprecated Abolished; retained for historical invoices only */
+  /** @deprecated Abolished effective 2026 */
   COVID19:     { code: 'COVID19',     name: 'COVID-19 Recovery Levy (legacy)', rate: 0,   glCode: '2140' },
   TOURISM:     { code: 'TOURISM',     name: 'Tourism Development Levy',       rate: 1.0,  glCode: '2150' },
-  WITHHOLDING: { code: 'WITHHOLDING', name: 'Withholding Tax',                rate: 5.0,  glCode: '2160' },
+  WITHHOLDING: { code: 'WITHHOLDING', name: 'Withholding Tax (Services)',     rate: 7.5,  glCode: '2160' },
 };
 
 // Standard Chart of Accounts for Ghana Hotels

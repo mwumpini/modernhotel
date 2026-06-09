@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { TaxRule, ReportingRule, ComplianceTransaction, ComplianceReport, TaxType } from '../models';
-import { computeSalesTax } from '../tax/engine';
+import { DEFAULT_COMPLIANCE_COUNTRY, getSeedReports, getSeedTaxes } from './config';
+import { resolveComplianceCountry } from './resolveCountry';
 
 export interface TaxLineItem {
   name: string;
@@ -85,9 +86,10 @@ interface ComplianceState {
   
   // Actions
   setCountry: (code: string) => Promise<void>;
+  syncCountryFromSetup: () => Promise<void>;
   getActiveRules: () => TaxRule[];
   getTaxTypesByContext: (domain?: TaxType['domain'], operation?: TaxType['operation']) => TaxType[];
-  getActiveReports: () => ComplianceReport[];
+  getActiveReports: () => ReportingRule[];
   addTransaction: (transaction: Omit<ComplianceTransaction, 'id'>) => void;
   updateReport: (id: string, updates: Partial<ComplianceReport>) => void;
   calculateTax: (
@@ -99,7 +101,7 @@ interface ComplianceState {
 }
 
 export const useComplianceStore = create<ComplianceState>((set, get) => ({
-  country: 'GH', // Default to Ghana
+  country: typeof window !== 'undefined' ? resolveComplianceCountry() : DEFAULT_COMPLIANCE_COUNTRY,
   taxRules: [],
   taxTypes: [],
   reportingRules: [],
@@ -110,35 +112,92 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
 
   setCountry: async (code) => {
     set({ isLoading: true, error: null });
-    
+
+    const applySeedFallback = (reason: string) => {
+      const taxRules = getSeedTaxes().filter((t) => t.countryCode === code) as unknown as TaxRule[];
+      const reportingRules = getSeedReports().filter((r) => r.countryCode === code) as unknown as ReportingRule[];
+      set({
+        country: code,
+        taxRules,
+        taxTypes: [],
+        reportingRules,
+        isLoading: false,
+        error: reason,
+      });
+      void import('../accounting/taxRuleAccountingSync').then(({ resyncCountryTaxRulesToAccounting }) => {
+        resyncCountryTaxRulesToAccounting(taxRules, code);
+      });
+    };
+
     try {
       const [taxRes, typeRes, reportRes] = await Promise.all([
         fetch(`/api/compliance/taxes?country=${code}`),
         fetch(`/api/compliance/tax-types?country=${code}`),
-        fetch(`/api/compliance/reports?country=${code}`)
+        fetch(`/api/compliance/reports?country=${code}`),
       ]);
-      
-      if (!taxRes.ok || !typeRes.ok || !reportRes.ok) {
-        throw new Error('Failed to fetch compliance data');
+
+      const unauthorized =
+        taxRes.status === 401 || typeRes.status === 401 || reportRes.status === 401;
+
+      if (unauthorized) {
+        applySeedFallback('Using default tax schedules (log in to save changes).');
+        return;
       }
-      
+
+      if (!taxRes.ok || !typeRes.ok || !reportRes.ok) {
+        const parts = [
+          !taxRes.ok ? `tax rules (${taxRes.status})` : null,
+          !typeRes.ok ? `tax types (${typeRes.status})` : null,
+          !reportRes.ok ? `filing schedules (${reportRes.status})` : null,
+        ].filter(Boolean);
+        throw new Error(`Failed to fetch compliance data: ${parts.join(', ')}`);
+      }
+
       const [taxRules, taxTypes, reportingRules] = await Promise.all([
         taxRes.json(),
         typeRes.json(),
-        reportRes.json()
+        reportRes.json(),
       ]);
-      
+
       set({
         country: code,
         taxRules,
         taxTypes,
         reportingRules,
-        isLoading: false
+        isLoading: false,
+        error: null,
+      });
+
+      void import('../accounting/taxRuleAccountingSync').then(({ resyncCountryTaxRulesToAccounting }) => {
+        resyncCountryTaxRulesToAccounting(taxRules as TaxRule[], code);
       });
     } catch (error) {
-      set({ 
-        error: error instanceof Error ? error.message : 'Unknown error',
-        isLoading: false 
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      if (getSeedTaxes().some((t) => t.countryCode === code)) {
+        applySeedFallback(`${msg} — showing default schedules.`);
+      } else {
+        set({
+          error: msg,
+          isLoading: false,
+        });
+      }
+    }
+  },
+
+  syncCountryFromSetup: async () => {
+    const state = get();
+    if (state.isLoading) return;
+    const code = resolveComplianceCountry();
+    const current = state.country;
+    const countryTaxRules = state.taxRules.filter((r) => r.countryCode === code);
+    const countryReports = state.reportingRules.filter((r) => r.countryCode === code);
+    const needsLoad =
+      code !== current || countryTaxRules.length === 0 || countryReports.length === 0;
+    if (needsLoad) {
+      await get().setCountry(code);
+    } else if (countryTaxRules.length > 0) {
+      void import('../accounting/taxRuleAccountingSync').then(({ resyncCountryTaxRulesToAccounting }) => {
+        resyncCountryTaxRulesToAccounting(countryTaxRules, code);
       });
     }
   },
@@ -148,7 +207,9 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
   },
 
   getActiveReports: () => {
-    return get().reports.filter(report => report.countryCode === get().country);
+    return get().reportingRules.filter(
+      (report) => report.countryCode === get().country && report.isActive !== false
+    );
   },
 
   getTaxTypesByContext: (domain, operation) => {
@@ -184,7 +245,6 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
 
   calculateTax: (amount, category = 'ALL', context = {}) => {
     const rules = get().getActiveRules();
-    const country = get().country;
     
     // Sort by priority; default to 100 if undefined
     const sortedRules = [...rules].sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100));
@@ -210,67 +270,58 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
     };
     
     const activeRules = sortedRules.filter(r => isEffective(r) && inScope(r));
-    
-    if (country === 'GH') {
-      const { lines, totalTax, gross } = computeSalesTax(amount);
-      const taxes: TaxLineItem[] = lines.map((l) => ({
-        name: l.name,
-        amount: l.amount,
-        glCode: l.glAccountCode,
-        rate: l.rate,
-      }));
-      return { taxes, total: gross };
-    } else {
-      // General rule engine: respects calculationBase, method, tiers, stacking, rounding, and effect
-      let runningBase = amount;
-      const taxes: TaxLineItem[] = [];
-      let addTotal = 0;
-      let subtractTotal = 0;
-      for (const rule of activeRules) {
-        const baseType = rule.calculationBase || 'subtotal';
-        const base = computeBase(baseType, amount, runningBase, context);
-        let raw = 0;
-        const method = rule.method || 'rate';
-        if (method === 'fixed') {
-          raw = rule.fixedAmount ?? 0;
-        } else if (method === 'tiered' && Array.isArray(rule.tiers) && rule.tiers.length) {
-          raw = computeTiered(base, rule.tiers, rule.rounding, rule.roundTo);
-        } else {
-          raw = base * ((rule.rate ?? 0) / 100);
-        }
-        // Optional rounding
-        if (rule.rounding && rule.roundTo) {
-          const m = 1 / rule.roundTo;
-          if (rule.rounding === 'nearest') raw = Math.round(raw * m) / m;
-          if (rule.rounding === 'down') raw = Math.floor(raw * m) / m;
-          if (rule.rounding === 'up') raw = Math.ceil(raw * m) / m;
-        }
-        taxes.push({ name: rule.name, amount: raw, glCode: rule.glCode, rate: rule.rate ?? 0 });
-        const effect = rule.effect || 'add';
-        if (effect === 'add') addTotal += raw;
-        else if (effect === 'subtract') subtractTotal += raw;
-        // exclude_total and informational do not alter totals
-        if ((rule.stacking || 'additive') === 'compound' && effect === 'add') {
-          runningBase += raw;
-        }
+
+    let runningBase = amount;
+    const taxes: TaxLineItem[] = [];
+    let addTotal = 0;
+    let subtractTotal = 0;
+    for (const rule of activeRules) {
+      const baseType = rule.calculationBase || 'subtotal';
+      const base = computeBase(baseType, amount, runningBase, context);
+      let raw = 0;
+      const method = rule.method || 'rate';
+      if (method === 'fixed') {
+        raw = rule.fixedAmount ?? 0;
+      } else if (method === 'tiered' && Array.isArray(rule.tiers) && rule.tiers.length) {
+        raw = computeTiered(base, rule.tiers, rule.rounding, rule.roundTo);
+      } else {
+        raw = base * ((rule.rate ?? 0) / 100);
       }
-      const total = amount + addTotal - subtractTotal;
-      return { taxes, total };
+      if (rule.rounding && rule.roundTo) {
+        const m = 1 / rule.roundTo;
+        if (rule.rounding === 'nearest') raw = Math.round(raw * m) / m;
+        if (rule.rounding === 'down') raw = Math.floor(raw * m) / m;
+        if (rule.rounding === 'up') raw = Math.ceil(raw * m) / m;
+      }
+      taxes.push({ name: rule.name, amount: raw, glCode: rule.glCode, rate: rule.rate ?? 0 });
+      const effect = rule.effect || 'add';
+      if (effect === 'add') addTotal += raw;
+      else if (effect === 'subtract') subtractTotal += raw;
+      if ((rule.stacking || 'additive') === 'compound' && effect === 'add') {
+        runningBase += raw;
+      }
     }
+    const total = amount + addTotal - subtractTotal;
+    return { taxes, total };
   },
 
   getComplianceScore: () => {
-    const reports = get().getActiveReports();
-    if (reports.length === 0) return 100;
-    
-    const submittedReports = reports.filter(r => r.status === 'submitted' || r.status === 'approved').length;
-    const pendingReports = reports.filter(r => r.status === 'pending').length;
-    
-    let score = (submittedReports / reports.length) * 80;
+    const schedules = get().reportingRules.filter(
+      (r) => r.countryCode === get().country && r.isActive !== false
+    );
+    if (schedules.length === 0) return 100;
+
+    const filings = get().reports.filter((r) => r.countryCode === get().country);
+    if (filings.length === 0) return 100;
+
+    const submittedReports = filings.filter((r) => r.status === 'submitted' || r.status === 'approved').length;
+    const pendingReports = filings.filter((r) => r.status === 'pending').length;
+
+    let score = (submittedReports / filings.length) * 80;
     if (pendingReports > 0) {
-      score += (pendingReports / reports.length) * 20;
+      score += (pendingReports / filings.length) * 20;
     }
-    
+
     return Math.round(score);
-  }
+  },
 }));

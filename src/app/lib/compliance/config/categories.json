@@ -1,0 +1,11 @@
+[
+  { "key": "ALL", "label": "All Products/Services" },
+  { "key": "FOOD", "label": "Food & Beverage" },
+  { "key": "ROOM", "label": "Room Service" },
+  { "key": "SERVICE", "label": "Service Charges" },
+  { "key": "HOTEL", "label": "Hotel Accommodation" },
+  { "key": "RESTAURANT", "label": "Restaurant Services" },
+  { "key": "BAR", "label": "Bar Services" },
+  { "key": "SPA", "label": "Spa & Wellness" },
+  { "key": "TRANSPORT", "label": "Transportation" }
+]

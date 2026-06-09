@@ -1,0 +1,8 @@
+[
+  { "code": "GH", "name": "Ghana", "flag": "🇬🇭" },
+  { "code": "NG", "name": "Nigeria", "flag": "🇳🇬" },
+  { "code": "KE", "name": "Kenya", "flag": "🇰🇪" },
+  { "code": "ZA", "name": "South Africa", "flag": "🇿🇦" },
+  { "code": "ZW", "name": "Zimbabwe", "flag": "🇿🇼" },
+  { "code": "US", "name": "United States", "flag": "🇺🇸" }
+]

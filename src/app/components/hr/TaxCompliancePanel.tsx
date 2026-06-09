@@ -1,11 +1,11 @@
 'use client';
 
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 import { Button, Card, CardBody, CardHeader, Input, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
 import { useComplianceStore } from '@/app/lib/compliance/store';
+import { computeSalesTax } from '@/app/lib/tax/engine';
 
 export default function TaxCompliancePanel() {
-  const calculateTax = useComplianceStore((s) => s.calculateTax);
   const country = useComplianceStore((s) => s.country);
   const setCountry = useComplianceStore((s) => s.setCountry);
 
@@ -13,11 +13,18 @@ export default function TaxCompliancePanel() {
   const [result, setResult] = React.useState<{ taxes: Array<{ name: string; amount: number; glCode: string }>; total: number } | null>(null);
   const [loading, setLoading] = React.useState(false);
 
+  React.useEffect(() => {
+    void useComplianceStore.getState().syncCountryFromSetup();
+  }, []);
+
   const run = async () => {
     setLoading(true);
     try {
-      const res = calculateTax(amount, 'ALL', { domain: 'sales', operation: 'external' });
-      setResult(res);
+      const { lines, totalTax, gross } = computeSalesTax(amount);
+      setResult({
+        taxes: lines.map((l) => ({ name: l.name, amount: l.amount, glCode: l.glAccountCode })),
+        total: gross,
+      });
     } finally {
       setLoading(false);
     }

@@ -10,10 +10,10 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const country = searchParams.get('country') || undefined;
 
-    const taxRules = ComplianceDB.getTaxes(country);
-    return NextResponse.json(taxRules);
+    const taxTypes = ComplianceDB.getTaxTypes(country);
+    return NextResponse.json(taxTypes);
   } catch (error) {
-    console.error('[compliance/taxes][GET] error', error);
+    console.error('[compliance/tax-types][GET] error', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }

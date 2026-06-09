@@ -1,0 +1,142 @@
+{
+  "countryDefaults": {
+    "GH": ["ghana_sales_standard"],
+    "US": ["us_sales_generic", "us_purchases_tax", "us_payroll_income"],
+    "NG": ["nigeria_vat_standard", "nigeria_purchases_vat", "nigeria_payroll_paye"],
+    "ZA": ["south_africa_vat_standard", "south_africa_purchases_vat", "south_africa_payroll_paye"],
+    "KE": ["kenya_vat_standard", "kenya_purchases_vat", "kenya_payroll_paye"],
+    "ZW": ["zimbabwe_vat_standard", "zimbabwe_purchases_vat", "zimbabwe_payroll_paye"]
+  },
+  "countryQuickApply": {
+    "GH": {
+      "templateKey": "ghana_sales_standard",
+      "note": "Act 1151 (Jan 2026): VAT 15% + NHIL 2.5% + GETFund 2.5% = 20% on taxable value; Tourism 1% separate (~21% on hotel bills)."
+    }
+  },
+  "templates": {
+    "ghana_sales_standard": {
+      "meta": {
+        "title": "Ghana Sales (VAT+Levies)",
+        "domain": "sales",
+        "operation": "external",
+        "effect": "all"
+      },
+      "rules": [
+        { "name": "NHIL", "rate": 2.5, "glCode": "2120", "appliesTo": ["ALL"], "description": "National Health Insurance Levy", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" },
+        { "name": "GETFund Levy", "rate": 2.5, "glCode": "2130", "appliesTo": ["ALL"], "description": "Ghana Education Trust Fund Levy", "enabled": true, "priority": 11, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" },
+        { "name": "VAT (Standard Rate)", "rate": 15, "glCode": "2110", "appliesTo": ["ALL"], "description": "VAT 15% on (subtotal + NHIL + GETFund) — Act 1151, Jan 2026", "enabled": true, "priority": 20, "calculationBase": "subtotal_plus_applied", "method": "rate", "stacking": "compound", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" },
+        { "name": "Tourism Levy", "rate": 1, "glCode": "2150", "appliesTo": ["ROOM", "HOTEL", "FOOD"], "description": "Tourism Development Levy (L.I. 2185)", "enabled": true, "priority": 30, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" }
+      ]
+    },
+    "withholding_services": {
+      "meta": { "title": "Withholding - Services", "domain": "sales", "operation": "external", "effect": "subtract" },
+      "rules": [
+        { "name": "Withholding Tax (Services)", "rate": 7.5, "glCode": "2160", "appliesTo": ["SERVICE"], "description": "Resident WHT on services (2026)", "enabled": true, "priority": 5, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "internal", "effect": "subtract" }
+      ]
+    },
+    "purchases_vat": {
+      "meta": { "title": "Purchases VAT", "domain": "purchases", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "Purchases VAT", "rate": 15, "glCode": "2400", "appliesTo": ["ALL"], "description": "Input VAT on purchases (Act 1151)", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" }
+      ]
+    },
+    "payroll_paye": {
+      "meta": { "title": "PAYE Placeholder", "domain": "payroll", "operation": "internal", "effect": "subtract" },
+      "rules": [
+        { "name": "PAYE", "rate": 0, "glCode": "PAYE", "appliesTo": ["ALL"], "description": "Pay As You Earn (configured in PAYE tab)", "enabled": true, "priority": 100, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "payroll", "operation": "internal", "effect": "subtract" }
+      ]
+    },
+    "us_sales_generic": {
+      "meta": { "title": "US Sales (State/Local/Occupancy)", "domain": "sales", "operation": "external", "effect": "all" },
+      "rules": [
+        { "name": "State Sales Tax", "rate": 6, "glCode": "3100", "appliesTo": ["ALL"], "description": "State-level sales tax", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" },
+        { "name": "Local Sales Tax", "rate": 2, "glCode": "3110", "appliesTo": ["ALL"], "description": "Local/city sales tax", "enabled": true, "priority": 11, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" },
+        { "name": "Hotel Occupancy Tax", "rate": 5, "glCode": "3120", "appliesTo": ["HOTEL", "ROOM"], "description": "Occupancy/bed tax", "enabled": true, "priority": 30, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" }
+      ]
+    },
+    "us_purchases_tax": {
+      "meta": { "title": "US Purchases Tax", "domain": "purchases", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "Purchases Tax", "rate": 6, "glCode": "3410", "appliesTo": ["ALL"], "description": "US purchases tax", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" }
+      ]
+    },
+    "us_payroll_income": {
+      "meta": { "title": "US Payroll Income", "domain": "payroll", "operation": "internal", "effect": "subtract" },
+      "rules": [
+        { "name": "Income Tax (Payroll)", "rate": 0, "glCode": "PR-US", "appliesTo": ["ALL"], "description": "US payroll income (configure in PAYE tab)", "enabled": true, "priority": 100, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "payroll", "operation": "internal", "effect": "subtract" }
+      ]
+    },
+    "nigeria_vat_standard": {
+      "meta": { "title": "Nigeria VAT", "domain": "sales", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "VAT (Standard Rate)", "rate": 7.5, "glCode": "2500", "appliesTo": ["ALL"], "description": "Nigeria VAT", "enabled": true, "priority": 20, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" }
+      ]
+    },
+    "nigeria_purchases_vat": {
+      "meta": { "title": "Nigeria Purchases VAT", "domain": "purchases", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "Purchases VAT", "rate": 7.5, "glCode": "2510", "appliesTo": ["ALL"], "description": "Input VAT on purchases (Nigeria)", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" }
+      ]
+    },
+    "nigeria_payroll_paye": {
+      "meta": { "title": "Nigeria PAYE", "domain": "payroll", "operation": "internal", "effect": "subtract" },
+      "rules": [
+        { "name": "PAYE", "rate": 0, "glCode": "PR-NG", "appliesTo": ["ALL"], "description": "Nigeria PAYE (configure in PAYE tab)", "enabled": true, "priority": 100, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "payroll", "operation": "internal", "effect": "subtract" }
+      ]
+    },
+    "south_africa_vat_standard": {
+      "meta": { "title": "South Africa VAT", "domain": "sales", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "VAT (Standard Rate)", "rate": 15, "glCode": "2600", "appliesTo": ["ALL"], "description": "South Africa VAT", "enabled": true, "priority": 20, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" }
+      ]
+    },
+    "south_africa_purchases_vat": {
+      "meta": { "title": "South Africa Purchases VAT", "domain": "purchases", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "Purchases VAT", "rate": 15, "glCode": "2610", "appliesTo": ["ALL"], "description": "Input VAT on purchases (South Africa)", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" }
+      ]
+    },
+    "south_africa_payroll_paye": {
+      "meta": { "title": "South Africa PAYE", "domain": "payroll", "operation": "internal", "effect": "subtract" },
+      "rules": [
+        { "name": "PAYE", "rate": 0, "glCode": "PR-ZA", "appliesTo": ["ALL"], "description": "South Africa PAYE (configure in PAYE tab)", "enabled": true, "priority": 100, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "payroll", "operation": "internal", "effect": "subtract" }
+      ]
+    },
+    "kenya_vat_standard": {
+      "meta": { "title": "Kenya VAT", "domain": "sales", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "VAT (Standard Rate)", "rate": 16, "glCode": "2700", "appliesTo": ["ALL"], "description": "Kenya VAT", "enabled": true, "priority": 20, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" }
+      ]
+    },
+    "kenya_purchases_vat": {
+      "meta": { "title": "Kenya Purchases VAT", "domain": "purchases", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "Purchases VAT", "rate": 16, "glCode": "2710", "appliesTo": ["ALL"], "description": "Input VAT on purchases (Kenya)", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" }
+      ]
+    },
+    "kenya_payroll_paye": {
+      "meta": { "title": "Kenya PAYE", "domain": "payroll", "operation": "internal", "effect": "subtract" },
+      "rules": [
+        { "name": "PAYE", "rate": 0, "glCode": "PR-KE", "appliesTo": ["ALL"], "description": "Kenya PAYE (configure in PAYE tab)", "enabled": true, "priority": 100, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "payroll", "operation": "internal", "effect": "subtract" }
+      ]
+    },
+    "zimbabwe_vat_standard": {
+      "meta": { "title": "Zimbabwe VAT", "domain": "sales", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "VAT (Standard Rate)", "rate": 15, "glCode": "2800", "appliesTo": ["ALL"], "description": "Zimbabwe VAT", "enabled": true, "priority": 20, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" }
+      ]
+    },
+    "zimbabwe_purchases_vat": {
+      "meta": { "title": "Zimbabwe Purchases VAT", "domain": "purchases", "operation": "external", "effect": "add" },
+      "rules": [
+        { "name": "Purchases VAT", "rate": 15, "glCode": "2810", "appliesTo": ["ALL"], "description": "Input VAT on purchases (Zimbabwe)", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" }
+      ]
+    },
+    "zimbabwe_payroll_paye": {
+      "meta": { "title": "Zimbabwe PAYE", "domain": "payroll", "operation": "internal", "effect": "subtract" },
+      "rules": [
+        { "name": "PAYE", "rate": 0, "glCode": "PR-ZW", "appliesTo": ["ALL"], "description": "Zimbabwe PAYE (configure in PAYE tab)", "enabled": true, "priority": 100, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "payroll", "operation": "internal", "effect": "subtract" }
+      ]
+    }
+  }
+}

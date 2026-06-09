@@ -1,77 +1,22 @@
 /**
- * Option A: compliance TaxRule → accounting TaxConfig so JE stacking uses the same rates/GL as the Tax Rate Builder.
+ * Compliance TaxRule → accounting store TaxConfig sync (uses store — import dynamically from compliance store).
  */
 
 import type { TaxRule } from '../models';
-import type { TaxConfig } from './models';
 import { remapComplianceGlToChart } from '../tax/glMap';
 import { useAccountingStore } from './store';
+import {
+  mapRuleToTaxConfig,
+  mapComplianceRulesToTaxConfigs,
+  taxRuleEligibleForAccountingSync,
+} from './taxRuleToConfig';
+
+export { mapComplianceRulesToTaxConfigs, taxRuleEligibleForAccountingSync } from './taxRuleToConfig';
 
 export function chartHasGlCode(chart: { code: string }[], glCode: string): boolean {
   const g = String(glCode || '').trim();
   if (!g) return false;
   return chart.some((a) => String(a.code).trim() === g);
-}
-
-export function taxRuleEligibleForAccountingSync(rule: TaxRule): boolean {
-  if (!rule?.id || !String(rule.glCode || '').trim()) return false;
-  const method = rule.method || 'rate';
-  if (method !== 'rate') return false;
-  const domain = rule.domain || 'sales';
-  if (domain === 'payroll' || domain === 'corporate') return false;
-  const effect = rule.effect || 'add';
-  if (effect === 'informational' || effect === 'exclude_total') return false;
-  return true;
-}
-
-function inferTaxType(rule: TaxRule): TaxConfig['type'] {
-  if (rule.calculationBase === 'subtotal_plus_applied') return 'VAT';
-  const n = String(rule.name || '').toLowerCase();
-  if (n.includes('withholding')) return 'Withholding';
-  if (n.includes('vat')) return 'VAT';
-  if (n.includes('nhil')) return 'NHIL';
-  if (n.includes('getfund') || n.includes('get fund')) return 'GETFund';
-  if (n.includes('tourism')) return 'Tourism';
-  if (n.includes('covid')) return 'COVID19';
-  return 'Other';
-}
-
-function mapApplyFlags(rule: TaxRule, type: TaxConfig['type']): Pick<TaxConfig, 'applyOnPurchases' | 'applyOnSales'> {
-  if (type === 'Withholding') {
-    return { applyOnPurchases: false, applyOnSales: false };
-  }
-  const domain = rule.domain || 'sales';
-  if (domain === 'purchases') {
-    return { applyOnPurchases: true, applyOnSales: false };
-  }
-  if (domain === 'sales') {
-    return { applyOnPurchases: false, applyOnSales: true };
-  }
-  return { applyOnPurchases: true, applyOnSales: true };
-}
-
-function mapRuleToTaxConfig(rule: TaxRule): TaxConfig {
-  const type = inferTaxType(rule);
-  const { applyOnPurchases, applyOnSales } = mapApplyFlags(rule, type);
-  let isRecoverable = type !== 'Withholding';
-  if (rule.domain === 'purchases') isRecoverable = true;
-
-  return {
-    id: rule.id,
-    code: `TCR-${rule.id}`,
-    name: rule.name,
-    rate: rule.rate,
-    type,
-    glAccountCode: remapComplianceGlToChart(String(rule.glCode).trim()),
-    isRecoverable,
-    isActive: rule.enabled !== false,
-    effectiveFrom: rule.effectiveFrom || new Date().toISOString(),
-    effectiveTo: rule.effectiveTo,
-    countryCode: rule.countryCode,
-    purchaseStackOrder: rule.priority ?? undefined,
-    applyOnPurchases,
-    applyOnSales,
-  };
 }
 
 function normalizeRuleFromApi(raw: unknown): TaxRule | null {
@@ -110,10 +55,6 @@ export type TaxAccountingSyncResult =
   | { ok: true; mode: 'upserted' | 'skipped' }
   | { ok: false; error: string };
 
-/**
- * Upsert `TaxConfig` keyed by compliance rule `id`.
- * Removes other tax configs with the same `glAccountCode` + `countryCode` so template rows do not double-stack.
- */
 export function syncTaxRuleToAccounting(rule: TaxRule): TaxAccountingSyncResult {
   if (!taxRuleEligibleForAccountingSync(rule)) {
     return { ok: true, mode: 'skipped' };
@@ -157,14 +98,12 @@ export function removeTaxRuleFromAccounting(ruleId: string): void {
   }
 }
 
-/** After API returns JSON body from POST/PUT taxes/manage. */
 export function syncTaxRuleFromApiResponse(body: unknown): TaxAccountingSyncResult {
   const rule = normalizeRuleFromApi(body);
   if (!rule) return { ok: false, error: 'Invalid tax rule response from server.' };
   return syncTaxRuleToAccounting(rule);
 }
 
-/** Re-apply accounting sync for all rules in a country (e.g. after template import or reorder). */
 export function resyncCountryTaxRulesToAccounting(rules: TaxRule[], countryCode: string): string[] {
   const errors: string[] = [];
   for (const r of rules) {

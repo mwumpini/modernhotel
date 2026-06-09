@@ -1,0 +1,46 @@
+{
+  "id": "ghana_standard",
+  "name": "Ghana Standard Payroll",
+  "country": "GH",
+  "currency": "GHS",
+  "payFrequency": "monthly",
+  "effectiveFrom": "2026-01-01",
+  "source": "GRA / SSNIT 2026 — Act 1151 VAT era",
+  "socialSecurity": {
+    "ssnit": {
+      "name": "SSNIT",
+      "type": "pension",
+      "employeeRate": 5.5,
+      "employerRate": 13,
+      "ceiling": 69000,
+      "minimumInsurable": 587.8
+    }
+  },
+  "deductions": [
+    {
+      "name": "SSNIT Employee",
+      "code": "SSNIT_EMP",
+      "category": "statutory",
+      "calculationType": "percentage",
+      "rate": 5.5,
+      "base": "gross",
+      "limits": { "ceiling": 69000 }
+    }
+  ],
+  "taxConfig": {
+    "income": {
+      "name": "Ghana Income Tax (PAYE 2026)",
+      "type": "income",
+      "calculationMethod": "progressive",
+      "brackets": [
+        { "threshold": 490, "rate": 0 },
+        { "threshold": 600, "rate": 5 },
+        { "threshold": 730, "rate": 10 },
+        { "threshold": 3896.67, "rate": 17.5 },
+        { "threshold": 19896.67, "rate": 25 },
+        { "threshold": 50416.67, "rate": 30 },
+        { "threshold": 999999, "rate": 35 }
+      ]
+    }
+  }
+}

@@ -2,15 +2,14 @@
   "name": "ghana-hotel-management",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "engines": {
     "node": ">=18.18.0"
   },
   "scripts": {
     "predev": "node scripts/ensure-tailwind.cjs",
     "dev": "next dev",
-    "dev:safe": "npm run kill:node && npm run clean && npm run dev",
-    "clean": "node scripts/clean-next.js",
+    "dev:safe": "npm run clean && npm run dev",
+    "clean": "node scripts/clean-next.mjs",
     "kill:node": "powershell -Command \"Get-Process node -ErrorAction SilentlyContinue | Stop-Process -Force\"",
     "prebuild": "prisma generate --schema=prisma/schema.production.prisma",
     "build": "prisma generate --schema=prisma/schema.production.prisma && next build",

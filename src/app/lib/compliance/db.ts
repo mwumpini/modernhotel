@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { getSeedReports, getSeedTaxes } from './config';
 
 type JsonObject = Record<string, any>;
 
@@ -10,38 +11,81 @@ const typesFile = path.join(dataDir, 'compliance.taxTypes.json');
 
 function ensureFiles() {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-  if (!fs.existsSync(taxesFile)) fs.writeFileSync(taxesFile, JSON.stringify(seedTaxes(), null, 2));
-  if (!fs.existsSync(reportsFile)) fs.writeFileSync(reportsFile, JSON.stringify(seedReports(), null, 2));
+  if (!fs.existsSync(taxesFile)) fs.writeFileSync(taxesFile, JSON.stringify(getSeedTaxes(), null, 2));
+  if (!fs.existsSync(reportsFile)) fs.writeFileSync(reportsFile, JSON.stringify(getSeedReports(), null, 2));
   if (!fs.existsSync(typesFile)) fs.writeFileSync(typesFile, JSON.stringify([], null, 2));
 }
 
-// Ghana hospitality levy stack (GRA rates):
-//   NHIL 2.5% + GETFund 2.5% + Tourism 1.0% on exclusive base (non-creditable)
-//   VAT 20% on (exclusive + pre-VAT levies) — total ≈ 26%
-function seedTaxes() {
-  const now = Date.now();
-  return [
-    { id: `${now}-nhil`,    countryCode: 'GH', name: 'NHIL',             rate: 2.5,  glCode: '2120', appliesTo: ['ALL'],          isRecoverable: false },
-    { id: `${now}-getfund`, countryCode: 'GH', name: 'GETFund Levy',     rate: 2.5,  glCode: '2130', appliesTo: ['ALL'],          isRecoverable: false },
-    { id: `${now}-tourism`, countryCode: 'GH', name: 'Tourism Levy',     rate: 1.0,  glCode: '2150', appliesTo: ['ROOM', 'F&B'], isRecoverable: false },
-    { id: `${now}-vat`,     countryCode: 'GH', name: 'VAT (Standard Rate)', rate: 20, glCode: '2110', appliesTo: ['ALL'],         isRecoverable: true  },
-  ];
+function migrateLegacyGhanaRates(items: JsonObject[]): JsonObject[] {
+  let changed = false;
+  const next = items.map((t) => {
+    if (t.countryCode !== 'GH') return t;
+    if ((t.id === 'gh-vat' || t.name === 'VAT (Standard Rate)') && Number(t.rate) === 20) {
+      changed = true;
+      return {
+        ...t,
+        rate: 15,
+        description: 'VAT 15% on (subtotal + NHIL + GETFund) — Act 1151, Jan 2026',
+      };
+    }
+    if (t.name === 'Withholding Tax (Services)' && Number(t.rate) === 5) {
+      changed = true;
+      return { ...t, rate: 7.5, description: 'Resident WHT on services (2026)' };
+    }
+    return t;
+  });
+  if (changed) writeJson(taxesFile, next);
+  return next;
 }
 
-function seedReports() {
-  const today = new Date().toISOString();
-  return [
-    { id: 'gh-vat', countryCode: 'GH', reportType: 'VAT', frequency: 'Monthly', fieldsRequired: ['sales','purchases','vatDue'], dueDay: 15, isActive: true, lastUpdated: today },
-    { id: 'gh-nhil', countryCode: 'GH', reportType: 'NHIL', frequency: 'Monthly', fieldsRequired: ['sales','nhilDue'], dueDay: 15, isActive: true, lastUpdated: today },
-    { id: 'gh-tourism', countryCode: 'GH', reportType: 'Tourism', frequency: 'Monthly', fieldsRequired: ['roomSales','levyDue'], dueDay: 15, isActive: true, lastUpdated: today },
-  ];
+function migrateSeedReports(items: JsonObject[]): JsonObject[] {
+  const seeds = getSeedReports();
+  const seedById = new Map(seeds.map((s) => [String(s.id), s]));
+  let changed = false;
+
+  const patched = items.map((item) => {
+    const seed = seedById.get(String(item.id));
+    if (!seed) return item;
+    const updates: JsonObject = {};
+    if (!item.dueRule && seed.dueRule) {
+      updates.dueRule = seed.dueRule;
+      changed = true;
+    }
+    if (!item.description && seed.description) {
+      updates.description = seed.description;
+      changed = true;
+    }
+    if (item.dueDay === undefined && seed.dueDay !== undefined) {
+      updates.dueDay = seed.dueDay;
+      changed = true;
+    }
+    return Object.keys(updates).length ? { ...item, ...updates } : item;
+  });
+
+  const existingIds = new Set(patched.map((r) => String(r.id)));
+  const missing = seeds.filter((s) => !existingIds.has(String(s.id)));
+  if (missing.length) {
+    changed = true;
+    const merged = [...patched, ...missing];
+    writeJson(reportsFile, merged);
+    return merged;
+  }
+  if (changed) writeJson(reportsFile, patched);
+  return patched;
 }
 
 export function readJson(filePath: string): any[] {
   ensureFiles();
   try {
     const raw = fs.readFileSync(filePath, 'utf8');
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (filePath === taxesFile && Array.isArray(parsed)) {
+      return migrateLegacyGhanaRates(parsed);
+    }
+    if (filePath === reportsFile && Array.isArray(parsed)) {
+      return migrateSeedReports(parsed);
+    }
+    return parsed;
   } catch {
     return [];
   }
@@ -135,10 +179,6 @@ export const ComplianceDB = {
     return created;
   },
 
-  /**
-   * Merge duplicate tax types for a country (same template:* tag or same normalized name).
-   * Keeps the type with the most linked rules; reassigns rules from removed types.
-   */
   dedupeTaxTypesForCountry(countryCode: string): { removed: number; removedIds: string[] } {
     const allTypes = readJson(typesFile) as JsonObject[];
     const allTaxes = readJson(taxesFile) as JsonObject[];
@@ -200,7 +240,5 @@ export const ComplianceDB = {
   getReports(country?: string) {
     const items = readJson(reportsFile);
     return country ? items.filter((r: JsonObject) => r.countryCode === country) : items;
-  }
+  },
 };
-
-

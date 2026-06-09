@@ -1244,7 +1244,7 @@ const defaultGhanaCompliance: CountryCompliance = {
   numberFormat: '#,##0.00',
   
   taxRates: {
-    vat: 20,
+    vat: 15,
     nhil: 2.5,
     getfundLevy: 2.5,
     tourismLevy: 1.0,

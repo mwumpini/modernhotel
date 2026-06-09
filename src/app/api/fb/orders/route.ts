@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { prisma } from '@/app/lib/database/client'
-import { computeStackedTaxLines, taxConfigsFromGhanaTemplate } from '@/app/lib/accounting/taxFromConfig'
+import { resolveTaxConfigs, type PrismaTaxRow } from '@/app/lib/tax/resolveConfigs'
+import { computeStackedTaxLines } from '@/app/lib/accounting/taxFromConfig'
 
 function round2(n: number) { return Math.round((n + Number.EPSILON) * 100) / 100 }
 
@@ -74,32 +75,23 @@ export async function POST(request: NextRequest) {
     const serviceCharge = round2(body.serviceCharge ?? 0)
     const taxableAmount = round2(subtotal - discountAmount + serviceCharge)
 
-    // ── Ghana stacked tax calculation ─────────────────────────────────────────
-    // Load active tax configs from DB or fall back to Ghana template
-    let taxConfigs = taxConfigsFromGhanaTemplate()
+    // ── Stacked tax (compliance JSON → tenant Prisma → Ghana template) ────────
+    let prismaTaxes: PrismaTaxRow[] | undefined;
     try {
       const dbTaxes = await prisma.tax.findMany({ where: { tenantId: ctx.tenantId, isActive: true } })
       if (dbTaxes.length > 0) {
-        taxConfigs = dbTaxes.map((t: any) => ({
+        prismaTaxes = dbTaxes.map((t) => ({
           id: t.id,
           code: t.code,
           name: t.name,
-          rate: Number(t.rate),
-          type: t.type as any,
-          glAccountCode: t.type === 'VAT' ? '2110'
-            : t.type === 'NHIL' ? '2120'
-            : t.type === 'GETFund' ? '2130'
-            : t.type === 'Tourism' ? '2150'
-            : '2110',
-          isRecoverable: true,
-          isActive: true,
-          effectiveFrom: new Date().toISOString(),
-          countryCode: 'GH',
-          applyOnSales: true,
-          applyOnPurchases: true,
+          rate: t.rate,
+          type: t.type,
+          isActive: t.isActive,
         }))
       }
-    } catch { /* use template fallback */ }
+    } catch { /* compliance JSON fallback */ }
+
+    const taxConfigs = resolveTaxConfigs({ countryCode: 'GH', prismaTaxes })
 
     const { lines: taxLines, totalTax } = computeStackedTaxLines(taxableAmount, taxConfigs, 'sales')
     const taxAmount = round2(totalTax)

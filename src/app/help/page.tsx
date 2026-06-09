@@ -12,7 +12,15 @@ import {
   Input,
 } from '@heroui/react';
 import { openMessengerFromShell } from '../lib/openMessenger';
-import { helpTopics, moduleQuickLinks, type HelpNavSection } from './helpContent';
+import {
+  helpTopics,
+  moduleQuickLinks,
+  configurationGuide,
+  helpMaintainerGuide,
+  helpCategoryLabels,
+  type HelpTopic,
+  type HelpTopicCategory,
+} from './helpContent';
 
 const shortcuts = [
   { keys: 'F1 / F12', action: 'Open this Help page (when not typing in a field)' },
@@ -22,13 +30,76 @@ const shortcuts = [
   { keys: 'Ctrl + P', action: 'F&B POS: open payment' },
 ];
 
-function goToAppSection(router: ReturnType<typeof useRouter>, section: HelpNavSection) {
+const CATEGORY_ORDER: HelpTopicCategory[] = ['configuration', 'operations', 'finance', 'general'];
+
+function goToAppSection(router: ReturnType<typeof useRouter>, topic: Pick<HelpTopic, 'section' | 'settingsTab' | 'complianceTab' | 'href'>) {
+  if (topic.href) {
+    router.push(topic.href);
+    return;
+  }
+  if (!topic.section) return;
   try {
-    localStorage.setItem('nav.section', section);
+    localStorage.setItem('nav.section', topic.section);
+    if (topic.settingsTab) {
+      localStorage.setItem('settings.tab', topic.settingsTab);
+    }
+    if (topic.complianceTab) {
+      localStorage.setItem('compliance.tab', topic.complianceTab);
+    }
   } catch {
     /* ignore */
   }
   router.push('/');
+}
+
+function TopicCard({
+  topic,
+  router,
+  pathname,
+}: {
+  topic: HelpTopic;
+  router: ReturnType<typeof useRouter>;
+  pathname: string;
+}) {
+  return (
+    <li className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-sm">
+      <p className="font-medium text-slate-900">{topic.title}</p>
+      <p className="mt-1 text-sm text-slate-600">{topic.description}</p>
+
+      {topic.steps && topic.steps.length > 0 && (
+        <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-slate-700">
+          {topic.steps.map((step, i) => (
+            <li key={i}>{step}</li>
+          ))}
+        </ol>
+      )}
+
+      {topic.notHere && (
+        <p className="mt-3 text-sm text-amber-900/90 rounded-md bg-amber-50 border border-amber-100 px-3 py-2">
+          <span className="font-medium">Not here: </span>
+          {topic.notHere}
+        </p>
+      )}
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {topic.section || topic.href ? (
+          <Button size="sm" color="primary" variant="flat" onPress={() => goToAppSection(router, topic)}>
+            Open in app
+          </Button>
+        ) : null}
+        {topic.href && !topic.section ? (
+          <Button size="sm" variant="bordered" as={Link} href={topic.href}>
+            Open page
+          </Button>
+        ) : null}
+        {topic.id === 'messenger' ? (
+          <Button size="sm" variant="bordered" onPress={() => openMessengerFromShell(router, pathname)}>
+            Open messenger
+          </Button>
+        ) : null}
+      </div>
+    </li>
+  );
 }
 
 export default function HelpPage() {
@@ -40,10 +111,23 @@ export default function HelpPage() {
   const filteredTopics = React.useMemo(() => {
     if (!normalized) return helpTopics;
     return helpTopics.filter((t) => {
-      const blob = `${t.title} ${t.description} ${t.keywords.join(' ')}`.toLowerCase();
+      const blob = `${t.title} ${t.description} ${t.keywords.join(' ')} ${t.notHere ?? ''} ${(t.steps ?? []).join(' ')}`.toLowerCase();
       return blob.includes(normalized);
     });
   }, [normalized]);
+
+  const groupedTopics = React.useMemo(() => {
+    const groups = new Map<HelpTopicCategory, HelpTopic[]>();
+    for (const cat of CATEGORY_ORDER) {
+      groups.set(cat, []);
+    }
+    for (const t of filteredTopics) {
+      groups.get(t.category)?.push(t);
+    }
+    return CATEGORY_ORDER.map((cat) => ({ category: cat, topics: groups.get(cat) ?? [] })).filter(
+      (g) => g.topics.length > 0
+    );
+  }, [filteredTopics]);
 
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -69,10 +153,11 @@ export default function HelpPage() {
           <div>
             <h1 className="text-2xl font-semibold text-slate-900">Help</h1>
             <p className="mt-1 text-sm text-slate-600">
+              Search topics below or press{' '}
               <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-xs shadow-sm">F1</kbd>{' '}
-              or{' '}
+              /{' '}
               <kbd className="rounded border border-slate-300 bg-white px-1.5 py-0.5 font-mono text-xs shadow-sm">F12</kbd>{' '}
-              opens this page when focus is not in a text field.
+              from the app.
             </p>
           </div>
           <Button color="primary" variant="flat" onPress={() => router.push('/')}>
@@ -82,12 +167,52 @@ export default function HelpPage() {
 
         <Input
           label="Search help"
-          placeholder="e.g. VAT, POS, housekeeping, setup…"
+          placeholder="e.g. VAT, rate plan, numbering, setup, users…"
           value={query}
           onValueChange={setQuery}
           variant="bordered"
           classNames={{ inputWrapper: 'bg-white shadow-sm' }}
         />
+
+        {!normalized && (
+          <Card shadow="sm" className="border border-slate-200/80">
+            <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
+              <p className="text-lg font-medium text-slate-900">{configurationGuide.title}</p>
+              <p className="text-sm text-slate-500">{configurationGuide.intro}</p>
+            </CardHeader>
+            <CardBody className="space-y-4 px-6 pb-6">
+              {configurationGuide.areas.map((area) => (
+                <div key={area.name} className="rounded-lg border border-slate-200 bg-slate-50/80 p-4">
+                  <p className="font-medium text-slate-900">{area.name}</p>
+                  <p className="mt-1 text-sm text-slate-700">
+                    <span className="font-medium text-slate-800">Use for: </span>
+                    {area.owns}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-600">
+                    <span className="font-medium text-slate-700">Not for: </span>
+                    {area.notHere}
+                  </p>
+                  <div className="mt-3">
+                    {'href' in area && area.href ? (
+                      <Button size="sm" variant="flat" color="primary" as={Link} href={area.href}>
+                        Open
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        color="primary"
+                        onPress={() => goToAppSection(router, { section: area.section })}
+                      >
+                        Open in app
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </CardBody>
+          </Card>
+        )}
 
         <Card shadow="sm" className="border border-slate-200/80">
           <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
@@ -101,7 +226,7 @@ export default function HelpPage() {
                 size="sm"
                 variant="flat"
                 className="border border-slate-200 bg-white"
-                onPress={() => goToAppSection(router, m.section)}
+                onPress={() => goToAppSection(router, { section: m.section })}
               >
                 {m.label}
               </Button>
@@ -117,58 +242,34 @@ export default function HelpPage() {
             <Button size="sm" variant="light" as={Link} href="/setup">
               Setup wizard
             </Button>
-            <Button size="sm" variant="light" as={Link} href="/analytics">
-              Analytics
-            </Button>
           </CardBody>
         </Card>
 
-        <Card shadow="sm" className="border border-slate-200/80">
-          <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
-            <p className="text-lg font-medium text-slate-900">
-              Topics {normalized ? `(${filteredTopics.length})` : ''}
-            </p>
-          </CardHeader>
-          <CardBody className="space-y-3 px-6 pb-6">
-            {filteredTopics.length === 0 ? (
-              <p className="text-sm text-slate-500">No topics match your search.</p>
-            ) : (
+        {groupedTopics.map(({ category, topics }) => (
+          <Card key={category} shadow="sm" className="border border-slate-200/80">
+            <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
+              <p className="text-lg font-medium text-slate-900">{helpCategoryLabels[category]}</p>
+              {normalized && (
+                <p className="text-sm text-slate-500">{topics.length} matching topic(s)</p>
+              )}
+            </CardHeader>
+            <CardBody className="px-6 pb-6">
               <ul className="space-y-3">
-                {filteredTopics.map((t) => (
-                  <li
-                    key={t.id}
-                    className="rounded-lg border border-slate-200/80 bg-white p-4 shadow-sm"
-                  >
-                    <p className="font-medium text-slate-900">{t.title}</p>
-                    <p className="mt-1 text-sm text-slate-600">{t.description}</p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {t.section ? (
-                        <Button size="sm" color="primary" variant="flat" onPress={() => goToAppSection(router, t.section!)}>
-                          Open in app
-                        </Button>
-                      ) : null}
-                      {t.href ? (
-                        <Button size="sm" variant="bordered" as={Link} href={t.href}>
-                          Open page
-                        </Button>
-                      ) : null}
-                      {t.id === 'messenger' ? (
-                        <Button size="sm" variant="bordered" onPress={() => openMessengerFromShell(router, pathname)}>
-                          Open messenger
-                        </Button>
-                      ) : null}
-                    </div>
-                  </li>
+                {topics.map((t) => (
+                  <TopicCard key={t.id} topic={t} router={router} pathname={pathname} />
                 ))}
               </ul>
-            )}
-          </CardBody>
-        </Card>
+            </CardBody>
+          </Card>
+        ))}
+
+        {filteredTopics.length === 0 && (
+          <p className="text-sm text-slate-500 text-center py-4">No topics match your search.</p>
+        )}
 
         <Card shadow="sm" className="border border-slate-200/80">
           <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
             <p className="text-lg font-medium text-slate-900">Keyboard shortcuts</p>
-            <p className="text-sm text-slate-500">Module-specific shortcuts apply only in that module.</p>
           </CardHeader>
           <CardBody className="space-y-0 divide-y divide-slate-100 px-6 pb-6">
             {shortcuts.map((row) => (
@@ -182,21 +283,37 @@ export default function HelpPage() {
           </CardBody>
         </Card>
 
+        <Card shadow="sm" className="border border-slate-200/80 bg-slate-50/50">
+          <CardHeader className="flex flex-col items-start gap-1 px-6 pt-6 pb-2">
+            <p className="text-lg font-medium text-slate-900">{helpMaintainerGuide.title}</p>
+            <p className="text-sm text-slate-500">
+              Edit <code className="text-xs bg-white px-1 py-0.5 rounded border">{helpMaintainerGuide.file}</code>{' '}
+              when screens move or new features ship.
+            </p>
+          </CardHeader>
+          <CardBody className="px-6 pb-6">
+            <ol className="list-decimal space-y-2 pl-5 text-sm text-slate-700">
+              {helpMaintainerGuide.steps.map((step, i) => (
+                <li key={i}>{step}</li>
+              ))}
+            </ol>
+          </CardBody>
+        </Card>
+
         <Card shadow="sm" className="border border-amber-200/80 bg-amber-50/40">
           <CardBody className="px-6 py-5 text-sm text-amber-950">
             <p className="font-medium text-amber-900">Developers</p>
             <p className="mt-2 text-amber-900/90">
-              <strong>F1</strong> and <strong>F12</strong> are handled for in-app help, so the browser may not open
-              DevTools on those keys. Use{' '}
+              F1 and F12 open this Help page, so the browser may not use those keys for DevTools. Use{' '}
               <kbd className="rounded border border-amber-300 bg-white px-1.5 py-0.5 font-mono text-xs">Ctrl+Shift+I</kbd>{' '}
-              (Chrome / Edge) or the browser menu for developer tools.
+              or the browser menu instead.
             </p>
           </CardBody>
         </Card>
 
         <Divider className="bg-slate-200" />
         <p className="text-center text-xs text-slate-500">
-          Ghana Hotel Management System — press Esc (outside a field) to return to the dashboard.
+          Ghana Hotel Management System — Esc (outside a field) returns to the dashboard.
         </p>
       </div>
     </div>

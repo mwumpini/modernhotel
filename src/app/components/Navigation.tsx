@@ -17,28 +17,18 @@ const OfflineIndicator = lazy(() => import('./OfflineIndicator'));
 const OfflineManager = lazy(() => import('./OfflineManager'));
 const ActivityLog = lazy(() => import('./ActivityLog'));
 const SystemSettingsMainDashboard = lazy(() => import('./SystemSettingsMainDashboard'));
-const UnifiedRateManagement = lazy(() => import('./UnifiedRateManagement'));
-const UserPreferences = lazy(() => import('./UserPreferences'));
 const AutoComplianceMainDashboard = lazy(() => import('./AutoComplianceMainDashboard'));
 const AccountingMainDashboard = lazy(() => import('./AccountingMainDashboard'));
-const UserManagement = lazy(() => import('./UserManagement'));
-const UserManagementUnified = lazy(() => import('./UserManagementUnified'));
 const FrontofficeRoomsBookings = lazy(() => import('./FrontofficeRoomsBookings'));
 const FrontofficeClientsServices = lazy(() => import('./FrontofficeClientsServices'));
 const FrontofficeEventsConferences = lazy(() => import('./FrontofficeEventsConferences'));
 const EventsConferencesMainDashboard = lazy(() => import('./EventsConferencesMainDashboard'));
-const RoomManagementDashboard = lazy(() => import('./RoomManagementDashboard'));
 const GuestExperienceManager = lazy(() => import('./GuestExperienceManager'));
 const MobileGuestServices = lazy(() => import('./MobileGuestServices'));
 const HRMainDashboard = lazy(() => import('./HRMainDashboard'));
 const SecurityMainDashboard = lazy(() => import('./SecurityMainDashboard'));
 const SecurityComplianceDashboard = lazy(() => import('./SecurityComplianceDashboard'));
 const StoresMainDashboard = lazy(() => import('./StoresMainDashboard'));
-const UserManagementDashboard = lazy(() => import('./UserManagementDashboard'));
-const OfflineManagementDashboard = lazy(() => import('./OfflineManagementDashboard'));
-const APIIntegrationDashboard = lazy(() => import('./APIIntegrationDashboard'));
-const PerformanceOptimizationDashboard = lazy(() => import('./PerformanceOptimizationDashboard'));
-const TemplateBuilder = lazy(() => import('./TemplateBuilder'));
 const FoodBeverageMainDashboard = lazy(() => import('./FoodBeverageMainDashboard'));
 const FoodBeverageRestaurantBar = lazy(() => import('./FoodBeverageRestaurantBar'));
 const FoodBeverageKitchen = lazy(() => import('./FoodBeverageKitchen'));
@@ -50,7 +40,6 @@ const InventoryAnalyticsDashboard = lazy(() => import('./InventoryAnalyticsDashb
 const SecurityAnalyticsDashboard = lazy(() => import('./SecurityAnalyticsDashboard'));
 const HRAnalyticsDashboard = lazy(() => import('./HRAnalyticsDashboard'));
 const DepartmentActivityLog = lazy(() => import('./DepartmentActivityLog').then(module => ({ default: module.default })));
-const RoomConfigurationDashboard = lazy(() => import('./RoomConfigurationDashboard'));
 const FrontOfficeReportsAnalysis = lazy(() => import('./FrontOfficeReportsAnalysis'));
 
 // Lazy load accounting components
@@ -66,7 +55,35 @@ interface NavigationProps {
   onLogout: () => void;
 }
 
-type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'user-preferences' | 'compliance' | 'inventory' | 'user-management' | 'user-management-dashboard' | 'user-management-unified' | 'theme-test' | 'offline-management' | 'api-integration' | 'performance-optimization' | 'template-builder' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'room-management' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'room-configuration' | 'rate-management';
+type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'compliance' | 'inventory' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs';
+
+function resolveNavSection(target: string): ActiveSection {
+  switch (target) {
+    case 'user-management-unified':
+    case 'user-management':
+    case 'user-management-dashboard':
+      try { localStorage.setItem('settings.tab', 'users'); } catch {}
+      return 'settings';
+    case 'user-preferences':
+      try {
+        localStorage.setItem('settings.tab', 'users');
+        localStorage.setItem('settings.usersSubTab', 'preferences');
+      } catch {}
+      return 'settings';
+    case 'room-configuration':
+      try { localStorage.setItem('settings.tab', 'rooms'); } catch {}
+      return 'settings';
+    case 'offline-management':
+    case 'api-integration':
+    case 'performance-optimization':
+    case 'template-builder':
+    case 'theme-test':
+    case 'room-management':
+      return 'settings';
+    default:
+      return target as ActiveSection;
+  }
+}
 /** Redirects to /kitchen-display via useEffect — never calls router.push during render */
 function KitchenRedirect() {
   const router = useRouter();
@@ -90,7 +107,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
     try {
       const target = localStorage.getItem('nav.section');
       if (target) {
-        setActiveSection(target as ActiveSection);
+        setActiveSection(resolveNavSection(target));
         localStorage.removeItem('nav.section');
       }
     } catch {}
@@ -245,7 +262,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
         } else if (itemTitle === '📈 Reports & Analysis') {
           setActiveSection('reports-analytics');
         } else if (itemTitle === '⚙️ User Preferences') {
-          setActiveSection('user-preferences');
+          try {
+            localStorage.setItem('settings.tab', 'users');
+            localStorage.setItem('settings.usersSubTab', 'preferences');
+          } catch {}
+          setActiveSection('settings');
         } else {
           setActiveSection('frontdesk');
         }
@@ -317,20 +338,6 @@ export default function Navigation({ onLogout }: NavigationProps) {
       } else {
         setActiveSection('hr');
       }
-    } else if (sectionKey === 'room-configuration' && itemTitle) {
-      if (itemTitle === 'Room Types & Categories') {
-        setActiveSection('room-configuration');
-      } else if (itemTitle === 'Room Amenities') {
-        setActiveSection('room-configuration');
-      } else if (itemTitle === 'Rate Configuration') {
-        setActiveSection('room-configuration');
-      } else if (itemTitle === '🎯 Event & Conference Rates') {
-        setActiveSection('room-configuration');
-      } else if (itemTitle === 'Bulk Room Creation') {
-        setActiveSection('room-configuration');
-      } else {
-        setActiveSection('room-configuration');
-      }
     } else if (sectionKey === 'compliance') {
       setActiveSection('compliance');
     } else if (sectionKey === 'accounting' && itemTitle) {
@@ -376,24 +383,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
     } else if (sectionKey === 'settings' && itemTitle) {
       if (itemTitle === 'System Setup Wizard') {
         try { window.location.href = '/setup'; } catch {}
-      } else if (itemTitle === 'Rate Management') {
-        setActiveSection('rate-management');
       } else if (itemTitle === 'Reports & Analytics') {
         setActiveSection('reports-analytics');
-      } else if (itemTitle === 'User Management & Preferences') {
-        setActiveSection('user-management-unified');
-      } else if (itemTitle === 'Room Configuration') {
-        setActiveSection('room-configuration');
-      } else if (itemTitle === 'Theme Test') {
-        setActiveSection('theme-test');
-      } else if (itemTitle === 'Offline Management & Sync') {
-        setActiveSection('offline-management');
-      } else if (itemTitle === 'API Integration') {
-        setActiveSection('api-integration');
-      } else if (itemTitle === 'Performance Optimization') {
-        setActiveSection('performance-optimization');
-      } else if (itemTitle === 'Template Builder') {
-        setActiveSection('template-builder');
       } else {
         setActiveSection('settings');
       }
@@ -425,8 +416,6 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Events & Conferences...</div>}><EventsConferencesMainDashboard /></Suspense>;
       case 'events-conferences-standalone':
         return <Suspense fallback={<div className="p-6 text-center">Loading Events & Conferences...</div>}><EventsConferencesMainDashboard /></Suspense>;
-      case 'room-management':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Room Management...</div>}><RoomManagementDashboard /></Suspense>;
 
       case 'check-ins':
         return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
@@ -461,20 +450,6 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}><StoresMainDashboard /></Suspense>;
       case 'reports-analytics':
         return <Suspense fallback={<div className="p-6 text-center">Loading Reports & Analytics...</div>}><FrontOfficeReportsAnalysis /></Suspense>;
-      case 'user-management-dashboard':
-        return <Suspense fallback={<div className="p-6 text-center">Loading User Management Dashboard...</div>}><UserManagementDashboard /></Suspense>;
-      case 'user-management-unified':
-        return <Suspense fallback={<div className="p-6 text-center">Loading User Management...</div>}><UserManagementUnified /></Suspense>;
-      case 'theme-test':
-        return <div className="p-6 text-center">Theme tester removed.</div>;
-      case 'offline-management':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Offline Management...</div>}><OfflineManagementDashboard /></Suspense>;
-      case 'api-integration':
-        return <Suspense fallback={<div className="p-6 text-center">Loading API Integration...</div>}><APIIntegrationDashboard /></Suspense>;
-      case 'performance-optimization':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Performance Optimization...</div>}><PerformanceOptimizationDashboard /></Suspense>;
-      case 'template-builder':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Template Builder...</div>}><TemplateBuilder /></Suspense>;
       case 'housekeeping':
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Dashboard...</div>}><HousekeepingMainDashboard /></Suspense>;
       case 'housekeeping-analytics':
@@ -513,8 +488,6 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading HR Analytics...</div>}><HRAnalyticsDashboard /></Suspense>;
       case 'hr-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading HR Activities...</div>}><DepartmentActivityLog area="hr" title="HR & Payroll - View Activities" /></Suspense>;
-      case 'room-configuration':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Room Configuration...</div>}><RoomConfigurationDashboard /></Suspense>;
       case 'accounting':
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;
       case 'chart-of-accounts':
@@ -531,14 +504,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Audit Controls...</div>}><AuditControlsPage /></Suspense>;
       case 'accounting-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Activities...</div>}><DepartmentActivityLog area="accounting" title="Accounting - View Activities" /></Suspense>;
-      case 'rate-management':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Rate Management...</div>}><UnifiedRateManagement onClose={() => setActiveSection('settings')} /></Suspense>;
       case 'settings':
         return <Suspense fallback={<div className="p-6 text-center">Loading System Settings...</div>}><SystemSettingsMainDashboard /></Suspense>;
-      case 'user-preferences':
-        return <Suspense fallback={<div className="p-6 text-center">Loading User Preferences...</div>}><UserPreferences /></Suspense>;
-      case 'user-management':
-        return <Suspense fallback={<div className="p-6 text-center">Loading User Management...</div>}><UserManagement /></Suspense>;
       case 'compliance':
         return <Suspense fallback={<div className="p-6 text-center">Loading Compliance Dashboard...</div>}><AutoComplianceMainDashboard /></Suspense>;
       case 'inventory':

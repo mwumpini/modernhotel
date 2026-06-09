@@ -25,7 +25,11 @@ import {
   Divider,
   Textarea,
   Switch,
-  Tooltip
+  Tooltip,
+  Tabs,
+  Tab,
+  Accordion,
+  AccordionItem,
 } from "@heroui/react";
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useAccountingStore } from '@/app/lib/accounting/store';
@@ -37,6 +41,18 @@ import {
 } from '@/app/lib/accounting/taxRuleAccountingSync';
 import { useCalculateTax } from '@/app/hooks/useCalculateTax';
 import { TaxRule } from '@/app/lib/models';
+import {
+  COMPLIANCE_CATEGORIES,
+  COMPLIANCE_COUNTRIES,
+  DEFAULT_COMPLIANCE_COUNTRY,
+  buildTemplateRules,
+  findTemplateKeyForTypeName,
+  formatRulesReferenceSummary,
+  getCountryDisplayName,
+  getCountryQuickApply,
+  getDefaultTemplatesForCountry,
+  getTemplateMeta,
+} from '@/app/lib/compliance/config';
 
 interface TaxRuleForm {
   id: string;
@@ -64,44 +80,11 @@ interface TaxRuleForm {
   effect?: 'add' | 'subtract' | 'exclude_total' | 'informational';
 }
 
-const countries = [
-  { code: 'GH', name: '🇬🇭 Ghana', flag: '🇬🇭' },
-  { code: 'ZW', name: '🇿🇼 Zimbabwe', flag: '🇿🇼' },
-  { code: 'US', name: '🇺🇸 United States', flag: '🇺🇸' },
-  { code: 'NG', name: '🇳🇬 Nigeria', flag: '🇳🇬' },
-  { code: 'KE', name: '🇰🇪 Kenya', flag: '🇰🇪' },
-  { code: 'ZA', name: '🇿🇦 South Africa', flag: '🇿🇦' }
-];
-
-const categories = [
-  { key: 'ALL', label: 'All Products/Services' },
-  { key: 'FOOD', label: 'Food & Beverage' },
-  { key: 'ROOM', label: 'Room Service' },
-  { key: 'SERVICE', label: 'Service Charges' },
-  { key: 'HOTEL', label: 'Hotel Accommodation' },
-  { key: 'RESTAURANT', label: 'Restaurant Services' },
-  { key: 'BAR', label: 'Bar Services' },
-  { key: 'SPA', label: 'Spa & Wellness' },
-  { key: 'TRANSPORT', label: 'Transportation' }
-];
-
-const commonTaxTypes = [
-  { name: 'VAT', description: 'Value Added Tax' },
-  { name: 'Sales Tax', description: 'General Sales Tax' },
-  { name: 'NHIL', description: 'National Health Insurance Levy' },
-  { name: 'GETFund Levy', description: 'Ghana Education Trust Fund' },
-  { name: 'Tourism Levy', description: 'Tourism Development Levy' },
-  { name: 'Hotel Tax', description: 'Hotel Accommodation Tax' },
-  { name: 'Income Tax', description: 'Income Tax' },
-  { name: 'Service Tax', description: 'Service Tax' },
-  { name: 'Import Duty', description: 'Import Duty' }
-];
-
 export default function TaxRateBuilder() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const { isOpen: isTypeOpen, onOpen: onOpenType, onClose: onCloseType } = useDisclosure();
   const { isOpen: isAssignOpen, onOpen: onOpenAssign, onClose: onCloseAssign } = useDisclosure();
-  const { taxRules, taxTypes, setCountry } = useComplianceStore();
+  const { taxRules, taxTypes, setCountry, country: selectedCountry } = useComplianceStore();
   const calcTax = useCalculateTax();
 
   const flushAccountingSyncForCountry = React.useCallback((country: string, silent?: boolean) => {
@@ -111,7 +94,6 @@ export default function TaxRateBuilder() {
       alert(`Some tax rules did not sync to accounting:\n${errs.join('\n')}`);
     }
   }, []);
-  const [selectedCountry, setSelectedCountry] = useState('GH');
   const [filterOperation, setFilterOperation] = useState<'internal' | 'external' | 'both'>('both');
   const [filterDomain, setFilterDomain] = useState<'sales' | 'purchases' | 'payroll' | 'corporate' | 'custom'>('sales');
   const [searchTerm, setSearchTerm] = useState('');
@@ -119,12 +101,12 @@ export default function TaxRateBuilder() {
   const [sim, setSim] = useState({ amount: 1000, category: 'HOTEL', domain: 'sales', operation: 'external', numPersons: 1, numNights: 1, roomType: '', industry: '' });
   const [isApplyingTemplate, setIsApplyingTemplate] = useState(false);
   const [autoAppliedCountries, setAutoAppliedCountries] = useState<Set<string>>(new Set());
-  const [expandedTemplate, setExpandedTemplate] = useState<string | null>(null);
+  const [workspaceTab, setWorkspaceTab] = useState<'rules' | 'types' | 'simulator'>('rules');
   const [selectedTypeId, setSelectedTypeId] = useState<string | null>(null);
   const [typeSearch, setTypeSearch] = useState('');
   const [isEditingType, setIsEditingType] = useState(false);
   const [editingTypeId, setEditingTypeId] = useState<string | null>(null);
-  const [typeForm, setTypeForm] = useState<{ countryCode: string; name: string; description: string; domain: 'sales'|'purchases'|'payroll'|'corporate'|'custom'; operation: 'internal'|'external'|'both' }>({ countryCode: 'GH', name: '', description: '', domain: 'sales', operation: 'both' });
+  const [typeForm, setTypeForm] = useState<{ countryCode: string; name: string; description: string; domain: 'sales'|'purchases'|'payroll'|'corporate'|'custom'; operation: 'internal'|'external'|'both' }>({ countryCode: DEFAULT_COMPLIANCE_COUNTRY, name: '', description: '', domain: 'sales', operation: 'both' });
 
   useEffect(() => {
     setTypeForm(prev => ({ ...prev, countryCode: selectedCountry }));
@@ -177,120 +159,6 @@ export default function TaxRateBuilder() {
     }
   };
 
-  const templateMeta: Record<string, { title: string; domain: 'sales'|'purchases'|'payroll'|'corporate'; operation: 'internal'|'external'; effect: 'all'|'add'|'subtract'|'exclude_total'|'informational' }> = {
-    ghana_sales_standard: { title: 'Ghana Sales (VAT+Levies)', domain: 'sales', operation: 'external', effect: 'all' },
-    withholding_services: { title: 'Withholding - Services', domain: 'sales', operation: 'external', effect: 'subtract' },
-    purchases_vat: { title: 'Purchases VAT', domain: 'purchases', operation: 'external', effect: 'add' },
-    payroll_paye: { title: 'PAYE Placeholder', domain: 'payroll', operation: 'internal', effect: 'subtract' },
-    us_sales_generic: { title: 'US Sales (State/Local/Occupancy)', domain: 'sales', operation: 'external', effect: 'all' },
-    us_purchases_tax: { title: 'US Purchases Tax (Placeholder)', domain: 'purchases', operation: 'external', effect: 'add' },
-    us_payroll_income: { title: 'US Payroll Income (Placeholder)', domain: 'payroll', operation: 'internal', effect: 'subtract' },
-    nigeria_vat_standard: { title: 'Nigeria VAT (7.5%)', domain: 'sales', operation: 'external', effect: 'add' },
-    nigeria_purchases_vat: { title: 'Nigeria Purchases VAT (7.5%)', domain: 'purchases', operation: 'external', effect: 'add' },
-    nigeria_payroll_paye: { title: 'Nigeria PAYE (Placeholder)', domain: 'payroll', operation: 'internal', effect: 'subtract' },
-    south_africa_vat_standard: { title: 'South Africa VAT (15%)', domain: 'sales', operation: 'external', effect: 'add' },
-    south_africa_purchases_vat: { title: 'South Africa Purchases VAT (15%)', domain: 'purchases', operation: 'external', effect: 'add' },
-    south_africa_payroll_paye: { title: 'South Africa PAYE (Placeholder)', domain: 'payroll', operation: 'internal', effect: 'subtract' },
-    kenya_vat_standard: { title: 'Kenya VAT (16%)', domain: 'sales', operation: 'external', effect: 'add' },
-    kenya_purchases_vat: { title: 'Kenya Purchases VAT (16%)', domain: 'purchases', operation: 'external', effect: 'add' },
-    kenya_payroll_paye: { title: 'Kenya PAYE (Placeholder)', domain: 'payroll', operation: 'internal', effect: 'subtract' },
-    zimbabwe_vat_standard: { title: 'Zimbabwe VAT (15%)', domain: 'sales', operation: 'external', effect: 'add' },
-    zimbabwe_purchases_vat: { title: 'Zimbabwe Purchases VAT (15%)', domain: 'purchases', operation: 'external', effect: 'add' },
-    zimbabwe_payroll_paye: { title: 'Zimbabwe PAYE (Placeholder)', domain: 'payroll', operation: 'internal', effect: 'subtract' }
-  };
-
-  const getTemplateCount = (key: string): number => {
-    const meta = templateMeta[key];
-    if (!meta) return 0;
-    return taxRules
-      .filter(r => r.countryCode === selectedCountry)
-      .filter(r => ((r as any).domain || 'sales') === meta.domain)
-      .filter(r => {
-        const op = ((r as any).operation || 'both');
-        return op === 'both' || op === meta.operation;
-      })
-      .filter(r => meta.effect === 'all' ? true : ((r as any).effect || 'add') === meta.effect)
-      .filter((r, idx, arr) => arr.findIndex(x => x.id === r.id) === idx)
-      .length;
-  };
-
-  const viewTemplate = (templateKey: string) => {
-    const meta = templateMeta[templateKey];
-    if (!meta) return;
-    setFilterDomain(meta.domain);
-    setFilterOperation(meta.operation);
-    setSearchTerm('');
-    try { document?.getElementById('rules-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch {}
-  };
-
-  const getVisibleTemplateKeys = (): string[] => {
-    const base = Object.keys(templateMeta).filter((k) => {
-      const t = templateMeta[k];
-      const domainOk = t.domain === filterDomain;
-      const opOk = filterOperation === 'both' ? true : t.operation === filterOperation;
-      return domainOk && opOk;
-    });
-    const defaults = getDefaultTemplatesForCountry(selectedCountry);
-    const preferred = defaults.filter(k => base.includes(k));
-    return preferred.length ? preferred : defaults; // fallback: show all country templates so the section is never empty
-  };
-
-  const getTemplateRulesForKey = (key: string) => {
-    const meta = templateMeta[key];
-    if (!meta) return [] as any[];
-    return taxRules
-      .filter(r => r.countryCode === selectedCountry)
-      .filter(r => ((r as any).domain || 'sales') === meta.domain)
-      .filter(r => { const op = ((r as any).operation || 'both'); return op === 'both' || op === meta.operation; })
-      .filter(r => meta.effect === 'all' ? true : ((r as any).effect || 'add') === meta.effect)
-      .filter((r, idx, arr) => arr.findIndex(x => x.id === r.id) === idx);
-  };
-
-  const getDefaultTemplatesForCountry = (code: string): string[] => {
-    switch (code) {
-      case 'GH':
-        return ['ghana_sales_standard'];
-      case 'US':
-        return ['us_sales_generic', 'us_purchases_tax', 'us_payroll_income'];
-      case 'NG':
-        return ['nigeria_vat_standard', 'nigeria_purchases_vat', 'nigeria_payroll_paye'];
-      case 'ZA':
-        return ['south_africa_vat_standard', 'south_africa_purchases_vat', 'south_africa_payroll_paye'];
-      case 'KE':
-        return ['kenya_vat_standard', 'kenya_purchases_vat', 'kenya_payroll_paye'];
-      case 'ZW':
-        return ['zimbabwe_vat_standard', 'zimbabwe_purchases_vat', 'zimbabwe_payroll_paye'];
-      default:
-        return [];
-    }
-  };
-
-  const ghanaSpecificNames = new Set(['NHIL','GETFund Levy','VAT (Standard Rate)','Tourism Levy','Withholding - Services']);
-  const hasMismatchedGhanaRules = selectedCountry !== 'GH' && taxRules.some(r => r.countryCode === selectedCountry && ghanaSpecificNames.has(r.name));
-
-  const resetCountryToDefaults = async () => {
-    const flag = countries.find(c => c.code === selectedCountry)?.flag || '🌍';
-    const ok = typeof window !== 'undefined' ? window.confirm(`Reset rules for ${flag} ${selectedCountry} to defaults? This will delete all existing rules for this country.`) : true;
-    if (!ok) return;
-    // Delete all rules for the selected country
-    const rulesForCountry = taxRules.filter(r => r.countryCode === selectedCountry);
-    for (const r of rulesForCountry) {
-      removeTaxRuleFromAccounting(r.id);
-      try { await fetch(`/api/compliance/taxes/manage?id=${encodeURIComponent(r.id)}`, { method: 'DELETE' }); } catch {}
-    }
-    await setCountry(selectedCountry);
-    // Apply defaults for country
-    const keys = getDefaultTemplatesForCountry(selectedCountry);
-    for (const k of keys) {
-      await applyTemplate(k, { silent: true, skipFilterSync: true, skipAccountingResync: true });
-    }
-    await setCountry(selectedCountry);
-    flushAccountingSyncForCountry(selectedCountry, true);
-    setFilterDomain('sales');
-    setFilterOperation('external');
-    try { alert(`Reset complete for ${selectedCountry}.`); } catch {}
-  };
-
   React.useEffect(() => {
     const code = selectedCountry;
     const already = autoAppliedCountries.has(code);
@@ -303,7 +171,6 @@ export default function TaxRateBuilder() {
             await applyTemplate(k, { silent: true, skipFilterSync: true });
           }
           setAutoAppliedCountries(prev => new Set([...Array.from(prev), code]));
-          try { alert(`Default tax types applied for ${code}.`); } catch {}
         })();
       }
     }
@@ -312,7 +179,7 @@ export default function TaxRateBuilder() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [formData, setFormData] = useState<TaxRuleForm>({
     id: '',
-    countryCode: 'GH',
+    countryCode: DEFAULT_COMPLIANCE_COUNTRY,
     name: '',
     typeId: '',
     rate: 0,
@@ -331,10 +198,6 @@ export default function TaxRateBuilder() {
     domain: 'sales',
     operation: 'both'
   });
-
-  useEffect(() => {
-    setCountry(selectedCountry);
-  }, [selectedCountry, setCountry]);
 
   useEffect(() => {
     if (!selectedTypeId) return;
@@ -629,103 +492,16 @@ export default function TaxRateBuilder() {
     flushAccountingSyncForCountry(selectedCountry, true);
   };
 
-  // Template builder
-  const buildTemplateRules = (templateKey: string) => {
-    const cc = selectedCountry;
-    switch (templateKey) {
-      case 'ghana_sales_standard':
-        return [
-          { countryCode: cc, name: 'NHIL', rate: 2.5, glCode: '2120', appliesTo: ['ALL'], description: 'National Health Insurance Levy', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'GETFund Levy', rate: 2.5, glCode: '2130', appliesTo: ['ALL'], description: 'Ghana Education Trust Fund Levy', enabled: true, priority: 11, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'VAT (Standard Rate)', rate: 20.0, glCode: '2110', appliesTo: ['ALL'], description: 'VAT 20% on (subtotal + NHIL + GETFund) — GRA 2024', enabled: true, priority: 20, calculationBase: 'subtotal_plus_applied', method: 'rate', stacking: 'compound', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'Tourism Levy', rate: 1.0, glCode: '2150', appliesTo: ['ROOM','HOTEL'], description: 'Tourism Development Levy — rooms & F&B only', enabled: true, priority: 30, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add', isSeparate: true },
-        ];
-      case 'withholding_services':
-        return [
-          { countryCode: cc, name: 'Withholding Tax (Services)', rate: 5.0, glCode: '2160', appliesTo: ['SERVICE'], description: 'WHT 5% on services paid to suppliers (GRA)', enabled: true, priority: 5, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'internal', effect: 'subtract' },
-        ];
-      case 'purchases_vat':
-        return [
-          { countryCode: cc, name: 'Purchases VAT', rate: 20.0, glCode: '2400', appliesTo: ['ALL'], description: 'Input VAT on purchases (creditable, offset against output VAT)', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'external', effect: 'add' },
-        ];
-      case 'payroll_paye':
-        return [
-          { countryCode: cc, name: 'PAYE', rate: 0, glCode: 'PAYE', appliesTo: ['ALL'], description: 'Pay As You Earn (handled in payroll)', enabled: true, priority: 100, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'payroll', operation: 'internal', effect: 'subtract' },
-        ];
-      case 'us_sales_generic':
-        return [
-          { countryCode: cc, name: 'State Sales Tax', rate: 6.0, glCode: '3100', appliesTo: ['ALL'], description: 'State-level sales tax (placeholder)', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'Local Sales Tax', rate: 2.0, glCode: '3110', appliesTo: ['ALL'], description: 'Local/city sales tax (placeholder)', enabled: true, priority: 11, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-          { countryCode: cc, name: 'Hotel Occupancy Tax', rate: 5.0, glCode: '3120', appliesTo: ['HOTEL','ROOM'], description: 'Occupancy/bed tax (placeholder)', enabled: true, priority: 30, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add', isSeparate: true },
-        ];
-      case 'nigeria_vat_standard':
-        return [
-          { countryCode: cc, name: 'VAT (Standard Rate)', rate: 7.5, glCode: '2500', appliesTo: ['ALL'], description: 'Nigeria VAT 7.5%', enabled: true, priority: 20, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-        ];
-      case 'south_africa_vat_standard':
-        return [
-          { countryCode: cc, name: 'VAT (Standard Rate)', rate: 15.0, glCode: '2600', appliesTo: ['ALL'], description: 'South Africa VAT 15%', enabled: true, priority: 20, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-        ];
-      case 'kenya_vat_standard':
-        return [
-          { countryCode: cc, name: 'VAT (Standard Rate)', rate: 16.0, glCode: '2700', appliesTo: ['ALL'], description: 'Kenya VAT 16%', enabled: true, priority: 20, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-        ];
-      case 'zimbabwe_vat_standard':
-        return [
-          { countryCode: cc, name: 'VAT (Standard Rate)', rate: 15.0, glCode: '2800', appliesTo: ['ALL'], description: 'Zimbabwe VAT 15%', enabled: true, priority: 20, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'sales', operation: 'external', effect: 'add' },
-        ];
-      case 'us_purchases_tax':
-        return [
-          { countryCode: cc, name: 'Purchases Tax', rate: 6.0, glCode: '3410', appliesTo: ['ALL'], description: 'US purchases tax placeholder (state-varies)', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'external', effect: 'add' },
-        ];
-      case 'us_payroll_income':
-        return [
-          { countryCode: cc, name: 'Income Tax (Payroll)', rate: 0, glCode: 'PR-US', appliesTo: ['ALL'], description: 'US payroll income placeholder (configure brackets in payroll)', enabled: true, priority: 100, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'payroll', operation: 'internal', effect: 'subtract' },
-        ];
-      case 'nigeria_purchases_vat':
-        return [
-          { countryCode: cc, name: 'Purchases VAT', rate: 7.5, glCode: '2510', appliesTo: ['ALL'], description: 'Input VAT on purchases (Nigeria)', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'external', effect: 'add' },
-        ];
-      case 'nigeria_payroll_paye':
-        return [
-          { countryCode: cc, name: 'PAYE', rate: 0, glCode: 'PR-NG', appliesTo: ['ALL'], description: 'Nigeria PAYE placeholder', enabled: true, priority: 100, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'payroll', operation: 'internal', effect: 'subtract' },
-        ];
-      case 'south_africa_purchases_vat':
-        return [
-          { countryCode: cc, name: 'Purchases VAT', rate: 15.0, glCode: '2610', appliesTo: ['ALL'], description: 'Input VAT on purchases (South Africa)', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'external', effect: 'add' },
-        ];
-      case 'south_africa_payroll_paye':
-        return [
-          { countryCode: cc, name: 'PAYE', rate: 0, glCode: 'PR-ZA', appliesTo: ['ALL'], description: 'South Africa PAYE placeholder', enabled: true, priority: 100, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'payroll', operation: 'internal', effect: 'subtract' },
-        ];
-      case 'kenya_purchases_vat':
-        return [
-          { countryCode: cc, name: 'Purchases VAT', rate: 16.0, glCode: '2710', appliesTo: ['ALL'], description: 'Input VAT on purchases (Kenya)', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'external', effect: 'add' },
-        ];
-      case 'kenya_payroll_paye':
-        return [
-          { countryCode: cc, name: 'PAYE', rate: 0, glCode: 'PR-KE', appliesTo: ['ALL'], description: 'Kenya PAYE placeholder', enabled: true, priority: 100, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'payroll', operation: 'internal', effect: 'subtract' },
-        ];
-      case 'zimbabwe_purchases_vat':
-        return [
-          { countryCode: cc, name: 'Purchases VAT', rate: 15.0, glCode: '2810', appliesTo: ['ALL'], description: 'Input VAT on purchases (Zimbabwe)', enabled: true, priority: 10, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'purchases', operation: 'external', effect: 'add' },
-        ];
-      case 'zimbabwe_payroll_paye':
-        return [
-          { countryCode: cc, name: 'PAYE', rate: 0, glCode: 'PR-ZW', appliesTo: ['ALL'], description: 'Zimbabwe PAYE placeholder', enabled: true, priority: 100, calculationBase: 'subtotal', method: 'rate', stacking: 'additive', rounding: 'nearest', roundTo: 0.01, domain: 'payroll', operation: 'internal', effect: 'subtract' },
-        ];
-      default:
-        return [];
-    }
-  };
-
+  // Template builder — rules loaded from compliance config
   const applyTemplate = async (templateKey: string, options?: { silent?: boolean; skipFilterSync?: boolean; forceTypeId?: string; skipAccountingResync?: boolean }) => {
     if (isApplyingTemplate) return;
     setIsApplyingTemplate(true);
-    const rules = buildTemplateRules(templateKey);
-    if (rules.length === 0) return;
-    // Ensure a Tax Type exists for this template
-    const meta = templateMeta[templateKey];
+    const rules = buildTemplateRules(templateKey, selectedCountry);
+    if (rules.length === 0) {
+      setIsApplyingTemplate(false);
+      return;
+    }
+    const meta = getTemplateMeta(templateKey);
     const typeName = meta?.title || templateKey;
     let typeIdForTemplate: string | null = options?.forceTypeId || null;
     try {
@@ -788,20 +564,12 @@ export default function TaxRateBuilder() {
   };
 
   const getCountryFlag = (code: string) => {
-    const country = countries.find(c => c.code === code);
-    return country?.flag || '🌍';
+    const c = COMPLIANCE_COUNTRIES.find((x) => x.code === code);
+    return c?.flag || '🌍';
   };
 
-  const getTemplateKeyForType = (type: any): string | null => {
-    // Prefer explicit tag: template:<key>
-    const tag = (type?.tags || []).find((t: string) => typeof t === 'string' && t.startsWith('template:'));
-    if (tag) return tag.split(':')[1];
-    // Fallback: match by title/name
-    for (const key of Object.keys(templateMeta)) {
-      if ((templateMeta as any)[key]?.title === type?.name) return key;
-    }
-    return null;
-  };
+  const getTemplateKeyForType = (type: any): string | null =>
+    findTemplateKeyForTypeName(type?.name, type?.tags);
 
   const buildRuleKey = (r: any): string => {
     const name = (r?.name || '').toLowerCase();
@@ -900,503 +668,349 @@ export default function TaxRateBuilder() {
     flushAccountingSyncForCountry(selectedCountry, true);
   };
 
-  const restoreGhanaCoreRules = async () => {
-    if (selectedCountry !== 'GH') return;
-    const typeId = selectedTypeId || '';
-    const desired = [
-      { name: 'GETFund Levy', rate: 2.5, glCode: '2151', priority: 11, base: 'subtotal' as const },
-      { name: 'Tourism Levy', rate: 1.0, glCode: '2154', priority: 30, base: 'subtotal' as const },
-      { name: 'Flat Rate', rate: 3.0, glCode: '2155', priority: 40, base: 'subtotal' as const },
-    ];
-    for (const d of desired) {
-      const existing = taxRules.find(r => r.countryCode === 'GH' && r.name === d.name);
-      const payload: any = {
-        id: existing?.id,
-        countryCode: 'GH',
-        name: d.name,
-        typeId: typeId || existing && (existing as any).typeId,
-        rate: d.rate,
-        glCode: d.glCode,
-        appliesTo: existing?.appliesTo || ['ALL'],
-        description: existing?.description || d.name,
-        enabled: true,
-        priority: existing?.priority ?? d.priority,
-        calculationBase: existing?.calculationBase || d.base,
-        method: (existing as any)?.method || 'rate',
-        stacking: existing?.stacking || 'additive',
-        rounding: existing?.rounding || 'nearest',
-        roundTo: existing?.roundTo ?? 0.01,
-        domain: (existing as any)?.domain || 'sales',
-        operation: (existing as any)?.operation || 'external',
-        effect: (existing as any)?.effect || 'add',
-      };
-      try {
-        await fetch('/api/compliance/taxes/manage', {
-          method: existing ? 'PUT' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-      } catch {}
-    }
-    await setCountry(selectedCountry);
-    flushAccountingSyncForCountry(selectedCountry, true);
+  const reApplyCountryTemplate = async () => {
+    const key = getCountryQuickApply(selectedCountry)?.templateKey ?? getDefaultTemplatesForCountry(selectedCountry)[0];
+    if (!key) return;
+    await applyTemplate(key);
   };
 
-  const calculateTotalTax = (amount: number) => {
-    const rules = taxRules.filter(rule => rule.countryCode === selectedCountry);
-    if (selectedCountry === 'GH') {
-      // Ghana-specific calculation
-      const subtotal = amount;
-      const levyRules = rules.filter(rule => 
-        ['NHIL', 'GETFund Levy'].includes(rule.name)
-      );
-      const totalLevies = levyRules.reduce((sum, rule) => sum + (subtotal * rule.rate / 100), 0);
-      const amountAfterLevies = subtotal + totalLevies;
-      const vatRule = rules.find(rule => rule.name === 'VAT (Standard Rate)');
-      const vatAmount = vatRule ? amountAfterLevies * (vatRule.rate / 100) : 0;
-      const tourismRule = rules.find(rule => rule.name === 'Tourism Levy');
-      const tourismAmount = tourismRule ? subtotal * (tourismRule.rate / 100) : 0;
-      return subtotal + totalLevies + vatAmount + tourismAmount;
-    } else {
-      // Standard calculation
-      const totalTax = rules.reduce((sum, rule) => sum + (amount * rule.rate / 100), 0);
-      return amount + totalTax;
-    }
-  };
+  const salesRulesSummary = React.useMemo(
+    () =>
+      formatRulesReferenceSummary(
+        taxRules
+          .filter((r) => r.countryCode === selectedCountry && ((r as any).domain || 'sales') === 'sales')
+          .map((r) => ({ name: r.name, rate: r.rate, glCode: r.glCode }))
+      ),
+    [taxRules, selectedCountry]
+  );
+
+  const countryQuickApply = getCountryQuickApply(selectedCountry);
+
+  const filteredRules = React.useMemo(
+    () =>
+      taxRules
+        .filter((rule) => rule.countryCode === selectedCountry)
+        .filter((rule) => (selectedTypeId ? ((rule as any).typeId || '') === selectedTypeId : true))
+        .filter((rule) => {
+          if (filterOperation === 'both') return true;
+          const op = (rule as any).operation || 'both';
+          return op === filterOperation || op === 'both';
+        })
+        .filter((rule) => ((rule as any).domain || 'sales') === filterDomain)
+        .filter((rule) => {
+          if (!searchTerm?.trim()) return true;
+          const q = searchTerm.toLowerCase();
+          return rule.name.toLowerCase().includes(q) || (rule.glCode || '').toLowerCase().includes(q);
+        })
+        .filter((rule, idx, arr) => arr.findIndex((r) => r.id === rule.id) === idx)
+        .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100)),
+    [taxRules, selectedCountry, selectedTypeId, filterOperation, filterDomain, searchTerm]
+  );
+
+  const countryTypesCount = (taxTypes || []).filter((t) => t.countryCode === selectedCountry).length;
+  const selectedTypeName = selectedTypeId
+    ? (taxTypes || []).find((t) => t.id === selectedTypeId)?.name
+    : null;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold text-ghana-black">Tax Rate Builder</h2>
-          <p className="text-gray-600">Create and manage tax rules for different countries</p>
+    <div className="space-y-4">
+      {/* Compact filter toolbar — country is controlled by the page header */}
+      <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4 p-4 rounded-lg bg-default-50 border border-default-200">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
+          <div>
+            <span className="text-sm font-medium text-gray-700 flex items-center gap-1">
+              Centre
+              <Tooltip content="Revenue Centre = guest invoices and sales. Cost Centre = purchases and internal spend.">
+                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help">i</span>
+              </Tooltip>
+            </span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Button size="sm" variant={filterOperation === 'external' ? 'solid' : 'flat'} className={filterOperation === 'external' ? 'bg-ghana-green text-white' : ''} onPress={() => setFilterOperation('external')}>Revenue</Button>
+              <Button size="sm" variant={filterOperation === 'internal' ? 'solid' : 'flat'} className={filterOperation === 'internal' ? 'bg-ghana-green text-white' : ''} onPress={() => setFilterOperation('internal')}>Cost</Button>
+              <Button size="sm" variant={filterOperation === 'both' ? 'solid' : 'flat'} className={filterOperation === 'both' ? 'bg-ghana-green text-white' : ''} onPress={() => setFilterOperation('both')}>Both</Button>
+            </div>
+          </div>
+          <div>
+            <span className="text-sm font-medium text-gray-700">Domain</span>
+            <Select
+              className="mt-2"
+              selectedKeys={[filterDomain]}
+              onSelectionChange={(keys) => setFilterDomain(Array.from(keys)[0] as any)}
+              variant="bordered"
+              size="sm"
+            >
+              <SelectItem key="sales">Sales</SelectItem>
+              <SelectItem key="purchases">Purchases</SelectItem>
+              <SelectItem key="corporate">Corporate</SelectItem>
+              <SelectItem key="custom">Custom</SelectItem>
+            </Select>
+          </div>
+          <div>
+            <span className="text-sm font-medium text-gray-700">Search rules</span>
+            <Input className="mt-2" placeholder="Name or GL code" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} variant="bordered" size="sm" />
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button 
-            variant="bordered"
-            onPress={onOpenType}
-          >
-            + Create Tax Type
-          </Button>
-        <Button 
-          className="bg-ghana-green text-white"
-          onPress={() => handleOpenModal()}
-        >
-          + Add Tax Rule
-        </Button>
+        <div className="flex flex-wrap gap-2 shrink-0">
+          <Button size="sm" variant="bordered" onPress={onOpenType}>+ Tax Type</Button>
+          <Button size="sm" className="bg-ghana-green text-white" onPress={() => handleOpenModal()}>+ Tax Rule</Button>
         </div>
       </div>
 
-      {/* Ghana quick-reference banner */}
-      {selectedCountry === 'GH' && (
-        <Card className="border border-ghana-green/30 bg-ghana-green/5">
-          <CardBody>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="font-semibold text-ghana-black mb-1">🇬🇭 Ghana GRA Tax Stack (2024)</div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mt-2">
-                  <div className="bg-white rounded p-2 border">
-                    <div className="text-xs text-gray-500 mb-1">NHIL · GL 2120</div>
-                    <div className="font-bold text-lg">2.5%</div>
-                    <div className="text-xs text-gray-500">on subtotal</div>
-                  </div>
-                  <div className="bg-white rounded p-2 border">
-                    <div className="text-xs text-gray-500 mb-1">GETFund · GL 2130</div>
-                    <div className="font-bold text-lg">2.5%</div>
-                    <div className="text-xs text-gray-500">on subtotal</div>
-                  </div>
-                  <div className="bg-white rounded p-2 border">
-                    <div className="text-xs text-gray-500 mb-1">VAT · GL 2110</div>
-                    <div className="font-bold text-lg">20%</div>
-                    <div className="text-xs text-gray-500">on (subtotal + levies)</div>
-                  </div>
-                  <div className="bg-white rounded p-2 border">
-                    <div className="text-xs text-gray-500 mb-1">Tourism · GL 2150</div>
-                    <div className="font-bold text-lg">1%</div>
-                    <div className="text-xs text-gray-500">rooms & F&B only</div>
-                  </div>
-                </div>
-                <div className="text-xs text-gray-500 mt-2">WHT: 5% on supplier service payments · NHIL & GETFund are non-creditable on purchases</div>
-              </div>
-              <Button size="sm" className="bg-ghana-green text-white shrink-0" onPress={() => applyTemplate('ghana_sales_standard')}>
-                Apply Ghana Stack
-              </Button>
-            </div>
-          </CardBody>
-        </Card>
+      {selectedTypeName && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <Chip variant="flat" color="success" onClose={() => setSelectedTypeId(null)}>
+            Filtering: {selectedTypeName}
+          </Chip>
+          <Button size="sm" variant="light" onPress={() => setSelectedTypeId(null)}>Show all rules</Button>
+        </div>
       )}
 
-      {/* Context Filters: Operation + Domain */}
-      <Card>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div>
-              <span className="text-sm font-medium text-gray-700 flex items-center gap-1">Operation
-                <Tooltip content="Cost Centre (purchases, payroll, internal spend). Revenue Centre (sales, customer invoices, guest folios). Both applies in either context.">
-                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
-                </Tooltip>
-              </span>
-              <div className="mt-2 flex gap-2">
-                <Button size="sm" variant={filterOperation === 'internal' ? 'solid' : 'flat'} className={filterOperation === 'internal' ? 'bg-ghana-green text-white' : ''} onPress={() => setFilterOperation('internal')}>Cost Centre</Button>
-                <Button size="sm" variant={filterOperation === 'external' ? 'solid' : 'flat'} className={filterOperation === 'external' ? 'bg-ghana-green text-white' : ''} onPress={() => setFilterOperation('external')}>Revenue Centre</Button>
-                <Button size="sm" variant={filterOperation === 'both' ? 'solid' : 'flat'} className={filterOperation === 'both' ? 'bg-ghana-green text-white' : ''} onPress={() => setFilterOperation('both')}>Both</Button>
-              </div>
-            </div>
-            <div>
-              <span className="text-sm font-medium text-gray-700 flex items-center gap-1">Domain
-                <Tooltip content="Business area where the rule applies (Sales/Revenue, Purchases/Procurement, Payroll, Corporate, or Custom). Centre (Cost vs Revenue) is chosen separately.">
-                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
-                </Tooltip>
-              </span>
-              <Select
-                className="mt-2"
-                selectedKeys={[filterDomain]}
-                onSelectionChange={(keys) => setFilterDomain(Array.from(keys)[0] as any)}
-                variant="bordered"
+      {countryQuickApply && (
+        <Accordion variant="bordered" itemClasses={{ title: 'text-sm font-medium' }}>
+          <AccordionItem
+            key="country-ref"
+            aria-label="Country tax reference"
+            title={`${getCountryFlag(selectedCountry)} Loaded sales rules`}
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pb-2">
+              <p className="text-xs text-gray-600">
+                {salesRulesSummary}
+                {countryQuickApply.note ? ` — ${countryQuickApply.note}` : ''}
+              </p>
+              <Button
+                size="sm"
+                className="bg-ghana-green text-white shrink-0"
+                onPress={reApplyCountryTemplate}
+                isLoading={isApplyingTemplate}
               >
-                <SelectItem key="sales">Sales</SelectItem>
-                <SelectItem key="purchases">Purchases</SelectItem>
-                <SelectItem key="payroll">Payroll</SelectItem>
-                <SelectItem key="corporate">Corporate</SelectItem>
-                <SelectItem key="custom">Custom</SelectItem>
-              </Select>
-            </div>
-            <div>
-              <span className="text-sm font-medium text-gray-700">Country</span>
-            <Select
-                className="mt-2 w-48"
-              selectedKeys={[selectedCountry]}
-              onSelectionChange={(keys) => {
-                const selectedKey = Array.from(keys)[0] as string;
-                setSelectedCountry(selectedKey);
-                setCountry(selectedKey);
-              }}
-              variant="bordered"
-            >
-              {countries.map((country) => (
-                <SelectItem key={country.code}>
-                  <div className="flex items-center space-x-2">
-                    <span className="text-lg">{country.flag}</span>
-                    <span>{country.name}</span>
-                  </div>
-                </SelectItem>
-              ))}
-            </Select>
-          </div>
-            <div>
-              <span className="text-sm font-medium text-gray-700">Search</span>
-              <Input className="mt-2" placeholder="Search name / GL code" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} variant="bordered" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-center gap-2">
-            <Button size="sm" variant="flat" onPress={() => bulkSetEnabled(true)} isDisabled={selectedRuleIds.size === 0}>Enable</Button>
-            <Button size="sm" variant="flat" onPress={() => bulkSetEnabled(false)} isDisabled={selectedRuleIds.size === 0}>Disable</Button>
-            <Button size="sm" color="danger" variant="flat" onPress={bulkDelete} isDisabled={selectedRuleIds.size === 0}>Delete</Button>
-            <span className="text-sm text-gray-600">Selected: {selectedRuleIds.size}</span>
-            </div>
-          </CardBody>
-        </Card>
-
-      
-
-      {/* Tax Types Management */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between w-full">
-            <div className="flex items-center gap-3">
-              <h3 className="text-lg font-semibold">Tax Types</h3>
-              <Chip size="sm" variant="flat">{(taxTypes || []).filter(t => t.countryCode === selectedCountry).length}</Chip>
-            </div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Input className="w-64" placeholder="Search tax types" value={typeSearch} onChange={(e) => setTypeSearch(e.target.value)} variant="bordered" />
-              <Tooltip content="Merges duplicate types (same template or same name). Keeps the type with the most rules and reassigns the rest.">
-                <Button
-                  size="sm"
-                  variant="flat"
-                  className={duplicateTaxTypesCount > 0 ? 'bg-amber-100 text-amber-900' : ''}
-                  onPress={mergeDuplicateTaxTypes}
-                  isDisabled={duplicateTaxTypesCount === 0}
-                >
-                  Merge duplicate types{duplicateTaxTypesCount > 0 ? ` (${duplicateTaxTypesCount})` : ''}
-                </Button>
-              </Tooltip>
-              <Button size="sm" variant="bordered" onPress={() => { setIsEditingType(false); setEditingTypeId(null); setTypeForm({ countryCode: selectedCountry, name: '', description: '', domain: 'sales', operation: 'both' }); onOpenType(); }}>+ Create Tax Type</Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {(taxTypes || [])
-              .filter(t => t.countryCode === selectedCountry)
-              .filter(t => !typeSearch.trim() ? true : (t.name.toLowerCase().includes(typeSearch.toLowerCase()) || (t.description || '').toLowerCase().includes(typeSearch.toLowerCase())))
-              .filter(t => {
-                const domainOk = filterDomain ? ((t as any).domain || 'sales') === filterDomain || (t as any).domain === 'custom' : true;
-                const op = (t as any).operation || 'both';
-                const opOk = filterOperation === 'both' ? true : op === filterOperation || op === 'both';
-                return domainOk && opOk;
-              })
-              .map((t) => {
-                const count = taxRules.filter(r => r.countryCode === selectedCountry && (r as any).typeId === t.id).length;
-                const selected = selectedTypeId === t.id;
-              return (
-                  <Card key={t.id} className={`border ${selected ? 'border-ghana-green' : 'border-default-200'}`}>
-                    <CardBody>
-                      <div className="flex items-start justify-between">
-                        <div className="flex-1 cursor-pointer" onClick={() => setSelectedTypeId(String(t.id))}>
-                          <div className="flex items-center gap-2">
-                            <button className={`text-left ${selected ? 'text-ghana-green font-semibold' : 'font-medium'}`} onClick={() => setSelectedTypeId(t.id)}>
-                              {t.name}
-                            </button>
-                            <Chip size="sm" variant="flat">{count} rules</Chip>
-                    </div>
-                          <div className="text-xs text-gray-500 mt-1">
-                            <span className="mr-2">Domain: {(t as any).domain || 'sales'}</span>
-                            <span>Operation: {(t as any).operation || 'both'}</span>
-                      </div>
-                          {t.description && (
-                            <div className="text-xs text-gray-500 mt-1 line-clamp-2">{t.description}</div>
-                                  )}
-                                </div>
-                        <div className="flex gap-1">
-                          <Button size="sm" className="bg-ghana-green text-white" onPress={() => openAssignRulesModal(String(t.id))}>Add Rules</Button>
-                          <Button size="sm" variant="flat" onPress={async () => {
-                            const key = getTemplateKeyForType(t);
-                            if (!key) { try { alert('No default rule template linked to this tax type.'); } catch {} return; }
-                            await applyTemplate(key, { forceTypeId: String(t.id) });
-                            setSelectedTypeId(String(t.id));
-                          }}>Apply Rules</Button>
-                          <Button size="sm" variant="bordered" onPress={() => { setIsEditingType(true); setEditingTypeId(String(t.id)); setTypeForm({ countryCode: selectedCountry, name: t.name, description: t.description || '', domain: (t as any).domain || 'sales', operation: (t as any).operation || 'both' }); onOpenType(); }}>Edit</Button>
-                          <Button size="sm" color="danger" variant="bordered" onPress={async () => {
-                            const ok = typeof window !== 'undefined' ? window.confirm(`Delete tax type "${t.name}"? This will not delete rules.`) : true;
-                            if (!ok) return;
-                            try {
-                              await fetch(`/api/compliance/tax-types/manage?id=${encodeURIComponent(String(t.id))}`, { method: 'DELETE' });
-                              await setCountry(selectedCountry);
-                              if (selectedTypeId === t.id) setSelectedTypeId(null);
-                            } catch {}
-                          }}>Delete</Button>
-                              </div>
-                        </div>
-                    </CardBody>
-                  </Card>
-              );
-              })}
-          </div>
-        </CardBody>
-      </Card>
-
-      {/* Removed: Apply common tax types card */}
-
-      {/* Tax Rules Table */}
-      <Card className="mt-6" id="rules-section">
-        <CardHeader>
-          <div className="flex items-center justify-between w-full">
-            <div>
-              <div className="text-lg font-semibold">
-                {selectedTypeId ? (
-                  <>Rules for {countries.find(c => c.code === selectedCountry)?.flag || '🌍'} {selectedCountry} • {(taxTypes || []).find(t => t.id === selectedTypeId)?.name || 'Selected Type'}</>
-                ) : (
-                  <>Tax Rules for {countries.find(c => c.code === selectedCountry)?.flag || '🌍'} {selectedCountry}</>
-                )}
-              </div>
-              <div className="text-sm text-gray-500">
-                {selectedTypeId ? (
-                  <>
-                    {taxRules.filter(rule => rule.countryCode === selectedCountry && (rule as any).typeId === selectedTypeId).length} rules
-                  </>
-                ) : (
-                  <>
-                    {taxRules.filter(rule => rule.countryCode === selectedCountry).length} rules
-                  </>
-                )}
-              </div>
-            </div>
-            <div className="flex items-center space-x-2">
-              <Button size="sm" variant="flat" onPress={() => handleOpenModal()}>+ Add Tax Rule</Button>
-              <Button size="sm" variant="bordered" onPress={() => setSelectedRuleIds(new Set())}>Clear Selection</Button>
-              <Button size="sm" variant="bordered" onPress={removeDuplicates} isDisabled={duplicatesCount === 0} title={duplicatesCount ? `${duplicatesCount} duplicates found` : 'No duplicates'}>
-                Remove Duplicates{duplicatesCount ? ` (${duplicatesCount})` : ''}
+                Apply country template
               </Button>
-              {selectedCountry === 'GH' && (
-                <Button size="sm" variant="flat" onPress={restoreGhanaCoreRules}>
-                  Restore Ghana Levies
-                </Button>
-              )}
             </div>
-          </div>
-        </CardHeader>
-        <CardBody>
-          <Table aria-label="Tax rules table" selectionMode="multiple" selectedKeys={selectedRuleIds} onSelectionChange={(keys: any) => {
-            if (keys === 'all') {
-              const ids = taxRules
-                .filter(rule => rule.countryCode === selectedCountry)
-                .map(r => r.id);
-              setSelectedRuleIds(new Set(ids));
-            } else if (keys && typeof keys === 'object') {
-              setSelectedRuleIds(new Set(Array.from(keys as any)));
-            }
-          }}>
-            <TableHeader>
-            <TableColumn>RULE NAME</TableColumn>
-            <TableColumn>TYPE</TableColumn>
-              <TableColumn>RATE</TableColumn>
-              <TableColumn>PRIORITY</TableColumn>
-              <TableColumn>GL CODE</TableColumn>
-              <TableColumn>APPLIES TO</TableColumn>
-              <TableColumn>BASE</TableColumn>
-              <TableColumn>ACTIONS</TableColumn>
-            </TableHeader>
-            <TableBody>
-              {taxRules
-                .filter(rule => rule.countryCode === selectedCountry)
-              .filter(rule => (selectedTypeId ? ((rule as any).typeId || '') === selectedTypeId : true))
-                .filter(rule => (filterOperation === 'both' ? true : ((rule as any).operation || 'both') === filterOperation))
-                .filter(rule => ((rule as any).domain || 'sales') === filterDomain)
-                // Effect filter removed
-                .filter(rule => {
-                  if (!searchTerm?.trim()) return true;
-                  const q = searchTerm.toLowerCase();
-                  return rule.name.toLowerCase().includes(q) || (rule.glCode || '').toLowerCase().includes(q);
-                })
-                .filter((rule, idx, arr) => arr.findIndex(r => r.id === rule.id) === idx)
-                .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100))
-                .map((rule) => (
-                  <TableRow key={rule.id}>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{rule.name}</p>
-                        <p className="text-sm text-gray-500">{rule.description || 'No description'}</p>
-                      </div>
-                    </TableCell>
-                  <TableCell>
-                    <span className="text-xs text-gray-600">{(taxTypes || []).find(t => t.id === (rule as any).typeId)?.name || '-'}</span>
-                    </TableCell>
-                    <TableCell>
-                      <Chip color="success" variant="flat">
-                        {rule.rate}%
-                      </Chip>
-                    </TableCell>
-                    <TableCell>
-                      <Chip variant="flat">{rule.priority ?? 100}</Chip>
-                    </TableCell>
-                    <TableCell>
-                      <code className="bg-gray-100 px-2 py-1 rounded text-sm">
-                        {rule.glCode}
-                      </code>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex flex-wrap gap-1">
-                        {(rule.appliesTo || ['ALL']).map((category) => (
-                          <Chip key={category} size="sm" variant="bordered">
-                            {categories.find(c => c.key === category)?.label || category}
-                          </Chip>
-                        ))}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-gray-600">{rule.calculationBase || 'subtotal'}</span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex space-x-2">
-                        <Button
-                          size="sm"
-                          variant="bordered"
-                          onPress={() => reorderRule(rule.id, 'up')}
-                        >
-                          ↑
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="bordered"
-                          onPress={() => reorderRule(rule.id, 'down')}
-                        >
-                          ↓
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="bordered"
-                          onPress={() => handleOpenModal(rule)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          size="sm"
-                          color="danger"
-                          variant="bordered"
-                          onPress={() => handleDelete(rule.id)}
-                        >
-                          Delete
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-            </TableBody>
-          </Table>
-        </CardBody>
-      </Card>
+          </AccordionItem>
+        </Accordion>
+      )}
 
-      {/* Tax Calculator Preview */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between w-full">
-            <h3 className="text-lg font-semibold">Unified Tax Simulator</h3>
-            <div className="text-sm text-gray-600 flex items-center gap-2">
-              <span>Country:</span>
-              <span>{countries.find(c => c.code === selectedCountry)?.flag} {selectedCountry}</span>
-            </div>
-          </div>
-        </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-            <Input label="Amount" type="number" value={String(sim.amount)} onChange={(e) => setSim({ ...sim, amount: parseFloat(e.target.value || '0') })} variant="bordered" />
-            <Input label="Category" value={sim.category} onChange={(e) => setSim({ ...sim, category: e.target.value })} variant="bordered" />
-            <Select label="Domain" selectedKeys={[sim.domain]} onSelectionChange={(k) => setSim({ ...sim, domain: Array.from(k)[0] as any })} variant="bordered">
-              <SelectItem key="sales">Sales</SelectItem>
-              <SelectItem key="purchases">Purchases</SelectItem>
-              <SelectItem key="payroll">Payroll</SelectItem>
-              <SelectItem key="corporate">Corporate</SelectItem>
-            </Select>
-            <Select label="Operation" selectedKeys={[sim.operation]} onSelectionChange={(k) => setSim({ ...sim, operation: Array.from(k)[0] as any })} variant="bordered">
-              <SelectItem key="external">Revenue Centre</SelectItem>
-              <SelectItem key="internal">Cost Centre</SelectItem>
-            </Select>
-            <Input label="Persons" type="number" value={String(sim.numPersons)} onChange={(e) => setSim({ ...sim, numPersons: parseInt(e.target.value || '1', 10) })} variant="bordered" />
-            <Input label="Nights" type="number" value={String(sim.numNights)} onChange={(e) => setSim({ ...sim, numNights: parseInt(e.target.value || '1', 10) })} variant="bordered" />
-            </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            <div>
-              <h4 className="font-medium mb-2">Breakdown</h4>
-              <div className="space-y-1 text-sm">
-                {(() => {
-                  const ctx: any = { numPersons: sim.numPersons, numNights: sim.numNights, roomType: sim.roomType, industry: sim.industry, domain: sim.domain, operation: sim.operation, typeId: selectedTypeId };
-                  const res = calcTax(Number(sim.amount) || 0, sim.category, ctx);
-                  return res.taxes.map((t: any, idx: number) => (
-                    <div key={`${t.name}-${idx}`} className="flex justify-between">
-                      <span>{t.name}</span>
-                      <span className="font-mono">{t.amount.toFixed(2)}</span>
-                    </div>
-                  ));
-                })()}
+      <Tabs
+        selectedKey={workspaceTab}
+        onSelectionChange={(key) => setWorkspaceTab(key as 'rules' | 'types' | 'simulator')}
+        aria-label="Tax builder sections"
+      >
+        <Tab key="rules" title={`Rules (${filteredRules.length})`}>
+          <Card className="mt-4 border-0 shadow-sm" id="rules-section">
+            <CardHeader className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div>
+                <p className="font-semibold">{getCountryDisplayName(selectedCountry)} — tax rules</p>
+                <p className="text-xs text-gray-500">
+                  {filteredRules.length} matching
+                  {taxRules.filter((r) => r.countryCode === selectedCountry).length > filteredRules.length
+                    ? ` (${taxRules.filter((r) => r.countryCode === selectedCountry).length} total for country)`
+                    : ''}
+                  {' '}· syncs to accounting on save
+                </p>
               </div>
-            </div>
-            <div className="space-y-2">
-              {(() => {
-                const ctx: any = { numPersons: sim.numPersons, numNights: sim.numNights, roomType: sim.roomType, industry: sim.industry, domain: sim.domain, operation: sim.operation, typeId: selectedTypeId };
-                const res = calcTax(Number(sim.amount) || 0, sim.category, ctx);
-                const tax = res.taxes.reduce((s: number, t: any) => s + t.amount, 0);
-                return (
-                  <>
-                    <div className="flex justify-between"><span>Total</span><span className="font-mono font-semibold">{res.total.toFixed(2)}</span></div>
-                    <div className="flex justify-between"><span>Effective Rate</span><span className="font-mono">{((tax / (Number(sim.amount) || 1)) * 100).toFixed(1)}%</span></div>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="flat" onPress={() => bulkSetEnabled(true)} isDisabled={selectedRuleIds.size === 0}>Enable</Button>
+                <Button size="sm" variant="flat" onPress={() => bulkSetEnabled(false)} isDisabled={selectedRuleIds.size === 0}>Disable</Button>
+                <Button size="sm" color="danger" variant="flat" onPress={bulkDelete} isDisabled={selectedRuleIds.size === 0}>Delete</Button>
+                <Button size="sm" variant="bordered" onPress={removeDuplicates} isDisabled={duplicatesCount === 0}>
+                  Dedupe{duplicatesCount ? ` (${duplicatesCount})` : ''}
+                </Button>
+                {countryQuickApply && (
+                  <Button size="sm" variant="flat" onPress={reApplyCountryTemplate}>Re-apply template</Button>
+                )}
+              </div>
+            </CardHeader>
+            <CardBody>
+              <Table
+                aria-label="Tax rules table"
+                selectionMode="multiple"
+                selectedKeys={selectedRuleIds}
+                onSelectionChange={(keys: any) => {
+                  if (keys === 'all') {
+                    setSelectedRuleIds(new Set(filteredRules.map((r) => r.id)));
+                  } else if (keys && typeof keys === 'object') {
+                    setSelectedRuleIds(new Set(Array.from(keys as any)));
+                  }
+                }}
+              >
+                <TableHeader>
+                  <TableColumn>RULE</TableColumn>
+                  <TableColumn>TYPE</TableColumn>
+                  <TableColumn>RATE</TableColumn>
+                  <TableColumn>GL</TableColumn>
+                  <TableColumn>PRIORITY</TableColumn>
+                  <TableColumn>ACTIONS</TableColumn>
+                </TableHeader>
+                <TableBody emptyContent="No rules match these filters. Add a rule or adjust filters.">
+                  {filteredRules.map((rule) => (
+                    <TableRow key={rule.id}>
+                      <TableCell>
+                        <p className="font-medium">{rule.name}</p>
+                        <p className="text-xs text-gray-500 line-clamp-1">{rule.description || rule.calculationBase || 'subtotal'}</p>
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-xs">{(taxTypes || []).find((t) => t.id === (rule as any).typeId)?.name || '—'}</span>
+                      </TableCell>
+                      <TableCell>
+                        <Chip color="success" variant="flat" size="sm">{rule.rate}%</Chip>
+                      </TableCell>
+                      <TableCell>
+                        <code className="bg-gray-100 px-2 py-0.5 rounded text-xs">{rule.glCode}</code>
+                      </TableCell>
+                      <TableCell>
+                        <Chip variant="flat" size="sm">{rule.priority ?? 100}</Chip>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="bordered" onPress={() => reorderRule(rule.id, 'up')}>↑</Button>
+                          <Button size="sm" variant="bordered" onPress={() => reorderRule(rule.id, 'down')}>↓</Button>
+                          <Button size="sm" variant="bordered" onPress={() => handleOpenModal(rule)}>Edit</Button>
+                          <Button size="sm" color="danger" variant="bordered" onPress={() => handleDelete(rule.id)}>Del</Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              {selectedRuleIds.size > 0 && (
+                <p className="text-xs text-gray-500 mt-2">{selectedRuleIds.size} selected</p>
+              )}
+            </CardBody>
+          </Card>
+        </Tab>
+
+        <Tab key="types" title={`Tax Types (${countryTypesCount})`}>
+          <Card className="mt-4 border-0 shadow-sm">
+            <CardHeader className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
+              <p className="text-sm text-gray-600">Group rules by type. Click a type to filter the Rules tab.</p>
+              <div className="flex flex-wrap gap-2">
+                <Input className="w-48" placeholder="Search types" value={typeSearch} onChange={(e) => setTypeSearch(e.target.value)} variant="bordered" size="sm" />
+                <Tooltip content="Merge duplicate types — keeps the one with the most rules.">
+                  <Button size="sm" variant="flat" className={duplicateTaxTypesCount > 0 ? 'bg-amber-100 text-amber-900' : ''} onPress={mergeDuplicateTaxTypes} isDisabled={duplicateTaxTypesCount === 0}>
+                    Merge dupes{duplicateTaxTypesCount > 0 ? ` (${duplicateTaxTypesCount})` : ''}
+                  </Button>
+                </Tooltip>
+                <Button size="sm" variant="bordered" onPress={() => { setIsEditingType(false); setEditingTypeId(null); setTypeForm({ countryCode: selectedCountry, name: '', description: '', domain: 'sales', operation: 'both' }); onOpenType(); }}>+ Create</Button>
+              </div>
+            </CardHeader>
+            <CardBody>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {(taxTypes || [])
+                  .filter((t) => t.countryCode === selectedCountry)
+                  .filter((t) => !typeSearch.trim() ? true : (t.name.toLowerCase().includes(typeSearch.toLowerCase()) || (t.description || '').toLowerCase().includes(typeSearch.toLowerCase())))
+                  .filter((t) => {
+                    const domainOk = filterDomain ? ((t as any).domain || 'sales') === filterDomain || (t as any).domain === 'custom' : true;
+                    const op = (t as any).operation || 'both';
+                    const opOk = filterOperation === 'both' ? true : op === filterOperation || op === 'both';
+                    return domainOk && opOk;
+                  })
+                  .map((t) => {
+                    const count = taxRules.filter((r) => r.countryCode === selectedCountry && (r as any).typeId === t.id).length;
+                    const selected = selectedTypeId === t.id;
+                    return (
+                      <Card
+                        key={t.id}
+                        isPressable
+                        className={`border transition-shadow ${selected ? 'border-ghana-green shadow-md' : 'border-default-200 hover:border-default-400'}`}
+                        onPress={() => { setSelectedTypeId(String(t.id)); setWorkspaceTab('rules'); }}
+                      >
+                        <CardBody className="gap-2">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className={`font-medium ${selected ? 'text-ghana-green' : ''}`}>{t.name}</p>
+                              <p className="text-xs text-gray-500 mt-0.5">
+                                {(t as any).domain || 'sales'} · {(t as any).operation || 'both'}
+                              </p>
+                            </div>
+                            <Chip size="sm" variant="flat">{count}</Chip>
+                          </div>
+                          {t.description && <p className="text-xs text-gray-500 line-clamp-2">{t.description}</p>}
+                          <div className="flex flex-wrap gap-1 pt-1" onClick={(e) => e.stopPropagation()}>
+                            <Button size="sm" className="bg-ghana-green text-white" onPress={() => openAssignRulesModal(String(t.id))}>Rules</Button>
+                            <Button size="sm" variant="flat" onPress={async () => {
+                              const key = getTemplateKeyForType(t);
+                              if (!key) { try { alert('No default rule template linked to this tax type.'); } catch {} return; }
+                              await applyTemplate(key, { forceTypeId: String(t.id) });
+                              setSelectedTypeId(String(t.id));
+                              setWorkspaceTab('rules');
+                            }}>Apply</Button>
+                            <Button size="sm" variant="bordered" onPress={() => { setIsEditingType(true); setEditingTypeId(String(t.id)); setTypeForm({ countryCode: selectedCountry, name: t.name, description: t.description || '', domain: (t as any).domain || 'sales', operation: (t as any).operation || 'both' }); onOpenType(); }}>Edit</Button>
+                            <Button size="sm" color="danger" variant="light" onPress={async () => {
+                              const ok = typeof window !== 'undefined' ? window.confirm(`Delete tax type "${t.name}"? Rules are kept but unassigned from this type.`) : true;
+                              if (!ok) return;
+                              try {
+                                await fetch(`/api/compliance/tax-types/manage?id=${encodeURIComponent(String(t.id))}`, { method: 'DELETE' });
+                                await setCountry(selectedCountry);
+                                if (selectedTypeId === t.id) setSelectedTypeId(null);
+                              } catch {}
+                            }}>Del</Button>
+                          </div>
+                        </CardBody>
+                      </Card>
+                    );
+                  })}
+              </div>
+            </CardBody>
+          </Card>
+        </Tab>
+
+        <Tab key="simulator" title="Simulator">
+          <Card className="mt-4 border-0 shadow-sm">
+            <CardHeader>
+              <p className="font-semibold">Test calculation</p>
+              <p className="text-xs text-gray-500">Uses live rules for {selectedCountry} — same engine as invoices and folios</p>
+            </CardHeader>
+            <CardBody>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+                <Input label="Amount" type="number" value={String(sim.amount)} onChange={(e) => setSim({ ...sim, amount: parseFloat(e.target.value || '0') })} variant="bordered" size="sm" />
+                <Input label="Category" value={sim.category} onChange={(e) => setSim({ ...sim, category: e.target.value })} variant="bordered" size="sm" />
+                <Select label="Domain" selectedKeys={[sim.domain]} onSelectionChange={(k) => setSim({ ...sim, domain: Array.from(k)[0] as any })} variant="bordered" size="sm">
+                  <SelectItem key="sales">Sales</SelectItem>
+                  <SelectItem key="purchases">Purchases</SelectItem>
+                  <SelectItem key="corporate">Corporate</SelectItem>
+                </Select>
+                <Select label="Centre" selectedKeys={[sim.operation]} onSelectionChange={(k) => setSim({ ...sim, operation: Array.from(k)[0] as any })} variant="bordered" size="sm">
+                  <SelectItem key="external">Revenue</SelectItem>
+                  <SelectItem key="internal">Cost</SelectItem>
+                </Select>
+                <Input label="Persons" type="number" value={String(sim.numPersons)} onChange={(e) => setSim({ ...sim, numPersons: parseInt(e.target.value || '1', 10) })} variant="bordered" size="sm" />
+                <Input label="Nights" type="number" value={String(sim.numNights)} onChange={(e) => setSim({ ...sim, numNights: parseInt(e.target.value || '1', 10) })} variant="bordered" size="sm" />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4 p-4 rounded-lg bg-default-50">
+                <div>
+                  <h4 className="text-sm font-medium mb-2">Breakdown</h4>
+                  <div className="space-y-1 text-sm">
+                    {(() => {
+                      const ctx: any = { numPersons: sim.numPersons, numNights: sim.numNights, roomType: sim.roomType, industry: sim.industry, domain: sim.domain, operation: sim.operation, typeId: selectedTypeId };
+                      const res = calcTax(Number(sim.amount) || 0, sim.category, ctx);
+                      if (!res.taxes.length) return <p className="text-gray-500 text-xs">No taxes applied for this scenario.</p>;
+                      return res.taxes.map((t: any, idx: number) => (
+                        <div key={`${t.name}-${idx}`} className="flex justify-between">
+                          <span>{t.name}</span>
+                          <span className="font-mono">{t.amount.toFixed(2)}</span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+                <div className="space-y-2 text-sm">
+                  {(() => {
+                    const ctx: any = { numPersons: sim.numPersons, numNights: sim.numNights, roomType: sim.roomType, industry: sim.industry, domain: sim.domain, operation: sim.operation, typeId: selectedTypeId };
+                    const res = calcTax(Number(sim.amount) || 0, sim.category, ctx);
+                    const tax = res.taxes.reduce((s: number, t: any) => s + t.amount, 0);
+                    return (
+                      <>
+                        <div className="flex justify-between font-medium"><span>Total incl. tax</span><span className="font-mono">{res.total.toFixed(2)}</span></div>
+                        <div className="flex justify-between text-gray-600"><span>Effective rate</span><span className="font-mono">{((tax / (Number(sim.amount) || 1)) * 100).toFixed(1)}%</span></div>
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            </CardBody>
+          </Card>
+        </Tab>
+      </Tabs>
 
       {/* Create Tax Type Modal */}
       <Modal isOpen={isTypeOpen} onClose={() => { onCloseType(); setIsEditingType(false); setEditingTypeId(null); }}>
@@ -1590,7 +1204,7 @@ export default function TaxRateBuilder() {
               <div>
                 <label className="text-sm font-medium">Applies To Categories</label>
                 <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2">
-                  {categories.map((category) => (
+                  {COMPLIANCE_CATEGORIES.map((category) => (
                     <div key={category.key} className="flex items-center space-x-2">
                       <input
                         type="checkbox"

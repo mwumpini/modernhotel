@@ -9,7 +9,6 @@ import {
   Autocomplete, AutocompleteItem
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
-import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useSupplierStore } from '@/app/lib/inventory/supplierStore';
 import { useStockStore } from '@/app/lib/inventory/stockStore';
 import { computePurchaseTax } from '@/app/lib/tax/engine';
@@ -32,7 +31,6 @@ export default function AccountsPayablePage() {
     postPayment,
     
   } = useAccountingStore();
-  const { calculateTax } = useComplianceStore();
   const { generateNextSupplierCode } = useSupplierStore();
   const { stockItems } = useStockStore();
 
@@ -1367,7 +1365,7 @@ export default function AccountsPayablePage() {
                   setForm({ ...form, taxType: v });
                 }
               }}>
-                <SelectItem key="STANDARD">Standard (Compliance)</SelectItem>
+                <SelectItem key="STANDARD">Standard (Purchase stack)</SelectItem>
                 <SelectItem key="CUSTOM">Custom Rate</SelectItem>
                 <SelectItem key="NONE">No Tax</SelectItem>
               </Select>
@@ -1387,9 +1385,9 @@ export default function AccountsPayablePage() {
                     setForm({ ...form, taxAmount: 0, total: subtotal });
                     return;
                   }
-                  const calc = calculateTax(subtotal, 'PURCHASES', { domain: 'purchases', operation: 'external' });
-                  const taxAmount = +(calc.total - subtotal).toFixed(2);
-                  setForm({ ...form, taxAmount, total: calc.total });
+                  const { totalTax } = computePurchaseTax(subtotal);
+                  const taxAmount = +totalTax.toFixed(2);
+                  setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2) });
                 }}>Apply Tax</Button>
               </div>
             </div>

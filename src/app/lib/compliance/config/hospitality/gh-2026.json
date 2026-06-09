@@ -1,0 +1,87 @@
+{
+  "countryCode": "GH",
+  "sector": "hotel_hospitality",
+  "effectiveFrom": "2026-01-01",
+  "title": "Ghana Hotel & Hospitality Tax Reference",
+  "summary": "Reference for hotels under GRA / GTA / SSNIT rules effective 2026 (Act 1151 VAT era). Confirm your GRA registration class before filing.",
+  "corporateIncomeTax": {
+    "hotelRate": 22,
+    "generalRate": 25,
+    "description": "Hotels principally engaged in the hotel industry — Income Tax Act, 2015 (Act 896).",
+    "annualReturnMonthsAfterYearEnd": 4
+  },
+  "vatStack": {
+    "legalReference": "VAT Act 2025 (Act 1151), effective January 2026",
+    "components": [
+      { "name": "VAT", "rate": 15, "note": "On subtotal + NHIL + GETFund" },
+      { "name": "NHIL", "rate": 2.5, "note": "On exclusive base" },
+      { "name": "GETFund Levy", "rate": 2.5, "note": "On exclusive base" },
+      { "name": "VAT + Levies combined", "rate": 20, "note": "Effective on taxable value" },
+      { "name": "Tourism Levy", "rate": 1, "note": "Separate; not part of VAT taxable value (L.I. 2185)" }
+    ],
+    "grandTotalHint": "~21% on typical hotel bills (20% stack + 1% tourism where applicable)",
+    "abolished": ["COVID-19 levy (2026)", "VAT flat rate scheme for hospitality (Act 1151)"]
+  },
+  "paye": {
+    "description": "Monthly PAYE for resident employees — 2026 bands",
+    "returnDueDay": 15,
+    "bandsAnnual": [
+      { "upTo": 5880, "rate": 0 },
+      { "upTo": 7200, "rate": 5 },
+      { "upTo": 8760, "rate": 10 },
+      { "upTo": 46760, "rate": 17.5 },
+      { "upTo": 238760, "rate": 25 },
+      { "upTo": 605000, "rate": 30 },
+      { "above": 605000, "rate": 35 }
+    ]
+  },
+  "withholdingTax": {
+    "description": "Key resident WHT rates relevant to hotels",
+    "returnDueDay": 15,
+    "rates": [
+      { "paymentType": "Goods", "rate": 3, "finalTax": false },
+      { "paymentType": "Works", "rate": 5, "finalTax": false },
+      { "paymentType": "Services", "rate": 7.5, "finalTax": false },
+      { "paymentType": "Rent — commercial", "rate": 15, "finalTax": true },
+      { "paymentType": "Rent — residential", "rate": 8, "finalTax": true },
+      { "paymentType": "Dividends", "rate": 8, "finalTax": true },
+      { "paymentType": "Interest", "rate": 8, "finalTax": false },
+      { "paymentType": "Director/Manager fees", "rate": 20, "finalTax": false }
+    ]
+  },
+  "ssnit": {
+    "employerRate": 13,
+    "employeeRate": 5.5,
+    "totalRate": 18.5,
+    "monthlyCap": 69000,
+    "monthlyMinimum": 587.8,
+    "effectiveYear": 2026
+  },
+  "growthAndSustainabilityLevy": {
+    "category": "C",
+    "categoryDescription": "All entities not in Category A or B (hotels typically Category C)",
+    "rateOnProfitBeforeTax": 2.5,
+    "assessmentYears": "2023–2028",
+    "quarterlyDueDates": ["03-31", "06-30", "09-30", "12-31"]
+  },
+  "capitalAllowances": [
+    { "class": "1", "assets": "Computers & data handling equipment", "method": "40% reducing balance" },
+    { "class": "2", "assets": "Vehicles, plant & machinery", "method": "30% reducing balance" },
+    { "class": "3", "assets": "Office furniture, other equipment", "method": "20% reducing balance" },
+    { "class": "4", "assets": "Buildings & permanent structures", "method": "10% straight line" },
+    { "class": "5", "assets": "Intangible assets", "method": "Useful life" }
+  ],
+  "bonusAndOvertime": {
+    "bonusFlatRate": 5,
+    "bonusCapPercentOfBasic": 15,
+    "qjeAnnualCap": 18000,
+    "qjeOvertimeFlatRate": 5,
+    "qjeOvertimeExcessRate": 10
+  },
+  "references": [
+    { "label": "GRA — VAT Act 1151 guidelines", "url": "https://gra.gov.gh" },
+    { "label": "Ghana Tourism Authority — Tourism Levy (L.I. 2185)", "url": "https://ghana.travel/services/tourism-development-fund/" },
+    { "label": "PwC Ghana — Corporate tax summary", "url": "https://taxsummaries.pwc.com/ghana/corporate/taxes-on-corporate-income" },
+    { "label": "TaxLawGH rates (2026)", "url": "https://taxlawgh-rates.netlify.app" }
+  ]
+}

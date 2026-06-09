@@ -1,9 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Button, Card, CardBody, Input, Select, SelectItem, Divider, Tooltip } from "@heroui/react";
-import { useCalculateTax } from '@/app/hooks/useCalculateTax';
 import { useComplianceStore } from '@/app/lib/compliance/store';
+import { computeSalesTax } from '@/app/lib/tax/engine';
 
 interface CheckoutProps {
   subtotal?: number;
@@ -23,10 +23,15 @@ export default function Checkout({ subtotal: initialSubtotal = 0, onComplete }: 
   const [isProcessing, setIsProcessing] = useState(false);
   const [operation, setOperation] = useState<'external' | 'internal'>('external');
   
-  const calculateTax = useCalculateTax();
   const { country } = useComplianceStore();
-  
-  const { taxes, total } = calculateTax(subtotal, category, { domain: 'sales', operation });
+
+  const { taxes, total } = useMemo(() => {
+    const { lines, gross } = computeSalesTax(subtotal);
+    return {
+      taxes: lines.map((l) => ({ name: l.name, amount: l.amount, glCode: l.glAccountCode, rate: l.rate })),
+      total: gross,
+    };
+  }, [subtotal]);
 
   const handlePayment = async () => {
     setIsProcessing(true);

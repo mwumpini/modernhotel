@@ -9,12 +9,12 @@
 import { useAccountingStore } from '../accounting/store';
 import {
   computeStackedTaxLines,
-  getEffectiveTaxConfigs,
   roundMoney2,
   type StackedTaxLine,
   type TaxStackContext,
 } from '../accounting/taxFromConfig';
 import type { TaxConfig } from '../accounting/models';
+import { resolveClientTaxConfigs } from './resolveConfigs.client';
 
 export type TaxComputationResult = {
   lines: StackedTaxLine[];
@@ -23,10 +23,10 @@ export type TaxComputationResult = {
   exclusiveAmount: number;
 };
 
-/** Active tax configs for the current country (accounting store is authoritative). */
+/** Active tax configs for the current country (accounting store → compliance JSON → template). */
 export function getActiveTaxConfigs(countryCode = 'GH'): TaxConfig[] {
-  const all = getEffectiveTaxConfigs(useAccountingStore.getState().taxConfigs);
-  return all.filter((c) => !c.countryCode || c.countryCode === countryCode);
+  const all = useAccountingStore.getState().taxConfigs;
+  return resolveClientTaxConfigs(all, countryCode);
 }
 
 /**

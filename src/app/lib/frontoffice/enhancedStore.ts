@@ -1,6 +1,6 @@
 'use client';
 
-import { GuestProfile, RoomType, RatePlan, Folio, Charge, EventResource, EventPackage, EventBooking } from './types';
+import { GuestProfile, RatePlan, Folio, Charge, EventPackage, EventBooking } from './types';
 import { trackEvent } from '../analytics/trackEvent';
 import { housekeepingStore } from '../housekeeping/store';
 import { useSettingsStore } from '../settings/store';
@@ -13,13 +13,6 @@ interface RoomPreferences {
   highFloor: boolean;
   nearElevator: boolean;
   connectingRooms: boolean;
-}
-
-interface PricingRecommendation {
-  recommendedRate: number;
-  confidence: number;
-  factors: string[];
-  demandLevel: 'low' | 'medium' | 'high';
 }
 
 interface GuestPreferences {
@@ -45,26 +38,11 @@ interface FolioSplit {
 
 export class EnhancedFrontOfficeStore {
   guests: GuestProfile[] = [];
-  roomTypes: RoomType[] = [
-    { id: 'rt-standard', name: 'Standard', baseRate: 600 },
-    { id: 'rt-deluxe', name: 'Deluxe', baseRate: 800 },
-    { id: 'rt-suite', name: 'Suite', baseRate: 1200 },
-    { id: 'rt-presidential', name: 'Presidential Suite', baseRate: 2500 },
-  ];
-  ratePlans: RatePlan[] = [
-    { id: 'rp-bar', name: 'BAR', roomTypeId: 'rt-standard', basePrice: 600, isActive: true, marketSegment: 'general' },
-    { id: 'rp-bar-deluxe', name: 'BAR', roomTypeId: 'rt-deluxe', basePrice: 800, isActive: true, marketSegment: 'general' },
-    { id: 'rp-bar-suite', name: 'BAR', roomTypeId: 'rt-suite', basePrice: 1200, isActive: true, marketSegment: 'general' },
-    { id: 'rp-bar-presidential', name: 'BAR', roomTypeId: 'rt-presidential', basePrice: 2500, isActive: true, marketSegment: 'general' },
-  ];
   marketCodes: string[] = ['INTERNET', 'BOOKING.COM', 'EXPEDIA', 'DIRECTINN', 'WALK IN', 'CORPORATE', 'TRAVEL AGENT'];
   folios: Folio[] = [];
   guestPreferences: Map<string, GuestPreferences> = new Map();
   private listeners: Array<() => void> = [];
 
-  // NEW: Event Management
-  eventResources: EventResource[] = [];
-  eventPackages: EventPackage[] = [];
   eventBookings: EventBooking[] = [];
 
   constructor() {
@@ -121,12 +99,12 @@ export class EnhancedFrontOfficeStore {
       taxes: number;
     };
   } {
-    const ratePlan = this.ratePlans.find(rp => rp.id === ratePlanId);
+    const settings = useSettingsStore.getState();
+    const ratePlan = settings.roomManagement.ratePlans.find(rp => rp.id === ratePlanId);
     if (!ratePlan || ratePlan.rateType !== 'event_conference') {
       throw new Error('Invalid event conference rate plan');
     }
 
-    const settings = useSettingsStore.getState();
     const baseRoomRate = ratePlan.basePrice;
     
     // Apply seasonal rates (existing logic)
@@ -146,7 +124,7 @@ export class EnhancedFrontOfficeStore {
     // Calculate package cost if applicable
     let packageCost = 0;
     if (packageId) {
-      const eventPackage = this.eventPackages.find(ep => ep.id === packageId);
+      const eventPackage = settings.roomManagement.eventPackages.find(ep => ep.id === packageId);
       if (eventPackage) {
         packageCost = eventPackage.basePrice * attendees * duration;
         
@@ -262,39 +240,6 @@ export class EnhancedFrontOfficeStore {
   }
 
   /**
-   * Get available event resources for a specific date range
-   */
-  getAvailableEventResources(
-    startDate: string,
-    endDate: string,
-    resourceType?: EventResource['type']
-  ): EventResource[] {
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    
-    return this.eventResources.filter(resource => {
-      if (!resource.isActive) return false;
-      if (resourceType && resource.type !== resourceType) return false;
-      
-      // Check if resource is available for the requested dates
-      const dayOfWeek = start.getDay();
-      const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-      const dayName = dayNames[dayOfWeek];
-      
-      return resource.availability[dayName as keyof typeof resource.availability];
-    });
-  }
-
-  /**
-   * Get event packages by category with pricing
-   */
-  getEventPackagesByCategory(category: EventPackage['category']): EventPackage[] {
-    return this.eventPackages.filter(pkg => 
-      pkg.category === category && pkg.isActive
-    );
-  }
-
-  /**
    * Calculate seasonal adjustment for rate plans (existing logic)
    */
   private calculateRatePlanSeasonalAdjustment(ratePlan: RatePlan, date: string): number {
@@ -360,73 +305,6 @@ export class EnhancedFrontOfficeStore {
     trackEvent('FO.Folio.Split', { reservationId, splitCount: splits.length });
     
     return newFolios;
-  }
-
-  // Revenue optimization with dynamic pricing
-  suggestDynamicPricing(
-    roomTypeId: string,
-    date: string,
-    demandLevel: 'low' | 'medium' | 'high'
-  ): PricingRecommendation {
-    const roomType = this.roomTypes.find(rt => rt.id === roomTypeId);
-    if (!roomType) {
-      throw new Error(`Room type ${roomTypeId} not found`);
-    }
-
-    const demandMultipliers = {
-      low: 0.8,
-      medium: 1.0,
-      high: 1.3
-    };
-
-    const baseRate = roomType.baseRate;
-    const demandMultiplier = demandMultipliers[demandLevel];
-    const seasonalAdjustment = this.calculateSeasonalAdjustment(date);
-    
-    const recommendedRate = Math.round(baseRate * demandMultiplier * seasonalAdjustment);
-
-    return {
-      recommendedRate,
-      confidence: this.calculatePricingConfidence(demandLevel, seasonalAdjustment),
-      factors: ['demand', 'seasonality', 'competition'],
-      demandLevel
-    };
-  }
-
-  private calculateSeasonalAdjustment(date: string): number {
-    const month = new Date(date).getMonth();
-    
-    // Ghana tourism seasons
-    const seasonalRates: { [key: number]: number } = {
-      0: 1.2,   // January - Peak season
-      1: 1.1,   // February - Peak season
-      2: 1.0,   // March - Regular season
-      3: 0.9,   // April - Low season
-      4: 0.8,   // May - Low season
-      5: 0.9,   // June - Low season
-      6: 1.0,   // July - Regular season
-      7: 1.1,   // August - Peak season
-      8: 1.2,   // September - Peak season
-      9: 1.1,   // October - Peak season
-      10: 1.0,  // November - Regular season
-      11: 1.2   // December - Peak season
-    };
-
-    return seasonalRates[month] || 1.0;
-  }
-
-  private calculatePricingConfidence(demandLevel: string, seasonalAdjustment: number): number {
-    let confidence = 70; // Base confidence
-    
-    // Adjust based on demand level
-    if (demandLevel === 'high') confidence += 15;
-    if (demandLevel === 'low') confidence -= 10;
-    
-    // Adjust based on seasonal factors
-    if (seasonalAdjustment > 1.1) confidence += 10;
-    if (seasonalAdjustment < 0.9) confidence += 5;
-    
-    return Math.min(confidence, 100);
   }
 
   // Upsell services tracking
@@ -497,27 +375,6 @@ export class EnhancedFrontOfficeStore {
       description 
     });
     trackEvent('FO.Maintenance.Reported', { roomId, category });
-  }
-
-  // Rate Plan Management
-  addRatePlan(ratePlan: RatePlan) {
-    this.ratePlans.push(ratePlan);
-    this.notify();
-    trackEvent('FO.RatePlan.Created', { id: ratePlan.id, name: ratePlan.name });
-  }
-
-  updateRatePlan(id: string, updates: Partial<RatePlan>) {
-    this.ratePlans = this.ratePlans.map(rp => 
-      rp.id === id ? { ...rp, ...updates, updatedAt: new Date().toISOString() } : rp
-    );
-    this.notify();
-    trackEvent('FO.RatePlan.Updated', { id });
-  }
-
-  deleteRatePlan(id: string) {
-    this.ratePlans = this.ratePlans.filter(rp => rp.id !== id);
-    this.notify();
-    trackEvent('FO.RatePlan.Deleted', { id });
   }
 }
 

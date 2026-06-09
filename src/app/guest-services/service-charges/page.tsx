@@ -393,7 +393,7 @@ export default function ServiceChargesPage() {
           <Button 
             color="secondary" 
             variant="flat"
-            onClick={() => alert('Service charge pricing is managed in Settings > Rate Management')}
+            onClick={() => alert('Room and event pricing is managed in Settings > Rooms & Pricing')}
           >
             ⚙️ Manage Pricing
           </Button>

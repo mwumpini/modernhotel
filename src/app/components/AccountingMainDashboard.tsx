@@ -95,6 +95,9 @@ export default function AccountingMainDashboard() {
 
   useEffect(() => {
     initializeAccounting().catch(() => {});
+    void import('../lib/compliance/store').then(({ useComplianceStore }) => {
+      void useComplianceStore.getState().syncCountryFromSetup();
+    });
   }, [initializeAccounting]);
 
   useEffect(() => {

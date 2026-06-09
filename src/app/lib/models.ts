@@ -89,10 +89,29 @@ export interface TaxType {
 export interface ReportingRule {
   id: string;
   countryCode: string;
-  reportType: 'VAT' | 'IncomeTax' | 'NHIL' | 'Tourism' | 'SSNIT' | 'PAYE' | 'Sales Tax' | 'Hotel Tax';
+  reportType:
+    | 'VAT'
+    | 'IncomeTax'
+    | 'NHIL'
+    | 'Tourism'
+    | 'SSNIT'
+    | 'PAYE'
+    | 'WHT'
+    | 'CIT'
+    | 'GSL'
+    | 'Sales Tax'
+    | 'Hotel Tax';
   frequency: 'Monthly' | 'Quarterly' | 'Annually';
   fieldsRequired: string[];
-  dueDay: number; // Day of month/quarter/year when due
+  dueDay: number;
+  dueRule?: {
+    type: string;
+    day?: number;
+    days?: number;
+    dates?: string[];
+    months?: number;
+  };
+  description?: string;
   isActive: boolean;
   lastUpdated: string;
 }
