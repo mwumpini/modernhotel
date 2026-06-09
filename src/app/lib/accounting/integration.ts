@@ -261,8 +261,30 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
   });
   
   try {
+    const existingJe = store.journalEntries.find(
+      (je) =>
+        je.sourceModule === transaction.source &&
+        je.sourceTransactionId === transaction.id &&
+        je.status === 'Posted',
+    );
+    if (existingJe) {
+      const linkedInv = store.invoices.find(
+        (i) => i.journalEntryId === existingJe.id || i.id === `INV-${transaction.source.toUpperCase()}-${transaction.id}`,
+      );
+      return {
+        invoiceId: linkedInv?.id ?? `INV-${transaction.source.toUpperCase()}-${transaction.id}`,
+        journalEntryId: existingJe.id,
+      };
+    }
+
     // 1. Create Sales Invoice
-    const invoiceId = `INV-${transaction.source.toUpperCase()}-${Date.now()}`;
+    const invoiceId = `INV-${transaction.source.toUpperCase()}-${transaction.id}`;
+    if (store.invoices.some((i) => i.id === invoiceId)) {
+      const inv = store.invoices.find((i) => i.id === invoiceId);
+      if (inv?.journalEntryId) {
+        return { invoiceId, journalEntryId: inv.journalEntryId };
+      }
+    }
     const invoiceNumber = generateInvoiceNumber(transaction.source);
     const revenueGLAccount = getRevenueGLAccount(transaction.source);
     
@@ -333,7 +355,7 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
     console.log(`[Accounting Integration] Recorded revenue to center: ${revenueCenterCode}, Amount: ${transaction.subtotal}`);
     
     // 3. Create Journal Entry (Dr: AR, Cr: Revenue, Cr: each tax payable per TaxConfig)
-    const journalEntryId = `JE-${transaction.source.toUpperCase()}-${Date.now()}`;
+    const journalEntryId = `JE-${transaction.source.toUpperCase()}-${transaction.id}`;
     let jlSeq = 0;
     const nextJeLineId = () => `JL-${journalEntryId}-${++jlSeq}-${Math.random().toString(36).slice(2, 7)}`;
     const journalLines: any[] = [
@@ -699,8 +721,30 @@ export function capturePayment(
   });
   
   try {
+    const existingPayJe = store.journalEntries.find(
+      (je) =>
+        je.sourceModule === source &&
+        je.sourceTransactionId === transaction.id &&
+        je.status === 'Posted',
+    );
+    if (existingPayJe) {
+      const linkedRcp = store.payments.find(
+        (p) => p.journalEntryId === existingPayJe.id || p.id === `RCP-${source.toUpperCase()}-${transaction.id}`,
+      );
+      return {
+        receiptId: linkedRcp?.id ?? `RCP-${source.toUpperCase()}-${transaction.id}`,
+        journalEntryId: existingPayJe.id,
+      };
+    }
+
     // 1. Create Receipt
-    const receiptId = `RCP-${source.toUpperCase()}-${Date.now()}`;
+    const receiptId = `RCP-${source.toUpperCase()}-${transaction.id}`;
+    if (store.payments.some((p) => p.id === receiptId)) {
+      const rcp = store.payments.find((p) => p.id === receiptId);
+      if (rcp?.journalEntryId) {
+        return { receiptId, journalEntryId: rcp.journalEntryId };
+      }
+    }
     const receiptNumber = generateReceiptNumber(source);
     
     const receipt = {
@@ -778,7 +822,7 @@ export function capturePayment(
     }
     
     // 3. Create Journal Entry (Dr: Cash/Bank, Cr: AR)
-    const journalEntryId = `JE-PAY-${source.toUpperCase()}-${Date.now()}`;
+    const journalEntryId = `JE-PAY-${source.toUpperCase()}-${transaction.id}`;
     const cashGLAccount = PAYMENT_GL_MAP[transaction.paymentMethod] || GL_ACCOUNTS.CASH;
     const revenueCenterCode = getRevenueCenterCode(source);
     

@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 function sleep(ms) {
@@ -19,9 +20,13 @@ async function rmDir(p) {
   return false;
 }
 
-const dirs = ['.next'];
+const dirs = [
+  '.next',
+  path.join(os.tmpdir(), 'ghana-hotel-next-cache'),
+];
+
 for (const d of dirs) {
-  const p = path.join(process.cwd(), d);
+  const p = path.isAbsolute(d) ? d : path.join(process.cwd(), d);
   if (fs.existsSync(p)) {
     try {
       await rmDir(p);

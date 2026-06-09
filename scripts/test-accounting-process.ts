@@ -246,4 +246,24 @@ function assert(cond: boolean, msg: string) {
   assert(invoiceSyncStatus(inv, jes) === 'synced', 'synced status');
 }
 
+// Folio checkout payment must not double-post via manual bridge
+{
+  const pay: Payment = {
+    id: 'RCP-FO-1',
+    paymentNumber: 'PAY-FO-1',
+    date: '2026-06-06',
+    type: 'Receipt',
+    businessPartnerId: 'GUEST-1',
+    description: 'Folio checkout receipt',
+    amount: 500,
+    currency: 'GHS',
+    paymentMethod: 'Cash',
+    status: 'Posted',
+    createdAt: '2026-06-06',
+    updatedAt: '2026-06-06',
+    sourceModule: 'front_office_checkout',
+  };
+  assert(!paymentNeedsGlPost(pay, []), 'folio checkout receipt GL via simpleFlow only');
+}
+
 console.log('All accounting process regression checks passed.');

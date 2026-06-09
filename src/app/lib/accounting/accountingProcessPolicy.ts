@@ -131,6 +131,12 @@ export function paymentNeedsGlPost(
   if (findJournalEntryForPayment(payment, journalEntries)) return false;
   if (
     payment.sourceModule &&
+    (GUEST_FOLIO_GL_SOURCES as readonly string[]).includes(payment.sourceModule)
+  ) {
+    return false;
+  }
+  if (
+    payment.sourceModule &&
     (DEPARTMENTAL_CAPTURE_SOURCES as readonly string[]).includes(payment.sourceModule)
   ) {
     return false;

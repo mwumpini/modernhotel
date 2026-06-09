@@ -3,6 +3,7 @@
 import React, { Suspense, lazy } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Accordion, AccordionItem, Badge, Avatar } from "@heroui/react";
+import { isLeanAccountingUI } from '../lib/accounting/tenantAccountingConfig';
 
 // Lazy load heavy components to prevent chunk loading errors
 const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
@@ -99,7 +100,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const router = useRouter();
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
-  const leanMode = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_LEAN_MODE === 'true') : (process.env.NEXT_PUBLIC_LEAN_MODE === 'true');
+  const leanMode = isLeanAccountingUI();
 
   // Log navigation component initialization and state changes
   React.useEffect(() => {

@@ -45,6 +45,14 @@ function stackOrder(c: TaxConfig): number {
   return c.purchaseStackOrder ?? defaultStackOrder(c.type);
 }
 
+/** Country bootstrap before compliance tax-rule sync runs. */
+export function bootstrapTaxConfigsForCountry(countryCode: string): TaxConfig[] {
+  const code = (countryCode || 'GH').toUpperCase();
+  if (code === 'GH') return taxConfigsFromGhanaTemplate();
+  // Future countries: return [] and rely on compliance → accounting sync.
+  return [];
+}
+
 /** Seed `TaxConfig[]` when the store has not run `initializeAccounting` yet. */
 export function taxConfigsFromGhanaTemplate(): TaxConfig[] {
   const entries = Object.entries(GHANA_TAX_CODES) as [keyof typeof GHANA_TAX_CODES, (typeof GHANA_TAX_CODES)['VAT']][];

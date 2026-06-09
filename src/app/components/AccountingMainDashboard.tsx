@@ -14,6 +14,13 @@ import {
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useAccountingStore } from '../lib/accounting/store';
+import { useComplianceStore } from '../lib/compliance/store';
+import {
+  formatAccountingCurrency,
+  getTenantAccountingCountryCode,
+  isLeanAccountingUI,
+} from '../lib/accounting/tenantAccountingConfig';
+import { buildAccountingComplianceOverview } from '../lib/accounting/accountingComplianceOverview';
 
 // Import specialized accounting components
 import ChartOfAccounts from './accounting/ChartOfAccounts';
@@ -82,7 +89,8 @@ const InfoIcon = ({ description }: { description: string }) => {
 
 export default function AccountingMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
-  const leanMode = typeof window !== 'undefined' ? (process.env.NEXT_PUBLIC_LEAN_MODE === 'true') : (process.env.NEXT_PUBLIC_LEAN_MODE === 'true');
+  const leanMode = isLeanAccountingUI();
+  const countryCode = getTenantAccountingCountryCode();
 
   const {
     invoices,
@@ -93,11 +101,27 @@ export default function AccountingMainDashboard() {
     initializeAccounting,
   } = useAccountingStore();
 
+  const complianceCountry = useComplianceStore((s) => s.country);
+  const reportingRules = useComplianceStore((s) => s.reportingRules);
+  const complianceReports = useComplianceStore((s) => s.reports);
+  const getComplianceScore = useComplianceStore((s) => s.getComplianceScore);
+
+  const complianceOverview = useMemo(
+    () =>
+      buildAccountingComplianceOverview({
+        countryCode: complianceCountry || countryCode,
+        reportingRules,
+        reports: complianceReports,
+        complianceScore: getComplianceScore(),
+      }),
+    [complianceCountry, countryCode, reportingRules, complianceReports, getComplianceScore],
+  );
+
+  const fmt = (amount: number) => formatAccountingCurrency(amount);
+
   useEffect(() => {
     initializeAccounting().catch(() => {});
-    void import('../lib/compliance/store').then(({ useComplianceStore }) => {
-      void useComplianceStore.getState().syncCountryFromSetup();
-    });
+    void useComplianceStore.getState().syncCountryFromSetup();
   }, [initializeAccounting]);
 
   useEffect(() => {
@@ -191,11 +215,8 @@ export default function AccountingMainDashboard() {
     [chartOfAccounts]
   );
 
-  // Compliance status (fixed — compliance tracking is not live in this system)
-  const taxCompliance = 94;
-  const auditCompliance = 97;
-  const regulatoryCompliance = 91;
-  const overallCompliance = 94;
+  // Live compliance metrics (from compliance module — not hardcoded percentages)
+  const { complianceScore, activeSchedules, pendingFilings, submittedFilings } = complianceOverview;
 
   // Today's operations from live data
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -222,7 +243,7 @@ export default function AccountingMainDashboard() {
       category: 'Financial Management',
       items: [
         { title: 'Chart of Accounts', icon: '📊', description: 'Complete account structure and GL codes', status: 'active', count: activeAccounts },
-        { title: 'Bank & Cash', icon: '💰', description: 'Bank accounts and cash management', status: 'active', count: 8 },
+        { title: 'Bank & Cash', icon: '💰', description: 'Bank accounts and cash management', status: 'active', count: bankAccounts.length },
         { title: 'Financial Reports', icon: '📈', description: 'P&L, Balance Sheet, Cash Flow', status: 'active', count: 0 },
         { title: 'Audit Controls', icon: '🔍', description: 'Internal controls and audit trails', status: 'active', count: 0 },
       ]
@@ -239,9 +260,9 @@ export default function AccountingMainDashboard() {
     {
       category: 'Compliance & Reporting',
       items: [
-        { title: 'Tax Compliance', icon: '📋', description: 'VAT, PAYE, and tax reporting', status: 'active', count: taxCompliance },
-        { title: 'Audit Compliance', icon: '🔒', description: 'Internal and external audits', status: 'active', count: auditCompliance },
-        { title: 'Regulatory Reports', icon: '📊', description: 'Ghana regulatory compliance', status: 'active', count: regulatoryCompliance },
+        { title: 'Tax Compliance', icon: '📋', description: 'Statutory filing schedules', status: 'active', count: activeSchedules },
+        { title: 'Filings Submitted', icon: '🔒', description: 'Returns filed with authority', status: 'active', count: submittedFilings },
+        { title: 'Filings Pending', icon: '📊', description: 'Returns awaiting submission', status: 'active', count: pendingFilings },
         { title: 'Performance Analytics', icon: '📈', description: 'Financial performance metrics', status: 'active', count: 0 },
       ]
     },
@@ -296,14 +317,17 @@ export default function AccountingMainDashboard() {
                     Accounting & Financial Management
                   </h1>
                   <p className="text-xl text-gray-600 mt-2">
-                    Comprehensive financial control, reporting, and compliance management
+                    Financial control, statutory reporting, and compliance ({complianceOverview.countryCode})
                   </p>
                 </div>
               </div>
               
               <div className="text-right">
-                <p className="text-sm text-gray-500">Overall Compliance</p>
-                <p className="text-3xl font-bold text-ghana-green">{overallCompliance}%</p>
+                <p className="text-sm text-gray-500">Filing compliance</p>
+                <p className="text-3xl font-bold text-ghana-green">{complianceScore}%</p>
+                <p className="text-xs text-gray-400 mt-1">
+                  {submittedFilings} filed · {pendingFilings} pending · {activeSchedules} schedules
+                </p>
               </div>
             </div>
           </div>
@@ -317,19 +341,19 @@ export default function AccountingMainDashboard() {
                   <h4 className="text-lg font-semibold text-ghana-black">Cash &amp; Bank Position</h4>
                   <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
                 </div>
-                <div className="text-3xl font-bold text-blue-600 mb-3">₵{totalBankCash.toFixed(2)}</div>
+                <div className="text-3xl font-bold text-blue-600 mb-3">{fmt(totalBankCash)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex justify-between">
                     <span>Total Bank &amp; Cash</span>
-                    <span className="font-medium">₵{totalBankCash.toFixed(2)}</span>
+                    <span className="font-medium">{fmt(totalBankCash)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Receivables Outstanding</span>
-                    <span className="font-medium">₵{totalReceivables.toFixed(2)}</span>
+                    <span className="font-medium">{fmt(totalReceivables)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Payables Outstanding</span>
-                    <span className="font-medium">₵{totalPayables.toFixed(2)}</span>
+                    <span className="font-medium">{fmt(totalPayables)}</span>
                   </div>
                 </div>
               </CardBody>
@@ -342,15 +366,15 @@ export default function AccountingMainDashboard() {
                   <h4 className="text-lg font-semibold text-ghana-black">Profitability</h4>
                   <div className="w-3 h-3 bg-green-500 rounded-full"></div>
                 </div>
-                <div className="text-3xl font-bold text-green-600 mb-3">₵{netIncome.toFixed(2)}</div>
+                <div className="text-3xl font-bold text-green-600 mb-3">{fmt(netIncome)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex justify-between">
                     <span>Revenue (Posted)</span>
-                    <span className="font-medium">₵{currentRevenue.toFixed(2)}</span>
+                    <span className="font-medium">{fmt(currentRevenue)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Expenses (GL 5xxx)</span>
-                    <span className="font-medium">₵{currentExpenses.toFixed(2)}</span>
+                    <span className="font-medium">{fmt(currentExpenses)}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Profit Margin</span>

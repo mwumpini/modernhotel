@@ -63,6 +63,11 @@ export function postGuestFolioCheckoutToLedger(params: {
   }
 
   const salesJeId = `JE-FO-CHK-${params.invoiceId}`;
+  const existingSales = store.journalEntries.find((je) => je.id === salesJeId);
+  if (existingSales) {
+    return { salesJournalEntryId: salesJeId };
+  }
+
   const jl = (suffix: string) => `JL-${salesJeId}-${suffix}`;
 
   const lines: Array<{
@@ -121,7 +126,8 @@ export function postGuestFolioCheckoutToLedger(params: {
   const sumCredit = lines.slice(1).reduce((s, l) => s + (l.credit || 0), 0);
   const sumDebit = lines[0].debit || 0;
   if (Math.abs(sumDebit - sumCredit) > 0.02) {
-    console.warn('[simpleFlow] Sales JE not balanced', { sumDebit, sumCredit, params });
+    console.error('[simpleFlow] Sales JE not balanced — post aborted', { sumDebit, sumCredit, params });
+    return null;
   }
 
   const salesEntry = {
@@ -168,7 +174,8 @@ export function postGuestFolioCheckoutToLedger(params: {
     const abs = Math.abs(raw);
     const isRefund = raw < 0;
     const cashGl = PAYMENT_GL_MAP[p.method] || GL_ACCOUNTS.CASH;
-    const payJeId = `JE-FO-${isRefund ? 'REF' : 'PAY'}-${params.invoiceId}-${i}-${Date.now()}`;
+    const payJeId = `JE-FO-${isRefund ? 'REF' : 'PAY'}-${params.invoiceId}-${i}`;
+    if (store.journalEntries.some((je) => je.id === payJeId)) return;
 
     const payLines = isRefund
       ? [
@@ -279,7 +286,12 @@ export function postNoShowPenaltyToLedger(params: {
   const ts = nowIso();
   const invRef = `NS-${params.reference}`;
 
-  const salesJeId = `JE-FO-NS-${params.reservationId}-${Date.now().toString().slice(-6)}`;
+  const salesJeId = `JE-FO-NS-${params.reservationId}`;
+  const existingNs = store.journalEntries.find((je) => je.id === salesJeId);
+  if (existingNs) {
+    return { salesJournalEntryId: salesJeId };
+  }
+
   const jl = (suffix: string) => `JL-${salesJeId}-${suffix}`;
 
   const lines: Array<{
@@ -354,7 +366,8 @@ export function postNoShowPenaltyToLedger(params: {
 
   if (params.cardCollected && params.cardCollected.amount > 0) {
     const abs = params.cardCollected.amount;
-    const payJeId = `JE-FO-NS-PAY-${params.reservationId}-${Date.now()}`;
+    const payJeId = `JE-FO-NS-PAY-${params.reservationId}`;
+    if (!store.journalEntries.some((je) => je.id === payJeId)) {
     const cashGl = PAYMENT_GL_MAP['Card'] || GL_ACCOUNTS.BANK;
     store.addJournalEntry({
       id: payJeId,
@@ -395,6 +408,7 @@ export function postNoShowPenaltyToLedger(params: {
       sourceModule: 'front_office_noshow',
       sourceTransactionId: params.reservationId,
     } as any);
+    }
   }
 
   return { salesJournalEntryId: salesJeId };
