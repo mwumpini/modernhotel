@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant';
+import { requireAuth } from '@/app/lib/api/auth-guard';
 import {
   listPurchaseOrders,
   upsertPurchaseOrder,
@@ -17,6 +18,8 @@ async function resolveTenantId(req: NextRequest): Promise<string | null> {
 // GET - Fetch purchase orders, optionally filtered by status/supplier/date range
 export async function GET(req: NextRequest) {
   try {
+    const auth = await requireAuth(req);
+    if (!auth.ok) return auth.response;
     const tenantId = await resolveTenantId(req);
     if (!tenantId) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 });
 
@@ -38,6 +41,8 @@ export async function GET(req: NextRequest) {
 // POST - Create a new purchase order
 export async function POST(req: NextRequest) {
   try {
+    const auth = await requireAuth(req);
+    if (!auth.ok) return auth.response;
     const tenantId = await resolveTenantId(req);
     if (!tenantId) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 });
 
@@ -88,6 +93,8 @@ export async function POST(req: NextRequest) {
 // PUT - Update an existing purchase order (full replace of items)
 export async function PUT(req: NextRequest) {
   try {
+    const auth = await requireAuth(req);
+    if (!auth.ok) return auth.response;
     const tenantId = await resolveTenantId(req);
     if (!tenantId) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 });
 
@@ -143,6 +150,8 @@ export async function PUT(req: NextRequest) {
 // DELETE - Delete a purchase order
 export async function DELETE(req: NextRequest) {
   try {
+    const auth = await requireAuth(req);
+    if (!auth.ok) return auth.response;
     const tenantId = await resolveTenantId(req);
     if (!tenantId) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 });
 

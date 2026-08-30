@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { updateInvoice, deleteInvoice } from '@/app/lib/accounting/repository'
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -23,6 +26,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)

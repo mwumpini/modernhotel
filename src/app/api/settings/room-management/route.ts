@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 
 /**
@@ -47,6 +48,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)

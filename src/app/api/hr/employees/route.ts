@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listHrEmployees, upsertHrEmployee, deleteHrEmployee } from '@/app/lib/hr/repository'
 
 async function resolveTenant(req: NextRequest) {
@@ -11,6 +12,8 @@ async function resolveTenant(req: NextRequest) {
 // GET /api/hr/employees — all employees for the tenant
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const employees = await listHrEmployees(ctx.tenantId)
@@ -25,6 +28,8 @@ export async function GET(request: NextRequest) {
 // the client generates it optimistically before this call resolves)
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
 
@@ -51,6 +56,8 @@ export async function POST(request: NextRequest) {
 // DELETE /api/hr/employees?id=... — remove an employee record
 export async function DELETE(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
 

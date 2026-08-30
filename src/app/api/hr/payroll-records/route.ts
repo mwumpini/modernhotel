@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listHrPayrollRecords, upsertHrPayrollRecord } from '@/app/lib/hr/repository'
 
 async function resolveTenant(req: NextRequest) {
@@ -10,6 +11,8 @@ async function resolveTenant(req: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const payrollRecords = await listHrPayrollRecords(ctx.tenantId)
@@ -22,6 +25,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
