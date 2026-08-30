@@ -135,7 +135,7 @@ export default function SetupWizardPage() {
       website: settings.companySettings?.contact.website || '',
     },
     defaultCurrency: settings.companySettings?.defaultCurrency || settings.financialSettings.defaultCurrency || 'GHS',
-    financialYearStartDate: settings.companySettings?.financialYearStartDate || '2025-01-01',
+    financialYearStartDate: settings.companySettings?.financialYearStartDate || `${new Date().getFullYear()}-01-01`,
     addressFormatTemplate: settings.companySettings?.addressFormatTemplate || '{line1}\n{city}, {country}',
     priceDisplayFormat: settings.companySettings?.priceDisplayFormat || 'symbol',
     defaultTaxScheme: settings.companySettings?.defaultTaxScheme || 'Ghana Standard',
@@ -231,11 +231,45 @@ export default function SetupWizardPage() {
   }));
 
   const TOTAL_STEPS = 4;
-  const goNext = () => setStep(prev => Math.min(prev + 1, TOTAL_STEPS));
-  const goBack = () => setStep(prev => Math.max(prev - 1, 1));
+  const [stepError, setStepError] = React.useState<string | null>(null);
 
-  // Auto-detect country from IP on first load (non-blocking)
+  const validateStep = (s: number): string | null => {
+    if (s === 1) {
+      if (!company.legalName || !company.legalName.trim()) return 'Company Legal Name is required.';
+      if (!company.contact.email || !company.contact.email.trim()) return 'Email is required.';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(company.contact.email.trim())) return 'Enter a valid email address.';
+      if (!company.defaultCurrency || !company.defaultCurrency.trim()) return 'Default Currency is required.';
+      return null;
+    }
+    if (s === 2) {
+      if (!numbering.invoiceFormat || !numbering.invoiceFormat.includes('{NUMBER}')) return 'Invoice Format must include {NUMBER}.';
+      if (!numbering.receiptFormat || !numbering.receiptFormat.includes('{NUMBER}')) return 'Receipt Format must include {NUMBER}.';
+      if (!Number.isFinite(numbering.invoiceNext) || numbering.invoiceNext < 1) return 'Invoice Next must be at least 1.';
+      if (!Number.isFinite(numbering.receiptNext) || numbering.receiptNext < 1) return 'Receipt Next must be at least 1.';
+      return null;
+    }
+    if (s === 3) {
+      if (!Number.isFinite(security.minLength) || security.minLength < 6) return 'Password Min Length must be at least 6.';
+      if (!Number.isFinite(security.expiryDays) || security.expiryDays < 1) return 'Password Expiry Days must be at least 1.';
+      if (!Number.isFinite(security.dataRetentionDays) || security.dataRetentionDays < 1) return 'Data Retention Days must be at least 1.';
+      return null;
+    }
+    return null;
+  };
+
+  const goNext = () => {
+    const err = validateStep(step);
+    if (err) { setStepError(err); return; }
+    setStepError(null);
+    setStep(prev => Math.min(prev + 1, TOTAL_STEPS));
+  };
+  const goBack = () => { setStepError(null); setStep(prev => Math.max(prev - 1, 1)); };
+
+  // Auto-detect country from IP on first load (non-blocking). Skipped entirely if the
+  // user has already manually picked a country before the fetch resolves, so a slow
+  // geo-IP response can't stomp on a deliberate choice made in the meantime.
   const autoDetectRef = React.useRef(false);
+  const userChangedCountryRef = React.useRef(false);
   React.useEffect(() => {
     if (autoDetectRef.current) return;
     autoDetectRef.current = true;
@@ -243,7 +277,9 @@ export default function SetupWizardPage() {
       try {
         const res = await fetch('https://ipapi.co/json/');
         if (!res.ok) return;
+        if (userChangedCountryRef.current) return;
         const data: any = await res.json();
+        if (userChangedCountryRef.current) return;
         const detected = String(data?.country_code || '').toUpperCase();
         const supported = Object.keys(COUNTRY_PRESETS);
         if (supported.includes(detected) && detected !== regional.country) {
@@ -251,9 +287,11 @@ export default function SetupWizardPage() {
         }
       } catch {}
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleCountryChange = (code: string) => {
+  const handleCountryChange = (code: string, userInitiated = false) => {
+    if (userInitiated) userChangedCountryRef.current = true;
     const preset = COUNTRY_PRESETS[code];
     if (!preset) return;
     // Update Company
@@ -315,6 +353,14 @@ export default function SetupWizardPage() {
   };
 
   const handleComplete = () => {
+    for (const s of [1, 2, 3]) {
+      const err = validateStep(s);
+      if (err) {
+        setStep(s);
+        setStepError(err);
+        return;
+      }
+    }
     try {
       // Company settings
       updateSetting('companySettings', {
@@ -330,11 +376,12 @@ export default function SetupWizardPage() {
       updateNestedSetting('tenant.metadata.language', regional.language);
       // Ensure country exists, then update localization/tax/timezone
       if (!settings.countryCompliance[regional.country]) {
+        const preset = COUNTRY_PRESETS[regional.country];
         addCountry(regional.country, {
           countryCode: regional.country,
-          countryName: regional.country,
+          countryName: preset?.name || regional.country,
           currency: company.defaultCurrency,
-          currencySymbol: '₵',
+          currencySymbol: preset?.currencySymbol || '',
           timezone: regional.timezone,
           dateFormat: regional.dateFormat,
           numberFormat: '#,##0.00',
@@ -435,6 +482,12 @@ export default function SetupWizardPage() {
         </Button>
         <StepHeader />
 
+        {stepError && (
+          <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+            {stepError}
+          </div>
+        )}
+
         {step === 1 && (
           <Card>
             <CardHeader>
@@ -447,7 +500,7 @@ export default function SetupWizardPage() {
                   selectedKeys={[regional.country]}
                   onSelectionChange={(keys) => {
                     const code = Array.from(keys)[0] as string;
-                    handleCountryChange(code);
+                    handleCountryChange(code, true);
                   }}
                 >
                   <SelectItem key="GH">Ghana</SelectItem>
@@ -597,12 +650,17 @@ export default function SetupWizardPage() {
               <h2 className="text-xl font-semibold">Review & Complete</h2>
             </CardHeader>
             <CardBody className="space-y-4">
-              <p className="text-gray-700">Review your settings, then click Complete to finish initial setup. You can change most items later in Settings.</p>
-              <ul className="list-disc pl-6 text-sm text-gray-700">
-                <li>Company: {company.legalName} ({company.tradingName})</li>
-                <li>Country: {regional.country} • Currency: {financial.defaultCurrency}</li>
+              <p className="text-gray-700">Review your settings, then click Complete to finish initial setup. You can change everything below later in Settings.</p>
+              <ul className="list-disc pl-6 text-sm text-gray-700 space-y-1">
+                <li>Company: {company.legalName || '(not set)'}{company.tradingName ? ` (${company.tradingName})` : ''}</li>
+                <li>Contact: {company.contact.email || '(not set)'}{company.contact.phone ? ` • ${company.contact.phone}` : ''}</li>
+                <li>Country: {COUNTRY_PRESETS[regional.country]?.name || regional.country} • Currency: {financial.defaultCurrency} • Timezone: {regional.timezone}</li>
                 <li>Classification: {company.classification || settings.hotelSettings.classification}</li>
-                <li>Invoice Prefix: {numbering.invoicePrefix} • Receipt Prefix: {numbering.receiptPrefix}</li>
+                <li>Tax Scheme: {company.defaultTaxScheme || '(none)'} — VAT {financial.vat}%{financial.nhil ? `, NHIL ${financial.nhil}%` : ''}{financial.tourismLevy ? `, Tourism Levy ${financial.tourismLevy}%` : ''}</li>
+                <li>Financial Year Start: {company.financialYearStartDate}</li>
+                <li>Invoice: {numbering.invoicePrefix} ({numbering.invoiceFormat}) • Receipt: {numbering.receiptPrefix} ({numbering.receiptFormat})</li>
+                <li>Password Policy: min {security.minLength} chars, expires every {security.expiryDays} days{security.requireUppercase || security.requireNumbers || security.requireSpecialChars ? ' (with complexity rules)' : ''}</li>
+                <li>Data Retention: {security.dataRetentionDays} days</li>
               </ul>
             </CardBody>
           </Card>
