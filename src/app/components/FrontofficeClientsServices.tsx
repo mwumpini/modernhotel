@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
-import { 
-  Card, 
-  CardBody, 
-  CardHeader, 
-  Button, 
+import React, { useState, useEffect } from 'react';
+import {
+  Card,
+  CardBody,
+  CardHeader,
+  Button,
   Table,
   TableHeader,
   TableColumn,
@@ -16,9 +16,21 @@ import {
   Avatar,
   useDisclosure,
   Tabs,
-  Tab
+  Tab,
+  Modal,
+  ModalContent,
+  ModalHeader,
+  ModalBody,
+  ModalFooter,
+  Input,
+  Select,
+  SelectItem,
+  Textarea
 } from "@heroui/react";
 import OfflineIndicator from './OfflineIndicator';
+import { frontOfficeStore } from '../lib/frontoffice/store';
+import { getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
+import { fetchGuestServices, saveGuestService, fetchServiceRequests, saveServiceRequest } from '../lib/frontoffice/guestServicesApi';
 // GuestForm removed in favor of canonical client form redirect
 
 interface Client {
@@ -61,123 +73,107 @@ interface ServiceRequest {
 export default function FrontofficeClientsServices() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [selectedTab, setSelectedTab] = useState("clients");
+  const [, setTick] = useState(0);
+  React.useEffect(() => {
+    const unsub = frontOfficeStore.subscribe(() => setTick((t) => t + 1));
+    return () => unsub();
+  }, []);
 
-  const clients: Client[] = [
-    {
-      id: 'G-123456',
-      serialNumber: 'C001',
-      name: 'John Doe',
-      email: 'john.doe@email.com',
-      phone: '+233 24 123 4567',
-      nationality: 'Ghanaian',
-      ghanaCard: 'GHA-123456789-0',
-      vipStatus: 'gold',
-      totalStays: 15,
-      totalSpent: '₵45,000',
-      lastVisit: '2024-01-15',
-      preferences: ['High Floor', 'Non-smoking', 'Extra Towels']
-    },
-    {
-      id: 'G-654321',
-      serialNumber: 'C002',
-      name: 'Sarah Johnson',
-      email: 'sarah.j@email.com',
-      phone: '+233 20 987 6543',
-      nationality: 'American',
-      passport: 'US123456789',
-      vipStatus: 'silver',
-      totalStays: 8,
-      totalSpent: '₵24,000',
-      lastVisit: '2024-01-14',
-      preferences: ['Pool View', 'Late Check-out']
-    },
-    {
-      id: 'C003',
-      serialNumber: 'C003',
-      name: 'Kwame Asante',
-      email: 'kasante@company.com',
-      phone: '+233 26 555 1234',
-      nationality: 'Ghanaian',
-      ghanaCard: 'GHA-987654321-0',
-      vipStatus: 'platinum',
-      totalStays: 45,
-      totalSpent: '₵180,000',
-      lastVisit: '2024-01-10',
-      preferences: ['Suite', 'Airport Pickup', 'Business Center']
-    }
-  ];
+  const clients: Client[] = frontOfficeStore.guests.map((g) => {
+    const guestReservations = frontOfficeStore.reservations.filter((r) => r.guestId === g.id);
+    const totalSpent = guestReservations.reduce((sum, r) => {
+      const folio = frontOfficeStore.folios.find((f) => f.reservationId === r.id);
+      return sum + (folio ? getFolioDisplayTotals(folio).totalCharges : 0);
+    }, 0);
+    const lastVisit = guestReservations
+      .map((r) => r.arrival)
+      .sort()
+      .slice(-1)[0];
+    return {
+      id: g.id,
+      serialNumber: g.serialNumber,
+      name: g.name || `${g.firstName} ${g.lastName}`.trim(),
+      email: g.email || '',
+      phone: g.phone || '',
+      nationality: g.nationality,
+      ghanaCard: g.idType === 'ghana_card' ? g.idNumber : undefined,
+      passport: g.idType === 'passport' ? g.idNumber : undefined,
+      vipStatus: (g.vipStatus as Client['vipStatus']) || 'regular',
+      totalStays: guestReservations.length,
+      totalSpent: `₵${totalSpent.toLocaleString(undefined, { maximumFractionDigits: 0 })}`,
+      lastVisit: lastVisit ? lastVisit.slice(0, 10) : 'Never',
+      preferences: g.specialRequests || [],
+    };
+  });
 
-  const services: Service[] = [
-    {
-      id: 'S001',
-      name: 'Airport Pickup',
-      category: 'Transportation',
-      description: 'Professional airport transfer service',
-      price: '₵200',
-      status: 'available',
-      provider: 'Ghana Transport Co.'
-    },
-    {
-      id: 'S002',
-      name: 'Laundry Service',
-      category: 'Housekeeping',
-      description: 'Same-day laundry and dry cleaning',
-      price: '₵50',
-      status: 'available',
-      provider: 'In-house'
-    },
-    {
-      id: 'S003',
-      name: 'Spa Treatment',
-      category: 'Wellness',
-      description: 'Relaxing spa and massage services',
-      price: '₵300',
-      status: 'available',
-      provider: 'Ghana Wellness Spa'
-    },
-    {
-      id: 'S004',
-      name: 'Tour Guide',
-      category: 'Entertainment',
-      description: 'Professional tour guide for Accra',
-      price: '₵400',
-      status: 'available',
-      provider: 'Ghana Tours Ltd.'
-    }
-  ];
+  const [rawServices, setRawServices] = useState<any[]>([]);
+  const [rawRequests, setRawRequests] = useState<any[]>([]);
 
-  const serviceRequests: ServiceRequest[] = [
-    {
-      id: 'SR001',
-      clientName: 'John Doe',
-      serviceName: 'Airport Pickup',
-      roomNumber: '205',
-      requestDate: '2024-01-15',
-      status: 'completed',
-      priority: 'high',
-      notes: 'Pickup from Kotoka International Airport'
-    },
-    {
-      id: 'SR002',
-      clientName: 'Sarah Johnson',
-      serviceName: 'Laundry Service',
-      roomNumber: '312',
-      requestDate: '2024-01-16',
-      status: 'in_progress',
-      priority: 'medium',
-      notes: 'Business suits - urgent'
-    },
-    {
-      id: 'SR003',
-      clientName: 'Kwame Asante',
-      serviceName: 'Spa Treatment',
-      roomNumber: '401',
-      requestDate: '2024-01-17',
+  const reloadServices = () => { fetchGuestServices().then(setRawServices); };
+  const reloadRequests = () => { fetchServiceRequests().then(setRawRequests); };
+  useEffect(() => { reloadServices(); reloadRequests(); }, []);
+
+  const services: Service[] = rawServices.map((s) => ({
+    id: s.id,
+    name: s.name,
+    category: s.category,
+    description: s.description || '',
+    price: `₵${Number(s.price || 0).toLocaleString()}`,
+    status: s.status,
+    provider: s.provider || '',
+  }));
+
+  const serviceRequests: ServiceRequest[] = rawRequests.map((r) => ({
+    id: r.id,
+    clientName: r.clientName,
+    serviceName: rawServices.find((s) => s.id === r.serviceId)?.name || 'Unknown service',
+    roomNumber: r.roomNumber || '',
+    requestDate: (r.requestDate || '').slice(0, 10),
+    status: r.status,
+    priority: r.priority,
+    notes: r.notes || '',
+  }));
+
+  // Add Service modal
+  const { isOpen: isServiceOpen, onOpen: onServiceOpen, onClose: onServiceClose } = useDisclosure();
+  const [serviceForm, setServiceForm] = useState({ name: '', category: '', description: '', price: '0', provider: '' });
+  const submitService = async () => {
+    if (!serviceForm.name || !serviceForm.category) return;
+    await saveGuestService({
+      id: `SVC-${Date.now().toString().slice(-8)}`,
+      name: serviceForm.name,
+      category: serviceForm.category,
+      description: serviceForm.description,
+      price: Number(serviceForm.price) || 0,
+      status: 'available',
+      provider: serviceForm.provider,
+    });
+    setServiceForm({ name: '', category: '', description: '', price: '0', provider: '' });
+    onServiceClose();
+    reloadServices();
+  };
+
+  // Log Service Request modal
+  const { isOpen: isRequestOpen, onOpen: onRequestOpen, onClose: onRequestClose } = useDisclosure();
+  const [requestServiceId, setRequestServiceId] = useState('');
+  const [requestForm, setRequestForm] = useState({ clientName: '', roomNumber: '', priority: 'medium' as 'low' | 'medium' | 'high', notes: '' });
+  const openRequestModal = (serviceId: string) => { setRequestServiceId(serviceId); onRequestOpen(); };
+  const submitRequest = async () => {
+    if (!requestServiceId || !requestForm.clientName) return;
+    await saveServiceRequest({
+      id: `SR-${Date.now().toString().slice(-8)}`,
+      serviceId: requestServiceId,
+      clientName: requestForm.clientName,
+      roomNumber: requestForm.roomNumber,
+      requestDate: new Date().toISOString(),
       status: 'pending',
-      priority: 'low',
-      notes: 'Couple massage - evening appointment'
-    }
-  ];
+      priority: requestForm.priority,
+      notes: requestForm.notes,
+    });
+    setRequestForm({ clientName: '', roomNumber: '', priority: 'medium', notes: '' });
+    onRequestClose();
+    reloadRequests();
+  };
 
   const getVipStatusColor = (status: string) => {
     switch (status) {
@@ -252,25 +248,25 @@ export default function FrontofficeClientsServices() {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
               <div className="text-center p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <div className="text-3xl mb-2">👥</div>
-                <p className="text-2xl font-bold text-blue-600">1,250</p>
+                <p className="text-2xl font-bold text-blue-600">{clients.length}</p>
                 <p className="text-sm text-blue-700">Total Clients</p>
               </div>
-              
+
               <div className="text-center p-4 bg-green-50 rounded-lg border border-green-200">
                 <div className="text-3xl mb-2">⭐</div>
-                <p className="text-2xl font-bold text-green-600">45</p>
+                <p className="text-2xl font-bold text-green-600">{clients.filter(c => c.vipStatus !== 'regular').length}</p>
                 <p className="text-sm text-green-700">VIP Clients</p>
               </div>
-              
+
               <div className="text-center p-4 bg-purple-50 rounded-lg border border-purple-200">
                 <div className="text-3xl mb-2">🛎️</div>
-                <p className="text-2xl font-bold text-purple-600">12</p>
+                <p className="text-2xl font-bold text-purple-600">{services.filter(s => s.status === 'available').length}</p>
                 <p className="text-sm text-purple-700">Active Services</p>
               </div>
 
               <div className="text-center p-4 bg-orange-50 rounded-lg border border-orange-200">
                 <div className="text-3xl mb-2">📋</div>
-                <p className="text-2xl font-bold text-orange-600">8</p>
+                <p className="text-2xl font-bold text-orange-600">{serviceRequests.filter(r => r.status === 'pending').length}</p>
                 <p className="text-sm text-orange-700">Pending Requests</p>
               </div>
             </div>
@@ -393,7 +389,7 @@ export default function FrontofficeClientsServices() {
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold text-ghana-black">Hotel Services</h3>
-                  <Button color="primary" variant="flat" size="sm">
+                  <Button color="primary" variant="flat" size="sm" onPress={onServiceOpen}>
                     ➕ Add Service
                   </Button>
                 </div>
@@ -427,10 +423,7 @@ export default function FrontofficeClientsServices() {
                         <TableCell>{service.provider}</TableCell>
                         <TableCell>
                           <div className="flex gap-2">
-                            <Button size="sm" color="primary" variant="flat">
-                              Edit
-                            </Button>
-                            <Button size="sm" color="success" variant="flat">
+                            <Button size="sm" color="success" variant="flat" onPress={() => openRequestModal(service.id)}>
                               Book
                             </Button>
                           </div>
@@ -514,6 +507,43 @@ export default function FrontofficeClientsServices() {
             window.location.href = '/guest-services/client-services/clients-services?new=1';
           }}>➕ New Client</Button>
               </div>
+
+        <Modal isOpen={isServiceOpen} onClose={onServiceClose}>
+          <ModalContent>
+            <ModalHeader>Add Service</ModalHeader>
+            <ModalBody>
+              <Input label="Name" value={serviceForm.name} onChange={(e) => setServiceForm({ ...serviceForm, name: e.target.value })} />
+              <Input label="Category" placeholder="e.g. Transportation, Housekeeping, Wellness" value={serviceForm.category} onChange={(e) => setServiceForm({ ...serviceForm, category: e.target.value })} />
+              <Textarea label="Description" value={serviceForm.description} onChange={(e) => setServiceForm({ ...serviceForm, description: e.target.value })} />
+              <Input label="Price (₵)" type="number" value={serviceForm.price} onChange={(e) => setServiceForm({ ...serviceForm, price: e.target.value })} />
+              <Input label="Provider" value={serviceForm.provider} onChange={(e) => setServiceForm({ ...serviceForm, provider: e.target.value })} />
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={onServiceClose}>Cancel</Button>
+              <Button color="primary" onPress={submitService} isDisabled={!serviceForm.name || !serviceForm.category}>Add Service</Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        <Modal isOpen={isRequestOpen} onClose={onRequestClose}>
+          <ModalContent>
+            <ModalHeader>Log Service Request — {rawServices.find((s) => s.id === requestServiceId)?.name}</ModalHeader>
+            <ModalBody>
+              <Input label="Client Name" value={requestForm.clientName} onChange={(e) => setRequestForm({ ...requestForm, clientName: e.target.value })} />
+              <Input label="Room Number" value={requestForm.roomNumber} onChange={(e) => setRequestForm({ ...requestForm, roomNumber: e.target.value })} />
+              <Select label="Priority" selectedKeys={[requestForm.priority]} onSelectionChange={(k) => setRequestForm({ ...requestForm, priority: (Array.from(k)[0] as any) || 'medium' })}>
+                <SelectItem key="low">Low</SelectItem>
+                <SelectItem key="medium">Medium</SelectItem>
+                <SelectItem key="high">High</SelectItem>
+              </Select>
+              <Textarea label="Notes" value={requestForm.notes} onChange={(e) => setRequestForm({ ...requestForm, notes: e.target.value })} />
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={onRequestClose}>Cancel</Button>
+              <Button color="primary" onPress={submitRequest} isDisabled={!requestForm.clientName}>Log Request</Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
       </div>
     </div>
   );

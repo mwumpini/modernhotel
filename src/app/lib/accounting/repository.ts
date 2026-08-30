@@ -439,3 +439,130 @@ export async function updatePayment(tenantId: string, id: string, patch: Partial
   })
   return toStorePayment(row)
 }
+
+// ---------------------------------------------------------------------------
+// Bank reconciliation — was previously localStorage-only (unscoped by tenant,
+// no backend at all). Field shape matches src/app/lib/accounting/bankRecon/types.ts.
+// ---------------------------------------------------------------------------
+
+function toStoreRecon(row: any) {
+  return {
+    id: row.id,
+    bankAccountId: row.bankAccountId,
+    periodEndDate: toISO(row.periodEndDate).slice(0, 10),
+    statementBalance: Number(row.statementBalance),
+    cashbookBalance: Number(row.cashbookBalance),
+    status: row.status,
+    preparedAt: row.preparedAt ? toISO(row.preparedAt) : undefined,
+    approvedAt: row.approvedAt ? toISO(row.approvedAt) : undefined,
+    createdAt: toISO(row.createdAt),
+    updatedAt: toISO(row.updatedAt),
+  }
+}
+
+function toStoreReconItem(row: any) {
+  return {
+    id: row.id,
+    reconciliationId: row.reconciliationId,
+    itemType: row.itemType,
+    description: row.description,
+    reference: row.reference || undefined,
+    transactionDate: row.transactionDate ? toISO(row.transactionDate).slice(0, 10) : undefined,
+    amount: Number(row.amount),
+    isCleared: row.isCleared,
+    clearedDate: row.clearedDate ? toISO(row.clearedDate).slice(0, 10) : undefined,
+    journalEntryId: row.journalEntryId || undefined,
+    offsetGlCode: row.offsetGlCode || undefined,
+    carriedFromItemId: row.carriedFromItemId || undefined,
+    createdAt: toISO(row.createdAt),
+  }
+}
+
+export async function listBankReconciliations(tenantId: string) {
+  const [reconciliations, items] = await Promise.all([
+    prisma.bankReconciliation.findMany({ where: { tenantId }, orderBy: { periodEndDate: 'desc' } }),
+    prisma.reconcilingItem.findMany({ where: { tenantId } }),
+  ])
+  return {
+    reconciliations: reconciliations.map(toStoreRecon),
+    items: items.map(toStoreReconItem),
+  }
+}
+
+export async function upsertBankReconciliation(tenantId: string, recon: {
+  id: string
+  bankAccountId: string
+  periodEndDate: string
+  statementBalance: number
+  cashbookBalance: number
+  status: string
+  preparedAt?: string
+  approvedAt?: string
+}) {
+  const data = {
+    bankAccountId: recon.bankAccountId,
+    periodEndDate: new Date(recon.periodEndDate),
+    statementBalance: recon.statementBalance,
+    cashbookBalance: recon.cashbookBalance,
+    status: recon.status,
+    preparedAt: recon.preparedAt ? new Date(recon.preparedAt) : undefined,
+    approvedAt: recon.approvedAt ? new Date(recon.approvedAt) : undefined,
+  }
+  // Check ownership BEFORE writing — `upsert`'s `where: { id }` has no tenant filter
+  // (id is the sole unique key), so a naive upsert would silently overwrite another
+  // tenant's row on an id collision instead of refusing.
+  const existing = await prisma.bankReconciliation.findUnique({ where: { id: recon.id } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('Reconciliation belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.bankReconciliation.update({ where: { id: recon.id }, data })
+    : await prisma.bankReconciliation.create({ data: { id: recon.id, tenantId, ...data } })
+  return toStoreRecon(row)
+}
+
+export async function upsertReconcilingItem(tenantId: string, item: {
+  id: string
+  reconciliationId: string
+  itemType: string
+  description: string
+  reference?: string
+  transactionDate?: string
+  amount: number
+  isCleared: boolean
+  clearedDate?: string
+  journalEntryId?: string
+  offsetGlCode?: string
+  carriedFromItemId?: string
+}) {
+  const data = {
+    reconciliationId: item.reconciliationId,
+    itemType: item.itemType,
+    description: item.description,
+    reference: item.reference,
+    transactionDate: item.transactionDate ? new Date(item.transactionDate) : undefined,
+    amount: item.amount,
+    isCleared: item.isCleared,
+    clearedDate: item.clearedDate ? new Date(item.clearedDate) : undefined,
+    journalEntryId: item.journalEntryId,
+    offsetGlCode: item.offsetGlCode,
+    carriedFromItemId: item.carriedFromItemId,
+  }
+  // Check ownership BEFORE writing — see upsertBankReconciliation for why upsert's
+  // where-by-id alone isn't a safe tenant guard.
+  const existing = await prisma.reconcilingItem.findUnique({ where: { id: item.id } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('Reconciling item belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.reconcilingItem.update({ where: { id: item.id }, data })
+    : await prisma.reconcilingItem.create({ data: { id: item.id, tenantId, ...data } })
+  return toStoreReconItem(row)
+}
+
+export async function deleteReconcilingItem(tenantId: string, id: string) {
+  const existing = await prisma.reconcilingItem.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.reconcilingItem.delete({ where: { id } })
+  return true
+}

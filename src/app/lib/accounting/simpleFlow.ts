@@ -15,6 +15,7 @@
 import { useAccountingStore } from './store';
 import { GL_ACCOUNTS, REVENUE_CENTERS, PAYMENT_GL_MAP } from './integration';
 import { computeSalesTax } from '../tax/engine';
+import { applyJournalEntryToGlBalances } from './invoicePostingBridge';
 
 function nowIso() {
   return new Date().toISOString();
@@ -30,7 +31,7 @@ export function postGuestFolioCheckoutToLedger(params: {
   subtotal: number;
   taxAmount: number;
   total: number;
-  payments: Array<{ amount: number; method: string; date: string }>;
+  payments: Array<{ amount: number; method: string; date: string; paymentId?: string }>;
 }): { salesJournalEntryId: string } | null {
   if (params.total <= 0) return null;
 
@@ -150,6 +151,7 @@ export function postGuestFolioCheckoutToLedger(params: {
   };
 
   store.addJournalEntry(salesEntry as any);
+  applyJournalEntryToGlBalances(salesEntry as any, store);
   store.recordRevenue(REVENUE_CENTERS.ROOM, params.subtotal);
 
   store.addAuditTrail({
@@ -223,7 +225,7 @@ export function postGuestFolioCheckoutToLedger(params: {
           },
         ];
 
-    store.addJournalEntry({
+    const payEntry = {
       id: payJeId,
       entryNumber: `JE-${new Date().getFullYear()}-${isRefund ? 'RF' : 'R'}${Date.now().toString().slice(-5)}${i}`,
       date: p.date || ts,
@@ -242,7 +244,15 @@ export function postGuestFolioCheckoutToLedger(params: {
       lines: payLines,
       sourceModule: 'front_office_checkout',
       sourceTransactionId: params.reservationId,
-    } as any);
+    } as any;
+
+    store.addJournalEntry(payEntry);
+    applyJournalEntryToGlBalances(payEntry, store);
+
+    const paymentId = p.paymentId;
+    if (paymentId) {
+      store.updatePayment(paymentId, { journalEntryId: payJeId } as any);
+    }
 
     store.addAuditTrail({
       id: `AT-SF-PAY-${Date.now()}-${i}`,

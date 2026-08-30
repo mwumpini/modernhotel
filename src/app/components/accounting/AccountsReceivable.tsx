@@ -8,9 +8,45 @@ import {
 	Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
 	Chip, Pagination, Checkbox,
 	Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
-	Tooltip
+	Tooltip,
+	Autocomplete, AutocompleteItem,
 } from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
+import { frontOfficeStore } from '@/app/lib/frontoffice/store';
+import { useFrontOfficeSelector } from '@/app/lib/frontoffice/useFoStore';
+import {
+	buildFolioReceiptTargets,
+	buildInvoiceReceiptTargets,
+	parseReceiptTargetKey,
+	type ReceiptTarget,
+} from '@/app/lib/accounting/receiptTargets';
+import {
+	buildCustomerReceiptPrintData,
+	FRONT_OFFICE_FOLIO_RECEIPT_SOURCE,
+	mapUiPaymentMethodToStore,
+	printCustomerReceipt,
+	receiptCanEdit,
+	receiptCanVoid,
+	resolvePaymentsForReceiptTarget,
+	suggestReceiptRevenueCenter,
+	type StoredReceiptPayment,
+} from '@/app/lib/accounting/receiptPrint';
+import { useSettingsStore } from '@/app/lib/settings/store';
+import {
+	invoiceSyncStatus,
+	paymentSyncStatus,
+	sourceMatchesFilter,
+} from '@/app/lib/accounting/accountingProcessPolicy';
+import {
+	computeCustomerAgingFromInvoices,
+	filterFinanceArInvoices,
+	totalFinanceReceivables,
+} from '@/app/lib/accounting/arSubledger';
+import { computeInvoiceWhtSettlement, getWhtCertificateRates, whtFormLabels } from '@/app/lib/accounting/whtRates';
+import { isManualArApSource } from '@/app/lib/accounting/journalReversal';
+import { roundMoney2 } from '@/app/lib/accounting/taxFromConfig';
+import { convertProformaToInvoice } from '@/app/lib/accounting/integration';
+import { computeSalesTax } from '@/app/lib/tax/engine';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
 
 // ===== EXPORT UTILITIES =====
@@ -91,6 +127,20 @@ const openPdfPreview = (html: string) => {
 	}
 };
 
+function InfoTip({ label, children }: { label: string; children: React.ReactNode }) {
+	return (
+		<Tooltip placement="top" classNames={{ content: 'max-w-sm p-3 text-sm leading-snug' }} content={children}>
+			<button
+				type="button"
+				aria-label={label}
+				className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-default-300 text-[10px] font-semibold text-default-600 hover:bg-default-100"
+			>
+				i
+			</button>
+		</Tooltip>
+	);
+}
+
 export default function AccountsReceivable() {
 	const [selectedTab, setSelectedTab] = useState('overview');
 	const [page, setPage] = useState(1);
@@ -110,21 +160,41 @@ export default function AccountsReceivable() {
         businessPartners,
         invoices,
         payments,
+		journalEntries,
 		taxConfigs,
 		whtCertificates,
+		bankAccounts,
+		revenueCenters,
         addPayment,
+		updatePayment,
 		addInvoice,
+		updateInvoice,
+		addBusinessPartner,
+		postInvoice,
 		initializeAccounting,
 		isLoading,
 		recordWHTPayment,
+		receiveWHTCertificate,
 		updateWHTCertificate,
+		voidInvoice,
+		voidPayment,
     } = useAccountingStore();
+	const settings = useSettingsStore();
+	const receiptTemplateKey = settings.printing?.receipt || 'simple-receipt';
+	const printOrg = useMemo(() => {
+		const biz = settings.countryCompliance?.[settings.defaultCountry]?.businessInfo;
+		return {
+			name: biz?.name || settings.systemName || 'Hotel',
+			address: biz?.address,
+			phone: biz?.phone,
+			email: biz?.email,
+			taxId: biz?.taxId,
+		};
+	}, [settings]);
+	const printCurrency =
+		settings.countryCompliance?.[settings.defaultCountry]?.currencySymbol || '₵';
 
-	// Initialize store on mount
-	useEffect(() => {
-		initializeAccounting();
-		console.log('[AR] 📊 Accounting store initialized');
-	}, [initializeAccounting]);
+	// Parent AccountingMainDashboard initializes the store; refresh via button only.
 
 	// Refresh data
 	const handleRefresh = useCallback(async () => {
@@ -167,12 +237,28 @@ export default function AccountsReceivable() {
 	const getSourceLabel = (sourceModule: string) => {
 		const sourceLabels: Record<string, { label: string; color: 'primary' | 'secondary' | 'success' | 'warning' | 'danger'; icon: string }> = {
 			front_office: { label: 'Front Office', color: 'primary', icon: '🏨' },
+			front_office_checkout: { label: 'Front Office', color: 'primary', icon: '🏨' },
+			front_office_folio: { label: 'In-house folio', color: 'primary', icon: '🏨' },
+			guest_noshow: { label: 'Front Office', color: 'primary', icon: '🏨' },
 			restaurant: { label: 'Restaurant', color: 'success', icon: '🍽️' },
 			bar: { label: 'Bar', color: 'warning', icon: '🍺' },
 			room_service: { label: 'Room Service', color: 'secondary', icon: '🛎️' },
 			conference: { label: 'Conference', color: 'danger', icon: '📅' },
+			manual_ar_ap: { label: 'Manual', color: 'default' as any, icon: '📝' },
+			manual: { label: 'Manual', color: 'default' as any, icon: '📝' },
 		};
 		return sourceLabels[sourceModule] || { label: sourceModule || 'Manual', color: 'default' as any, icon: '📝' };
+	};
+
+	const getGlSyncChip = (kind: 'invoice' | 'payment', record: any) => {
+		const status =
+			kind === 'invoice'
+				? invoiceSyncStatus(record, journalEntries)
+				: paymentSyncStatus(record, journalEntries);
+		if (status === 'not_applicable') return null;
+		const color = status === 'synced' ? 'success' : status === 'subledger_only' ? 'warning' : 'danger';
+		const label = status === 'synced' ? 'GL ✓' : status === 'subledger_only' ? 'No GL' : 'GL only';
+		return { color, label };
 	};
 
 	// Apply filters to invoices
@@ -189,7 +275,7 @@ export default function AccountsReceivable() {
 				}
 			}
 			// Source filter
-			if (sourceFilter !== 'all' && inv.sourceModule !== sourceFilter) return false;
+			if (sourceFilter !== 'all' && !sourceMatchesFilter(inv.sourceModule, sourceFilter)) return false;
 			// Date filter
 			if (dateFrom && new Date(inv.date) < new Date(dateFrom)) return false;
 			if (dateTo && new Date(inv.date) > new Date(dateTo)) return false;
@@ -210,7 +296,7 @@ export default function AccountsReceivable() {
 	const filteredProformas = useMemo(() => applyFilters(proformaInvoices), [proformaInvoices, statusFilter, sourceFilter, dateFrom, dateTo, searchQuery]);
 	const filteredReceipts = useMemo(() => {
 		return receipts.filter((r: any) => {
-			if (sourceFilter !== 'all' && r.sourceModule !== sourceFilter) return false;
+			if (sourceFilter !== 'all' && !sourceMatchesFilter(r.sourceModule, sourceFilter)) return false;
 			if (dateFrom && new Date(r.date) < new Date(dateFrom)) return false;
 			if (dateTo && new Date(r.date) > new Date(dateTo)) return false;
 			if (searchQuery) {
@@ -223,73 +309,17 @@ export default function AccountsReceivable() {
 		});
 	}, [receipts, sourceFilter, dateFrom, dateTo, searchQuery]);
 
-	// Customer aging analysis
-	const customerAging = useMemo(() => {
-		const uniqueCustomerIds = [...new Set(salesInvoices.map((inv: any) => inv.businessPartnerId || inv.customerName))];
-		return uniqueCustomerIds.map(customerId => {
-			const customerInvoices = salesInvoices.filter((inv: any) => (inv.businessPartnerId || inv.customerName) === customerId);
-			const customerReceipts = receipts.filter((r: any) => (r.businessPartnerId || r.customerName) === customerId);
-			const customerName = (customerInvoices[0] as any)?.customerName || customers.find(c => c.id === customerId)?.name || customerId;
-			
-			const totalInvoiced = customerInvoices.reduce((sum: number, inv: any) => sum + (inv.total || 0), 0);
-			const totalPaid = customerReceipts.reduce((sum: number, r: any) => sum + (r.amount || 0), 0);
-			const balance = totalInvoiced - totalPaid;
-			
-			const now = new Date();
-			let current = 0, days30 = 0, days60 = 0, days90 = 0, over90 = 0;
-			
-			customerInvoices.forEach((inv: any) => {
-				const invBalance = (inv.total || 0) - (inv.paidAmount || 0);
-				if (invBalance <= 0) return;
-				const dueDate = new Date(inv.dueDate);
-				const daysDiff = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-				if (daysDiff <= 0) current += invBalance;
-				else if (daysDiff <= 30) days30 += invBalance;
-				else if (daysDiff <= 60) days60 += invBalance;
-				else if (daysDiff <= 90) days90 += invBalance;
-				else over90 += invBalance;
-			});
-			
-			return {
-				customerId,
-				customerName,
-				totalInvoiced,
-				totalPaid,
-				balance,
-				current,
-				days30,
-				days60,
-				days90,
-				over90,
-				invoiceCount: customerInvoices.length,
-				source: (customerInvoices[0] as any)?.sourceModule || 'manual',
-			};
-		}).filter(c => c.balance !== 0 || c.invoiceCount > 0);
-	}, [salesInvoices, receipts, customers]);
+	// Customer aging — finance subledger only (excludes open folios / proformas)
+	const customerAging = useMemo(
+		() => computeCustomerAgingFromInvoices(salesInvoices, customers),
+		[salesInvoices, customers],
+	);
 
-	// Revenue by source
-	const revenueBySource = useMemo(() => {
-		const sources = ['front_office', 'restaurant', 'bar', 'room_service', 'conference'];
-		return sources.map(src => {
-			const srcInvoices = salesInvoices.filter((i: any) => i.sourceModule === src);
-			const srcReceipts = receipts.filter((r: any) => r.sourceModule === src);
-			const outstanding = srcInvoices.reduce((s: number, i: any) => s + ((i.total || 0) - (i.paidAmount || 0)), 0);
-			return {
-				source: src,
-				...getSourceLabel(src),
-				invoiceCount: srcInvoices.length,
-				receiptCount: srcReceipts.length,
-				revenue: srcInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0),
-				received: srcReceipts.reduce((s: number, r: any) => s + (r.amount || 0), 0),
-				outstanding,
-			};
-		}).filter(s => s.invoiceCount > 0 || s.receiptCount > 0);
-	}, [salesInvoices, receipts]);
-
-	// Totals
-	const totalRevenue = salesInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0);
-	const totalReceived = receipts.reduce((s: number, r: any) => s + (r.amount || 0), 0);
-	const totalOutstanding = salesInvoices.reduce((s: number, i: any) => s + ((i.total || 0) - (i.paidAmount || 0)), 0);
+	// Totals — finance AR subledger (posted sales invoices only)
+	const financeInvoices = useMemo(() => filterFinanceArInvoices(salesInvoices), [salesInvoices]);
+	const totalRevenue = financeInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0);
+	const totalReceived = financeInvoices.reduce((s: number, i: any) => s + (i.paidAmount || 0), 0);
+	const totalOutstanding = totalFinanceReceivables(salesInvoices);
 	const totalProforma = proformaInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0);
 
 	// Pagination helpers
@@ -305,11 +335,19 @@ export default function AccountsReceivable() {
 	const [isReceiptDetailOpen, setIsReceiptDetailOpen] = useState(false);
 	const [isNewInvoiceOpen, setIsNewInvoiceOpen] = useState(false);
 	const [isNewReceiptOpen, setIsNewReceiptOpen] = useState(false);
+	const [isPrintReceiptOpen, setIsPrintReceiptOpen] = useState(false);
 	const [isWHTPaymentOpen, setIsWHTPaymentOpen] = useState(false);
+	const [whtPaymentMode, setWhtPaymentMode] = useState<'settlement' | 'wht_only'>('settlement');
 	const [selectedWHTCert, setSelectedWHTCert] = useState<any>(null);
 	const [isWHTDetailOpen, setIsWHTDetailOpen] = useState(false);
+	const [receiveCertForm, setReceiveCertForm] = useState({ certificateNumber: '', withholdingAgentTIN: '' });
     const [invoiceForm, setInvoiceForm] = useState<any>({});
-	const [receiptForm, setReceiptForm] = useState<any>({});
+	const [receiptForm, setReceiptForm] = useState<any>({ printAfterSave: true });
+	const [editingReceiptId, setEditingReceiptId] = useState<string | null>(null);
+	const [printForm, setPrintForm] = useState<{ targetKey: string; paymentId: string }>({
+		targetKey: '',
+		paymentId: '',
+	});
 	const [whtPaymentForm, setWHTPaymentForm] = useState<any>({
 		invoiceId: '',
 		invoiceNumber: '',
@@ -323,6 +361,157 @@ export default function AccountsReceivable() {
 		withholdingAgentTIN: '',
 	});
 	const [formError, setFormError] = useState('');
+
+	const activeRevenueCenters = useMemo(
+		() => (revenueCenters || []).filter((rc) => rc.isActive),
+		[revenueCenters],
+	);
+
+	const foFolios = useFrontOfficeSelector((s) => s.folios);
+	const foReservations = useFrontOfficeSelector((s) => s.reservations);
+
+	useEffect(() => {
+		if (isNewReceiptOpen || isPrintReceiptOpen) void frontOfficeStore.refreshFromApi();
+	}, [isNewReceiptOpen, isPrintReceiptOpen]);
+
+	const activeBankAccounts = useMemo(
+		() => (bankAccounts || []).filter((b) => b.isActive),
+		[bankAccounts],
+	);
+
+	const receiptTargets = useMemo(
+		() => [
+			...buildFolioReceiptTargets(foFolios, foReservations),
+			...buildInvoiceReceiptTargets(salesInvoices),
+		],
+		[foFolios, foReservations, salesInvoices],
+	);
+
+	const filteredReceiptTargets = useMemo(() => {
+		if (!receiptForm.businessPartnerId && !receiptForm.customerName?.trim()) {
+			return receiptTargets;
+		}
+		const name = receiptForm.customerName?.trim().toLowerCase();
+		return receiptTargets.filter(
+			(t) =>
+				(receiptForm.businessPartnerId && t.businessPartnerId === receiptForm.businessPartnerId) ||
+				(name && t.customerName.toLowerCase().includes(name)),
+		);
+	}, [receiptTargets, receiptForm.businessPartnerId, receiptForm.customerName]);
+
+	const selectedReceiptTarget = useMemo(
+		() =>
+			receiptForm.targetKey
+				? receiptTargets.find((t) => t.key === receiptForm.targetKey) ?? null
+				: null,
+		[receiptForm.targetKey, receiptTargets],
+	);
+
+	const selectedReceiptInvoice = useMemo(
+		() =>
+			selectedReceiptTarget?.kind === 'invoice'
+				? salesInvoices.find((inv: any) => inv.id === selectedReceiptTarget.id)
+				: receiptForm.invoiceId
+					? salesInvoices.find((inv: any) => inv.id === receiptForm.invoiceId)
+					: null,
+		[selectedReceiptTarget, receiptForm.invoiceId, salesInvoices],
+	);
+
+	const receiptBalanceDue = useMemo(
+		() =>
+			selectedReceiptTarget
+				? roundMoney2(selectedReceiptTarget.balance)
+				: selectedReceiptInvoice
+					? roundMoney2((selectedReceiptInvoice.total || 0) - (selectedReceiptInvoice.paidAmount || 0))
+					: 0,
+		[selectedReceiptTarget, selectedReceiptInvoice],
+	);
+
+	const receiptWhtSettlement = useMemo(
+		() =>
+			selectedReceiptInvoice
+				? computeInvoiceWhtSettlement(selectedReceiptInvoice, taxConfigs)
+				: null,
+		[selectedReceiptInvoice, taxConfigs],
+	);
+
+	const receiptNeedsBankAccount = ['Bank Transfer', 'Bank', 'Card', 'Mobile Money', 'Cheque', 'Check'].includes(
+		receiptForm.paymentMethod || '',
+	);
+
+	const selectedPrintTarget = useMemo(
+		() =>
+			printForm.targetKey
+				? receiptTargets.find((t) => t.key === printForm.targetKey) ?? null
+				: null,
+		[printForm.targetKey, receiptTargets],
+	);
+
+	const printTargetPayments = useMemo(() => {
+		if (!selectedPrintTarget) return [] as StoredReceiptPayment[];
+		const folio =
+			selectedPrintTarget.kind === 'folio'
+				? foFolios.find((f) => f.reservationId === selectedPrintTarget.id)
+				: null;
+		return resolvePaymentsForReceiptTarget(
+			selectedPrintTarget,
+			receipts as StoredReceiptPayment[],
+			folio,
+		);
+	}, [selectedPrintTarget, receipts, foFolios]);
+
+	const selectedPrintPayment = useMemo(
+		() =>
+			printTargetPayments.find((p) => p.id === printForm.paymentId) ??
+			printTargetPayments[0] ??
+			null,
+		[printTargetPayments, printForm.paymentId],
+	);
+
+	const printCustomerReceiptForPayment = useCallback(
+		(payment: StoredReceiptPayment, target?: ReceiptTarget | null) => {
+			const targetResolved =
+				target ??
+				(payment.receiptTargetKey
+					? receiptTargets.find((t) => t.key === payment.receiptTargetKey) ?? null
+					: payment.invoiceId
+						? receiptTargets.find((t) => t.kind === 'invoice' && t.id === payment.invoiceId) ?? null
+						: payment.reservationId
+							? receiptTargets.find((t) => t.kind === 'folio' && t.id === payment.reservationId) ?? null
+							: null);
+			const invoice = payment.invoiceId
+				? (salesInvoices.find((i: any) => i.id === payment.invoiceId) as any)
+				: null;
+			const reservation = payment.reservationId
+				? foReservations.find((r) => r.id === payment.reservationId)
+				: undefined;
+			const folio = reservation
+				? foFolios.find((f) => f.reservationId === reservation.id)
+				: undefined;
+			const data = buildCustomerReceiptPrintData({
+				payment,
+				customerName:
+					payment.customerName || targetResolved?.customerName || invoice?.customerName || 'Customer',
+				target: targetResolved,
+				invoice,
+				reservation,
+				folio,
+				org: printOrg,
+				currency: printCurrency,
+				docNumber: payment.paymentNumber || payment.id,
+			});
+			printCustomerReceipt(receiptTemplateKey, data);
+		},
+		[
+			receiptTargets,
+			salesInvoices,
+			foReservations,
+			foFolios,
+			printOrg,
+			printCurrency,
+			receiptTemplateKey,
+		],
+	);
 
 	// WHT Certificates filtered
 	const filteredWHTCerts = useMemo(() => {
@@ -345,8 +534,14 @@ export default function AccountsReceivable() {
 	const totalWHTReceivable = (whtCertificates || []).reduce((s: number, c: any) => s + (c.totalWithheld || 0), 0);
 	const pendingWHTCerts = (whtCertificates || []).filter((c: any) => c.status === 'Pending').length;
 
+	const whtCertRates = useMemo(() => getWhtCertificateRates(taxConfigs), [taxConfigs]);
+	const whtLabels = useMemo(() => whtFormLabels(whtCertRates), [whtCertRates]);
+	const receiptWhtAvailable =
+		!!receiptWhtSettlement && receiptWhtSettlement.whtTotalRemaining > 0.009;
+
 	// Get related data
-	const getInvoiceReceipts = (invoiceId: string) => receipts.filter((r: any) => r.invoiceId === invoiceId);
+	const getInvoiceReceipts = (invoiceId: string) =>
+		receipts.filter((r: any) => r.invoiceId === invoiceId && r.status !== 'Void');
 	const getReceiptInvoice = (invoiceId: string) => allSalesInvoices.find((inv: any) => inv.id === invoiceId);
 
 	// Open detail views
@@ -674,64 +869,13 @@ export default function AccountsReceivable() {
 		openPdfPreview(html);
 	}, [getInvoiceReceipts]);
 
-	// Print Individual Receipt PDF
-	const printReceiptPDF = useCallback((receipt: any) => {
-		const source = getSourceLabel(receipt.sourceModule);
-		const linkedInvoice = getReceiptInvoice(receipt.invoiceId);
-		
-		const html = generatePdfHtml('Receipt', `
-			<div class="header">
-				<h1>🧾 RECEIPT</h1>
-				<div class="subtitle">${receipt.paymentNumber || receipt.id}</div>
-			</div>
-			
-			<div class="section">
-				<div class="section-title">Payment Details</div>
-				<div class="detail-grid">
-					<div class="detail-item"><div class="label">Date</div><div class="value">${new Date(receipt.date).toLocaleDateString()}</div></div>
-					<div class="detail-item"><div class="label">Time</div><div class="value">${new Date(receipt.date).toLocaleTimeString()}</div></div>
-					<div class="detail-item"><div class="label">Source</div><div class="value">${source.icon} ${source.label}</div></div>
-					<div class="detail-item"><div class="label">Method</div><div class="value">${receipt.paymentMethod || 'Cash'}</div></div>
-				</div>
-			</div>
-
-			<div class="section">
-				<div class="section-title">Customer</div>
-				<div class="detail-grid">
-					<div class="detail-item"><div class="label">Name</div><div class="value">${receipt.customerName || '-'}</div></div>
-					<div class="detail-item"><div class="label">Reference</div><div class="value">${receipt.reference || '-'}</div></div>
-				</div>
-			</div>
-
-			<div class="section">
-				<div class="section-title">Amount Received</div>
-				<table>
-					<tr class="total-row"><td style="width:70%"><strong>Amount</strong></td><td class="amount" style="font-size:20px;color:#16a34a"><strong>₵${Number(receipt.amount || 0).toLocaleString()}</strong></td></tr>
-				</table>
-			</div>
-
-			${linkedInvoice ? `
-			<div class="section">
-				<div class="section-title">Linked Invoice</div>
-				<div class="detail-grid">
-					<div class="detail-item"><div class="label">Invoice #</div><div class="value">${(linkedInvoice as any).invoiceNumber || linkedInvoice.id}</div></div>
-					<div class="detail-item"><div class="label">Total</div><div class="value">₵${Number(linkedInvoice.total || 0).toLocaleString()}</div></div>
-					<div class="detail-item"><div class="label">Paid</div><div class="value">₵${Number(linkedInvoice.paidAmount || 0).toLocaleString()}</div></div>
-					<div class="detail-item"><div class="label">Balance</div><div class="value">₵${((linkedInvoice.total || 0) - (linkedInvoice.paidAmount || 0)).toLocaleString()}</div></div>
-				</div>
-			</div>
-			` : ''}
-
-			<div class="section">
-				<div class="section-title">Processed By</div>
-				<div class="detail-grid">
-					<div class="detail-item"><div class="label">Staff</div><div class="value">${receipt.staffName || 'System'}</div></div>
-					<div class="detail-item"><div class="label">Role</div><div class="value">${receipt.staffRole || '-'}</div></div>
-				</div>
-			</div>
-		`, `Generated on ${new Date().toLocaleString()}`);
-		openPdfPreview(html);
-	}, [getReceiptInvoice]);
+	// Print Individual Receipt (hotel template via folio/invoice picker context)
+	const printReceiptPDF = useCallback(
+		(receipt: StoredReceiptPayment) => {
+			printCustomerReceiptForPayment(receipt);
+		},
+		[printCustomerReceiptForPayment],
+	);
 
 	// New invoice/proforma
 	const openNewInvoice = (isProforma: boolean = false) => {
@@ -757,18 +901,44 @@ export default function AccountsReceivable() {
 		
 		const isProforma = invoiceForm.isProforma || false;
 		const prefix = isProforma ? 'PRO' : 'INV';
-		
+
+		const subtotal = Number(invoiceForm.subtotal || invoiceForm.total);
+		const invoiceId = `${prefix}-${Date.now()}`;
+
+		// A customer typed by name with no existing business partner selected needs a real
+		// BusinessPartner record — otherwise their running balance never appears anywhere
+		// (addInvoice's balance update only touches an existing partner by id) even though the
+		// invoice itself saves fine.
+		let businessPartnerId = invoiceForm.businessPartnerId;
+		if (!businessPartnerId) {
+			businessPartnerId = `CUST-${Date.now()}`;
+			const now = new Date().toISOString();
+			addBusinessPartner({
+				id: businessPartnerId,
+				code: `CUST-${String(businessPartners.length + 1).padStart(4, '0')}`,
+				name: invoiceForm.customerName.trim(),
+				type: 'Customer',
+				glAccountCode: '1200',
+				currency: 'GHS',
+				balance: 0,
+				isActive: true,
+				countryCode: 'GH',
+				createdAt: now,
+				updatedAt: now,
+			});
+		}
+
 		const payload = {
-			id: `${prefix}-${Date.now()}`,
+			id: invoiceId,
 			invoiceNumber: invoiceForm.invoiceNumber || `${prefix}-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
 			type: 'Sales' as const,
 			isProforma: isProforma,
 			date: new Date(invoiceForm.date).toISOString(),
 			dueDate: new Date(invoiceForm.dueDate).toISOString(),
-			businessPartnerId: invoiceForm.businessPartnerId || `CUST-${Date.now()}`,
+			businessPartnerId,
 			customerName: invoiceForm.customerName,
 			description: invoiceForm.description || (isProforma ? 'Proforma invoice' : 'Sales invoice'),
-			subtotal: Number(invoiceForm.subtotal || invoiceForm.total),
+			subtotal,
 			taxAmount: Number(invoiceForm.taxAmount || 0),
 			total: Number(invoiceForm.total),
 			currency: 'GHS',
@@ -778,64 +948,625 @@ export default function AccountsReceivable() {
 			updatedAt: new Date().toISOString(),
 			sourceModule: 'manual_ar_ap',
 			staffName: 'Manual Entry',
+			lines: isProforma
+				? []
+				: [{
+					id: `IL-${Date.now()}`,
+					invoiceId,
+					description: invoiceForm.description || 'Sales revenue',
+					quantity: 1,
+					unitPrice: subtotal,
+					amount: subtotal,
+					taxAmount: Number(invoiceForm.taxAmount || 0),
+					glAccountCode: '4300',
+				}],
 		};
 		addInvoice(payload as any);
 		setIsNewInvoiceOpen(false);
 	};
 
-	// New receipt
-	const openNewReceipt = () => {
-        setReceiptForm({
-			businessPartnerId: '',
-			customerName: '',
-			date: new Date().toISOString().slice(0, 10),
-            amount: 0,
-            paymentMethod: 'Cash',
-            invoiceId: '',
-			reference: '',
-        });
-        setFormError('');
+	const mapReceiptMethodToFo = (
+		method: string,
+	): 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Check' => {
+		switch (method) {
+			case 'Bank':
+			case 'Bank Transfer':
+				return 'Bank Transfer';
+			case 'Cheque':
+			case 'Check':
+				return 'Check';
+			case 'Card':
+				return 'Card';
+			case 'Mobile Money':
+				return 'Mobile Money';
+			default:
+				return 'Cash';
+		}
+	};
+
+	const mapStoreMethodToUi = (method?: string) => {
+		switch (method) {
+			case 'Bank':
+				return 'Bank';
+			case 'Check':
+				return 'Cheque';
+			case 'Card':
+				return 'Card';
+			case 'Mobile Money':
+				return 'Mobile Money';
+			default:
+				return 'Cash';
+		}
+	};
+
+	// New / edit receipt — optional invoice (posted AR) or folio reservation (in-house guest)
+	const openReceiptForm = (invoice?: any, folioReservationId?: string) => {
+		setEditingReceiptId(null);
+		if (folioReservationId) {
+			const folioTarget = buildFolioReceiptTargets(foFolios, foReservations).find(
+				(t) => t.id === folioReservationId,
+			);
+			const res = foReservations.find((r) => r.id === folioReservationId);
+			setReceiptForm({
+				targetKey: `folio:${folioReservationId}`,
+				businessPartnerId: folioTarget?.businessPartnerId || res?.guestId || '',
+				customerName: folioTarget?.customerName || res?.guestName || '',
+				invoiceId: '',
+				invoiceNumber: '',
+				date: new Date().toISOString().slice(0, 10),
+				amount: folioTarget?.balance ?? '',
+				paymentMethod: 'Bank',
+				bankAccountId: activeBankAccounts[0]?.id || '',
+				checkNumber: '',
+				reference: res
+					? `In-house payment — ${res.guestName}${res.roomId ? ` Rm ${res.roomId}` : ''}`
+					: '',
+				notes: '',
+				printAfterSave: true,
+				paymentKind: 'standard',
+				cashAmount: '',
+				whtAmount: '',
+				whtVatAmount: '',
+				certificateNumber: '',
+				withholdingAgentTIN: '',
+				revenueCenterCode: folioTarget
+					? suggestReceiptRevenueCenter(folioTarget)
+					: 'RM',
+			});
+		} else {
+			const settlement = invoice ? computeInvoiceWhtSettlement(invoice, taxConfigs) : null;
+			const defaultAmount =
+				invoice && settlement
+					? settlement.whtTotalRemaining > 0
+						? settlement.cashRemaining
+						: settlement.balanceDue
+					: '';
+			setReceiptForm({
+				targetKey: invoice?.id ? `invoice:${invoice.id}` : '',
+				businessPartnerId: invoice?.businessPartnerId || '',
+				customerName: invoice?.customerName || '',
+				invoiceId: invoice?.id || '',
+				invoiceNumber: invoice?.invoiceNumber || '',
+				date: new Date().toISOString().slice(0, 10),
+				amount: defaultAmount === '' ? '' : defaultAmount,
+				paymentMethod: 'Bank',
+				bankAccountId: activeBankAccounts[0]?.id || '',
+				checkNumber: '',
+				reference: invoice?.invoiceNumber ? `Payment for ${invoice.invoiceNumber}` : '',
+				notes: '',
+				printAfterSave: true,
+				paymentKind: 'standard',
+				cashAmount: '',
+				whtAmount: '',
+				whtVatAmount: '',
+				certificateNumber: '',
+				withholdingAgentTIN: '',
+				revenueCenterCode: invoice
+					? suggestReceiptRevenueCenter(
+							{ kind: 'invoice', id: invoice.id } as ReceiptTarget,
+							invoice,
+						)
+					: '',
+			});
+		}
+		setFormError('');
 		setIsNewReceiptOpen(true);
 	};
 
+	const openEditReceiptForm = (receipt: StoredReceiptPayment) => {
+		if (!receiptCanEdit(receipt)) return;
+		const linkedInv = receipt.invoiceId
+			? salesInvoices.find((i: any) => i.id === receipt.invoiceId)
+			: null;
+		setEditingReceiptId(receipt.id);
+		setReceiptForm({
+			targetKey:
+				receipt.receiptTargetKey ||
+				(receipt.invoiceId
+					? `invoice:${receipt.invoiceId}`
+					: receipt.reservationId
+						? `folio:${receipt.reservationId}`
+						: ''),
+			businessPartnerId: receipt.businessPartnerId || '',
+			customerName: receipt.customerName || '',
+			invoiceId: receipt.invoiceId || '',
+			invoiceNumber: linkedInv?.invoiceNumber || '',
+			date: (receipt.date || new Date().toISOString()).slice(0, 10),
+			amount: receipt.amount,
+			paymentMethod: mapStoreMethodToUi(receipt.paymentMethod),
+			bankAccountId: receipt.bankAccountId || activeBankAccounts[0]?.id || '',
+			checkNumber: receipt.checkNumber || '',
+			reference: receipt.reference || '',
+			notes: receipt.description || '',
+			printAfterSave: false,
+			paymentKind: 'standard',
+			revenueCenterCode: receipt.revenueCenterCode || '',
+		});
+		setFormError('');
+		setIsNewReceiptOpen(true);
+	};
+
+	const applyReceiptPaymentKind = (
+		kind: 'standard' | 'wht_settlement' | 'wht_only',
+		invoice?: any,
+	) => {
+		const inv = invoice || selectedReceiptInvoice;
+		const settlement = inv ? computeInvoiceWhtSettlement(inv, taxConfigs) : null;
+		if (kind === 'wht_settlement' && settlement) {
+			setReceiptForm((f: any) => ({
+				...f,
+				paymentKind: kind,
+				cashAmount: settlement.cashRemaining,
+				whtAmount: settlement.whtRemaining,
+				whtVatAmount: settlement.whtVatRemaining,
+				amount: settlement.cashRemaining,
+			}));
+		} else if (kind === 'wht_only' && settlement) {
+			setReceiptForm((f: any) => ({
+				...f,
+				paymentKind: kind,
+				cashAmount: 0,
+				whtAmount: settlement.whtRemaining,
+				whtVatAmount: settlement.whtVatRemaining,
+				amount: 0,
+			}));
+		} else {
+			setReceiptForm((f: any) => ({
+				...f,
+				paymentKind: 'standard',
+				cashAmount: '',
+				whtAmount: '',
+				whtVatAmount: '',
+			}));
+		}
+	};
+
+	const onReceiptPaymentKindChange = (kind: string | null) => {
+		if (!kind || kind === 'standard') {
+			applyReceiptPaymentKind('standard');
+			return;
+		}
+		if (kind === 'wht_settlement' || kind === 'wht_only') {
+			applyReceiptPaymentKind(kind);
+		}
+	};
+
+	const openPrintReceiptModal = () => {
+		setPrintForm({ targetKey: '', paymentId: '' });
+		setFormError('');
+		setIsPrintReceiptOpen(true);
+	};
+
+	const onPrintTargetSelect = (targetKey: string | null) => {
+		if (!targetKey) {
+			setPrintForm({ targetKey: '', paymentId: '' });
+			return;
+		}
+		const target = receiptTargets.find((t) => t.key === targetKey);
+		if (!target) return;
+		const folio =
+			target.kind === 'folio'
+				? foFolios.find((f) => f.reservationId === target.id)
+				: null;
+		const list = resolvePaymentsForReceiptTarget(
+			target,
+			receipts as StoredReceiptPayment[],
+			folio,
+		);
+		setPrintForm({ targetKey, paymentId: list[0]?.id || '' });
+	};
+
+	const runPrintReceipt = () => {
+		if (!selectedPrintTarget || !selectedPrintPayment) {
+			setFormError('Select a folio or invoice that has at least one payment to print');
+			return;
+		}
+		printCustomerReceiptForPayment(selectedPrintPayment, selectedPrintTarget);
+		setIsPrintReceiptOpen(false);
+	};
+
+	const onReceiptCustomerSelect = (partnerId: string | null) => {
+		if (!partnerId) {
+			setReceiptForm((f: any) => ({
+				...f,
+				businessPartnerId: '',
+				customerName: '',
+				targetKey: '',
+				invoiceId: '',
+				invoiceNumber: '',
+			}));
+			return;
+		}
+		const partner = customers.find((c) => c.id === partnerId);
+		setReceiptForm((f: any) => ({
+			...f,
+			businessPartnerId: partnerId,
+			customerName: partner?.name || f.customerName,
+			targetKey: '',
+			invoiceId: '',
+			invoiceNumber: '',
+			amount: '',
+		}));
+	};
+
+	const onReceiptTargetSelect = (targetKey: string | null) => {
+		if (!targetKey) {
+			setReceiptForm((f: any) => ({
+				...f,
+				targetKey: '',
+				invoiceId: '',
+				invoiceNumber: '',
+				amount: '',
+			}));
+			return;
+		}
+		const target = receiptTargets.find((t) => t.key === targetKey);
+		if (!target) return;
+
+		if (target.kind === 'invoice') {
+			const inv = salesInvoices.find((i: any) => i.id === target.id);
+			if (!inv) return;
+			const settlement = computeInvoiceWhtSettlement(inv, taxConfigs);
+			const suggested =
+				settlement.whtTotalRemaining > 0 ? settlement.cashRemaining : settlement.balanceDue;
+			setReceiptForm((f: any) => ({
+				...f,
+				targetKey,
+				invoiceId: inv.id,
+				invoiceNumber: inv.invoiceNumber,
+				businessPartnerId: inv.businessPartnerId,
+				customerName: (inv as { customerName?: string }).customerName || inv.businessPartnerId,
+				amount: suggested,
+				paymentKind: 'standard',
+				cashAmount: '',
+				whtAmount: '',
+				whtVatAmount: '',
+				revenueCenterCode: suggestReceiptRevenueCenter(target, inv),
+				reference: f.reference || `Payment for ${inv.invoiceNumber}`,
+			}));
+			return;
+		}
+
+		const res = foReservations.find((r) => r.id === target.id);
+		setReceiptForm((f: any) => ({
+			...f,
+			targetKey,
+			invoiceId: '',
+			invoiceNumber: '',
+			businessPartnerId: target.businessPartnerId || '',
+			customerName: target.customerName,
+			amount: target.balance,
+			paymentKind: 'standard',
+			cashAmount: '',
+			whtAmount: '',
+			whtVatAmount: '',
+			revenueCenterCode: suggestReceiptRevenueCenter(target),
+			reference:
+				f.reference ||
+				`In-house payment — ${target.customerName}${res?.roomId ? ` Rm ${res.roomId}` : ''}`,
+		}));
+	};
+
+	const fillReceiptFullBalance = () => {
+		if (selectedReceiptTarget) {
+			const amt =
+				selectedReceiptTarget.kind === 'invoice' &&
+				receiptWhtSettlement &&
+				receiptWhtSettlement.whtTotalRemaining > 0
+					? receiptWhtSettlement.cashRemaining
+					: receiptBalanceDue;
+			setReceiptForm((f: any) => ({ ...f, amount: amt }));
+			return;
+		}
+		if (!selectedReceiptInvoice) return;
+		const amt =
+			receiptWhtSettlement && receiptWhtSettlement.whtTotalRemaining > 0
+				? receiptWhtSettlement.cashRemaining
+				: receiptBalanceDue;
+		setReceiptForm((f: any) => ({ ...f, amount: amt }));
+	};
+
 	const saveReceipt = () => {
-		if (!receiptForm.customerName?.trim()) { setFormError('Customer name is required'); return; }
-		if (!receiptForm.amount || Number(receiptForm.amount) <= 0) { setFormError('Amount must be greater than 0'); return; }
-		
-        const payload = {
+		const amount = roundMoney2(Number(receiptForm.amount || 0));
+		const targetParsed = receiptForm.targetKey
+			? parseReceiptTargetKey(receiptForm.targetKey)
+			: null;
+		const editingReceipt = editingReceiptId
+			? (payments.find((p) => p.id === editingReceiptId) as StoredReceiptPayment | undefined)
+			: undefined;
+
+		if (!receiptForm.customerName?.trim() && !receiptForm.businessPartnerId) {
+			setFormError('Select or enter a customer');
+			return;
+		}
+
+		const descParts = [
+			receiptForm.reference?.trim(),
+			receiptForm.notes?.trim(),
+		].filter(Boolean);
+
+		const isWhtReceipt =
+			!editingReceipt &&
+			receiptForm.paymentKind !== 'standard' &&
+			selectedReceiptTarget?.kind === 'invoice' &&
+			selectedReceiptInvoice?.id;
+
+		if (isWhtReceipt) {
+			const cash = roundMoney2(Number(receiptForm.cashAmount || 0));
+			const wht = roundMoney2(Number(receiptForm.whtAmount || 0));
+			const whtVat = roundMoney2(Number(receiptForm.whtVatAmount || 0));
+			if (cash <= 0 && wht <= 0 && whtVat <= 0) {
+				setFormError('Enter cash and/or WHT amounts');
+				return;
+			}
+			if (receiptForm.paymentKind === 'wht_settlement' && cash <= 0) {
+				setFormError('Enter net cash received');
+				return;
+			}
+			if (receiptForm.paymentKind === 'wht_only' && wht + whtVat <= 0) {
+				setFormError('Enter WHT certificate amounts');
+				return;
+			}
+			const balanceDue = roundMoney2(
+				selectedReceiptInvoice.total - (selectedReceiptInvoice.paidAmount || 0),
+			);
+			const totalEntered = roundMoney2(cash + wht + whtVat);
+			if (totalEntered > balanceDue + 0.01) {
+				setFormError(
+					`Total (₵${totalEntered.toLocaleString()}) exceeds balance due (₵${balanceDue.toLocaleString()})`,
+				);
+				return;
+			}
+			if (
+				cash > 0 &&
+				receiptNeedsBankAccount &&
+				activeBankAccounts.length > 0 &&
+				!receiptForm.bankAccountId
+			) {
+				setFormError('Select the bank account that received this payment');
+				return;
+			}
+
+			const result = recordWHTPayment({
+				invoiceId: selectedReceiptInvoice.id,
+				cashAmount: cash,
+				whtAmount: wht,
+				whtVatAmount: whtVat,
+				paymentMethod: (() => {
+					const m = mapUiPaymentMethodToStore(receiptForm.paymentMethod || 'Cash');
+					return m === 'WHT Certificate' ? 'Bank' : m;
+				})(),
+				bankAccountId: receiptForm.bankAccountId || undefined,
+				certificateNumber: receiptForm.certificateNumber?.trim() || undefined,
+				withholdingAgentTIN: receiptForm.withholdingAgentTIN?.trim() || undefined,
+				revenueCenterCode: receiptForm.revenueCenterCode?.trim() || undefined,
+				staffName: 'Manual Entry',
+				staffId: 'MANUAL',
+			});
+			if (!result) {
+				setFormError(useAccountingStore.getState().error || 'Failed to record WHT payment');
+				return;
+			}
+			setIsNewReceiptOpen(false);
+			if (receiptForm.printAfterSave && result.receiptId) {
+				const saved = useAccountingStore
+					.getState()
+					.payments.find((p) => p.id === result.receiptId);
+				if (saved) printCustomerReceiptForPayment(saved as StoredReceiptPayment, selectedReceiptTarget);
+			}
+			handleRefresh();
+			return;
+		}
+
+		if (amount <= 0) {
+			setFormError('Amount must be greater than 0');
+			return;
+		}
+
+		if (editingReceipt) {
+			if (editingReceipt.journalEntryId && Math.abs(amount - editingReceipt.amount) > 0.009) {
+				setFormError('Cannot change amount after GL posting — void this receipt and record a new one.');
+				return;
+			}
+			if (receiptNeedsBankAccount && activeBankAccounts.length > 0 && !receiptForm.bankAccountId) {
+				setFormError('Select the bank account that received this payment');
+				return;
+			}
+			if (receiptForm.paymentMethod === 'Cheque' && !receiptForm.checkNumber?.trim()) {
+				setFormError('Enter cheque number');
+				return;
+			}
+
+			const delta = roundMoney2(amount - editingReceipt.amount);
+			if (editingReceipt.invoiceId && Math.abs(delta) > 0.009) {
+				const inv = salesInvoices.find((i: any) => i.id === editingReceipt.invoiceId);
+				if (inv) {
+					const newPaid = roundMoney2(Math.max(0, (inv.paidAmount || 0) + delta));
+					if (newPaid > inv.total + 0.01) {
+						setFormError('Updated amount would overpay the linked invoice');
+						return;
+					}
+					updateInvoice(editingReceipt.invoiceId, {
+						paidAmount: newPaid,
+						status: newPaid >= inv.total ? 'Paid' : 'Posted',
+						updatedAt: new Date().toISOString(),
+					});
+				}
+			}
+
+			if (
+				editingReceipt.sourceModule === FRONT_OFFICE_FOLIO_RECEIPT_SOURCE &&
+				editingReceipt.reservationId &&
+				editingReceipt.folioPaymentId
+			) {
+				frontOfficeStore.updateFolioPayment(
+					editingReceipt.reservationId,
+					editingReceipt.folioPaymentId,
+					{
+						amount,
+						method: mapReceiptMethodToFo(receiptForm.paymentMethod || 'Cash'),
+						notes: descParts.join(' — ') || undefined,
+						ref: receiptForm.reference?.trim() || undefined,
+					},
+				);
+			}
+
+			updatePayment(editingReceipt.id, {
+				amount,
+				date: new Date(receiptForm.date).toISOString(),
+				paymentMethod: mapUiPaymentMethodToStore(receiptForm.paymentMethod || 'Cash'),
+				bankAccountId: receiptForm.bankAccountId || undefined,
+				checkNumber: receiptForm.checkNumber?.trim() || undefined,
+				reference: receiptForm.reference?.trim() || undefined,
+				description: descParts.join(' — ') || editingReceipt.description,
+				customerName: receiptForm.customerName?.trim() || editingReceipt.customerName,
+				revenueCenterCode: receiptForm.revenueCenterCode?.trim() || undefined,
+				updatedAt: new Date().toISOString(),
+			});
+
+			setEditingReceiptId(null);
+			setIsNewReceiptOpen(false);
+			handleRefresh();
+			return;
+		}
+
+		if (selectedReceiptTarget && amount > receiptBalanceDue + 0.01) {
+			setFormError(`Amount cannot exceed balance due (₵${receiptBalanceDue.toLocaleString()})`);
+			return;
+		}
+		if (receiptNeedsBankAccount && activeBankAccounts.length > 0 && !receiptForm.bankAccountId) {
+			setFormError('Select the bank account that received this payment');
+			return;
+		}
+		if (receiptForm.paymentMethod === 'Cheque' && !receiptForm.checkNumber?.trim()) {
+			setFormError('Enter cheque number');
+			return;
+		}
+
+		if (targetParsed?.kind === 'folio') {
+			const folioPayment = frontOfficeStore.addPayment(
+				targetParsed.id,
+				mapReceiptMethodToFo(receiptForm.paymentMethod || 'Cash'),
+				amount,
+				{
+					notes: descParts.join(' — ') || undefined,
+					ref: receiptForm.reference?.trim() || undefined,
+					processedBy: 'Finance AR',
+				},
+			);
+			const paymentNumber = settings.getNextReceiptNumber();
+			const mirrorPayload: StoredReceiptPayment = {
+				id: `RCP-FO-${folioPayment.id}`,
+				paymentNumber,
+				date: new Date(receiptForm.date).toISOString(),
+				type: 'Receipt',
+				businessPartnerId:
+					receiptForm.businessPartnerId ||
+					selectedReceiptTarget?.businessPartnerId ||
+					targetParsed.id,
+				customerName:
+					receiptForm.customerName?.trim() || selectedReceiptTarget?.customerName || 'Guest',
+				description: descParts.join(' — ') || 'In-house folio payment',
+				amount,
+				currency: 'GHS',
+				paymentMethod: mapUiPaymentMethodToStore(receiptForm.paymentMethod || 'Cash'),
+				bankAccountId: receiptForm.bankAccountId || undefined,
+				checkNumber: receiptForm.checkNumber?.trim() || undefined,
+				reference: receiptForm.reference?.trim() || undefined,
+				status: 'Posted',
+				createdAt: new Date().toISOString(),
+				updatedAt: new Date().toISOString(),
+				sourceModule: FRONT_OFFICE_FOLIO_RECEIPT_SOURCE,
+				staffName: 'Finance AR',
+				reservationId: targetParsed.id,
+				folioPaymentId: folioPayment.id,
+				receiptTargetKey: receiptForm.targetKey,
+				revenueCenterCode: receiptForm.revenueCenterCode?.trim() || undefined,
+			};
+			addPayment(mirrorPayload as any);
+			setIsNewReceiptOpen(false);
+			if (receiptForm.printAfterSave) {
+				printCustomerReceiptForPayment(mirrorPayload, selectedReceiptTarget);
+			}
+			handleRefresh();
+			return;
+		}
+
+		const payload: StoredReceiptPayment = {
 			id: `RCP-${Date.now()}`,
 			paymentNumber: `RCP-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
-            date: new Date(receiptForm.date).toISOString(),
-            type: 'Receipt' as const,
+			date: new Date(receiptForm.date).toISOString(),
+			type: 'Receipt' as const,
 			businessPartnerId: receiptForm.businessPartnerId || `CUST-${Date.now()}`,
-			customerName: receiptForm.customerName,
-            invoiceId: receiptForm.invoiceId || undefined,
-            description: receiptForm.reference || 'Customer receipt',
-			amount: Number(receiptForm.amount),
-            currency: 'GHS',
-            paymentMethod: receiptForm.paymentMethod || 'Cash',
+			customerName: receiptForm.customerName?.trim() || 'Customer',
+			invoiceId: receiptForm.invoiceId || undefined,
+			receiptTargetKey:
+				receiptForm.targetKey ||
+				(receiptForm.invoiceId ? `invoice:${receiptForm.invoiceId}` : undefined),
+			description: descParts.join(' — ') || 'Customer receipt',
+			amount,
+			currency: 'GHS',
+			paymentMethod: mapUiPaymentMethodToStore(receiptForm.paymentMethod || 'Cash'),
+			bankAccountId: receiptForm.bankAccountId || undefined,
+			checkNumber: receiptForm.checkNumber?.trim() || undefined,
+			reference: receiptForm.reference?.trim() || receiptForm.invoiceNumber || undefined,
 			status: 'Posted' as const,
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
+			createdAt: new Date().toISOString(),
+			updatedAt: new Date().toISOString(),
 			sourceModule: 'manual_ar_ap',
 			staffName: 'Manual Entry',
+			revenueCenterCode: receiptForm.revenueCenterCode?.trim() || undefined,
 		};
 		addPayment(payload as any);
 		setIsNewReceiptOpen(false);
+		if (receiptForm.printAfterSave) {
+			printCustomerReceiptForPayment(payload, selectedReceiptTarget);
+		}
+		handleRefresh();
 	};
 
 	// Open WHT Payment Modal (from an invoice)
-	const openWHTPayment = (invoice: any) => {
-		const subtotal = Number(invoice.subtotal || invoice.total - (invoice.taxAmount || 0));
-		const taxAmount = Number(invoice.taxAmount || 0);
-		const whtAmount = Math.round(subtotal * 0.05 * 100) / 100; // 5% WHT on subtotal
-		const whtVatAmount = Math.round(taxAmount * 0.07 * 100) / 100; // 7% WHT on VAT
-		const cashAmount = Math.round((invoice.total - whtAmount - whtVatAmount) * 100) / 100;
-		
+	const openWHTPayment = (invoice: any, mode: 'settlement' | 'wht_only' = 'settlement') => {
+		const settlement = computeInvoiceWhtSettlement(invoice, taxConfigs);
+		if (settlement.balanceDue <= 0) {
+			setFormError('Invoice has no balance due');
+			return;
+		}
+		if (mode === 'wht_only' && settlement.whtTotalRemaining <= 0) {
+			setFormError('No WHT remainder on this invoice — use Record Receipt for cash payments');
+			return;
+		}
+
+		const cashAmount = mode === 'wht_only' ? 0 : settlement.cashRemaining;
+		const whtAmount = settlement.whtRemaining;
+		const whtVatAmount = settlement.whtVatRemaining;
+
+		setWhtPaymentMode(mode);
 		setWHTPaymentForm({
 			invoiceId: invoice.id,
 			invoiceNumber: invoice.invoiceNumber,
 			invoiceTotal: invoice.total,
+			balanceDue: settlement.balanceDue,
 			customerName: invoice.customerName || invoice.businessPartnerId,
 			cashAmount,
 			whtAmount,
@@ -848,26 +1579,66 @@ export default function AccountsReceivable() {
 		setIsWHTPaymentOpen(true);
 	};
 
-	// Calculate WHT amounts when form values change
-	const recalculateWHT = (subtotal: number, taxAmount: number) => {
-		const whtAmount = Math.round(subtotal * 0.05 * 100) / 100;
-		const whtVatAmount = Math.round(taxAmount * 0.07 * 100) / 100;
-		return { whtAmount, whtVatAmount };
+	// Convert proforma → sales invoice (+ GL post)
+	const handleConvertProforma = async (inv: any, e?: React.MouseEvent) => {
+		e?.stopPropagation();
+		const src = inv.sourceModule || 'manual_ar_ap';
+		if (src === 'manual_ar_ap' || src === 'manual') {
+			const newNumber = (inv.invoiceNumber || '').replace(/^PRO-/, 'INV-') || `INV-${Date.now()}`;
+			const subtotal = Number(inv.subtotal || inv.total);
+			updateInvoice(inv.id, {
+				isProforma: false,
+				status: 'Posted',
+				invoiceNumber: newNumber,
+				...(inv.lines?.length
+					? {}
+					: {
+						lines: [{
+							id: `IL-${Date.now()}`,
+							invoiceId: inv.id,
+							description: inv.description || 'Sales revenue',
+							quantity: 1,
+							unitPrice: subtotal,
+							amount: subtotal,
+							taxAmount: Number(inv.taxAmount || 0),
+							glAccountCode: '4300',
+						}],
+					}),
+			});
+			await postInvoice(inv.id);
+		} else {
+			convertProformaToInvoice(inv.id);
+		}
+		setIsDetailOpen(false);
+		handleRefresh();
 	};
 
 	// Save WHT Payment
 	const saveWHTPayment = () => {
 		if (!whtPaymentForm.invoiceId) { setFormError('No invoice selected'); return; }
-		if (!whtPaymentForm.cashAmount && !whtPaymentForm.whtAmount) { 
-			setFormError('Enter either cash amount or WHT amount'); return; 
+		if (!whtPaymentForm.cashAmount && !whtPaymentForm.whtAmount && !whtPaymentForm.whtVatAmount) {
+			setFormError('Enter cash and/or WHT amounts'); return;
 		}
-		
+
+		const invoice = invoices.find((i) => i.id === whtPaymentForm.invoiceId);
+		const balanceDue = invoice ? roundMoney2(invoice.total - (invoice.paidAmount || 0)) : 0;
+		const totalEntered = roundMoney2(
+			Number(whtPaymentForm.cashAmount || 0) +
+			Number(whtPaymentForm.whtAmount || 0) +
+			Number(whtPaymentForm.whtVatAmount || 0),
+		);
+		if (totalEntered > balanceDue + 0.01) {
+			setFormError(`Total (₵${totalEntered.toLocaleString()}) exceeds balance due (₵${balanceDue.toLocaleString()})`);
+			return;
+		}
+
 		const result = recordWHTPayment({
 			invoiceId: whtPaymentForm.invoiceId,
 			cashAmount: Number(whtPaymentForm.cashAmount || 0),
 			whtAmount: Number(whtPaymentForm.whtAmount || 0),
 			whtVatAmount: Number(whtPaymentForm.whtVatAmount || 0),
 			paymentMethod: whtPaymentForm.paymentMethod as any,
+			bankAccountId: whtPaymentForm.paymentMethod === 'Bank' ? (whtPaymentForm.bankAccountId || undefined) : undefined,
 			certificateNumber: whtPaymentForm.certificateNumber || undefined,
 			withholdingAgentTIN: whtPaymentForm.withholdingAgentTIN || undefined,
 			staffName: 'Manual Entry',
@@ -884,15 +1655,89 @@ export default function AccountsReceivable() {
 	};
 
 	// Open WHT Certificate Detail
-	const openWHTDetail = (cert: any) => { setSelectedWHTCert(cert); setIsWHTDetailOpen(true); };
+	const openWHTDetail = (cert: any) => {
+		setSelectedWHTCert(cert);
+		setReceiveCertForm({
+			certificateNumber: cert.certificateNumber?.startsWith('PENDING-') ? '' : (cert.certificateNumber || ''),
+			withholdingAgentTIN: cert.withholdingAgentTIN || '',
+		});
+		setIsWHTDetailOpen(true);
+	};
+
+	const saveReceiveWHTCertificate = () => {
+		if (!selectedWHTCert?.id) return;
+		if (!receiveCertForm.certificateNumber.trim()) {
+			setFormError('Enter the GRA certificate number');
+			return;
+		}
+		const ok = receiveWHTCertificate(selectedWHTCert.id, {
+			certificateNumber: receiveCertForm.certificateNumber.trim(),
+			withholdingAgentTIN: receiveCertForm.withholdingAgentTIN.trim() || undefined,
+		});
+		if (ok) {
+			setFormError('');
+			setIsWHTDetailOpen(false);
+			handleRefresh();
+		} else {
+			setFormError('Could not save certificate details');
+		}
+	};
 
 	// Verify WHT Certificate (mark as received/verified)
 	const verifyWHTCertificate = (certId: string) => {
+		const cert = whtCertificates?.find((c: any) => c.id === certId);
+		if (cert?.status === 'Pending') {
+			setFormError('Receive the GRA certificate number first');
+			return;
+		}
 		updateWHTCertificate(certId, {
 			status: 'Verified',
 			verifiedBy: 'Manual Entry',
 			verifiedDate: new Date().toISOString(),
 		});
+		handleRefresh();
+	};
+
+	const handleVoidInvoice = async (inv: any) => {
+		const activePay = payments.filter((p) => p.invoiceId === inv.id && p.status !== 'Void');
+		if (activePay.length > 0) {
+			setFormError('Void all receipts and WHT payments on this invoice first');
+			return;
+		}
+		if (!window.confirm(`Void invoice ${inv.invoiceNumber}? A reversing GL entry will be posted.`)) return;
+		await voidInvoice(inv.id);
+		const err = useAccountingStore.getState().error;
+		if (err) {
+			setFormError(err);
+			return;
+		}
+		setIsDetailOpen(false);
+		handleRefresh();
+	};
+
+	const handleVoidReceipt = async (receipt: StoredReceiptPayment) => {
+		if (receipt.status === 'Void') return;
+		if (!receiptCanVoid(receipt)) {
+			setFormError('Only manual or in-house folio receipts can be voided from here');
+			return;
+		}
+		const isFolio = receipt.sourceModule === FRONT_OFFICE_FOLIO_RECEIPT_SOURCE;
+		const msg = isFolio
+			? `Void receipt ${receipt.paymentNumber || receipt.id}? This removes the payment from the guest folio.`
+			: `Void receipt ${receipt.paymentNumber || receipt.id}? This reverses GL and reopens invoice balance.`;
+		if (!window.confirm(msg)) return;
+
+		if (isFolio && receipt.reservationId && receipt.folioPaymentId) {
+			frontOfficeStore.removeFolioPayment(receipt.reservationId, receipt.folioPaymentId);
+		}
+
+		await voidPayment(receipt.id);
+		const err = useAccountingStore.getState().error;
+		if (err) {
+			setFormError(err);
+			return;
+		}
+		setIsReceiptDetailOpen(false);
 		handleRefresh();
 	};
 
@@ -941,11 +1786,19 @@ export default function AccountsReceivable() {
 						<TableColumn align="end">PAID</TableColumn>
 						<TableColumn align="end">BALANCE</TableColumn>
 						<TableColumn>STATUS</TableColumn>
+						<TableColumn>WHT</TableColumn>
+						<TableColumn>GL</TableColumn>
+						<TableColumn>ACTIONS</TableColumn>
 					</TableHeader>
 					<TableBody emptyContent="No sales invoices found.">
 						{paginatedData.map((inv: any) => {
 							const source = getSourceLabel(inv.sourceModule);
+							const glChip = getGlSyncChip('invoice', inv);
 							const balance = (inv.total || 0) - (inv.paidAmount || 0);
+							const settlement = computeInvoiceWhtSettlement(inv, taxConfigs);
+							const hasPendingWhtCert = (whtCertificates || []).some(
+								(c: any) => c.invoiceId === inv.id && c.status === 'Pending',
+							);
 							const isOverdue = balance > 0 && new Date(inv.dueDate) < new Date();
 							return (
 								<TableRow key={inv.id} className="cursor-pointer hover:bg-gray-50" onClick={() => openInvoiceDetail(inv)}>
@@ -972,6 +1825,58 @@ export default function AccountsReceivable() {
 										<Chip size="sm" color={balance === 0 ? 'success' : isOverdue ? 'danger' : 'warning'} variant="flat">
 											{balance === 0 ? 'Paid' : isOverdue ? 'Overdue' : 'Open'}
 										</Chip>
+									</TableCell>
+									<TableCell onClick={(e) => e.stopPropagation()}>
+										{inv.whtStatus === 'Pending' || hasPendingWhtCert ? (
+											<Chip size="sm" color="warning" variant="flat">Cert pending</Chip>
+										) : inv.whtStatus === 'Complete' ? (
+											<Chip size="sm" color="success" variant="flat">WHT ✓</Chip>
+										) : settlement.whtTotalRemaining > 0 && balance > 0 ? (
+											<Chip size="sm" color="default" variant="flat">WHT due</Chip>
+										) : (
+											<span className="text-xs text-gray-400">—</span>
+										)}
+									</TableCell>
+									<TableCell>
+										{glChip ? (
+											<Chip size="sm" color={glChip.color as any} variant="flat">{glChip.label}</Chip>
+										) : (
+											<span className="text-xs text-gray-400">—</span>
+										)}
+									</TableCell>
+									<TableCell onClick={(e) => e.stopPropagation()}>
+										{balance > 0 && (
+											<Dropdown>
+												<DropdownTrigger>
+													<Button size="sm" variant="flat">Actions</Button>
+												</DropdownTrigger>
+												<DropdownMenu aria-label="Invoice actions">
+													<DropdownItem
+														key="receipt"
+														onPress={() => openReceiptForm(inv)}
+													>
+														➕ Record receipt
+													</DropdownItem>
+													<DropdownItem
+														key="wht-settle"
+														onPress={() => openWHTPayment(inv, 'settlement')}
+													>
+														💰 Payment + WHT (cert later OK)
+													</DropdownItem>
+													{settlement.whtTotalRemaining > 0 ? (
+														<DropdownItem
+															key="wht-only"
+															onPress={() => openWHTPayment(inv, 'wht_only')}
+														>
+															📜 WHT only (cash already received)
+														</DropdownItem>
+													) : null}
+													<DropdownItem key="view" onPress={() => openInvoiceDetail(inv)}>
+														🧾 View invoice
+													</DropdownItem>
+												</DropdownMenu>
+											</Dropdown>
+										)}
 									</TableCell>
 								</TableRow>
 							);
@@ -1006,6 +1911,7 @@ export default function AccountsReceivable() {
 						<TableColumn align="end">AMOUNT</TableColumn>
 						<TableColumn>VALID UNTIL</TableColumn>
 						<TableColumn>STATUS</TableColumn>
+						<TableColumn>ACTIONS</TableColumn>
 					</TableHeader>
 					<TableBody emptyContent="No proforma invoices found. Generate a quote from Events & Conferences to create proformas.">
 						{paginatedData.map((inv: any) => {
@@ -1056,6 +1962,16 @@ export default function AccountsReceivable() {
 											{isExpired ? '⏰ Expired' : '📋 Active'}
 										</Chip>
 									</TableCell>
+									<TableCell>
+										<Button
+											size="sm"
+											color="primary"
+											variant="flat"
+											onPress={() => handleConvertProforma(inv)}
+										>
+											Convert to invoice
+										</Button>
+									</TableCell>
 								</TableRow>
 							);
 						})}
@@ -1070,8 +1986,8 @@ export default function AccountsReceivable() {
 		);
 	};
 
-	// Show loading state
-	if (isLoading) {
+	// Show loading state only on first bootstrap (avoid spinner loop on refresh)
+	if (isLoading && invoices.length === 0 && payments.length === 0) {
 		return (
 			<div className="p-6 flex items-center justify-center min-h-[400px]">
 				<div className="text-center">
@@ -1087,7 +2003,20 @@ export default function AccountsReceivable() {
 			<div className="mb-6 flex justify-between items-start">
 				<div>
 				<h1 className="text-3xl font-bold text-gray-900">🧾 Accounts Receivable</h1>
-					<p className="text-gray-600 mt-2">Manage customer accounts, sales invoices, proformas, and receipts</p>
+					<p className="text-gray-600 mt-2 inline-flex items-center gap-1.5 flex-wrap">
+						Manage customer accounts, sales invoices, proformas, and receipts
+						<InfoTip label="Official finance AR">
+							<div className="space-y-2">
+								<p className="font-semibold">Official finance AR</p>
+								<p>
+									Aging and outstanding on this screen come from the <strong>accounting subledger</strong>{' '}
+									(posted invoices + GL).
+								</p>
+								<p>In-house guest folios are operational only until checkout posts here.</p>
+								<p className="text-default-500 text-xs">API: /api/accounting/receivables/aging</p>
+							</div>
+						</InfoTip>
+					</p>
 				</div>
 				<div className="flex gap-2">
 					<Button 
@@ -1150,28 +2079,6 @@ export default function AccountsReceivable() {
 					</CardBody>
 				</Card>
 			</div>
-
-			{/* Revenue by Source */}
-			{revenueBySource.length > 0 && (
-				<Card className="mb-6">
-					<CardBody>
-						<h3 className="font-semibold mb-3">📊 Revenue by Source</h3>
-						<div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-							{revenueBySource.map(src => (
-								<div key={src.source} className="p-3 rounded-lg bg-gray-50 border hover:shadow-md transition-shadow">
-									<div className="text-xs font-medium text-gray-600">{src.icon} {src.label}</div>
-									<div className="text-lg font-bold text-gray-900">₵{src.revenue.toLocaleString()}</div>
-									<div className="flex justify-between text-xs mt-1">
-										<span className="text-green-600">Rcvd: ₵{src.received.toLocaleString()}</span>
-										<span className="text-orange-600">Due: ₵{src.outstanding.toLocaleString()}</span>
-									</div>
-									<div className="text-xs text-gray-500 mt-1">{src.invoiceCount} inv • {src.receiptCount} rcpt</div>
-								</div>
-							))}
-						</div>
-					</CardBody>
-				</Card>
-			)}
 
 			{/* Main Tabs */}
 			<Card>
@@ -1338,7 +2245,8 @@ export default function AccountsReceivable() {
 												<DropdownItem key="pdf" onPress={printReceiptsTablePDF}>📑 Print PDF</DropdownItem>
 											</DropdownMenu>
 										</Dropdown>
-										<Button color="primary" size="sm" onClick={openNewReceipt}>➕ Record Receipt</Button>
+										<Button variant="flat" size="sm" onClick={openPrintReceiptModal}>🖨️ Print Receipt</Button>
+										<Button color="primary" size="sm" onClick={() => openReceiptForm()}>➕ Record Receipt</Button>
                                 </div>
 								</div>
 								{renderFilters(false)}
@@ -1355,10 +2263,13 @@ export default function AccountsReceivable() {
 										<TableColumn>INVOICE</TableColumn>
 										<TableColumn align="end">AMOUNT</TableColumn>
                                         <TableColumn>STATUS</TableColumn>
+										<TableColumn>ACTIONS</TableColumn>
                                     </TableHeader>
                                     <TableBody emptyContent="No receipts found.">
 										{getPaginatedData(filteredReceipts, page).map((r: any) => {
 											const source = getSourceLabel(r.sourceModule);
+											const canEdit = receiptCanEdit(r);
+											const canVoid = receiptCanVoid(r);
 											return (
 												<TableRow key={r.id} className="cursor-pointer hover:bg-gray-50" onClick={() => openReceiptDetail(r)}>
 													<TableCell>
@@ -1386,7 +2297,37 @@ export default function AccountsReceivable() {
 													</TableCell>
 													<TableCell className="text-right font-medium text-green-600">₵{Number(r.amount || 0).toLocaleString()}</TableCell>
 													<TableCell>
-														<Chip size="sm" color={r.status === 'Posted' ? 'success' : 'default'} variant="flat">{r.status || 'Draft'}</Chip>
+														<Chip size="sm" color={r.status === 'Posted' ? 'success' : r.status === 'Void' ? 'danger' : 'default'} variant="flat">{r.status || 'Draft'}</Chip>
+													</TableCell>
+													<TableCell onClick={(e) => e.stopPropagation()}>
+														<Dropdown>
+															<DropdownTrigger>
+																<Button size="sm" variant="flat">Actions</Button>
+															</DropdownTrigger>
+															<DropdownMenu aria-label="Receipt actions">
+																<DropdownItem key="view" onPress={() => openReceiptDetail(r)}>
+																	🧾 View
+																</DropdownItem>
+																<DropdownItem key="print" onPress={() => printReceiptPDF(r)}>
+																	🖨️ Print
+																</DropdownItem>
+																{canEdit ? (
+																	<DropdownItem key="edit" onPress={() => openEditReceiptForm(r)}>
+																		✏️ Edit
+																	</DropdownItem>
+																) : null}
+																{canVoid ? (
+																	<DropdownItem
+																		key="void"
+																		className="text-danger"
+																		color="danger"
+																		onPress={() => handleVoidReceipt(r)}
+																	>
+																		🗑️ Void
+																	</DropdownItem>
+																) : null}
+															</DropdownMenu>
+														</Dropdown>
 													</TableCell>
                                             </TableRow>
 											);
@@ -1406,7 +2347,20 @@ export default function AccountsReceivable() {
 						<Tab key="wht" title={`📜 WHT Certificates (${whtCertificates?.length || 0})`}>
 							<div className="p-6">
 								<div className="flex justify-between items-center mb-4">
-									<h3 className="text-lg font-semibold">WHT Certificates (Tax Credits)</h3>
+									<h3 className="text-lg font-semibold inline-flex items-center gap-1.5">
+										WHT Certificates (Tax Credits)
+										<InfoTip label="What is WHT?">
+											<div className="space-y-2">
+												<p className="font-semibold">What is WHT?</p>
+												<p>
+													When corporate/government clients pay, they withhold WHT on the invoice subtotal (
+													{whtCertRates.onSubtotalPct}% per your tax settings) and WHT-VAT on the VAT portion (
+													{whtCertRates.onVatPct}%). They later provide a GRA certificate as proof. These certificates
+													become tax credits for your company. Adjust rates under Books &amp; Taxes (WHT_CERT / WHT_VAT_CERT).
+												</p>
+											</div>
+										</InfoTip>
+									</h3>
 									<div className="flex items-center gap-2">
 										<Chip color="warning" variant="flat">{filteredWHTCerts.length} certificates</Chip>
 										<Chip color="primary" variant="flat">₵{totalWHTReceivable.toLocaleString()} receivable</Chip>
@@ -1415,19 +2369,6 @@ export default function AccountsReceivable() {
 										)}
 									</div>
 								</div>
-
-								{/* WHT Info Card */}
-								<Card className="mb-4 bg-amber-50 border border-amber-200">
-									<CardBody className="py-3">
-										<div className="flex items-start gap-3">
-											<span className="text-2xl">💡</span>
-											<div className="text-sm text-amber-800">
-												<p className="font-semibold">What is WHT?</p>
-												<p>When corporate/government clients pay, they withhold <strong>5% WHT</strong> on the subtotal and <strong>7% WHT-VAT</strong> on VAT. They later provide a GRA certificate as proof. These certificates become tax credits for your company.</p>
-											</div>
-										</div>
-									</CardBody>
-								</Card>
 
 								{renderFilters(false)}
 
@@ -1478,7 +2419,14 @@ export default function AccountsReceivable() {
 												</TableCell>
 												<TableCell>
 													{cert.status === 'Pending' && (
-														<Tooltip content="Mark as received & verified">
+														<Tooltip content="Enter GRA certificate number">
+															<Button size="sm" color="primary" variant="flat" onClick={(e) => { e.stopPropagation(); openWHTDetail(cert); }}>
+																📥 Receive cert
+															</Button>
+														</Tooltip>
+													)}
+													{cert.status === 'Received' && (
+														<Tooltip content="Mark as verified">
 															<Button size="sm" color="success" variant="flat" onClick={(e) => { e.stopPropagation(); verifyWHTCertificate(cert.id); }}>
 																✓ Verify
 															</Button>
@@ -1507,14 +2455,29 @@ export default function AccountsReceivable() {
                 <ModalContent>
                     {(onClose) => (
                         <>
-							<ModalHeader>💰 Record Payment with WHT Deduction</ModalHeader>
+							<ModalHeader>
+								{whtPaymentMode === 'wht_only'
+									? '📜 Record WHT Certificate (clears remaining balance)'
+									: '💰 Record Payment with WHT Deduction'}
+							</ModalHeader>
                             <ModalBody>
 								{formError && <div className="text-red-600 text-sm mb-3 p-2 bg-red-50 rounded">{formError}</div>}
+
+								{whtPaymentMode === 'settlement' && (
+									<p className="text-sm text-gray-600 mb-3 p-2 bg-blue-50 rounded border border-blue-100">
+										Record the net cash received now. WHT amounts can be saved without a certificate number — attach the GRA certificate later from the WHT Certificates tab.
+									</p>
+								)}
+								{whtPaymentMode === 'wht_only' && (
+									<p className="text-sm text-gray-600 mb-3 p-2 bg-amber-50 rounded border border-amber-100">
+										Cash was already recorded on this invoice. Enter the withheld WHT + WHT-VAT to clear the remaining balance. Certificate number can be added when GRA issues it.
+									</p>
+								)}
 
 								{/* Invoice Info */}
 								<Card className="mb-4 bg-blue-50 border border-blue-200">
 									<CardBody className="py-3">
-										<div className="grid grid-cols-3 gap-4 text-sm">
+										<div className="grid grid-cols-4 gap-4 text-sm">
 											<div>
 												<div className="text-gray-500">Invoice</div>
 												<div className="font-bold">{whtPaymentForm.invoiceNumber}</div>
@@ -1525,7 +2488,11 @@ export default function AccountsReceivable() {
 											</div>
 											<div>
 												<div className="text-gray-500">Invoice Total</div>
-												<div className="font-bold text-lg">₵{Number(whtPaymentForm.invoiceTotal || 0).toLocaleString()}</div>
+												<div className="font-bold">₵{Number(whtPaymentForm.invoiceTotal || 0).toLocaleString()}</div>
+											</div>
+											<div>
+												<div className="text-gray-500">Balance Due</div>
+												<div className="font-bold text-orange-600">₵{Number(whtPaymentForm.balanceDue || 0).toLocaleString()}</div>
 											</div>
 										</div>
 									</CardBody>
@@ -1540,8 +2507,10 @@ export default function AccountsReceivable() {
 										value={whtPaymentForm.cashAmount}
 										onValueChange={(v) => setWHTPaymentForm((f: any) => ({ ...f, cashAmount: Number(v) }))}
 										startContent="₵"
-										description="Actual amount received from customer"
+										description={whtPaymentMode === 'wht_only' ? 'Leave at 0 — cash already received' : 'Actual amount received from customer'}
+										isReadOnly={whtPaymentMode === 'wht_only'}
 									/>
+									{whtPaymentMode !== 'wht_only' && (
 									<Select 
 										label="Payment Method"
 										selectedKeys={[whtPaymentForm.paymentMethod]}
@@ -1552,6 +2521,20 @@ export default function AccountsReceivable() {
                                         <SelectItem key="Card">Card</SelectItem>
                                         <SelectItem key="Mobile Money">Mobile Money</SelectItem>
                                     </Select>
+									)}
+									{whtPaymentMode !== 'wht_only' && whtPaymentForm.paymentMethod === 'Bank' && activeBankAccounts.length > 0 && (
+										<Select
+											label="Deposit to account"
+											selectedKeys={whtPaymentForm.bankAccountId ? [whtPaymentForm.bankAccountId] : []}
+											onSelectionChange={(s: any) =>
+												setWHTPaymentForm((f: any) => ({ ...f, bankAccountId: Array.from(s)[0] as string }))
+											}
+										>
+											{activeBankAccounts.map((acc: any) => (
+												<SelectItem key={acc.id}>{acc.accountName}</SelectItem>
+											))}
+										</Select>
+									)}
                                 </div>
 
 								{/* WHT Amounts */}
@@ -1561,7 +2544,7 @@ export default function AccountsReceivable() {
 										<div className="grid grid-cols-2 gap-4">
 											<Input 
 												type="number"
-												label="WHT Amount (5% of Subtotal)"
+												label={whtLabels.whtLabel}
 												placeholder="0.00"
 												value={whtPaymentForm.whtAmount}
 												onValueChange={(v) => setWHTPaymentForm((f: any) => ({ ...f, whtAmount: Number(v) }))}
@@ -1570,7 +2553,7 @@ export default function AccountsReceivable() {
 											/>
 											<Input 
 												type="number"
-												label="WHT-VAT Amount (7% of VAT)"
+												label={whtLabels.whtVatLabel}
 												placeholder="0.00"
 												value={whtPaymentForm.whtVatAmount}
 												onValueChange={(v) => setWHTPaymentForm((f: any) => ({ ...f, whtVatAmount: Number(v) }))}
@@ -1752,9 +2735,40 @@ export default function AccountsReceivable() {
 										</div>
                                                 </CardBody>
                                             </Card>
+
+								{selectedWHTCert.status === 'Pending' && (
+									<Card className="mt-4 border border-amber-300 bg-amber-50">
+										<CardBody>
+											<h4 className="font-semibold text-amber-900 mb-3">Receive GRA Certificate</h4>
+											<p className="text-sm text-amber-800 mb-3">
+												The WHT was recorded when payment was received. Enter the official certificate details when the customer/GRA provides them.
+											</p>
+											{formError && <div className="text-red-600 text-sm mb-3">{formError}</div>}
+											<div className="grid grid-cols-2 gap-4">
+												<Input
+													label="Certificate Number *"
+													placeholder="e.g., WHT-2026-001234"
+													value={receiveCertForm.certificateNumber}
+													onValueChange={(v) => setReceiveCertForm((f) => ({ ...f, certificateNumber: v }))}
+												/>
+												<Input
+													label="Withholding Agent TIN"
+													placeholder="e.g., P00012345X"
+													value={receiveCertForm.withholdingAgentTIN}
+													onValueChange={(v) => setReceiveCertForm((f) => ({ ...f, withholdingAgentTIN: v }))}
+												/>
+											</div>
+										</CardBody>
+									</Card>
+								)}
 							</ModalBody>
 							<ModalFooter>
 								{selectedWHTCert.status === 'Pending' && (
+									<Button color="primary" onPress={saveReceiveWHTCertificate}>
+										Save certificate details
+									</Button>
+								)}
+								{selectedWHTCert.status === 'Received' && (
 									<Button color="success" onPress={() => { verifyWHTCertificate(selectedWHTCert.id); onClose(); }}>
 										✓ Mark as Verified
 									</Button>
@@ -1793,8 +2807,15 @@ export default function AccountsReceivable() {
 									<Input type="date" label={invoiceForm.isProforma ? "Proforma Date" : "Invoice Date"} value={invoiceForm.date || ''} onValueChange={(v) => setInvoiceForm({ ...invoiceForm, date: v })} />
 									<Input type="date" label={invoiceForm.isProforma ? "Valid Until" : "Due Date"} value={invoiceForm.dueDate || ''} onValueChange={(v) => setInvoiceForm({ ...invoiceForm, dueDate: v })} />
 									<Input type="number" label="Subtotal" value={invoiceForm.subtotal?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, subtotal: e.target.value, total: Number(e.target.value) + Number(invoiceForm.taxAmount || 0) })} />
-									<Input type="number" label="Tax Amount" value={invoiceForm.taxAmount?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, taxAmount: e.target.value, total: Number(invoiceForm.subtotal || 0) + Number(e.target.value) })} />
-									<Input type="number" label="Total *" value={invoiceForm.total?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, total: e.target.value })} className="col-span-2" />
+									<div className="flex gap-2 items-end">
+										<Input type="number" label="Tax Amount" value={invoiceForm.taxAmount?.toString() || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, taxAmount: e.target.value, total: Number(invoiceForm.subtotal || 0) + Number(e.target.value) })} />
+										<Button size="sm" variant="bordered" onPress={() => {
+											const subtotal = Number(invoiceForm.subtotal || 0);
+											const { totalTax } = computeSalesTax(subtotal);
+											setInvoiceForm({ ...invoiceForm, taxAmount: totalTax, total: subtotal + totalTax });
+										}}>Apply Tax</Button>
+									</div>
+									<Input type="number" isReadOnly label="Total" value={(Number(invoiceForm.subtotal || 0) + Number(invoiceForm.taxAmount || 0)).toString()} description="Subtotal + Tax — not independently editable" className="col-span-2" />
 									<Input label="Description" value={invoiceForm.description || ''} onChange={(e) => setInvoiceForm({ ...invoiceForm, description: e.target.value })} className="col-span-2" />
                                 </div>
                             </ModalBody>
@@ -1809,38 +2830,465 @@ export default function AccountsReceivable() {
                 </ModalContent>
             </Modal>
 
-			{/* New Receipt Modal */}
-			<Modal isOpen={isNewReceiptOpen} onOpenChange={setIsNewReceiptOpen} size="lg">
+			{/* Record Receipt Modal */}
+			<Modal
+				isOpen={isNewReceiptOpen}
+				onOpenChange={(open) => {
+					setIsNewReceiptOpen(open);
+					if (!open) {
+						setEditingReceiptId(null);
+						setFormError('');
+					}
+				}}
+				size="2xl"
+			>
                 <ModalContent>
                     {(onClose) => (
                         <>
-							<ModalHeader>➕ Record Receipt</ModalHeader>
+							<ModalHeader className="flex items-center gap-2">
+								<span>
+									{editingReceiptId ? '✏️ Edit Customer Receipt' : '➕ Record Customer Receipt'}
+								</span>
+								<InfoTip label="Receipt form help">
+									<div className="space-y-2 text-left">
+										<p>
+											Apply to an <strong>in-house folio</strong> (guest checked in) or a{' '}
+											<strong>posted invoice</strong> (incl. front-office checkout).
+										</p>
+										<p>
+											Invoice payments post to GL; folio payments update the guest ledger until
+											checkout.
+										</p>
+										<p>
+											For corporate WHT, choose <strong>Net cash + WHT</strong> or{' '}
+											<strong>WHT certificate only</strong> under Payment type.
+										</p>
+										<p>
+											<strong>Revenue centre</strong> is optional — it tags the GL segment when
+											the receipt posts (suggested from the folio or invoice you select).
+										</p>
+										{editingReceiptId && (
+											<p className="text-amber-800">
+												Amount changes are blocked after GL posting — void and re-record instead.
+											</p>
+										)}
+									</div>
+								</InfoTip>
+							</ModalHeader>
                             <ModalBody>
 								{formError && <div className="text-red-600 text-sm mb-3 p-2 bg-red-50 rounded">{formError}</div>}
-								<div className="grid grid-cols-2 gap-4">
-									<Input label="Customer Name *" value={receiptForm.customerName || ''} onChange={(e) => setReceiptForm({ ...receiptForm, customerName: e.target.value })} />
-									<Input type="date" label="Date" value={receiptForm.date || ''} onValueChange={(v) => setReceiptForm({ ...receiptForm, date: v })} />
-									<Input type="number" label="Amount *" value={receiptForm.amount?.toString() || ''} onChange={(e) => setReceiptForm({ ...receiptForm, amount: e.target.value })} />
-									<Select label="Payment Method" selectedKeys={[receiptForm.paymentMethod || 'Cash']} onSelectionChange={(s) => setReceiptForm({ ...receiptForm, paymentMethod: Array.from(s)[0] })}>
+
+								<div className="grid grid-cols-2 gap-4 mb-4">
+									<Autocomplete
+										label="Customer"
+										placeholder="Search customer..."
+										selectedKey={receiptForm.businessPartnerId || null}
+										onSelectionChange={(key) => onReceiptCustomerSelect(key as string | null)}
+										inputValue={receiptForm.customerName || ''}
+										onInputChange={(v) =>
+											setReceiptForm((f: any) => ({
+												...f,
+												customerName: v,
+												...(f.businessPartnerId && v !== customers.find((c) => c.id === f.businessPartnerId)?.name
+													? { businessPartnerId: '', targetKey: '', invoiceId: '', invoiceNumber: '' }
+													: {}),
+											}))
+										}
+										allowsCustomValue
+									>
+										{customers.map((c) => (
+											<AutocompleteItem key={c.id} textValue={c.name}>
+												<div className="font-medium">{c.name}</div>
+												<div className="text-xs text-gray-500">{c.id}</div>
+											</AutocompleteItem>
+										))}
+									</Autocomplete>
+
+									<Select
+										label="Apply to folio or invoice"
+										placeholder="In-house guest or open invoice"
+										selectedKeys={receiptForm.targetKey ? [receiptForm.targetKey] : []}
+										onSelectionChange={(s) => onReceiptTargetSelect(Array.from(s)[0] as string | null)}
+										isDisabled={!!editingReceiptId}
+									>
+										{filteredReceiptTargets.map((target: ReceiptTarget) => (
+											<SelectItem key={target.key} textValue={target.label}>
+												<div className="flex flex-col gap-0.5">
+													<span>{target.label}</span>
+													<span className="text-xs text-gray-500">{target.sourceBadge}</span>
+												</div>
+											</SelectItem>
+										))}
+									</Select>
+								</div>
+
+								{activeRevenueCenters.length > 0 && (
+									<Select
+										label="Revenue centre (optional)"
+										placeholder="Suggested when you pick folio or invoice"
+										className="mb-4"
+										selectedKeys={
+											receiptForm.revenueCenterCode ? [receiptForm.revenueCenterCode] : []
+										}
+										onSelectionChange={(s) => {
+											const key = Array.from(s)[0] as string | undefined;
+											setReceiptForm((f: any) => ({
+												...f,
+												revenueCenterCode: key || '',
+											}));
+										}}
+									>
+										{activeRevenueCenters.map((rc) => (
+											<SelectItem key={rc.code} textValue={`${rc.code} — ${rc.name}`}>
+												{rc.code} — {rc.name}
+											</SelectItem>
+										))}
+									</Select>
+								)}
+
+								{selectedReceiptTarget?.kind === 'invoice' && !editingReceiptId && (
+									<Select
+										label="Payment type"
+										className="mb-4"
+										selectedKeys={[receiptForm.paymentKind || 'standard']}
+										onSelectionChange={(s) =>
+											onReceiptPaymentKindChange(Array.from(s)[0] as string | null)
+										}
+									>
+										<SelectItem key="standard">Full payment (cash/bank)</SelectItem>
+										<SelectItem key="wht_settlement" isDisabled={!receiptWhtAvailable}>
+											Net cash + WHT (certificate later OK)
+										</SelectItem>
+										<SelectItem key="wht_only" isDisabled={!receiptWhtAvailable}>
+											WHT certificate only
+										</SelectItem>
+									</Select>
+								)}
+
+								{selectedReceiptTarget?.kind === 'folio' && (
+									<Card className="mb-4 bg-emerald-50 border border-emerald-200">
+										<CardBody className="py-3">
+											<div className="grid grid-cols-3 gap-3 text-sm">
+												<div>
+													<div className="text-gray-500">Guest</div>
+													<div className="font-bold">{selectedReceiptTarget.customerName}</div>
+												</div>
+												{selectedReceiptTarget.roomNumber && (
+													<div>
+														<div className="text-gray-500">Room</div>
+														<div className="font-medium">{selectedReceiptTarget.roomNumber}</div>
+													</div>
+												)}
+												<div>
+													<div className="text-gray-500 inline-flex items-center gap-1">
+														Folio balance
+														<InfoTip label="Folio payment">
+															Posts to the in-house guest folio. Accounting invoice and GL are
+															created at checkout.
+														</InfoTip>
+													</div>
+													<div className="font-bold text-orange-600">₵{receiptBalanceDue.toLocaleString()}</div>
+												</div>
+											</div>
+										</CardBody>
+									</Card>
+								)}
+
+								{selectedReceiptInvoice && (
+									<Card className="mb-4 bg-blue-50 border border-blue-200">
+										<CardBody className="py-3">
+											<div className="grid grid-cols-4 gap-3 text-sm">
+												<div>
+													<div className="text-gray-500">Invoice</div>
+													<div className="font-mono font-bold">{selectedReceiptInvoice.invoiceNumber}</div>
+													{selectedReceiptInvoice.sourceModule === 'front_office_checkout' && (
+														<Chip size="sm" variant="flat" color="secondary" className="mt-1">
+															Front office
+														</Chip>
+													)}
+												</div>
+												<div>
+													<div className="text-gray-500">Invoice total</div>
+													<div className="font-medium">₵{Number(selectedReceiptInvoice.total || 0).toLocaleString()}</div>
+												</div>
+												<div>
+													<div className="text-gray-500">Balance due</div>
+													<div className="font-bold text-orange-600">₵{receiptBalanceDue.toLocaleString()}</div>
+												</div>
+												<div>
+													<div className="text-gray-500">After this receipt</div>
+													<div className="font-bold text-green-700">
+														₵{Math.max(0, receiptBalanceDue - roundMoney2(
+															Number(receiptForm.amount || 0) +
+															Number(receiptForm.whtAmount || 0) +
+															Number(receiptForm.whtVatAmount || 0)
+														)).toLocaleString()}
+													</div>
+												</div>
+											</div>
+										</CardBody>
+									</Card>
+								)}
+
+								<div className="grid grid-cols-2 gap-4 mb-4">
+									{(receiptForm.paymentKind === 'standard' ||
+										selectedReceiptTarget?.kind !== 'invoice' ||
+										editingReceiptId) && (
+									<Input
+										type="number"
+										label="Amount received *"
+										placeholder="0.00"
+										value={receiptForm.amount?.toString() ?? ''}
+										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, amount: v }))}
+										startContent="₵"
+										description={
+											selectedReceiptTarget
+												? `Balance due ₵${receiptBalanceDue.toLocaleString()}`
+												: 'Enter amount received'
+										}
+										endContent={
+											selectedReceiptTarget ? (
+												<Button size="sm" variant="flat" onPress={fillReceiptFullBalance}>
+													Fill
+												</Button>
+											) : undefined
+										}
+									/>
+									)}
+
+									{(receiptForm.paymentKind === 'wht_settlement' ||
+										receiptForm.paymentKind === 'wht_only') &&
+										!editingReceiptId && (
+										<>
+											<Input
+												type="number"
+												label="Cash/bank received"
+												placeholder="0.00"
+												value={receiptForm.cashAmount?.toString() ?? ''}
+												onValueChange={(v) =>
+													setReceiptForm((f: any) => ({ ...f, cashAmount: v, amount: v }))
+												}
+												startContent="₵"
+												isReadOnly={receiptForm.paymentKind === 'wht_only'}
+												description={
+													receiptForm.paymentKind === 'wht_only'
+														? 'Leave at 0 if cash already received'
+														: 'Net cash from customer'
+												}
+											/>
+											<Input
+												type="number"
+												label={whtLabels.whtLabel}
+												placeholder="0.00"
+												value={receiptForm.whtAmount?.toString() ?? ''}
+												onValueChange={(v) =>
+													setReceiptForm((f: any) => ({ ...f, whtAmount: v }))
+												}
+												startContent="₵"
+											/>
+											<Input
+												type="number"
+												label={whtLabels.whtVatLabel}
+												placeholder="0.00"
+												value={receiptForm.whtVatAmount?.toString() ?? ''}
+												onValueChange={(v) =>
+													setReceiptForm((f: any) => ({ ...f, whtVatAmount: v }))
+												}
+												startContent="₵"
+											/>
+											<Input
+												label="WHT certificate # (optional)"
+												placeholder="GRA cert number when received"
+												value={receiptForm.certificateNumber || ''}
+												onValueChange={(v) =>
+													setReceiptForm((f: any) => ({ ...f, certificateNumber: v }))
+												}
+											/>
+											<Input
+												label="Withholding agent TIN (optional)"
+												value={receiptForm.withholdingAgentTIN || ''}
+												onValueChange={(v) =>
+													setReceiptForm((f: any) => ({ ...f, withholdingAgentTIN: v }))
+												}
+											/>
+										</>
+									)}
+
+									<Input
+										type="date"
+										label="Receipt date"
+										value={receiptForm.date || ''}
+										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, date: v }))}
+									/>
+									<Select
+										label="Payment method"
+										selectedKeys={[receiptForm.paymentMethod || 'Bank']}
+										onSelectionChange={(s: any) =>
+											setReceiptForm((f: any) => ({
+												...f,
+												paymentMethod: Array.from(s)[0] as string,
+											}))
+										}
+										isDisabled={
+											receiptForm.paymentKind === 'wht_only' && !Number(receiptForm.cashAmount)
+										}
+									>
+										<SelectItem key="Bank">Bank transfer</SelectItem>
 										<SelectItem key="Cash">Cash</SelectItem>
 										<SelectItem key="Card">Card</SelectItem>
-										<SelectItem key="Mobile Money">Mobile Money</SelectItem>
-										<SelectItem key="Bank Transfer">Bank Transfer</SelectItem>
+										<SelectItem key="Mobile Money">Mobile money</SelectItem>
 										<SelectItem key="Cheque">Cheque</SelectItem>
-                                    </Select>
-									<Input label="Reference" value={receiptForm.reference || ''} onChange={(e) => setReceiptForm({ ...receiptForm, reference: e.target.value })} className="col-span-2" />
-		</div>
+									</Select>
+									{receiptNeedsBankAccount && activeBankAccounts.length > 0 && (
+										<Select
+											label="Deposit to account"
+											selectedKeys={receiptForm.bankAccountId ? [receiptForm.bankAccountId] : []}
+											onSelectionChange={(s: any) =>
+												setReceiptForm((f: any) => ({
+													...f,
+													bankAccountId: Array.from(s)[0] as string,
+												}))
+											}
+										>
+											{activeBankAccounts.map((acc) => (
+												<SelectItem key={acc.id}>{acc.accountName}</SelectItem>
+											))}
+										</Select>
+									)}
+									{receiptForm.paymentMethod === 'Cheque' && (
+										<Input
+											label="Cheque number *"
+											value={receiptForm.checkNumber || ''}
+											onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, checkNumber: v }))}
+										/>
+									)}
+									<Input
+										label="Reference / transaction ID"
+										placeholder="Bank ref, MoMo txn…"
+										value={receiptForm.reference || ''}
+										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, reference: v }))}
+										className={receiptForm.paymentMethod === 'Cheque' ? '' : 'col-span-2'}
+									/>
+									<Input
+										label="Notes (optional)"
+										placeholder="Internal note"
+										value={receiptForm.notes || ''}
+										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, notes: v }))}
+										className="col-span-2"
+									/>
+								</div>
+
+								{!editingReceiptId && (
+									<Checkbox
+										isSelected={!!receiptForm.printAfterSave}
+										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, printAfterSave: v }))}
+										className="mb-2"
+									>
+										Print receipt after posting (uses hotel receipt template)
+									</Checkbox>
+								)}
 							</ModalBody>
 							<ModalFooter>
 								<Button variant="light" onPress={onClose}>Cancel</Button>
-								<Button color="primary" onPress={saveReceipt}>Save Receipt</Button>
+								<Button color="primary" onPress={saveReceipt}>
+									{editingReceiptId
+										? 'Save Changes'
+										: selectedReceiptTarget?.kind === 'folio'
+											? 'Post to Folio'
+											: receiptForm.paymentKind === 'wht_only'
+												? 'Record WHT'
+												: receiptForm.paymentKind === 'wht_settlement'
+													? 'Record Payment + WHT'
+													: 'Post Receipt'}
+								</Button>
 							</ModalFooter>
 						</>
 					)}
 				</ModalContent>
 			</Modal>
 
-			{/* Invoice Detail Modal - Clean Accounting Style */}
+			{/* Print Receipt Modal — same folio/invoice picker as Record Receipt */}
+			<Modal isOpen={isPrintReceiptOpen} onOpenChange={setIsPrintReceiptOpen} size="2xl">
+				<ModalContent>
+					{(onClose) => (
+						<>
+							<ModalHeader>🖨️ Print Customer Receipt</ModalHeader>
+							<ModalBody>
+								{formError && (
+									<div className="text-red-600 text-sm mb-3 p-2 bg-red-50 rounded">{formError}</div>
+								)}
+								<p className="text-sm text-gray-600 mb-4">
+									Select the same folio or invoice used when recording the payment, then choose which
+									payment to print.
+								</p>
+								<Select
+									label="Folio or invoice"
+									placeholder="In-house guest or posted invoice"
+									selectedKeys={printForm.targetKey ? [printForm.targetKey] : []}
+									onSelectionChange={(s) => onPrintTargetSelect(Array.from(s)[0] as string | null)}
+									className="mb-4"
+								>
+									{receiptTargets.map((target: ReceiptTarget) => (
+										<SelectItem key={target.key} textValue={target.label}>
+											<div className="flex flex-col gap-0.5">
+												<span>{target.label}</span>
+												<span className="text-xs text-gray-500">{target.sourceBadge}</span>
+											</div>
+										</SelectItem>
+									))}
+								</Select>
+
+								{selectedPrintTarget && (
+									<Select
+										label="Payment to print"
+										placeholder="Select payment"
+										selectedKeys={
+											selectedPrintPayment?.id ? [selectedPrintPayment.id] : []
+										}
+										onSelectionChange={(s) =>
+											setPrintForm((f) => ({
+												...f,
+												paymentId: Array.from(s)[0] as string,
+											}))
+										}
+										isDisabled={printTargetPayments.length === 0}
+									>
+										{printTargetPayments.map((p) => (
+											<SelectItem
+												key={p.id}
+												textValue={`${p.paymentNumber || p.id} — ${printCurrency}${Number(p.amount || 0).toLocaleString()}`}
+											>
+												{p.paymentNumber || p.id} — {new Date(p.date).toLocaleString()} —{' '}
+												{printCurrency}
+												{Number(p.amount || 0).toLocaleString()}
+											</SelectItem>
+										))}
+									</Select>
+								)}
+
+								{selectedPrintTarget && printTargetPayments.length === 0 && (
+									<p className="text-sm text-amber-700 mt-3 p-2 bg-amber-50 rounded">
+										No payments found for this target yet. Record a receipt first, or pick another
+										folio/invoice.
+									</p>
+								)}
+							</ModalBody>
+							<ModalFooter>
+								<Button variant="light" onPress={onClose}>Cancel</Button>
+								<Button
+									color="primary"
+									isDisabled={!selectedPrintPayment}
+									onPress={runPrintReceipt}
+								>
+									Print
+								</Button>
+							</ModalFooter>
+						</>
+					)}
+				</ModalContent>
+			</Modal>
+
+			{/* Invoice Detail Modal */}
 			<Modal isOpen={isDetailOpen} onOpenChange={setIsDetailOpen} size="5xl" scrollBehavior="inside">
 				<ModalContent className="max-w-[1200px]">
 					{(onClose) => {
@@ -2091,14 +3539,42 @@ export default function AccountsReceivable() {
                             </ModalBody>
 								<ModalFooter className="border-t bg-white">
 									<Button variant="flat" onPress={onClose}>Close</Button>
-									{!isProforma && balance > 0 && (
-										<Button 
-											color="warning" 
-											variant="flat" 
-											onPress={() => { openWHTPayment(selectedInvoice); setIsDetailOpen(false); }}
-										>
-											💰 Record WHT Payment
+									{isProforma && (
+										<Button color="primary" onPress={() => handleConvertProforma(selectedInvoice)}>
+											Convert to sales invoice
 										</Button>
+									)}
+									{!isProforma && selectedInvoice.status !== 'Void' && isManualArApSource(selectedInvoice.sourceModule) && invoiceReceipts.length === 0 && (
+										<Button color="danger" variant="flat" onPress={() => handleVoidInvoice(selectedInvoice)}>
+											Void invoice
+										</Button>
+									)}
+									{!isProforma && balance > 0 && (
+										<>
+											<Button
+												color="primary"
+												variant="flat"
+												onPress={() => { openReceiptForm(selectedInvoice); setIsDetailOpen(false); }}
+											>
+												➕ Record receipt
+											</Button>
+											<Button 
+												color="warning" 
+												variant="flat" 
+												onPress={() => { openWHTPayment(selectedInvoice, 'settlement'); setIsDetailOpen(false); }}
+											>
+												💰 Payment + WHT
+											</Button>
+											{computeInvoiceWhtSettlement(selectedInvoice, taxConfigs).whtTotalRemaining > 0 && (
+												<Button 
+													color="secondary" 
+													variant="flat" 
+													onPress={() => { openWHTPayment(selectedInvoice, 'wht_only'); setIsDetailOpen(false); }}
+												>
+													📜 WHT only
+												</Button>
+											)}
+										</>
 									)}
 									<Button color="primary" variant="flat" onPress={() => printInvoicePDF(selectedInvoice)}>
 										Print PDF
@@ -2126,7 +3602,13 @@ export default function AccountsReceivable() {
 										<div>
 											<div className="flex items-center gap-2 mb-1">
 												<h3 className="text-xl font-bold text-gray-900">PAYMENT RECEIPT</h3>
-												<Chip size="sm" variant="flat" color="success">POSTED</Chip>
+												<Chip
+													size="sm"
+													variant="flat"
+													color={selectedReceipt.status === 'Void' ? 'danger' : 'success'}
+												>
+													{selectedReceipt.status === 'Void' ? 'VOID' : 'POSTED'}
+												</Chip>
 											</div>
 											<p className="text-lg font-mono text-gray-700">{selectedReceipt.paymentNumber || selectedReceipt.id}</p>
 										</div>
@@ -2243,8 +3725,24 @@ export default function AccountsReceivable() {
 								</ModalBody>
 								<ModalFooter className="border-t bg-white">
 									<Button variant="flat" onPress={onClose}>Close</Button>
+									{selectedReceipt.status !== 'Void' && receiptCanEdit(selectedReceipt) && (
+										<Button
+											variant="flat"
+											onPress={() => {
+												openEditReceiptForm(selectedReceipt);
+												setIsReceiptDetailOpen(false);
+											}}
+										>
+											Edit
+										</Button>
+									)}
+									{selectedReceipt.status !== 'Void' && receiptCanVoid(selectedReceipt) && (
+										<Button color="danger" variant="flat" onPress={() => handleVoidReceipt(selectedReceipt)}>
+											Void receipt
+										</Button>
+									)}
 									<Button color="primary" variant="flat" onPress={() => printReceiptPDF(selectedReceipt)}>
-										Print PDF
+										Print Receipt
 									</Button>
 								</ModalFooter>
 							</>

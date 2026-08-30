@@ -514,7 +514,7 @@ export default function CheckOutsPage() {
     const baseSum = (folio.charges || []).reduce((s, c) => s + (c.amount || 0), 0);
     const taxSum = (folio.charges || []).reduce((s, c) => s + (c.tax || 0), 0);
     const breakdown = salesTaxBreakdown(baseSum);
-    const taxes = { vat: breakdown.vat, nhil: breakdown.nhil, levy: breakdown.tourism };
+    const taxes = { vat: breakdown.vat, nhil: breakdown.nhil, levy: breakdown.tourism, gefl: breakdown.getfund };
     const payments = (folio.payments || []).filter(p => p.status === 'completed').reduce((s, p) => s + (p.amount || 0), 0);
     const subTotal = baseSum;
     const grandTotal = baseSum + taxSum;
@@ -825,7 +825,7 @@ export default function CheckOutsPage() {
                             docDate: inv.createdAt,
                             title: 'Invoice',
                             items: (frontOfficeStore.getOrCreateFolio(checkOut.id).charges || []).map(c => ({ description: c.description, amount: c.amount + (c.tax || 0), date: c.date })),
-                            totals: { subTotal: inv.subtotal, taxes: { vat: undefined }, payments: (checkOut.totalPayments || 0), balance: inv.balance, grandTotal: inv.totalAmount },
+                            totals: { subTotal: inv.subtotal, taxes: (() => { const b = salesTaxBreakdown(inv.subtotal); return { vat: b.vat, nhil: b.nhil, levy: b.tourism, gefl: b.getfund }; })(), payments: (checkOut.totalPayments || 0), balance: inv.balance, grandTotal: inv.totalAmount },
                             footerNotes: ['Thank you for staying with us.'],
                             currency: '₵'
                           } as any;

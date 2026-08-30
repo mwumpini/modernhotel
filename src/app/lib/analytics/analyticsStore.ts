@@ -372,20 +372,21 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
     const occupiedRooms = dailyFlashReport.occupancy.occupiedRooms;
     const totalRooms = dailyFlashReport.occupancy.totalRooms;
     const totalGuests = checkInGuests.length;
-    
+    const occupancyRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
+
     // Calculate metrics with historical comparison (simplified)
     const metrics: AnalyticsMetric[] = [
       {
         id: 'occupancy-rate',
         name: 'Occupancy Rate',
-        value: (occupiedRooms / totalRooms) * 100,
+        value: occupancyRate,
         previousValue: 75, // Example historical value
-        change: ((occupiedRooms / totalRooms) * 100) - 75,
-        changePercentage: (((occupiedRooms / totalRooms) * 100) - 75) / 75 * 100,
+        change: occupancyRate - 75,
+        changePercentage: (occupancyRate - 75) / 75 * 100,
         target: 85,
         unit: '%',
         category: 'operational',
-        trend: (occupiedRooms / totalRooms) * 100 > 75 ? 'up' : 'down',
+        trend: occupancyRate > 75 ? 'up' : 'down',
         formula: '(Occupied Rooms / Total Rooms) × 100',
         description: 'Percentage of rooms occupied compared to total available rooms',
         lastUpdated: new Date().toISOString()
@@ -408,14 +409,14 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
       {
         id: 'revpar',
         name: 'Revenue Per Available Room (RevPAR)',
-        value: totalRevenue / totalRooms,
+        value: totalRooms > 0 ? totalRevenue / totalRooms : 0,
         previousValue: 600, // Example historical value
-        change: (totalRevenue / totalRooms) - 600,
-        changePercentage: ((totalRevenue / totalRooms) - 600) / 600 * 100,
+        change: (totalRooms > 0 ? totalRevenue / totalRooms : 0) - 600,
+        changePercentage: ((totalRooms > 0 ? totalRevenue / totalRooms : 0) - 600) / 600 * 100,
         target: 650,
         unit: 'GHS',
         category: 'financial',
-        trend: (totalRevenue / totalRooms) > 600 ? 'up' : 'down',
+        trend: (totalRooms > 0 ? totalRevenue / totalRooms : 0) > 600 ? 'up' : 'down',
         formula: 'Total Revenue / Total Rooms',
         description: 'Revenue generated per available room, regardless of occupancy',
         lastUpdated: new Date().toISOString()
@@ -518,7 +519,7 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
         fBRevenue,
         otherRevenue,
         averageDailyRate: occupiedRooms > 0 ? roomRevenue / occupiedRooms : 0,
-        revenuePerAvailableRoom: totalRevenue / totalRooms,
+        revenuePerAvailableRoom: totalRooms > 0 ? totalRevenue / totalRooms : 0,
         revenuePerOccupiedRoom: occupiedRooms > 0 ? totalRevenue / occupiedRooms : 0,
         revenueGrowthRate: 12.5, // Example value
         revenueBySource: [
@@ -571,7 +572,7 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
     const occupiedRooms = dailyFlashReport.occupancy.occupiedRooms;
     const outOfOrderRooms = dailyFlashReport.occupancy.outOfOrderRooms;
     const availableRooms = totalRooms - occupiedRooms - outOfOrderRooms;
-    const occupancyRate = (occupiedRooms / totalRooms) * 100;
+    const occupancyRate = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
     
     return {
       occupancyRate,

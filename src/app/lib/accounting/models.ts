@@ -1,21 +1,41 @@
 // Accounting Models for Ghana/Africa Hotel Management System
 
-// Chart of Accounts Structure
+/** Tree COA account types (name-based chart; codes are internal GL keys). */
+export const COA_ACCOUNT_TYPES = [
+  'Asset',
+  'Liability',
+  'Equity',
+  'Revenue',
+  'Cost of Sales',
+  'Operating Expense',
+  'Contra',
+] as const;
+
+export type CoaAccountType = (typeof COA_ACCOUNT_TYPES)[number] | 'Expense';
+
+// Chart of Accounts Structure — flat list with parentId (rendered as nested tree in UI)
 export interface ChartOfAccounts {
   id: string;
-  code: string;
   name: string;
-  type: 'Asset' | 'Liability' | 'Equity' | 'Revenue' | 'Expense';
+  type: CoaAccountType;
+  parentId: string | null;
+  position: number;
+  /** Internal GL key; not shown in the tree UI. */
+  code: string;
+  /** Computed nesting depth (1 = root). */
+  level: number;
+  /** @deprecated Legacy parent code link — synced from parentId for journal rollups. */
+  parentAccount?: string;
   category: string;
   subcategory?: string;
   description?: string;
   isActive: boolean;
-  parentAccount?: string;
-  level: number; // 1 = Main account, 2 = Sub-account, 3 = Detail account
-  currency: string; // GHS, USD, EUR, etc.
+  currency: string;
   createdAt: string;
   updatedAt: string;
 }
+
+export type CoaTreeNode = ChartOfAccounts & { children: CoaTreeNode[] };
 
 // Journal Entry
 export interface JournalEntry {
@@ -119,6 +139,8 @@ export interface BankAccount {
   iban?: string;
   currency: string;
   glAccountCode: string;
+  /** go_live = posts opening balance to GL (Dr bank / Cr equity); period = register & reconciliation only. */
+  openingBalanceType?: 'go_live' | 'period';
   openingBalance: number;
   currentBalance: number;
   isActive: boolean;
@@ -141,6 +163,10 @@ export interface BankTransaction {
   reconciledAt?: string;
   reconciledBy?: string;
   journalEntryId?: string;
+  /** Transfer: counterparty bank account id. */
+  transferToAccountId?: string;
+  /** Transfer: paired register line id. */
+  linkedTransactionId?: string;
   createdAt: string;
 }
 
@@ -243,6 +269,8 @@ export interface Invoice {
   whtStatus?: 'N/A' | 'Pending' | 'Partial' | 'Complete'; // WHT certificate status
   /** Automated GL / AR sub-ledger classification (NHIA, insurers, etc.) */
   salesLedgerPreset?: 'nhia_claim' | 'insurance_receivable' | 'standard';
+  /** Proforma invoice — no GL until converted to posted sales invoice. */
+  isProforma?: boolean;
 }
 
 // Invoice Line
@@ -283,9 +311,19 @@ export interface Payment {
   journalEntryId?: string;
   /** Originating module (manual_ar_ap, restaurant, integration_extended_*, etc.) */
   sourceModule?: string;
+  /** Display / print metadata (persisted in details JSON) */
+  customerName?: string;
+  staffName?: string;
+  receiptTargetKey?: string;
+  reservationId?: string;
+  folioPaymentId?: string;
+  /** Revenue centre code (RM, REST, etc.) for dimensional reporting on receipts */
+  revenueCenterCode?: string;
   // WHT Certificate fields (for payments with withheld tax)
   isWHTCertificate?: boolean;
   whtCertificateId?: string; // Link to WHTCertificate record
+  /** Full certificate snapshot — persisted in payment.details for DB round-trip */
+  whtCertificateData?: WHTCertificate;
   whtAmount?: number; // Amount of WHT (5% of subtotal)
   whtVatAmount?: number; // Amount of WHT-VAT (7% of VAT)
   // Receipt acknowledgement & files
@@ -323,7 +361,7 @@ export interface WHTCertificate {
   whtVatAmount?: number; // WHT-VAT withheld
   totalWithheld: number; // whtAmount + whtVatAmount
   // Status
-  status: 'Pending' | 'Received' | 'Verified' | 'Filed' | 'Used';
+  status: 'Pending' | 'Received' | 'Verified' | 'Filed' | 'Used' | 'Void';
   // GL Entries
   journalEntryId?: string;
   // Tax credit tracking
@@ -548,6 +586,10 @@ export const GHANA_TAX_CODES = {
   COVID19:     { code: 'COVID19',     name: 'COVID-19 Recovery Levy (legacy)', rate: 0,   glCode: '2140' },
   TOURISM:     { code: 'TOURISM',     name: 'Tourism Development Levy',       rate: 1.0,  glCode: '2150' },
   WITHHOLDING: { code: 'WITHHOLDING', name: 'Withholding Tax (Services)',     rate: 7.5,  glCode: '2160' },
+  /** AR certificate: withheld on invoice subtotal (configurable; not in VAT stack) */
+  WHT_CERT:    { code: 'WHT_CERT',    name: 'WHT Certificate (on subtotal)', rate: 5.0,  glCode: '1230' },
+  /** AR certificate: withheld on VAT portion */
+  WHT_VAT_CERT:{ code: 'WHT_VAT_CERT',name: 'WHT Certificate (on VAT)',       rate: 7.0,  glCode: '1240' },
 };
 
 // Standard Chart of Accounts for Ghana Hotels

@@ -1,13 +1,32 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { 
+import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip,
-  Tabs, Tab, Spinner, Alert, Progress
+  Tabs, Tab, Spinner, Alert, Progress, Pagination
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
+
+function downloadCSV(data: any[], filename: string, columns: { key: string; label: string }[]) {
+  const header = columns.map(c => c.label).join(',');
+  const rows = data.map(row =>
+    columns.map(c => {
+      const val = row[c.key];
+      const str = String(val ?? '').replace(/"/g, '""');
+      return str.includes(',') ? `"${str}"` : str;
+    }).join(',')
+  );
+  const csv = [header, ...rows].join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${filename}_${new Date().toISOString().split('T')[0]}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
 export default function AuditControlsPage() {
   const {
@@ -32,15 +51,11 @@ export default function AuditControlsPage() {
       const matchesAction = filterAction === 'all' || entry.action === filterAction;
       const matchesTable = filterTable === 'all' || entry.tableName === filterTable;
       
-      let matchesDate = true;
-      if (dateRange.start && dateRange.end) {
-        const entryDate = new Date(entry.timestamp);
-        const startDate = new Date(dateRange.start);
-        const endDate = new Date(dateRange.end);
-        matchesDate = entryDate >= startDate && entryDate <= endDate;
-      }
-      
-      return matchesSearch && matchesAction && matchesTable && matchesDate;
+      const entryDate = new Date(entry.timestamp);
+      const matchesStart = !dateRange.start || entryDate >= new Date(dateRange.start);
+      const matchesEnd = !dateRange.end || entryDate <= new Date(new Date(dateRange.end).setHours(23, 59, 59, 999));
+
+      return matchesSearch && matchesAction && matchesTable && matchesStart && matchesEnd;
     });
   }, [auditTrail, searchTerm, filterAction, filterTable, dateRange]);
 
@@ -185,6 +200,21 @@ export default function AuditControlsPage() {
                     color="primary"
                     variant="bordered"
                     startContent={<span>📥</span>}
+                    onPress={() => downloadCSV(
+                      filteredAuditTrail.map(entry => ({
+                        ...entry,
+                        details: entry.newValues ? JSON.stringify(entry.newValues) : (entry.oldValues ? JSON.stringify(entry.oldValues) : ''),
+                      })),
+                      'audit_trail',
+                      [
+                        { key: 'timestamp', label: 'Timestamp' },
+                        { key: 'userId', label: 'User' },
+                        { key: 'action', label: 'Action' },
+                        { key: 'tableName', label: 'Table' },
+                        { key: 'recordId', label: 'Record ID' },
+                        { key: 'details', label: 'Details' },
+                      ]
+                    )}
                   >
                     Export
                   </Button>
@@ -248,6 +278,11 @@ export default function AuditControlsPage() {
                     ))}
                   </TableBody>
                 </Table>
+                {auditTrailPages > 1 && (
+                  <div className="flex justify-center mt-4">
+                    <Pagination total={auditTrailPages} page={page} onChange={setPage} showControls />
+                  </div>
+                )}
               </div>
             </Tab>
 

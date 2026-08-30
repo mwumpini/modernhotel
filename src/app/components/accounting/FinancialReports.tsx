@@ -7,6 +7,7 @@ import {
   Chip, Tabs, Tab, Divider, Spinner, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
   Checkbox, RadioGroup, Radio
 } from "@heroui/react";
+import { toRollupCoa } from '@/app/lib/accounting/coaHierarchy';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { GHANA_CHART_OF_ACCOUNTS } from '@/app/lib/accounting/models';
 import {
@@ -242,13 +243,7 @@ export default function FinancialReportsPage() {
   /** Profit or loss: movement in selected period. Statement of financial position: cumulative through reporting date. */
   const rollupCoa: RollupCoa[] = useMemo(() => {
     const raw = chartOfAccounts.length > 0 ? chartOfAccounts : GHANA_CHART_OF_ACCOUNTS;
-    return raw.map((a) => ({
-      code: a.code,
-      name: a.name,
-      type: a.type as RollupCoa['type'],
-      category: a.category,
-      level: a.level,
-    }));
+    return toRollupCoa(raw);
   }, [chartOfAccounts]);
 
   const expandAll = () =>
@@ -289,6 +284,12 @@ export default function FinancialReportsPage() {
     const totalExpenses = sumBalance(expenseAccounts);
     const netIncome = totalRevenue - totalExpenses;
 
+    // totalEquity is a plug (Assets − Liabilities), shown as "Total Equity" together with an
+    // itemized "Accumulated results (unclosed P&L)" row equal to accumulatedUnclosedPlug — so
+    // totalLiabAndEquity (= Liabilities + the plug) is definitionally equal to totalAssets and
+    // is NOT an independent balance check; it's a display subtotal only. The real check is
+    // accumulatedUnclosedPlug itself: it isolates whatever isn't explained by real ledger
+    // equity + this period's known unclosed P&L (see the "Balance Check" card below).
     const totalEquity = totalAssets - totalLiabilities;
     const accumulatedUnclosedPlug = totalEquity - totalEquityLedger;
     const totalLiabAndEquity = totalLiabilities + totalEquity;
@@ -345,10 +346,28 @@ export default function FinancialReportsPage() {
     return flattenTree(accountTreeCumulative);
   }, [accountTreeCumulative, showZeroBalances, expandedSections]);
 
-  const trialBalanceTotals = useMemo(() => ({
-    debit: trialBalanceRows.reduce((s, r) => s + (r.debit || 0), 0),
-    credit: trialBalanceRows.reduce((s, r) => s + (r.credit || 0), 0),
-  }), [trialBalanceRows]);
+  // Trial Balance footer totals — summed over LEAF accounts only (accounts with no children).
+  // A parent/header node's debit/credit is already a cumulative roll-up of its descendants
+  // (see financialReportRollup.ts), so summing every row in the displayed tree — which is what
+  // `trialBalanceRows` does for on-screen hierarchy display — would count each real posting
+  // once per ancestor level. Independent of `showZeroBalances`/`expandedSections` so the total
+  // can't shift just because the user expanded or collapsed a section.
+  const trialBalanceTotals = useMemo(() => {
+    let debit = 0;
+    let credit = 0;
+    const walk = (nodes: AccountNode[]) => {
+      for (const node of nodes) {
+        if (node.children.length > 0) {
+          walk(node.children);
+        } else {
+          debit += node.debit > node.credit ? node.debit - node.credit : 0;
+          credit += node.credit > node.debit ? node.credit - node.debit : 0;
+        }
+      }
+    };
+    walk(accountTreeCumulative);
+    return { debit, credit };
+  }, [accountTreeCumulative]);
 
   // ==================== RENDER ACCOUNT ROWS ====================
   const renderAccountRows = useCallback((nodes: AccountNode[], showDebitCredit = false): JSX.Element[] => {
@@ -886,13 +905,16 @@ export default function FinancialReportsPage() {
                   </Card>
                 </div>
 
-                {/* Balance Check */}
-                <Card className={`mt-4 shadow-none border ${Math.abs(totals.totalAssets - totals.totalLiabAndEquity) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                {/* Balance Check — real debit=credit check across every posted journal entry
+                    through the report date. (Assets vs Liabilities+Equity can't be used here:
+                    Equity is displayed as a plug, Assets − Liabilities by construction, so that
+                    comparison is always exactly zero regardless of what's actually posted.) */}
+                <Card className={`mt-4 shadow-none border ${Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <CardBody className="py-3">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium text-gray-700">Balance Check (Assets = Liabilities + Equity)</span>
-                      <Chip size="sm" variant="flat" color={Math.abs(totals.totalAssets - totals.totalLiabAndEquity) < 0.01 ? 'success' : 'warning'}>
-                        {Math.abs(totals.totalAssets - totals.totalLiabAndEquity) < 0.01 ? '✓ Balanced' : '⚠ Difference: ' + formatCurrency(Math.abs(totals.totalAssets - totals.totalLiabAndEquity), true)}
+                      <span className="font-medium text-gray-700">Balance Check (Debits = Credits, all posted entries)</span>
+                      <Chip size="sm" variant="flat" color={Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'success' : 'warning'}>
+                        {Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? '✓ Balanced' : '⚠ Difference: ' + formatCurrency(Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit), true)}
                       </Chip>
                     </div>
                   </CardBody>
@@ -1068,15 +1090,18 @@ export default function FinancialReportsPage() {
                   </Card>
                 </div>
 
-                {/* Balance Check */}
-                <Card className={`mt-4 shadow-none border ${Math.abs(totals.totalAssets - totals.totalLiabAndEquity) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                {/* Balance Check — real debit=credit check across every posted journal entry
+                    through the report date. (Assets vs Liabilities+Equity isn't shown here:
+                    Equity is displayed as a plug, Assets − Liabilities by construction, so that
+                    comparison is always exactly zero regardless of what's actually posted.) */}
+                <Card className={`mt-4 shadow-none border ${Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <CardBody className="py-3">
                     <div className="flex items-center justify-center gap-4 text-sm flex-wrap">
-                      <span>Assets: <span className="font-mono font-semibold">{formatCurrency(totals.totalAssets, true)}</span></span>
+                      <span>Debits: <span className="font-mono font-semibold">{formatCurrency(trialBalanceTotals.debit, true)}</span></span>
                       <span className="text-gray-400">=</span>
-                      <span>Liab + Equity: <span className="font-mono font-semibold">{formatCurrency(totals.totalLiabAndEquity, true)}</span></span>
-                      <Chip size="sm" variant="flat" color={Math.abs(totals.totalAssets - totals.totalLiabAndEquity) < 0.01 ? 'success' : 'warning'}>
-                        {Math.abs(totals.totalAssets - totals.totalLiabAndEquity) < 0.01 ? '✓ Balanced' : '⚠ Diff: ' + formatCurrency(Math.abs(totals.totalAssets - totals.totalLiabAndEquity), true)}
+                      <span>Credits: <span className="font-mono font-semibold">{formatCurrency(trialBalanceTotals.credit, true)}</span></span>
+                      <Chip size="sm" variant="flat" color={Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'success' : 'warning'}>
+                        {Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? '✓ Balanced' : '⚠ Diff: ' + formatCurrency(Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit), true)}
                       </Chip>
                     </div>
                   </CardBody>

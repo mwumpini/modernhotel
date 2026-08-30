@@ -14,6 +14,8 @@ import {
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useRouter } from 'next/navigation';
+import { useStockStore } from '../lib/inventory/stockStore';
+import { useSupplierStore } from '../lib/inventory/supplierStore';
 
 // Import specialized Stores/Inventory components - lazy load heavy components
 const InventorySupplyChainDashboard = lazy(() => import('./InventorySupplyChainDashboard'));
@@ -76,36 +78,61 @@ const InfoIcon = ({ description }: { description: string }) => {
 export default function StoresMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const router = useRouter();
-  
-  // Sample Stores/Inventory data - in real app, this would come from stores
-  const totalItems = 1250;
-  const lowStockItems = 45;
-  const outOfStockItems = 12;
-  const overstockItems = 8;
-  
-  // Inventory value data
-  const totalInventoryValue = 125000;
-  const lowStockValue = 8500;
-  const outOfStockValue = 3200;
-  const overstockValue = 5600;
-  
-  // Supplier data
-  const totalSuppliers = 28;
-  const activeSuppliers = 25;
-  const pendingSuppliers = 3;
-  const supplierRating = 4.2;
-  
-  // Purchase order data
-  const totalPurchaseOrders = 15;
-  const pendingOrders = 8;
-  const confirmedOrders = 5;
-  const deliveredOrders = 2;
 
-  // Today's operations
+  // Real data — hydrated from the DB on mount below. These stores already power
+  // InventorySupplyChainDashboard.tsx; this landing page just reads the same state.
+  const stockItems = useStockStore((s) => s.stockItems);
+  const stockMovements = useStockStore((s) => s.stockMovements);
+  const getLowStockItems = useStockStore((s) => s.getLowStockItems);
+  const getOutOfStockItems = useStockStore((s) => s.getOutOfStockItems);
+  const getOverstockItems = useStockStore((s) => s.getOverstockItems);
+  const getTotalInventoryValue = useStockStore((s) => s.getTotalInventoryValue);
+  const hydrateStock = useStockStore((s) => s.hydrateFromApi);
+  const suppliers = useSupplierStore((s) => s.suppliers);
+  const purchaseOrders = useSupplierStore((s) => s.purchaseOrders);
+  const hydrateSuppliers = useSupplierStore((s) => s.hydrateSuppliersFromApi);
+  const hydratePOs = useSupplierStore((s) => s.hydratePurchaseOrdersFromApi);
+
+  useEffect(() => {
+    hydrateStock();
+    hydrateSuppliers();
+    hydratePOs();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const today = new Date().toISOString().slice(0, 10);
-  const itemsReceivedToday = 45;
-  const itemsIssuedToday = 32;
-  const purchaseOrdersCreatedToday = 3;
+  const isToday = (d: Date) => new Date(d).toISOString().slice(0, 10) === today;
+
+  const lowStockItemsList = getLowStockItems();
+  const outOfStockItemsList = getOutOfStockItems();
+  const overstockItemsList = getOverstockItems();
+  const valueOf = (items: typeof stockItems) => items.reduce((sum, i) => sum + i.currentStock * i.unitCost, 0);
+
+  const totalItems = stockItems.length;
+  const lowStockItems = lowStockItemsList.length;
+  const outOfStockItems = outOfStockItemsList.length;
+  const overstockItems = overstockItemsList.length;
+
+  const totalInventoryValue = getTotalInventoryValue();
+  const lowStockValue = valueOf(lowStockItemsList);
+  const outOfStockValue = valueOf(outOfStockItemsList);
+  const overstockValue = valueOf(overstockItemsList);
+
+  const totalSuppliers = suppliers.length;
+  const activeSuppliers = suppliers.filter((s) => s.isActive).length;
+  const pendingSuppliers = totalSuppliers - activeSuppliers;
+  const supplierRating = suppliers.length > 0
+    ? Number((suppliers.reduce((sum, s) => sum + (s.rating || 0), 0) / suppliers.length).toFixed(1))
+    : 0;
+
+  const totalPurchaseOrders = purchaseOrders.length;
+  const pendingOrders = purchaseOrders.filter((p) => p.status === 'draft' || p.status === 'sent').length;
+  const confirmedOrders = purchaseOrders.filter((p) => p.status === 'confirmed' || p.status === 'in-transit').length;
+  const deliveredOrders = purchaseOrders.filter((p) => p.status === 'delivered' || p.status === 'closed').length;
+
+  const itemsReceivedToday = stockMovements.filter((m) => m.movementType === 'in' && isToday(m.createdAt)).length;
+  const itemsIssuedToday = stockMovements.filter((m) => m.movementType === 'out' && isToday(m.createdAt)).length;
+  const purchaseOrdersCreatedToday = purchaseOrders.filter((p) => isToday(p.createdAt)).length;
 
   // Operational items following the uniform pattern
   const operationalItems = [
@@ -140,7 +167,7 @@ export default function StoresMainDashboard() {
       category: 'Compliance & Reporting',
       items: [
         { title: 'Inventory Reports', icon: '📊', description: 'Stock level and value reports', status: 'active', count: 0 },
-        { title: 'Ghana Compliance', icon: '🔒', description: 'Import/export regulations', status: 'active', count: 100 },
+        { title: 'Ghana Compliance', icon: '🔒', description: 'Import/export regulations', status: 'active', count: 0 },
         { title: 'VAT Management', icon: '🧾', description: 'Tax compliance and reporting', status: 'active', count: 0 },
         { title: 'Analytics Dashboard', icon: '📈', description: 'Performance insights', status: 'active', count: 0 },
       ]
@@ -156,16 +183,12 @@ export default function StoresMainDashboard() {
         setSelectedTab('inventory');
         break;
       case 'create-po':
-        setSelectedTab('purchase-orders');
-        break;
       case 'add-supplier':
-        setSelectedTab('suppliers');
-        break;
       case 'stock-count':
-        setSelectedTab('operations');
-        break;
       case 'low-stock-report':
-        setSelectedTab('reports');
+        // All of these live inside the single Inventory & Supply Chain tab's own
+        // sub-navigation now — there's no separate outer tab per action anymore.
+        setSelectedTab('inventory');
         break;
     }
   };
@@ -427,14 +450,10 @@ export default function StoresMainDashboard() {
                             className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
                             onClick={() => {
                               // Handle navigation based on item type
-                              if (item.title.includes('Stock Items') || item.title.includes('Low Stock Alerts')) {
-                                setSelectedTab('inventory');
-                              } else if (item.title.includes('Supplier Management') || item.title.includes('Purchase Orders')) {
-                                setSelectedTab('suppliers');
-                              } else if (item.title.includes('Goods Receipt') || item.title.includes('Goods Issue')) {
-                                setSelectedTab('operations');
-                              } else if (item.title.includes('Inventory Reports') || item.title.includes('Analytics Dashboard')) {
+                              if (item.title.includes('Analytics Dashboard')) {
                                 setSelectedTab('analytics');
+                              } else {
+                                setSelectedTab('inventory');
                               }
                             }}
                           >
@@ -467,31 +486,7 @@ export default function StoresMainDashboard() {
               </div>
             </Tab>
 
-            <Tab key="inventory" title="📦 Inventory Management">
-              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
-                <InventorySupplyChainDashboard />
-              </Suspense>
-            </Tab>
-
-            <Tab key="suppliers" title="🏢 Supplier Management">
-              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
-                <InventorySupplyChainDashboard />
-              </Suspense>
-            </Tab>
-
-            <Tab key="purchase-orders" title="📋 Purchase Orders">
-              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
-                <InventorySupplyChainDashboard />
-              </Suspense>
-            </Tab>
-
-            <Tab key="operations" title="🔄 Stock Operations">
-              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
-                <InventorySupplyChainDashboard />
-              </Suspense>
-            </Tab>
-
-            <Tab key="reports" title="📊 Reports & Analytics">
+            <Tab key="inventory" title="📦 Inventory & Supply Chain">
               <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
                 <InventorySupplyChainDashboard />
               </Suspense>

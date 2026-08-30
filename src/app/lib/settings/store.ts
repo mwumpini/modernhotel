@@ -1,6 +1,26 @@
 'use client';
 
 import { create } from 'zustand';
+import { getClientTenantSubdomain } from '../api/clientTenant';
+
+// Best-effort background sync of just the no-show policy fields to the server
+// (see /api/settings/room-management) so server-side jobs like the night-audit
+// cron can apply the same policy configured here — the rest of roomManagement
+// stays client-only for now.
+function syncNoShowPolicyToApi(rm: { noShowPolicyEnabled?: boolean; noShowChargeType?: string; noShowChargeValue?: number }) {
+  if (typeof window === 'undefined') return;
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  fetch('/api/settings/room-management', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': t },
+    body: JSON.stringify({
+      noShowPolicyEnabled: rm.noShowPolicyEnabled,
+      noShowChargeType: rm.noShowChargeType,
+      noShowChargeValue: rm.noShowChargeValue,
+    }),
+  }).catch((e) => console.warn('[Settings] Failed to sync no-show policy:', e));
+}
 
 export interface CountryCompliance {
   countryCode: string;
@@ -924,7 +944,9 @@ export interface RoomManagementSettings {
     basePrice: number;
     isActive: boolean;
     marketSegment: string;
-    
+    /** What's included in the nightly rate — drives the Guest Count & Meal Plan Report. */
+    mealPlan?: 'room_only' | 'bed_breakfast' | 'half_board' | 'full_board';
+
     // NEW: Event & Conference Rate Management
     rateType: 'standard' | 'corporate' | 'event_conference' | 'package' | 'fixed_price';
     eventSpecific?: {
@@ -2161,12 +2183,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       // Load current user
       const currentUser = localStorage.getItem('system.currentUser') ? JSON.parse(localStorage.getItem('system.currentUser')!) : undefined;
       set({ currentUser });
-      
+
+      // Pull the server's no-show policy (the one slice of roomManagement that's
+      // also read server-side, by the night-audit cron) so it's authoritative
+      // across devices/browsers rather than only ever reflecting this browser's
+      // localStorage.
+      const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
+      if (t) {
+        fetch('/api/settings/room-management', { headers: { 'x-tenant-subdomain': t } })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (data?.policy) {
+              set({ roomManagement: { ...get().roomManagement, ...data.policy } });
+            }
+          })
+          .catch((e) => console.warn('[Settings] Failed to hydrate no-show policy:', e));
+      }
+
     } catch (error) {
       console.error('Error loading settings:', error);
     }
   },
-  
+
   saveSettings: () => {
     try {
       const state = get();
@@ -2191,7 +2229,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       
       // Save room management settings
       localStorage.setItem('room.management', JSON.stringify(state.roomManagement));
-      
+      syncNoShowPolicyToApi(state.roomManagement);
+
       // Save POS settings
       localStorage.setItem('manager.pin', state.posSettings.managerPin);
       localStorage.setItem('print.method', state.posSettings.printMethod);

@@ -3,6 +3,7 @@
  * Uses the same COA / JE semantics as FinancialReports + financialReportRollup.
  */
 
+import { toRollupCoa } from './coaHierarchy';
 import type { ChartOfAccounts, GLBalance, JournalEntry } from './models';
 import { GHANA_CHART_OF_ACCOUNTS } from './models';
 import type { AccountNode, RollupCoa } from './financialReportRollup';
@@ -10,13 +11,7 @@ import { buildFinancialAccountTree, computeCashFlowFromJournals } from './financ
 
 /** Ghana template as roll-up rows when the store COA list is still empty. */
 export function defaultRollupCoa(): RollupCoa[] {
-  return GHANA_CHART_OF_ACCOUNTS.map((a) => ({
-    code: a.code,
-    name: a.name,
-    type: a.type as RollupCoa['type'],
-    category: a.category,
-    level: a.level,
-  }));
+  return toRollupCoa(GHANA_CHART_OF_ACCOUNTS);
 }
 
 function dayStart(d: Date): Date {
@@ -40,13 +35,7 @@ function jeTime(je: JournalEntry): number {
 export function coaToRollup(chartOfAccounts: ChartOfAccounts[], fallback: RollupCoa[]): RollupCoa[] {
   const raw = chartOfAccounts.length > 0 ? chartOfAccounts : [];
   if (raw.length === 0) return fallback;
-  return raw.map((a) => ({
-    code: a.code,
-    name: a.name,
-    type: a.type,
-    category: a.category,
-    level: a.level,
-  }));
+  return toRollupCoa(raw);
 }
 
 /** Resolve `YYYY-MM` to calendar month bounds (local). */
@@ -306,7 +295,8 @@ export function computeBalanceSheetFromJE(
     totalEquityLedger,
     totalEquity,
     totalLiabilitiesAndEquity,
-    balanced: Math.abs(imbalance) < 0.02,
+    // Matches the 0.01 tolerance used throughout FinancialReports.tsx's own balance checks.
+    balanced: Math.abs(imbalance) < 0.01,
     imbalance,
   };
 }

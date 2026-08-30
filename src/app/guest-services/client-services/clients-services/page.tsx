@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import PageLayout from '../../../components/PageLayout';
+import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
 import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Avatar, Badge, Switch, Tooltip, Pagination } from '@heroui/react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Textarea, useDisclosure, Tabs, Tab } from '@heroui/react';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
@@ -413,16 +414,30 @@ function ClientsServicesContent() {
 	}, []);
 
 
-    // Auto-open modal from query (?new=1&type=corporate)
+    // Auto-open modal from query (?new=1&type=corporate&name=John+Mensah)
     useEffect(() => {
         const openFlag = searchParams?.get('new');
         if (openFlag && !isNewOpen) {
             const t = (searchParams?.get('type') || '').toLowerCase();
-            if (t === 'corporate') {
-                setNewClient(prev => ({ ...prev, type: 'corporate', isCorporate: true }));
-            } else if (t === 'individual') {
-                setNewClient(prev => ({ ...prev, type: 'individual', isCorporate: false }));
-            }
+            const nameParam = searchParams?.get('name')?.trim();
+            const nameParts = nameParam ? nameParam.split(/\s+/) : [];
+
+            setNewClient(prev => {
+                const next = { ...prev };
+                if (t === 'corporate') {
+                    next.type = 'corporate';
+                    next.isCorporate = true;
+                    if (nameParam) next.companyName = nameParam;
+                } else {
+                    next.type = 'individual';
+                    next.isCorporate = false;
+                    if (nameParts.length > 0) {
+                        next.firstName = nameParts[0] || '';
+                        next.lastName = nameParts.slice(1).join(' ') || '';
+                    }
+                }
+                return next;
+            });
             setNewClientStep('basic');
             onNewOpen();
             // Clean URL
@@ -1024,6 +1039,7 @@ function ClientsServicesContent() {
 				<div className="max-w-[1800px] mx-auto">
 					<div className="mb-8 flex items-center justify-between">
 						<div>
+							<FrontOfficeBackButton />
 							<h1 className="text-3xl font-bold text-gray-900">👥 Clients & Services</h1>
 							<p className="text-gray-600">Manage clients, corporate accounts, and service offerings</p>
 						</div>

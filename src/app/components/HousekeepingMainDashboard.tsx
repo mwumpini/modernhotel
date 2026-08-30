@@ -94,6 +94,9 @@ export default function HousekeepingMainDashboard() {
   
   useEffect(() => {
     const unsubscribe = housekeepingStore.subscribe(() => setTick(t => t + 1));
+    // Pulls in real persisted tasks/maintenance/staff/room-status history —
+    // setTick above re-renders once this resolves and notifies listeners.
+    housekeepingStore.hydrateFromApi();
     return unsubscribe;
   }, []);
 
@@ -120,6 +123,10 @@ export default function HousekeepingMainDashboard() {
   const maintenanceRooms = allRooms.filter(r => r.status === 'maintenance' || r.status === 'out-of-order').length;
   const activeStaff = staff.filter(s => s.active).length;
   const totalRooms = allRooms.length;
+  const activeStaffList = staff.filter(s => s.active);
+  const avgStaffEfficiency = activeStaffList.length > 0
+    ? Math.round(activeStaffList.reduce((sum, s) => sum + s.efficiency, 0) / activeStaffList.length)
+    : 0;
 
   // Today's operations
   const todayIso = new Date().toISOString().slice(0,10);
@@ -143,15 +150,17 @@ export default function HousekeepingMainDashboard() {
         { title: 'Room Inspections', icon: '✅', description: 'Conduct quality inspections', status: 'active', count: stats.inspectionsCompleted },
         { title: 'Performance Metrics', icon: '📊', description: 'Staff efficiency tracking', status: 'active', count: activeStaff },
         { title: 'Daily Schedules', icon: '📋', description: 'Staff work schedules', status: 'active', count: staff.length },
-        { title: 'Quality Standards', icon: '🎯', description: 'Maintain service standards', status: 'active', count: 100 },
+        { title: 'Quality Standards', icon: '🎯', description: 'Maintain service standards', status: 'active', count: 0 },
       ]
     },
     {
+      // Cleaning-supplies inventory isn't tracked anywhere yet — no Prisma model exists
+      // for it (a separate, larger fix). Honest zeros rather than fabricated stock counts.
       category: 'Inventory & Supplies',
       items: [
-        { title: 'Supply Management', icon: '📦', description: 'Manage cleaning supplies', status: 'active', count: 25 },
-        { title: 'Stock Monitoring', icon: '🔄', description: 'Track inventory levels', status: 'active', count: 50 },
-        { title: 'Purchase Orders', icon: '📝', description: 'Order new supplies', status: 'active', count: 5 },
+        { title: 'Supply Management', icon: '📦', description: 'Manage cleaning supplies', status: 'active', count: 0 },
+        { title: 'Stock Monitoring', icon: '🔄', description: 'Track inventory levels', status: 'active', count: 0 },
+        { title: 'Purchase Orders', icon: '📝', description: 'Order new supplies', status: 'active', count: 0 },
         { title: 'Cost Control', icon: '💰', description: 'Monitor supply costs', status: 'active', count: 0 },
       ]
     },
@@ -159,7 +168,7 @@ export default function HousekeepingMainDashboard() {
       category: 'Communication & Reports',
       items: [
         { title: 'Staff Communication', icon: '📱', description: 'Team coordination tools', status: 'active', count: activeStaff },
-        { title: 'Daily Reports', icon: '📊', description: 'Generate daily summaries', status: 'active', count: 1 },
+        { title: 'Daily Reports', icon: '📊', description: 'Generate daily summaries', status: 'active', count: 0 },
         { title: 'Performance Analytics', icon: '📈', description: 'Staff performance insights', status: 'active', count: 0 },
         { title: 'Notifications', icon: '🔔', description: 'Alert system', status: 'active', count: 0 },
       ]
@@ -557,11 +566,11 @@ export default function HousekeepingMainDashboard() {
                           <span className="text-2xl">🏠</span>
                           <span className="text-sm font-medium text-gray-600">Rooms Cleaned</span>
                         </div>
-                        <div className="text-2xl font-bold text-ghana-black mb-2">0</div>
+                        <div className="text-2xl font-bold text-ghana-black mb-2">{stats.tasksCompleted}</div>
                         <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                           <span>Target: 50</span>
                         </div>
-                        <Progress value={0} color="success" size="sm" />
+                        <Progress value={Math.min(100, (stats.tasksCompleted / 50) * 100)} color="success" size="sm" />
                       </div>
 
                       {/* Quality Score */}
@@ -570,11 +579,11 @@ export default function HousekeepingMainDashboard() {
                           <span className="text-2xl">⭐</span>
                           <span className="text-sm font-medium text-gray-600">Quality Score</span>
                         </div>
-                        <div className="text-2xl font-bold text-ghana-black mb-2">0%</div>
+                        <div className="text-2xl font-bold text-ghana-black mb-2">{stats.averageInspectionScore}%</div>
                         <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                           <span>Target: 95%</span>
                         </div>
-                        <Progress value={0} color="primary" size="sm" />
+                        <Progress value={stats.averageInspectionScore} color="primary" size="sm" />
                       </div>
 
                       {/* Avg Task Time */}
@@ -583,11 +592,11 @@ export default function HousekeepingMainDashboard() {
                           <span className="text-2xl">⏱️</span>
                           <span className="text-sm font-medium text-gray-600">Avg Task Time</span>
                         </div>
-                        <div className="text-2xl font-bold text-ghana-black mb-2">0 min</div>
+                        <div className="text-2xl font-bold text-ghana-black mb-2">{stats.averageTaskTime} min</div>
                         <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                           <span>Target: 30 min</span>
                         </div>
-                        <Progress value={0} color="secondary" size="sm" />
+                        <Progress value={Math.min(100, (stats.averageTaskTime / 30) * 100)} color="secondary" size="sm" />
                       </div>
 
                       {/* Staff Efficiency */}
@@ -596,11 +605,11 @@ export default function HousekeepingMainDashboard() {
                           <span className="text-2xl">👥</span>
                           <span className="text-sm font-medium text-gray-600">Staff Efficiency</span>
                         </div>
-                        <div className="text-2xl font-bold text-ghana-black mb-2">0%</div>
+                        <div className="text-2xl font-bold text-ghana-black mb-2">{avgStaffEfficiency}%</div>
                         <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
                           <span>Target: 90%</span>
                         </div>
-                        <Progress value={0} color="warning" size="sm" />
+                        <Progress value={avgStaffEfficiency} color="warning" size="sm" />
                       </div>
                     </div>
                   </CardBody>

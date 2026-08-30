@@ -21,6 +21,7 @@ import {
   isLeanAccountingUI,
 } from '../lib/accounting/tenantAccountingConfig';
 import { buildAccountingComplianceOverview } from '../lib/accounting/accountingComplianceOverview';
+import { totalFinanceReceivables } from '../lib/accounting/arSubledger';
 
 // Import specialized accounting components
 import ChartOfAccounts from './accounting/ChartOfAccounts';
@@ -160,31 +161,40 @@ export default function AccountingMainDashboard() {
     [salesInvoices]
   );
 
-  // Receivables = outstanding balance on Sales invoices
+  // Receivables = outstanding on finance AR subledger (excludes proformas / open folios)
   const totalReceivables = useMemo(
-    () => salesInvoices.reduce((s, i) => s + Math.max(0, (i.total || 0) - (i.paidAmount || 0)), 0),
-    [salesInvoices]
+    () => totalFinanceReceivables(invoices),
+    [invoices]
   );
 
-  // Payables = outstanding balance on Purchase invoices
+  // Payables = outstanding balance on Purchase invoices (excludes Void/Draft, matching the AR
+  // subledger's totalFinanceReceivables convention above)
   const totalPayables = useMemo(
-    () => purchaseInvoices.reduce((s, i) => s + Math.max(0, (i.total || 0) - (i.paidAmount || 0)), 0),
+    () => purchaseInvoices
+      .filter(i => i.status !== 'Void' && i.status !== 'Draft')
+      .reduce((s, i) => s + Math.max(0, (i.total || 0) - (i.paidAmount || 0)), 0),
     [purchaseInvoices]
   );
 
-  // Expenses = sum of journal entry credit lines on 5xxx accounts (expense accounts)
+  // Expenses = sum of journal entry debit lines on accounts typed 'Expense' in the Chart of
+  // Accounts, not a hardcoded '5xxx' code prefix — matches FinancialReports' classification
+  // and stays correct if a non-Ghana chart template numbers expenses differently.
+  const expenseAccountCodes = useMemo(
+    () => new Set(chartOfAccounts.filter(a => a.type === 'Expense').map(a => a.code)),
+    [chartOfAccounts]
+  );
   const currentExpenses = useMemo(() => {
     let total = 0;
     for (const je of journalEntries) {
       if (je.status !== 'Posted') continue;
       for (const line of (je.lines || [])) {
-        if (line.accountCode?.startsWith('5')) {
+        if (line.accountCode && expenseAccountCodes.has(line.accountCode)) {
           total += (line.debit || 0);
         }
       }
     }
     return total;
-  }, [journalEntries]);
+  }, [journalEntries, expenseAccountCodes]);
 
   // Net Profit
   const netIncome = currentRevenue - currentExpenses;
@@ -254,7 +264,7 @@ export default function AccountingMainDashboard() {
         { title: 'Accounts Receivable', icon: '📝', description: 'Customer invoices and payments', status: 'active', count: pendingInvoices },
         { title: 'Accounts Payable', icon: '🧾', description: 'Vendor bills and payments', status: 'active', count: overduePayments },
         { title: 'PPE & Assets', icon: '🏗️', description: 'Property, plant & equipment and capital allowance', status: 'active', count: 0 },
-        { title: 'Trial Balance', icon: '⚖️', description: 'Account balances in financial reports', status: 'active', count: pendingReconciliations },
+        { title: 'Trial Balance', icon: '⚖️', description: 'Account balances in financial reports', status: 'active', count: 0 },
       ]
     },
     {
@@ -277,23 +287,30 @@ export default function AccountingMainDashboard() {
     }
   ];
 
+  // Tabs hidden entirely when leanMode is on (see the `!leanMode && <Tab .../>` guards below) —
+  // navigating to one of these while lean would land on a blank panel, so fall back to Overview.
+  const LEAN_HIDDEN_TABS = new Set(['accounts', 'banking', 'assets', 'reports', 'audit']);
+  const goToTab = (key: string) => setSelectedTab(leanMode && LEAN_HIDDEN_TABS.has(key) ? 'overview' : key);
+
   const handleQuickAction = (action: string) => {
     trackEvent('accounting.quick_action', { action });
     switch (action) {
       case 'new_transaction':
-        setSelectedTab('reconciliation');
+        // Journal-entry creation lives in Financial Reports, not Bank Reconciliation.
+        goToTab('reports');
         break;
       case 'generate_invoice':
-        setSelectedTab('receivables');
+        goToTab('receivables');
         break;
       case 'process_payment':
-        setSelectedTab('payables');
+        // "Record payment receipt" — receiving cash from a customer is an AR receipt.
+        goToTab('receivables');
         break;
       case 'run_reports':
-        setSelectedTab('reports');
+        goToTab('reports');
         break;
       case 'audit_check':
-        setSelectedTab('audit');
+        goToTab('audit');
         break;
       default:
         break;
@@ -360,24 +377,24 @@ export default function AccountingMainDashboard() {
             </Card>
 
             {/* Profitability */}
-            <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
+            <Card className={`border-0 shadow-lg border-l-4 ${netIncome >= 0 ? 'border-l-green-500' : 'border-l-red-500'}`}>
               <CardBody className="p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-lg font-semibold text-ghana-black">Profitability</h4>
-                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                  <div className={`w-3 h-3 rounded-full ${netIncome >= 0 ? 'bg-green-500' : 'bg-red-500'}`}></div>
                 </div>
-                <div className="text-3xl font-bold text-green-600 mb-3">{fmt(netIncome)}</div>
+                <div className={`text-3xl font-bold mb-3 ${netIncome >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(netIncome)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex justify-between">
                     <span>Revenue (Posted)</span>
                     <span className="font-medium">{fmt(currentRevenue)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Expenses (GL 5xxx)</span>
+                    <span>Expenses</span>
                     <span className="font-medium">{fmt(currentExpenses)}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Profit Margin</span>
+                    <span>Net {netIncome >= 0 ? 'Profit' : 'Loss'} Margin</span>
                     <span className="font-medium">{profitMargin}%</span>
                   </div>
                 </div>
@@ -452,6 +469,7 @@ export default function AccountingMainDashboard() {
             </CardHeader>
             <CardBody>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {!leanMode && (
                 <Button
                   color="success"
                   variant="flat"
@@ -462,6 +480,7 @@ export default function AccountingMainDashboard() {
                   <span className="font-medium">New Transaction</span>
                   <span className="text-xs text-center opacity-80">Create new journal entry</span>
                 </Button>
+                )}
                 <Button
                   color="warning"
                   variant="flat"
@@ -524,23 +543,37 @@ export default function AccountingMainDashboard() {
                                 onClick={() => {
                                   // Handle navigation based on item type
                                   if (item.title.includes('Chart of Accounts')) {
-                                    setSelectedTab('accounts');
+                                    goToTab('accounts');
                                   } else if (item.title.includes('Bank & Cash')) {
-                                    setSelectedTab('banking');
+                                    goToTab('banking');
                                   } else if (item.title.includes('Financial Reports')) {
-                                    setSelectedTab('reports');
+                                    goToTab('reports');
                                   } else if (item.title.includes('Audit Controls')) {
-                                    setSelectedTab('audit');
+                                    goToTab('audit');
                                   } else if (item.title.includes('Accounts Receivable')) {
-                                    setSelectedTab('receivables');
+                                    goToTab('receivables');
                                   } else if (item.title.includes('Accounts Payable')) {
-                                    setSelectedTab('payables');
+                                    goToTab('payables');
                                   } else if (item.title.includes('PPE & Assets')) {
-                                    setSelectedTab('assets');
+                                    goToTab('assets');
                                   } else if (item.title.includes('Trial Balance')) {
-                                    setSelectedTab('reports');
+                                    goToTab('reports');
                                   } else if (item.title.includes('Bank Reconciliation')) {
-                                    setSelectedTab('reconciliation');
+                                    goToTab('reconciliation');
+                                  } else if (
+                                    item.title.includes('Tax Compliance') ||
+                                    item.title.includes('Filings Submitted') ||
+                                    item.title.includes('Filings Pending')
+                                  ) {
+                                    goToTab('taxes');
+                                  } else if (item.title.includes('Performance Analytics')) {
+                                    goToTab('reports');
+                                  } else if (item.title.includes('Daily Transactions')) {
+                                    goToTab('reports');
+                                  } else if (item.title.includes('Invoice Generation')) {
+                                    goToTab('receivables');
+                                  } else if (item.title.includes('Payment Processing')) {
+                                    goToTab('payables');
                                   }
                                 }}
                               >
@@ -561,7 +594,7 @@ export default function AccountingMainDashboard() {
                                     {item.status}
                                   </Badge>
                                   <Chip size="sm" variant="flat" color="primary">
-                                    {item.count}
+                                    {Number.isFinite(item.count) ? item.count : 0}
                                   </Chip>
                                 </div>
                               </div>

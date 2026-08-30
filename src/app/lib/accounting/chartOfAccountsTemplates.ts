@@ -5,6 +5,7 @@
  * Ghana is the default; additional countries register here as compliance expands.
  */
 
+import { buildPrebuiltChartOfAccounts } from './prebuiltChartOfAccounts';
 import { GHANA_CHART_OF_ACCOUNTS } from './models';
 import type { ChartOfAccounts } from './models';
 
@@ -52,28 +53,7 @@ export function listSupportedAccountingCountries(): string[] {
   return Object.keys(CHART_TEMPLATES);
 }
 
-function mapCoaType(raw: string): ChartOfAccounts['type'] {
-  if (raw === 'Asset') return 'Asset';
-  if (raw === 'Liability') return 'Liability';
-  if (raw === 'Equity') return 'Equity';
-  if (raw === 'Revenue') return 'Revenue';
-  return 'Expense';
-}
-
-/** Build store-ready COA rows for the tenant's country. */
+/** Prebuilt coded COA (main / sub / detail) — user can keep, delete, or extend. */
 export function buildChartOfAccountsFromTemplate(countryCode?: string): ChartOfAccounts[] {
-  const tpl = getChartTemplate(countryCode);
-  const ts = new Date().toISOString();
-  return tpl.rows.map((account, index) => ({
-    id: `${tpl.countryCode}-coa-${index + 1}`,
-    code: account.code,
-    name: account.name,
-    type: mapCoaType(account.type),
-    category: account.category,
-    level: account.level,
-    currency: tpl.currency,
-    isActive: true,
-    createdAt: ts,
-    updatedAt: ts,
-  }));
+  return buildPrebuiltChartOfAccounts(countryCode);
 }

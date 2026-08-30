@@ -1,3 +1,4 @@
+import { toRollupCoa } from '../coaHierarchy';
 import type { JournalEntry } from '../models';
 import { GHANA_CHART_OF_ACCOUNTS } from '../models';
 import { buildFinancialAccountTree, type AccountNode, type RollupCoa } from '../financialReportRollup';
@@ -58,13 +59,7 @@ function flattenTree(nodes: AccountNode[]): AccountNode[] {
 
 function resolveCoa(chartOfAccounts: RollupCoa[] | undefined): RollupCoa[] {
   const raw = chartOfAccounts?.length ? chartOfAccounts : GHANA_CHART_OF_ACCOUNTS;
-  return raw.map((a) => ({
-    code: a.code,
-    name: a.name,
-    type: a.type as RollupCoa['type'],
-    category: a.category,
-    level: a.level,
-  }));
+  return toRollupCoa(raw);
 }
 
 /** GL 1510 / 1520 balances through report date (posted journals). */

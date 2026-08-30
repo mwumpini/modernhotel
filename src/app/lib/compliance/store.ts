@@ -4,12 +4,18 @@ import { DEFAULT_COMPLIANCE_COUNTRY, getSeedReports, getSeedTaxes } from './conf
 import { resolveComplianceCountry } from './resolveCountry';
 
 export interface TaxLineItem {
+  // Stable identity of the rule that produced this line — use this (never `name`) to find
+  // "the Tier 2 amount" etc. in code, since `name` is a user-editable display label and
+  // will not match after a rename.
+  ruleId: string;
   name: string;
   amount: number;
   glCode: string;
   rate: number;
   isExempt?: boolean;
   exemptionReason?: string;
+  // Employer-side contribution amount, when the rule declares an `employerRate`.
+  employerAmount?: number;
 }
 
 function evalCondition(context: Record<string, any>, cond: NonNullable<TaxRule['condition']>): boolean {
@@ -279,13 +285,23 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
       const baseType = rule.calculationBase || 'subtotal';
       const base = computeBase(baseType, amount, runningBase, context);
       let raw = 0;
+      let employerAmount: number | undefined;
       const method = rule.method || 'rate';
       if (method === 'fixed') {
         raw = rule.fixedAmount ?? 0;
       } else if (method === 'tiered' && Array.isArray(rule.tiers) && rule.tiers.length) {
         raw = computeTiered(base, rule.tiers, rule.rounding, rule.roundTo);
       } else {
-        raw = base * ((rule.rate ?? 0) / 100);
+        // Clamp the base for statutory schemes with an insurable-earnings floor/ceiling
+        // (e.g. SSNIT). Undefined on every rule that doesn't declare them, so this is a
+        // no-op for existing sales/purchases tax rules.
+        let clampedBase = base;
+        if (typeof rule.floor === 'number' && clampedBase > 0) clampedBase = Math.max(clampedBase, rule.floor);
+        if (typeof rule.ceiling === 'number') clampedBase = Math.min(clampedBase, rule.ceiling);
+        raw = clampedBase * ((rule.rate ?? 0) / 100);
+        if (typeof rule.employerRate === 'number') {
+          employerAmount = clampedBase * (rule.employerRate / 100);
+        }
       }
       if (rule.rounding && rule.roundTo) {
         const m = 1 / rule.roundTo;
@@ -293,7 +309,19 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
         if (rule.rounding === 'down') raw = Math.floor(raw * m) / m;
         if (rule.rounding === 'up') raw = Math.ceil(raw * m) / m;
       }
-      taxes.push({ name: rule.name, amount: raw, glCode: rule.glCode, rate: rule.rate ?? 0 });
+      // Final safety-net rounding to the cent — currency amounts are never fractions of a
+      // pesewa, and without this, chained percentage math accumulates float artifacts like
+      // 123.44999999999998 by the time it reaches a payslip or invoice line.
+      raw = Math.round(raw * 100) / 100;
+      if (typeof employerAmount === 'number') employerAmount = Math.round(employerAmount * 100) / 100;
+      taxes.push({
+        ruleId: rule.id,
+        name: rule.name,
+        amount: raw,
+        glCode: rule.glCode,
+        rate: rule.rate ?? 0,
+        employerAmount,
+      });
       const effect = rule.effect || 'add';
       if (effect === 'add') addTotal += raw;
       else if (effect === 'subtract') subtractTotal += raw;
@@ -301,7 +329,7 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
         runningBase += raw;
       }
     }
-    const total = amount + addTotal - subtractTotal;
+    const total = Math.round((amount + addTotal - subtractTotal) * 100) / 100;
     return { taxes, total };
   },
 
@@ -312,7 +340,9 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
     if (schedules.length === 0) return 100;
 
     const filings = get().reports.filter((r) => r.countryCode === get().country);
-    if (filings.length === 0) return 100;
+    // Active schedules exist but nothing has ever been filed/tracked against them — that's the
+    // opposite of "fully compliant", not a reason to show 100%.
+    if (filings.length === 0) return 0;
 
     const submittedReports = filings.filter((r) => r.status === 'submitted' || r.status === 'approved').length;
     const pendingReports = filings.filter((r) => r.status === 'pending').length;

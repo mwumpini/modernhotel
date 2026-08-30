@@ -64,7 +64,7 @@ export function taxConfigsFromGhanaTemplate(): TaxConfig[] {
           ? 'COVID19'
           : key === 'TOURISM'
             ? 'Tourism'
-            : key === 'WITHHOLDING'
+            : key === 'WITHHOLDING' || key === 'WHT_CERT' || key === 'WHT_VAT_CERT'
               ? 'Withholding'
               : key === 'VAT'
                 ? 'VAT'

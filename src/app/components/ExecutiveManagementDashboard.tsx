@@ -100,7 +100,8 @@ export default function ExecutiveManagementDashboard() {
       setInHouse(inHouseNow);
       setArrivalsToday(arr);
       setDeparturesToday(dep);
-      setExpectedOcc(flash?.occupancy?.occupancyRate || 0);
+      const occRate = Number(flash?.occupancy?.occupancyRate);
+      setExpectedOcc(Number.isFinite(occRate) ? occRate : 0);
       // Without check-in times, we cannot compute next-hour movements precisely
       setNextHourCheckins(0);
       setNextHourCheckouts(0);
@@ -199,6 +200,13 @@ export default function ExecutiveManagementDashboard() {
     try { announcementStore.subscribe(() => setEventsList(announcementStore.getForDepartment('events', 3).map(m => m.message))); } catch {}
     try { unsubs.push(ordersStore.subscribe(() => refreshForDate(todayISO))); } catch {}
     try { unsubs.push(kitchenOpsStore.subscribe(() => refreshForDate(todayISO))); } catch {}
+    // Pulls in real persisted order history — the subscribe above re-runs
+    // refreshForDate once this resolves and notifies listeners.
+    try { ordersStore.hydrateFromApi(); } catch {}
+    // Same for housekeeping — without this, a user landing directly on the
+    // Executive dashboard sees every room as the default 'vacant' instead of
+    // its real logged status.
+    try { housekeepingStore.hydrateFromApi(); } catch {}
 
     return () => {
       unsubs.forEach((fn) => {
@@ -345,7 +353,7 @@ export default function ExecutiveManagementDashboard() {
                 <span>Today's Departures</span><span className="font-semibold">{departuresToday}</span>
               </button>
               <button onClick={() => go('/reports')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
-                <span>Expected Occupancy</span><span className="font-semibold">{Math.round(expectedOcc)}%</span>
+                <span>Expected Occupancy</span><span className="font-semibold">{Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0}%</span>
               </button>
               <div className="flex justify-between text-xs text-gray-600"><span>Next Hour</span><span>{nextHourCheckins} Check-ins • {nextHourCheckouts} Check-outs</span></div>
             </CardBody>
@@ -409,7 +417,7 @@ export default function ExecutiveManagementDashboard() {
               </div>
               <div className="p-4 bg-gray-50 rounded-lg">
                 <div className="text-xs text-gray-600">OCCUPANCY</div>
-                <div className="text-2xl font-bold text-ghana-black">{Math.round(expectedOcc)}%</div>
+                <div className="text-2xl font-bold text-ghana-black">{Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0}%</div>
                 <div className="text-xs text-gray-500">Target: 92%</div>
               </div>
               <div className="p-4 bg-gray-50 rounded-lg flex items-center justify-between">

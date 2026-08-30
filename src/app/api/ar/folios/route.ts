@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantContext, getTenantFromRequest } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listFoliosWithBalancesByCustomer } from '@/app/lib/ar/repository'
+import { operationalArResponse } from '@/app/lib/ar/operationalResponse'
 
 export async function GET(request: NextRequest) {
-	console.log('[ar/folios][GET] start')
+	console.log('[ar/folios][GET] start (guest ledger — not finance AR)')
 	try {
 		const auth = await requireAuth(request)
 		if (!auth.ok) return auth.response
@@ -23,7 +24,7 @@ export async function GET(request: NextRequest) {
 
 		const data = await listFoliosWithBalancesByCustomer(ctx.tenantId, customerType, customerId)
 		console.log('[ar/folios][GET] result', { count: data.length })
-		return NextResponse.json({ data })
+		return NextResponse.json(operationalArResponse(data))
 	} catch (error) {
 		console.error('[ar/folios][GET] error', error)
 		return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

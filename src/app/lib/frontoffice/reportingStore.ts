@@ -3,6 +3,8 @@
 import { create } from 'zustand';
 import { frontOfficeStore } from './store';
 import { trackEvent } from '../analytics/trackEvent';
+import { getFolioDisplayTotals, folioChargeGlCode } from './helpers/folio';
+import { housekeepingStore } from '../housekeeping/store';
 
 // Report Types
 export interface ReportConfig {
@@ -598,16 +600,17 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
         const folio = frontOfficeStore.folios.find(f => f.reservationId === reservation.id);
         
-        const totalCharges = folio?.charges?.reduce((sum, charge) => sum + charge.amount, 0) || 0;
-        const totalPayments = folio?.payments?.reduce((sum, payment) => sum + payment.amount, 0) || 0;
-        
+        const { totalCharges, totalPayments, balance } = folio
+          ? getFolioDisplayTotals(folio)
+          : { totalCharges: 0, totalPayments: 0, balance: 0 };
+
         return {
           guestName: reservation.guestName,
           roomNumber: room?.id || 'Unknown',
           checkoutTime: '11:00',
           totalCharges,
           totalPayments,
-          balance: totalCharges - totalPayments,
+          balance,
           lateCheckout: false,
           folioStatus: folio?.status || 'open',
           housekeepingStatus: 'pending'
@@ -650,10 +653,11 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
         const folio = frontOfficeStore.folios.find(f => f.reservationId === reservation.id);
         
-        const totalCharges = folio?.charges?.reduce((sum, charge) => sum + charge.amount, 0) || 0;
-        const totalPayments = folio?.payments?.reduce((sum, payment) => sum + payment.amount, 0) || 0;
+        const { totalCharges, totalPayments, balance } = folio
+          ? getFolioDisplayTotals(folio)
+          : { totalCharges: 0, totalPayments: 0, balance: 0 };
         const nightsStayed = Math.ceil((new Date(date).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24));
-        
+
         return {
           guestName: reservation.guestName,
           roomNumber: room?.id || 'Unknown',
@@ -662,7 +666,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
           nightsStayed,
           totalCharges,
           totalPayments,
-          currentBalance: totalCharges - totalPayments,
+          currentBalance: balance,
           vipStatus: guest?.vipStatus || 'regular',
           specialRequests: guest?.specialRequests || [],
           lastActivity: new Date().toISOString()
@@ -672,23 +676,25 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
   generateHighBalanceReport: (date) => {
     console.log(`[REPORTS] Generating high balance report for ${date}`);
-    
-    const creditLimit = 5000; // Default credit limit
-    
+
+    const defaultCreditLimit = 5000; // Fallback when the guest has no creditLimit on file
+
     return frontOfficeStore.reservations
-      .filter(reservation => 
-        reservation.status === 'checked-in' && 
-        reservation.arrival <= date && 
+      .filter(reservation =>
+        reservation.status === 'checked-in' &&
+        reservation.arrival <= date &&
         reservation.departure > date
       )
       .map(reservation => {
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
         const folio = frontOfficeStore.folios.find(f => f.reservationId === reservation.id);
-        
-        const totalCharges = folio?.charges?.reduce((sum, charge) => sum + charge.amount, 0) || 0;
-        const totalPayments = folio?.payments?.reduce((sum, payment) => sum + payment.amount, 0) || 0;
-        const currentBalance = totalCharges - totalPayments;
-        
+        const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
+        const creditLimit = guest?.creditLimit || defaultCreditLimit;
+
+        const { balance: currentBalance } = folio
+          ? getFolioDisplayTotals(folio)
+          : { balance: 0 };
+
         const daysOverdue = Math.max(0, Math.ceil((new Date().getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24)));
         
         let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low';
@@ -707,25 +713,23 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
           riskLevel
         };
       })
-      .filter(guest => guest.currentBalance > creditLimit);
+      .filter(guest => guest.currentBalance > guest.creditLimit);
   },
 
   generateWakeUpCallReport: (date) => {
     console.log(`[REPORTS] Generating wake-up call report for ${date}`);
-    
-    // This would typically come from a wake-up call system
-    // For now, we'll return sample data
-    return [
-      {
-        guestName: 'John Doe',
-        roomNumber: '101',
-        wakeUpTime: '06:00',
-        date,
-        status: 'scheduled' as const,
-        notes: 'Early flight',
-        completedBy: ''
-      }
-    ];
+
+    return frontOfficeStore.wakeUpCalls
+      .filter(c => c.date === date)
+      .map(c => ({
+        guestName: c.guestName,
+        roomNumber: c.roomNumber,
+        wakeUpTime: c.time,
+        date: c.date,
+        status: c.status,
+        notes: c.notes || '',
+        completedBy: c.completedBy || ''
+      }));
   },
 
   generateDailyTransactionReport: (date) => {
@@ -739,7 +743,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       
       // Add charges
       folio.charges?.forEach(charge => {
-        if (charge.date === date) {
+        if ((charge.date || '').slice(0, 10) === date) {
           transactions.push({
             transactionId: `charge-${charge.id}`,
             guestName: reservation.guestName,
@@ -748,16 +752,16 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
             amount: charge.amount,
             description: charge.description,
             timestamp: charge.date,
-            cashier: 'System',
+            cashier: (charge as any).staffName || 'Front Desk',
             paymentMethod: 'Folio',
             folioNumber: folio.id
           });
         }
       });
-      
+
       // Add payments
       folio.payments?.forEach(payment => {
-        if (payment.date === date) {
+        if ((payment.date || '').slice(0, 10) === date) {
           transactions.push({
             transactionId: `payment-${payment.id}`,
             guestName: reservation.guestName,
@@ -766,7 +770,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
             amount: payment.amount,
             description: payment.description,
             timestamp: payment.date,
-            cashier: 'System',
+            cashier: payment.processedBy || 'Front Desk',
             paymentMethod: payment.method,
             folioNumber: folio.id
           });
@@ -795,40 +799,47 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       .filter(t => t.paymentMethod === 'Mobile Money')
       .reduce((sum, t) => sum + t.amount, 0);
     
+    // Shift start/end and a declared opening float aren't tracked anywhere in this
+    // system (no clock-in/till-declaration feature exists) — reporting a fabricated
+    // shift window or balance would be actively misleading for a cash reconciliation
+    // report, so those fields are omitted (null) rather than invented. The renderer
+    // filters null fields out of the summary rather than showing a false "0"/"08:00".
     return {
       cashierName: cashierId,
-      shiftStart: '08:00',
-      shiftEnd: '16:00',
+      shiftStart: null,
+      shiftEnd: null,
       totalTransactions: cashierTransactions.length,
       totalCash,
       totalCard,
       totalMobileMoney,
       totalAdjustments: 0,
-      openingBalance: 1000,
-      closingBalance: 1000 + totalCash,
-      variance: 0
+      openingBalance: null,
+      closingBalance: null,
+      variance: null
     };
   },
 
   generateCreditCardReconciliationReport: (date) => {
     console.log(`[REPORTS] Generating credit card reconciliation report for ${date}`);
-    
+
     const transactions = get().generateDailyTransactionReport(date);
-    const cardTransactions = transactions.filter(t => t.paymentMethod === 'Card');
-    
-    // Group by card type (this would come from actual payment processing)
-    const cardTypes = ['Visa', 'Mastercard', 'American Express'];
-    
-    return cardTypes.map(cardType => ({
-      cardType,
-      transactionCount: Math.floor(Math.random() * 10) + 1,
-      totalAmount: Math.floor(Math.random() * 10000) + 1000,
-      batchNumber: `BATCH-${date}-${cardType}`,
+    const cardTransactions = transactions.filter(t => t.paymentMethod === 'Card' && t.transactionType === 'payment');
+
+    // Card network (Visa/Mastercard/Amex) isn't captured anywhere on a payment
+    // today — FolioPayment.method only distinguishes 'Card' generically — so this
+    // reports one real aggregate row rather than fabricating a network breakdown.
+    if (cardTransactions.length === 0) return [];
+    const totalAmount = cardTransactions.reduce((s, t) => s + t.amount, 0);
+    return [{
+      cardType: 'Card',
+      transactionCount: cardTransactions.length,
+      totalAmount,
+      batchNumber: `BATCH-${date}`,
       settlementDate: date,
       status: 'pending' as const,
-      merchantId: 'MERCHANT001',
-      terminalId: 'TERMINAL001'
-    }));
+      merchantId: 'N/A',
+      terminalId: 'N/A'
+    }];
   },
 
   generateGuestLedgerReport: (date) => {
@@ -844,10 +855,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
         const folio = frontOfficeStore.folios.find(f => f.reservationId === reservation.id);
         
-        const totalCharges = folio?.charges?.reduce((sum, charge) => sum + charge.amount, 0) || 0;
-        const totalPayments = folio?.payments?.reduce((sum, payment) => sum + payment.amount, 0) || 0;
-        const outstandingBalance = totalCharges - totalPayments;
-        
+        const { totalCharges, totalPayments, balance: outstandingBalance } = folio
+          ? getFolioDisplayTotals(folio)
+          : { totalCharges: 0, totalPayments: 0, balance: 0 };
+
         const agingDays = Math.ceil((new Date().getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24));
         
         return {
@@ -867,63 +878,82 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
   generateDailyFlashReport: (date) => {
     console.log(`[REPORTS] Generating daily flash report for ${date}`);
-    
+
     const totalRooms = frontOfficeStore.rooms.length;
-    const occupiedRooms = frontOfficeStore.reservations.filter(r => 
-      r.status === 'checked-in' && 
-      r.arrival <= date && 
+    const occupiedRooms = frontOfficeStore.reservations.filter(r =>
+      r.status === 'checked-in' &&
+      r.arrival <= date &&
       r.departure > date
     ).length;
-    
-    const arrivals = frontOfficeStore.reservations.filter(r => 
+
+    const arrivalReservations = frontOfficeStore.reservations.filter(r =>
       r.arrival === date && r.status === 'confirmed'
-    ).length;
-    
-    const departures = frontOfficeStore.reservations.filter(r => 
+    );
+    const arrivals = arrivalReservations.length;
+    const guaranteedArrivals = arrivalReservations.filter(r => r.isGuaranteed).length;
+
+    const departures = frontOfficeStore.reservations.filter(r =>
       r.departure === date && r.status === 'checked-in'
     ).length;
-    
-    const totalRevenue = frontOfficeStore.folios
-      .filter(f => {
-        const reservation = frontOfficeStore.reservations.find(r => r.id === f.reservationId);
-        return reservation && reservation.arrival <= date && reservation.departure > date;
-      })
-      .reduce((sum, folio) => sum + (folio.charges?.reduce((cSum, charge) => cSum + charge.amount, 0) || 0), 0);
-    
+
+    // Only charges/payments actually posted ON this date (not every charge that
+    // has ever accumulated on a folio whose stay happens to overlap the date).
+    const chargesToday = frontOfficeStore.folios.flatMap(f =>
+      (f.charges || []).filter(c => (c.date || '').slice(0, 10) === date)
+    );
+    const paymentsToday = frontOfficeStore.folios.flatMap(f =>
+      (f.payments || []).filter(p => p.status === 'completed' && (p.date || '').slice(0, 10) === date)
+    );
+
+    const roomRevenue = chargesToday
+      .filter(c => folioChargeGlCode(c) === '4100')
+      .reduce((s, c) => s + c.amount + (c.tax || 0), 0);
+    const foodBeverageRevenue = chargesToday
+      .filter(c => folioChargeGlCode(c) === '4200')
+      .reduce((s, c) => s + c.amount + (c.tax || 0), 0);
+    const otherRevenue = chargesToday
+      .filter(c => folioChargeGlCode(c) !== '4100' && folioChargeGlCode(c) !== '4200')
+      .reduce((s, c) => s + c.amount + (c.tax || 0), 0);
+    const totalRevenue = roomRevenue + foodBeverageRevenue + otherRevenue;
+    const totalPayments = paymentsToday.reduce((s, p) => s + p.amount, 0);
+    const outOfOrderRooms = housekeepingStore.getRoomsByStatus('out-of-order').length;
+
     return {
       date,
       occupancy: {
         totalRooms,
         occupiedRooms,
-        occupancyRate: (occupiedRooms / totalRooms) * 100,
-        availableRooms: totalRooms - occupiedRooms,
-        outOfOrderRooms: 0
+        occupancyRate: totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0,
+        availableRooms: Math.max(0, totalRooms - occupiedRooms - outOfOrderRooms),
+        outOfOrderRooms
       },
       revenue: {
-        roomRevenue: totalRevenue * 0.8,
-        foodBeverageRevenue: totalRevenue * 0.15,
-        otherRevenue: totalRevenue * 0.05,
+        roomRevenue,
+        foodBeverageRevenue,
+        otherRevenue,
         totalRevenue,
-        averageDailyRate: occupiedRooms > 0 ? totalRevenue / occupiedRooms : 0,
-        revenuePerAvailableRoom: totalRevenue / totalRooms
+        averageDailyRate: occupiedRooms > 0 ? roomRevenue / occupiedRooms : 0,
+        revenuePerAvailableRoom: totalRooms > 0 ? roomRevenue / totalRooms : 0
       },
       arrivals: {
         total: arrivals,
         confirmed: arrivals,
-        guaranteed: Math.floor(arrivals * 0.7),
+        guaranteed: guaranteedArrivals,
         walkIns: 0
       },
       departures: {
+        // Actual-vs-scheduled checkout timing isn't tracked per guest today, so
+        // this only reports the real total rather than a fabricated split.
         total: departures,
-        early: Math.floor(departures * 0.1),
-        onTime: Math.floor(departures * 0.8),
-        late: Math.floor(departures * 0.1)
+        early: 0,
+        onTime: 0,
+        late: 0
       },
       financial: {
         totalCharges: totalRevenue,
-        totalPayments: totalRevenue * 0.9,
-        outstandingBalance: totalRevenue * 0.1,
-        cashOnHand: totalRevenue * 0.3
+        totalPayments,
+        outstandingBalance: Math.max(0, totalRevenue - totalPayments),
+        cashOnHand: paymentsToday.filter(p => p.method === 'Cash').reduce((s, p) => s + p.amount, 0)
       }
     };
   },
@@ -943,38 +973,65 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       totalRooms,
       occupiedRooms,
       availableRooms: totalRooms - occupiedRooms,
-      occupancyRate: (occupiedRooms / totalRooms) * 100
+      occupancyRate: totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0
     };
   },
 
   generatePaceReport: (date) => {
     console.log(`[REPORTS] Generating pace report for ${date}`);
-    
-    // This would compare current bookings to historical data
-    // For now, return sample data
-    return [
-      {
+
+    // A true pace report compares bookings-on-the-books today to the equivalent
+    // point last year — that needs daily historical snapshots, which nothing in
+    // this system captures yet. What's reported here is real: bookings currently
+    // on the books for this arrival date, segmented by RatePlan.marketSegment.
+    // historicalBookings/pacePercentage are explicitly null rather than a
+    // fabricated comparison — there is no baseline to compare against.
+    const arrivals = frontOfficeStore.reservations.filter(r =>
+      r.arrival === date && (r.status === 'confirmed' || r.status === 'checked-in' || r.status === 'pending')
+    );
+    if (arrivals.length === 0) return [];
+
+    const segmentOf = (r: typeof arrivals[number]) => {
+      const plan = r.ratePlanId ? frontOfficeStore.ratePlans.find(rp => rp.id === r.ratePlanId) : undefined;
+      return plan?.marketSegment || 'Unclassified';
+    };
+    const segments = Array.from(new Set(arrivals.map(segmentOf)));
+
+    const totalRooms = frontOfficeStore.rooms.length;
+    const occupiedRooms = frontOfficeStore.reservations.filter(r =>
+      r.status === 'checked-in' && r.arrival <= date && r.departure > date
+    ).length;
+    const projectedOccupancy = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
+
+    return segments.map(marketSegment => {
+      const segReservations = arrivals.filter(r => segmentOf(r) === marketSegment);
+      const revenuePace = segReservations.reduce((sum, r) => {
+        const quote = frontOfficeStore.getReservationQuote(r);
+        return sum + quote.grandTotal;
+      }, 0);
+
+      return {
         date,
-        currentBookings: 15,
-        historicalBookings: 12,
-        pacePercentage: 125,
-        projectedOccupancy: 75,
-        revenuePace: 120,
-        marketSegment: 'Leisure'
-      }
-    ];
+        currentBookings: segReservations.length,
+        historicalBookings: null,
+        pacePercentage: null,
+        projectedOccupancy,
+        revenuePace,
+        marketSegment
+      };
+    });
   },
 
   generateNoShowReport: (date) => {
     console.log(`[REPORTS] Generating no-show report for ${date}`);
     
+    // Actual no-shows — reservations the night audit already flagged 'no-show'
+    // (frontoffice/store.ts markNoShow / the night-audit cron), not merely
+    // reservations still sitting in 'confirmed' for the date.
     return frontOfficeStore.reservations
-      .filter(reservation => 
-        reservation.arrival === date && 
-        reservation.status === 'confirmed' &&
-        !frontOfficeStore.reservations.some(r => 
-          r.id === reservation.id && r.status === 'checked-in'
-        )
+      .filter(reservation =>
+        reservation.arrival === date &&
+        reservation.status === 'no-show'
       )
       .map(reservation => ({
         guestName: reservation.guestName,
@@ -983,7 +1040,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         reservationSource: reservation.source || 'Direct',
         guaranteed: reservation.isGuaranteed || false,
         depositAmount: reservation.deposit?.amount || 0,
-        noShowReason: 'No communication',
+        noShowReason: 'Not recorded',
         followUpRequired: true
       }));
   },
@@ -993,21 +1050,21 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     
     const sources = ['Direct', 'Booking.com', 'Expedia', 'Corporate', 'Travel Agent'];
     
+    const inRange = frontOfficeStore.reservations.filter(r => r.arrival >= startDate && r.arrival <= endDate);
     return sources.map(source => {
-      const bookings = frontOfficeStore.reservations.filter(r => 
-        r.source === source &&
-        r.arrival >= startDate &&
-        r.arrival <= endDate
-      ).length;
-      
-      const revenue = bookings * 800; // Average rate
-      
+      const sourceReservations = inRange.filter(r => r.source === source);
+      const bookings = sourceReservations.length;
+      const revenue = sourceReservations.reduce((sum, r) => {
+        const folio = frontOfficeStore.folios.find(f => f.reservationId === r.id);
+        return sum + (folio ? getFolioDisplayTotals(folio).totalCharges : 0);
+      }, 0);
+
       return {
         source,
         bookings,
         revenue,
-        averageRate: 800,
-        percentageOfTotal: (bookings / frontOfficeStore.reservations.length) * 100,
+        averageRate: bookings > 0 ? revenue / bookings : 0,
+        percentageOfTotal: inRange.length > 0 ? (bookings / inRange.length) * 100 : 0,
         trend: 'stable' as const
       };
     });
@@ -1015,39 +1072,70 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
   generateMarketSegmentationReport: (startDate, endDate) => {
     console.log(`[REPORTS] Generating market segmentation report from ${startDate} to ${endDate}`);
-    
-    const segments = ['Leisure', 'Business', 'Group', 'Corporate'];
-    
+
+    // Segment comes from the reservation's rate plan (RatePlan.marketSegment is a
+    // real, staff-configured field — see Settings > Room Management > Rate Plans),
+    // falling back to 'Unclassified' when no rate plan/segment was set.
+    const inRange = frontOfficeStore.reservations.filter(r => r.arrival >= startDate && r.arrival <= endDate);
+    const segmentOf = (r: typeof inRange[number]) => {
+      const plan = r.ratePlanId ? frontOfficeStore.ratePlans.find(rp => rp.id === r.ratePlanId) : undefined;
+      return plan?.marketSegment || 'Unclassified';
+    };
+    const segments = Array.from(new Set(inRange.map(segmentOf)));
+    if (segments.length === 0) return [];
+
     return segments.map(segment => {
-      const bookings = Math.floor(Math.random() * 20) + 5;
-      const revenue = bookings * 800;
-      
+      const segReservations = inRange.filter(r => segmentOf(r) === segment);
+      const bookings = segReservations.length;
+      let revenue = 0;
+      let totalNights = 0;
+      for (const r of segReservations) {
+        const folio = frontOfficeStore.folios.find(f => f.reservationId === r.id);
+        revenue += folio ? getFolioDisplayTotals(folio).totalCharges : 0;
+        totalNights += Math.max(0, Math.ceil((new Date(r.departure).getTime() - new Date(r.arrival).getTime()) / (1000 * 60 * 60 * 24)));
+      }
+
       return {
         segment,
         bookings,
         revenue,
-        averageRate: 800,
-        averageLengthOfStay: 2.5,
-        percentageOfTotal: (bookings / 50) * 100
+        averageRate: bookings > 0 ? revenue / bookings : 0,
+        averageLengthOfStay: bookings > 0 ? totalNights / bookings : 0,
+        percentageOfTotal: inRange.length > 0 ? (bookings / inRange.length) * 100 : 0
       };
     });
   },
 
   generateGuestCountMealPlanReport: (date) => {
     console.log(`[REPORTS] Generating guest count meal plan report for ${date}`);
-    
-    const mealPlans = ['Bed & Breakfast', 'Half Board', 'Full Board', 'Room Only'];
-    
-    return mealPlans.map(plan => ({
-      mealPlan: plan,
-      guestCount: Math.floor(Math.random() * 10) + 1,
-      dietaryRestrictions: ['Vegetarian', 'Gluten-Free'],
-      specialRequests: ['Late breakfast', 'Room service'],
-      mealTimes: {
-        breakfast: Math.floor(Math.random() * 5) + 1,
-        lunch: Math.floor(Math.random() * 3) + 1,
-        dinner: Math.floor(Math.random() * 4) + 1
-      }
+
+    const mealPlanLabels: Record<string, string> = {
+      room_only: 'Room Only',
+      bed_breakfast: 'Bed & Breakfast',
+      half_board: 'Half Board',
+      full_board: 'Full Board',
+    };
+
+    const inHouse = frontOfficeStore.reservations.filter(r =>
+      r.status === 'checked-in' && r.arrival <= date && r.departure > date
+    );
+    if (inHouse.length === 0) return [];
+
+    const mealPlanOf = (r: typeof inHouse[number]) => {
+      const plan = r.ratePlanId ? frontOfficeStore.ratePlans.find(rp => rp.id === r.ratePlanId) : undefined;
+      return (plan as any)?.mealPlan || 'room_only';
+    };
+
+    const buckets = Array.from(new Set(inHouse.map(mealPlanOf)));
+    // Per-meal (breakfast/lunch/dinner) attendance and dietary restrictions aren't
+    // tracked anywhere in this system, so those are honestly reported empty/zero
+    // rather than fabricated — only the real guest count per meal plan is shown.
+    return buckets.map(key => ({
+      mealPlan: mealPlanLabels[key] || key,
+      guestCount: inHouse.filter(r => mealPlanOf(r) === key).reduce((sum, r) => sum + (r.adults || 0) + (r.children || 0), 0),
+      dietaryRestrictions: [],
+      specialRequests: [],
+      mealTimes: { breakfast: 0, lunch: 0, dinner: 0 }
     }));
   },
 
@@ -1096,7 +1184,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     
     const totalSpent = guestReservations.reduce((sum, r) => {
       const folio = frontOfficeStore.folios.find(f => f.reservationId === r.id);
-      return sum + (folio?.charges?.reduce((cSum, charge) => cSum + charge.amount, 0) || 0);
+      return sum + (folio ? getFolioDisplayTotals(folio).totalCharges : 0);
     }, 0);
     
     return {
@@ -1115,175 +1203,139 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
   generateDiscountRequestReport: (startDate, endDate) => {
     console.log(`[REPORTS] Generating discount request report from ${startDate} to ${endDate}`);
-    
-    // Simulate discount request data - in real implementation, this would come from actual discount requests
-    const discountRequests = [
-      {
-        id: 'DR001',
-        guestName: 'John Smith',
-        roomType: 'Deluxe',
-        originalRate: 1200,
-        requestedRate: 1000,
-        discountAmount: 200,
-        discountPercentage: 16.67,
-        requestReason: 'Corporate rate',
-        requestDate: '2024-01-15',
-        status: 'approved',
-        approvedBy: 'Manager',
-        approvedDate: '2024-01-15',
-        revenueImpact: -200,
-        marketSegment: 'Corporate'
-      },
-      {
-        id: 'DR002',
-        guestName: 'Sarah Johnson',
-        roomType: 'Standard',
-        originalRate: 800,
-        requestedRate: 700,
-        discountAmount: 100,
-        discountPercentage: 12.5,
-        requestReason: 'Long stay discount',
-        requestDate: '2024-01-14',
-        status: 'approved',
-        approvedBy: 'Supervisor',
-        approvedDate: '2024-01-14',
-        revenueImpact: -100,
-        marketSegment: 'Leisure'
-      },
-      {
-        id: 'DR003',
-        guestName: 'Mike Wilson',
-        roomType: 'Suite',
-        originalRate: 2000,
-        requestedRate: 1800,
-        discountAmount: 200,
-        discountPercentage: 10,
-        requestReason: 'VIP guest',
-        requestDate: '2024-01-13',
-        status: 'approved',
-        approvedBy: 'Manager',
-        approvedDate: '2024-01-13',
-        revenueImpact: -200,
-        marketSegment: 'VIP'
-      }
-    ];
 
-    // Filter by date range
-    const filteredRequests = discountRequests.filter(req => 
-      req.requestDate >= startDate && req.requestDate <= endDate
-    );
+    // Real discounts, sourced from folio charges tagged "Discount: <reason>" —
+    // the actual mechanism staff use in Guest Services > Invoices & Payments >
+    // Folio Adjustments. Discounts apply immediately (no separate request/approval
+    // step exists in this system), so every one reported here is already "applied";
+    // approvedBy isn't tracked per-charge, so it's reported honestly as unknown
+    // rather than a fabricated name.
+    type Req = { id: string; guestName: string; roomType: string; originalRate: number; requestedRate: number; discountAmount: number; discountPercentage: number; requestReason: string; requestDate: string; status: 'approved'; approvedBy: string; approvedDate: string; revenueImpact: number; marketSegment: string };
+    const requests: Req[] = [];
+    for (const folio of frontOfficeStore.folios) {
+      const reservation = frontOfficeStore.reservations.find(r => r.id === folio.reservationId);
+      if (!reservation) continue;
+      const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Unknown';
+      const plan = reservation.ratePlanId ? frontOfficeStore.ratePlans.find(rp => rp.id === reservation.ratePlanId) : undefined;
+      const roomCharges = folio.charges.filter(c => (c.description || '').toLowerCase().includes('room'));
+      const originalRate = roomCharges.reduce((s, c) => s + c.amount, 0);
+      for (const c of folio.charges) {
+        if (!c.description?.startsWith('Discount: ')) continue;
+        const chargeDate = (c.date || '').slice(0, 10);
+        if (chargeDate < startDate || chargeDate > endDate) continue;
+        const discountAmount = Math.abs(c.amount);
+        requests.push({
+          id: c.id,
+          guestName: reservation.guestName,
+          roomType,
+          originalRate,
+          requestedRate: Math.max(0, originalRate - discountAmount),
+          discountAmount,
+          discountPercentage: originalRate > 0 ? (discountAmount / originalRate) * 100 : 0,
+          requestReason: c.description.slice('Discount: '.length),
+          requestDate: chargeDate,
+          status: 'approved',
+          approvedBy: (c as any).staffName || 'Not tracked',
+          approvedDate: chargeDate,
+          revenueImpact: -discountAmount,
+          marketSegment: plan?.marketSegment || 'Unclassified',
+        });
+      }
+    }
+
+    const byReason = new Map<string, { count: number; totalDiscount: number }>();
+    const bySegment = new Map<string, { totalDiscount: number; requestCount: number }>();
+    const byRoomType = new Map<string, { totalDiscount: number; requestCount: number }>();
+    for (const r of requests) {
+      const rr = byReason.get(r.requestReason) || { count: 0, totalDiscount: 0 };
+      rr.count++; rr.totalDiscount += r.discountAmount; byReason.set(r.requestReason, rr);
+      const rs = bySegment.get(r.marketSegment) || { totalDiscount: 0, requestCount: 0 };
+      rs.totalDiscount += r.discountAmount; rs.requestCount++; bySegment.set(r.marketSegment, rs);
+      const rt = byRoomType.get(r.roomType) || { totalDiscount: 0, requestCount: 0 };
+      rt.totalDiscount += r.discountAmount; rt.requestCount++; byRoomType.set(r.roomType, rt);
+    }
 
     return {
       summary: {
-        totalRequests: filteredRequests.length,
-        approvedRequests: filteredRequests.filter(req => req.status === 'approved').length,
-        rejectedRequests: filteredRequests.filter(req => req.status === 'rejected').length,
-        pendingRequests: filteredRequests.filter(req => req.status === 'pending').length,
-        totalRevenueImpact: filteredRequests.reduce((sum, req) => sum + req.revenueImpact, 0),
-        averageDiscountPercentage: filteredRequests.reduce((sum, req) => sum + req.discountPercentage, 0) / filteredRequests.length
+        totalRequests: requests.length,
+        approvedRequests: requests.length,
+        rejectedRequests: 0,
+        pendingRequests: 0,
+        totalRevenueImpact: requests.reduce((sum, req) => sum + req.revenueImpact, 0),
+        averageDiscountPercentage: requests.length > 0 ? requests.reduce((sum, req) => sum + req.discountPercentage, 0) / requests.length : 0
       },
-      requests: filteredRequests,
+      requests,
       analysis: {
-        topReasons: [
-          { reason: 'Corporate rate', count: 2, totalDiscount: 400 },
-          { reason: 'Long stay discount', count: 1, totalDiscount: 100 },
-          { reason: 'VIP guest', count: 1, totalDiscount: 200 }
-        ],
-        marketSegmentImpact: [
-          { segment: 'Corporate', totalDiscount: 400, requestCount: 2 },
-          { segment: 'Leisure', totalDiscount: 100, requestCount: 1 },
-          { segment: 'VIP', totalDiscount: 200, requestCount: 1 }
-        ],
-        roomTypeAnalysis: [
-          { type: 'Deluxe', totalDiscount: 200, averageDiscount: 200 },
-          { type: 'Standard', totalDiscount: 100, averageDiscount: 100 },
-          { type: 'Suite', totalDiscount: 200, averageDiscount: 200 }
-        ]
+        topReasons: Array.from(byReason.entries()).map(([reason, v]) => ({ reason, ...v })),
+        marketSegmentImpact: Array.from(bySegment.entries()).map(([segment, v]) => ({ segment, ...v })),
+        roomTypeAnalysis: Array.from(byRoomType.entries()).map(([type, v]) => ({ type, totalDiscount: v.totalDiscount, averageDiscount: v.requestCount > 0 ? v.totalDiscount / v.requestCount : 0 }))
       }
     };
   },
 
   generateComplimentaryRoomReport: (startDate, endDate) => {
     console.log(`[REPORTS] Generating complimentary room report from ${startDate} to ${endDate}`);
-    
-    // Simulate complimentary room data
-    const complimentaryRooms = [
-      {
-        id: 'CR001',
-        guestName: 'VIP Guest 1',
-        roomType: 'Suite',
-        roomNumber: '101',
-        originalRate: 2000,
-        complimentaryReason: 'VIP guest - loyalty program',
-        checkIn: '2024-01-15',
-        checkOut: '2024-01-17',
-        nights: 2,
-        revenueLoss: 4000,
-        approvedBy: 'General Manager',
-        approvedDate: '2024-01-14',
-        notes: 'High-value customer retention'
-      },
-      {
-        id: 'CR002',
-        guestName: 'Corporate Partner',
-        roomType: 'Deluxe',
-        roomNumber: '205',
-        originalRate: 1200,
-        complimentaryReason: 'Corporate partnership agreement',
-        checkIn: '2024-01-16',
-        checkOut: '2024-01-18',
-        nights: 2,
-        revenueLoss: 2400,
-        approvedBy: 'Sales Director',
-        approvedDate: '2024-01-15',
-        notes: 'Strategic partnership benefit'
-      },
-      {
-        id: 'CR003',
-        guestName: 'Media Representative',
-        roomType: 'Standard',
-        roomNumber: '310',
-        originalRate: 800,
-        complimentaryReason: 'Media coverage and promotion',
-        checkIn: '2024-01-17',
-        checkOut: '2024-01-19',
-        nights: 2,
-        revenueLoss: 1600,
-        approvedBy: 'Marketing Manager',
-        approvedDate: '2024-01-16',
-        notes: 'Publicity and marketing value'
-      }
-    ];
 
-    // Filter by date range
-    const filteredRooms = complimentaryRooms.filter(room => 
-      room.checkIn >= startDate && room.checkIn <= endDate
-    );
+    // Real comps, sourced from folio charges tagged "Complimentary: <reason>" —
+    // applied the same way as discounts, via Guest Services > Invoices & Payments
+    // > Folio Adjustments. approvedBy isn't tracked per-charge (no separate
+    // approval workflow exists), so it's reported honestly as unknown.
+    type Room = { id: string; guestName: string; roomType: string; roomNumber: string; originalRate: number; complimentaryReason: string; checkIn: string; checkOut: string; nights: number; revenueLoss: number; approvedBy: string; approvedDate: string; notes: string };
+    const rooms: Room[] = [];
+    for (const folio of frontOfficeStore.folios) {
+      const reservation = frontOfficeStore.reservations.find(r => r.id === folio.reservationId);
+      if (!reservation) continue;
+      const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Unknown';
+      const roomChargesTotal = folio.charges.filter(c => (c.description || '').toLowerCase().includes('room')).reduce((s, c) => s + c.amount, 0);
+      const nights = Math.max(1, Math.ceil((new Date(reservation.departure).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24)));
+      for (const c of folio.charges) {
+        if (!c.description?.startsWith('Complimentary: ')) continue;
+        const chargeDate = (c.date || '').slice(0, 10);
+        if (chargeDate < startDate || chargeDate > endDate) continue;
+        rooms.push({
+          id: c.id,
+          guestName: reservation.guestName,
+          roomType,
+          roomNumber: reservation.roomId || 'TBD',
+          originalRate: roomChargesTotal,
+          complimentaryReason: c.description.slice('Complimentary: '.length),
+          checkIn: reservation.arrival.slice(0, 10),
+          checkOut: reservation.departure.slice(0, 10),
+          nights,
+          revenueLoss: Math.abs(c.amount),
+          approvedBy: (c as any).staffName || 'Not tracked',
+          approvedDate: chargeDate,
+          notes: '',
+        });
+      }
+    }
+
+    const byReason = new Map<string, { count: number; revenueLoss: number }>();
+    const byRoomType = new Map<string, { count: number; revenueLoss: number }>();
+    const byApprover = new Map<string, { count: number; totalRevenueLoss: number }>();
+    for (const r of rooms) {
+      const rr = byReason.get(r.complimentaryReason) || { count: 0, revenueLoss: 0 };
+      rr.count++; rr.revenueLoss += r.revenueLoss; byReason.set(r.complimentaryReason, rr);
+      const rt = byRoomType.get(r.roomType) || { count: 0, revenueLoss: 0 };
+      rt.count++; rt.revenueLoss += r.revenueLoss; byRoomType.set(r.roomType, rt);
+      const ra = byApprover.get(r.approvedBy) || { count: 0, totalRevenueLoss: 0 };
+      ra.count++; ra.totalRevenueLoss += r.revenueLoss; byApprover.set(r.approvedBy, ra);
+    }
+    const totalRevenueLoss = rooms.reduce((sum, room) => sum + room.revenueLoss, 0);
+    const pct = (loss: number) => totalRevenueLoss > 0 ? (loss / totalRevenueLoss) * 100 : 0;
 
     return {
       summary: {
-        totalComplimentaryRooms: filteredRooms.length,
-        totalNights: filteredRooms.reduce((sum, room) => sum + room.nights, 0),
-        totalRevenueLoss: filteredRooms.reduce((sum, room) => sum + room.revenueLoss, 0),
-        averageRate: filteredRooms.reduce((sum, room) => sum + room.originalRate, 0) / filteredRooms.length
+        totalComplimentaryRooms: rooms.length,
+        totalNights: rooms.reduce((sum, room) => sum + room.nights, 0),
+        totalRevenueLoss,
+        averageRate: rooms.length > 0 ? rooms.reduce((sum, room) => sum + room.originalRate, 0) / rooms.length : 0
       },
-      rooms: filteredRooms,
+      rooms,
       analysis: {
-        reasons: [
-          { reason: 'VIP guest - loyalty program', count: 1, revenueLoss: 4000, percentage: 50 },
-          { reason: 'Corporate partnership agreement', count: 1, revenueLoss: 2400, percentage: 30 },
-          { reason: 'Media coverage and promotion', count: 1, revenueLoss: 1600, percentage: 20 }
-        ],
-        roomTypeImpact: [
-          { type: 'Suite', count: 1, revenueLoss: 4000, percentage: 50 },
-          { type: 'Deluxe', count: 1, revenueLoss: 2400, percentage: 30 },
-          { type: 'Standard', count: 1, revenueLoss: 1600, percentage: 20 }
-        ],
-        approvalAnalysis: [
-          { approver: 'General Manager', count: 1, totalRevenueLoss: 4000 },
-          { approver: 'Sales Director', count: 1, totalRevenueLoss: 2400 },
-          { approver: 'Marketing Manager', count: 1, totalRevenueLoss: 1600 }
-        ]
+        reasons: Array.from(byReason.entries()).map(([reason, v]) => ({ reason, count: v.count, revenueLoss: v.revenueLoss, percentage: pct(v.revenueLoss) })),
+        roomTypeImpact: Array.from(byRoomType.entries()).map(([type, v]) => ({ type, count: v.count, revenueLoss: v.revenueLoss, percentage: pct(v.revenueLoss) })),
+        approvalAnalysis: Array.from(byApprover.entries()).map(([approver, v]) => ({ approver, ...v }))
       }
     };
   },
@@ -1295,12 +1347,15 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     const discountReport = get().generateDiscountRequestReport(startDate, endDate);
     const complimentaryReport = get().generateComplimentaryRoomReport(startDate, endDate);
     
-    const totalRevenueImpact = (discountReport.summary.totalRevenueImpact || 0) + 
+    const totalRevenueImpact = (discountReport.summary.totalRevenueImpact || 0) +
                               (complimentaryReport.summary.totalRevenueLoss || 0);
-    
-    const averageRoomRate = 1000; // This would come from actual room rate data
-    const totalRooms = 50; // This would come from actual room inventory
-    
+
+    const totalRooms = frontOfficeStore.rooms.length;
+    const arrivalsInRange = frontOfficeStore.reservations.filter(r => r.arrival >= startDate && r.arrival <= endDate);
+    const averageRoomRate = arrivalsInRange.length > 0
+      ? arrivalsInRange.reduce((sum, r) => sum + frontOfficeStore.getReservationQuote(r).nightlyGross, 0) / arrivalsInRange.length
+      : 0;
+
     return {
       period: { startDate, endDate },
       summary: {
@@ -1313,7 +1368,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       },
       discountAnalysis: {
         totalRequests: discountReport.summary.totalRequests,
-        approvalRate: (discountReport.summary.approvedRequests / discountReport.summary.totalRequests) * 100,
+        approvalRate: discountReport.summary.totalRequests > 0 ? (discountReport.summary.approvedRequests / discountReport.summary.totalRequests) * 100 : 0,
         averageDiscountPercentage: discountReport.summary.averageDiscountPercentage,
         topReasons: discountReport.analysis.topReasons,
         marketSegmentImpact: discountReport.analysis.marketSegmentImpact

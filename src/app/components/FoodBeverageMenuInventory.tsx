@@ -1,68 +1,59 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Progress, Tabs, Tab } from "@heroui/react";
+import React, { useState, useEffect } from 'react';
+import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Tabs, Tab } from "@heroui/react";
+import { getClientTenantSubdomain } from '../lib/api/clientTenant';
+
+function fbHeaders() {
+  return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
+}
 
 interface MenuItem {
   id: string;
+  code: string;
   name: string;
   description: string;
   category: string;
+  venue: string;
   price: number;
   cost: number;
   profitMargin: number;
   available: boolean;
   preparationTime: number;
   allergens: string[];
-  ingredients: MenuIngredient[];
-  image?: string;
-  popularity: number;
-  seasonal: boolean;
-}
-
-interface MenuIngredient {
-  name: string;
-  quantity: number;
-  unit: string;
-  cost: number;
 }
 
 interface InventoryItem {
   id: string;
+  code: string;
   name: string;
+  description: string;
   category: string;
-  currentStock: number;
-  minimumStock: number;
-  maximumStock: number;
   unit: string;
-  costPerUnit: number;
-  supplier: string;
-  status: 'sufficient' | 'low' | 'out' | 'overstock';
-  lastUpdated: Date;
-  expiryDate?: Date;
-  location: string;
+  defaultCost: number;
+  sellingPrice: number;
+  isActive: boolean;
 }
 
 interface Supplier {
   id: string;
+  code: string;
   name: string;
-  contact: string;
+  contactPerson: string;
   phone: string;
   email: string;
-  rating: number;
-  deliveryTime: number;
-  paymentTerms: string;
-  items: string[];
 }
 
 interface PurchaseOrder {
   id: string;
-  supplier: string;
+  poNumber: string;
+  supplierId: string;
+  supplierName: string;
   items: PurchaseOrderItem[];
   totalCost: number;
-  status: 'pending' | 'ordered' | 'delivered' | 'cancelled';
+  status: 'draft' | 'sent' | 'confirmed' | 'in-transit' | 'delivered' | 'cancelled' | 'closed';
   orderDate: Date;
-  expectedDelivery: Date;
+  expectedDelivery?: Date;
   actualDelivery?: Date;
 }
 
@@ -78,180 +69,197 @@ export default function FoodBeverageMenuInventory() {
   const [isNewMenuItemModalOpen, setIsNewMenuItemModalOpen] = useState(false);
   const [isNewInventoryItemModalOpen, setIsNewInventoryItemModalOpen] = useState(false);
   const [isNewPurchaseOrderModalOpen, setIsNewPurchaseOrderModalOpen] = useState(false);
+  const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedInventoryStatus, setSelectedInventoryStatus] = useState('all');
 
-  // Sample data
-  const menuItems: MenuItem[] = [
-    {
-      id: '1',
-      name: 'Jollof Rice',
-      description: 'Traditional Ghanaian rice dish with tomatoes and spices',
-      category: 'Main Course',
-      price: 28.00,
-      cost: 12.50,
-      profitMargin: 55.4,
-      available: true,
-      preparationTime: 25,
-      allergens: ['None'],
-      ingredients: [
-        { name: 'Rice', quantity: 2, unit: 'cups', cost: 4.00 },
-        { name: 'Tomatoes', quantity: 6, unit: 'medium', cost: 3.00 },
-        { name: 'Onions', quantity: 2, unit: 'medium', cost: 1.00 },
-        { name: 'Palm Oil', quantity: 3, unit: 'tbsp', cost: 2.00 },
-        { name: 'Chicken', quantity: 500, unit: 'g', cost: 2.50 }
-      ],
-      popularity: 95,
-      seasonal: false
-    },
-    {
-      id: '2',
-      name: 'Banku & Tilapia',
-      description: 'Fermented corn dough with grilled tilapia fish',
-      category: 'Main Course',
-      price: 35.00,
-      cost: 18.00,
-      profitMargin: 48.6,
-      available: true,
-      preparationTime: 30,
-      allergens: ['Fish', 'Corn'],
-      ingredients: [
-        { name: 'Corn Dough', quantity: 2, unit: 'cups', cost: 3.00 },
-        { name: 'Cassava Dough', quantity: 1, unit: 'cup', cost: 2.00 },
-        { name: 'Tilapia', quantity: 1, unit: 'whole', cost: 12.00 },
-        { name: 'Pepper', quantity: 3, unit: 'medium', cost: 1.00 }
-      ],
-      popularity: 88,
-      seasonal: false
-    },
-    {
-      id: '3',
-      name: 'Kelewele',
-      description: 'Spicy fried plantains with ginger and pepper',
-      category: 'Appetizer',
-      price: 12.00,
-      cost: 4.50,
-      profitMargin: 62.5,
-      available: true,
-      preparationTime: 10,
-      allergens: ['None'],
-      ingredients: [
-        { name: 'Plantains', quantity: 3, unit: 'medium', cost: 3.00 },
-        { name: 'Ginger', quantity: 1, unit: 'tbsp', cost: 0.50 },
-        { name: 'Pepper', quantity: 2, unit: 'medium', cost: 1.00 }
-      ],
-      popularity: 92,
-      seasonal: false
-    },
-    {
-      id: '4',
-      name: 'Palm Wine',
-      description: 'Traditional palm wine from coconut palm',
-      category: 'Beverage',
-      price: 15.00,
-      cost: 6.00,
-      profitMargin: 60.0,
-      available: true,
-      preparationTime: 5,
-      allergens: ['None'],
-      ingredients: [
-        { name: 'Palm Wine', quantity: 1, unit: 'bottle', cost: 6.00 }
-      ],
-      popularity: 78,
-      seasonal: true
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const reloadMenu = () => {
+    fetch('/api/fb/menu', { headers: fbHeaders() })
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((data) => setMenuItems((data.items || []).map((i: any) => {
+        const price = Number(i.unitPrice || 0);
+        const cost = Number(i.costPrice || 0);
+        return {
+          id: i.id,
+          code: i.code,
+          name: i.name,
+          description: i.description || '',
+          category: i.category,
+          venue: i.venue,
+          price,
+          cost,
+          profitMargin: price > 0 ? ((price - cost) / price) * 100 : 0,
+          available: i.isAvailable,
+          preparationTime: i.prepMinutes,
+          allergens: i.allergens ? i.allergens.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
+        };
+      })));
+  };
+  useEffect(() => { reloadMenu(); }, []);
+
+  const [menuForm, setMenuForm] = useState({ name: '', category: 'main-course', venue: 'restaurant', description: '', price: '0', cost: '0', prepTime: '15', allergens: '' });
+  const submitMenuItem = async () => {
+    if (!menuForm.name) return;
+    const code = menuForm.name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 20) + '-' + Date.now().toString().slice(-4);
+    const res = await fetch('/api/fb/menu', {
+      method: 'POST',
+      headers: fbHeaders(),
+      body: JSON.stringify({
+        code,
+        name: menuForm.name,
+        description: menuForm.description,
+        category: menuForm.category,
+        venue: menuForm.venue,
+        unitPrice: Number(menuForm.price) || 0,
+        costPrice: Number(menuForm.cost) || 0,
+        prepMinutes: Number(menuForm.prepTime) || 10,
+        allergens: menuForm.allergens || undefined,
+      }),
+    });
+    if (res.ok) {
+      setMenuForm({ name: '', category: 'main-course', venue: 'restaurant', description: '', price: '0', cost: '0', prepTime: '15', allergens: '' });
+      setIsNewMenuItemModalOpen(false);
+      reloadMenu();
     }
-  ];
+  };
+  const toggleMenuItemAvailability = async (item: MenuItem) => {
+    await fetch('/api/fb/menu', {
+      method: 'PATCH',
+      headers: fbHeaders(),
+      body: JSON.stringify({ id: item.id, isAvailable: !item.available }),
+    });
+    reloadMenu();
+  };
 
-  const inventoryItems: InventoryItem[] = [
-    { id: '1', name: 'Rice', category: 'Grains', currentStock: 50, minimumStock: 20, maximumStock: 100, unit: 'kg', costPerUnit: 2.00, supplier: 'Ghana Foods Ltd', status: 'sufficient', lastUpdated: new Date(), location: 'Storage A' },
-    { id: '2', name: 'Chicken', category: 'Meat', currentStock: 15, minimumStock: 25, maximumStock: 50, unit: 'kg', costPerUnit: 5.00, supplier: 'Fresh Meat Co', status: 'low', lastUpdated: new Date(), location: 'Freezer B' },
-    { id: '3', name: 'Tilapia', category: 'Fish', currentStock: 8, minimumStock: 10, maximumStock: 30, unit: 'kg', costPerUnit: 12.00, supplier: 'Ocean Fresh', status: 'low', lastUpdated: new Date(), location: 'Freezer A' },
-    { id: '4', name: 'Plantains', category: 'Vegetables', currentStock: 0, minimumStock: 5, maximumStock: 20, unit: 'kg', costPerUnit: 1.50, supplier: 'Local Market', status: 'out', lastUpdated: new Date(), location: 'Storage B' },
-    { id: '5', name: 'Palm Oil', category: 'Oils', currentStock: 12, minimumStock: 8, maximumStock: 25, unit: 'L', costPerUnit: 3.00, supplier: 'Ghana Oils', status: 'sufficient', lastUpdated: new Date(), location: 'Storage A' },
-    { id: '6', name: 'Tomatoes', category: 'Vegetables', currentStock: 30, minimumStock: 15, maximumStock: 40, unit: 'kg', costPerUnit: 2.50, supplier: 'Fresh Produce', status: 'sufficient', lastUpdated: new Date(), location: 'Storage B' }
-  ];
 
-  const suppliers: Supplier[] = [
-    { id: '1', name: 'Ghana Foods Ltd', contact: 'Kwame Asante', phone: '+233 24 123 4567', email: 'info@ghanafoods.com', rating: 4.5, deliveryTime: 2, paymentTerms: 'Net 30', items: ['Rice', 'Palm Oil'] },
-    { id: '2', name: 'Fresh Meat Co', contact: 'Ama Osei', phone: '+233 20 987 6543', email: 'orders@freshmeat.com', rating: 4.2, deliveryTime: 1, paymentTerms: 'Net 15', items: ['Chicken', 'Beef'] },
-    { id: '3', name: 'Ocean Fresh', contact: 'Kofi Mensah', phone: '+233 26 555 1234', email: 'sales@oceanfresh.com', rating: 4.8, deliveryTime: 3, paymentTerms: 'Net 30', items: ['Tilapia', 'Salmon'] },
-    { id: '4', name: 'Local Market', contact: 'Efua Addo', phone: '+233 27 777 8888', email: 'localmarket@gmail.com', rating: 4.0, deliveryTime: 1, paymentTerms: 'Cash on Delivery', items: ['Plantains', 'Tomatoes'] }
-  ];
+  const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
+  const reloadInventoryItems = () => {
+    fetch('/api/inventory/items', { headers: fbHeaders() })
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((data) => setInventoryItems((data.items || []).map((i: any) => ({
+        id: i.id,
+        code: i.code,
+        name: i.name,
+        description: i.description || '',
+        category: i.category?.name || '—',
+        unit: i.unit?.name || '—',
+        defaultCost: Number(i.defaultCost || 0),
+        sellingPrice: Number(i.sellingPrice || 0),
+        isActive: i.isActive,
+      }))));
+  };
 
-  const purchaseOrders: PurchaseOrder[] = [
-    {
-      id: 'PO001',
-      supplier: 'Fresh Meat Co',
-      items: [
-        { item: 'Chicken', quantity: 20, unitCost: 5.00, totalCost: 100.00 },
-        { item: 'Beef', quantity: 15, unitCost: 8.00, totalCost: 120.00 }
-      ],
-      totalCost: 220.00,
-      status: 'ordered',
-      orderDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-      expectedDelivery: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000)
-    },
-    {
-      id: 'PO002',
-      supplier: 'Local Market',
-      items: [
-        { item: 'Plantains', quantity: 10, unitCost: 1.50, totalCost: 15.00 },
-        { item: 'Tomatoes', quantity: 20, unitCost: 2.50, totalCost: 50.00 }
-      ],
-      totalCost: 65.00,
-      status: 'delivered',
-      orderDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
-      expectedDelivery: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-      actualDelivery: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000)
+  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const reloadSuppliers = () => {
+    fetch('/api/inventory/suppliers', { headers: fbHeaders() })
+      .then((r) => (r.ok ? r.json() : { suppliers: [] }))
+      .then((data) => setSuppliers((data.suppliers || []).map((s: any) => ({
+        id: s.id,
+        code: s.code,
+        name: s.name,
+        contactPerson: s.contactPerson || '',
+        phone: s.phone || '',
+        email: s.email || '',
+      }))));
+  };
+
+  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
+  const reloadPurchaseOrders = () => {
+    fetch('/api/inventory/purchase-orders', { headers: fbHeaders() })
+      .then((r) => (r.ok ? r.json() : { orders: [] }))
+      .then((data) => setPurchaseOrders((data.orders || []).map((o: any) => ({
+        id: o.id,
+        poNumber: o.poNumber,
+        supplierId: o.supplierId,
+        supplierName: o.supplierName,
+        items: (o.items || []).map((it: any) => ({ item: it.itemName, quantity: it.quantity, unitCost: Number(it.unitCost), totalCost: Number(it.totalCost) })),
+        totalCost: Number(o.finalAmount ?? o.totalAmount ?? 0),
+        status: o.status,
+        orderDate: new Date(o.orderDate || o.createdAt),
+        expectedDelivery: o.expectedDeliveryDate ? new Date(o.expectedDeliveryDate) : undefined,
+        actualDelivery: o.actualDeliveryDate ? new Date(o.actualDeliveryDate) : undefined,
+      }))));
+  };
+
+  useEffect(() => { reloadInventoryItems(); reloadSuppliers(); reloadPurchaseOrders(); }, []);
+
+  const [inventoryForm, setInventoryForm] = useState({ name: '', description: '', defaultCost: '0', sellingPrice: '0' });
+  const submitInventoryItem = async () => {
+    if (!inventoryForm.name) return;
+    const code = inventoryForm.name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 20) + '-' + Date.now().toString().slice(-4);
+    const res = await fetch('/api/inventory/items', {
+      method: 'POST',
+      headers: fbHeaders(),
+      body: JSON.stringify({ code, name: inventoryForm.name, description: inventoryForm.description, defaultCost: Number(inventoryForm.defaultCost) || 0, sellingPrice: Number(inventoryForm.sellingPrice) || 0 }),
+    });
+    if (res.ok) {
+      setInventoryForm({ name: '', description: '', defaultCost: '0', sellingPrice: '0' });
+      setIsNewInventoryItemModalOpen(false);
+      reloadInventoryItems();
     }
-  ];
+  };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'sufficient': return 'success';
-      case 'low': return 'warning';
-      case 'out': return 'danger';
-      case 'overstock': return 'secondary';
-      default: return 'default';
+  const [supplierForm, setSupplierForm] = useState({ name: '', contactPerson: '', phone: '', email: '' });
+  const submitSupplier = async () => {
+    if (!supplierForm.name) return;
+    const id = `SUP-${Date.now().toString().slice(-8)}`;
+    const res = await fetch('/api/inventory/suppliers', { method: 'POST', headers: fbHeaders(), body: JSON.stringify({ id, ...supplierForm }) });
+    if (res.ok) {
+      setSupplierForm({ name: '', contactPerson: '', phone: '', email: '' });
+      setIsNewSupplierModalOpen(false);
+      reloadSuppliers();
+    }
+  };
+
+  const [poSupplierId, setPoSupplierId] = useState('');
+  const [poExpectedDelivery, setPoExpectedDelivery] = useState('');
+  const [poQuantities, setPoQuantities] = useState<Record<string, string>>({});
+  const submitPurchaseOrder = async () => {
+    const supplier = suppliers.find((s) => s.id === poSupplierId);
+    if (!supplier) return;
+    const items = inventoryItems
+      .filter((it) => Number(poQuantities[it.id]) > 0)
+      .map((it) => ({ itemId: it.id, itemCode: it.code, itemName: it.name, quantity: Number(poQuantities[it.id]), unitCost: it.defaultCost }));
+    if (items.length === 0) return;
+    const res = await fetch('/api/inventory/purchase-orders', {
+      method: 'POST',
+      headers: fbHeaders(),
+      body: JSON.stringify({ supplierId: supplier.id, supplierName: supplier.name, expectedDeliveryDate: poExpectedDelivery || undefined, items }),
+    });
+    if (res.ok) {
+      setPoSupplierId('');
+      setPoExpectedDelivery('');
+      setPoQuantities({});
+      setIsNewPurchaseOrderModalOpen(false);
+      reloadPurchaseOrders();
     }
   };
 
   const getOrderStatusColor = (status: string) => {
     switch (status) {
-      case 'pending': return 'warning';
-      case 'ordered': return 'primary';
+      case 'draft': return 'default';
+      case 'sent': return 'warning';
+      case 'confirmed': return 'primary';
+      case 'in-transit': return 'secondary';
       case 'delivered': return 'success';
+      case 'closed': return 'success';
       case 'cancelled': return 'danger';
       default: return 'default';
     }
   };
 
-  const getPopularityColor = (popularity: number) => {
-    if (popularity >= 90) return 'success';
-    if (popularity >= 80) return 'primary';
-    if (popularity >= 70) return 'warning';
-    return 'danger';
-  };
-
-  const filteredMenuItems = selectedCategory === 'all' 
+  const filteredMenuItems = selectedCategory === 'all'
     ? menuItems 
     : menuItems.filter(item => item.category === selectedCategory);
 
-  const filteredInventoryItems = selectedInventoryStatus === 'all' 
-    ? inventoryItems 
-    : inventoryItems.filter(item => item.status === selectedInventoryStatus);
-
-  const getStockPercentage = (item: InventoryItem) => {
-    return (item.currentStock / item.maximumStock) * 100;
-  };
-
-  const getTotalInventoryValue = () => {
-    return inventoryItems.reduce((total, item) => total + (item.currentStock * item.costPerUnit), 0);
-  };
-
-  const getLowStockItems = () => {
-    return inventoryItems.filter(item => item.status === 'low' || item.status === 'out');
-  };
+  // Stock quantity isn't tracked anywhere real yet (see the Inventory & Stores
+  // module's stockStore.ts — same gap, flagged separately), so this view is
+  // scoped to the real item catalog (code/name/cost) rather than live stock
+  // levels/status, which this session confirmed have no backing data.
+  const filteredInventoryItems = selectedInventoryStatus === 'all'
+    ? inventoryItems
+    : inventoryItems.filter(item => (selectedInventoryStatus === 'active' ? item.isActive : !item.isActive));
 
   return (
     <div className="p-6">
@@ -307,33 +315,33 @@ export default function FoodBeverageMenuInventory() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Inventory Items</p>
                 <p className="text-2xl font-bold text-ghana-black">{inventoryItems.length}</p>
-                <p className="text-sm text-warning">{getLowStockItems().length} need restocking</p>
+                <p className="text-sm text-gray-500">{inventoryItems.filter(i => i.isActive).length} active</p>
               </div>
               <div className="text-3xl">📦</div>
             </div>
           </CardBody>
         </Card>
-        
+
         <Card className="border-0 shadow-lg">
           <CardBody className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Total Inventory Value</p>
-                <p className="text-2xl font-bold text-ghana-black">₵{getTotalInventoryValue().toFixed(2)}</p>
-                <p className="text-sm text-blue-600">Current stock value</p>
+                <p className="text-sm font-medium text-gray-600">Purchase Orders</p>
+                <p className="text-2xl font-bold text-ghana-black">{purchaseOrders.length}</p>
+                <p className="text-sm text-blue-600">₵{purchaseOrders.reduce((s, o) => s + o.totalCost, 0).toFixed(2)} total</p>
               </div>
-              <div className="text-3xl">💰</div>
+              <div className="text-3xl">📋</div>
             </div>
           </CardBody>
         </Card>
-        
+
         <Card className="border-0 shadow-lg">
           <CardBody className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Active Suppliers</p>
+                <p className="text-sm font-medium text-gray-600">Suppliers</p>
                 <p className="text-2xl font-bold text-ghana-black">{suppliers.length}</p>
-                <p className="text-sm text-green-600">All reliable</p>
+                <p className="text-sm text-gray-500">On file</p>
               </div>
               <div className="text-3xl">🏢</div>
             </div>
@@ -360,10 +368,11 @@ export default function FoodBeverageMenuInventory() {
                     className="w-64"
                   >
                     <SelectItem key="all">All Categories</SelectItem>
-                    <SelectItem key="Appetizer">Appetizer</SelectItem>
-                    <SelectItem key="Main Course">Main Course</SelectItem>
-                    <SelectItem key="Beverage">Beverage</SelectItem>
-                    <SelectItem key="Dessert">Dessert</SelectItem>
+                    <SelectItem key="food">Food</SelectItem>
+                    <SelectItem key="beverage">Beverage</SelectItem>
+                    <SelectItem key="dessert">Dessert</SelectItem>
+                    <SelectItem key="snack">Snack</SelectItem>
+                    <SelectItem key="special">Special</SelectItem>
                   </Select>
                 </div>
                 
@@ -401,34 +410,6 @@ export default function FoodBeverageMenuInventory() {
                           </div>
                         </div>
                         
-                        <div className="mb-3">
-                          <div className="flex items-center justify-between text-sm mb-1">
-                            <span>Popularity:</span>
-                            <span>{item.popularity}%</span>
-                          </div>
-                          <Progress 
-                            value={item.popularity} 
-                            color={getPopularityColor(item.popularity)}
-                            className="w-full"
-                          />
-                        </div>
-                        
-                        <div className="mb-3">
-                          <p className="text-sm font-medium text-gray-700 mb-1">Ingredients ({item.ingredients.length}):</p>
-                          <div className="flex flex-wrap gap-1">
-                            {item.ingredients.slice(0, 3).map((ingredient, index) => (
-                              <Chip key={index} size="sm" variant="flat" color="secondary">
-                                {ingredient.name}
-                              </Chip>
-                            ))}
-                            {item.ingredients.length > 3 && (
-                              <Chip size="sm" variant="flat" color="default">
-                                +{item.ingredients.length - 3} more
-                              </Chip>
-                            )}
-                          </div>
-                        </div>
-                        
                         {item.allergens.length > 0 && item.allergens[0] !== 'None' && (
                           <div className="mb-3">
                             <p className="text-sm font-medium text-gray-700 mb-1">Allergens:</p>
@@ -441,17 +422,11 @@ export default function FoodBeverageMenuInventory() {
                             </div>
                           </div>
                         )}
-                        
-                        {item.seasonal && (
-                          <Chip size="sm" variant="flat" color="primary" className="mb-3">
-                            🌱 Seasonal Item
-                          </Chip>
-                        )}
-                        
+
                         <div className="flex gap-2">
-                          <Button size="sm" color="primary" variant="flat">Edit</Button>
-                          <Button size="sm" color="secondary" variant="flat">Toggle</Button>
-                          <Button size="sm" color="success" variant="flat">View Recipe</Button>
+                          <Button size="sm" color="secondary" variant="flat" onPress={() => toggleMenuItemAvailability(item)}>
+                            {item.available ? 'Mark Unavailable' : 'Mark Available'}
+                          </Button>
                         </div>
                       </CardBody>
                     </Card>
@@ -465,29 +440,28 @@ export default function FoodBeverageMenuInventory() {
                 <div className="flex items-center justify-between mb-4">
                   <Select
                     label="Filter by Status"
-                    placeholder="All Status"
+                    placeholder="All Items"
                     value={selectedInventoryStatus}
                     onChange={(e) => setSelectedInventoryStatus(e.target.value)}
                     className="w-64"
                   >
-                    <SelectItem key="all">All Status</SelectItem>
-                    <SelectItem key="sufficient">Sufficient</SelectItem>
-                    <SelectItem key="low">Low Stock</SelectItem>
-                    <SelectItem key="out">Out of Stock</SelectItem>
-                    <SelectItem key="overstock">Overstock</SelectItem>
+                    <SelectItem key="all">All Items</SelectItem>
+                    <SelectItem key="active">Active</SelectItem>
+                    <SelectItem key="inactive">Inactive</SelectItem>
                   </Select>
                 </div>
-                
+                <p className="text-xs text-gray-500 mb-3">
+                  Stock quantity isn't tracked yet — this is the real item catalog (code, name, cost). Full stock-level tracking is a separate, larger fix.
+                </p>
+
                 <Table aria-label="Inventory table">
                   <TableHeader>
                     <TableColumn>ITEM</TableColumn>
                     <TableColumn>CATEGORY</TableColumn>
-                    <TableColumn>STOCK LEVEL</TableColumn>
-                    <TableColumn>COST</TableColumn>
+                    <TableColumn>UNIT</TableColumn>
+                    <TableColumn>DEFAULT COST</TableColumn>
+                    <TableColumn>SELLING PRICE</TableColumn>
                     <TableColumn>STATUS</TableColumn>
-                    <TableColumn>SUPPLIER</TableColumn>
-                    <TableColumn>LOCATION</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
                   </TableHeader>
                   <TableBody>
                     {filteredInventoryItems.map((item) => (
@@ -495,48 +469,19 @@ export default function FoodBeverageMenuInventory() {
                         <TableCell>
                           <div>
                             <p className="font-medium text-ghana-black">{item.name}</p>
-                            <p className="text-sm text-gray-600">ID: {item.id}</p>
+                            <p className="text-sm text-gray-600">{item.code}</p>
                           </div>
                         </TableCell>
                         <TableCell>
                           <Badge color="primary" variant="flat">{item.category}</Badge>
                         </TableCell>
+                        <TableCell>{item.unit}</TableCell>
+                        <TableCell>₵{item.defaultCost.toFixed(2)}</TableCell>
+                        <TableCell>₵{item.sellingPrice.toFixed(2)}</TableCell>
                         <TableCell>
-                          <div>
-                            <p className="font-medium">{item.currentStock} {item.unit}</p>
-                            <p className="text-sm text-gray-600">Min: {item.minimumStock} | Max: {item.maximumStock}</p>
-                            <Progress 
-                              value={getStockPercentage(item)} 
-                              color={getStatusColor(item.status)}
-                              className="w-24 mt-1"
-                            />
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">₵{item.costPerUnit.toFixed(2)}/{item.unit}</p>
-                            <p className="text-sm text-gray-600">Total: ₵{(item.currentStock * item.costPerUnit).toFixed(2)}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Chip color={getStatusColor(item.status)} size="sm">
-                            {item.status.charAt(0).toUpperCase() + item.status.slice(1)}
+                          <Chip color={item.isActive ? 'success' : 'default'} size="sm">
+                            {item.isActive ? 'Active' : 'Inactive'}
                           </Chip>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            <p className="font-medium">{item.supplier}</p>
-                            <p className="text-gray-600">Last updated: {item.lastUpdated.toLocaleDateString()}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge color="secondary" variant="flat">{item.location}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button size="sm" color="primary" variant="flat">Update</Button>
-                            <Button size="sm" color="success" variant="flat">Order</Button>
-                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
@@ -547,50 +492,30 @@ export default function FoodBeverageMenuInventory() {
 
             <Tab key="suppliers" title="🏢 Supplier Management">
               <div className="p-6">
+                <div className="flex justify-end mb-4">
+                  <Button color="success" className="bg-blue-500 text-white" onClick={() => setIsNewSupplierModalOpen(true)}>
+                    + Add Supplier
+                  </Button>
+                </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {suppliers.map((supplier) => (
                     <Card key={supplier.id} className="border border-gray-200 hover:border-ghana-green transition-colors">
                       <CardBody className="p-4">
                         <div className="flex items-center justify-between mb-3">
                           <h4 className="font-semibold text-ghana-black">{supplier.name}</h4>
-                          <div className="flex items-center gap-1">
-                            <span className="text-yellow-500">⭐</span>
-                            <span className="text-sm font-medium">{supplier.rating}</span>
-                          </div>
+                          <Chip size="sm" variant="flat">{supplier.code}</Chip>
                         </div>
-                        
+
                         <div className="space-y-2 mb-3">
                           <div className="text-sm">
-                            <span className="font-medium">Contact:</span> {supplier.contact}
+                            <span className="font-medium">Contact:</span> {supplier.contactPerson || '—'}
                           </div>
                           <div className="text-sm">
-                            <span className="font-medium">Phone:</span> {supplier.phone}
+                            <span className="font-medium">Phone:</span> {supplier.phone || '—'}
                           </div>
                           <div className="text-sm">
-                            <span className="font-medium">Email:</span> {supplier.email}
+                            <span className="font-medium">Email:</span> {supplier.email || '—'}
                           </div>
-                          <div className="text-sm">
-                            <span className="font-medium">Delivery:</span> {supplier.deliveryTime} day(s)
-                          </div>
-                          <div className="text-sm">
-                            <span className="font-medium">Payment:</span> {supplier.paymentTerms}
-                          </div>
-                        </div>
-                        
-                        <div className="mb-3">
-                          <p className="text-sm font-medium text-gray-700 mb-1">Supplies:</p>
-                          <div className="flex flex-wrap gap-1">
-                            {supplier.items.map((item, index) => (
-                              <Chip key={index} size="sm" variant="flat" color="secondary">
-                                {item}
-                              </Chip>
-                            ))}
-                          </div>
-                        </div>
-                        
-                        <div className="flex gap-2">
-                          <Button size="sm" color="primary" variant="flat">View Details</Button>
-                          <Button size="sm" color="success" variant="flat">Place Order</Button>
                         </div>
                       </CardBody>
                     </Card>
@@ -603,22 +528,21 @@ export default function FoodBeverageMenuInventory() {
               <div className="p-6">
                 <Table aria-label="Purchase orders table">
                   <TableHeader>
-                    <TableColumn>ORDER ID</TableColumn>
+                    <TableColumn>ORDER #</TableColumn>
                     <TableColumn>SUPPLIER</TableColumn>
                     <TableColumn>ITEMS</TableColumn>
                     <TableColumn>TOTAL COST</TableColumn>
                     <TableColumn>STATUS</TableColumn>
                     <TableColumn>ORDER DATE</TableColumn>
                     <TableColumn>EXPECTED DELIVERY</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
                   </TableHeader>
                   <TableBody>
                     {purchaseOrders.map((order) => (
                       <TableRow key={order.id}>
-                        <TableCell className="font-medium">{order.id}</TableCell>
+                        <TableCell className="font-medium">{order.poNumber}</TableCell>
                         <TableCell>
                           <div>
-                            <p className="font-medium text-ghana-black">{order.supplier}</p>
+                            <p className="font-medium text-ghana-black">{order.supplierName}</p>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -642,18 +566,12 @@ export default function FoodBeverageMenuInventory() {
                         </TableCell>
                         <TableCell>
                           <div className="text-sm">
-                            {order.expectedDelivery.toLocaleDateString()}
+                            {order.expectedDelivery ? order.expectedDelivery.toLocaleDateString() : '—'}
                             {order.actualDelivery && (
                               <p className="text-green-600 text-xs">
                                 Delivered: {order.actualDelivery.toLocaleDateString()}
                               </p>
                             )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            <Button size="sm" color="primary" variant="flat">View</Button>
-                            <Button size="sm" color="success" variant="flat">Update</Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -673,37 +591,40 @@ export default function FoodBeverageMenuInventory() {
           <ModalBody>
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input label="Item Name" placeholder="Enter item name" />
-                <Select label="Category" placeholder="Select category">
-                  <SelectItem key="appetizer">Appetizer</SelectItem>
-                  <SelectItem key="main-course">Main Course</SelectItem>
+                <Input label="Item Name" placeholder="Enter item name" value={menuForm.name} onChange={(e) => setMenuForm({ ...menuForm, name: e.target.value })} />
+                <Select label="Category" selectedKeys={[menuForm.category]} onSelectionChange={(k) => setMenuForm({ ...menuForm, category: (Array.from(k)[0] as string) || 'food' })}>
+                  <SelectItem key="food">Food</SelectItem>
                   <SelectItem key="beverage">Beverage</SelectItem>
                   <SelectItem key="dessert">Dessert</SelectItem>
+                  <SelectItem key="snack">Snack</SelectItem>
+                  <SelectItem key="special">Special</SelectItem>
                 </Select>
               </div>
-              
-              <Input label="Description" placeholder="Enter item description" />
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Input label="Price (₵)" type="number" placeholder="0.00" />
-                <Input label="Cost (₵)" type="number" placeholder="0.00" />
-                <Input label="Preparation Time (min)" type="number" placeholder="15" />
-              </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input label="Allergens" placeholder="e.g., Peanuts, Fish, Gluten" />
-                <Select label="Seasonal Item" placeholder="Select">
-                  <SelectItem key="yes">Yes</SelectItem>
-                  <SelectItem key="no">No</SelectItem>
+                <Select label="Venue" selectedKeys={[menuForm.venue]} onSelectionChange={(k) => setMenuForm({ ...menuForm, venue: (Array.from(k)[0] as string) || 'restaurant' })}>
+                  <SelectItem key="restaurant">Restaurant</SelectItem>
+                  <SelectItem key="bar">Bar</SelectItem>
+                  <SelectItem key="room_service">Room Service</SelectItem>
+                  <SelectItem key="all">All Venues</SelectItem>
                 </Select>
+                <Input label="Description" placeholder="Enter item description" value={menuForm.description} onChange={(e) => setMenuForm({ ...menuForm, description: e.target.value })} />
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Input label="Price (₵)" type="number" placeholder="0.00" value={menuForm.price} onChange={(e) => setMenuForm({ ...menuForm, price: e.target.value })} />
+                <Input label="Cost (₵)" type="number" placeholder="0.00" value={menuForm.cost} onChange={(e) => setMenuForm({ ...menuForm, cost: e.target.value })} />
+                <Input label="Preparation Time (min)" type="number" placeholder="15" value={menuForm.prepTime} onChange={(e) => setMenuForm({ ...menuForm, prepTime: e.target.value })} />
+              </div>
+
+              <Input label="Allergens" placeholder="e.g., Peanuts, Fish, Gluten" value={menuForm.allergens} onChange={(e) => setMenuForm({ ...menuForm, allergens: e.target.value })} />
             </div>
           </ModalBody>
           <ModalFooter>
             <Button color="danger" variant="light" onPress={() => setIsNewMenuItemModalOpen(false)}>
               Cancel
             </Button>
-            <Button color="primary" className="bg-ghana-green text-white" onPress={() => setIsNewMenuItemModalOpen(false)}>
+            <Button color="primary" className="bg-ghana-green text-white" onPress={submitMenuItem} isDisabled={!menuForm.name}>
               Add Menu Item
             </Button>
           </ModalFooter>
@@ -716,44 +637,45 @@ export default function FoodBeverageMenuInventory() {
           <ModalHeader>Add New Inventory Item</ModalHeader>
           <ModalBody>
             <div className="space-y-4">
+              <Input label="Item Name" placeholder="Enter item name" value={inventoryForm.name} onChange={(e) => setInventoryForm({ ...inventoryForm, name: e.target.value })} />
+              <Input label="Description" placeholder="Optional" value={inventoryForm.description} onChange={(e) => setInventoryForm({ ...inventoryForm, description: e.target.value })} />
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input label="Item Name" placeholder="Enter item name" />
-                <Select label="Category" placeholder="Select category">
-                  <SelectItem key="grains">Grains</SelectItem>
-                  <SelectItem key="meat">Meat</SelectItem>
-                  <SelectItem key="fish">Fish</SelectItem>
-                  <SelectItem key="vegetables">Vegetables</SelectItem>
-                  <SelectItem key="oils">Oils</SelectItem>
-                </Select>
+                <Input label="Default Cost (₵)" type="number" placeholder="0.00" value={inventoryForm.defaultCost} onChange={(e) => setInventoryForm({ ...inventoryForm, defaultCost: e.target.value })} />
+                <Input label="Selling Price (₵)" type="number" placeholder="0.00" value={inventoryForm.sellingPrice} onChange={(e) => setInventoryForm({ ...inventoryForm, sellingPrice: e.target.value })} />
               </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Input label="Current Stock" type="number" placeholder="0" />
-                <Input label="Minimum Stock" type="number" placeholder="0" />
-                <Input label="Maximum Stock" type="number" placeholder="0" />
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <Input label="Unit" placeholder="e.g., kg, L, pcs" />
-                <Input label="Cost per Unit (₵)" type="number" placeholder="0.00" />
-                <Select label="Supplier" placeholder="Select supplier">
-                  {suppliers.map((supplier) => (
-                    <SelectItem key={supplier.id}>
-                      {supplier.name}
-                    </SelectItem>
-                  ))}
-                </Select>
-              </div>
-              
-              <Input label="Storage Location" placeholder="e.g., Storage A, Freezer B" />
             </div>
           </ModalBody>
           <ModalFooter>
             <Button color="danger" variant="light" onPress={() => setIsNewInventoryItemModalOpen(false)}>
               Cancel
             </Button>
-            <Button color="primary" className="bg-ghana-green text-white" onPress={() => setIsNewInventoryItemModalOpen(false)}>
+            <Button color="primary" className="bg-ghana-green text-white" onPress={submitInventoryItem} isDisabled={!inventoryForm.name}>
               Add Inventory Item
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* New Supplier Modal */}
+      <Modal isOpen={isNewSupplierModalOpen} onClose={() => setIsNewSupplierModalOpen(false)} size="lg">
+        <ModalContent>
+          <ModalHeader>Add Supplier</ModalHeader>
+          <ModalBody>
+            <div className="space-y-4">
+              <Input label="Supplier Name" value={supplierForm.name} onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })} />
+              <Input label="Contact Person" value={supplierForm.contactPerson} onChange={(e) => setSupplierForm({ ...supplierForm, contactPerson: e.target.value })} />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Input label="Phone" value={supplierForm.phone} onChange={(e) => setSupplierForm({ ...supplierForm, phone: e.target.value })} />
+                <Input label="Email" type="email" value={supplierForm.email} onChange={(e) => setSupplierForm({ ...supplierForm, email: e.target.value })} />
+              </div>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button color="danger" variant="light" onPress={() => setIsNewSupplierModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button color="primary" className="bg-ghana-green text-white" onPress={submitSupplier} isDisabled={!supplierForm.name}>
+              Add Supplier
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -765,27 +687,36 @@ export default function FoodBeverageMenuInventory() {
           <ModalHeader>Create New Purchase Order</ModalHeader>
           <ModalBody>
             <div className="space-y-4">
-              <Select label="Supplier" placeholder="Select supplier">
+              <Select label="Supplier" placeholder="Select supplier" selectedKeys={poSupplierId ? [poSupplierId] : []} onSelectionChange={(k) => setPoSupplierId((Array.from(k)[0] as string) || '')}>
                 {suppliers.map((supplier) => (
                   <SelectItem key={supplier.id}>
                     {supplier.name}
                   </SelectItem>
                 ))}
               </Select>
-              
-              <Input label="Expected Delivery Date" type="date" />
-              
+
+              <Input label="Expected Delivery Date" type="date" value={poExpectedDelivery} onChange={(e) => setPoExpectedDelivery(e.target.value)} />
+
               <div className="space-y-2">
-                <p className="text-sm font-medium">Order Items:</p>
-                <div className="space-y-2">
-                  {inventoryItems.filter(item => item.status === 'low' || item.status === 'out').map((item) => (
+                <p className="text-sm font-medium">Order Items (enter quantity to include):</p>
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {inventoryItems.map((item) => (
                     <div key={item.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
-                      <input type="checkbox" className="rounded" />
                       <span className="flex-1 text-sm">{item.name}</span>
-                      <span className="text-sm text-gray-600">Current: {item.currentStock} {item.unit}</span>
-                      <Input size="sm" type="number" placeholder="Qty" className="w-20" />
+                      <span className="text-sm text-gray-600">₵{item.defaultCost.toFixed(2)}/{item.unit}</span>
+                      <Input
+                        size="sm"
+                        type="number"
+                        placeholder="Qty"
+                        className="w-20"
+                        value={poQuantities[item.id] || ''}
+                        onChange={(e) => setPoQuantities({ ...poQuantities, [item.id]: e.target.value })}
+                      />
                     </div>
                   ))}
+                  {inventoryItems.length === 0 && (
+                    <p className="text-sm text-gray-500">No inventory items yet — add some in the Inventory Management tab first.</p>
+                  )}
                 </div>
               </div>
             </div>
@@ -794,7 +725,7 @@ export default function FoodBeverageMenuInventory() {
             <Button color="danger" variant="light" onPress={() => setIsNewPurchaseOrderModalOpen(false)}>
               Cancel
             </Button>
-            <Button color="primary" className="bg-ghana-green text-white" onPress={() => setIsNewPurchaseOrderModalOpen(false)}>
+            <Button color="primary" className="bg-ghana-green text-white" onPress={submitPurchaseOrder} isDisabled={!poSupplierId}>
               Create Order
             </Button>
           </ModalFooter>

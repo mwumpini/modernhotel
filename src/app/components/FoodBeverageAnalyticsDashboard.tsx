@@ -7,6 +7,7 @@ import { inventoryStore } from '../lib/fb/inventoryStore';
 import { customerStore } from '../lib/fb/customerStore';
 import { supplierStore } from '../lib/fb/supplierStore';
 import { employeeStore } from '../lib/fb/employeeStore';
+import { ordersStore } from '../lib/fb/ordersStore';
 
 export default function FoodBeverageAnalyticsDashboard() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -14,27 +15,39 @@ export default function FoodBeverageAnalyticsDashboard() {
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedTab, setSelectedTab] = useState('overview');
 
+  // ordersStore starts empty and is hydrated async from the real, persisted order
+  // history (see ordersStore.hydrateFromApi) — this tick forces the report
+  // useMemos below to recompute once that real data actually arrives, instead of
+  // permanently reflecting whatever (nothing, on a fresh page load) was in the
+  // in-memory store at first render.
+  const [ordersTick, setOrdersTick] = React.useState(0);
+  React.useEffect(() => {
+    ordersStore.hydrateFromApi().then(() => setOrdersTick((t) => t + 1));
+    const unsub = ordersStore.subscribe(() => setOrdersTick((t) => t + 1));
+    return unsub;
+  }, []);
+
   // Generate reports
-  const dailySalesReport = useMemo(() => 
-    reportingStore.generateDailySalesReport(selectedDate), [selectedDate]);
-  
-  const productMixReport = useMemo(() => 
-    reportingStore.generateProductMixReport(startDate, endDate), [startDate, endDate]);
-  
-  const salesByEmployeeReport = useMemo(() => 
-    reportingStore.generateSalesByEmployeeReport(startDate, endDate), [startDate, endDate]);
-  
-  const inventoryReport = useMemo(() => 
+  const dailySalesReport = useMemo(() =>
+    reportingStore.generateDailySalesReport(selectedDate), [selectedDate, ordersTick]);
+
+  const productMixReport = useMemo(() =>
+    reportingStore.generateProductMixReport(startDate, endDate), [startDate, endDate, ordersTick]);
+
+  const salesByEmployeeReport = useMemo(() =>
+    reportingStore.generateSalesByEmployeeReport(startDate, endDate), [startDate, endDate, ordersTick]);
+
+  const inventoryReport = useMemo(() =>
     reportingStore.generateInventoryReport(selectedDate), [selectedDate]);
-  
-  const wasteReport = useMemo(() => 
+
+  const wasteReport = useMemo(() =>
     reportingStore.generateWasteReport(startDate, endDate), [startDate, endDate]);
-  
-  const laborReport = useMemo(() => 
-    reportingStore.generateLaborReport(startDate, endDate), [startDate, endDate]);
-  
-  const financialSummary = useMemo(() => 
-    reportingStore.generateFinancialSummary(startDate, endDate), [startDate, endDate]);
+
+  const laborReport = useMemo(() =>
+    reportingStore.generateLaborReport(startDate, endDate), [startDate, endDate, ordersTick]);
+
+  const financialSummary = useMemo(() =>
+    reportingStore.generateFinancialSummary(startDate, endDate), [startDate, endDate, ordersTick]);
   
   const customerAnalytics = useMemo(() => 
     reportingStore.generateCustomerAnalyticsReport(), []);

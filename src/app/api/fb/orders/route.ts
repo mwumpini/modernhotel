@@ -3,6 +3,7 @@ import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/li
 import { prisma } from '@/app/lib/database/client'
 import { resolveTaxConfigs, type PrismaTaxRow } from '@/app/lib/tax/resolveConfigs'
 import { computeStackedTaxLines } from '@/app/lib/accounting/taxFromConfig'
+import { resolveItemRouteFromPayload, serializeFbOrder } from '@/app/lib/fb/serializeOrder'
 
 function round2(n: number) { return Math.round((n + Number.EPSILON) * 100) / 100 }
 
@@ -23,7 +24,18 @@ export async function GET(request: NextRequest) {
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
-    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+    if (!ctx) {
+      return NextResponse.json(
+        {
+          error: 'Tenant not found',
+          subdomain,
+          hint: subdomain === 'demo'
+            ? 'Run `npm run db:seed` then restart the dev server. Or clear browser localStorage key tenant.subdomain.'
+            : `No tenant with subdomain "${subdomain}". Use demo, or run db:seed.`,
+        },
+        { status: 404 }
+      );
+    }
 
     const { searchParams } = new URL(request.url)
     const status = searchParams.get('status')
@@ -42,7 +54,23 @@ export async function GET(request: NextRequest) {
       take: 200,
     })
 
-    return NextResponse.json({ orders })
+    const menuIds = Array.from(
+      new Set(
+        orders.flatMap(o => o.items.map(i => i.menuItemId).filter(Boolean) as string[])
+      )
+    )
+    const menuRouteById = new Map<string, string>()
+    if (menuIds.length > 0) {
+      const menuItems = await prisma.fBMenuItem.findMany({
+        where: { tenantId: ctx.tenantId, id: { in: menuIds } },
+        select: { id: true, route: true },
+      })
+      menuItems.forEach(m => menuRouteById.set(m.id, m.route))
+    }
+
+    return NextResponse.json({
+      orders: orders.map(o => serializeFbOrder(o, menuRouteById)),
+    })
   } catch (error) {
     console.error('[fb/orders][GET] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
@@ -55,7 +83,18 @@ export async function POST(request: NextRequest) {
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
-    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+    if (!ctx) {
+      return NextResponse.json(
+        {
+          error: 'Tenant not found',
+          subdomain,
+          hint: subdomain === 'demo'
+            ? 'Run `npm run db:seed` then restart the dev server. Or clear browser localStorage key tenant.subdomain.'
+            : `No tenant with subdomain "${subdomain}". Use demo, or run db:seed.`,
+        },
+        { status: 404 }
+      );
+    }
 
     const body = await request.json()
     if (!body.venue) return NextResponse.json({ error: 'venue is required' }, { status: 400 })
@@ -71,8 +110,8 @@ export async function POST(request: NextRequest) {
     const subtotal = round2(
       body.items.reduce((s: number, i: any) => s + round2((i.unitPrice ?? 0) * (i.quantity ?? 1)), 0)
     )
-    const discountAmount = round2(body.discountAmount ?? 0)
-    const serviceCharge = round2(body.serviceCharge ?? 0)
+    const discountAmount = round2(Math.min(Math.max(body.discountAmount ?? 0, 0), subtotal))
+    const serviceCharge = round2(Math.max(body.serviceCharge ?? 0, 0))
     const taxableAmount = round2(subtotal - discountAmount + serviceCharge)
 
     // ── Stacked tax (compliance JSON → tenant Prisma → Ghana template) ────────
@@ -126,6 +165,7 @@ export async function POST(request: NextRequest) {
             menuItemId: item.menuItemId ?? item.id,
             name: item.name,
             category: item.category,
+            route: resolveItemRouteFromPayload(item),
             quantity: item.quantity ?? 1,
             unitPrice: item.unitPrice ?? 0,
             amount: round2((item.unitPrice ?? 0) * (item.quantity ?? 1)),
@@ -146,7 +186,10 @@ export async function POST(request: NextRequest) {
       request
     )
 
-    return NextResponse.json({ order, taxBreakdown: taxLines }, { status: 201 })
+    return NextResponse.json({
+      order: serializeFbOrder(order),
+      taxBreakdown: taxLines,
+    }, { status: 201 })
   } catch (error) {
     console.error('[fb/orders][POST] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

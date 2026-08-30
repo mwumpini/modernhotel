@@ -14,6 +14,9 @@ import {
   TableCell,
   Chip,
   Divider,
+  Select,
+  SelectItem,
+  Input,
 } from '@heroui/react';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useAccountingStore } from '../lib/accounting/store';
@@ -45,6 +48,18 @@ export default function FrontofficeNightAudit() {
       r.arrival.slice(0, 10) === businessDate &&
       (r.status === 'confirmed' || r.status === 'pending'),
   );
+
+  const [wakeUpReservationId, setWakeUpReservationId] = React.useState('');
+  const [wakeUpTime, setWakeUpTime] = React.useState('06:00');
+  const [wakeUpNotes, setWakeUpNotes] = React.useState('');
+  const todaysWakeUpCalls = frontOfficeStore.wakeUpCalls.filter((c) => c.date === businessDate);
+
+  const scheduleWakeUpCall = () => {
+    if (!wakeUpReservationId) return;
+    frontOfficeStore.scheduleWakeUpCall(wakeUpReservationId, businessDate, wakeUpTime, wakeUpNotes || undefined);
+    setWakeUpReservationId('');
+    setWakeUpNotes('');
+  };
 
   const runAudit = () => {
     setRunning(true);
@@ -96,7 +111,14 @@ export default function FrontofficeNightAudit() {
           </div>
           <div className="rounded-lg bg-indigo-50 p-3 border border-indigo-100">
             <div className="text-xs text-indigo-700">Auto-run 1:00am</div>
-            <div className="text-sm font-semibold text-indigo-900">{nightAuditAutoRun ? 'On' : 'Off'}</div>
+            <div className="text-sm font-semibold text-indigo-900">
+              Server cron{nightAuditAutoRun ? ' + in-browser' : ''}
+            </div>
+            <div className="text-[11px] text-indigo-700 mt-0.5">
+              {nightAuditAutoRun
+                ? 'A server job runs reliably every night; this setting additionally fires it from an open browser tab, which is redundant but harmless.'
+                : 'A server job runs reliably every night regardless of this setting — this only controls an additional, unreliable in-browser trigger.'}
+            </div>
           </div>
           <div className="rounded-lg bg-purple-50 p-3 border border-purple-100">
             <div className="text-xs text-purple-700">GL recognition</div>
@@ -165,6 +187,64 @@ export default function FrontofficeNightAudit() {
               </TableBody>
             </Table>
           </div>
+        </div>
+
+        <Divider />
+
+        <div>
+          <h4 className="text-sm font-semibold text-ghana-black mb-2">Wake-up calls — {businessDate}</h4>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+            <Select
+              label="Guest"
+              placeholder="Select in-house guest"
+              selectedKeys={wakeUpReservationId ? [wakeUpReservationId] : []}
+              onSelectionChange={(k) => setWakeUpReservationId(Array.from(k as Set<string>)[0] || '')}
+            >
+              {inHouse.map((r) => (
+                <SelectItem key={r.id}>{`${r.guestName} — Room ${r.roomId || 'TBD'}`}</SelectItem>
+              ))}
+            </Select>
+            <Input type="time" label="Time" value={wakeUpTime} onChange={(e) => setWakeUpTime(e.target.value)} />
+            <Input label="Notes" placeholder="e.g. Early flight" value={wakeUpNotes} onChange={(e) => setWakeUpNotes(e.target.value)} />
+            <div className="flex items-end">
+              <Button className="bg-ghana-green text-white w-full" variant="flat" onPress={scheduleWakeUpCall} isDisabled={!wakeUpReservationId}>
+                Schedule
+              </Button>
+            </div>
+          </div>
+          <Table aria-label="Wake-up calls">
+            <TableHeader>
+              <TableColumn>Guest</TableColumn>
+              <TableColumn>Room</TableColumn>
+              <TableColumn>Time</TableColumn>
+              <TableColumn>Notes</TableColumn>
+              <TableColumn>Status</TableColumn>
+              <TableColumn>Actions</TableColumn>
+            </TableHeader>
+            <TableBody emptyContent="No wake-up calls scheduled">
+              {todaysWakeUpCalls.map((c) => (
+                <TableRow key={c.id}>
+                  <TableCell>{c.guestName}</TableCell>
+                  <TableCell>{c.roomNumber}</TableCell>
+                  <TableCell>{c.time}</TableCell>
+                  <TableCell className="max-w-[160px] truncate">{c.notes || '—'}</TableCell>
+                  <TableCell>
+                    <Chip size="sm" variant="flat" color={c.status === 'completed' ? 'success' : c.status === 'cancelled' ? 'default' : 'warning'}>
+                      {c.status}
+                    </Chip>
+                  </TableCell>
+                  <TableCell>
+                    {c.status === 'scheduled' && (
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="flat" color="success" onPress={() => frontOfficeStore.completeWakeUpCall(c.id)}>Done</Button>
+                        <Button size="sm" variant="flat" onPress={() => frontOfficeStore.cancelWakeUpCall(c.id)}>Cancel</Button>
+                      </div>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </div>
 
         <div className="text-xs text-gray-500 space-y-1">

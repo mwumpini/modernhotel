@@ -1,5 +1,7 @@
 'use client';
 
+import { getClientTenantSubdomain } from '../api/clientTenant';
+
 export type VenueMode = 'Restaurant' | 'Bar';
 export type CustomerType = 'In-house' | 'Walk-in' | 'Takeout' | 'Bar Tab';
 
@@ -109,6 +111,85 @@ class OrdersStore {
     order.items = order.items.filter(i => i.id !== itemId);
     order.updatedAt = new Date().toISOString();
     this.listeners.forEach(l => l());
+  }
+
+  /**
+   * Replace in-memory orders with the real, Prisma-persisted history from
+   * /api/fb/orders. Without this, every consumer of this store (FBPOS's order
+   * list, reportingStore.ts's sales/labor/hourly reports, the Restaurant/Bar
+   * "POS Activity" tabs) only ever sees orders placed in the current browser
+   * tab since the last reload — this store was never hydrated from the DB.
+   *
+   * Field reconciliation notes (the server shape differs from this client shape):
+   * - table <- tableNumber; waiterId <- serverName (the real order stores the
+   *   resolved name, not a staff id — every consumer already falls back to
+   *   displaying waiterId as-is when it doesn't match a known staff id, so this
+   *   displays correctly even though it's a name, not an id).
+   * - venue collapses 4 real values (restaurant|bar|room_service|pool_bar) to
+   *   this store's 2 (Restaurant|Bar).
+   * - customerType isn't persisted server-side at all; inferred from
+   *   guestId/roomNumber/venue as the closest honest approximation.
+   * - Per-item discountPerUnit/serviceChargePerUnit aren't persisted either
+   *   (only the final net `amount` is) — reverse-derived from
+   *   amount/quantity vs unitPrice so downstream code computing
+   *   `price - discountPerUnit + serviceChargePerUnit` still reproduces the
+   *   real, already-billed amount exactly.
+   */
+  async hydrateFromApi(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    const t = getClientTenantSubdomain();
+    if (!t) return;
+    try {
+      const res = await fetch('/api/fb/orders', { headers: { 'x-tenant-subdomain': t }, cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const rows: any[] = data.orders || [];
+
+      this.orders = rows.map((o): FBOrder => {
+        const venue: VenueMode = (o.venue === 'bar' || o.venue === 'pool_bar') ? 'Bar' : 'Restaurant';
+        const customerType: CustomerType = o.guestId || o.roomNumber
+          ? 'In-house'
+          : venue === 'Bar' ? 'Bar Tab' : 'Walk-in';
+
+        const items: OrderItem[] = (o.items || []).map((it: any): OrderItem => {
+          const qty = Number(it.quantity) || 0;
+          const unitPrice = Number(it.unitPrice) || 0;
+          const netPerUnit = qty > 0 ? Number(it.amount) / qty : unitPrice;
+          const discountPerUnit = Math.max(0, unitPrice - netPerUnit) || undefined;
+          const serviceChargePerUnit = Math.max(0, netPerUnit - unitPrice) || undefined;
+          return {
+            id: it.id,
+            name: it.name,
+            price: unitPrice,
+            route: it.route === 'bar' ? 'bar' : 'kitchen',
+            qty,
+            category: it.category || undefined,
+            discountPerUnit,
+            serviceChargePerUnit,
+          };
+        });
+
+        return {
+          id: o.id,
+          table: o.tableNumber || '',
+          waiterId: o.serverName || o.assignedToName || '',
+          items,
+          status: o.status,
+          customerType,
+          venue,
+          priority: o.priority,
+          roomNumber: o.roomNumber || undefined,
+          total: Number(o.total) || 0,
+          timestamp: o.createdAt,
+          createdAt: o.createdAt,
+          updatedAt: o.updatedAt,
+          notes: o.notes || undefined,
+        };
+      });
+      this.listeners.forEach((l) => l());
+    } catch (e) {
+      console.warn('[FB] ordersStore hydrateFromApi failed:', e);
+    }
   }
 }
 

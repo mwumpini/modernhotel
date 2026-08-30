@@ -4,15 +4,19 @@ import React, { Suspense, lazy } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Accordion, AccordionItem, Badge, Avatar } from "@heroui/react";
 import { isLeanAccountingUI } from '../lib/accounting/tenantAccountingConfig';
+import { useComplianceStore } from '../lib/compliance/store';
 
 // Lazy load heavy components to prevent chunk loading errors
 const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
 const ExecutiveManagementDashboard = lazy(() => import('./ExecutiveManagementDashboard'));
 const HousekeepingMainDashboard = lazy(() => import('./HousekeepingMainDashboard'));
 const FBPOS = lazy(() => import('./FBPOS').then(module => ({ default: module.default })));
-// RestaurantManagement and BarManagement both just wrap FBPOS — kept for backward compat
+// RestaurantManagement kept for backward compat (legacy 'restaurant' deep link).
+// BarManagement was removed — restaurant and bar are one unified operation (same
+// staff, same POS), covered by FoodBeverageRestaurantBar.tsx with venue filtering
+// and FBPOS.tsx's venue toggle, which already auto-route revenue to the correct
+// GL account per venue.
 const RestaurantManagement = lazy(() => import('./RestaurantManagement'));
-const BarManagement = lazy(() => import('./BarManagement'));
 // KitchenDisplay (old in-memory) removed — use /kitchen-display page instead
 const OfflineIndicator = lazy(() => import('./OfflineIndicator'));
 const OfflineManager = lazy(() => import('./OfflineManager'));
@@ -85,13 +89,20 @@ function resolveNavSection(target: string): ActiveSection {
       return target as ActiveSection;
   }
 }
-/** Redirects to /kitchen-display via useEffect — never calls router.push during render */
+/** Full-page kitchen display — use assign so navigation is not blocked by the main shell. */
 function KitchenRedirect() {
-  const router = useRouter();
-  React.useEffect(() => { router.push('/kitchen-display'); }, [router]);
+  React.useEffect(() => {
+    window.location.assign('/kitchen-display');
+  }, []);
   return (
-    <div className="p-6 text-center text-gray-500 animate-pulse">
-      Opening Kitchen Display…
+    <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4 p-8">
+      <p className="text-gray-500 animate-pulse">Opening Kitchen Display…</p>
+      <a
+        href="/kitchen-display"
+        className="text-ghana-green font-semibold underline"
+      >
+        Click here if it does not open
+      </a>
     </div>
   );
 }
@@ -101,6 +112,17 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
   const leanMode = isLeanAccountingUI();
+
+  // Every revenue centre (Front Office, F&B, Events & Conferences, Room Configuration,
+  // checkout) reads tax rates via getActiveTaxConfigs(), which falls back to a hardcoded
+  // default table (GHANA_TAX_CODES) whenever the accounting store's taxConfigs is empty —
+  // and it starts empty until something syncs the configured compliance rules into it.
+  // Previously only Accounting/Compliance/HR screens triggered that sync, so a guest could
+  // be billed at hardcoded rates just by landing straight in Front Office or F&B. Doing it
+  // once here, at the app shell, guarantees every module has real rates before it renders.
+  React.useEffect(() => {
+    void useComplianceStore.getState().syncCountryFromSetup();
+  }, []);
 
   // Log navigation component initialization and state changes
   React.useEffect(() => {
@@ -148,9 +170,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'frontdesk',
       title: `🏨 Front Office Operations${getUnreadCount('frontdesk') ? ` (${getUnreadCount('frontdesk')})` : ''}`,
       icon: '🏨',
-      items: [
-        { title: '📊 Operations', href: '#' }
-      ]
+      items: []
     },
     {
       key: 'events-conferences',
@@ -172,6 +192,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '🛏️',
       items: [
         { title: '🏠 Main Dashboard', href: '/housekeeping' },
+        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '👁️ View Activities', href: '#' },
       ]
     },
     {
@@ -256,38 +278,13 @@ export default function Navigation({ onLogout }: NavigationProps) {
       return;
     }
 
-    // Handle Front Office sub-items
-    if (sectionKey === 'frontdesk' && itemTitle) {
-              if (itemTitle === '📊 Operations') {
-          setActiveSection('frontdesk');
-        } else if (itemTitle === '📈 Reports & Analysis') {
-          setActiveSection('reports-analytics');
-        } else if (itemTitle === '⚙️ User Preferences') {
-          try {
-            localStorage.setItem('settings.tab', 'users');
-            localStorage.setItem('settings.usersSubTab', 'preferences');
-          } catch {}
-          setActiveSection('settings');
-        } else {
-          setActiveSection('frontdesk');
-        }
-    // Handle Events & Conferences sub-items
-    } else if (sectionKey === 'events-conferences' && itemTitle) {
-      if (itemTitle === '📊 Operations') {
-        setActiveSection('events-conferences-standalone');
-      } else if (itemTitle === '📈 Reports & Analysis') {
-        setActiveSection('events-conferences-analytics');
-      } else if (itemTitle === '⚙️ User Preferences') {
-        setActiveSection('events-conferences-preferences');
-      } else {
-        setActiveSection('events-conferences-standalone');
-      }
     // Handle Food & Beverage sub-items
-    } else if (sectionKey === 'f&b' && itemTitle) {
+    if (sectionKey === 'f&b' && itemTitle) {
       if (itemTitle === 'R&B Operations') {
         setActiveSection('food-beverage');
       } else if (itemTitle === 'Kitchen Operations') {
-        setActiveSection('fb-kitchen');
+        window.location.assign('/kitchen-display');
+        return;
       } else if (itemTitle === '📈 Reports & Analysis') {
         setActiveSection('fb-analytics');
       } else if (itemTitle === '⚙️ User Preferences') {
@@ -301,6 +298,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
         setActiveSection('housekeeping');
       } else if (itemTitle === '📈 Reports & Analysis') {
         setActiveSection('housekeeping-analytics');
+      } else if (itemTitle === '👁️ View Activities') {
+        setActiveSection('housekeeping-activities');
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('housekeeping-preferences');
       } else {
@@ -455,6 +454,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Dashboard...</div>}><HousekeepingMainDashboard /></Suspense>;
       case 'housekeeping-analytics':
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Analytics...</div>}><HousekeepingAnalyticsDashboard /></Suspense>;
+      case 'housekeeping-activities':
+        return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Activities...</div>}><DepartmentActivityLog area="housekeeping" title="Housekeeping - View Activities" /></Suspense>;
       // ── Food & Beverage ────────────────────────────────────────────────────
       case 'f&b':
       case 'food-beverage': // alias — kept for deep-link compat
@@ -549,6 +550,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
               <AccordionItem
                 key={section.key}
                 aria-label={section.title}
+                hideIndicator={section.items.length === 0}
                 title={
                   <div 
                     className="flex items-center justify-between w-full cursor-pointer"
@@ -564,6 +566,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
                 }
                 className="border-0 shadow-sm rounded-lg bg-gray-50 hover:bg-gray-100 transition-colors"
               >
+                {section.items.length > 0 && (
                 <div className="space-y-1 pt-2 pb-3">
                                            {section.items.map((item, index) => (
                            <div
@@ -575,6 +578,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
                            </div>
                          ))}
                 </div>
+                )}
               </AccordionItem>
             ))}
           </Accordion>

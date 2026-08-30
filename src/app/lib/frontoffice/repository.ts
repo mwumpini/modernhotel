@@ -59,6 +59,7 @@ export function toStoreReservation(row: any): Reservation {
     selfReservationToken: details.selfReservationToken,
     invoiceGenerated: details.invoiceGenerated,
     invoiceStatus: details.invoiceStatus,
+    pendingGlPost: details.pendingGlPost,
     createdAt: toISO(row.createdAt),
     updatedAt: toISO(row.updatedAt),
   } as Reservation
@@ -363,10 +364,9 @@ export async function upsertFolio(tenantId: string, f: Partial<Folio>): Promise<
     charges: (f.charges || []) as any,
     payments: (f.payments || []) as any,
   }
-  const row = await prisma.guestFolio.upsert({
-    where: { id: f.id },
-    create: { id: f.id, tenantId, ...fields } as any,
-    update: fields as any,
-  })
+  const existing = await prisma.guestFolio.findFirst({ where: { id: f.id, tenantId } })
+  const row = existing
+    ? await prisma.guestFolio.update({ where: { id: f.id }, data: fields as any })
+    : await prisma.guestFolio.create({ data: { id: f.id, tenantId, ...fields } as any })
   return toStoreFolio(row)
 }

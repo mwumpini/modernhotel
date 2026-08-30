@@ -13,13 +13,13 @@ import {
 } from "@heroui/react";
 import dynamic from 'next/dynamic';
 import { useSearchParams, useRouter } from 'next/navigation';
+import FrontOfficeBackButton from '../../components/FrontOfficeBackButton';
 
 // Lazy sections to keep the page responsive
 const CheckOutsPage = dynamic(() => import('../check-outs/page'), { ssr: false });
 const InvoicesPaymentsPage = dynamic(() => import('../client-services/invoices-payments/page'), { ssr: false });
 const ServiceChargesPage = dynamic(() => import('../service-charges/page'), { ssr: false });
 const ReservationsBookingsManager = dynamic(() => import('../../components/ReservationsBookingsManager'), { ssr: false });
-const QuickCheckInManager = dynamic(() => import('../../components/QuickCheckInManager'), { ssr: false });
 
 // --- Check-ins section (existing logic) ---
 import {
@@ -39,8 +39,7 @@ import {
   ModalBody,
   ModalFooter,
   useDisclosure,
-  Textarea,
-  Chip
+  Textarea
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
@@ -104,8 +103,6 @@ function CheckInsSection() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
-  const [quickModalOpen, setQuickModalOpen] = useState(false);
-  const [preExistingReservationIds, setPreExistingReservationIds] = useState<string[]>([]);
   const [isFolioModalOpen, setIsFolioModalOpen] = useState(false);
   const [selectedFolioGuest, setSelectedFolioGuest] = useState<CheckInGuest | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
@@ -128,40 +125,6 @@ function CheckInsSection() {
     setInlineNotification({ type, message });
     setTimeout(() => setInlineNotification(null), 4000);
   };
-
-  // Quick intake state (Reservation search + Walk-in form)
-  const [reservationSearchTerm, setReservationSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState<any[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [walkInForm, setWalkInForm] = useState({
-    guestName: '',
-    phone: '',
-    email: '',
-    roomTypeId: '',
-    arrivalDate: new Date().toISOString().split('T')[0],
-    departureDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    adults: 1,
-    children: 0,
-    paymentMethod: 'Cash'
-  });
-  // Guest picker & purpose/billing/source (mirror)
-  const [guestSearchTerm, setGuestSearchTerm] = useState('');
-  const [guestResults, setGuestResults] = useState<any[]>([]);
-  const [quickSelectedGuest, setQuickSelectedGuest] = useState<any | null>(null);
-  const [stayReason, setStayReason] = useState('');
-  const [stayReasonDetails, setStayReasonDetails] = useState('');
-  const [payerType, setPayerType] = useState<'guest' | 'thirdparty'>('guest');
-  const [source, setSource] = useState('Direct');
-
-  // Handle Quick Check-In tab selection
-  useEffect(() => {
-    if (activeTab === 'quick') {
-      setPreExistingReservationIds(frontOfficeStore.reservations.map(r => r.id));
-      setQuickModalOpen(true);
-    } else {
-      setQuickModalOpen(false);
-    }
-  }, [activeTab]);
 
   // Load guests function
   const loadGuests = () => {
@@ -220,20 +183,6 @@ function CheckInsSection() {
       });
     setGuests(data);
     setFilteredGuests(data);
-  };
-
-  // Handle Quick Check-In completion
-  const handleQuickCheckInComplete = (reservationId: string) => {
-    // Close modal and return to overview
-    setQuickModalOpen(false);
-    setActiveTab('overview');
-    loadGuests(); // Refresh the guest list
-    
-    // Show success message
-    trackEvent('FO.Reservation.CheckedIn', {
-      reservationId,
-      source: 'QuickCheckInManager'
-    });
   };
 
   useEffect(() => {
@@ -431,29 +380,6 @@ function CheckInsSection() {
     }
   };
 
-  // Quick intake actions
-  const searchReservations = async () => {
-    if (!reservationSearchTerm.trim()) { setSearchResults([]); return; }
-    setIsSearching(true);
-    try {
-      const reservations = frontOfficeStore.reservations;
-      const results = reservations.filter(r =>
-        r.guestName.toLowerCase().includes(reservationSearchTerm.toLowerCase()) ||
-        r.guestPhone?.includes(reservationSearchTerm) ||
-        r.id.includes(reservationSearchTerm)
-      );
-      setSearchResults(results);
-    } finally {
-      setIsSearching(false);
-    }
-  };
-
-  const checkInReservation = (reservation: Reservation) => {
-    frontOfficeStore.checkIn(reservation.id);
-    trackEvent('FO.Reservation.CheckedIn', { reservationId: reservation.id, guestName: reservation.guestName, source: 'check-ins-arrivals' });
-    loadGuests();
-  };
-
   const openNoShowConfirm = (reservation: Reservation) => {
     setNoShowTarget(reservation);
     onNoShowOpen();
@@ -466,43 +392,6 @@ function CheckInsSection() {
     onNoShowClose();
     setNoShowTarget(null);
     loadGuests();
-  };
-
-  const submitWalkIn = () => {
-    const fallbackRoomType = (frontOfficeStore.roomTypes || [])[0];
-    const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === walkInForm.roomTypeId) || fallbackRoomType;
-      const walkInReservation = {
-        id: `walkin-${Date.now()}`,
-      guestName: quickSelectedGuest?.name || walkInForm.guestName,
-      guestPhone: quickSelectedGuest?.phone || walkInForm.phone,
-      guestEmail: quickSelectedGuest?.email || walkInForm.email,
-      roomType: roomType?.name || 'Standard',
-      roomTypeId: roomType?.id,
-        arrival: walkInForm.arrivalDate,
-        departure: walkInForm.departureDate,
-        adults: walkInForm.adults,
-        children: walkInForm.children,
-        paymentMethod: walkInForm.paymentMethod,
-      remarksToGuest: stayReasonDetails,
-      billingPersonName: payerType === 'thirdparty' ? 'Third Party' : undefined,
-        status: 'checked-in' as const,
-      source,
-        createdAt: new Date().toISOString()
-      };
-    const created = frontOfficeStore.addReservation(walkInReservation);
-    if (created?.id) {
-      frontOfficeStore.checkIn(created.id);
-    }
-    trackEvent('FO.Reservation.CheckedIn', { guestName: walkInReservation.guestName, roomType: walkInReservation.roomType, source });
-    loadGuests();
-      setWalkInForm({
-      guestName: '', phone: '', email: '', roomTypeId: '',
-        arrivalDate: new Date().toISOString().split('T')[0],
-      departureDate: new Date(Date.now() + 24*60*60*1000).toISOString().split('T')[0],
-      adults: 1, children: 0, paymentMethod: 'Cash'
-    });
-    setQuickSelectedGuest(null);
-    setStayReason(''); setStayReasonDetails(''); setPayerType('guest'); setSource('Direct');
   };
 
   return (
@@ -560,158 +449,7 @@ function CheckInsSection() {
       </CardBody></Card>
 
       <Card><CardBody>
-        <Tabs selectedKey={activeTab} onSelectionChange={(k)=>setActiveTab(k as string)} className="mb-4"><Tab key="quick" title="⚡ Quick Check-In" /><Tab key="overview" title="📊 Overview" /><Tab key="analytics" title="📈 Analytics" /></Tabs>
-
-        {activeTab === 'quick' && (
-          <Modal isOpen={quickModalOpen} onClose={() => setActiveTab('overview')} size="4xl">
-            <ModalContent>
-              <ModalHeader>⚡ Quick Check-In</ModalHeader>
-              <ModalBody>
-                <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                  <p className="text-sm text-blue-800">
-                    <strong>Auto-Processing:</strong> When you submit the form, we'll automatically assign an available room and check the guest in.
-            </p>
-                  </div>
-                <Suspense fallback={<div className="p-6 text-center">Loading form...</div>}>
-                  <QuickCheckInManager 
-                    onCheckInComplete={handleQuickCheckInComplete}
-                    onClose={() => setActiveTab('overview')}
-                  />
-                </Suspense>
-              </ModalBody>
-              <ModalFooter>
-                <Button variant="flat" onClick={() => setActiveTab('overview')}>Close</Button>
-              </ModalFooter>
-            </ModalContent>
-          </Modal>
-        )}
-        {false && (
-          <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-              <h4 className="font-semibold mb-2">Find Reservation</h4>
-              <div className="flex gap-2 mb-3">
-                <Input placeholder="Name / Phone / Reservation ID" value={reservationSearchTerm} onChange={(e)=>setReservationSearchTerm(e.target.value)} onKeyPress={(e)=> e.key==='Enter' && searchReservations()} className="flex-1" />
-                <Button color="primary" onClick={searchReservations} isLoading={isSearching}>Search</Button>
-                </div>
-              <div className="space-y-2 max-h-64 overflow-auto">
-                {searchResults.map((r) => (
-                  <Card key={r.id} className="border border-gray-200"><CardBody className="p-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                        <p className="font-medium">{r.guestName}</p>
-                        <p className="text-xs text-gray-600">{r.guestPhone} • {r.roomType} • {r.arrival} → {r.departure}</p>
-                  </div>
-                      <Button size="sm" color="primary" onClick={() => checkInReservation(r)}>✅ Check In</Button>
-                </div>
-                  </CardBody></Card>
-                ))}
-                {!searchResults.length && <p className="text-sm text-gray-500">No results yet. Search to find a reservation.</p>}
-                  </div>
-
-              {/* Guest List (mirror of reservation UI) */}
-              <Card className="mt-6 bg-purple-50 border border-purple-200">
-                <CardHeader className="pb-2">
-                <div className="flex items-center justify-between w-full">
-                    <span className="font-semibold">Guest List {quickSelectedGuest ? '(1 guest)' : '(0 guests)'}</span>
-                    <span className="text-xs text-purple-600">Search and add guests from the system</span>
-                </div>
-              </CardHeader>
-                <CardBody className="space-y-3">
-                  <Input placeholder="Search for existing guests by name, phone, email, or Ghana Card" value={guestSearchTerm} onChange={(e)=>{ setGuestSearchTerm(e.target.value); const q=e.target.value.toLowerCase(); const results=(frontOfficeStore.guests||[]).filter((g:any)=> (g.name||'').toLowerCase().includes(q) || (g.phone||'').includes(q) || (g.email||'').toLowerCase().includes(q)); setGuestResults(results.slice(0,10)); }} />
-                  <div className="min-h-16 p-4 rounded-lg border border-dashed border-purple-300 text-center text-sm text-purple-700 bg-white">
-                    {quickSelectedGuest ? (
-                      <div className="flex items-center justify-center gap-2">
-                        <Chip color="primary" variant="flat">{quickSelectedGuest.name} • {quickSelectedGuest.phone}</Chip>
-                        <Button size="sm" variant="light" onClick={()=>setQuickSelectedGuest(null)}>Remove</Button>
-          </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <div className="text-2xl">👥</div>
-                        <div>No guests added yet</div>
-                        <div className="text-xs">Search for guests above and click "Add" to include them</div>
-              </div>
-                )}
-                                </div>
-                  {guestSearchTerm && guestResults.length > 0 && (
-                    <div className="space-y-2">
-                      {guestResults.map((g:any)=> (
-                        <Card key={g.id} className="border border-gray-200"><CardBody className="p-3"><div className="flex items-center justify-between"><div><p className="font-medium">{g.name}</p><p className="text-xs text-gray-600">{g.phone} • {g.email}</p></div><Button size="sm" onClick={()=>setQuickSelectedGuest(g)}>Add</Button></div></CardBody></Card>
-                      ))}
-                    </div>
-                )}
-              </CardBody>
-            </Card>
-          </div>
-
-                        <div>
-              <h4 className="font-semibold mb-2">Walk-In Guest</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input label="Guest Name" placeholder="e.g., Ama Kofi" value={walkInForm.guestName} onChange={(e)=>setWalkInForm({ ...walkInForm, guestName: e.target.value })} />
-                <Input label="Phone" placeholder="e.g., +233..." value={walkInForm.phone} onChange={(e)=>setWalkInForm({ ...walkInForm, phone: e.target.value })} />
-                <Input label="Email" placeholder="guest@example.com" value={walkInForm.email} onChange={(e)=>setWalkInForm({ ...walkInForm, email: e.target.value })} />
-                <Select label="Room Type" selectedKeys={walkInForm.roomTypeId ? [walkInForm.roomTypeId] : []} onSelectionChange={(keys)=>{ const id = Array.from(keys)[0] as string; setWalkInForm({ ...walkInForm, roomTypeId: id }); }}>
-                  {(frontOfficeStore.roomTypes || []).map((rt: any) => (<SelectItem key={rt.id}>{rt.name}</SelectItem>))}
-                </Select>
-                <Input type="date" label="Arrival" value={walkInForm.arrivalDate} onChange={(e)=>setWalkInForm({ ...walkInForm, arrivalDate: e.target.value })} />
-                <Input type="date" label="Departure" value={walkInForm.departureDate} onChange={(e)=>setWalkInForm({ ...walkInForm, departureDate: e.target.value })} />
-                <Input type="number" min={1} label="Adults" value={String(walkInForm.adults)} onChange={(e)=>setWalkInForm({ ...walkInForm, adults: Number(e.target.value || 1) })} />
-                <Input type="number" min={0} label="Children" value={String(walkInForm.children)} onChange={(e)=>setWalkInForm({ ...walkInForm, children: Number(e.target.value || 0) })} />
-                <Select label="Payment Method" selectedKeys={[walkInForm.paymentMethod]} onSelectionChange={(keys)=>{ const pm = Array.from(keys)[0] as string; setWalkInForm({ ...walkInForm, paymentMethod: pm }); }}>
-                  <SelectItem key="Cash">Cash</SelectItem>
-                  <SelectItem key="Card">Card</SelectItem>
-                  <SelectItem key="Transfer">Transfer</SelectItem>
-                </Select>
-                <div className="md:col-span-2">
-                  <Button color="primary" onClick={submitWalkIn} isDisabled={!walkInForm.guestName || !walkInForm.roomTypeId}>Create & Check In</Button>
-                        </div>
-                      </div>
-                        </div>
-                  </div>
-          {/* Purpose of Stay / Billing / Source sections */}
-          <div className="grid grid-cols-1 gap-4 mt-6">
-            <Card className="bg-blue-50 border border-blue-200">
-              <CardHeader className="pb-2"><span className="font-semibold">Purpose of Stay</span></CardHeader>
-              <CardBody>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Select label="Reason for Stay" selectedKeys={stayReason ? [stayReason] : []} onSelectionChange={(keys)=>setStayReason(Array.from(keys)[0] as string)}>
-                    <SelectItem key="business">Business</SelectItem>
-                    <SelectItem key="leisure">Leisure</SelectItem>
-                    <SelectItem key="conference">Conference</SelectItem>
-                    <SelectItem key="medical">Medical</SelectItem>
-                    <SelectItem key="other">Other</SelectItem>
-                  </Select>
-                  <Textarea label="Additional Details" placeholder="More details about the purpose" value={stayReasonDetails} onChange={(e)=>setStayReasonDetails(e.target.value)} />
-                      </div>
-                    </CardBody>
-                  </Card>
-
-            <Card className="bg-green-50 border border-green-200">
-              <CardHeader className="pb-2"><span className="font-semibold">Billing Information</span></CardHeader>
-              <CardBody>
-                <div className="flex items-center gap-4 text-sm">
-                  <Button size="sm" variant={payerType==='guest'?'solid':'flat'} color={payerType==='guest'?'success':'default'} onClick={()=>setPayerType('guest')}>Guest Pays</Button>
-                  <Button size="sm" variant={payerType==='thirdparty'?'solid':'flat'} color={payerType==='thirdparty'?'success':'default'} onClick={()=>setPayerType('thirdparty')}>Third Party Pays</Button>
-                  <span className="text-gray-600">{payerType==='guest' ? 'Guest will be responsible for their own payment.' : 'A third party will handle payment.'}</span>
-                      </div>
-                    </CardBody>
-                  </Card>
-
-            <Card className="bg-yellow-50 border border-yellow-200">
-              <CardHeader className="pb-2"><span className="font-semibold">Source</span></CardHeader>
-              <CardBody>
-                <Select placeholder="Select booking source" selectedKeys={[source]} onSelectionChange={(keys)=>setSource(Array.from(keys)[0] as string)} className="max-w-md">
-                  <SelectItem key="Direct">Direct</SelectItem>
-                  <SelectItem key="Walk-in">Walk-in</SelectItem>
-                  <SelectItem key="OTA">OTA</SelectItem>
-                  <SelectItem key="Corporate">Corporate</SelectItem>
-                  <SelectItem key="Referral">Referral</SelectItem>
-                </Select>
-                    </CardBody>
-                  </Card>
-                </div>
-                      </div>
-        )}
+        <Tabs selectedKey={activeTab} onSelectionChange={(k)=>setActiveTab(k as string)} className="mb-4"><Tab key="overview" title="📊 Overview" /><Tab key="analytics" title="📈 Analytics" /></Tabs>
 
         {activeTab === 'overview' && (
           <div className="space-y-4">
@@ -1336,6 +1074,7 @@ function CheckInsPageInner() {
     <PageLayout>
       <div className="p-6">
         <div className="mb-6">
+          <FrontOfficeBackButton />
           <h1 className="text-3xl font-bold text-ghana-black">🔑 Guest Check-In & Check-Ins Management</h1>
           <p className="text-gray-600 mt-2">Process check-ins for reservations and walk-ins, then manage guests during their stay</p>
                       </div>

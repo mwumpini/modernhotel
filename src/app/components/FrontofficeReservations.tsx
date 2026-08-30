@@ -126,13 +126,17 @@ export default function FrontofficeReservations() {
     setSelectedRoom(null);
   };
 
-  const ActionButtons = (r: Reservation) => (
-    <div className="flex gap-2">
-      <Button size="sm" variant="flat" className="bg-ghana-green text-white" onClick={() => openRoomAssignModal(r)}>Assign</Button>
-      <Button size="sm" variant="flat" className="bg-blue-600 text-white" onClick={() => frontOfficeStore.checkIn(r.id)}>Check-in</Button>
-      <Button size="sm" variant="flat" className="bg-gray-200" onClick={() => frontOfficeStore.cancelReservation(r.id)}>Cancel</Button>
-    </div>
-  );
+  const ActionButtons = (r: Reservation) => {
+    const preArrival = r.status === 'pending' || r.status === 'confirmed';
+    const cancellable = preArrival;
+    return (
+      <div className="flex gap-2">
+        <Button size="sm" variant="flat" className="bg-ghana-green text-white" isDisabled={!preArrival} onClick={() => openRoomAssignModal(r)}>Assign</Button>
+        <Button size="sm" variant="flat" className="bg-blue-600 text-white" isDisabled={!preArrival} onClick={() => frontOfficeStore.checkIn(r.id)}>Check-in</Button>
+        <Button size="sm" variant="flat" className="bg-gray-200" isDisabled={!cancellable} onClick={() => frontOfficeStore.cancelReservation(r.id)}>Cancel</Button>
+      </div>
+    );
+  };
 
   return (
     <Card className="border-0 shadow-lg">
@@ -161,20 +165,7 @@ export default function FrontofficeReservations() {
                 <TableCell>{r.id}</TableCell>
                 <TableCell>{r.guestName}</TableCell>
                 <TableCell>{frontOfficeStore.roomTypes.find(rt => rt.id === r.roomTypeId)?.name}</TableCell>
-                <TableCell>₵{(() => {
-                  // Try to get rate from rate plan first
-                  if (r.ratePlanId) {
-                    const ratePlan = useSettingsStore.getState().roomManagement.ratePlans.find(rp => rp.id === r.ratePlanId);
-                    if (ratePlan) return ratePlan.basePrice || 0;
-                  }
-                  
-                  // Fallback to room type base rate or first available rate plan
-                  const roomType = useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === r.roomTypeId);
-                  if (roomType?.baseRate) return roomType.baseRate;
-                  
-                  const ratePlan = useSettingsStore.getState().roomManagement.ratePlans.find(rp => rp.roomTypeId === r.roomTypeId);
-                  return ratePlan?.basePrice || 0;
-                })().toFixed(2)}</TableCell>
+                <TableCell>₵{frontOfficeStore.getReservationQuote(r).nightlyGross.toFixed(2)}</TableCell>
                 <TableCell>{r.arrival}</TableCell>
                 <TableCell>{r.departure}</TableCell>
                 <TableCell>{r.status}</TableCell>
@@ -297,9 +288,10 @@ export default function FrontofficeReservations() {
                 }}
               >
                 {frontOfficeStore.rooms
-                  .filter(room => 
-                    !(room as any).isOutOfService && 
-                    room.roomTypeId === selectedReservation?.roomTypeId
+                  .filter(room =>
+                    !(room as any).isOutOfService &&
+                    room.roomTypeId === selectedReservation?.roomTypeId &&
+                    (!selectedReservation || frontOfficeStore.isRoomFreeForRange(room.id, selectedReservation.arrival, selectedReservation.departure, selectedReservation.id))
                   )
                   .map(room => (
                     <SelectItem key={room.id} textValue={`Room ${room.id} - ${useSettingsStore.getState().roomManagement.roomTypes.find(rt => rt.id === room.roomTypeId)?.name || 'Unknown Type'}`}>

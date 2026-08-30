@@ -13,6 +13,12 @@ export default function LeaveAttendanceDashboard({ onSelect }: Props) {
   const onClock = useLeaveAttendanceStore((s) => s.getActiveEmployeesOnClock());
   const upcomingShifts = useLeaveAttendanceStore((s) => s.getUpcomingShiftCount());
   const openOvertime = useLeaveAttendanceStore((s) => s.getOpenOvertimeCount());
+  const hydrateFromApi = useLeaveAttendanceStore((s) => s.hydrateFromApi);
+
+  React.useEffect(() => {
+    hydrateFromApi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const go = (k: SectionKey) => onSelect?.(k);
 

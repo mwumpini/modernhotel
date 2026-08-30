@@ -24,8 +24,14 @@ export interface Employee {
   secondEmployment?: boolean;
   incomeTaxDeductible?: boolean; // PAYE/Withholding Tax - generic for all countries
   ssnitEnrolled?: boolean; // Tier 1
-  tier2Enrolled?: boolean; // Tier 2
-  tier3Enrolled?: boolean; // Tier 3
+  tier2Enrolled?: boolean; // Tier 2 — mandatory occupational; currently informational only,
+  // see Tier 1/2 split reporting in the payroll engine (no separate deduction — Tier 2 is
+  // part of the existing 18.5% mandatory contribution, not additional money withheld).
+  tier3Enrolled?: boolean; // Tier 3 — voluntary provident fund; a REAL additional pre-tax
+  // deduction when enrolled, sized by tier3ContributionPct below (tax-relieved up to the
+  // statutory cap — see ghana.json's socialSecurity.tier3.reliefCapPct).
+  /** % of basic salary the employee elects to contribute to Tier 3 (only applied when tier3Enrolled). */
+  tier3ContributionPct?: number;
   salary: number;
   hourlyRate?: number;
   overtimeRate?: number;
@@ -39,11 +45,27 @@ export interface Employee {
     filingStatus?: 'single' | 'married' | 'head_of_household' | string;
     allowances?: number;
   };
+  /** Annual leave-day entitlement per leave type. Falls back to DEFAULT_LEAVE_ENTITLEMENTS
+   * (in leaveAttendanceStore.ts) for any type not overridden here. */
+  leaveEntitlements?: Partial<Record<LeaveRequest['leaveType'], number>>;
   governmentIds?: {
     nationalId?: string;
     ssn?: string;
     passport?: string;
     workPermit?: string;
+  };
+  /** SSNIT membership ID — required to actually file a return; ssnitEnrolled alone isn't enough. */
+  ssnitNumber?: string;
+  /** Ghana Card (NIA) number, format GHA-XXXXXXXXX-X — distinct from the generic governmentIds.nationalId freetext. */
+  ghanaCardNumber?: string;
+  /** For fixed-term/contract staff; open-ended hires leave this unset. */
+  contractEndDate?: Date;
+  /** Non-Ghanaian staff work-permit renewal tracking — governmentIds.workPermit has no expiry today. */
+  workPermitExpiryDate?: Date;
+  probation?: {
+    startDate: Date;
+    endDate: Date;
+    status: 'active' | 'confirmed' | 'extended' | 'failed';
   };
   bankAccount: {
     accountNumber: string;
@@ -55,6 +77,13 @@ export interface Employee {
     relationship: string;
     phone: string;
     email?: string;
+  };
+  /** Distinct from emergencyContact — Ghanaian HR practice keeps these separate. */
+  nextOfKin?: {
+    name: string;
+    relationship: string;
+    phone: string;
+    address?: string;
   };
   address: {
     street: string;
@@ -71,6 +100,11 @@ export interface Employee {
     year?: number;
   }>;
   acknowledgments?: Array<{ code: string; title: string; date: Date }>;
+  photo?: string;
+  /** Benefit-in-kind inputs for PAYE (see PayrollBuilderPanel's benefit-in-kind tax treatment). */
+  vehicleBenefit?: number;
+  housingBenefit?: number;
+  otherNonCashBenefits?: number;
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
@@ -147,6 +181,9 @@ export interface PayrollRecord {
     socialSecurity: number;
     healthInsurance: number;
     pension: number;
+    // Ghana Tier 3 (voluntary provident fund) — separate institution/election from Tier 1
+    // (socialSecurity) and Tier 2 (pension), so tracked as its own field.
+    tier3?: number;
     other: number;
   };
   netPay: number;
@@ -240,6 +277,9 @@ export interface TrainingProgram {
   startDate: Date;
   endDate: Date;
   status: 'scheduled' | 'in_progress' | 'completed' | 'cancelled';
+  /** Mandatory compliance training (e.g. food safety) — surfaced as an outstanding flag
+   * on the employee profile when not yet completed, vs. optional development courses. */
+  mandatory?: boolean;
   materials: string[];
   objectives: string[];
   prerequisites: string[];

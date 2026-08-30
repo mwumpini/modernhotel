@@ -95,7 +95,7 @@ export default function RestaurantManagement() {
           customerType: o.customerType,
           amount: 0,
           discount: 0,
-          price: o.items.reduce((s,i)=>s+i.price*i.qty,0),
+          price: o.items.reduce((s,i)=>s+(i.price-((i as any).discountPerUnit||0)+((i as any).serviceChargePerUnit||0))*i.qty,0),
           status: o.status === 'paid' ? 'receipt' : 'pending',
           customerName: '',
           roomNo: '',
@@ -104,7 +104,7 @@ export default function RestaurantManagement() {
         });
         // If paid, add invoice+receipt demo rows
         if (o.status === 'paid') {
-          const base = o.items.reduce((s,i)=>s+i.price*i.qty,0);
+          const base = o.items.reduce((s,i)=>s+(i.price-((i as any).discountPerUnit||0)+((i as any).serviceChargePerUnit||0))*i.qty,0);
           out.push({
             code: `INV-${o.id}`,
             date: o.updatedAt || new Date().toISOString(),
@@ -137,6 +137,9 @@ export default function RestaurantManagement() {
     };
     build();
     const unsub = ordersStore.subscribe(build);
+    // Pulls in real persisted order history — build() re-runs via the subscribe
+    // callback above once this resolves and notifies listeners.
+    ordersStore.hydrateFromApi();
     return () => unsub();
   }, []);
 

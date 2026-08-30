@@ -16,7 +16,14 @@ export default function FrontofficeCalendar() {
   start.setHours(0,0,0,0);
   const dates = Array.from({length: days}).map((_,i)=>{ const d=new Date(start); d.setDate(start.getDate()+i); return d;});
 
-  const reservations = frontOfficeStore.reservations.filter(r => roomTypeId==='all' || r.roomTypeId===roomTypeId);
+  // Only reservations that actually occupy a room on the calendar — matches the
+  // status set store.ts's isRoomFreeForRange treats as blocking, plus in-progress
+  // 'pending' holds; cancelled/no-show/checked-out are done and shouldn't render
+  // as occupying a cell (or hide the "+" quick-create button below).
+  const reservations = frontOfficeStore.reservations.filter(r =>
+    (roomTypeId==='all' || r.roomTypeId===roomTypeId) &&
+    (r.status === 'pending' || r.status === 'confirmed' || r.status === 'checked-in')
+  );
 
   const createQuick = (date: string) => {
     const guest = frontOfficeStore.createGuest({ name: 'Walk-in' } as any);
@@ -52,7 +59,8 @@ export default function FrontofficeCalendar() {
                   <div className="p-2 font-medium text-ghana-black bg-white border">{rt.name}</div>
                   {dates.map(d => {
                     const ds = formatDate(d);
-                    const has = reservations.filter(r => r.roomTypeId===rt.id && r.arrival <= ds && r.departure >= ds);
+                    // Departure day itself is not occupied (checkout-day turnover), so strict "<".
+                    const has = reservations.filter(r => r.roomTypeId===rt.id && r.arrival <= ds && r.departure > ds);
                     return (
                       <div key={rt.id+ds} className="border p-1 text-[11px]">
                         {has.length === 0 ? (

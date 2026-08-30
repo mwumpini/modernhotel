@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server'
 import { prisma } from '../database/client'
+import { normalizeTenantSubdomain } from './tenantSubdomain'
+
+export { normalizeTenantSubdomain } from './tenantSubdomain'
 
 export interface TenantContext {
   tenantId: string
@@ -11,8 +14,28 @@ export interface TenantContext {
  * Extract tenant information from request headers
  */
 export function getTenantFromRequest(request: NextRequest): string | null {
-  const subdomain = request.headers.get('x-tenant-subdomain')
-  return subdomain || null
+  const raw =
+    request.headers.get('x-tenant-subdomain') ||
+    request.headers.get('x-tenant-id');
+  return raw ? normalizeTenantSubdomain(raw) : null;
+}
+
+async function ensureDemoTenantDev() {
+  return prisma.tenant.upsert({
+    where: { subdomain: 'demo' },
+    update: {},
+    create: {
+      name: 'Demo Hotel',
+      subdomain: 'demo',
+      plan: 'professional',
+      status: 'active',
+      maxUsers: 10,
+      maxRooms: 50,
+      maxProperties: 2,
+      features: { housekeeping: true, inventory: true, reporting: true },
+      metadata: { region: 'ghana', industry: 'hospitality' },
+    },
+  });
 }
 
 /**
@@ -20,14 +43,19 @@ export function getTenantFromRequest(request: NextRequest): string | null {
  */
 export async function getTenantContext(subdomain: string): Promise<TenantContext | null> {
   try {
-    const tenant = await prisma.tenant.findUnique({
-      where: { subdomain },
-      include: {
-        settings: true
-      }
+    const normalized = normalizeTenantSubdomain(subdomain)
+
+    let tenant = await prisma.tenant.findUnique({
+      where: { subdomain: normalized },
     })
 
+    if (!tenant && normalized === 'demo' && process.env.NODE_ENV === 'development') {
+      console.warn('[tenant] demo missing — auto-creating for local dev')
+      tenant = await ensureDemoTenantDev()
+    }
+
     if (!tenant) {
+      console.warn(`[tenant] not found: raw="${subdomain}" normalized="${normalized}"`)
       return null
     }
 

@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Button, Input, Checkbox, Link } from "@heroui/react";
 import { signIn } from 'next-auth/react';
+import { setClientTenantSubdomain } from '../lib/api/clientTenant';
 
 export default function LoginForm() {
   const [email, setEmail] = useState('');
@@ -27,6 +28,8 @@ export default function LoginForm() {
 
       if (result?.error) {
         setError('Invalid credentials. Please try again.');
+      } else {
+        setClientTenantSubdomain(tenantId.trim().toLowerCase());
       }
     } catch {
       setError('An error occurred. Please try again.');

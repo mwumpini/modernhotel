@@ -30,6 +30,7 @@ import {
   Pagination as HeroPagination
 } from "@heroui/react";
 import { Autocomplete, AutocompleteItem } from "@heroui/react";
+import GuestSearchEmptyState from './frontoffice/GuestSearchEmptyState';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
@@ -1900,8 +1901,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                               placeholder="Search for existing guests by name, phone, email, or Ghana Card"
                                   onFocus={() => setShowGuestSearch(true)}
                                   className="flex-1"
-                              isInvalid={!!guestSearchError && guestSearchTerm.length >= 2}
-                              errorMessage={guestSearchError && guestSearchTerm.length >= 2 ? guestSearchError : undefined}
+                              isInvalid={!!guestSearchError && guestSearchTerm.length >= 2 && guestSearchError !== 'No guests found matching your search'}
+                              errorMessage={guestSearchError && guestSearchTerm.length >= 2 && guestSearchError !== 'No guests found matching your search' ? guestSearchError : undefined}
                               startContent={
                                 isGuestSearching ? (
                                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
@@ -1934,10 +1935,6 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     <span className="text-sm text-gray-600">Searching guests...</span>
                                   </div>
                                 </div>
-                              ) : guestSearchError ? (
-                                <div className="p-3 text-center">
-                                  <div className="text-red-600 text-sm mb-2">⚠️ {guestSearchError}</div>
-                                </div>
                               ) : filteredGuests.length > 0 ? (
                                     filteredGuests.map(guest => (
                                       <div
@@ -1969,12 +1966,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                               </div>
                               </div>
                                 ))
-                              ) : (
-                                <div className="p-3 text-gray-500 text-center">
-                                  <div className="text-sm">No guests found</div>
-                                  <div className="text-xs mt-1">Try searching by name, phone, email, or ID number</div>
-                            </div>
-                          )}
+                              ) : guestSearchError === 'No guests found matching your search' ? (
+                                <GuestSearchEmptyState searchTerm={guestSearchTerm} />
+                              ) : guestSearchError ? (
+                                <div className="p-3 text-center">
+                                  <div className="text-red-600 text-sm mb-2">⚠️ {guestSearchError}</div>
+                                </div>
+                              ) : null}
                         </div>
                       )}
                     </div>

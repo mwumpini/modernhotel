@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { prisma } from '@/app/lib/database/client'
+import { serializeFbOrder } from '@/app/lib/fb/serializeOrder'
 
 // ── Order state machine ───────────────────────────────────────────────────────
 // Valid forward transitions only. Cancellation allowed from any non-billed state.
@@ -49,20 +50,37 @@ export async function PATCH(
     }
 
     const now = new Date()
+    const nextStatus = body.status ?? existing.status
     const updated = await prisma.fBOrder.update({
       where: { id },
       data: {
-        status: body.status ?? existing.status,
+        status: nextStatus,
         notes: body.notes ?? existing.notes,
         serverName: body.serverName ?? existing.serverName,
         tableNumber: body.tableNumber ?? existing.tableNumber,
+        assignedToId: body.assignedToId ?? existing.assignedToId,
+        assignedToName: body.assignedToName ?? existing.assignedToName,
+        ...(nextStatus === 'preparing' && !existing.preparingAt ? { preparingAt: now } : {}),
         ...(body.status === 'served' ? { servedAt: now } : {}),
       },
       include: { items: true },
     })
 
+    // ── When cancelled: record who cancelled it and why ────────────────────
+    if (body.status === 'cancelled' && existing.status !== 'cancelled') {
+      await createAuditLog(
+        ctx.tenantId, null,
+        'FB_ORDER_CANCELLED', 'FBOrder', id,
+        { status: existing.status },
+        { status: 'cancelled', orderNumber: existing.orderNumber, reason: body.cancelReason ?? null },
+        request
+      )
+    }
+
     // ── When billed: post charge to guest folio ────────────────────────────
-    if (body.status === 'billed' && existing.guestId && existing.reservationId) {
+    // Guard on existing.status (not just the incoming body) so a retried PATCH after a
+    // timed-out-but-successful request doesn't re-push the charge onto the folio.
+    if (body.status === 'billed' && existing.status !== 'billed' && existing.guestId && existing.reservationId) {
       const folio = await prisma.guestFolio.findFirst({
         where: {
           tenantId: ctx.tenantId,
@@ -95,7 +113,7 @@ export async function PATCH(
 
         charges.push(newCharge)
         const totalCharges = charges.reduce(
-          (s: number, c: any) => s + (c.amount ?? 0) + (c.tax ?? 0) + (c.serviceCharge ?? 0), 0
+          (s: number, c: any) => s + (c.amount ?? 0) + (c.tax ?? 0) + (c.serviceCharge ?? 0) - (c.discountAmount ?? 0), 0
         )
         const totalPayments = payments
           .filter((p: any) => p.status === 'completed')
@@ -126,7 +144,7 @@ export async function PATCH(
       }
     }
 
-    return NextResponse.json({ order: updated })
+    return NextResponse.json({ order: serializeFbOrder(updated) })
   } catch (error) {
     console.error('[fb/orders/[id]][PATCH] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
@@ -151,7 +169,7 @@ export async function GET(
     })
     if (!order) return NextResponse.json({ error: 'Order not found' }, { status: 404 })
 
-    return NextResponse.json({ order })
+    return NextResponse.json({ order: serializeFbOrder(order) })
   } catch (error) {
     console.error('[fb/orders/[id]][GET] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

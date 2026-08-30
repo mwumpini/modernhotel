@@ -15,8 +15,16 @@ interface Props {
 export default function EmployeeManagementDashboard({ onSelect }: Props) {
   const getEmployeeAnalytics = useEmployeeStore((s) => s.getEmployeeAnalytics);
   const employees = useEmployeeStore((s) => s.employees);
+  const hydrateFromApi = useEmployeeStore((s) => s.hydrateFromApi);
   const changes = useEmployeeChangesStore((s) => s.changes);
   const reviews = usePerformanceStore((s) => s.reviews);
+
+  // Load real persisted employees/departments/positions once on mount, replacing the
+  // hardcoded in-memory seed.
+  React.useEffect(() => {
+    hydrateFromApi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const analytics = React.useMemo(() => getEmployeeAnalytics('monthly'), [getEmployeeAnalytics, employees]);
   const activeEmployeesCount = React.useMemo(() => employees.filter((e) => e.status === 'active').length, [employees]);

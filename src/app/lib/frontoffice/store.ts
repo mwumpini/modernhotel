@@ -33,6 +33,7 @@ import {
 import { postFirstNightAtCheckIn } from './roomCharges';
 import { runNightAudit, type NightAuditResult } from './nightAudit';
 import { postNoShowPenaltyToLedger } from '../accounting/simpleFlow';
+import { DEMO_BILLING_PERSONS, isDemoFixturesEnabled } from '../demo';
 
 class FrontOfficeStore {
   reservations: Reservation[] = [];
@@ -64,6 +65,7 @@ class FrontOfficeStore {
   businessDate: string = new Date().toISOString().slice(0, 10);
   lastNightAuditAt?: string;
   nightAuditHistory: import('./nightAudit').NightAuditRun[] = [];
+  wakeUpCalls: import('./types').WakeUpCall[] = [];
   private listeners: Array<() => void> = [];
   
   // Simple global sequential ID generator persisted in localStorage for human-friendly IDs
@@ -90,69 +92,7 @@ class FrontOfficeStore {
   constructor() {
     this.loadNightAuditState();
     // Settings are now managed centrally via useSettingsStore
-    // Initialize with some sample billing persons
-    this.billingPersons = [
-      {
-        id: 'bp-corporate-1',
-        name: 'Ghana Telecom Ltd',
-        company: 'Ghana Telecom Ltd',
-        position: 'Travel Manager',
-        phone: '+233 30 123 4567',
-        email: 'travel@ghanatelecom.com',
-        address: '123 High Street, Accra',
-        city: 'Accra',
-        country: 'Ghana',
-        taxId: 'GH123456789',
-        billingRelationship: 'corporate_account',
-        isCorporateAccount: true,
-        corporateAccountNumber: 'CORP-001',
-        paymentMethod: 'corporate_billing',
-        creditLimit: 50000,
-        paymentTerms: 'Net 30',
-        notes: 'Major corporate client with monthly billing. Contact John Mensah for urgent matters.',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      },
-      {
-        id: 'bp-travel-agent-1',
-        name: 'Accra Travel Agency',
-        company: 'Accra Travel Agency',
-        position: 'Booking Agent',
-        phone: '+233 24 987 6543',
-        email: 'bookings@accratravel.com',
-        address: '456 Airport Road, Accra',
-        city: 'Accra',
-        country: 'Ghana',
-        taxId: 'GH987654321',
-        billingRelationship: 'travel_agent',
-        isCorporateAccount: false,
-        paymentMethod: 'bank_transfer',
-        paymentTerms: 'Immediate',
-        notes: 'Reliable travel agency. Send invoices to accounts@accratravel.com',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      },
-      {
-        id: 'bp-company-1',
-        name: 'Kumasi Mining Corporation',
-        company: 'Kumasi Mining Corporation',
-        position: 'HR Manager',
-        phone: '+233 32 555 1234',
-        email: 'hr@kumasimining.com',
-        address: '789 Mining Road, Kumasi',
-        city: 'Kumasi',
-        country: 'Ghana',
-        taxId: 'GH555123456',
-        billingRelationship: 'company',
-        isCorporateAccount: false,
-        paymentMethod: 'bank_transfer',
-        creditLimit: 25000,
-        paymentTerms: 'Net 15',
-        notes: 'Regular client for employee training programs. Prefer email communication.',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }
-    ];
+    this.billingPersons = isDemoFixturesEnabled() ? [...DEMO_BILLING_PERSONS] : [];
 
     // Load persisted guests from storage to prevent data loss on refresh
     try {
@@ -277,6 +217,9 @@ class FrontOfficeStore {
               try { this.ensureFolioRoomCharges(r.id); } catch {}
             }
           });
+          // A prior checkout may have failed only at the GL-post step (invoiceStatus
+          // stuck at 'gl_pending'); retry those now that folios/reservations are fresh.
+          try { this.retryAllPendingGlPosts(); } catch (e) { console.warn('FO: retryAllPendingGlPosts failed', e); }
           this.notify();
         }
       }
@@ -472,6 +415,7 @@ class FrontOfficeStore {
       if (parsed.businessDate) this.businessDate = parsed.businessDate;
       if (Array.isArray(parsed.nightAuditHistory)) this.nightAuditHistory = parsed.nightAuditHistory;
       if (parsed.lastNightAuditAt) this.lastNightAuditAt = parsed.lastNightAuditAt;
+      if (Array.isArray(parsed.wakeUpCalls)) this.wakeUpCalls = parsed.wakeUpCalls;
     } catch {}
   }
 
@@ -484,9 +428,42 @@ class FrontOfficeStore {
           businessDate: this.businessDate,
           nightAuditHistory: this.nightAuditHistory,
           lastNightAuditAt: this.lastNightAuditAt,
+          wakeUpCalls: this.wakeUpCalls,
         }),
       );
     } catch {}
+  }
+
+  scheduleWakeUpCall(reservationId: string, date: string, time: string, notes?: string) {
+    const res = this.reservations.find(r => r.id === reservationId);
+    if (!res) return null;
+    const call: import('./types').WakeUpCall = {
+      id: `WC-${Date.now().toString().slice(-6)}`,
+      reservationId,
+      guestName: res.guestName,
+      roomNumber: res.roomId || 'TBD',
+      date,
+      time,
+      status: 'scheduled',
+      notes,
+      createdAt: new Date().toISOString(),
+    };
+    this.wakeUpCalls = [call, ...this.wakeUpCalls];
+    this.persistNightAuditState();
+    this.notify();
+    return call;
+  }
+
+  completeWakeUpCall(id: string, completedBy?: string) {
+    this.wakeUpCalls = this.wakeUpCalls.map(c => c.id === id ? { ...c, status: 'completed', completedBy: completedBy || 'Front Desk' } : c);
+    this.persistNightAuditState();
+    this.notify();
+  }
+
+  cancelWakeUpCall(id: string) {
+    this.wakeUpCalls = this.wakeUpCalls.map(c => c.id === id ? { ...c, status: 'cancelled' } : c);
+    this.persistNightAuditState();
+    this.notify();
   }
 
   /** End-of-day close — posts room charges, processes no-shows, rolls business date. */
@@ -827,7 +804,15 @@ class FrontOfficeStore {
     } catch {}
 
     try { this.generateAccountingInvoiceForReservation(reservationId); } catch (e) { console.warn('FO: Auto-invoice generation failed', e); }
-    this.persistReservationPatch(reservationId, { status: 'checked-out' });
+    // generateAccountingInvoiceForReservation mutates res.invoiceGenerated/invoiceStatus
+    // (and, on a failed GL post, res.pendingGlPost) in place — persist the result so a
+    // 'gl_pending' reservation is recoverable after a reload, not just for this session.
+    this.persistReservationPatch(reservationId, {
+      status: 'checked-out',
+      invoiceGenerated: res.invoiceGenerated,
+      invoiceStatus: res.invoiceStatus,
+      pendingGlPost: (res as any).pendingGlPost ?? null,
+    });
   }
 
   checkOut(id: string) {
@@ -905,7 +890,15 @@ class FrontOfficeStore {
 
   addCharge(reservationId: string, description: string, amount: number) { folioHelpers.addCharge(this as any, reservationId, description, amount); }
 
-  addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: { invoiceId?: string; creditApplied?: number; notes?: string; processedBy?: string; ref?: string; }) { folioHelpers.addPayment(this as any, reservationId, method, amount, options); }
+  addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: { invoiceId?: string; creditApplied?: number; notes?: string; processedBy?: string; ref?: string; }) {
+    return folioHelpers.addPayment(this as any, reservationId, method, amount, options);
+  }
+  updateFolioPayment(reservationId: string, paymentId: string, patch: { amount?: number; method?: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check'; notes?: string; ref?: string; }) {
+    return folioHelpers.updateFolioPayment(this as any, reservationId, paymentId, patch);
+  }
+  removeFolioPayment(reservationId: string, paymentId: string) {
+    return folioHelpers.removeFolioPayment(this as any, reservationId, paymentId);
+  }
 
   // Credit management methods
   addCreditToGuest(guestId: string, amount: number, reason: string, processedBy: string = 'Front Desk') {
@@ -1402,6 +1395,12 @@ class FrontOfficeStore {
 
   // Generate an accounting invoice from a reservation folio and mark reservation
   private generateAccountingInvoiceForReservation(reservationId: string) { return invoiceHelpers.generateAccountingInvoiceForReservation(this as any, reservationId); }
+
+  // Re-attempt a stuck GL post for one reservation (invoiceStatus === 'gl_pending').
+  retryPendingGlPost(reservationId: string) { return invoiceHelpers.retryPendingGlPost(this as any, reservationId); }
+
+  // Re-attempt GL posts for every reservation currently stuck in 'gl_pending'.
+  retryAllPendingGlPosts() { return invoiceHelpers.retryAllPendingGlPosts(this as any); }
 
   // Extend stay for a reservation
   extendStay(reservationId: string, additionalNights: number) {

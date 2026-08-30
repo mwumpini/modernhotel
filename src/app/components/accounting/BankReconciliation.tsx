@@ -26,6 +26,7 @@ import {
   DropdownTrigger,
   DropdownMenu,
   DropdownItem,
+  Tooltip,
 } from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useBankReconStore } from '@/app/lib/accounting/bankReconStore';
@@ -40,8 +41,10 @@ import {
   BANK_SIDE_TYPES,
   BOOK_SIDE_TYPES,
   RECON_ITEM_TYPES,
+  defaultOffsetGlForType,
 } from '@/app/lib/accounting/bankRecon/ledgerSync';
 import type { ReconcilingItem, ReconcilingItemType, ReconSide } from '@/app/lib/accounting/bankRecon/types';
+import type { BankTransaction } from '@/app/lib/accounting/models';
 
 const fmt = (n: number) =>
   `₵${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -54,6 +57,20 @@ const fmtSigned = (n: number, deduct = false) => {
 };
 
 type Line = { label: string; amount: number; deduct?: boolean; emphasis?: boolean; divider?: boolean };
+
+function InfoTip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <Tooltip placement="top" classNames={{ content: 'max-w-sm p-3 text-sm leading-snug' }} content={children}>
+      <button
+        type="button"
+        aria-label={label}
+        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-default-300 text-[10px] font-semibold text-default-600 hover:bg-default-100"
+      >
+        i
+      </button>
+    </Tooltip>
+  );
+}
 
 function ReconBlock({
   title,
@@ -109,9 +126,15 @@ type Props = {
 };
 
 export default function BankReconciliation({ embedded, initialAccountId }: Props) {
-  const { bankAccounts, journalEntries, chartOfAccounts, initializeAccounting } = useAccountingStore();
   const {
-    openReconciliation,
+    bankAccounts,
+    bankTransactions,
+    journalEntries,
+    chartOfAccounts,
+    initializeAccounting,
+    markBankTransactionCleared,
+  } = useAccountingStore();
+  const {
     getReconciliation,
     getItems,
     updateReconciliation,
@@ -122,6 +145,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
     postBookSideToLedger,
     completeReconciliation,
     approveReconciliation,
+    hydrateFromApi,
     error,
     clearError,
   } = useBankReconStore();
@@ -137,10 +161,6 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
   const { isOpen, onOpen, onClose } = useDisclosure();
 
   useEffect(() => {
-    initializeAccounting().catch(() => {});
-  }, [initializeAccounting]);
-
-  useEffect(() => {
     try {
       const stored = localStorage.getItem('bankRecon.accountId');
       if (stored) {
@@ -154,13 +174,24 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
     if (initialAccountId) setAccountId(initialAccountId);
   }, [initialAccountId]);
 
+  useEffect(() => {
+    hydrateFromApi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const reconciliations = useBankReconStore((s) => s.reconciliations);
 
   useEffect(() => {
-    if (accountId && periodEndDate) {
-      openReconciliation(accountId, periodEndDate);
+    if (!accountId && activeAccounts[0]?.id) {
+      setAccountId(activeAccounts[0].id);
     }
-  }, [accountId, periodEndDate, openReconciliation]);
+  }, [accountId, activeAccounts]);
+
+  useEffect(() => {
+    if (accountId && periodEndDate) {
+      useBankReconStore.getState().openReconciliation(accountId, periodEndDate);
+    }
+  }, [accountId, periodEndDate]);
 
   const recon = useMemo(() => {
     if (!accountId || !periodEndDate) return undefined;
@@ -220,6 +251,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
     setItemForm({
       ...defaultItemForm,
       itemType: types[0].type,
+      offsetGlCode: defaultOffsetGlForType(types[0].type),
       transactionDate: periodEndDate,
     });
     onOpen();
@@ -257,8 +289,13 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
 
   const handleComplete = () => {
     if (!recon) return;
-    if (completeReconciliation(recon.id)) {
-      setNotice('Reconciliation marked complete.');
+    const marked = completeReconciliation(recon.id);
+    if (marked !== false) {
+      setNotice(
+        marked > 0
+          ? `Reconciliation complete. ${marked} register transaction(s) through ${periodEndDate} marked reconciled.`
+          : 'Reconciliation marked complete.'
+      );
     }
   };
 
@@ -325,6 +362,21 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
 
   const itemTypesForModal = addSide === 'bank' ? BANK_SIDE_TYPES : BOOK_SIDE_TYPES;
 
+  const registerTxns = useMemo(() => {
+    if (!accountId || !periodEndDate) return [] as BankTransaction[];
+    const end = new Date(periodEndDate);
+    end.setHours(23, 59, 59, 999);
+    return bankTransactions
+      .filter((t) => t.bankAccountId === accountId)
+      .filter((t) => new Date(t.transactionDate) <= end)
+      .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime());
+  }, [bankTransactions, accountId, periodEndDate]);
+
+  const unreconciledRegisterCount = useMemo(
+    () => registerTxns.filter((t) => t.status !== 'Reconciled').length,
+    [registerTxns]
+  );
+
   if (!activeAccounts.length) {
     return (
       <Alert color="warning" title="No bank accounts">
@@ -337,11 +389,32 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
     <div className={embedded ? '' : 'p-4 md:p-6 max-w-[1200px] mx-auto'}>
       {!embedded && (
         <div className="mb-4">
-          <h1 className="text-2xl font-bold text-gray-900">Bank Reconciliation</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-gray-900">Bank Reconciliation</h1>
+            <InfoTip label="About bank reconciliation">
+              <div className="space-y-2">
+                <p>Prove the <strong>bank statement</strong> agrees with your <strong>books</strong> at period end.</p>
+                <p><strong>Bank side</strong> — start from statement balance; adjust for timing (deposits in transit, outstanding cheques).</p>
+                <p><strong>Book side</strong> — start from GL/cashbook; adjust for items on the statement not yet in books (charges, credits).</p>
+                <p>When both adjusted balances match, mark complete. This is not where you record everyday receipts — use Transactions or AR/AP first.</p>
+              </div>
+            </InfoTip>
+          </div>
           <p className="text-sm text-gray-600 mt-1">
-            Two-block format — adjusted bank balance must equal adjusted cashbook balance.
+            Adjusted bank balance must equal adjusted cashbook balance.
           </p>
         </div>
+      )}
+
+      {embedded && (
+        <Alert color="primary" variant="flat" className="mb-4" title="Reconciliation workflow">
+          <ol className="list-decimal list-inside text-sm space-y-1 mt-1">
+            <li>Enter <strong>statement balance</strong> from the bank for the period end date.</li>
+            <li>Review register transactions below; clear or explain differences.</li>
+            <li>Add <strong>bank-side</strong> or <strong>book-side</strong> items until both blocks balance.</li>
+            <li>Post book-side items to GL, then <strong>Mark complete</strong> (locks register lines as reconciled).</li>
+          </ol>
+        </Alert>
       )}
 
       {(notice || error) && (
@@ -374,14 +447,28 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
             </Select>
             <Input
               type="date"
-              label="Period end"
+              label={
+                <span className="inline-flex items-center gap-1">
+                  Period end
+                  <InfoTip label="Period end date">
+                    Last date covered by this reconciliation (usually month-end). Register transactions on or before this date can be marked reconciled when you complete.
+                  </InfoTip>
+                </span>
+              }
               value={periodEndDate}
               onValueChange={setPeriodEndDate}
               isDisabled={isReadOnly}
             />
             <Input
               type="number"
-              label="Statement balance"
+              label={
+                <span className="inline-flex items-center gap-1">
+                  Statement balance
+                  <InfoTip label="Statement balance">
+                    Closing balance on the bank statement for this period end. This is the starting point for the bank side — not the same as opening balance on the account setup screen.
+                  </InfoTip>
+                </span>
+              }
               value={statementInput}
               onValueChange={setStatementInput}
               onBlur={handleStatementBlur}
@@ -392,6 +479,9 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
               <Button size="sm" variant="bordered" className="flex-1" onPress={handleSyncCashbook} isDisabled={isReadOnly}>
                 Sync cashbook from GL
               </Button>
+              <InfoTip label="Sync cashbook from GL">
+                Refreshes the book-side starting balance from posted journal entries on the linked GL account ({bankAccount?.glAccountCode || '—'}). Use after posting book-side reconciling items.
+              </InfoTip>
             </div>
           </div>
 
@@ -499,6 +589,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
               onAdd={() => openAddItem('bank')}
               onDelete={deleteItem}
               onClearCheque={markChequeCleared}
+              infoTip="Timing differences on the statement: deposits not yet credited, cheques not yet cleared, bank errors."
             />
             <ItemsPanel
               title="Book-side items"
@@ -508,8 +599,16 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
               onAdd={() => openAddItem('book')}
               onDelete={deleteItem}
               onClearCheque={markChequeCleared}
+              infoTip="Items on the statement not yet in your books: bank charges, interest credits, or cashbook errors. Post to GL before completing."
             />
           </div>
+
+          <RegisterTransactionsPanel
+            transactions={registerTxns}
+            unreconciledCount={unreconciledRegisterCount}
+            isReadOnly={!!isReadOnly}
+            onMarkCleared={markBankTransactionCleared}
+          />
         </>
       )}
 
@@ -520,7 +619,10 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
             <Select
               label="Type"
               selectedKeys={[itemForm.itemType]}
-              onSelectionChange={(k) => setItemForm({ ...itemForm, itemType: Array.from(k)[0] as ReconcilingItemType })}
+              onSelectionChange={(k) => {
+                const nextType = Array.from(k)[0] as ReconcilingItemType;
+                setItemForm({ ...itemForm, itemType: nextType, offsetGlCode: defaultOffsetGlForType(nextType) });
+              }}
             >
               {itemTypesForModal.map((t) => (
                 <SelectItem key={t.type} textValue={t.label}>
@@ -585,6 +687,7 @@ function ItemsPanel({
   onAdd,
   onDelete,
   onClearCheque,
+  infoTip,
 }: {
   title: string;
   side: ReconSide;
@@ -593,6 +696,7 @@ function ItemsPanel({
   onAdd: () => void;
   onDelete: (id: string) => void;
   onClearCheque: (id: string, date: string) => void;
+  infoTip?: string;
 }) {
   const meta = (type: ReconcilingItemType) => RECON_ITEM_TYPES.find((t) => t.type === type);
 
@@ -600,7 +704,12 @@ function ItemsPanel({
     <Card className="shadow-sm border border-slate-200">
       <CardBody className="p-0">
         <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50">
-          <span className="text-sm font-semibold text-gray-800">{title}</span>
+          <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+            {title}
+            {infoTip && (
+              <InfoTip label={title}>{infoTip}</InfoTip>
+            )}
+          </span>
           {!isReadOnly && (
             <Button size="sm" variant="flat" color="primary" onPress={onAdd}>
               Add
@@ -672,6 +781,77 @@ function ItemsPanel({
                 </TableRow>
               );
             })}
+          </TableBody>
+        </Table>
+      </CardBody>
+    </Card>
+  );
+}
+
+function RegisterTransactionsPanel({
+  transactions,
+  unreconciledCount,
+  isReadOnly,
+  onMarkCleared,
+}: {
+  transactions: BankTransaction[];
+  unreconciledCount: number;
+  isReadOnly: boolean;
+  onMarkCleared: (id: string) => void;
+}) {
+  return (
+    <Card className="shadow-sm border border-slate-200 mt-4">
+      <CardBody className="p-0">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50">
+          <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+            Register transactions (through period end)
+            <InfoTip label="Register transactions">
+              Movements from Bank & Cash → Transactions for this account through the period end date.
+              Completing reconciliation marks them Reconciled. Mark cleared for pending items on the statement.
+            </InfoTip>
+          </span>
+          {unreconciledCount > 0 && (
+            <Chip size="sm" color="warning" variant="flat">
+              {unreconciledCount} not yet reconciled
+            </Chip>
+          )}
+        </div>
+        <Table removeWrapper aria-label="Register transactions" classNames={{ th: 'text-xs' }}>
+          <TableHeader>
+            <TableColumn>DATE</TableColumn>
+            <TableColumn>REFERENCE</TableColumn>
+            <TableColumn>TYPE</TableColumn>
+            <TableColumn className="text-right">AMOUNT</TableColumn>
+            <TableColumn>STATUS</TableColumn>
+            <TableColumn>ACTIONS</TableColumn>
+          </TableHeader>
+          <TableBody emptyContent="No register transactions in this period.">
+            {transactions.map((txn) => (
+              <TableRow key={txn.id}>
+                <TableCell className="text-sm">{new Date(txn.transactionDate).toLocaleDateString()}</TableCell>
+                <TableCell className="font-mono text-xs">{txn.reference}</TableCell>
+                <TableCell><Chip size="sm" variant="flat">{txn.type}</Chip></TableCell>
+                <TableCell className="text-right font-mono text-sm">{fmt(txn.amount ?? 0)}</TableCell>
+                <TableCell>
+                  <Chip
+                    size="sm"
+                    variant="flat"
+                    color={txn.status === 'Reconciled' ? 'success' : txn.status === 'Cleared' ? 'primary' : 'warning'}
+                  >
+                    {txn.status}
+                  </Chip>
+                </TableCell>
+                <TableCell>
+                  {!isReadOnly && txn.status === 'Pending' ? (
+                    <Button size="sm" variant="light" onPress={() => onMarkCleared(txn.id)}>
+                      Mark cleared
+                    </Button>
+                  ) : (
+                    <span className="text-gray-300 text-xs">—</span>
+                  )}
+                </TableCell>
+              </TableRow>
+            ))}
           </TableBody>
         </Table>
       </CardBody>

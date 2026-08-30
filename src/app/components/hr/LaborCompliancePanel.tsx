@@ -1,19 +1,20 @@
 'use client';
 
 import React from 'react';
-import { Card, CardBody, CardHeader, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Chip, Button } from '@heroui/react';
-
-const checklist = [
-  { id: 'contracts', label: 'Signed Employment Contracts' },
-  { id: 'ssnit', label: 'SSNIT Registration for Employees' },
-  { id: 'overtime', label: 'Overtime Policy in Place' },
-  { id: 'leave', label: 'Annual Leave Policy' },
-  { id: 'safety', label: 'Workplace Safety Training' },
-];
+import { Card, CardBody, CardHeader, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Chip } from '@heroui/react';
+import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
+import { useTrainingStore } from '@/app/lib/hr/trainingStore';
+import { computeLaborCompliance } from '@/app/lib/hr/laborCompliance';
 
 export default function LaborCompliancePanel() {
-  const [done, setDone] = React.useState<Record<string, boolean>>({ ssnit: true, contracts: true });
-  const score = Math.round((Object.keys(done).filter(k => done[k]).length / checklist.length) * 100);
+  const employees = useEmployeeStore((s) => s.employees);
+  const trainingPrograms = useTrainingStore((s) => s.programs);
+  const trainingEnrollments = useTrainingStore((s) => s.enrollments);
+
+  const { checklist, score } = React.useMemo(
+    () => computeLaborCompliance(employees, trainingPrograms, trainingEnrollments),
+    [employees, trainingPrograms, trainingEnrollments]
+  );
 
   return (
     <div className="space-y-4">
@@ -23,20 +24,32 @@ export default function LaborCompliancePanel() {
           <div className="text-sm">Score: <span className="font-semibold">{score}</span></div>
         </CardHeader>
         <CardBody>
+          <div className="text-xs text-gray-500 mb-3">
+            Derived from actual employee records — not a manual checklist. Fill in SSNIT numbers,
+            Ghana Card numbers, work-permit expiry dates, and documents on employee profiles to
+            improve this score.
+          </div>
           <Table aria-label="labor-checklist">
             <TableHeader>
               <TableColumn>ITEM</TableColumn>
+              <TableColumn>COVERAGE</TableColumn>
               <TableColumn>STATUS</TableColumn>
-              <TableColumn>{' '}</TableColumn>
             </TableHeader>
             <TableBody>
-              {checklist.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>{c.label}</TableCell>
-                  <TableCell><Chip size="sm" variant="flat" color={done[c.id] ? 'success' : 'warning'}>{done[c.id] ? 'Complete' : 'Pending'}</Chip></TableCell>
-                  <TableCell><Button size="sm" variant="flat" onPress={() => setDone(d => ({ ...d, [c.id]: !d[c.id] }))}>{done[c.id] ? 'Mark Pending' : 'Mark Complete'}</Button></TableCell>
-                </TableRow>
-              ))}
+              {checklist.map((c) => {
+                const isCompliant = c.total === 0 || c.compliant === c.total;
+                return (
+                  <TableRow key={c.id}>
+                    <TableCell>{c.label}</TableCell>
+                    <TableCell>{c.total === 0 ? 'N/A — no applicable employees' : `${c.compliant}/${c.total}`}</TableCell>
+                    <TableCell>
+                      <Chip size="sm" variant="flat" color={isCompliant ? 'success' : 'warning'}>
+                        {isCompliant ? 'Compliant' : 'Attention Needed'}
+                      </Chip>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </CardBody>
@@ -44,5 +57,3 @@ export default function LaborCompliancePanel() {
     </div>
   );
 }
-
-

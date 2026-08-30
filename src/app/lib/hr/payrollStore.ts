@@ -1,5 +1,22 @@
 import { create } from 'zustand';
 import { PayrollPeriod, PayrollRecord } from './models';
+import { getClientTenantSubdomain } from '../api/clientTenant';
+import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+
+function hrTenantHeaders(): HeadersInit {
+  const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
+  return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
+}
+function syncPayrollPeriodToApi(period: PayrollPeriod) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/hr/payroll-periods', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(period) })
+    .catch((e) => console.warn('[HR] Failed to sync payroll period to server:', e));
+}
+function syncPayrollRecordToApi(record: PayrollRecord) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/hr/payroll-records', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(record) })
+    .catch((e) => console.warn('[HR] Failed to sync payroll record to server:', e));
+}
 
 interface PayrollStore {
   payrollPeriods: PayrollPeriod[];
@@ -52,155 +69,17 @@ interface PayrollStore {
   // Selection
   selectPayrollPeriod: (period: PayrollPeriod | null) => void;
   selectPayrollRecord: (record: PayrollRecord | null) => void;
+
+  hydrateFromApi: () => Promise<void>;
 }
 
 export const usePayrollStore = create<PayrollStore>((set, get) => ({
-  payrollPeriods: [
-    {
-      id: '1',
-      periodNumber: 'PP-2024-01',
-      startDate: new Date('2024-01-01'),
-      endDate: new Date('2024-01-31'),
-      status: 'paid',
-      totalGrossPay: 75000,
-      totalNetPay: 60000,
-      totalDeductions: 15000,
-      totalTaxes: 10000,
-      employeeCount: 25,
-      processedAt: new Date('2024-02-01'),
-      processedBy: 'HR001',
-      approvedAt: new Date('2024-02-02'),
-      approvedBy: 'MGMT001',
-      createdAt: new Date('2024-01-01'),
-      updatedAt: new Date('2024-02-02')
-    },
-    {
-      id: '2',
-      periodNumber: 'PP-2024-02',
-      startDate: new Date('2024-02-01'),
-      endDate: new Date('2024-02-29'),
-      status: 'paid',
-      totalGrossPay: 72000,
-      totalNetPay: 57600,
-      totalDeductions: 14400,
-      totalTaxes: 9600,
-      employeeCount: 24,
-      processedAt: new Date('2024-03-01'),
-      processedBy: 'HR001',
-      approvedAt: new Date('2024-03-02'),
-      approvedBy: 'MGMT001',
-      createdAt: new Date('2024-02-01'),
-      updatedAt: new Date('2024-03-02')
-    },
-    {
-      id: '3',
-      periodNumber: 'PP-2024-03',
-      startDate: new Date('2024-03-01'),
-      endDate: new Date('2024-03-31'),
-      status: 'draft',
-      totalGrossPay: 0,
-      totalNetPay: 0,
-      totalDeductions: 0,
-      totalTaxes: 0,
-      employeeCount: 25,
-      processedAt: undefined,
-      processedBy: undefined,
-      approvedAt: undefined,
-      approvedBy: undefined,
-      createdAt: new Date('2024-03-01'),
-      updatedAt: new Date('2024-03-01')
-    }
-  ],
+  // Empty initial state — hydrateFromApi() below replaces this with real data on mount.
+  // Never seed with fake records: a slow/failed fetch must show an honest empty state,
+  // not fabricated payroll history.
+  payrollPeriods: [],
 
-  payrollRecords: [
-    {
-      id: '1',
-      payrollPeriodId: '1',
-      employeeId: '1',
-      employeeNumber: 'EMP001',
-      employeeName: 'John Doe',
-      department: 'Front Office',
-      position: 'Front Office Manager',
-      basicSalary: 2500,
-      allowances: 180,
-      overtimePay: 180,
-      bonuses: 0,
-      grossPay: 2680,
-      deductions: {
-        tax: 268,
-        socialSecurity: 134,
-        healthInsurance: 100,
-        pension: 134,
-        other: 0
-      },
-      netPay: 2044,
-      bankAccount: '1234567890',
-      paymentMethod: 'bank_transfer',
-      status: 'paid',
-      paidAt: new Date('2024-02-01'),
-      notes: 'Regular monthly payroll',
-      createdAt: new Date('2024-01-31'),
-      updatedAt: new Date('2024-02-01')
-    },
-    {
-      id: '2',
-      payrollPeriodId: '1',
-      employeeId: '2',
-      employeeNumber: 'EMP002',
-      employeeName: 'Sarah Johnson',
-      department: 'Food & Beverage',
-      position: 'Head Chef',
-      basicSalary: 2800,
-      allowances: 200,
-      overtimePay: 324,
-      bonuses: 0,
-      grossPay: 3124,
-      deductions: {
-        tax: 312.4,
-        socialSecurity: 156.2,
-        healthInsurance: 100,
-        pension: 156.2,
-        other: 0
-      },
-      netPay: 2399.2,
-      bankAccount: '0987654321',
-      paymentMethod: 'bank_transfer',
-      status: 'paid',
-      paidAt: new Date('2024-02-01'),
-      notes: 'Regular monthly payroll',
-      createdAt: new Date('2024-01-31'),
-      updatedAt: new Date('2024-02-01')
-    },
-    {
-      id: '3',
-      payrollPeriodId: '1',
-      employeeId: '3',
-      employeeNumber: 'EMP003',
-      employeeName: 'Michael Chen',
-      department: 'Housekeeping',
-      position: 'Housekeeping Supervisor',
-      basicSalary: 2200,
-      allowances: 150,
-      overtimePay: 84,
-      bonuses: 0,
-      grossPay: 2284,
-      deductions: {
-        tax: 228.4,
-        socialSecurity: 114.2,
-        healthInsurance: 100,
-        pension: 114.2,
-        other: 0
-      },
-      netPay: 1727.2,
-      bankAccount: '1122334455',
-      paymentMethod: 'bank_transfer',
-      status: 'paid',
-      paidAt: new Date('2024-02-01'),
-      notes: 'Regular monthly payroll',
-      createdAt: new Date('2024-01-31'),
-      updatedAt: new Date('2024-02-01')
-    }
-  ],
+  payrollRecords: [],
 
   selectedPeriod: null,
   selectedRecord: null,
@@ -224,15 +103,20 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
       payrollPeriods: [...state.payrollPeriods, newPeriod]
     }));
     console.log('[HR][Payroll][Store] createPayrollPeriod: Period created successfully', newPeriod.id);
+    syncPayrollPeriodToApi(newPeriod);
     return newPeriod;
   },
 
   updatePayrollPeriod: (id, updates) => {
+    let updated: PayrollPeriod | undefined;
     set((state) => ({
-      payrollPeriods: state.payrollPeriods.map(period =>
-        period.id === id ? { ...period, ...updates, updatedAt: new Date() } : period
-      )
+      payrollPeriods: state.payrollPeriods.map(period => {
+        if (period.id !== id) return period;
+        updated = { ...period, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncPayrollPeriodToApi(updated);
   },
 
   deletePayrollPeriod: (id) => {
@@ -256,14 +140,19 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
     set((state) => ({
       payrollRecords: [...state.payrollRecords, newRecord]
     }));
+    syncPayrollRecordToApi(newRecord);
   },
 
   updatePayrollRecord: (id, updates) => {
+    let updated: PayrollRecord | undefined;
     set((state) => ({
-      payrollRecords: state.payrollRecords.map(record =>
-        record.id === id ? { ...record, ...updates, updatedAt: new Date() } : record
-      )
+      payrollRecords: state.payrollRecords.map(record => {
+        if (record.id !== id) return record;
+        updated = { ...record, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncPayrollRecordToApi(updated);
   },
 
   deletePayrollRecord: (id) => {
@@ -278,49 +167,39 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
 
   // Payroll Processing
   processPayroll: (periodId) => {
+    let updated: PayrollPeriod | undefined;
     set((state) => ({
-      payrollPeriods: state.payrollPeriods.map(period =>
-        period.id === periodId 
-          ? { 
-              ...period, 
-              status: 'processing', 
-              processedAt: new Date(), 
-              updatedAt: new Date() 
-            } 
-          : period
-      )
+      payrollPeriods: state.payrollPeriods.map(period => {
+        if (period.id !== periodId) return period;
+        updated = { ...period, status: 'processing', processedAt: new Date(), updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncPayrollPeriodToApi(updated);
   },
 
   approvePayroll: (periodId, approvedBy) => {
+    let updated: PayrollPeriod | undefined;
     set((state) => ({
-      payrollPeriods: state.payrollPeriods.map(period =>
-        period.id === periodId 
-          ? { 
-              ...period, 
-              status: 'approved', 
-              approvedAt: new Date(), 
-              approvedBy, 
-              updatedAt: new Date() 
-            } 
-          : period
-      )
+      payrollPeriods: state.payrollPeriods.map(period => {
+        if (period.id !== periodId) return period;
+        updated = { ...period, status: 'approved', approvedAt: new Date(), approvedBy, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncPayrollPeriodToApi(updated);
   },
 
   markAsPaid: (recordId) => {
+    let updated: PayrollRecord | undefined;
     set((state) => ({
-      payrollRecords: state.payrollRecords.map(record =>
-        record.id === recordId 
-          ? { 
-              ...record, 
-              status: 'paid', 
-              paidAt: new Date(), 
-              updatedAt: new Date() 
-            } 
-          : record
-      )
+      payrollRecords: state.payrollRecords.map(record => {
+        if (record.id !== recordId) return record;
+        updated = { ...record, status: 'paid', paidAt: new Date(), updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncPayrollRecordToApi(updated);
   },
 
   // Search and Filtering
@@ -414,5 +293,36 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
 
   selectPayrollRecord: (record) => {
     set({ selectedRecord: record });
-  }
+  },
+
+  hydrateFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const headers = hrTenantHeaders();
+      const dateFields = ['startDate', 'endDate', 'processedAt', 'approvedAt', 'paidAt', 'createdAt', 'updatedAt'];
+      const toDates = (row: any) => {
+        const out = { ...row };
+        for (const f of dateFields) if (out[f]) out[f] = new Date(out[f]);
+        return out;
+      };
+      const [periodsRes, recordsRes] = await Promise.all([
+        fetch('/api/hr/payroll-periods', { headers, cache: 'no-store' }),
+        fetch('/api/hr/payroll-records', { headers, cache: 'no-store' }),
+      ]);
+      if (periodsRes.ok) {
+        const data = await periodsRes.json();
+        if (Array.isArray(data.payrollPeriods)) {
+          set({ payrollPeriods: data.payrollPeriods.map(toDates) });
+        }
+      }
+      if (recordsRes.ok) {
+        const data = await recordsRes.json();
+        if (Array.isArray(data.payrollRecords)) {
+          set({ payrollRecords: data.payrollRecords.map(toDates) });
+        }
+      }
+    } catch (e) {
+      console.warn('[HR] Failed to hydrate payroll periods/records from server:', e);
+    }
+  },
 }));

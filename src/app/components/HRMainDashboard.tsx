@@ -40,6 +40,14 @@ import PayslipGenerationPanel from './hr/PayslipGenerationPanel';
 import BenefitsManagementPanel from './hr/BenefitsManagementPanel';
 import SalaryAnalyticsPanel from './hr/SalaryAnalyticsPanel';
 import RecentActivities from './RecentActivities';
+import { useEmployeeStore } from '../lib/hr/employeeStore';
+import { usePayrollStore } from '../lib/hr/payrollStore';
+import { useLeaveAttendanceStore } from '../lib/hr/leaveAttendanceStore';
+import { useTrainingStore } from '../lib/hr/trainingStore';
+import { usePerformanceStore } from '../lib/hr/performanceStore';
+import { useEmployeeChangesStore } from '../lib/hr/employeeChangesStore';
+import { useBenefitsStore } from '../lib/hr/benefitsStore';
+import { computeLaborCompliance } from '../lib/hr/laborCompliance';
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {
@@ -99,39 +107,79 @@ export default function HRMainDashboard() {
   const [complianceView, setComplianceView] = useState<'dashboard' | 'tax' | 'training' | 'labor' | 'reports'>('dashboard');
   const [payrollView, setPayrollView] = useState<'dashboard' | 'processing' | 'payslips' | 'benefits' | 'analytics'>('dashboard');
   const router = useRouter();
-  
-  // Sample HR data - in real app, this would come from stores
-  const totalEmployees = 128;
-  const activeEmployees = 115;
-  const onLeaveEmployees = 8;
-  const terminatedEmployees = 5;
-  
-  // Payroll data
-  const monthlyPayroll = 186450;
-  const pendingPayroll = 45230;
-  const processedPayroll = 141220;
-  
-  // Leave data
-  const pendingLeaveRequests = 12;
-  const approvedLeaveRequests = 8;
-  const rejectedLeaveRequests = 3;
-  
-  // Performance data
-  const performanceReviews = 45;
-  const pendingReviews = 23;
-  const completedReviews = 22;
-  
-  // Compliance data
-  const complianceScore = 92;
-  const taxCompliance = 88;
-  const ssnitCompliance = 95;
-  const laborCompliance = 89;
 
-  // Today's operations
+  // Real HR data — hydrated from the DB on mount below.
+  const employees = useEmployeeStore((s) => s.employees);
+  const hydrateEmployees = useEmployeeStore((s) => s.hydrateFromApi);
+  const payrollPeriods = usePayrollStore((s) => s.payrollPeriods);
+  const payrollRecords = usePayrollStore((s) => s.payrollRecords);
+  const hydratePayroll = usePayrollStore((s) => s.hydrateFromApi);
+  const leaveRequests = useLeaveAttendanceStore((s) => s.leaveRequests);
+  const shifts = useLeaveAttendanceStore((s) => s.shifts);
+  const attendances = useLeaveAttendanceStore((s) => s.attendances);
+  const hydrateLeave = useLeaveAttendanceStore((s) => s.hydrateFromApi);
+  const employeeChanges = useEmployeeChangesStore((s) => s.changes);
+  const benefitsEnrollments = useBenefitsStore((s) => s.enrollments);
+  const trainingPrograms = useTrainingStore((s) => s.programs);
+  const trainingEnrollments = useTrainingStore((s) => s.enrollments);
+  const hydrateTraining = useTrainingStore((s) => s.hydrateFromApi);
+  // Performance reviews aren't Prisma-backed yet (explicitly deferred) — this store is
+  // in-memory only, so the count reflects whatever's currently loaded, not a durable total.
+  const performanceReviewsList = usePerformanceStore((s) => s.reviews);
+
+  useEffect(() => {
+    hydrateEmployees();
+    hydratePayroll();
+    hydrateLeave();
+    hydrateTraining();
+  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining]);
+
   const today = new Date().toISOString().slice(0, 10);
-  const newHiresToday = 2;
-  const terminationsToday = 0;
-  const payrollProcessedToday = 15;
+  const isSameMonth = (d: Date | string) => {
+    const date = new Date(d);
+    const now = new Date();
+    return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
+  };
+
+  const totalEmployees = employees.length;
+  const activeEmployees = employees.filter((e) => e.status === 'active').length;
+  const onLeaveEmployees = employees.filter((e) => e.status === 'on_leave').length;
+  const fullTimeCount = employees.filter((e) => e.employmentType === 'full_time').length;
+  const partTimeCount = employees.filter((e) => e.employmentType === 'part_time').length;
+  const contractCount = employees.filter((e) => e.employmentType === 'contract').length;
+
+  // "Currently on leave" = approved leave requests whose date range spans today.
+  const activeLeave = leaveRequests.filter(
+    (r) => r.status === 'approved' && new Date(r.startDate).getTime() <= Date.now() && new Date(r.endDate).getTime() >= Date.now()
+  );
+  const vacationOnLeave = activeLeave.filter((r) => r.leaveType === 'annual').length;
+  const sickOnLeave = activeLeave.filter((r) => r.leaveType === 'sick').length;
+  const maternityOnLeave = activeLeave.filter((r) => r.leaveType === 'maternity' || r.leaveType === 'paternity').length;
+
+  const currentMonthPeriods = payrollPeriods.filter((p) => isSameMonth(p.startDate));
+  const monthlyPayroll = currentMonthPeriods.reduce((sum, p) => sum + (p.totalNetPay || 0), 0);
+  const processedPayroll = currentMonthPeriods
+    .filter((p) => p.status === 'approved' || p.status === 'paid' || p.status === 'closed')
+    .reduce((sum, p) => sum + (p.totalNetPay || 0), 0);
+  const pendingPayroll = currentMonthPeriods
+    .filter((p) => p.status === 'draft' || p.status === 'processing')
+    .reduce((sum, p) => sum + (p.totalNetPay || 0), 0);
+
+  const pendingLeaveRequests = leaveRequests.filter((r) => r.status === 'pending').length;
+
+  const performanceReviews = performanceReviewsList.length;
+  const pendingReviews = performanceReviewsList.filter((r: any) => r.status !== 'completed' && r.status !== 'acknowledged').length;
+  const completedReviews = performanceReviews - pendingReviews;
+
+  const { checklist: complianceChecklist, score: laborCompliance } = computeLaborCompliance(employees, trainingPrograms, trainingEnrollments);
+  const tinCheck = complianceChecklist.find((c) => c.id === 'tin');
+  const taxCompliance = tinCheck && tinCheck.total > 0 ? Math.round((tinCheck.compliant / tinCheck.total) * 100) : 100;
+
+  const newHiresToday = employees.filter((e) => e.hireDate && new Date(e.hireDate).toISOString().slice(0, 10) === today).length;
+  const payrollProcessedToday = payrollRecords.filter((r) => r.createdAt && new Date(r.createdAt).toISOString().slice(0, 10) === today).length;
+
+  const activeBenefitsEnrollments = benefitsEnrollments.filter((e) => e.status === 'active').length;
+  const overtimeRecordsCount = attendances.filter((a) => (a.overtimeHours || 0) > 0).length;
 
   // Operational items following the uniform pattern
   const operationalItems = [
@@ -140,7 +188,7 @@ export default function HRMainDashboard() {
       items: [
         { title: 'Employee Records', icon: '👥', description: 'Complete employee database and profiles', status: 'active', count: totalEmployees },
         { title: 'New Hires', icon: '📝', description: 'Onboarding and recruitment management', status: 'active', count: newHiresToday },
-        { title: 'Employee Changes', icon: '🔄', description: 'Promotions, transfers, and updates', status: 'active', count: 5 },
+        { title: 'Employee Changes', icon: '🔄', description: 'Promotions, transfers, and updates', status: 'active', count: employeeChanges.length },
         { title: 'Performance Reviews', icon: '📊', description: 'Employee evaluation and feedback', status: 'active', count: pendingReviews },
       ]
     },
@@ -149,7 +197,7 @@ export default function HRMainDashboard() {
       items: [
         { title: 'Payroll Processing', icon: '💰', description: 'Salary calculation and payment', status: 'active', count: payrollProcessedToday },
         { title: 'Payslip Generation', icon: '🧾', description: 'Employee payment documentation', status: 'active', count: 0 },
-        { title: 'Benefits Management', icon: '💳', description: 'Health, insurance, and perks', status: 'active', count: 8 },
+        { title: 'Benefits Management', icon: '💳', description: 'Health, insurance, and perks', status: 'active', count: activeBenefitsEnrollments },
         { title: 'Salary Analytics', icon: '📈', description: 'Compensation analysis and planning', status: 'active', count: 0 },
       ]
     },
@@ -158,15 +206,15 @@ export default function HRMainDashboard() {
       items: [
         { title: 'Leave Management', icon: '🌴', description: 'Vacation and time-off requests', status: 'active', count: pendingLeaveRequests },
         { title: 'Time Tracking', icon: '⏰', description: 'Work hours and attendance monitoring', status: 'active', count: activeEmployees },
-        { title: 'Shift Scheduling', icon: '📅', description: 'Work schedule management', status: 'active', count: 3 },
-        { title: 'Overtime Management', icon: '🚨', description: 'Extra hours tracking and approval', status: 'active', count: 25 },
+        { title: 'Shift Scheduling', icon: '📅', description: 'Work schedule management', status: 'active', count: shifts.length },
+        { title: 'Overtime Management', icon: '🚨', description: 'Extra hours tracking and approval', status: 'active', count: overtimeRecordsCount },
       ]
     },
     {
       category: 'Compliance & Training',
       items: [
         { title: 'Tax Compliance', icon: '📋', description: 'PAYE, SSNIT, and tax reporting', status: 'active', count: taxCompliance },
-        { title: 'Training Programs', icon: '🎓', description: 'Employee development and skills', status: 'active', count: 12 },
+        { title: 'Training Programs', icon: '🎓', description: 'Employee development and skills', status: 'active', count: trainingPrograms.length },
         { title: 'Labor Compliance', icon: '🔒', description: 'Ghana labor law adherence', status: 'active', count: laborCompliance },
         { title: 'Compliance Reports', icon: '📊', description: 'Regulatory reporting and audits', status: 'active', count: 0 },
       ]
@@ -234,37 +282,6 @@ export default function HRMainDashboard() {
     }
   ];
 
-  const kpis = [
-    { 
-      label: 'Total Employees', 
-      value: totalEmployees, 
-      target: 150, 
-      color: 'success',
-      icon: '👥'
-    },
-    { 
-      label: 'Active Employees', 
-      value: activeEmployees, 
-      target: 140, 
-      color: 'primary',
-      icon: '✅'
-    },
-    { 
-      label: 'Monthly Payroll', 
-      value: `₵${(monthlyPayroll / 1000).toFixed(0)}K`, 
-      target: 200, 
-      color: 'secondary',
-      icon: '💰'
-    },
-    { 
-      label: 'Compliance Score', 
-      value: `${complianceScore}%`, 
-      target: 95, 
-      color: 'warning',
-      icon: '📊'
-    }
-  ];
-
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
@@ -296,15 +313,15 @@ export default function HRMainDashboard() {
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex justify-between">
                   <span>Full-time</span>
-                  <span className="font-medium">98</span>
+                  <span className="font-medium">{fullTimeCount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Part-time</span>
-                  <span className="font-medium">12</span>
+                  <span className="font-medium">{partTimeCount}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Contract</span>
-                  <span className="font-medium">5</span>
+                  <span className="font-medium">{contractCount}</span>
                 </div>
               </div>
             </CardBody>
@@ -321,15 +338,15 @@ export default function HRMainDashboard() {
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex justify-between">
                   <span>Vacation</span>
-                  <span className="font-medium">5</span>
+                  <span className="font-medium">{vacationOnLeave}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Sick Leave</span>
-                  <span className="font-medium">2</span>
+                  <span className="font-medium">{sickOnLeave}</span>
                 </div>
                 <div className="flex justify-between">
                   <span>Maternity</span>
-                  <span className="font-medium">1</span>
+                  <span className="font-medium">{maternityOnLeave}</span>
                 </div>
               </div>
             </CardBody>

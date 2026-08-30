@@ -14,6 +14,11 @@ import {
 import { trackEvent } from '../analytics/trackEvent';
 import { useSettingsStore } from '../settings/store';
 import { frontOfficeStore } from '../frontoffice/store';
+import { getClientTenantSubdomain } from '../api/clientTenant';
+
+function hkHeaders(): HeadersInit {
+  return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
+}
 
 interface RoomStatusData {
   roomNumber: string;
@@ -51,6 +56,105 @@ class HousekeepingStore {
       });
     } catch (e) {
       console.warn('HK: Room sync subscription failed', e);
+    }
+  }
+
+  /**
+   * Pull real, Prisma-persisted tasks/maintenance requests/staff/room-status history
+   * from the DB, replacing the in-memory state. The Task/Maintenance Prisma models
+   * are plain String columns (not enums), so this store's existing status/taskType
+   * vocabulary ('in-progress', 'deep-clean', etc.) round-trips through the API
+   * unchanged — no translation layer needed.
+   */
+  async hydrateFromApi(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    try {
+      const [tasksRes, maintRes, staffRes, statusRes] = await Promise.all([
+        fetch('/api/housekeeping/tasks', { headers: hkHeaders(), cache: 'no-store' }),
+        fetch('/api/housekeeping/maintenance', { headers: hkHeaders(), cache: 'no-store' }),
+        fetch('/api/housekeeping/staff', { headers: hkHeaders(), cache: 'no-store' }),
+        fetch('/api/housekeeping/room-status', { headers: hkHeaders(), cache: 'no-store' }),
+      ]);
+
+      if (tasksRes.ok) {
+        const data = await tasksRes.json();
+        this.tasks = (data.tasks || []).map((t: any): HousekeepingTask => {
+          const details = t.details || {};
+          return {
+            id: t.id,
+            roomNumber: t.roomNumber || '',
+            roomTypeId: details.roomTypeId || '',
+            taskType: t.taskType,
+            priority: t.priority,
+            status: t.status,
+            assignedTo: t.assignedTo || undefined,
+            assignedAt: details.assignedAt || undefined,
+            startedAt: t.startedAt || undefined,
+            completedAt: t.completedAt || undefined,
+            verifiedAt: details.verifiedAt || undefined,
+            notes: t.notes || undefined,
+            estimatedMinutes: details.estimatedMinutes || 0,
+            actualMinutes: details.actualMinutes || undefined,
+            checklist: details.checklist || [],
+            completedItems: details.completedItems || [],
+            issues: details.issues || [],
+            photos: details.photos || [],
+          };
+        });
+      }
+
+      if (maintRes.ok) {
+        const data = await maintRes.json();
+        this.maintenanceRequests = (data.requests || []).map((r: any): MaintenanceRequest => ({
+          id: r.id,
+          roomNumber: r.roomNumber || '',
+          reportedBy: r.reportedBy || '',
+          reportedAt: r.createdAt,
+          category: r.category,
+          priority: r.priority,
+          status: r.status === 'open' ? 'reported' : r.status,
+          description: r.description,
+          assignedTo: r.assignedTo || undefined,
+          estimatedCost: r.estimatedCost != null ? Number(r.estimatedCost) : undefined,
+          actualCost: r.actualCost != null ? Number(r.actualCost) : undefined,
+          completedAt: r.resolvedAt || undefined,
+          notes: r.notes ? [r.notes] : [],
+          photos: [],
+        }));
+      }
+
+      if (staffRes.ok) {
+        const data = await staffRes.json();
+        this.staff = (data.staff || []).map((s: any): HousekeepingStaff => ({
+          id: s.id,
+          name: s.name,
+          role: s.role,
+          active: s.isActive,
+          currentTasks: this.tasks.filter((t) => t.assignedTo === s.id && t.status !== 'completed').map((t) => t.id),
+          dailyTarget: s.dailyTarget,
+          completedToday: s.completedToday,
+          efficiency: s.dailyTarget > 0 ? Math.round((s.completedToday / s.dailyTarget) * 100) : 0,
+          lastActive: s.updatedAt,
+        }));
+      }
+
+      if (statusRes.ok) {
+        const data = await statusRes.json();
+        const logs = (data.logs || []) as Array<{ roomNumber: string; toStatus: string; createdAt: string }>;
+        // logs are ordered desc by createdAt — first occurrence per room is the latest.
+        const latestByRoom = new Map<string, string>();
+        for (const log of logs) {
+          if (!latestByRoom.has(log.roomNumber)) latestByRoom.set(log.roomNumber, log.toStatus);
+        }
+        latestByRoom.forEach((status, roomNumber) => {
+          const room = this.rooms.get(roomNumber);
+          if (room) room.status = status as RoomStatus;
+        });
+      }
+
+      this.notify();
+    } catch (e) {
+      console.warn('HK: hydrateFromApi failed:', e);
     }
   }
 
@@ -135,6 +239,12 @@ class HousekeepingStore {
 
     this.notify();
     trackEvent('HK.RoomStatusChanged', { roomNumber, status, previousStatus, changedBy });
+
+    fetch('/api/housekeeping/room-status', {
+      method: 'POST',
+      headers: hkHeaders(),
+      body: JSON.stringify({ roomNumber, fromStatus: previousStatus, toStatus: status, changedBy, reason }),
+    }).catch((e) => console.warn('HK: Failed to sync room status:', e));
   }
 
   getRoomStatus(roomNumber: string): RoomStatusData | undefined {
@@ -198,6 +308,24 @@ class HousekeepingStore {
     this.tasks.unshift(task);
     this.notify();
     trackEvent('HK.TaskCreated', { taskId: task.id, roomNumber: task.roomNumber, taskType: task.taskType });
+
+    // Send the client-generated id as-is so the server creates the row under the same
+    // id — callers (e.g. TaskManagementPanel) call assignTask(task.id, ...) synchronously
+    // right after createTask() returns, before this POST could otherwise resolve.
+    fetch('/api/housekeeping/tasks', {
+      method: 'POST',
+      headers: hkHeaders(),
+      body: JSON.stringify({
+        id: task.id,
+        roomNumber: task.roomNumber,
+        taskType: task.taskType,
+        status: task.status,
+        priority: task.priority,
+        notes: task.notes,
+        details: { roomTypeId: task.roomTypeId, estimatedMinutes: task.estimatedMinutes, checklist: task.checklist },
+      }),
+    }).catch((e) => console.warn('HK: Failed to sync new task:', e));
+
     return task;
   }
 
@@ -217,6 +345,12 @@ class HousekeepingStore {
 
     this.notify();
     trackEvent('HK.TaskAssigned', { taskId, staffId });
+
+    fetch(`/api/housekeeping/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PATCH',
+      headers: hkHeaders(),
+      body: JSON.stringify({ status: 'in-progress', assignedTo: staffId, assignedName: staff?.name }),
+    }).catch((e) => console.warn('HK: Failed to sync task assignment:', e));
   }
 
   updateTaskStatus(taskId: string, status: TaskStatus, completedItems?: string[]) {
@@ -240,6 +374,15 @@ class HousekeepingStore {
 
     this.notify();
     trackEvent('HK.TaskStatusUpdated', { taskId, status });
+
+    fetch(`/api/housekeeping/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PATCH',
+      headers: hkHeaders(),
+      body: JSON.stringify({
+        status,
+        details: { roomTypeId: task.roomTypeId, estimatedMinutes: task.estimatedMinutes, checklist: task.checklist, completedItems: task.completedItems, actualMinutes: task.actualMinutes },
+      }),
+    }).catch((e) => console.warn('HK: Failed to sync task status:', e));
   }
 
   getTasksByStatus(status: TaskStatus): HousekeepingTask[] {
@@ -270,6 +413,23 @@ class HousekeepingStore {
     this.maintenanceRequests.unshift(request);
     this.notify();
     trackEvent('HK.MaintenanceRequestCreated', { requestId: request.id, roomNumber: request.roomNumber, category: request.category });
+
+    // Real POST always sets status='open' on create (mapped back to 'reported' by
+    // hydrateFromApi) — client-generated id sent through so it matches immediately,
+    // same reasoning as createTask.
+    fetch('/api/housekeeping/maintenance', {
+      method: 'POST',
+      headers: hkHeaders(),
+      body: JSON.stringify({
+        id: request.id,
+        roomNumber: request.roomNumber,
+        reportedBy: request.reportedBy,
+        category: request.category,
+        priority: request.priority,
+        description: request.description,
+      }),
+    }).catch((e) => console.warn('HK: Failed to sync maintenance request:', e));
+
     return request;
   }
 
@@ -283,6 +443,12 @@ class HousekeepingStore {
 
     this.notify();
     trackEvent('HK.MaintenanceStatusUpdated', { requestId, status });
+
+    fetch('/api/housekeeping/maintenance', {
+      method: 'PATCH',
+      headers: hkHeaders(),
+      body: JSON.stringify({ id: requestId, status, assignedTo }),
+    }).catch((e) => console.warn('HK: Failed to sync maintenance status:', e));
   }
 
   // Staff Management
@@ -290,15 +456,68 @@ class HousekeepingStore {
     return this.staff.filter(s => s.role === role);
   }
 
+  addStaff(data: { name: string; role: HousekeepingStaff['role']; dailyTarget: number }): HousekeepingStaff {
+    const member: HousekeepingStaff = {
+      id: `HK-${Date.now().toString().slice(-6)}`,
+      name: data.name,
+      role: data.role,
+      active: true,
+      currentTasks: [],
+      dailyTarget: data.dailyTarget,
+      completedToday: 0,
+      efficiency: 0,
+      lastActive: new Date().toISOString(),
+    };
+    this.staff.push(member);
+    this.notify();
+    trackEvent('HK.StaffAdded', { staffId: member.id, role: member.role });
+
+    fetch('/api/housekeeping/staff', {
+      method: 'POST',
+      headers: hkHeaders(),
+      body: JSON.stringify({ id: member.id, name: member.name, role: member.role, dailyTarget: member.dailyTarget, isActive: true }),
+    }).catch((e) => console.warn('HK: Failed to sync new staff member:', e));
+
+    return member;
+  }
+
+  updateStaff(staffId: string, updates: Partial<Pick<HousekeepingStaff, 'name' | 'role' | 'dailyTarget' | 'active'>>) {
+    const staff = this.staff.find(s => s.id === staffId);
+    if (!staff) return;
+
+    Object.assign(staff, updates);
+    staff.lastActive = new Date().toISOString();
+    this.notify();
+    trackEvent('HK.StaffUpdated', { staffId });
+
+    fetch('/api/housekeeping/staff', {
+      method: 'POST',
+      headers: hkHeaders(),
+      body: JSON.stringify({ id: staffId, name: staff.name, role: staff.role, dailyTarget: staff.dailyTarget, isActive: staff.active }),
+    }).catch((e) => console.warn('HK: Failed to sync staff update:', e));
+  }
+
+  toggleStaffStatus(staffId: string) {
+    const staff = this.staff.find(s => s.id === staffId);
+    if (!staff) return;
+    this.updateStaff(staffId, { active: !staff.active });
+  }
+
   updateStaffEfficiency(staffId: string, completedToday: number) {
     const staff = this.staff.find(s => s.id === staffId);
     if (!staff) return;
 
     staff.completedToday = completedToday;
-    staff.efficiency = Math.round((completedToday / staff.dailyTarget) * 100);
+    staff.efficiency = staff.dailyTarget > 0 ? Math.round((completedToday / staff.dailyTarget) * 100) : 0;
     staff.lastActive = new Date().toISOString();
 
     this.notify();
+
+    fetch('/api/housekeeping/staff', {
+      method: 'POST',
+      headers: hkHeaders(),
+      body: JSON.stringify({ id: staffId, name: staff.name, role: staff.role, dailyTarget: staff.dailyTarget, completedToday, isActive: staff.active }),
+    }).catch((e) => console.warn('HK: Failed to sync staff efficiency:', e));
   }
 
   // Inspections
@@ -393,6 +612,18 @@ class HousekeepingStore {
     Object.assign(task, updatedTask);
     this.notify();
     trackEvent('HK.Task.Updated', { taskId, roomNumber: task.roomNumber });
+
+    fetch(`/api/housekeeping/tasks/${encodeURIComponent(taskId)}`, {
+      method: 'PATCH',
+      headers: hkHeaders(),
+      body: JSON.stringify({
+        status: task.status,
+        assignedTo: task.assignedTo,
+        notes: task.notes,
+        priority: task.priority,
+        details: { roomTypeId: task.roomTypeId, estimatedMinutes: task.estimatedMinutes, checklist: task.checklist, completedItems: task.completedItems, actualMinutes: task.actualMinutes, issues: task.issues },
+      }),
+    }).catch((e) => console.warn('HK: Failed to sync task update:', e));
   }
 
   updateMaintenanceRequest(requestId: string, updatedRequest: Partial<MaintenanceRequest>) {
@@ -402,6 +633,12 @@ class HousekeepingStore {
     Object.assign(request, updatedRequest);
     this.notify();
     trackEvent('HK.MaintenanceRequest.Updated', { requestId, roomNumber: request.roomNumber });
+
+    fetch('/api/housekeeping/maintenance', {
+      method: 'PATCH',
+      headers: hkHeaders(),
+      body: JSON.stringify({ id: requestId, status: request.status, assignedTo: request.assignedTo, priority: request.priority, notes: request.notes?.[0], estimatedCost: request.estimatedCost, actualCost: request.actualCost }),
+    }).catch((e) => console.warn('HK: Failed to sync maintenance update:', e));
   }
 
   private notify() {

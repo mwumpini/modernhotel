@@ -1,11 +1,24 @@
 'use client';
 
 import { SalesReport, InventoryReport, LaborReport } from './models';
-import { ordersStore } from './ordersStore';
+import { ordersStore, type FBOrder } from './ordersStore';
 import { inventoryStore } from './inventoryStore';
 import { customerStore } from './customerStore';
 import { supplierStore } from './supplierStore';
 import { employeeStore } from './employeeStore';
+
+/**
+ * order.id is a cuid or `ORD-<timestamp>` string — never a valid Date input — and
+ * order.timestamp is never actually set by ordersStore.add()/update() (only
+ * createdAt/updatedAt are). `new Date(order.timestamp || order.id)` therefore
+ * produces an Invalid Date whose .toISOString() throws RangeError. Use createdAt
+ * (always set) as the real fallback, and never let an invalid result reach the caller.
+ */
+function orderDate(order: FBOrder): Date {
+  const raw = order.timestamp || order.createdAt;
+  const d = raw ? new Date(raw) : new Date(NaN);
+  return isNaN(d.getTime()) ? new Date() : d;
+}
 
 class ReportingStore {
   private listeners: Array<() => void> = [];
@@ -13,8 +26,8 @@ class ReportingStore {
   // Sales Reports
   generateDailySalesReport(date: string): SalesReport {
     const orders = ordersStore.all().filter(order => {
-      const orderDate = new Date(order.timestamp || order.id).toISOString().split('T')[0];
-      return orderDate === date;
+      const d = orderDate(order).toISOString().split('T')[0];
+      return d === date;
     });
 
     const totalSales = orders.reduce((sum, order) => {
@@ -54,7 +67,7 @@ class ReportingStore {
     const salesByHour: Array<{ hour: number; orders: number; revenue: number }> = [];
     for (let hour = 6; hour <= 23; hour++) {
       const hourOrders = orders.filter(order => {
-        const orderHour = new Date(order.timestamp || order.id).getHours();
+        const orderHour = orderDate(order).getHours();
         return orderHour === hour;
       });
 
@@ -99,10 +112,10 @@ class ReportingStore {
     categoryBreakdown: Record<string, { quantity: number; revenue: number; percentage: number }>;
   } {
     const orders = ordersStore.all().filter(order => {
-      const orderDate = new Date(order.timestamp || order.id);
+      const d = orderDate(order);
       const start = new Date(startDate);
       const end = new Date(endDate);
-      return orderDate >= start && orderDate <= end;
+      return d >= start && d <= end;
     });
 
     const totalRevenue = orders.reduce((sum, order) => {
@@ -189,10 +202,10 @@ class ReportingStore {
     }>;
   } {
     const orders = ordersStore.all().filter(order => {
-      const orderDate = new Date(order.timestamp || order.id);
+      const d = orderDate(order);
       const start = new Date(startDate);
       const end = new Date(endDate);
-      return orderDate >= start && orderDate <= end;
+      return d >= start && d <= end;
     });
 
     const totalSales = orders.reduce((sum, order) => {

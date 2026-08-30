@@ -37,7 +37,7 @@ function ensureFiles() {
 
 function migrateLegacyGhanaRates(items: JsonObject[]): JsonObject[] {
   let changed = false;
-  const next = items.map((t) => {
+  let next = items.map((t) => {
     if (t.countryCode !== 'GH') return t;
     if ((t.id === 'gh-vat' || t.name === 'VAT (Standard Rate)') && Number(t.rate) === 20) {
       changed = true;
@@ -51,8 +51,51 @@ function migrateLegacyGhanaRates(items: JsonObject[]): JsonObject[] {
       changed = true;
       return { ...t, rate: 7.5, description: 'Resident WHT on services (2026)' };
     }
+    // Tier 3's rule id/shape didn't change, just its default display name — only touch it
+    // if it's still the untouched default, never a name the tenant already customized.
+    if (t.id === 'gh-tier3-relief-cap' && t.name === 'Tier 3 Relief Cap') {
+      changed = true;
+      return { ...t, name: 'Tier 3' };
+    }
+    // Tourism Levy originally excluded EVENT from its scope, so it silently never applied to
+    // Events & Conferences bills — a coverage bug, not a deliberate exclusion. Only widen scope
+    // for tenants still on the exact original default; a tenant who already customized appliesTo
+    // (e.g. narrowed it) keeps their own choice untouched.
+    if (
+      t.id === 'gh-tourism' &&
+      Array.isArray(t.appliesTo) &&
+      t.appliesTo.length === 3 &&
+      ['ROOM', 'HOTEL', 'FOOD'].every((tag) => (t.appliesTo as string[]).includes(tag))
+    ) {
+      changed = true;
+      return { ...t, appliesTo: ['ROOM', 'HOTEL', 'FOOD', 'EVENT'] };
+    }
     return t;
   });
+
+  // gh-ssnit (a single rule covering Tier 1 + Tier 2 as a combined reporting split) was
+  // replaced by gh-ssnit-tier1 + gh-ssnit-tier2 as two independently-tracked, independently
+  // renameable rules, since Tier 1 and Tier 2 are remitted to different institutions.
+  // Any tenant still holding the old combined rule gets it dropped here; the backfill below
+  // then adds the two replacement rules since their ids won't be present yet.
+  if (next.some((t) => t.id === 'gh-ssnit')) {
+    changed = true;
+    next = next.filter((t) => t.id !== 'gh-ssnit');
+  }
+
+  // Tenants whose compliance.taxes.json was seeded before a new tax rule was added to
+  // seed-taxes.json (e.g. gh-paye/gh-ssnit-tier1/gh-ssnit-tier2/gh-tier3-relief-cap, added
+  // when payroll gained its own configurable tax rules) never get it, since seeding only
+  // runs once when the file doesn't exist yet. Backfill anything present in the current
+  // seed but missing from this tenant's file, matched by id — never overwrites a rule the
+  // tenant already has (including one they've edited), only adds ones that are absent.
+  const existingIds = new Set(next.map((t) => String(t.id)));
+  const missing = getSeedTaxes().filter((s) => !existingIds.has(String((s as JsonObject).id)));
+  if (missing.length) {
+    changed = true;
+    next = next.concat(missing as JsonObject[]);
+  }
+
   if (changed) safeWriteJson(taxesFile, next);
   return next;
 }

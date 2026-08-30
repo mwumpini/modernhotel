@@ -69,6 +69,8 @@ export interface RatePlan {
   marketSegment: string;
   priceType?: string;
   lastUpdated?: string;
+  /** What's included in the nightly rate — drives the Guest Count & Meal Plan Report. */
+  mealPlan?: 'room_only' | 'bed_breakfast' | 'half_board' | 'full_board';
   
   // NEW: Event & Conference Rate Management
   rateType?: 'standard' | 'corporate' | 'event_conference' | 'package' | 'fixed_price';
@@ -404,8 +406,11 @@ export interface Reservation {
   // Invoice properties
   invoiceGenerated?: boolean;
   invoiceGeneratedDate?: string;
-  invoiceStatus?: 'draft' | 'sent' | 'paid' | 'overdue';
+  invoiceStatus?: 'draft' | 'sent' | 'paid' | 'overdue' | 'none' | 'gl_pending';
   invoiceSentDate?: string;
+  /** Set when a checkout's GL post failed; carries the exact payload retryPendingGlPost
+   * needs to re-attempt it without recreating the invoice/payments. */
+  pendingGlPost?: Record<string, unknown>;
   checkoutStatus?: 'pending' | 'checked-in' | 'completed';
   
   rateBreakdown?: { date: string; base: number; extraAdult?: number; extraChild?: number; total: number }[];
@@ -422,6 +427,19 @@ export interface FolioCharge {
   tax?: number; // tax component
   category?: string;
   reference?: string;
+}
+
+export interface WakeUpCall {
+  id: string;
+  reservationId: string;
+  guestName: string;
+  roomNumber: string;
+  date: string; // YYYY-MM-DD
+  time: string; // HH:MM, 24h
+  status: 'scheduled' | 'completed' | 'cancelled';
+  notes?: string;
+  completedBy?: string;
+  createdAt: string;
 }
 
 export interface FolioPayment {

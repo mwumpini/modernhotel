@@ -11,6 +11,7 @@ import { housekeepingStore } from '../lib/housekeeping/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import type { Reservation } from '../lib/frontoffice/types';
+import { getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 
 interface QuickAction {
   id: string;
@@ -553,15 +554,20 @@ export default function FrontOfficeOperationsDashboard() {
   // Breakdowns
   const todayIso = new Date().toISOString().slice(0,10);
   const checkingOutToday = reservations.filter(r => r.status === 'checked-in' && r.departure.slice(0,10) === todayIso).length;
-  const extendedStays = reservations.filter(r => r.status === 'checked-in' && r.departure < new Date().toISOString()).length;
-  const vipGuests = 0;
+  // "Extended" = still checked-in past their scheduled departure date (not today's departures).
+  const extendedStays = reservations.filter(r => r.status === 'checked-in' && r.departure.slice(0,10) < todayIso).length;
+  const vipGuests = reservations.filter(r => {
+    if (r.status !== 'checked-in') return false;
+    const guest = frontOfficeStore.guests.find(g => g.id === r.guestId);
+    return !!guest?.vipStatus && guest.vipStatus !== 'regular';
+  }).length;
 
   // Metrics
   const totalReservations = reservations.length;
   const checkedInReservations = reservations.filter(r => r.status === 'checked-in').length;
   const pendingCheckIns = reservations.filter(r => r.status === 'confirmed').length;
   const pendingCheckOuts = reservations.filter(r => r.status === 'checked-in').length;
-  const totalRevenue = 0;
+  const totalRevenue = frontOfficeStore.folios.reduce((sum, f) => sum + getFolioDisplayTotals(f).totalCharges, 0);
 
   const quickActions: QuickAction[] = [
     {
@@ -583,25 +589,14 @@ export default function FrontOfficeOperationsDashboard() {
     }
   ];
 
-  // Get room counts by type from settings
-  const getRoomCountByType = (typeId: string) => {
-    const count = settings.roomManagement.rooms?.filter(room => room.typeId === typeId).length || 0;
-    console.log(`Room count for type ${typeId}:`, count);
-    return count;
-  };
-
+  // Available rooms by the property's actual configured room types (not hardcoded
+  // standard/deluxe/suite ids — a real property's room-type ids are generated, not
+  // fixed strings).
   const getAvailableRoomCountByType = (typeId: string) => {
-    const count = hkAllRooms.filter(room => 
+    return hkAllRooms.filter(room =>
       room.roomTypeId === typeId && ['vacant', 'clean', 'inspected'].includes(room.status as any)
     ).length;
-    console.log(`Available room count for type ${typeId}:`, count);
-    return count;
   };
-
-  // Debug logging
-  console.log('Settings rooms:', settings.roomManagement.rooms);
-  console.log('Housekeeping rooms:', hkAllRooms);
-  console.log('Total rooms count:', totalRooms);
 
   const renderOverview = () => (
     <div className="space-y-6">
@@ -617,9 +612,9 @@ export default function FrontOfficeOperationsDashboard() {
             <CardBody className="pt-3">
                               <div className="text-4xl font-bold text-ghana-green mb-3">{availableRooms}</div>
                 <div className="space-y-1 text-sm text-gray-600">
-                  <div className="flex justify-between"><span>Standard Rooms</span><span>{getAvailableRoomCountByType('standard')}</span></div>
-                  <div className="flex justify-between"><span>Deluxe Rooms</span><span>{getAvailableRoomCountByType('deluxe')}</span></div>
-                  <div className="flex justify-between"><span>Suite Rooms</span><span>{getAvailableRoomCountByType('suite')}</span></div>
+                  {roomTypes.map((rt: any) => (
+                    <div key={rt.id} className="flex justify-between"><span>{rt.name}</span><span>{getAvailableRoomCountByType(rt.id)}</span></div>
+                  ))}
                 </div>
             </CardBody>
           </Card>

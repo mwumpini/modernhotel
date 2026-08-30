@@ -1,14 +1,22 @@
-import type { JournalEntry } from '../models';
+import type { JournalEntry, ChartOfAccounts } from '../models';
 import { GHANA_CHART_OF_ACCOUNTS } from '../models';
 import { buildFinancialAccountTree, type AccountNode, type RollupCoa } from '../financialReportRollup';
+import { toRollupCoa } from '../coaHierarchy';
 import { useAccountingStore } from '../store';
 import type { BankAccount } from '../models';
 import type { ReconcilingItem, ReconcilingItemType } from './types';
 import { bookSideItemsNeedingJournal } from './calculations';
 
+// Must match bankTransactionLedger.ts's GL_INTEREST_INCOME — both post the same concept.
+// '4900' doesn't exist in GHANA_CHART_OF_ACCOUNTS (only '4300' Other Revenue does), so any
+// item posted through this path previously credited a phantom account invisible to reports.
 const GL_INTEREST_INCOME = '4300';
 const GL_BANK_CHARGES = '5625';
-const GL_SUSPENSE = '4300';
+// '1220' (Other Receivables) is used as a holding account for unclassified book-side
+// reconciling adjustments pending investigation — must NOT share a code with a revenue
+// account (it previously matched GL_INTEREST_INCOME's old '4300', silently inflating
+// reported Sales Revenue whenever an unmapped adjustment was posted).
+const GL_SUSPENSE = '1220';
 
 function flattenTree(nodes: AccountNode[]): AccountNode[] {
   const out: AccountNode[] = [];
@@ -22,15 +30,9 @@ function flattenTree(nodes: AccountNode[]): AccountNode[] {
   return out;
 }
 
-function resolveCoa(chartOfAccounts: RollupCoa[] | undefined): RollupCoa[] {
+function resolveCoa(chartOfAccounts: ChartOfAccounts[] | RollupCoa[] | undefined): RollupCoa[] {
   const raw = chartOfAccounts?.length ? chartOfAccounts : GHANA_CHART_OF_ACCOUNTS;
-  return raw.map((a) => ({
-    code: a.code,
-    name: a.name,
-    type: a.type as RollupCoa['type'],
-    category: a.category,
-    level: a.level,
-  }));
+  return toRollupCoa(raw);
 }
 
 export function reportDateFromInput(dateStr: string): Date {
@@ -41,7 +43,7 @@ export function reportDateFromInput(dateStr: string): Date {
 /** Cumulative GL balance for bank/cash account through period end. */
 export function getGlCashbookBalance(
   journalEntries: JournalEntry[],
-  chartOfAccounts: RollupCoa[] | undefined,
+  chartOfAccounts: ChartOfAccounts[] | RollupCoa[] | undefined,
   glAccountCode: string,
   periodEndDate: string
 ): number {
@@ -66,7 +68,7 @@ export interface CashbookLedgerLink {
 export function linkCashbookToLedger(
   bankAccount: BankAccount,
   journalEntries: JournalEntry[],
-  chartOfAccounts: RollupCoa[] | undefined,
+  chartOfAccounts: ChartOfAccounts[] | RollupCoa[] | undefined,
   periodEndDate: string
 ): CashbookLedgerLink {
   const glBalance = getGlCashbookBalance(
@@ -93,6 +95,22 @@ function jeNumber() {
   return `JE-${Date.now().toString().slice(-8)}`;
 }
 
+/** Default offset GL for a book-side item type — used both to post (when the user leaves the
+ *  field untouched) and to reset the "Offset GL code" input when the type selector changes, so
+ *  a stale code from a previously-selected type can't silently carry over into a new posting. */
+export function defaultOffsetGlForType(itemType: ReconcilingItemType): string {
+  switch (itemType) {
+    case 'BANK_CREDIT_NOT_IN_BOOK':
+      return GL_INTEREST_INCOME;
+    case 'BANK_CHARGE_NOT_IN_BOOK':
+    case 'BOOK_ERROR_DEDUCT':
+      return GL_BANK_CHARGES;
+    case 'BOOK_ERROR_ADD':
+    default:
+      return GL_SUSPENSE;
+  }
+}
+
 function offsetForType(item: ReconcilingItem, bankGl: string): { debit: string; credit: string } {
   const offset = item.offsetGlCode;
   switch (item.itemType) {
@@ -109,11 +127,27 @@ function offsetForType(item: ReconcilingItem, bankGl: string): { debit: string; 
   }
 }
 
+/** Register-transaction type + signed balance effect for a book-side reconciling item. */
+function bankTxnShapeForItem(itemType: ReconcilingItem['itemType']): { type: 'Deposit' | 'Withdrawal' | 'Charge' | 'Interest'; inflow: boolean } {
+  switch (itemType) {
+    case 'BANK_CREDIT_NOT_IN_BOOK':
+      return { type: 'Interest', inflow: true };
+    case 'BANK_CHARGE_NOT_IN_BOOK':
+      return { type: 'Charge', inflow: false };
+    case 'BOOK_ERROR_DEDUCT':
+      return { type: 'Withdrawal', inflow: false };
+    case 'BOOK_ERROR_ADD':
+    default:
+      return { type: 'Deposit', inflow: true };
+  }
+}
+
 export function captureBookSideItem(
   item: ReconcilingItem,
   bankGlCode: string,
   periodEndDate: string,
-  reconId: string
+  reconId: string,
+  bankAccountId: string
 ): { journalEntryId: string } | null {
   const store = useAccountingStore.getState();
   const now = new Date().toISOString();
@@ -161,6 +195,33 @@ export function captureBookSideItem(
 
   try {
     store.addJournalEntry(je);
+
+    // A book-side item means the bank statement already reflects this movement — the register
+    // (and its running currentBalance) must catch up too, not just the GL. Without this, the
+    // bank account's displayed balance permanently diverges from the GL the moment any bank
+    // charge/interest/correction is posted here.
+    const bank = store.bankAccounts.find((b) => b.id === bankAccountId);
+    if (bank) {
+      const { type: txnType, inflow } = bankTxnShapeForItem(item.itemType);
+      const signedAmount = inflow ? item.amount : -item.amount;
+      const newBalance = Math.round(((bank.currentBalance ?? 0) + signedAmount) * 100) / 100;
+      store.updateBankAccount(bankAccountId, { currentBalance: newBalance, updatedAt: now });
+      store.addBankTransaction({
+        id: `BT-BRECON-${jeId}`,
+        bankAccountId,
+        transactionDate: date,
+        reference: item.reference || item.id,
+        description: item.description,
+        amount: item.amount,
+        type: txnType,
+        currency: bank.currency || 'GHS',
+        balance: newBalance,
+        status: 'Cleared',
+        journalEntryId: jeId,
+        createdAt: now,
+      });
+    }
+
     store.addAuditTrail({
       id: `AT-BRECON-${Date.now()}`,
       tableName: 'BankReconciliation',
@@ -187,14 +248,15 @@ export function postBookSideItemsToLedger(
   items: ReconcilingItem[],
   bankGlCode: string,
   periodEndDate: string,
-  reconId: string
+  reconId: string,
+  bankAccountId: string
 ): PostBookSideResult {
   const pending = bookSideItemsNeedingJournal(items);
   const mappings: { itemId: string; journalEntryId: string }[] = [];
   const errors: string[] = [];
 
   for (const item of pending) {
-    const result = captureBookSideItem(item, bankGlCode, periodEndDate, reconId);
+    const result = captureBookSideItem(item, bankGlCode, periodEndDate, reconId, bankAccountId);
     if (result) {
       mappings.push({ itemId: item.id, journalEntryId: result.journalEntryId });
     } else {

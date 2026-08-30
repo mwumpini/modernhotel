@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
 
     const req = await prisma.maintenanceRequest.create({
       data: {
+        ...(body.id ? { id: body.id } : {}),
         tenantId: ctx.tenantId,
         roomId: body.roomId,
         roomNumber: body.roomNumber,
@@ -47,6 +48,7 @@ export async function POST(request: NextRequest) {
         description: body.description,
         reportedBy: body.reportedBy,
         assignedTo: body.assignedTo,
+        estimatedCost: body.estimatedCost ?? undefined,
         notes: body.notes,
         status: 'open',
       },
@@ -80,6 +82,8 @@ export async function PATCH(request: NextRequest) {
         assignedTo: body.assignedTo ?? existing.assignedTo,
         notes: body.notes ?? existing.notes,
         priority: body.priority ?? existing.priority,
+        estimatedCost: body.estimatedCost ?? existing.estimatedCost,
+        actualCost: body.actualCost ?? existing.actualCost,
         ...(body.status === 'completed' ? { resolvedAt: new Date() } : {}),
       },
     })

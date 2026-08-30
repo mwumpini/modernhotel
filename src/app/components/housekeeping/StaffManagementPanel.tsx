@@ -91,18 +91,16 @@ export default function StaffManagementPanel() {
     if (!staffForm.name) return;
 
     if (isCreatingStaff) {
-      // This would typically create a new staff member in the store
-      console.log('Creating staff member:', staffForm);
-      trackEvent('HK.Staff.Created', {
+      housekeepingStore.addStaff({
         name: staffForm.name,
-        role: staffForm.role
+        role: staffForm.role,
+        dailyTarget: staffForm.dailyTarget,
       });
     } else if (selectedStaff) {
-      // This would typically update the staff member in the store
-      console.log('Updating staff member:', selectedStaff.id, staffForm);
-      trackEvent('HK.Staff.Updated', {
-        staffId: selectedStaff.id,
-        name: staffForm.name
+      housekeepingStore.updateStaff(selectedStaff.id, {
+        name: staffForm.name,
+        role: staffForm.role,
+        dailyTarget: staffForm.dailyTarget,
       });
     }
 
@@ -111,9 +109,7 @@ export default function StaffManagementPanel() {
   };
 
   const handleToggleStaffStatus = (staffId: string, active: boolean) => {
-    // This would typically update the staff status in the store
-    console.log('Toggling staff status:', staffId, active);
-    trackEvent('HK.Staff.StatusToggled', { staffId, active });
+    housekeepingStore.updateStaff(staffId, { active });
     loadData();
   };
 

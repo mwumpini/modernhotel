@@ -43,6 +43,7 @@ export async function POST(request: NextRequest) {
 
     const task = await prisma.housekeepingTask.create({
       data: {
+        ...(body.id ? { id: body.id } : {}),
         tenantId: ctx.tenantId,
         roomId: body.roomId,
         roomNumber: body.roomNumber,
@@ -53,6 +54,7 @@ export async function POST(request: NextRequest) {
         assignedName: body.assignedName,
         notes: body.notes,
         scheduledFor: body.scheduledFor ? new Date(body.scheduledFor) : undefined,
+        details: body.details ?? undefined,
       },
     })
 

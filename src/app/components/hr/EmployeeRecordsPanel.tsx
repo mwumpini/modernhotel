@@ -5,6 +5,8 @@ import { Button, Card, CardBody, CardHeader, Chip, Input, Modal, ModalBody, Moda
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useEmployeeChangesStore } from '@/app/lib/hr/employeeChangesStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
+import { useTrainingStore } from '@/app/lib/hr/trainingStore';
+import { useComplianceStore } from '@/app/lib/compliance/store';
 
 export default function EmployeeRecordsPanel() {
   const employees = useEmployeeStore((s) => s.employees);
@@ -17,6 +19,30 @@ export default function EmployeeRecordsPanel() {
 
   const logChange = useEmployeeChangesStore((s) => s.logChange);
   const payrollRecords = usePayrollStore((s) => s.payrollRecords);
+  const trainingPrograms = useTrainingStore((s) => s.programs);
+  const trainingEnrollments = useTrainingStore((s) => s.enrollments);
+  const taxRules = useComplianceStore((s) => s.taxRules);
+
+  // Tier 1/2/3 are separate, independently-renameable rules (different institutions) — the
+  // column labels and pre-run estimate rates below read the live rule so a rename in
+  // Settings → Tax Rate Builder (or a rate change) shows up here without a code change.
+  const findGhRule = (tag: string) =>
+    taxRules.find((r) => r.countryCode === 'GH' && r.domain === 'payroll' && (r.appliesTo || []).includes(tag));
+  const tier1Rule = findGhRule('TIER1');
+  const tier2Rule = findGhRule('TIER2');
+  const tier3Rule = findGhRule('TIER3_RELIEF_CAP');
+  const tier1Label = tier1Rule?.name || 'Tier 1';
+  const tier2Label = tier2Rule?.name || 'Tier 2';
+  const tier3Label = tier3Rule?.name || 'Tier 3';
+
+  React.useEffect(() => {
+    // This panel can be reached directly (HR & Payroll → Employee Management → Employee
+    // Records) without ever visiting Compliance & Reports first, which is otherwise the
+    // only place the compliance store gets hydrated — without this, taxRules is silently
+    // empty and every Tier 1/2/3 label/rate below falls back to defaults instead of the
+    // live (possibly renamed/rate-changed) rule.
+    void useComplianceStore.getState().syncCountryFromSetup();
+  }, []);
 
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
   const [deptFilter, setDeptFilter] = React.useState<string>('all');
@@ -67,6 +93,7 @@ export default function EmployeeRecordsPanel() {
     payeEnrolled: 'yes',
     ssnitEnrolled: 'yes',
     tier3Enrolled: 'no',
+    tier3ContributionPct: 0,
     // Compensation
     compensationType: 'monthly',
     basicSalary: 0,
@@ -77,6 +104,12 @@ export default function EmployeeRecordsPanel() {
     paymentFrequency: 'monthly',
     taxWithholding: { tin: '', filingStatus: 'single', allowances: 0 },
     governmentIds: { nationalId: '', ssn: '', passport: '', workPermit: '' },
+    ssnitNumber: '',
+    ghanaCardNumber: '',
+    contractEndDate: '',
+    workPermitExpiryDate: '',
+    nextOfKin: { name: '', relationship: '', phone: '', address: '' },
+    probation: { startDate: '', endDate: '', status: 'active' },
     // Bank
     bankAccount: { accountNumber: '', bankName: '', branchCode: '' },
     // Emergency
@@ -127,6 +160,7 @@ export default function EmployeeRecordsPanel() {
       ssnitEnrolled: 'yes',
       tier2Enrolled: 'yes',
       tier3Enrolled: 'no',
+    tier3ContributionPct: 0,
       compensationType: 'monthly',
       basicSalary: 0,
       allowances: 0,
@@ -136,6 +170,12 @@ export default function EmployeeRecordsPanel() {
       paymentFrequency: 'monthly',
       taxWithholding: { tin: '', filingStatus: 'single', allowances: 0 },
       governmentIds: { nationalId: '', ssn: '', passport: '', workPermit: '' },
+    ssnitNumber: '',
+    ghanaCardNumber: '',
+    contractEndDate: '',
+    workPermitExpiryDate: '',
+    nextOfKin: { name: '', relationship: '', phone: '', address: '' },
+    probation: { startDate: '', endDate: '', status: 'active' },
       bankAccount: { accountNumber: '', bankName: '', branchCode: '' },
       emergencyContact: { name: '', relationship: '', phone: '', email: '' },
       address: { street: '', city: '', state: '', postalCode: '', country: 'Ghana' },
@@ -181,6 +221,7 @@ export default function EmployeeRecordsPanel() {
       ssnitEnrolled: (e as any).ssnitEnrolled ? 'yes' : 'no',
       tier2Enrolled: (e as any).tier2Enrolled ? 'yes' : 'no',
       tier3Enrolled: (e as any).tier3Enrolled ? 'yes' : 'no',
+      tier3ContributionPct: (e as any).tier3ContributionPct ?? 0,
       compensationType: (e as any).compensationType || ((e as any).hourlyRate ? 'hourly' : 'monthly'),
       basicSalary: (e as any).basicSalary ?? (e as any).salary ?? (e as any).baseSalary ?? 0,
       allowances: (e as any).allowances ?? 0,
@@ -190,6 +231,18 @@ export default function EmployeeRecordsPanel() {
       paymentFrequency: (e as any).paymentFrequency || 'monthly',
       taxWithholding: (e as any).taxWithholding || { tin: '', filingStatus: 'single', allowances: 0 },
       governmentIds: (e as any).governmentIds || { nationalId: '', ssn: '', passport: '', workPermit: '' },
+      ssnitNumber: (e as any).ssnitNumber || '',
+      ghanaCardNumber: (e as any).ghanaCardNumber || '',
+      contractEndDate: (e as any).contractEndDate ? new Date((e as any).contractEndDate).toISOString().slice(0, 10) : '',
+      workPermitExpiryDate: (e as any).workPermitExpiryDate ? new Date((e as any).workPermitExpiryDate).toISOString().slice(0, 10) : '',
+      nextOfKin: (e as any).nextOfKin || { name: '', relationship: '', phone: '', address: '' },
+      probation: (e as any).probation
+        ? {
+            startDate: new Date((e as any).probation.startDate).toISOString().slice(0, 10),
+            endDate: new Date((e as any).probation.endDate).toISOString().slice(0, 10),
+            status: (e as any).probation.status,
+          }
+        : { startDate: '', endDate: '', status: 'active' },
       bankAccount: { accountNumber: e.bankAccount?.accountNumber || '', bankName: e.bankAccount?.bankName || '', branchCode: e.bankAccount?.branchCode || '' },
       emergencyContact: { name: e.emergencyContact?.name || '', relationship: e.emergencyContact?.relationship || '', phone: e.emergencyContact?.phone || '', email: e.emergencyContact?.email || '' },
       address: { street: e.address?.street || '', city: e.address?.city || '', state: e.address?.state || '', postalCode: e.address?.postalCode || '', country: e.address?.country || 'Ghana' },
@@ -294,6 +347,7 @@ export default function EmployeeRecordsPanel() {
         ssnitEnrolled: form.ssnitEnrolled === 'yes',
         tier2Enrolled: form.tier2Enrolled === 'yes',
         tier3Enrolled: form.tier3Enrolled === 'yes',
+        tier3ContributionPct: form.tier3Enrolled === 'yes' ? Number(form.tier3ContributionPct || 0) : undefined,
         status: form.status,
         employmentType: form.employmentType,
         compensationType: form.compensationType,
@@ -305,6 +359,14 @@ export default function EmployeeRecordsPanel() {
         paymentFrequency: form.paymentFrequency,
         taxWithholding: form.taxWithholding,
         governmentIds: form.governmentIds,
+        ssnitNumber: form.ssnitNumber || undefined,
+        ghanaCardNumber: form.ghanaCardNumber || undefined,
+        contractEndDate: form.contractEndDate ? new Date(form.contractEndDate) : undefined,
+        workPermitExpiryDate: form.workPermitExpiryDate ? new Date(form.workPermitExpiryDate) : undefined,
+        nextOfKin: (form.nextOfKin?.name ? form.nextOfKin : undefined),
+        probation: (form.probation?.startDate && form.probation?.endDate)
+          ? { startDate: new Date(form.probation.startDate), endDate: new Date(form.probation.endDate), status: form.probation.status }
+          : undefined,
         bankAccount: {
           accountNumber: form.bankAccount.accountNumber,
           bankName: form.bankAccount.bankName,
@@ -381,6 +443,7 @@ export default function EmployeeRecordsPanel() {
         ssnitEnrolled: form.ssnitEnrolled === 'yes',
         tier2Enrolled: form.tier2Enrolled === 'yes',
         tier3Enrolled: form.tier3Enrolled === 'yes',
+        tier3ContributionPct: form.tier3Enrolled === 'yes' ? Number(form.tier3ContributionPct || 0) : undefined,
         compensationType: form.compensationType,
         basicSalary: form.compensationType === 'monthly' ? Number(form.basicSalary || 0) : undefined,
         allowances: form.compensationType === 'monthly' ? Number(form.allowances || 0) : undefined,
@@ -390,6 +453,14 @@ export default function EmployeeRecordsPanel() {
         paymentFrequency: form.paymentFrequency,
         taxWithholding: form.taxWithholding,
         governmentIds: form.governmentIds,
+        ssnitNumber: form.ssnitNumber || undefined,
+        ghanaCardNumber: form.ghanaCardNumber || undefined,
+        contractEndDate: form.contractEndDate ? new Date(form.contractEndDate) : undefined,
+        workPermitExpiryDate: form.workPermitExpiryDate ? new Date(form.workPermitExpiryDate) : undefined,
+        nextOfKin: (form.nextOfKin?.name ? form.nextOfKin : undefined),
+        probation: (form.probation?.startDate && form.probation?.endDate)
+          ? { startDate: new Date(form.probation.startDate), endDate: new Date(form.probation.endDate), status: form.probation.status }
+          : undefined,
         bankAccount: { accountNumber: form.bankAccount.accountNumber, bankName: form.bankAccount.bankName, branchCode: form.bankAccount.branchCode },
         emergencyContact: { name: form.emergencyContact.name, relationship: form.emergencyContact.relationship, phone: form.emergencyContact.phone, email: form.emergencyContact.email || undefined },
         address: { street: form.address.street, city: form.address.city, state: form.address.state, postalCode: form.address.postalCode, country: form.address.country },
@@ -434,6 +505,7 @@ export default function EmployeeRecordsPanel() {
       ssnitEnrolled: 'yes',
       tier2Enrolled: 'yes',
       tier3Enrolled: 'no',
+    tier3ContributionPct: 0,
       compensationType: 'monthly',
       basicSalary: 0,
       allowances: 0,
@@ -443,6 +515,12 @@ export default function EmployeeRecordsPanel() {
       paymentFrequency: 'monthly',
       taxWithholding: { tin: '', filingStatus: 'single', allowances: 0 },
       governmentIds: { nationalId: '', ssn: '', passport: '', workPermit: '' },
+    ssnitNumber: '',
+    ghanaCardNumber: '',
+    contractEndDate: '',
+    workPermitExpiryDate: '',
+    nextOfKin: { name: '', relationship: '', phone: '', address: '' },
+    probation: { startDate: '', endDate: '', status: 'active' },
       bankAccount: { accountNumber: '', bankName: '', branchCode: '' },
       emergencyContact: { name: '', relationship: '', phone: '', email: '' },
       address: { street: '', city: '', state: '', postalCode: '', country: 'Ghana' },
@@ -727,9 +805,9 @@ export default function EmployeeRecordsPanel() {
               <TableColumn className={visibleColumns.has('type') ? '' : 'hidden'}>TYPE</TableColumn>
               <TableColumn className={visibleColumns.has('secondEmployment') ? '' : 'hidden'}>SECOND EMPLOY</TableColumn>
               <TableColumn className={visibleColumns.has('basicSalary') ? '' : 'hidden'}>BASIC SALARY</TableColumn>
-              <TableColumn className={visibleColumns.has('socialSecurity') ? '' : 'hidden'}>Social Security</TableColumn>
-              <TableColumn className={visibleColumns.has('tier2') ? '' : 'hidden'}>TIER 2</TableColumn>
-              <TableColumn className={visibleColumns.has('tier3') ? '' : 'hidden'}>TIER 3</TableColumn>
+              <TableColumn className={visibleColumns.has('socialSecurity') ? '' : 'hidden'}>{tier1Label}</TableColumn>
+              <TableColumn className={visibleColumns.has('tier2') ? '' : 'hidden'}>{tier2Label}</TableColumn>
+              <TableColumn className={visibleColumns.has('tier3') ? '' : 'hidden'}>{tier3Label}</TableColumn>
               <TableColumn className={visibleColumns.has('allowances') ? '' : 'hidden'}>ALLOWANCES</TableColumn>
               <TableColumn className={visibleColumns.has('vehicleBenefit') ? '' : 'hidden'}>VEHICLE BENEFIT</TableColumn>
               <TableColumn className={visibleColumns.has('housingBenefit') ? '' : 'hidden'}>HOUSING BENEFIT</TableColumn>
@@ -761,26 +839,30 @@ export default function EmployeeRecordsPanel() {
                   ? (incomeTaxAmount > 0 ? incomeTaxAmount : (grossPay * 0.1)) // Default 10% fallback
                   : 0;
                 
-                // Social Security (Tier 1) - numeric amount only
+                // Tier 1's base is basic salary only (allowances/bonus/overtime excluded),
+                // so the pre-run estimate uses basicSalary and the live employee rate from
+                // Settings → Tax Rate Builder rather than a hardcoded percentage.
                 const ssnitEnrolled = (e as any).ssnitEnrolled === true;
                 const ssnitAmount = latestPayrollRecord?.deductions?.socialSecurity || 0;
-                const ssnitDisplayAmount = ssnitEnrolled 
-                  ? (ssnitAmount > 0 ? ssnitAmount : (grossPay * 0.055)) // Default 5.5% fallback
+                const ssnitDisplayAmount = ssnitEnrolled
+                  ? (ssnitAmount > 0 ? ssnitAmount : (basicSalary * ((tier1Rule?.rate ?? 5.5) / 100)))
                   : 0;
-                
-                // Tier 2 - numeric amount only
+
+                // Tier 2 is its own separate, fully-employer-funded rule (0% employee rate
+                // by default) — deductions.pension carries the real amount from the payroll
+                // engine once a record exists (see PayrollBuilderPanel.tsx).
                 const tier2Enrolled = (e as any).tier2Enrolled === true;
                 const tier2Amount = latestPayrollRecord?.deductions?.pension || 0;
-                const tier2DisplayAmount = tier2Enrolled 
-                  ? (tier2Amount > 0 ? tier2Amount : (grossPay * 0.05)) // Default 5% fallback
+                const tier2DisplayAmount = tier2Enrolled
+                  ? (tier2Amount > 0 ? tier2Amount : (basicSalary * ((tier2Rule?.rate ?? 0) / 100)))
                   : 0;
-                
-                // Tier 3 - numeric amount only (typically employee voluntary contribution)
+
+                // Tier 3 — a real, employee-elected voluntary deduction. Before any payroll
+                // run exists there's no historical record, so estimate from the employee's
+                // own configured contribution rate instead of guessing a flat percentage.
                 const tier3Enrolled = (e as any).tier3Enrolled === true;
-                const tier3AmountValue = latestPayrollRecord?.deductions?.other || 0; // Tier 3 often in 'other' deductions
-                const tier3DisplayAmount = tier3Enrolled 
-                  ? (tier3AmountValue > 0 ? tier3AmountValue : 0)
-                  : 0;
+                const tier3Pct = Number((e as any).tier3ContributionPct || 0);
+                const tier3DisplayAmount = tier3Enrolled ? grossPay * (tier3Pct / 100) : 0;
                 
                 return (
                   <TableRow key={e.id}>
@@ -1044,6 +1126,16 @@ export default function EmployeeRecordsPanel() {
                         <SelectItem key="no">No</SelectItem>
                         <SelectItem key="yes">Yes</SelectItem>
                       </Select>
+                      {form.tier3Enrolled === 'yes' && (
+                        <Input
+                          type="number"
+                          label="Tier 3 Contribution (% of gross)"
+                          value={String(form.tier3ContributionPct ?? 0)}
+                          onValueChange={(v) => setForm({ ...form, tier3ContributionPct: Number(v || 0) })}
+                          variant="bordered"
+                          description="Voluntary — tax-relieved up to the statutory cap"
+                        />
+                      )}
                     </div>
                   </div>
                   )}
@@ -1138,7 +1230,44 @@ export default function EmployeeRecordsPanel() {
                       {form.nationality && form.nationality !== 'Ghana' && (
                         <Input label="Work Permit" value={form.governmentIds.workPermit} onChange={(e) => setForm({ ...form, governmentIds: { ...form.governmentIds, workPermit: e.target.value } })} variant="bordered" />
                       )}
+                      <Input label="SSNIT Number" value={form.ssnitNumber} onChange={(e) => setForm({ ...form, ssnitNumber: e.target.value })} variant="bordered" description="Required to actually file a SSNIT return" />
+                      <Input label="Ghana Card Number" value={form.ghanaCardNumber} onChange={(e) => setForm({ ...form, ghanaCardNumber: e.target.value })} variant="bordered" placeholder="GHA-XXXXXXXXX-X" />
+                      {form.employmentType === 'contract' && (
+                        <Input label="Contract End Date" type="date" value={form.contractEndDate} onChange={(e) => setForm({ ...form, contractEndDate: e.target.value })} variant="bordered" />
+                      )}
+                      {form.nationality && form.nationality !== 'Ghana' && (
+                        <Input label="Work Permit Expiry" type="date" value={form.workPermitExpiryDate} onChange={(e) => setForm({ ...form, workPermitExpiryDate: e.target.value })} variant="bordered" />
+                      )}
                     </div>
+                  </div>
+                  )}
+
+                  {step === 3 && (
+                  <div>
+                    <div className="text-sm font-medium mb-2">Next of Kin</div>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                      <Input label="Name" value={form.nextOfKin.name} onChange={(e) => setForm({ ...form, nextOfKin: { ...form.nextOfKin, name: e.target.value } })} variant="bordered" />
+                      <Input label="Relationship" value={form.nextOfKin.relationship} onChange={(e) => setForm({ ...form, nextOfKin: { ...form.nextOfKin, relationship: e.target.value } })} variant="bordered" />
+                      <Input label="Phone" value={form.nextOfKin.phone} onChange={(e) => setForm({ ...form, nextOfKin: { ...form.nextOfKin, phone: e.target.value } })} variant="bordered" />
+                      <Input label="Address" value={form.nextOfKin.address} onChange={(e) => setForm({ ...form, nextOfKin: { ...form.nextOfKin, address: e.target.value } })} variant="bordered" />
+                    </div>
+                  </div>
+                  )}
+
+                  {step === 3 && (
+                  <div>
+                    <div className="text-sm font-medium mb-2">Probation</div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Input label="Start Date" type="date" value={form.probation.startDate} onChange={(e) => setForm({ ...form, probation: { ...form.probation, startDate: e.target.value } })} variant="bordered" />
+                      <Input label="End Date" type="date" value={form.probation.endDate} onChange={(e) => setForm({ ...form, probation: { ...form.probation, endDate: e.target.value } })} variant="bordered" />
+                      <Select label="Status" selectedKeys={[form.probation.status]} onSelectionChange={(k) => setForm({ ...form, probation: { ...form.probation, status: Array.from(k)[0] as string } })} variant="bordered">
+                        <SelectItem key="active">Active</SelectItem>
+                        <SelectItem key="confirmed">Confirmed</SelectItem>
+                        <SelectItem key="extended">Extended</SelectItem>
+                        <SelectItem key="failed">Failed</SelectItem>
+                      </Select>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-1">Leave dates blank if the employee isn't on probation.</div>
                   </div>
                   )}
 
@@ -1157,6 +1286,47 @@ export default function EmployeeRecordsPanel() {
                     )}
                   </div>
                   )}
+
+                  {step === 3 && isEditing && editingId && (() => {
+                    const empEnrollments = trainingEnrollments.filter((r) => r.employeeId === editingId);
+                    const totalCost = empEnrollments.reduce((sum, r) => sum + (r.cost || 0), 0);
+                    const completed = empEnrollments.filter((r) => r.status === 'completed').length;
+                    const inProgress = empEnrollments.filter((r) => r.status === 'in_progress' || r.status === 'enrolled').length;
+                    const mandatoryProgramIds = new Set(trainingPrograms.filter((p) => p.mandatory).map((p) => p.id));
+                    const completedProgramIds = new Set(empEnrollments.filter((r) => r.status === 'completed').map((r) => r.trainingProgramId));
+                    const outstandingMandatory = trainingPrograms.filter((p) => mandatoryProgramIds.has(p.id) && !completedProgramIds.has(p.id));
+                    return (
+                      <div>
+                        <div className="text-sm font-medium mb-2">Training & Development</div>
+                        <div className="flex gap-4 mb-3 text-sm">
+                          <div>Total training cost: <span className="font-semibold">{totalCost.toFixed(2)}</span></div>
+                          <div>Completed: <span className="font-semibold">{completed}</span></div>
+                          <div>In progress: <span className="font-semibold">{inProgress}</span></div>
+                        </div>
+                        {outstandingMandatory.length > 0 && (
+                          <div className="text-xs text-red-600 mb-2">
+                            ⚠ Mandatory training not yet completed: {outstandingMandatory.map((p) => p.title).join(', ')}
+                          </div>
+                        )}
+                        {empEnrollments.length > 0 ? (
+                          <div className="space-y-1 text-xs text-gray-700">
+                            {empEnrollments.map((r) => {
+                              const program = trainingPrograms.find((p) => p.id === r.trainingProgramId);
+                              return (
+                                <div key={r.id} className="flex justify-between border-b border-gray-100 py-1">
+                                  <span>{program?.title || r.trainingProgramId}{program?.mandatory ? ' (mandatory)' : ''}</span>
+                                  <span className="capitalize">{r.status}</span>
+                                  <span>{(r.cost || 0).toFixed(2)}</span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500">No training records for this employee.</div>
+                        )}
+                      </div>
+                    );
+                  })()}
 
                   {step === 3 && (
                   <div>

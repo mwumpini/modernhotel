@@ -35,6 +35,9 @@ export const GUEST_FOLIO_GL_SOURCES = [
   REVENUE_SOURCE_GROUPS.GUEST_NOSHOW,
 ] as const;
 
+/** In-house folio receipts recorded from finance AR — folio only, no GL until checkout */
+export const OPERATIONAL_FOLIO_RECEIPT_SOURCES = ['front_office_folio'] as const;
+
 /** Extended integration captures (AP, payroll, PPE, etc.) */
 export const INTEGRATION_EXTENDED_SOURCES = [
   'integration_extended_expense',
@@ -54,6 +57,14 @@ export const PERIOD_CLOSE_SOURCE = 'pl_period_close';
 export const BANK_RECON_SOURCE = 'bank_reconciliation';
 
 export const MANUAL_AR_AP_SOURCE = 'manual_ar_ap';
+
+/** Finance reporting uses accounting subledger only — see arSubledger.ts (Option B). */
+export const FINANCE_AR_POLICY = {
+  master: 'accounting_subledger',
+  operationalGuestLedger: 'folio_in_house',
+  financeAgingApi: '/api/accounting/receivables/aging',
+  folioApiNotice: 'guest_ledger_operational',
+} as const;
 
 export type AccountingSyncStatus =
   | 'synced'
@@ -122,13 +133,37 @@ export function invoiceNeedsGlPost(
 }
 
 /** Whether a posted receipt/payment still needs GL. */
+/** Match AR UI source filter keys to stored sourceModule values. */
+export function sourceMatchesFilter(sourceModule: string | undefined, filter: string): boolean {
+  if (filter === 'all') return true;
+  const src = sourceModule || 'manual';
+  if (filter === 'manual') return src === 'manual' || src === 'manual_ar_ap';
+  if (filter === 'front_office') {
+    return (
+      src === 'front_office' ||
+      src === 'front_office_checkout' ||
+      src === 'front_office_folio' ||
+      src === 'guest_noshow'
+    );
+  }
+  return src === filter;
+}
+
 export function paymentNeedsGlPost(
   payment: Payment,
   journalEntries: JournalEntry[],
 ): boolean {
+  if ((payment as { isWHTCertificate?: boolean }).isWHTCertificate) return false;
+  if (payment.sourceModule === 'manual_ar_ap_wht') return false;
   if (payment.status !== 'Posted') return false;
   if (payment.journalEntryId) return false;
   if (findJournalEntryForPayment(payment, journalEntries)) return false;
+  if (
+    payment.sourceModule &&
+    (OPERATIONAL_FOLIO_RECEIPT_SOURCES as readonly string[]).includes(payment.sourceModule)
+  ) {
+    return false;
+  }
   if (
     payment.sourceModule &&
     (GUEST_FOLIO_GL_SOURCES as readonly string[]).includes(payment.sourceModule)
@@ -190,6 +225,22 @@ export const ACCOUNTING_PROCESS_MATRIX: AccountingProcessRow[] = [
     glTiming: 'Once at checkout',
     sourceModule: REVENUE_SOURCE_GROUPS.GUEST_FOLIO_CHECKOUT,
     syncCheck: 'simpleFlow.postGuestFolioCheckoutToLedger',
+  },
+  {
+    process: 'Finance AR aging',
+    trigger: 'Accounts Receivable / finance reports',
+    subledger: 'Accounting invoices (Posted/Paid sales)',
+    glTiming: 'At invoice post / checkout',
+    sourceModule: 'manual_ar_ap | front_office_checkout | departmental',
+    syncCheck: 'arSubledger.ts — excludes proformas & open folios',
+  },
+  {
+    process: 'Guest folio (in-house)',
+    trigger: 'Charges during stay',
+    subledger: 'Folio operational ledger only',
+    glTiming: 'Deferred to checkout',
+    sourceModule: '(none until checkout)',
+    syncCheck: '/api/ar/* = operational; not finance aging',
   },
   {
     process: 'No-show penalty',

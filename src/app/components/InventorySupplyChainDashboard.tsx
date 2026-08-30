@@ -14,18 +14,6 @@ import { useAccountingStore } from '../lib/accounting/store';
 import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
 import { BusinessPartner } from '../lib/accounting/models';
 
-interface InventoryItem {
-  id: string;
-  itemCode: string;
-  name: string;
-  category: 'food-beverage' | 'housekeeping' | 'maintenance' | 'office-supplies' | 'uniforms' | 'other';
-  currentStock: number;
-  reorderPoint: number;
-  costPrice: number;
-  supplier: string;
-  status: 'active' | 'inactive' | 'discontinued';
-}
-
 // Supplier interface removed - using imported Supplier from models.ts
 // PurchaseOrder interface removed - using imported PurchaseOrder from models.ts
 
@@ -46,7 +34,8 @@ export default function InventorySupplyChainDashboard() {
     deleteStockItem,
     selectStockItem,
     updateStockLevel,
-    addStockMovement
+    addStockMovement,
+    hydrateFromApi: hydrateStockFromApi
   } = useStockStore();
 
   // Supplier Management Hooks - Linked with Accounting
@@ -71,6 +60,8 @@ export default function InventorySupplyChainDashboard() {
     updatePurchaseOrderItem,
     removePurchaseOrderItem,
     selectPurchaseOrder,
+    hydratePurchaseOrdersFromApi,
+    hydrateSuppliersFromApi,
     requisitions: supplierStoreRequisitions,
     createRequisition,
     updateRequisition,
@@ -396,32 +387,6 @@ export default function InventorySupplyChainDashboard() {
     };
     return colors[category] || 'default';
   };
-
-  // Sample data
-  const inventoryItems: InventoryItem[] = [
-    {
-      id: '1',
-      itemCode: 'FB-001',
-      name: 'Premium Coffee Beans',
-      category: 'food-beverage',
-      currentStock: 45.5,
-      reorderPoint: 20,
-      costPrice: 25.00,
-      supplier: 'Coffee Suppliers Ltd',
-      status: 'active'
-    },
-    {
-      id: '2',
-      itemCode: 'HK-001',
-      name: 'Luxury Bed Linens',
-      category: 'housekeeping',
-      currentStock: 120,
-      reorderPoint: 50,
-      costPrice: 45.00,
-      supplier: 'Textile Importers Ghana',
-      status: 'active'
-    }
-  ];
 
   // Using suppliers and purchase orders from store - no local array needed
 
@@ -865,6 +830,15 @@ export default function InventorySupplyChainDashboard() {
       }
     });
   }, [accountingSuppliers, supplierStoreSuppliers, syncAccountingToInventory]);
+
+  // Load real persisted purchase orders and stock items once on mount, replacing
+  // the hardcoded sample seeds the stores initialize with.
+  useEffect(() => {
+    hydratePurchaseOrdersFromApi();
+    hydrateStockFromApi();
+    hydrateSuppliersFromApi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Merge suppliers from both stores, prioritizing inventory store data
   const mergedSuppliers = useMemo(() => {
@@ -2577,8 +2551,8 @@ export default function InventorySupplyChainDashboard() {
         if (additionalQty > 0) {
           poItem.receivedQuantity = receiptItem.receivedQty;
           
-          // Update stock level
-          updateStockLevel(receiptItem.itemId, additionalQty, 'add');
+          // Update stock level (blend the received cost into a weighted-average unitCost)
+          updateStockLevel(receiptItem.itemId, additionalQty, 'add', receiptItem.unitCost);
           
           // Create stock movement with GRN reference
           addStockMovement({
@@ -2732,11 +2706,17 @@ export default function InventorySupplyChainDashboard() {
       transferData.items.forEach(item => {
         const stockItem = stockItems.find(i => i.id === item.itemId);
         if (stockItem) {
-          // Remove from source location
+          // Remove from source location — refuse the transfer if the source doesn't
+          // actually have enough stock, instead of silently clamping to zero and still
+          // crediting the full quantity to the destination (which fabricates inventory).
           if (stockItem.location === transferData.fromLocation) {
+            if (stockItem.currentStock < item.quantity) {
+              alert(`Insufficient stock for ${item.itemName} at ${transferData.fromLocation}. Available: ${stockItem.currentStock}, requested: ${item.quantity}`);
+              return;
+            }
             updateStockLevel(item.itemId, item.quantity, 'remove');
           }
-          
+
           // Add to destination (or update location)
           if (stockItem.location === transferData.toLocation) {
             updateStockLevel(item.itemId, item.quantity, 'add');

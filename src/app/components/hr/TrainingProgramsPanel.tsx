@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Button, Card, CardBody, CardHeader, Input, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Chip } from '@heroui/react';
+import { Button, Card, CardBody, CardHeader, Input, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow, Chip, Checkbox } from '@heroui/react';
 import { useTrainingStore } from '@/app/lib/hr/trainingStore';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 
@@ -10,14 +10,20 @@ export default function TrainingProgramsPanel() {
   const enrollments = useTrainingStore((s) => s.enrollments);
   const addProgram = useTrainingStore((s) => s.addProgram);
   const enroll = useTrainingStore((s) => s.enroll);
+  const hydrateFromApi = useTrainingStore((s) => s.hydrateFromApi);
   const employees = useEmployeeStore((s) => s.employees);
 
-  const [pForm, setPForm] = React.useState<any>({ title: '', code: '', category: 'technical', duration: 8, cost: 0, startDate: '', endDate: '', location: '', instructor: '' });
+  React.useEffect(() => {
+    hydrateFromApi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const [pForm, setPForm] = React.useState<any>({ title: '', code: '', category: 'technical', duration: 8, cost: 0, startDate: '', endDate: '', location: '', instructor: '', mandatory: false });
   const [eForm, setEForm] = React.useState<any>({ trainingProgramId: '', employeeId: employees[0]?.id || '', enrollmentDate: new Date().toISOString().slice(0,10) });
 
   const createProgram = () => {
     if (!pForm.title) return;
-    addProgram({ title: pForm.title, code: pForm.code || `TP${programs.length+1}`, description: '', category: pForm.category, duration: Number(pForm.duration||0), cost: Number(pForm.cost||0), maxParticipants: 0, instructor: pForm.instructor || '', location: pForm.location || '', startDate: pForm.startDate ? new Date(pForm.startDate) : new Date(), endDate: pForm.endDate ? new Date(pForm.endDate) : new Date(), status: 'scheduled', materials: [], objectives: [], prerequisites: [] } as any);
+    addProgram({ title: pForm.title, code: pForm.code || `TP${programs.length+1}`, description: '', category: pForm.category, duration: Number(pForm.duration||0), cost: Number(pForm.cost||0), maxParticipants: 0, instructor: pForm.instructor || '', location: pForm.location || '', startDate: pForm.startDate ? new Date(pForm.startDate) : new Date(), endDate: pForm.endDate ? new Date(pForm.endDate) : new Date(), status: 'scheduled', mandatory: !!pForm.mandatory, materials: [], objectives: [], prerequisites: [] } as any);
   };
 
   const doEnroll = () => {
@@ -45,7 +51,12 @@ export default function TrainingProgramsPanel() {
             <Input label="Duration (hrs)" type="number" value={String(pForm.duration)} onChange={(e) => setPForm({ ...pForm, duration: e.target.value })} variant="bordered" />
             <Input label="Start" type="date" value={pForm.startDate} onChange={(e) => setPForm({ ...pForm, startDate: e.target.value })} variant="bordered" />
             <Input label="End" type="date" value={pForm.endDate} onChange={(e) => setPForm({ ...pForm, endDate: e.target.value })} variant="bordered" />
-            <div className="md:col-span-6"><Button color="primary" onPress={createProgram} isDisabled={!pForm.title}>Add Program</Button></div>
+            <div className="md:col-span-6 flex items-center gap-4">
+              <Checkbox isSelected={!!pForm.mandatory} onValueChange={(v) => setPForm({ ...pForm, mandatory: v })}>
+                Mandatory (e.g. food safety, fire safety)
+              </Checkbox>
+              <Button color="primary" onPress={createProgram} isDisabled={!pForm.title}>Add Program</Button>
+            </div>
           </div>
 
           <Table aria-label="programs">

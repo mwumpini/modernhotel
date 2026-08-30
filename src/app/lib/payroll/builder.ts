@@ -1,7 +1,35 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 // Universal Payroll Builder - integrated as a library module
 
-import ghanaPayrollConfig from '../compliance/config/payroll/ghana.json';
+import { useComplianceStore } from '../compliance/store';
+
+// Currency amounts are never fractions of a pesewa — without a final rounding pass,
+// chained percentage math accumulates float artifacts like 123.44999999999998 by the time
+// a total reaches a payslip.
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Ghana PAYE/Tier 1/Tier 2/Tier 3 rates live in the compliance engine (tax rules with
+ * domain:'payroll', countryCode:'GH', ids gh-paye/gh-ssnit-tier1/gh-ssnit-tier2/
+ * gh-tier3-relief-cap — see seed-taxes.json) instead of a static config file, so a rate
+ * change (GRA revises PAYE bands, SSNIT revises the ceiling) is an edit in
+ * Settings → Tax Rate Builder, not a code change. Tier 1 and Tier 2 are tracked as fully
+ * separate rules — not a combined SSNIT figure split for reporting — because they're
+ * remitted to different institutions (Tier 1 to SSNIT, Tier 2 to a private occupational
+ * trustee); each can be independently renamed (e.g. Tier 1 → "SSNIT") without affecting the
+ * other or the calculation. Requires the compliance store to have loaded GH rules —
+ * callers must await useComplianceStore.getState().setCountry('GH') (or
+ * syncCountryFromSetup()) before running Ghana payroll; if no rules are loaded, these
+ * helpers return a zero result rather than silently falling back to guessed numbers.
+ */
+function findGhanaTaxRule(appliesToTag: string) {
+  const rules = useComplianceStore.getState().taxRules;
+  return rules.find(
+    (r) => r.countryCode === 'GH' && r.domain === 'payroll' && (r.appliesTo || []).includes(appliesToTag)
+  );
+}
 
 export default class UniversalPayrollBuilder {
   payrollConfigs: Map<string, any>;
@@ -52,7 +80,8 @@ export default class UniversalPayrollBuilder {
         department: employeeData.employment?.department,
         position: employeeData.employment?.position,
         salary: employeeData.employment?.salary || 0,
-        currency: employeeData.employment?.currency || 'USD'
+        currency: employeeData.employment?.currency || 'USD',
+        hourlyRate: employeeData.employment?.hourlyRate || 0
       },
       taxInfo: {
         taxId: employeeData.taxInfo?.taxId,
@@ -138,6 +167,12 @@ export default class UniversalPayrollBuilder {
       calculationBase: config.calculationBase || 'gross',
       includes: config.includes || ['basic', 'allowances'],
       excludes: config.excludes || ['bonus', 'overtime'],
+      // Optional: reporting split of a mandatory scheme into sub-tiers (e.g. Ghana SSNIT's
+      // Tier 1 / Tier 2 split — see ghana.json), and voluntary-scheme metadata (Tier 3).
+      tier1SplitOfTotalPct: config.tier1SplitOfTotalPct,
+      tier2SplitOfTotalPct: config.tier2SplitOfTotalPct,
+      isVoluntary: config.isVoluntary || false,
+      reliefCapPct: config.reliefCapPct,
       metadata: { created: new Date().toISOString() }
     };
   }
@@ -162,11 +197,19 @@ export default class UniversalPayrollBuilder {
     try {
       this.calculateEarnings(payrollResult, employee, config, adjustments);
       this.calculatePreTaxDeductions(payrollResult, employee, config);
-      payrollResult.summary.taxable = payrollResult.earnings.taxable - payrollResult.deductions.pretax;
+      payrollResult.summary.taxable = round2(payrollResult.earnings.taxable - payrollResult.deductions.pretax);
       this.calculateTaxes(payrollResult, employee, config);
       this.calculatePostTaxDeductions(payrollResult, employee, config);
-      payrollResult.summary.net = payrollResult.summary.taxable - payrollResult.taxes.employee - payrollResult.deductions.posttax;
+      payrollResult.summary.net = round2(payrollResult.summary.taxable - payrollResult.taxes.employee - payrollResult.deductions.posttax);
       this.calculateEmployerCosts(payrollResult, employee, config);
+      payrollResult.summary.gross = round2(payrollResult.summary.gross);
+      payrollResult.summary.employerCost = round2(payrollResult.summary.employerCost);
+      payrollResult.deductions.pretax = round2(payrollResult.deductions.pretax);
+      payrollResult.deductions.posttax = round2(payrollResult.deductions.posttax);
+      payrollResult.deductions.total = round2(payrollResult.deductions.total);
+      payrollResult.taxes.employee = round2(payrollResult.taxes.employee);
+      payrollResult.taxes.employer = round2(payrollResult.taxes.employer);
+      payrollResult.taxes.total = round2(payrollResult.taxes.total);
       return payrollResult;
     } catch (e: any) {
       throw new Error(`Payroll calculation failed: ${e.message}`);
@@ -178,7 +221,7 @@ export default class UniversalPayrollBuilder {
     let taxableEarnings = 0;
     config.earnings.forEach((earning: any) => {
       if (this.shouldApplyComponent(earning, employee)) {
-        const amount = this.calculateEarningAmount(earning, employee, adjustments);
+        const amount = round2(this.calculateEarningAmount(earning, employee, adjustments));
         if (amount > 0) {
           payrollResult.earnings.items.push({ component: earning, amount, taxable: earning.taxable });
           totalEarnings += amount;
@@ -202,8 +245,13 @@ export default class UniversalPayrollBuilder {
       case 'percentage':
         return employee.employment.salary * (earning.rate / 100);
       case 'hourly': {
+        // earning.rate is a multiplier (e.g. 1.5x for overtime), not a currency rate — it
+        // must be applied on top of the employee's actual hourly wage, not used alone
+        // (hours * 1.5 previously produced a near-zero amount regardless of salary). If no
+        // hourly rate is on file, this pays 0 rather than guessing one from salary.
         const hours = adjustments.hours?.[earning.code] || earning.amount;
-        return hours * earning.rate;
+        const hourlyWage = employee.employment.hourlyRate || 0;
+        return hours * hourlyWage * earning.rate;
       }
       case 'formula':
         return earning.formula ? this.evaluateFormula(earning.formula, { salary: employee.employment.salary, ...adjustments }) : 0;
@@ -212,40 +260,145 @@ export default class UniversalPayrollBuilder {
     }
   }
 
-  calculatePreTaxDeductions(payrollResult: any, _employee: any, config: any) {
+  calculatePreTaxDeductions(payrollResult: any, employee: any, config: any) {
     let preTaxTotal = 0;
-    config.deductions
-      .filter((ded: any) => ded.base === 'gross' || ded.base === 'taxable')
-      .forEach((deduction: any) => {
-        if (this.shouldApplyComponent(deduction, payrollResult.employee)) {
-          const base = deduction.base === 'gross' ? payrollResult.summary.gross : payrollResult.summary.taxable;
-          const amount = this.calculateDeductionAmount(deduction, base);
-          if (amount > 0) {
-            payrollResult.deductions.items.push({ component: deduction, amount, type: 'pre-tax' });
-            preTaxTotal += amount;
-          }
+
+    if (config.country === 'GH') {
+      // Tier 1 and Tier 2 must be deducted before PAYE is computed (they're genuine
+      // pre-tax deductions under Ghana law) and their base is BASIC SALARY ONLY —
+      // allowances, bonuses, and overtime are excluded (SSNIT's own "insurable earnings"
+      // definition). Each is its own rule/institution (see findGhanaTaxRule's doc comment
+      // above), computed and stored separately here; calculateTaxes() below reuses both
+      // results instead of recomputing them.
+      for (const tag of ['TIER1', 'TIER2'] as const) {
+        const rule = findGhanaTaxRule(tag);
+        if (!rule) {
+          console.warn(`[Payroll] No GH ${tag} tax rule loaded from the compliance store — not withheld. Call useComplianceStore.getState().setCountry("GH") before running Ghana payroll.`);
+          continue;
         }
-      });
+        const result = useComplianceStore
+          .getState()
+          .calculateTax(employee.employment.salary, tag, { domain: 'payroll', operation: 'internal' });
+        const line = result.taxes.find((t) => t.ruleId === rule.id);
+        if (!line) {
+          console.warn(`[Payroll] GH ${tag} rule is loaded but calculateTax() returned no matching line (check the rule's enabled/effectiveFrom/effectiveTo/appliesTo/domain/operation fields) — not withheld.`);
+        } else if (line.amount > 0) {
+          payrollResult.deductions.items.push({
+            component: { name: line.name, code: `${tag}_EMP` },
+            amount: line.amount,
+            type: 'pre-tax',
+          });
+          preTaxTotal += line.amount;
+        }
+        payrollResult[tag === 'TIER1' ? '_ghanaTier1' : '_ghanaTier2'] = line;
+      }
+
+      // Tier 3 (voluntary provident fund) isn't a statutory rate — it's an employee-elected
+      // contribution the caller injects into config.deductions at runtime (see
+      // PayrollBuilderPanel.tsx), already capped against the compliance-sourced relief
+      // ceiling. Process it (and anything else a caller adds here) the same way non-Ghana
+      // countries process their deductions array.
+      (config.deductions || [])
+        .filter((ded: any) => ded.base === 'gross' || ded.base === 'taxable')
+        .forEach((deduction: any) => {
+          if (this.shouldApplyComponent(deduction, payrollResult.employee)) {
+            const base = deduction.base === 'gross' ? payrollResult.summary.gross : payrollResult.summary.taxable;
+            const amount = this.calculateDeductionAmount(deduction, base);
+            if (amount > 0) {
+              payrollResult.deductions.items.push({ component: deduction, amount, type: 'pre-tax' });
+              preTaxTotal += amount;
+            }
+          }
+        });
+    } else {
+      config.deductions
+        .filter((ded: any) => ded.base === 'gross' || ded.base === 'taxable')
+        .forEach((deduction: any) => {
+          if (this.shouldApplyComponent(deduction, payrollResult.employee)) {
+            const base = deduction.base === 'gross' ? payrollResult.summary.gross : payrollResult.summary.taxable;
+            const amount = this.calculateDeductionAmount(deduction, base);
+            if (amount > 0) {
+              payrollResult.deductions.items.push({ component: deduction, amount, type: 'pre-tax' });
+              preTaxTotal += amount;
+            }
+          }
+        });
+    }
+
     payrollResult.deductions.pretax = preTaxTotal;
   }
 
   calculateTaxes(payrollResult: any, employee: any, config: any) {
     let employeeTaxTotal = 0;
     let employerTaxTotal = 0;
-    if (config.taxConfig?.income) {
-      const incomeTax = this.calculateIncomeTax(payrollResult.summary.taxable, employee.taxInfo, config.taxConfig.income);
-      payrollResult.taxes.items.push({ type: 'income', name: 'Income Tax', amount: incomeTax.employee, employerAmount: incomeTax.employer || 0 });
-      employeeTaxTotal += incomeTax.employee;
-      employerTaxTotal += incomeTax.employer || 0;
+
+    if (config.country === 'GH') {
+      const payeRule = findGhanaTaxRule('PAYE');
+      if (payeRule) {
+        const result = useComplianceStore
+          .getState()
+          .calculateTax(payrollResult.summary.taxable, 'PAYE', { domain: 'payroll', operation: 'internal' });
+        const line = result.taxes.find((t) => t.ruleId === payeRule.id);
+        if (!line) {
+          console.warn('[Payroll] GH PAYE rule is loaded but calculateTax() returned no matching line (check the rule\'s enabled/effectiveFrom/effectiveTo/appliesTo/domain/operation fields) — income tax not withheld.');
+        }
+        const payeAmount = line?.amount || 0;
+        payrollResult.taxes.items.push({ type: 'income', name: payeRule.name, ruleId: payeRule.id, amount: payeAmount, employerAmount: 0 });
+        employeeTaxTotal += payeAmount;
+      } else {
+        console.warn('[Payroll] No GH PAYE tax rule loaded from the compliance store — income tax not withheld.');
+      }
+
+      // Reuse the Tier 1/Tier 2 results already computed in calculatePreTaxDeductions (same
+      // employee, same period) instead of recomputing them — one source of truth, and
+      // avoids the calls ever silently disagreeing. Pushed as two independent line items
+      // (not a combined figure) so each keeps its own name/ruleId for downstream code and
+      // payslips — a rename of one never affects the other.
+      for (const key of ['_ghanaTier1', '_ghanaTier2'] as const) {
+        const tier = payrollResult[key];
+        if (tier) {
+          payrollResult.taxes.items.push({
+            type: 'social',
+            name: tier.name,
+            ruleId: tier.ruleId,
+            amount: tier.amount,
+            employerAmount: tier.employerAmount || 0,
+          });
+          employerTaxTotal += tier.employerAmount || 0;
+        }
+        delete payrollResult[key];
+      }
+    } else {
+      if (config.taxConfig?.income) {
+        const incomeTax = this.calculateIncomeTax(payrollResult.summary.taxable, employee.taxInfo, config.taxConfig.income);
+        payrollResult.taxes.items.push({ type: 'income', name: 'Income Tax', amount: incomeTax.employee, employerAmount: incomeTax.employer || 0 });
+        employeeTaxTotal += incomeTax.employee;
+        employerTaxTotal += incomeTax.employer || 0;
+      }
+      if (config.socialSecurity) {
+        Object.values(config.socialSecurity).forEach((ssConfig: any) => {
+          const ssTax = this.calculateSocialSecurityTax(payrollResult.summary.gross, ssConfig);
+          // Report the real employee-side amount (payslip breakdowns, compliance filing,
+          // and analytics all read taxes.items for the actual withheld figure) but do NOT
+          // fold it into employeeTaxTotal — it's already subtracted from taxable pay as a
+          // pre-tax deduction (see calculatePreTaxDeductions / config.deductions), and
+          // employeeTaxTotal feeds directly into the net-pay formula below. Adding it here
+          // too would double-deduct it from net pay.
+          const item: any = { type: 'social', name: ssConfig.name, amount: ssTax.employee, employerAmount: ssTax.employer };
+          if (typeof ssConfig.tier1SplitOfTotalPct === 'number' && typeof ssConfig.tier2SplitOfTotalPct === 'number') {
+            const splitBase = ssConfig.tier1SplitOfTotalPct + ssConfig.tier2SplitOfTotalPct;
+            const totalContribution = ssTax.employee + ssTax.employer;
+            if (splitBase > 0) {
+              item.tier1Amount = totalContribution * (ssConfig.tier1SplitOfTotalPct / splitBase);
+              item.tier2Amount = totalContribution * (ssConfig.tier2SplitOfTotalPct / splitBase);
+            }
+          }
+          payrollResult.taxes.items.push(item);
+          employerTaxTotal += ssTax.employer;
+        });
+      }
     }
-    if (config.socialSecurity) {
-      Object.values(config.socialSecurity).forEach((ssConfig: any) => {
-        const ssTax = this.calculateSocialSecurityTax(payrollResult.summary.gross, ssConfig);
-        payrollResult.taxes.items.push({ type: 'social', name: (ssConfig as any).name, amount: ssTax.employee, employerAmount: ssTax.employer });
-        employeeTaxTotal += ssTax.employee;
-        employerTaxTotal += ssTax.employer;
-      });
-    }
+
     payrollResult.taxes.employee = employeeTaxTotal;
     payrollResult.taxes.employer = employerTaxTotal;
     payrollResult.taxes.total = employeeTaxTotal + employerTaxTotal;
@@ -256,7 +409,7 @@ export default class UniversalPayrollBuilder {
       case 'progressive':
         return this.calculateProgressiveTax(taxableIncome, taxConfig.brackets);
       case 'flat':
-        return { employee: taxableIncome * (taxConfig.rates.employee / 100), employer: taxableIncome * (taxConfig.rates.employer / 100) };
+        return { employee: round2(taxableIncome * (taxConfig.rates.employee / 100)), employer: round2(taxableIncome * (taxConfig.rates.employer / 100)) };
       default:
         return { employee: 0, employer: 0 };
     }
@@ -275,14 +428,14 @@ export default class UniversalPayrollBuilder {
       tax += taxableInBracket * (bracket.rate / 100);
       remainingIncome -= taxableInBracket;
     }
-    return { employee: tax, employer: 0 };
+    return { employee: round2(tax), employer: 0 };
   }
 
   calculateSocialSecurityTax(grossIncome: number, ssConfig: any) {
     const base = Math.min(Math.max(grossIncome, ssConfig.floor || 0), ssConfig.ceiling || Infinity);
     return {
-      employee: base * (ssConfig.employeeRate / 100),
-      employer: base * (ssConfig.employerRate / 100)
+      employee: round2(base * (ssConfig.employeeRate / 100)),
+      employer: round2(base * (ssConfig.employerRate / 100))
     };
   }
 
@@ -306,15 +459,23 @@ export default class UniversalPayrollBuilder {
   }
 
   calculateDeductionAmount(deduction: any, baseAmount: number) {
+    // `limits.ceiling` was declared on deductions (e.g. SSNIT_EMP's 69,000 ceiling in
+    // ghana.json) but never actually enforced here — every deduction was computed against
+    // the full uncapped base regardless of its own stated ceiling. For a percentage
+    // deduction with a statutory ceiling (SSNIT, Tier 3 relief cap), that means high
+    // earners were silently over-deducted past the legal cap.
+    const limits = deduction.limits || {};
+    const effectiveBase =
+      typeof limits.ceiling === 'number' ? Math.min(baseAmount, limits.ceiling) : baseAmount;
     switch (deduction.calculationType) {
       case 'fixed':
-        return deduction.amount;
+        return round2(deduction.amount);
       case 'percentage':
-        return baseAmount * (deduction.rate / 100);
+        return round2(effectiveBase * (deduction.rate / 100));
       case 'formula':
-        return deduction.formula ? this.evaluateFormula(deduction.formula, { base: baseAmount }) : 0;
+        return deduction.formula ? round2(this.evaluateFormula(deduction.formula, { base: effectiveBase })) : 0;
       default:
-        return deduction.amount;
+        return round2(deduction.amount);
     }
   }
 
@@ -341,30 +502,27 @@ export default class UniversalPayrollBuilder {
   }
 
   createGhanaTemplate() {
-    const cfg = ghanaPayrollConfig as any;
+    // PAYE/SSNIT rates are NOT sourced from here — calculatePreTaxDeductions/calculateTaxes
+    // pull them live from the compliance tax-rule engine for any config with country:'GH'
+    // (see findGhanaTaxRule above). `deductions`/`socialSecurity`/`taxConfig` are left empty
+    // for Ghana since nothing reads them on this path any more.
     return this.createPayrollConfig({
-      id: cfg.id,
-      name: cfg.name,
-      country: cfg.country,
-      currency: cfg.currency,
-      payFrequency: cfg.payFrequency,
+      id: 'ghana_standard',
+      name: 'Ghana Standard Payroll',
+      country: 'GH',
+      currency: 'GHS',
+      payFrequency: 'monthly',
       earnings: [
         this.createEarningComponent({ name: 'Basic Salary', code: 'BASIC', category: 'regular', calculationType: 'fixed', taxable: true }),
-        this.createEarningComponent({ name: 'Transport Allowance', code: 'TRANSPORT', category: 'allowance', calculationType: 'fixed', amount: 300, taxable: false }),
+        // Cash transport allowance is fully PAYE-taxable under GRA rules unless it's a
+        // documented reimbursement of actual business expense — a flat allowance like this
+        // one is not, so it must not be marked exempt.
+        this.createEarningComponent({ name: 'Transport Allowance', code: 'TRANSPORT', category: 'allowance', calculationType: 'fixed', amount: 300, taxable: true }),
         this.createEarningComponent({ name: 'Overtime', code: 'OVERTIME', category: 'overtime', calculationType: 'hourly', rate: 1.5, taxable: true }),
       ],
-      deductions: (cfg.deductions || []).map((d: any) => this.createDeductionComponent(d)),
-      socialSecurity: {
-        ssnit: this.createSocialSecurityConfig(cfg.socialSecurity?.ssnit || {}),
-      },
-      taxConfig: {
-        income: this.createTaxConfig({
-          name: cfg.taxConfig?.income?.name || 'Ghana Income Tax',
-          type: 'income',
-          calculationMethod: 'progressive',
-          brackets: cfg.taxConfig?.income?.brackets || [],
-        }),
-      },
+      deductions: [],
+      socialSecurity: {},
+      taxConfig: {},
     });
   }
 

@@ -42,12 +42,42 @@ import {
   computeCashFlowForPeriod,
   defaultRollupCoa,
 } from './jeDrivenReports';
-import { bootstrapTaxConfigsForCountry } from './taxFromConfig';
+import { bootstrapTaxConfigsForCountry, roundMoney2 } from './taxFromConfig';
+import { getWhtCertificateRates } from './whtRates';
+import {
+  mergeWhtCertificateLists,
+  patchForWhtCertificatePayment,
+  paymentWithWhtCertificateData,
+  whtCertificatesFromPayments,
+} from './whtCertificateSync';
+import {
+  collectDescendantIds,
+  createCoaAccount,
+  getCoaSiblings,
+  normalizeCoaList,
+  validateCoaTreeAccount,
+} from './coaTree';
+import type { CoaAccountType } from './models';
 import { buildChartOfAccountsFromTemplate, resolveAccountingCountryCode } from './chartOfAccountsTemplates';
 import { buildOperationalAccountingSeed, EMPTY_TRANSACTION_SEED } from './operationalSeed';
 import { isAccountingDemoMode } from './tenantAccountingConfig';
 import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments } from './helpers/api';
-import { syncInvoiceToLedger, syncPaymentToLedger } from './invoicePostingBridge';
+import {
+  syncInvoiceToLedger,
+  syncPaymentToLedger,
+  buildWHTClearingJournalEntry,
+  buildAPWHTPayableJournalEntry,
+  applyJournalEntryToGlBalances,
+} from './invoicePostingBridge';
+import { findJournalEntryForInvoice, MANUAL_AR_AP_SOURCE } from './accountingProcessPolicy';
+import { isManualArApSource, postJournalEntryReversal } from './journalReversal';
+import { isPettyCashAccount, resolveBankGlAccountCode } from './bankCoaLink';
+import { syncBankOpeningBalanceToLedger } from './bankOpeningBalance';
+import {
+  createManualBankTransaction,
+  reverseManualBankTransaction,
+  type ManualBankTransactionInput,
+} from './bankTransactionLedger';
 
 interface AccountingState {
   // Chart of Accounts
@@ -121,6 +151,7 @@ interface AccountingState {
   // Chart of Accounts
   setChartOfAccounts: (accounts: ChartOfAccounts[]) => void;
   addChartOfAccount: (account: ChartOfAccounts) => void;
+  addCoaChild: (parentId: string | null, params: { name: string; type: CoaAccountType; code?: string }) => void;
   updateChartOfAccount: (id: string, updates: Partial<ChartOfAccounts>) => void;
   deleteChartOfAccount: (id: string) => void;
   setSelectedAccount: (account: ChartOfAccounts | null) => void;
@@ -156,6 +187,13 @@ interface AccountingState {
   addBankAccount: (account: BankAccount) => void;
   updateBankAccount: (id: string, updates: Partial<BankAccount>) => void;
   deleteBankAccount: (id: string) => void;
+  ensureBankGlAccount: (params: {
+    accountName: string;
+    bankName?: string;
+    accountKind: 'bank' | 'petty_cash';
+    createDedicatedGl?: boolean;
+    preferredCode?: string;
+  }) => string;
   
   // Bank Transactions
   setBankTransactions: (transactions: BankTransaction[]) => void;
@@ -163,6 +201,12 @@ interface AccountingState {
   updateBankTransaction: (id: string, updates: Partial<BankTransaction>) => void;
   deleteBankTransaction: (id: string) => void;
   reconcileBankTransaction: (id: string) => Promise<void>;
+  createManualBankTransaction: (
+    input: import('./bankTransactionLedger').ManualBankTransactionInput
+  ) => { ok: true; transactionIds: string[] } | { ok: false; error: string };
+  deleteManualBankTransaction: (id: string) => boolean;
+  markBankTransactionCleared: (id: string) => void;
+  markBankTransactionsReconciledForPeriod: (bankAccountId: string, periodEndDate: string) => number;
   
   // Business Partners
   setBusinessPartners: (partners: BusinessPartner[]) => void;
@@ -205,15 +249,33 @@ interface AccountingState {
     cashAmount: number;
     whtAmount: number;
     whtVatAmount?: number;
-    paymentMethod: 'Cash' | 'Bank' | 'Card' | 'Mobile Money';
+    paymentMethod: Payment['paymentMethod'];
+    bankAccountId?: string;
     certificateNumber?: string;
     withholdingAgentTIN?: string;
+    revenueCenterCode?: string;
     staffName?: string;
     staffId?: string;
   }) => { receiptId: string; whtCertificateId?: string } | null;
+  receiveWHTCertificate: (
+    id: string,
+    params: { certificateNumber: string; withholdingAgentTIN?: string; receivedDate?: string },
+  ) => boolean;
   getWHTCertificatesByInvoice: (invoiceId: string) => WHTCertificate[];
   getWHTCertificatesByStatus: (status: WHTCertificate['status']) => WHTCertificate[];
   getPendingWHTCertificates: () => WHTCertificate[];
+  /** Records a supplier payment where WHT was withheld on a service invoice: a cash payment
+   * to the supplier plus a linked GL entry moving the withheld portion into WHT Payable
+   * (owed to GRA), mirroring recordWHTPayment's AR-side settlement pattern in reverse. */
+  recordSupplierWHTPayment: (params: {
+    invoiceId: string;
+    cashAmount: number;
+    whtAmount: number;
+    paymentMethod: Payment['paymentMethod'];
+    bankAccountId?: string;
+    reference?: string;
+    postedBy?: string;
+  }) => { paymentId: string } | null;
   
   // Payment Vouchers
   generateNextVoucherNumber: () => string;
@@ -375,19 +437,75 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // Chart of Accounts Actions
   setChartOfAccounts: (accounts) => set({ chartOfAccounts: accounts }),
   
-  addChartOfAccount: (account) => set((state) => ({
-    chartOfAccounts: [...state.chartOfAccounts, account]
-  })),
-  
-  updateChartOfAccount: (id, updates) => set((state) => ({
-    chartOfAccounts: state.chartOfAccounts.map(account =>
-      account.id === id ? { ...account, ...updates } : account
-    )
-  })),
-  
-  deleteChartOfAccount: (id) => set((state) => ({
-    chartOfAccounts: state.chartOfAccounts.filter(account => account.id !== id)
-  })),
+  addChartOfAccount: (account) => set((state) => {
+    const withMeta: ChartOfAccounts = {
+      ...account,
+      parentId: account.parentId ?? null,
+      position: account.position ?? getCoaSiblings(account.parentId ?? null, state.chartOfAccounts).length,
+      updatedAt: new Date().toISOString(),
+    };
+    const draft = normalizeCoaList([...state.chartOfAccounts, withMeta]);
+    const errors = validateCoaTreeAccount(withMeta, draft);
+    if (errors.length > 0) return { error: errors.join('. ') };
+    return { chartOfAccounts: draft, error: null };
+  }),
+
+  addCoaChild: (parentId, params) => set((state) => {
+    try {
+      const siblings = getCoaSiblings(parentId, state.chartOfAccounts);
+      const created = createCoaAccount({
+        name: params.name,
+        type: params.type,
+        parentId,
+        position: siblings.length,
+        existing: state.chartOfAccounts,
+        code: params.code,
+      });
+      const errors = validateCoaTreeAccount(created, [...state.chartOfAccounts, created]);
+      if (errors.length > 0) return { error: errors.join('. ') };
+      return {
+        chartOfAccounts: normalizeCoaList([...state.chartOfAccounts, created]),
+        error: null,
+      };
+    } catch (e) {
+      return { error: e instanceof Error ? e.message : 'Could not add account' };
+    }
+  }),
+
+  updateChartOfAccount: (id, updates) => set((state) => {
+    const existing = state.chartOfAccounts.find((account) => account.id === id);
+    if (!existing) return state;
+    const merged: ChartOfAccounts = {
+      ...existing,
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    };
+    const draft = state.chartOfAccounts.map((account) => (account.id === id ? merged : account));
+    const errors = validateCoaTreeAccount(merged, draft);
+    if (errors.length > 0) return { error: errors.join('. ') };
+    return { chartOfAccounts: normalizeCoaList(draft), error: null };
+  }),
+
+  deleteChartOfAccount: (id) => set((state) => {
+    const target = state.chartOfAccounts.find((account) => account.id === id);
+    if (!target) return state;
+    const removeIds = new Set([id, ...collectDescendantIds(id, state.chartOfAccounts)]);
+    const removeCodes = new Set(
+      state.chartOfAccounts.filter((account) => removeIds.has(account.id)).map((account) => account.code),
+    );
+    const hasPostedActivity = state.journalEntries.some(
+      (entry) => entry.status === 'Posted' && entry.lines.some((line) => removeCodes.has(line.accountCode)),
+    );
+    if (hasPostedActivity) {
+      return {
+        error: 'Cannot delete: this account (or one of its sub-accounts) has posted journal entries. Reassign or void those entries first.',
+      };
+    }
+    return {
+      chartOfAccounts: state.chartOfAccounts.filter((account) => !removeIds.has(account.id)),
+      error: null,
+    };
+  }),
   
   setSelectedAccount: (account) => set({ selectedAccount: account }),
 
@@ -447,11 +565,24 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   setCurrentJournalEntry: (entry) => set({ currentJournalEntry: entry }),
   
   postJournalEntry: async (id) => {
+    const already = get().journalEntries.find(e => e.id === id);
+    if (already && already.status === 'Posted') {
+      console.warn(`[Accounting] Journal entry ${id} is already Posted — skipping duplicate post`);
+      return;
+    }
     set({ isLoading: true, error: null });
     try {
       // Simulate API call
       await new Promise(resolve => setTimeout(resolve, 1000));
-      
+
+      // Re-check after the artificial delay — a concurrent call may have posted this
+      // entry (and applied its GL balances) while this call was "in flight".
+      if (get().journalEntries.find(e => e.id === id)?.status === 'Posted') {
+        console.warn(`[Accounting] Journal entry ${id} was posted by a concurrent call — skipping duplicate post`);
+        set({ isLoading: false });
+        return;
+      }
+
       const postedAt = new Date().toISOString();
       set((state) => ({
         journalEntries: state.journalEntries.map(entry =>
@@ -476,6 +607,15 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
             currentCredit: line.credit
           });
         });
+        get().addAuditTrail({
+          id: `AT-JEPOST-${Date.now()}`,
+          tableName: 'JournalEntry',
+          recordId: id,
+          action: 'Post',
+          newValues: { entryNumber: entry.entryNumber, totalDebit: entry.totalDebit, totalCredit: entry.totalCredit },
+          userId: 'current-user',
+          timestamp: postedAt,
+        });
       }
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to post journal entry' });
@@ -483,19 +623,36 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       set({ isLoading: false });
     }
   },
-  
+
   voidJournalEntry: async (id) => {
     set({ isLoading: true, error: null });
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      set((state) => ({
-        journalEntries: state.journalEntries.map(entry =>
-          entry.id === id ? { ...entry, status: 'Void' } : entry
-        )
-      }));
-      persistJournalEntryStatus(id, { status: 'Void' });
+      const original = get().journalEntries.find(e => e.id === id);
+      const rev = postJournalEntryReversal(id, get(), {
+        postedBy: 'current-user',
+        reason: 'Manual journal void',
+        persistEntry: persistJournalEntry,
+        markOriginalVoid: (entryId) => {
+          set((state) => ({
+            journalEntries: state.journalEntries.map((entry) =>
+              entry.id === entryId
+                ? { ...entry, status: 'Void' as const, updatedAt: new Date().toISOString() }
+                : entry,
+            ),
+          }));
+          persistJournalEntryStatus(entryId, { status: 'Void' });
+        },
+      });
+      if (!rev.ok) throw new Error(rev.error);
+      get().addAuditTrail({
+        id: `AT-JEVOID-${Date.now()}`,
+        tableName: 'JournalEntry',
+        recordId: id,
+        action: 'Void',
+        oldValues: original ? { entryNumber: original.entryNumber, status: original.status } : undefined,
+        userId: 'current-user',
+        timestamp: new Date().toISOString(),
+      });
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to void journal entry' });
     } finally {
@@ -580,19 +737,54 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // Bank Accounts Actions
   setBankAccounts: (accounts) => set({ bankAccounts: accounts }),
   
-  addBankAccount: (account) => set((state) => ({
-    bankAccounts: [...state.bankAccounts, account]
-  })),
-  
-  updateBankAccount: (id, updates) => set((state) => ({
-    bankAccounts: state.bankAccounts.map(account =>
-      account.id === id ? { ...account, ...updates } : account
-    )
-  })),
+  addBankAccount: (account) => {
+    const normalized: BankAccount = {
+      ...account,
+      openingBalance: account.openingBalance ?? 0,
+      currentBalance: account.currentBalance ?? account.openingBalance ?? 0,
+    };
+    set((state) => ({
+      bankAccounts: [...state.bankAccounts, normalized],
+    }));
+    syncBankOpeningBalanceToLedger(normalized, get());
+  },
+
+  updateBankAccount: (id, updates) => {
+    set((state) => ({
+      bankAccounts: state.bankAccounts.map((account) =>
+        account.id === id ? { ...account, ...updates } : account
+      ),
+    }));
+    if (
+      updates.openingBalance !== undefined ||
+      updates.glAccountCode !== undefined ||
+      updates.openingBalanceType !== undefined
+    ) {
+      const account = get().bankAccounts.find((a) => a.id === id);
+      if (account) syncBankOpeningBalanceToLedger(account, get());
+    }
+  },
   
   deleteBankAccount: (id) => set((state) => ({
     bankAccounts: state.bankAccounts.filter(account => account.id !== id)
   })),
+
+  ensureBankGlAccount: (params) => {
+    const state = get();
+    const accountKind =
+      params.accountKind ??
+      (isPettyCashAccount(params.accountName, params.bankName) ? 'petty_cash' : 'bank');
+    return resolveBankGlAccountCode({
+      chart: state.chartOfAccounts,
+      accountName: params.accountName,
+      bankName: params.bankName,
+      accountKind,
+      createDedicatedGl: params.createDedicatedGl ?? accountKind === 'bank',
+      preferredCode: params.preferredCode,
+      addCoaChild: (parentId, child) => get().addCoaChild(parentId, child),
+      getChart: () => get().chartOfAccounts,
+    });
+  },
 
   // Bank Transactions Actions
   setBankTransactions: (transactions) => set({ bankTransactions: transactions }),
@@ -614,7 +806,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   reconcileBankTransaction: async (id) => {
     set({ isLoading: true, error: null });
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 300));
       set((state) => ({
         bankTransactions: state.bankTransactions.map(transaction =>
           transaction.id === id 
@@ -632,6 +824,93 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     } finally {
       set({ isLoading: false });
     }
+  },
+
+  createManualBankTransaction: (input) => {
+    const result = createManualBankTransaction(input, get());
+    if (!result.ok) {
+      set({ error: result.error });
+      return result;
+    }
+    set({ error: null });
+    return result;
+  },
+
+  deleteManualBankTransaction: (id) => {
+    const state = get();
+    const txn = state.bankTransactions.find((t) => t.id === id);
+    if (!txn) {
+      set({ error: 'Transaction not found' });
+      return false;
+    }
+    if (txn.status === 'Reconciled') {
+      set({ error: 'Cannot delete a reconciled transaction' });
+      return false;
+    }
+
+    let primary = txn;
+    if (txn.type === 'Transfer' && txn.linkedTransactionId) {
+      const linked = state.bankTransactions.find((t) => t.id === txn.linkedTransactionId);
+      if (linked && txn.transferToAccountId === linked.bankAccountId) {
+        primary = txn;
+      } else if (linked) {
+        primary = linked;
+      }
+    }
+
+    const reversed = reverseManualBankTransaction(primary, get());
+    if (!reversed.ok) {
+      set({ error: reversed.error });
+      return false;
+    }
+
+    const removeIds = new Set<string>([primary.id]);
+    if (primary.linkedTransactionId) removeIds.add(primary.linkedTransactionId);
+
+    set((s) => ({
+      bankTransactions: s.bankTransactions.filter((t) => !removeIds.has(t.id)),
+      error: null,
+    }));
+    return true;
+  },
+
+  markBankTransactionCleared: (id) => set((state) => ({
+    bankTransactions: state.bankTransactions.map((t) =>
+      t.id === id && t.status === 'Pending' ? { ...t, status: 'Cleared' as const } : t
+    ),
+  })),
+
+  markBankTransactionsReconciledForPeriod: (bankAccountId, periodEndDate) => {
+    const end = new Date(periodEndDate);
+    end.setHours(23, 59, 59, 999);
+    const now = new Date().toISOString();
+    // Only transactions already matched against the statement (Cleared) graduate to Reconciled
+    // when a reconciliation is completed — a still-Pending transaction was never confirmed
+    // against the bank statement and must not be silently stamped Reconciled.
+    const ids = new Set(
+      get()
+        .bankTransactions.filter(
+          (t) =>
+            t.bankAccountId === bankAccountId &&
+            t.status === 'Cleared' &&
+            new Date(t.transactionDate) <= end
+        )
+        .map((t) => t.id)
+    );
+    if (!ids.size) return 0;
+    set((state) => ({
+      bankTransactions: state.bankTransactions.map((t) =>
+        ids.has(t.id)
+          ? {
+              ...t,
+              status: 'Reconciled' as const,
+              reconciledAt: now,
+              reconciledBy: 'bank-reconciliation',
+            }
+          : t
+      ),
+    }));
+    return ids.size;
   },
 
   // Business Partners Actions
@@ -939,13 +1218,66 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   voidInvoice: async (id) => {
     set({ isLoading: true, error: null });
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      set((state) => ({
-        invoices: state.invoices.map(invoice =>
-          invoice.id === id ? { ...invoice, status: 'Void' } : invoice
-        )
+      const state = get();
+      const invoice = state.invoices.find((i) => i.id === id);
+      if (!invoice) throw new Error('Invoice not found');
+      if (invoice.status === 'Void') return;
+
+      const activePayments = state.payments.filter(
+        (p) => p.invoiceId === id && p.status !== 'Void',
+      );
+      if (activePayments.length > 0) {
+        throw new Error('Void all receipts and WHT payments on this invoice before voiding the invoice');
+      }
+      if ((invoice.paidAmount || 0) > 0.01) {
+        throw new Error('Invoice still shows amounts paid — void linked receipts first');
+      }
+
+      if (isManualArApSource(invoice.sourceModule)) {
+        const originalJe =
+          (invoice.journalEntryId
+            ? state.journalEntries.find((e) => e.id === invoice.journalEntryId)
+            : undefined) || findJournalEntryForInvoice(invoice, state.journalEntries);
+        if (originalJe?.status === 'Posted') {
+          const rev = postJournalEntryReversal(originalJe.id, get(), {
+            postedBy: 'current-user',
+            reason: `Void invoice ${invoice.invoiceNumber}`,
+            persistEntry: persistJournalEntry,
+            markOriginalVoid: (entryId) => {
+              set((s) => ({
+                journalEntries: s.journalEntries.map((e) =>
+                  e.id === entryId
+                    ? { ...e, status: 'Void' as const, updatedAt: new Date().toISOString() }
+                    : e,
+                ),
+              }));
+              persistJournalEntryStatus(entryId, { status: 'Void' });
+            },
+          });
+          if (!rev.ok) throw new Error(rev.error);
+        }
+      }
+
+      const now = new Date().toISOString();
+      const openAmount = roundMoney2(invoice.total - (invoice.paidAmount || 0));
+
+      set((s) => ({
+        invoices: s.invoices.map((inv) =>
+          inv.id === id ? { ...inv, status: 'Void' as const, updatedAt: now } : inv,
+        ),
+        businessPartners: s.businessPartners.map((p) => {
+          if (p.id !== invoice.businessPartnerId || openAmount <= 0) return p;
+          if (invoice.type === 'Sales' && (p.type === 'Customer' || p.type === 'Both')) {
+            return { ...p, balance: roundMoney2(p.balance - openAmount) };
+          }
+          if (invoice.type === 'Purchase' && (p.type === 'Supplier' || p.type === 'Both')) {
+            return { ...p, balance: roundMoney2(p.balance - openAmount) };
+          }
+          return p;
+        }),
       }));
-      persistInvoicePatch(id, { status: 'Void' });
+
+      persistInvoicePatch(id, { status: 'Void', updatedAt: now });
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to void invoice' });
     } finally {
@@ -961,6 +1293,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       console.warn(`[Accounting] Payment ${payment.id} already exists — skipping duplicate`);
       return;
     }
+
+    let invoiceIdToPatch: string | undefined;
+    let invoicePatch: Partial<Invoice> | undefined;
 
     set((state) => {
       const isReceipt = payment.type === 'Receipt';
@@ -990,11 +1325,25 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       // Update invoice.paidAmount when a payment targets a specific invoice
       let updatedInvoices = state.invoices;
       if (payment.invoiceId) {
+        const now = new Date().toISOString();
         updatedInvoices = state.invoices.map(inv => {
           if (inv.id !== payment.invoiceId) return inv;
           const newPaid = +((inv.paidAmount || 0) + payment.amount).toFixed(2);
           const newStatus = newPaid >= inv.total ? 'Paid' : inv.status === 'Paid' ? 'Posted' : inv.status;
-          return { ...inv, paidAmount: newPaid, status: newStatus as any, updatedAt: new Date().toISOString() };
+          invoiceIdToPatch = inv.id;
+          invoicePatch = {
+            paidAmount: newPaid,
+            status: newStatus as Invoice['status'],
+            paidDate: newStatus === 'Paid' ? now : inv.paidDate,
+            updatedAt: now,
+          };
+          return {
+            ...inv,
+            paidAmount: newPaid,
+            status: newStatus as any,
+            paidDate: newStatus === 'Paid' ? now : inv.paidDate,
+            updatedAt: now,
+          };
         });
       }
 
@@ -1005,6 +1354,10 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         payments: [...state.payments, payment]
       };
     });
+
+    if (invoiceIdToPatch && invoicePatch) {
+      persistInvoicePatch(invoiceIdToPatch, invoicePatch);
+    }
 
     const state = get();
     const added = state.payments.find(p => p.id === payment.id);
@@ -1131,12 +1484,148 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   voidPayment: async (id) => {
     set({ isLoading: true, error: null });
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      set((state) => ({
-        payments: state.payments.map(payment =>
-          payment.id === id ? { ...payment, status: 'Void' } : payment
-        )
-      }));
+      const state = get();
+      const payment = state.payments.find((p) => p.id === id);
+      if (!payment) throw new Error('Payment not found');
+      if (payment.status === 'Void') return;
+
+      if (isManualArApSource(payment.sourceModule)) {
+        const entryId = payment.journalEntryId;
+        if (entryId) {
+          const originalJe = state.journalEntries.find((e) => e.id === entryId);
+          if (originalJe?.status === 'Posted') {
+            const rev = postJournalEntryReversal(entryId, get(), {
+              postedBy: 'current-user',
+              reason: `Void ${payment.type.toLowerCase()} ${payment.paymentNumber}`,
+              persistEntry: persistJournalEntry,
+              markOriginalVoid: (jeId) => {
+                set((s) => ({
+                  journalEntries: s.journalEntries.map((e) =>
+                    e.id === jeId
+                      ? { ...e, status: 'Void' as const, updatedAt: new Date().toISOString() }
+                      : e,
+                  ),
+                }));
+                persistJournalEntryStatus(jeId, { status: 'Void' });
+              },
+            });
+            if (!rev.ok) throw new Error(rev.error);
+          }
+        }
+      }
+
+      const now = new Date().toISOString();
+      let invoiceIdToPatch: string | undefined;
+      let invoicePatch: Partial<Invoice> | undefined;
+
+      set((s) => {
+        let invoices = s.invoices;
+        let whtCertificates = s.whtCertificates;
+
+        if (payment.invoiceId) {
+          invoices = s.invoices.map((inv) => {
+            if (inv.id !== payment.invoiceId) return inv;
+            const newPaid = roundMoney2(Math.max(0, (inv.paidAmount || 0) - payment.amount));
+            const newStatus =
+              newPaid >= inv.total
+                ? 'Paid'
+                : newPaid > 0
+                  ? inv.status === 'Void'
+                    ? 'Void'
+                    : 'Posted'
+                  : inv.status === 'Paid'
+                    ? 'Posted'
+                    : inv.status;
+
+            let whtReceived = inv.whtReceived || 0;
+            let whtVatReceived = inv.whtVatReceived || 0;
+            if (payment.isWHTCertificate) {
+              whtReceived = roundMoney2(Math.max(0, whtReceived - (payment.whtAmount || 0)));
+              whtVatReceived = roundMoney2(Math.max(0, whtVatReceived - (payment.whtVatAmount || 0)));
+            }
+
+            const pendingCert = s.whtCertificates.some(
+              (c) =>
+                c.invoiceId === inv.id &&
+                c.status === 'Pending' &&
+                c.id !== payment.whtCertificateId,
+            );
+            let whtStatus = inv.whtStatus;
+            if (payment.isWHTCertificate) {
+              if (whtReceived + whtVatReceived <= 0) whtStatus = 'N/A';
+              else if (pendingCert) whtStatus = 'Pending';
+              else whtStatus = 'Partial';
+            }
+
+            invoiceIdToPatch = inv.id;
+            invoicePatch = {
+              paidAmount: newPaid,
+              status: newStatus as Invoice['status'],
+              paidDate: newPaid >= inv.total ? inv.paidDate : undefined,
+              whtReceived,
+              whtVatReceived,
+              whtStatus,
+              updatedAt: now,
+            };
+
+            return {
+              ...inv,
+              paidAmount: newPaid,
+              status: newStatus as Invoice['status'],
+              paidDate: newPaid >= inv.total ? inv.paidDate : undefined,
+              whtReceived,
+              whtVatReceived,
+              whtStatus,
+              updatedAt: now,
+            };
+          });
+        }
+
+        if (payment.whtCertificateId) {
+          whtCertificates = s.whtCertificates.map((c) =>
+            c.id === payment.whtCertificateId
+              ? { ...c, status: 'Void' as const, updatedAt: now, notes: c.notes || 'Voided with payment' }
+              : c,
+          );
+        }
+
+        const partners = s.businessPartners.map((p) => {
+          if (p.id !== payment.businessPartnerId) return p;
+          if (payment.type === 'Payment' && (p.type === 'Supplier' || p.type === 'Both')) {
+            return { ...p, balance: roundMoney2(p.balance + payment.amount) };
+          }
+          if (payment.type === 'Receipt' && (p.type === 'Customer' || p.type === 'Both')) {
+            return { ...p, balance: roundMoney2(p.balance + payment.amount) };
+          }
+          return p;
+        });
+
+        return {
+          payments: s.payments.map((p) =>
+            p.id === id ? { ...p, status: 'Void' as const, updatedAt: now } : p,
+          ),
+          invoices,
+          businessPartners: partners,
+          whtCertificates,
+        };
+      });
+
+      if (invoiceIdToPatch && invoicePatch) {
+        persistInvoicePatch(invoiceIdToPatch, invoicePatch);
+      }
+
+      const voidedCert = payment.whtCertificateId
+        ? get().whtCertificates.find((c) => c.id === payment.whtCertificateId)
+        : undefined;
+      if (voidedCert) {
+        persistPaymentPatch(id, {
+          status: 'Void',
+          ...patchForWhtCertificatePayment(voidedCert),
+          updatedAt: now,
+        });
+      } else {
+        persistPaymentPatch(id, { status: 'Void', updatedAt: now });
+      }
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to void payment' });
     } finally {
@@ -1202,30 +1691,57 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     return { whtCertificates: [...state.whtCertificates, certificate] };
   }),
 
-  updateWHTCertificate: (id, updates) => set((state) => ({
-    whtCertificates: state.whtCertificates.map(cert => 
-      cert.id === id ? { ...cert, ...updates, updatedAt: new Date().toISOString() } : cert
-    )
-  })),
+  updateWHTCertificate: (id, updates) => {
+    const now = new Date().toISOString();
+    const state = get();
+    const cert = state.whtCertificates.find((c) => c.id === id);
+    if (!cert) return;
+    const merged: WHTCertificate = { ...cert, ...updates, updatedAt: now };
+
+    set((s) => ({
+      whtCertificates: s.whtCertificates.map((c) => (c.id === id ? merged : c)),
+    }));
+
+    const linked = get().payments.find((p) => p.whtCertificateId === id);
+    if (linked) {
+      persistPaymentPatch(linked.id, patchForWhtCertificatePayment(merged));
+    }
+  },
 
   deleteWHTCertificate: (id) => set((state) => ({
     whtCertificates: state.whtCertificates.filter(cert => cert.id !== id)
   })),
 
   recordWHTPayment: (params) => {
-    const { invoiceId, cashAmount, whtAmount, whtVatAmount = 0, paymentMethod, certificateNumber, withholdingAgentTIN, staffName, staffId } = params;
+    const { invoiceId, cashAmount, whtAmount, whtVatAmount = 0, paymentMethod, bankAccountId, certificateNumber, withholdingAgentTIN, revenueCenterCode, staffName, staffId } = params;
     const state = get();
     const invoice = state.invoices.find(i => i.id === invoiceId);
-    
+
     if (!invoice) {
-      console.error(`[WHT Payment] Invoice ${invoiceId} not found`);
+      const msg = `Invoice ${invoiceId} not found`;
+      console.error(`[WHT Payment] ${msg}`);
+      set({ error: msg });
       return null;
     }
 
     const now = new Date().toISOString();
-    const totalWithheld = whtAmount + whtVatAmount;
-    const totalPayment = cashAmount + totalWithheld;
-    
+    const totalWithheld = roundMoney2(whtAmount + whtVatAmount);
+    const totalPayment = roundMoney2(cashAmount + totalWithheld);
+    const balanceDue = roundMoney2(invoice.total - (invoice.paidAmount || 0));
+
+    if (totalPayment <= 0) {
+      const msg = 'No amounts to record';
+      console.error(`[WHT Payment] ${msg}`);
+      set({ error: msg });
+      return null;
+    }
+    if (totalPayment > balanceDue + 0.01) {
+      const msg = `Total (₵${totalPayment.toLocaleString()}) exceeds balance due (₵${balanceDue.toLocaleString()})`;
+      console.error(`[WHT Payment] ${msg}`);
+      set({ error: msg });
+      return null;
+    }
+
     console.log(`[Accounting] 💰 WHT Payment Recording:`, {
       invoiceNumber: invoice.invoiceNumber,
       cashReceived: `GHS ${cashAmount.toLocaleString()}`,
@@ -1248,16 +1764,21 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       amount: cashAmount,
       currency: invoice.currency || 'GHS',
       paymentMethod: paymentMethod,
+      bankAccountId,
       status: 'Posted',
+      sourceModule: MANUAL_AR_AP_SOURCE,
+      revenueCenterCode,
       createdAt: now,
       updatedAt: now,
     };
 
     // 2. Create WHT certificate entry if certificate details provided
     let whtCertificateId: string | undefined;
+    let whtCert: WHTCertificate | undefined;
+    const whtRates = getWhtCertificateRates(state.taxConfigs);
     if (certificateNumber || totalWithheld > 0) {
       whtCertificateId = `WHT-${Date.now()}`;
-      const whtCert: WHTCertificate = {
+      whtCert = {
         id: whtCertificateId,
         certificateNumber: certificateNumber || `PENDING-${Date.now()}`,
         date: now,
@@ -1268,9 +1789,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
         grossAmount: invoice.total,
-        whtRate: 5,
+        whtRate: whtRates.onSubtotalPct,
         whtAmount: whtAmount,
-        whtVatRate: whtVatAmount > 0 ? 7 : 0,
+        whtVatRate: whtVatAmount > 0 ? whtRates.onVatPct : 0,
         whtVatAmount: whtVatAmount,
         totalWithheld: totalWithheld,
         status: certificateNumber ? 'Received' : 'Pending',
@@ -1281,85 +1802,57 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         updatedAt: now,
       };
 
-      // Add WHT certificate
-      set((st) => ({ whtCertificates: [...st.whtCertificates, whtCert] }));
+      set((st) => ({ whtCertificates: [...st.whtCertificates, whtCert!] }));
     }
 
-    // 3. Create WHT credit entry as a special payment (clears AR, creates asset)
-    if (totalWithheld > 0) {
-      const whtPayment: Payment = {
-        id: `PAYWHT-${Date.now()}`,
-        paymentNumber: `WHT-${receiptNumber}`,
-        date: now,
-        type: 'Receipt',
-        businessPartnerId: invoice.businessPartnerId,
-        invoiceId: invoice.id,
-        reference: certificateNumber || `WHT-${invoice.invoiceNumber}`,
-        description: `WHT/VAT withheld on ${invoice.invoiceNumber}${certificateNumber ? ` - Cert: ${certificateNumber}` : ' (pending certificate)'}`,
-        amount: totalWithheld,
-        currency: invoice.currency || 'GHS',
-        paymentMethod: 'WHT Certificate',
-        isWHTCertificate: true,
-        whtCertificateId,
-        whtAmount,
-        whtVatAmount,
-        status: 'Posted',
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      // Add WHT payment
-      set((st) => ({ payments: [...st.payments, whtPayment] }));
-
-      // Create GL entry for WHT: Dr WHT Receivable, Cr AR
-      const jeId = `JE-WHT-${Date.now()}`;
-      const whtJE: JournalEntry = {
-        id: jeId,
-        entryNumber: `WHT-${Date.now().toString().slice(-6)}`,
-        date: now,
-        reference: certificateNumber || invoice.invoiceNumber,
-        description: `WHT Credit for ${invoice.invoiceNumber}`,
-        totalDebit: totalWithheld,
-        totalCredit: totalWithheld,
-        currency: 'GHS',
-        status: 'Posted',
-        postedBy: staffName || 'system',
-        postedAt: now,
-        createdAt: now,
-        updatedAt: now,
-        lines: [
-          {
-            id: `${jeId}-1`,
-            journalEntryId: jeId,
-            accountCode: '1230', // WHT Receivable
-            description: `WHT Credit - ${whtAmount > 0 ? `WHT: ${whtAmount}` : ''}${whtVatAmount > 0 ? ` WHT-VAT: ${whtVatAmount}` : ''}`,
-            debit: totalWithheld,
-            credit: 0,
-            currency: 'GHS',
-          },
-          {
-            id: `${jeId}-2`,
-            journalEntryId: jeId,
-            accountCode: '1200', // Accounts Receivable
-            description: `Clear AR for WHT on ${invoice.invoiceNumber}`,
-            debit: 0,
-            credit: totalWithheld,
-            currency: 'GHS',
-          },
-        ],
-      };
-      set((st) => ({ journalEntries: [...st.journalEntries, whtJE] }));
+    let whtPayment: Payment | undefined;
+    if (totalWithheld > 0 && whtCert) {
+      whtPayment = paymentWithWhtCertificateData(
+        {
+          id: `PAYWHT-${Date.now()}`,
+          paymentNumber: `WHT-${receiptNumber}`,
+          date: now,
+          type: 'Receipt',
+          businessPartnerId: invoice.businessPartnerId,
+          invoiceId: invoice.id,
+          reference: certificateNumber || `WHT-${invoice.invoiceNumber}`,
+          description: `WHT/VAT withheld on ${invoice.invoiceNumber}${certificateNumber ? ` - Cert: ${certificateNumber}` : ' (pending certificate)'}`,
+          amount: totalWithheld,
+          currency: invoice.currency || 'GHS',
+          paymentMethod: 'WHT Certificate',
+          isWHTCertificate: true,
+          whtAmount,
+          whtVatAmount,
+          status: 'Posted',
+          sourceModule: 'manual_ar_ap_wht',
+          createdAt: now,
+          updatedAt: now,
+        },
+        whtCert,
+      );
     }
 
-    // 4. Add cash receipt to payments
-    set((st) => ({ payments: [...st.payments, cashReceipt] }));
-
-    // 5. Update invoice paid amount and status
-    const newPaidAmount = (invoice.paidAmount || 0) + totalPayment;
+    const newPaidAmount = roundMoney2((invoice.paidAmount || 0) + totalPayment);
     const newStatus = newPaidAmount >= invoice.total ? 'Paid' : invoice.status;
-    
+    const anyOtherPendingWhtCert = state.whtCertificates.some(
+      (c) => c.invoiceId === invoice.id && c.status === 'Pending' && c.id !== whtCertificateId,
+    );
+    const certStillPending = (totalWithheld > 0 && !certificateNumber) || anyOtherPendingWhtCert;
+    const whtStatus = (() => {
+      if (totalWithheld <= 0 && !(invoice.whtReceived || invoice.whtVatReceived)) {
+        return invoice.whtStatus || 'N/A';
+      }
+      if (newPaidAmount < invoice.total) return 'Partial' as const;
+      return certStillPending ? 'Pending' as const : 'Complete' as const;
+    })();
+
     set((st) => ({
-      invoices: st.invoices.map(inv => 
+      payments: [
+        ...st.payments,
+        ...(cashAmount > 0 ? [cashReceipt] : []),
+        ...(whtPayment ? [whtPayment] : []),
+      ],
+      invoices: st.invoices.map(inv =>
         inv.id === invoiceId ? {
           ...inv,
           paidAmount: newPaidAmount,
@@ -1367,23 +1860,67 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
           paidDate: newStatus === 'Paid' ? now : inv.paidDate,
           whtReceived: (inv.whtReceived || 0) + whtAmount,
           whtVatReceived: (inv.whtVatReceived || 0) + whtVatAmount,
-          whtCertificateIds: whtCertificateId 
+          whtCertificateIds: whtCertificateId
             ? [...(inv.whtCertificateIds || []), whtCertificateId]
             : inv.whtCertificateIds,
-          whtStatus: newPaidAmount >= invoice.total ? 'Complete' : 'Partial',
+          whtStatus,
           updatedAt: now,
         } : inv
-      )
-    }));
-
-    // 6. Update business partner balance
-    set((st) => ({
-      businessPartners: st.businessPartners.map(p => 
+      ),
+      businessPartners: st.businessPartners.map(p =>
         p.id === invoice.businessPartnerId && (p.type === 'Customer' || p.type === 'Both')
           ? { ...p, balance: +(p.balance - totalPayment).toFixed(2) }
           : p
-      )
+      ),
+      error: null,
     }));
+
+    if (cashAmount > 0) {
+      persistPayment(cashReceipt);
+    }
+    if (whtPayment) {
+      persistPayment(whtPayment);
+    }
+
+    persistInvoicePatch(invoiceId, {
+      paidAmount: newPaidAmount,
+      status: newStatus as Invoice['status'],
+      paidDate: newStatus === 'Paid' ? now : invoice.paidDate,
+      whtReceived: (invoice.whtReceived || 0) + whtAmount,
+      whtVatReceived: (invoice.whtVatReceived || 0) + whtVatAmount,
+      whtCertificateIds: whtCertificateId
+        ? [...(invoice.whtCertificateIds || []), whtCertificateId]
+        : invoice.whtCertificateIds,
+      whtStatus,
+      updatedAt: now,
+    });
+
+    const partner = get().businessPartners.find(p => p.id === invoice.businessPartnerId);
+    const glStore = get();
+
+    if (cashAmount > 0) {
+      syncPaymentToLedger(cashReceipt, partner, glStore);
+    }
+
+    if (whtPayment && totalWithheld > 0) {
+      const whtResult = buildWHTClearingJournalEntry(
+        {
+          paymentId: whtPayment.id,
+          invoiceNumber: invoice.invoiceNumber,
+          whtAmount,
+          whtVatAmount,
+          date: now,
+          currency: whtPayment.currency || invoice.currency || 'GHS',
+        },
+        partner,
+        { journalSeq: glStore.journalEntries.length, postedBy: staffName || 'system' },
+      );
+      if (whtResult.ok) {
+        glStore.addJournalEntry(whtResult.entry);
+        applyJournalEntryToGlBalances(whtResult.entry, glStore);
+        get().updatePayment(whtPayment.id, { journalEntryId: whtResult.entry.id });
+      }
+    }
 
     // 7. Add audit trail
     set((st) => ({
@@ -1415,7 +1952,220 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       invoiceNewBalance: invoice.total - newPaidAmount,
     });
 
-    return { receiptId: cashReceipt.id, whtCertificateId };
+    return {
+      receiptId: cashAmount > 0 ? cashReceipt.id : (whtPayment?.id ?? ''),
+      whtCertificateId,
+    };
+  },
+
+  recordSupplierWHTPayment: (params) => {
+    const { invoiceId, paymentMethod, bankAccountId, reference, postedBy } = params;
+    const state = get();
+    const invoice = state.invoices.find((i) => i.id === invoiceId);
+    if (!invoice) {
+      console.error(`[AP WHT Payment] Invoice ${invoiceId} not found`);
+      return null;
+    }
+
+    const cashAmount = roundMoney2(params.cashAmount || 0);
+    const whtAmount = roundMoney2(params.whtAmount || 0);
+    const totalSettled = roundMoney2(cashAmount + whtAmount);
+    const balanceDue = roundMoney2(invoice.total - (invoice.paidAmount || 0));
+
+    if (totalSettled <= 0) {
+      console.error('[AP WHT Payment] No amounts to record');
+      return null;
+    }
+    if (totalSettled > balanceDue + 0.01) {
+      console.error(`[AP WHT Payment] Total ${totalSettled} exceeds balance ${balanceDue}`);
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const paymentNumber = `AP-PAY-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`;
+
+    const cashPayment: Payment | null =
+      cashAmount > 0
+        ? {
+            id: `PAY-${Date.now()}`,
+            paymentNumber,
+            date: now,
+            type: 'Payment',
+            businessPartnerId: invoice.businessPartnerId,
+            invoiceId: invoice.id,
+            reference: reference || invoice.invoiceNumber,
+            description: `Payment (net of WHT) for ${invoice.invoiceNumber}`,
+            amount: cashAmount,
+            currency: invoice.currency || 'GHS',
+            paymentMethod,
+            bankAccountId,
+            status: 'Posted',
+            sourceModule: MANUAL_AR_AP_SOURCE,
+            createdAt: now,
+            updatedAt: now,
+          }
+        : null;
+
+    const whtPayment: Payment | null =
+      whtAmount > 0
+        ? {
+            id: `PAYWHT-${Date.now()}`,
+            paymentNumber: `WHT-${paymentNumber}`,
+            date: now,
+            type: 'Payment',
+            businessPartnerId: invoice.businessPartnerId,
+            invoiceId: invoice.id,
+            reference: reference || invoice.invoiceNumber,
+            description: `WHT withheld — to remit to GRA for ${invoice.invoiceNumber}`,
+            amount: whtAmount,
+            currency: invoice.currency || 'GHS',
+            paymentMethod: 'WHT Certificate',
+            isWHTCertificate: true,
+            whtAmount,
+            status: 'Posted',
+            sourceModule: MANUAL_AR_AP_SOURCE,
+            createdAt: now,
+            updatedAt: now,
+          }
+        : null;
+
+    const newPaidAmount = roundMoney2((invoice.paidAmount || 0) + totalSettled);
+    const newStatus = newPaidAmount >= invoice.total ? 'Paid' : invoice.status;
+
+    set((st) => ({
+      payments: [
+        ...st.payments,
+        ...(cashPayment ? [cashPayment] : []),
+        ...(whtPayment ? [whtPayment] : []),
+      ],
+      invoices: st.invoices.map((inv) =>
+        inv.id === invoiceId
+          ? {
+              ...inv,
+              paidAmount: newPaidAmount,
+              status: newStatus as any,
+              paidDate: newStatus === 'Paid' ? now : inv.paidDate,
+              updatedAt: now,
+            }
+          : inv
+      ),
+      businessPartners: st.businessPartners.map((p) =>
+        p.id === invoice.businessPartnerId && (p.type === 'Supplier' || p.type === 'Both')
+          ? { ...p, balance: roundMoney2(p.balance - totalSettled) }
+          : p
+      ),
+    }));
+
+    if (cashPayment) persistPayment(cashPayment);
+    if (whtPayment) persistPayment(whtPayment);
+    persistInvoicePatch(invoiceId, {
+      paidAmount: newPaidAmount,
+      status: newStatus as Invoice['status'],
+      paidDate: newStatus === 'Paid' ? now : invoice.paidDate,
+      updatedAt: now,
+    });
+
+    const partner = get().businessPartners.find((p) => p.id === invoice.businessPartnerId);
+    const glStore = get();
+
+    if (cashPayment) {
+      syncPaymentToLedger(cashPayment, partner, glStore);
+    }
+
+    if (whtPayment && whtAmount > 0) {
+      const whtResult = buildAPWHTPayableJournalEntry(
+        {
+          paymentId: whtPayment.id,
+          invoiceNumber: invoice.invoiceNumber,
+          whtAmount,
+          date: now,
+          currency: whtPayment.currency || invoice.currency || 'GHS',
+        },
+        partner,
+        { journalSeq: glStore.journalEntries.length, postedBy: postedBy || 'system' },
+      );
+      if (whtResult.ok) {
+        glStore.addJournalEntry(whtResult.entry);
+        applyJournalEntryToGlBalances(whtResult.entry, glStore);
+        get().updatePayment(whtPayment.id, { journalEntryId: whtResult.entry.id, status: 'Posted' });
+      }
+    }
+
+    console.log('[Accounting] ✅ Supplier WHT payment recorded:', {
+      invoiceNumber: invoice.invoiceNumber,
+      cashPaid: cashAmount,
+      whtWithheld: whtAmount,
+      invoiceNewBalance: invoice.total - newPaidAmount,
+    });
+
+    return { paymentId: cashPayment?.id || whtPayment?.id || '' };
+  },
+
+  receiveWHTCertificate: (id, params) => {
+    const state = get();
+    const cert = state.whtCertificates.find((c) => c.id === id);
+    const certNumber = params.certificateNumber?.trim();
+    if (!cert || !certNumber) return false;
+
+    const now = params.receivedDate || new Date().toISOString();
+    const updatedCert: WHTCertificate = {
+      ...cert,
+      certificateNumber: certNumber,
+      withholdingAgentTIN: params.withholdingAgentTIN?.trim() || cert.withholdingAgentTIN,
+      receivedDate: now,
+      status: cert.status === 'Pending' ? 'Received' : cert.status,
+      updatedAt: now,
+    };
+
+    const anyOtherPendingWhtCert = state.whtCertificates.some(
+      (c) => c.invoiceId === cert.invoiceId && c.status === 'Pending' && c.id !== id,
+    );
+
+    set((st) => ({
+      whtCertificates: st.whtCertificates.map((c) => (c.id === id ? updatedCert : c)),
+      payments: st.payments.map((p) =>
+        p.whtCertificateId === id
+          ? paymentWithWhtCertificateData(
+              {
+                ...p,
+                reference: certNumber,
+                description: `WHT/VAT withheld on ${cert.invoiceNumber} - Cert: ${certNumber}`,
+                updatedAt: now,
+              },
+              updatedCert,
+            )
+          : p,
+      ),
+      invoices: st.invoices.map((inv) =>
+        inv.id === cert.invoiceId && inv.whtStatus === 'Pending' && !anyOtherPendingWhtCert
+          ? { ...inv, whtStatus: 'Complete' as const, updatedAt: now }
+          : inv,
+      ),
+      auditTrail: [
+        ...st.auditTrail,
+        {
+          id: `AT-WHT-RCV-${Date.now()}`,
+          tableName: 'WHT_Certificate',
+          recordId: id,
+          action: 'Update',
+          description: `GRA certificate received: ${certNumber}`,
+          oldValues: { certificateNumber: cert.certificateNumber, status: cert.status } as any,
+          newValues: { certificateNumber: certNumber, status: 'Received' } as any,
+          userId: 'system',
+          timestamp: now,
+        },
+      ],
+    }));
+
+    const linkedPayment = get().payments.find((p) => p.whtCertificateId === id);
+    if (linkedPayment) {
+      persistPaymentPatch(linkedPayment.id, patchForWhtCertificatePayment(updatedCert));
+    }
+    if (cert.invoiceId && !anyOtherPendingWhtCert) {
+      persistInvoicePatch(cert.invoiceId, { whtStatus: 'Complete', updatedAt: now });
+    }
+
+    return true;
   },
 
   getWHTCertificatesByInvoice: (invoiceId) => {
@@ -1711,9 +2461,10 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
       // Create journal entry from payment voucher
       const entryNumber = `JE-${new Date().getFullYear()}-${String(get().journalEntries.length + 1).padStart(4, '0')}`;
+      const journalEntryId = Date.now().toString();
       const journalLines: JournalEntryLine[] = voucher.lines.map(line => ({
         id: Date.now().toString() + Math.random(),
-        journalEntryId: '',
+        journalEntryId,
         accountCode: line.accountCode,
         description: line.details,
         debit: line.debit,
@@ -1725,7 +2476,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       }));
 
       const journalEntry: JournalEntry = {
-        id: Date.now().toString(),
+        id: journalEntryId,
         entryNumber,
         date: voucher.date.toISOString().split('T')[0],
         reference: voucher.voucherNumber,
@@ -1741,6 +2492,10 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         lines: journalLines
       };
 
+      // Persist the journal entry through the normal posting path (not a raw state
+      // splice) so it's actually saved to the backend, not just held in memory.
+      get().addJournalEntry(journalEntry);
+
       // Update voucher status and link journal entry
       set(state => ({
         paymentVouchers: state.paymentVouchers.map(v =>
@@ -1753,7 +2508,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
               }
             : v
         ),
-        journalEntries: [...state.journalEntries, journalEntry]
       }));
 
       // Update GL balances
@@ -1884,6 +2638,12 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         depreciationAmount = +(depreciableBase / monthsOfUsefulLife).toFixed(2);
       }
 
+      // Cap to what's actually left to depreciate — otherwise a period run after the
+      // asset is already fully depreciated (or a rounding-driven final period) posts
+      // more than the remaining depreciable balance, pushing net book value negative.
+      const remainingToDepreciate = Math.max(0, depreciableBase - asset.accumulatedDepreciation);
+      depreciationAmount = Math.min(depreciationAmount, remainingToDepreciate);
+
       const newAccumulated = +(Math.min(asset.purchaseCost - asset.salvageValue, asset.accumulatedDepreciation + depreciationAmount)).toFixed(2);
       const newNBV = +(Math.max(asset.salvageValue, asset.purchaseCost - newAccumulated)).toFixed(2);
 
@@ -1927,10 +2687,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       if (!schedule) throw new Error('Depreciation schedule not found');
       if (schedule.isPosted) throw new Error('Depreciation already posted');
 
-      set((state) => ({
-        depreciationSchedules: state.depreciationSchedules.filter((s) => s.id !== scheduleId),
-      }));
-
+      // Post to the ledger FIRST — only remove the schedule row once that succeeds,
+      // so a failed post (missing asset, GL error) leaves the schedule intact for retry
+      // instead of silently vanishing with no journal entry and no way to recompute it.
       const { captureDepreciation } = await import('./integrationExtendedCaptures');
       const result = captureDepreciation({
         assetId: schedule.assetId,
@@ -1938,6 +2697,10 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         amount: schedule.depreciationAmount,
       });
       if (!result) throw new Error('Failed to post depreciation to the ledger');
+
+      set((state) => ({
+        depreciationSchedules: state.depreciationSchedules.filter((s) => s.id !== scheduleId),
+      }));
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to post depreciation' });
     } finally {
@@ -2223,7 +2986,14 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
   // Initialize
   initializeAccounting: async () => {
-    set({ isLoading: true, error: null });
+    const snapshot = get();
+    const hasExistingData =
+      snapshot.chartOfAccounts.length > 0 ||
+      snapshot.bankAccounts.length > 0 ||
+      snapshot.journalEntries.length > 0;
+    if (!hasExistingData) {
+      set({ isLoading: true, error: null });
+    }
     try {
       const countryCode = resolveAccountingCountryCode();
       const accounts = buildChartOfAccountsFromTemplate(countryCode);
@@ -2286,11 +3056,11 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         return Array.from(m.values());
       };
 
-      const mergeChartByCode = (seed: ChartOfAccounts[], existing: ChartOfAccounts[]) => {
-        const m = new Map<string, ChartOfAccounts>();
-        for (const a of seed) m.set(a.code, a);
-        for (const a of existing) m.set(a.code, a);
-        return Array.from(m.values());
+      /** First visit: load prebuilt COA. After that: keep user edits (incl. deletions). */
+      const resolveChartOfAccounts = (seed: ChartOfAccounts[], existing: ChartOfAccounts[]) => {
+        if (existing.length === 0 && seed.length > 0) return normalizeCoaList(seed);
+        if (existing.length > 0) return normalizeCoaList(existing);
+        return normalizeCoaList(seed);
       };
 
       const mergeTaxConfigs = (seed: TaxConfig[], existing: TaxConfig[]) => {
@@ -2319,7 +3089,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         demoMode ? mergeById(seed, existing) : existing;
 
       set({
-        chartOfAccounts: mergeChartByCode(accounts, prev.chartOfAccounts),
+        chartOfAccounts: resolveChartOfAccounts(accounts, prev.chartOfAccounts),
         taxConfigs: mergeTaxConfigs(taxConfigs, prev.taxConfigs),
         financialPeriods: mergedFinancialPeriods,
         currentFinancialPeriod: resolvedCurrentFinancial,
@@ -2363,7 +3133,14 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         set((s) => {
           const byId = new Map(s.payments.map(p => [p.id, p]));
           serverPayments.forEach(p => byId.set(p.id, p));
-          return { payments: Array.from(byId.values()) };
+          const payments = Array.from(byId.values());
+          return {
+            payments,
+            whtCertificates: mergeWhtCertificateLists(
+              s.whtCertificates,
+              whtCertificatesFromPayments(payments),
+            ),
+          };
         });
       }
     } catch (error) {

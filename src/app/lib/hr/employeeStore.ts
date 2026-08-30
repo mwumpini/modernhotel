@@ -1,5 +1,46 @@
 import { create } from 'zustand';
 import { Employee, Department, Position } from './models';
+import { getClientTenantSubdomain } from '../api/clientTenant';
+import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+
+function hrTenantHeaders(): HeadersInit {
+  const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
+  return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
+}
+
+// Best-effort background persistence — the store stays synchronous/in-memory for the UI
+// (same interaction model as before), but every mutation now also durably persists
+// tenant-scoped to the database, same pattern as supplierStore.ts/bankReconStore.ts.
+function syncEmployeeToApi(employee: Employee) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/hr/employees', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(employee) })
+    .catch((e) => console.warn('[HR] Failed to sync employee to server:', e));
+}
+function deleteEmployeeFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/hr/employees?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: hrTenantHeaders() })
+    .catch((e) => console.warn('[HR] Failed to delete employee on server:', e));
+}
+function syncDepartmentToApi(department: Department) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/hr/departments', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(department) })
+    .catch((e) => console.warn('[HR] Failed to sync department to server:', e));
+}
+function deleteDepartmentFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/hr/departments?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: hrTenantHeaders() })
+    .catch((e) => console.warn('[HR] Failed to delete department on server:', e));
+}
+function syncPositionToApi(position: Position) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/hr/positions', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(position) })
+    .catch((e) => console.warn('[HR] Failed to sync position to server:', e));
+}
+function deletePositionFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/hr/positions?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: hrTenantHeaders() })
+    .catch((e) => console.warn('[HR] Failed to delete position on server:', e));
+}
 
 interface EmployeeStore {
   employees: Employee[];
@@ -51,197 +92,20 @@ interface EmployeeStore {
 
   // Selection
   selectEmployee: (employee: Employee | null) => void;
+
+  // Persistence — pulls real data from the database, replacing the in-memory seed.
+  hydrateFromApi: () => Promise<void>;
 }
 
 export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
-  employees: [
-    {
-      id: '1',
-      employeeNumber: 'EMP001',
-      firstName: 'John',
-      lastName: 'Doe',
-      email: 'john.doe@hotel.com',
-      phone: '+233 20 123 4567',
-      dateOfBirth: new Date('1990-05-15'),
-      hireDate: new Date('2020-03-01'),
-      departmentId: '1',
-      positionId: '1',
-      status: 'active',
-      employmentType: 'full_time',
-      salary: 2500,
-      hourlyRate: 15,
-      address: {
-        street: '123 Main St',
-        city: 'Accra',
-        state: 'Greater Accra',
-        postalCode: '00233',
-        country: 'Ghana'
-      },
-      bankAccount: {
-        accountNumber: '1234567890',
-        bankName: 'Ghana Commercial Bank',
-        branchCode: 'GCB001'
-      },
-      emergencyContact: {
-        name: 'Jane Doe',
-        relationship: 'Spouse',
-        phone: '+233 20 123 4568'
-      },
-      documents: ['cert1', 'cert2'],
-      notes: 'Experienced front office manager with strong leadership skills',
-      createdAt: new Date('2020-03-01'),
-      updatedAt: new Date('2024-01-15')
-    },
-    {
-      id: '2',
-      employeeNumber: 'EMP002',
-      firstName: 'Sarah',
-      lastName: 'Johnson',
-      email: 'sarah.johnson@hotel.com',
-      phone: '+233 20 123 4569',
-      dateOfBirth: new Date('1988-12-10'),
-      hireDate: new Date('2019-08-15'),
-      departmentId: '2',
-      positionId: '2',
-      status: 'active',
-      employmentType: 'full_time',
-      salary: 2800,
-      hourlyRate: 18,
-      address: {
-        street: '456 Oak Ave',
-        city: 'Accra',
-        state: 'Greater Accra',
-        postalCode: '00233',
-        country: 'Ghana'
-      },
-      bankAccount: {
-        accountNumber: '0987654321',
-        bankName: 'Ghana Commercial Bank',
-        branchCode: 'GCB002'
-      },
-      emergencyContact: {
-        name: 'Mike Johnson',
-        relationship: 'Spouse',
-        phone: '+233 20 123 4570'
-      },
-      documents: ['Food Safety Certificate', 'Culinary Arts Diploma'],
-      notes: 'Experienced chef with strong kitchen management skills',
-      createdAt: new Date('2019-08-15'),
-      updatedAt: new Date('2024-01-20')
-    },
-    {
-      id: '3',
-      employeeNumber: 'EMP003',
-      firstName: 'Michael',
-      lastName: 'Chen',
-      email: 'michael.chen@hotel.com',
-      phone: '+233 20 123 4571',
-      dateOfBirth: new Date('1992-07-22'),
-      hireDate: new Date('2021-01-10'),
-      departmentId: '3',
-      positionId: '3',
-      status: 'active',
-      employmentType: 'full_time',
-      salary: 2200,
-      hourlyRate: 14,
-      address: {
-        street: '789 Pine St',
-        city: 'Accra',
-        state: 'Greater Accra',
-        postalCode: '00233',
-        country: 'Ghana'
-      },
-      bankAccount: {
-        accountNumber: '1122334455',
-        bankName: 'Ghana Commercial Bank',
-        branchCode: 'GCB003'
-      },
-      emergencyContact: {
-        name: 'Lisa Chen',
-        relationship: 'Sister',
-        phone: '+233 20 123 4572'
-      },
-      documents: ['Housekeeping Certificate'],
-      notes: 'Experienced housekeeping supervisor with attention to detail',
-      createdAt: new Date('2021-01-10'),
-      updatedAt: new Date('2024-01-10')
-    }
-  ],
+  // Empty initial state — hydrateFromApi() below replaces this with real data on mount.
+  // Never seed with fake employees/departments/positions: a slow/failed fetch must show
+  // an honest empty state, not fabricated staff records.
+  employees: [],
 
-  departments: [
-    {
-      id: '1',
-      name: 'Front Office',
-      description: 'Guest services and front desk operations',
-      managerId: '1',
-      location: 'Main Lobby',
-      budget: 150000,
-      employeeCount: 12,
-      status: 'active',
-      createdAt: new Date('2020-01-01'),
-      updatedAt: new Date('2024-01-01')
-    },
-    {
-      id: '2',
-      name: 'Food & Beverage',
-      description: 'Restaurant, bar, and catering services',
-      managerId: '2',
-      location: 'Ground Floor',
-      budget: 200000,
-      employeeCount: 25,
-      status: 'active',
-      createdAt: new Date('2020-01-01'),
-      updatedAt: new Date('2024-01-01')
-    },
-    {
-      id: '3',
-      name: 'Housekeeping',
-      description: 'Room cleaning and maintenance',
-      managerId: '3',
-      location: 'All Floors',
-      budget: 120000,
-      employeeCount: 18,
-      status: 'active',
-      createdAt: new Date('2020-01-01'),
-      updatedAt: new Date('2024-01-01')
-    }
-  ],
+  departments: [],
 
-  positions: [
-    {
-      id: '1',
-      title: 'Front Office Manager',
-      departmentId: '1',
-      description: 'Manages front desk operations and guest services',
-      baseSalary: 2500,
-      requirements: ['Bachelor\'s degree', '3+ years experience', 'Leadership skills'],
-      status: 'active',
-      createdAt: new Date('2020-01-01'),
-      updatedAt: new Date('2024-01-01')
-    },
-    {
-      id: '2',
-      title: 'Head Chef',
-      departmentId: '2',
-      description: 'Leads kitchen operations and menu development',
-      baseSalary: 2800,
-      requirements: ['Culinary degree', '5+ years experience', 'Kitchen management'],
-      status: 'active',
-      createdAt: new Date('2020-01-01'),
-      updatedAt: new Date('2024-01-01')
-    },
-    {
-      id: '3',
-      title: 'Housekeeping Supervisor',
-      departmentId: '3',
-      description: 'Supervises cleaning staff and quality control',
-      baseSalary: 2200,
-      requirements: ['High school diploma', '2+ years experience', 'Supervisory skills'],
-      status: 'active',
-      createdAt: new Date('2020-01-01'),
-      updatedAt: new Date('2024-01-01')
-    }
-  ],
+  positions: [],
 
   selectedEmployee: null,
 
@@ -256,20 +120,26 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
     set((state) => ({
       employees: [...state.employees, newEmployee]
     }));
+    syncEmployeeToApi(newEmployee);
   },
 
   updateEmployee: (id, updates) => {
+    let updated: Employee | undefined;
     set((state) => ({
-      employees: state.employees.map(emp =>
-        emp.id === id ? { ...emp, ...updates, updatedAt: new Date() } : emp
-      )
+      employees: state.employees.map(emp => {
+        if (emp.id !== id) return emp;
+        updated = { ...emp, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncEmployeeToApi(updated);
   },
 
   deleteEmployee: (id) => {
     set((state) => ({
       employees: state.employees.filter(emp => emp.id !== id)
     }));
+    deleteEmployeeFromApi(id);
   },
 
   getEmployee: (id) => {
@@ -291,20 +161,26 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
     set((state) => ({
       departments: [...state.departments, newDepartment]
     }));
+    syncDepartmentToApi(newDepartment);
   },
 
   updateDepartment: (id, updates) => {
+    let updated: Department | undefined;
     set((state) => ({
-      departments: state.departments.map(dept =>
-        dept.id === id ? { ...dept, ...updates, updatedAt: new Date() } : dept
-      )
+      departments: state.departments.map(dept => {
+        if (dept.id !== id) return dept;
+        updated = { ...dept, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncDepartmentToApi(updated);
   },
 
   deleteDepartment: (id) => {
     set((state) => ({
       departments: state.departments.filter(dept => dept.id !== id)
     }));
+    deleteDepartmentFromApi(id);
   },
 
   getDepartment: (id) => {
@@ -322,20 +198,26 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
     set((state) => ({
       positions: [...state.positions, newPosition]
     }));
+    syncPositionToApi(newPosition);
   },
 
   updatePosition: (id, updates) => {
+    let updated: Position | undefined;
     set((state) => ({
-      positions: state.positions.map(pos =>
-        pos.id === id ? { ...pos, ...updates, updatedAt: new Date() } : pos
-      )
+      positions: state.positions.map(pos => {
+        if (pos.id !== id) return pos;
+        updated = { ...pos, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncPositionToApi(updated);
   },
 
   deletePosition: (id) => {
     set((state) => ({
       positions: state.positions.filter(pos => pos.id !== id)
     }));
+    deletePositionFromApi(id);
   },
 
   getPosition: (id) => {
@@ -428,5 +310,49 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
   // Selection
   selectEmployee: (employee) => {
     set({ selectedEmployee: employee });
-  }
+  },
+
+  // Dates come back over JSON as ISO strings (the wire format); the store's types expect
+  // real Date objects — convert on the way in, mirroring the numeric-string handling the
+  // inventory/bank-recon hydration functions do for Prisma Decimal fields.
+  hydrateFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const headers = hrTenantHeaders();
+      const [empRes, deptRes, posRes] = await Promise.all([
+        fetch('/api/hr/employees', { headers, cache: 'no-store' }),
+        fetch('/api/hr/departments', { headers, cache: 'no-store' }),
+        fetch('/api/hr/positions', { headers, cache: 'no-store' }),
+      ]);
+      const dateFields = ['dateOfBirth', 'hireDate', 'terminationDate', 'contractEndDate', 'workPermitExpiryDate', 'createdAt', 'updatedAt'];
+      const toDates = (row: any) => {
+        const out = { ...row };
+        for (const f of dateFields) if (out[f]) out[f] = new Date(out[f]);
+        if (out.probation) {
+          out.probation = { ...out.probation, startDate: new Date(out.probation.startDate), endDate: new Date(out.probation.endDate) };
+        }
+        return out;
+      };
+      if (empRes.ok) {
+        const data = await empRes.json();
+        if (Array.isArray(data.employees)) {
+          set({ employees: data.employees.map(toDates) });
+        }
+      }
+      if (deptRes.ok) {
+        const data = await deptRes.json();
+        if (Array.isArray(data.departments)) {
+          set({ departments: data.departments.map(toDates) });
+        }
+      }
+      if (posRes.ok) {
+        const data = await posRes.json();
+        if (Array.isArray(data.positions)) {
+          set({ positions: data.positions.map(toDates) });
+        }
+      }
+    } catch (e) {
+      console.warn('[HR] Failed to hydrate employees/departments/positions from server:', e);
+    }
+  },
 }));

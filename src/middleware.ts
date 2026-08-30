@@ -9,7 +9,7 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    // Skip all static files and API routes
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.).*)',
+    // Skip API routes, static assets, and files with extensions
+    '/((?!api|_next/static|_next/image|favicon.ico|.*\\.).*)',
   ],
 }

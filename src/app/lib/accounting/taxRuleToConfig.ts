@@ -29,9 +29,25 @@ function inferTaxType(rule: TaxRule): TaxConfig['type'] {
   return 'Other';
 }
 
+/** NHIL, GETFund and Tourism are output-only levies — no input tax relief on purchases,
+ *  matching GHANA_TAX_CODES / taxConfigsFromGhanaTemplate's documented creditability model. */
+function isNonCreditableLevy(type: TaxConfig['type']): boolean {
+  return type === 'NHIL' || type === 'GETFund' || type === 'Tourism';
+}
+
 function mapApplyFlags(rule: TaxRule, type: TaxConfig['type']): Pick<TaxConfig, 'applyOnPurchases' | 'applyOnSales'> {
   if (type === 'Withholding') {
     return { applyOnPurchases: false, applyOnSales: false };
+  }
+  // VAT is charged — and reclaimable as input tax — on both sales and purchases, regardless
+  // of which domain the rule itself is scoped to (the compliance engine only has one VAT
+  // rule, tagged domain:'sales' for guest-billing purposes; that tag doesn't mean VAT is
+  // absent from supplier invoices).
+  if (type === 'VAT') {
+    return { applyOnPurchases: true, applyOnSales: true };
+  }
+  if (isNonCreditableLevy(type)) {
+    return { applyOnPurchases: false, applyOnSales: true };
   }
   const domain = rule.domain || 'sales';
   if (domain === 'purchases') {
@@ -46,7 +62,7 @@ function mapApplyFlags(rule: TaxRule, type: TaxConfig['type']): Pick<TaxConfig, 
 export function mapRuleToTaxConfig(rule: TaxRule): TaxConfig {
   const type = inferTaxType(rule);
   const { applyOnPurchases, applyOnSales } = mapApplyFlags(rule, type);
-  let isRecoverable = type !== 'Withholding';
+  let isRecoverable = type !== 'Withholding' && !isNonCreditableLevy(type);
   if (rule.domain === 'purchases') isRecoverable = true;
 
   return {

@@ -84,7 +84,10 @@ export default function LeaveManagementPanel() {
                       <div className="flex gap-2">
                         {r.status === 'pending' && (
                           <>
-                            <Button size="sm" variant="flat" color="success" onPress={() => approveLeave(r.id, 'HR Manager')}>Approve</Button>
+                            <Button size="sm" variant="flat" color="success" onPress={() => {
+                              const result = approveLeave(r.id, 'HR Manager');
+                              if (!result.success) alert(result.error);
+                            }}>Approve</Button>
                             <Button size="sm" variant="flat" color="danger" onPress={() => rejectLeave(r.id, 'HR Manager')}>Reject</Button>
                           </>
                         )}

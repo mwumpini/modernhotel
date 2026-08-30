@@ -41,18 +41,70 @@ import {
   Pagination
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
+import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { useRouter } from 'next/navigation';
 import { useFrontOfficeSelector } from '../lib/frontoffice/useFoStore';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useCalculateTax } from '../hooks/useCalculateTax';
 import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
 import type { EventBooking, GuestProfile } from '../lib/frontoffice/types';
-import { openPrintPreview } from '../lib/print/engine';
+import { openPrintPreview, openHtmlPrintWindow } from '../lib/print/engine';
 import { listTemplates } from '../lib/print/templates';
 import { useSettingsStore } from '../lib/settings/store';
 import { useAccountingStore } from '../lib/accounting/store';
-import { captureRevenue, capturePayment, captureProforma } from '../lib/accounting/integration';
+import { captureRevenue, capturePayment } from '../lib/accounting/integration';
 import { computeQuoteTax, exclusiveFromGross } from '../lib/tax/engine';
+import EventsModuleFilters, {
+  matchesEventsDateFilter,
+  getEventsDateRangeBounds,
+  eventPrimaryDate,
+  type EventsDateFilterMode,
+} from './EventsModuleFilters';
+import { useEmployeeStore } from '../lib/hr/employeeStore';
+
+type ManagementMainTabKey =
+  | 'events'
+  | 'active'
+  | 'completed'
+  | 'invoices'
+  | 'receipts'
+  | 'quotes'
+  | 'folios';
+
+const UNASSIGNED_STAFF = 'Unassigned';
+
+function getEventCoordinator(event: any): string {
+  const value = (event?.eventCoordinator || '').trim();
+  return value && value !== UNASSIGNED_STAFF ? value : UNASSIGNED_STAFF;
+}
+
+function getEventClientContactName(event: any): string {
+  const person = (event?.contactPerson || '').trim();
+  const org = (event?.organization || '').trim();
+  if (person && person !== org) return person;
+  return person || '—';
+}
+
+function formatScheduleStatus(status?: string): string {
+  switch (status) {
+    case 'quote':
+      return 'Quote';
+    case 'confirmed':
+      return 'Confirmed';
+    case 'in-progress':
+      return 'In Progress';
+    case 'completed':
+      return 'Completed';
+    case 'invoiced':
+      return 'Invoiced';
+    case 'billed':
+      return 'Billed';
+    case 'cancelled':
+      return 'Cancelled';
+    default:
+      return status || '—';
+  }
+}
 
 type VenueStatus = 'available' | 'booked' | 'setup' | 'maintenance';
 
@@ -245,13 +297,8 @@ const InfoIcon = ({ description }: { description: string }) => {
 };
 
 type ReportFilterConfig = {
-  voucherType?: boolean;
-  user?: boolean;
-  room?: boolean;
   dateRange?: boolean;
-  service?: boolean;
-  costCenters?: boolean;
-  notes?: boolean;
+  venue?: boolean;
 };
 
 interface ReportDefinition {
@@ -270,16 +317,6 @@ interface ReportCategory {
   reports: ReportDefinition[];
 }
 
-type ReportLogLevel = 'info' | 'success' | 'warning';
-
-interface ReportLogEntry {
-  id: string;
-  timestamp: string;
-  level: ReportLogLevel;
-  action: string;
-  context?: string;
-}
-
 interface ReportInsight {
   label: string;
   value: string;
@@ -292,316 +329,512 @@ interface ReportQuickLink {
   action: () => void;
 }
 
-const REPORT_LOG_COLOR: Record<ReportLogLevel, 'primary' | 'success' | 'warning'> = {
-  info: 'primary',
-  success: 'success',
-  warning: 'warning'
-};
-
-interface ReportFiltersState {
-  voucherType: string;
-  user: string;
-  room: string;
-  fromDate: string;
-  toDate: string;
-  service: string;
-  notes: string;
+interface ReportTableColumn {
+  key: string;
+  label: string;
 }
 
-const REPORT_VOUCHER_TYPES = [
-  { label: 'All Documents', value: 'all' },
-  { label: 'Event Invoice', value: 'invoice' },
-  { label: 'Service Order', value: 'service-order' },
-  { label: 'Credit Memo', value: 'credit-note' },
-  { label: 'Adjustment Voucher', value: 'adjustment' }
-];
+interface ReportTableData {
+  columns: ReportTableColumn[];
+  rows: Record<string, string>[];
+  emptyMessage?: string;
+}
 
-const FALLBACK_COST_CENTERS = [
-  { label: 'Conference', value: 'CONFERENCE' },
-  { label: 'Front Desk', value: 'FRONT_DESK' },
-  { label: 'Gift Shop', value: 'GIFT_SHOP' },
-  { label: 'Housekeeping', value: 'HOUSEKEEPING' },
-  { label: 'Kitchen', value: 'KITCHEN' },
-  { label: 'Restaurant', value: 'RESTAURANT' },
-  { label: 'Stores', value: 'STORES' },
-  { label: 'Swimming Pool', value: 'SWIMMING_POOL' }
-];
-
-const SERVICE_REPORT_OPTIONS = [
-  { label: 'Full-Service Catering', value: 'catering' },
-  { label: 'Audio / Visual', value: 'av-production' },
-  { label: 'Décor & Staging', value: 'decor-staging' },
-  { label: 'Airport & Local Shuttle', value: 'transport' },
-  { label: 'Security & Protocol', value: 'security' },
-  { label: 'Guest Concierge', value: 'concierge' }
-];
+interface ReportFiltersState {
+  fromDate: string;
+  toDate: string;
+  venue: string;
+}
 
 const getDefaultReportRange = () => {
   const today = new Date();
   const to = today.toISOString().split('T')[0];
   const from = new Date(today);
-  from.setDate(from.getDate() - 7);
+  from.setDate(from.getDate() - 30);
   return { from: from.toISOString().split('T')[0], to };
 };
 
 const buildInitialReportFilters = (): ReportFiltersState => {
   const range = getDefaultReportRange();
   return {
-    voucherType: REPORT_VOUCHER_TYPES[0]?.value || 'all',
-    user: '',
-    room: '',
     fromDate: range.from,
     toDate: range.to,
-    service: SERVICE_REPORT_OPTIONS[0]?.value || '',
-    notes: ''
+    venue: '',
   };
+};
+
+const filterEventsForReport = (events: any[], filters: ReportFiltersState) => {
+  const venueTerm = filters.venue.trim().toLowerCase();
+  return events.filter((event) => {
+    const date = event.arrivalDate || event.startDate || '';
+    if (filters.fromDate && date && date < filters.fromDate) return false;
+    if (filters.toDate && date && date > filters.toDate) return false;
+    if (venueTerm) {
+      const venue = (event.venueName || event.venue || '').toLowerCase();
+      if (!venue.includes(venueTerm)) return false;
+    }
+    return true;
+  });
+};
+
+const matchesReportDate = (dateValue: string | undefined | null, filters: ReportFiltersState) => {
+  if (!dateValue) return true;
+  if (filters.fromDate && dateValue < filters.fromDate) return false;
+  if (filters.toDate && dateValue > filters.toDate) return false;
+  return true;
+};
+
+interface RateApplicableDates {
+  startDate: string;
+  endDate: string;
+  isAllYear: boolean;
+}
+
+type RateEffectiveStatus = 'all-year' | 'effective' | 'upcoming' | 'expired' | 'incomplete';
+
+const getRateEffectiveStatus = (
+  dates: RateApplicableDates,
+  referenceDate = new Date().toISOString().slice(0, 10)
+): RateEffectiveStatus => {
+  if (dates.isAllYear) return 'all-year';
+  if (!dates.startDate || !dates.endDate) return 'incomplete';
+  if (referenceDate < dates.startDate) return 'upcoming';
+  if (referenceDate > dates.endDate) return 'expired';
+  return 'effective';
+};
+
+const rateOverlapsDateRange = (
+  dates: RateApplicableDates,
+  rangeFrom: string,
+  rangeTo: string
+) => {
+  if (dates.isAllYear) return true;
+  if (!dates.startDate || !dates.endDate) return false;
+  const from = rangeFrom || rangeTo;
+  const to = rangeTo || rangeFrom;
+  if (!from && !to) return true;
+  return dates.startDate <= to && dates.endDate >= from;
+};
+
+const rateEffectiveForEventDates = (
+  dates: RateApplicableDates,
+  eventStart: string,
+  eventEnd: string
+) => {
+  const from = eventStart || eventEnd;
+  const to = eventEnd || eventStart;
+  if (!from && !to) {
+    // Before event dates are set, only timeless / all-year rates should auto-apply
+    return dates.isAllYear;
+  }
+  return rateOverlapsDateRange(dates, from, to);
+};
+
+const getRateEffectivePeriodLabel = (dates: RateApplicableDates) => {
+  if (dates.isAllYear) return 'All year';
+  if (dates.startDate && dates.endDate) return `${dates.startDate} → ${dates.endDate}`;
+  if (dates.startDate) return `From ${dates.startDate}`;
+  if (dates.endDate) return `Until ${dates.endDate}`;
+  return 'Dates not set';
+};
+
+const pickBestRateForType = (rates: any[]) => {
+  if (!rates.length) return null;
+  return [...rates].sort((a, b) => {
+    if (a.clientSpecific && !b.clientSpecific) return -1;
+    if (!a.clientSpecific && b.clientSpecific) return 1;
+    const aAllYear = a.applicableDates?.isAllYear;
+    const bAllYear = b.applicableDates?.isAllYear;
+    if (aAllYear && !bAllYear) return 1;
+    if (!aAllYear && bAllYear) return -1;
+    if (!aAllYear && !bAllYear) {
+      const spanA =
+        new Date(a.applicableDates.endDate).getTime() - new Date(a.applicableDates.startDate).getTime();
+      const spanB =
+        new Date(b.applicableDates.endDate).getTime() - new Date(b.applicableDates.startDate).getTime();
+      return spanA - spanB;
+    }
+    return 0;
+  })[0];
+};
+
+const resolveGuestRatesForEvent = (
+  conferenceRates: any[],
+  orgName: string,
+  eventStart: string,
+  eventEnd: string
+) => {
+  const orgNameLower = orgName.toLowerCase().trim();
+  if (!orgNameLower) {
+    return { bestRatesByType: {} as Record<string, any>, applicableCount: 0 };
+  }
+
+  const clientSpecificRates = conferenceRates.filter((rate) => {
+    if (!rate.isActive || !rate.clientSpecific) return false;
+    const rateClientNameLower = (rate.clientName || '').toLowerCase().trim();
+    return (
+      rateClientNameLower &&
+      (rateClientNameLower.includes(orgNameLower) || orgNameLower.includes(rateClientNameLower))
+    );
+  });
+
+  const generalRates = conferenceRates.filter((rate) => rate.isActive && !rate.clientSpecific);
+  const ratesToUse = clientSpecificRates.length > 0 ? clientSpecificRates : generalRates;
+  const applicableRates = ratesToUse.filter((rate) =>
+    rateEffectiveForEventDates(rate.applicableDates, eventStart, eventEnd || eventStart)
+  );
+
+  const bestRatesByType = ['accommodation', 'conference', 'lunch', 'dinner'].reduce<Record<string, any>>(
+    (acc, type) => {
+      const best = pickBestRateForType(applicableRates.filter((rate) => rate.type === type));
+      if (best) acc[type] = best;
+      return acc;
+    },
+    {}
+  );
+
+  return { bestRatesByType, applicableCount: applicableRates.length };
+};
+
+type PrintScheduleRates = {
+  residential?: boolean;
+  roomRate?: number;
+  conferenceRate?: number;
+  lunchRate?: number;
+  dinnerRate?: number;
+};
+
+const buildPrintLineItemsFromSchedule = (
+  schedule: any[],
+  rates: PrintScheduleRates,
+  eventDates?: { arrivalDate?: string; startDate?: string; departureDate?: string; endDate?: string }
+) => {
+  const items: Array<{ description: string; qty?: number; unit?: string; unitPrice?: number; amount: number; date?: string }> = [];
+
+  if (!schedule.length) return items;
+
+  schedule.forEach((day: any, idx: number) => {
+    const dayLabel = `Day ${idx + 1}`;
+    const date =
+      day.date ||
+      eventDates?.arrivalDate ||
+      eventDates?.startDate ||
+      eventDates?.departureDate ||
+      eventDates?.endDate ||
+      '';
+
+    if (rates.residential && day.rooms && day.rooms > 0) {
+      const roomRate = rates.roomRate || 0;
+      items.push({
+        description: `${dayLabel} • Accommodation`,
+        qty: day.rooms,
+        unit: 'rooms',
+        unitPrice: roomRate,
+        amount: day.rooms * roomRate,
+        date,
+      });
+    }
+
+    if (day.conferencePax && day.conferencePax > 0) {
+      const confRate = rates.conferenceRate || 0;
+      items.push({
+        description: `${dayLabel} • Conference`,
+        qty: day.conferencePax,
+        unit: 'pax',
+        unitPrice: confRate,
+        amount: day.conferencePax * confRate,
+        date,
+      });
+    }
+
+    if (day.lunchPax && day.lunchPax > 0) {
+      const lunchRate = rates.lunchRate || 0;
+      items.push({
+        description: `${dayLabel} • Lunch`,
+        qty: day.lunchPax,
+        unit: 'pax',
+        unitPrice: lunchRate,
+        amount: day.lunchPax * lunchRate,
+        date,
+      });
+    }
+
+    if (day.dinnerPax && day.dinnerPax > 0) {
+      const dinnerRate = rates.dinnerRate || 0;
+      items.push({
+        description: `${dayLabel} • Dinner`,
+        qty: day.dinnerPax,
+        unit: 'pax',
+        unitPrice: dinnerRate,
+        amount: day.dinnerPax * dinnerRate,
+        date,
+      });
+    }
+
+    if (day.extraLines && Array.isArray(day.extraLines)) {
+      day.extraLines.forEach((extra: any) => {
+        if (extra.qty && extra.unitPrice) {
+          items.push({
+            description: `${dayLabel} • ${extra.name || 'Extra Service'}`,
+            qty: extra.qty,
+            unit: 'pcs',
+            unitPrice: extra.unitPrice,
+            amount: extra.qty * extra.unitPrice,
+            date,
+          });
+        }
+      });
+    }
+  });
+
+  return items;
+};
+
+const RATE_EFFECTIVE_STATUS_META: Record<
+  RateEffectiveStatus,
+  { label: string; color: 'success' | 'warning' | 'danger' | 'default' | 'primary' }
+> = {
+  'all-year': { label: 'Always effective', color: 'primary' },
+  effective: { label: 'Effective now', color: 'success' },
+  upcoming: { label: 'Upcoming', color: 'warning' },
+  expired: { label: 'Expired', color: 'danger' },
+  incomplete: { label: 'Needs dates', color: 'danger' },
+};
+
+const GUEST_RATES_STORAGE_KEY_PREFIX = 'events.conferenceRates';
+// Tenant is resolved client-side on a shared origin, so negotiated rates must be
+// namespaced per tenant — a flat key would leak one tenant's rates into another's view.
+const guestRatesStorageKey = () => `${GUEST_RATES_STORAGE_KEY_PREFIX}.${getClientTenantSubdomain()}`;
+
+const DEFAULT_CONFERENCE_RATES = [
+  {
+    id: 'rate-001',
+    name: 'Standard Accommodation Rate',
+    type: 'accommodation',
+    baseRate: 200,
+    unit: 'per_room',
+    customLabel: 'Accommodation',
+    applicableDates: { startDate: '2026-01-01', endDate: '2026-12-31', isAllYear: false },
+    clientSpecific: false,
+    clientId: '',
+    clientName: '',
+    isActive: true,
+    notes: 'Standard room rate for all guests',
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+  },
+  {
+    id: 'rate-002',
+    name: 'Conference Hall Rate',
+    type: 'conference',
+    baseRate: 300,
+    unit: 'per_person',
+    customLabel: 'Conference',
+    applicableDates: { startDate: '2026-01-01', endDate: '2026-12-31', isAllYear: false },
+    clientSpecific: false,
+    clientId: '',
+    clientName: '',
+    isActive: true,
+    notes: 'Standard conference rate per person per day',
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+  },
+  {
+    id: 'rate-003',
+    name: 'Lunch Rate',
+    type: 'lunch',
+    baseRate: 50,
+    unit: 'per_person',
+    customLabel: 'Lunch',
+    applicableDates: { startDate: '2026-01-01', endDate: '2026-12-31', isAllYear: false },
+    clientSpecific: false,
+    clientId: '',
+    clientName: '',
+    isActive: true,
+    notes: 'Standard lunch rate per person',
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+  },
+  {
+    id: 'rate-004',
+    name: 'Dinner Rate',
+    type: 'dinner',
+    baseRate: 80,
+    unit: 'per_person',
+    customLabel: 'Dinner',
+    applicableDates: { startDate: '2026-01-01', endDate: '2026-12-31', isAllYear: false },
+    clientSpecific: false,
+    clientId: '',
+    clientName: '',
+    isActive: true,
+    notes: 'Standard dinner rate per person',
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+  },
+  {
+    id: 'rate-005',
+    name: 'T-TEL Accommodation & Breakfast Rate',
+    type: 'accommodation',
+    baseRate: 180,
+    unit: 'per_room',
+    customLabel: 'Accommodation & Breakfast',
+    applicableDates: { startDate: '2026-01-01', endDate: '2026-09-30', isAllYear: false },
+    clientSpecific: true,
+    clientId: '',
+    clientName: 'T-TEL',
+    isActive: true,
+    notes: 'Corporate rate for T-TEL through Q3 2026',
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+  },
+  {
+    id: 'rate-006',
+    name: 'Agrivest Co Conference with 2 Snacks Rate',
+    type: 'conference',
+    baseRate: 250,
+    unit: 'per_person',
+    customLabel: 'Conference with 2 Snacks',
+    applicableDates: { startDate: '2026-03-01', endDate: '2026-12-31', isAllYear: false },
+    clientSpecific: true,
+    clientId: '',
+    clientName: 'Agrivest Co',
+    isActive: true,
+    notes: 'Negotiated rate for Agrivest Co conferences',
+    createdAt: '2026-01-01',
+    updatedAt: '2026-01-01',
+  },
+];
+
+const loadStoredConferenceRates = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(guestRatesStorageKey());
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 };
 
 const EVENTS_REPORT_CATALOG: ReportCategory[] = [
   {
-    key: 'sales-pipeline',
-    label: 'Sales & Pipeline',
-    icon: '📋',
-    description: 'Demand generation, inquiry handling, and conversion performance for events.',
+    key: 'events-pipeline',
+    label: 'Events & Pipeline',
+    icon: '📊',
+    description: 'Status mix, quotes, and revenue from your event book.',
     reports: [
       {
-        key: 'pipeline-conversion',
-        label: 'Pipeline Conversion',
-        description: 'See how inquiries progress through proposal, contract, and execution.',
-        metrics: ['Inquiry volume', 'Conversion %', 'Stage fallout'],
-        filters: { dateRange: true, user: true, notes: true }
+        key: 'pipeline-summary',
+        label: 'Pipeline Summary',
+        description: 'Events grouped by status with quoted and confirmed value.',
+        metrics: ['Status counts', 'Conversion rate', 'Pipeline value'],
+        filters: { dateRange: true },
       },
       {
-        key: 'channel-performance',
-        label: 'Channel Performance',
-        description: 'Compare corporate, OTA, referral, and walk-in bookings.',
-        metrics: ['Revenue by channel', 'Win rate', 'Average deal size'],
-        filters: { dateRange: true, user: true, notes: true }
+        key: 'open-quotes',
+        label: 'Open Quotes',
+        description: 'Quote-stage events in the selected period.',
+        metrics: ['Quote count', 'Quoted value', 'Average pax'],
+        filters: { dateRange: true, venue: true },
       },
       {
-        key: 'quote-aging',
-        label: 'Quote Aging',
-        description: 'Monitor quotes approaching SLA thresholds and aging buckets.',
-        metrics: ['Avg quote age', 'Quotes expiring soon', 'Follow-up cadence'],
-        filters: { dateRange: true, user: true, notes: true }
+        key: 'confirmed-events',
+        label: 'Confirmed & In Progress',
+        description: 'Active confirmed events with coordinator and venue.',
+        metrics: ['Event count', 'Total pax', 'Coordinator assigned'],
+        filters: { dateRange: true, venue: true },
       },
-      {
-        key: 'response-time',
-        label: 'Lead Response Time',
-        description: 'Measure planner response speed across sales reps.',
-        metrics: ['Median minutes to first reply', 'Outliers', 'Owner leaderboard'],
-        filters: { dateRange: true, user: true, notes: true }
-      },
-      {
-        key: 'contract-cycle',
-        label: 'Contract Cycle',
-        description: 'Track contract drafts, approvals, and signature timelines.',
-        metrics: ['Cycle duration', 'Legal backlog', 'Pending approvals'],
-        filters: { dateRange: true, user: true, notes: true }
-      },
-      {
-        key: 'discount-impact',
-        label: 'Discount Impact',
-        description: 'Analyse the lift vs. margin cost for discounts and concessions.',
-        metrics: ['Discounted revenue', 'Margin delta', 'Approver list'],
-        filters: { dateRange: true, user: true, notes: true }
-      }
-    ]
+    ],
   },
   {
-    key: 'operations-venues',
+    key: 'venues-operations',
     label: 'Venues & Operations',
-    icon: '🎛️',
-    description: 'Utilisation, setup readiness, and production execution across venues.',
+    icon: '🏢',
+    description: 'Space utilisation and BEO readiness.',
     reports: [
       {
-        key: 'venue-utilization',
-        label: 'Venue Utilization',
-        description: 'Occupancy of each hall/space by daypart and event type.',
-        metrics: ['Utilisation %', 'Idle capacity', 'Overbooking alerts'],
-        filters: { dateRange: true, room: true, costCenters: true, notes: true }
+        key: 'venue-status',
+        label: 'Venue Status',
+        description: 'All venues with capacity and current status.',
+        metrics: ['Available', 'Booked', 'Utilisation'],
+        filters: { venue: true },
       },
       {
-        key: 'setup-readiness',
-        label: 'Setup Readiness',
-        description: 'BEO milestones, vendor call times, and setup blockers.',
-        metrics: ['Milestones met', 'Late setups', 'Tasks outstanding'],
-        filters: { dateRange: true, room: true, service: true, notes: true }
+        key: 'beo-readiness',
+        label: 'BEO Readiness',
+        description: 'Confirmed events and whether a BEO has been saved.',
+        metrics: ['With BEO', 'Pending BEO', 'Coordinator assigned'],
+        filters: { dateRange: true, venue: true },
       },
-      {
-        key: 'service-order-board',
-        label: 'Service Order Board',
-        description: 'Track catering, AV, décor, and logistics orders per event.',
-        metrics: ['Orders fulfilled', 'Variance vs. plan', 'Escalations'],
-        filters: { dateRange: true, service: true, costCenters: true, notes: true }
-      },
-      {
-        key: 'resource-conflicts',
-        label: 'Resource Conflicts',
-        description: 'Identify overlapping space, staff, or equipment allocations.',
-        metrics: ['Conflicts prevented', 'Manual overrides', 'High-risk slots'],
-        filters: { dateRange: true, room: true, notes: true }
-      },
-      {
-        key: 'run-sheet-compliance',
-        label: 'Run Sheet Compliance',
-        description: 'Compare planned timelines vs. actual execution.',
-        metrics: ['Start delay', 'Program deviations', 'Owner notes'],
-        filters: { dateRange: true, room: true, notes: true }
-      },
-      {
-        key: 'incident-log',
-        label: 'Incident & Issue Log',
-        description: 'Safety, maintenance, and guest-related incidents during events.',
-        metrics: ['Incidents per 100 guests', 'Resolution SLA', 'Root causes'],
-        filters: { dateRange: true, room: true, notes: true }
-      }
-    ]
-  },
-  {
-    key: 'guest-experience',
-    label: 'Attendee & Experience',
-    icon: '🧑‍🤝‍🧑',
-    description: 'Attendee manifests, VIP oversight, satisfaction, and cancellations.',
-    reports: [
-      {
-        key: 'attendee-manifest',
-        label: 'Attendee Manifest',
-        description: 'Full attendee lists, ticket classes, and access levels.',
-        metrics: ['Registrations vs. goal', 'Walk-ins', 'Special needs'],
-        filters: { dateRange: true, room: true, notes: true }
-      },
-      {
-        key: 'guest-checkin',
-        label: 'Guest Check-in Experience',
-        description: 'Monitor arrival throughput and dwell time per entry point.',
-        metrics: ['Check-in time', 'Badge reprints', 'Queue alerts'],
-        filters: { dateRange: true, room: true, notes: true }
-      },
-      {
-        key: 'vip-tracker',
-        label: 'VIP & Speaker Tracker',
-        description: 'Status of VIP itineraries, escorts, and hospitality deliverables.',
-        metrics: ['VIP arrivals', 'Hospitality tasks', 'Unresolved requests'],
-        filters: { dateRange: true, room: true, notes: true }
-      },
-      {
-        key: 'onsite-spend',
-        label: 'On-Site Spend',
-        description: 'Ancillary revenue per attendee (F&B, spa, merch).',
-        metrics: ['Spend per attendee', 'Top categories', 'Upsell take rate'],
-        filters: { dateRange: true, service: true, notes: true }
-      },
-      {
-        key: 'feedback-sentiment',
-        label: 'Feedback & Sentiment',
-        description: 'Survey scores, NPS, and open feedback themes.',
-        metrics: ['NPS', 'CSAT', 'Top positive/negative themes'],
-        filters: { dateRange: true, notes: true }
-      },
-      {
-        key: 'cancellations-refunds',
-        label: 'Cancellations & Refunds',
-        description: 'Event or attendee cancellations with refund outcomes.',
-        metrics: ['Cancelled pax', 'Refund value', 'Reason codes'],
-        filters: { dateRange: true, notes: true }
-      }
-    ]
+    ],
   },
   {
     key: 'finance-billing',
-    label: 'Financial & Billing',
+    label: 'Finance & Billing',
     icon: '💰',
-    description: 'Cash flow, receivables, folios, and ancillary profitability.',
+    description: 'Invoices, receipts, and folios linked to events.',
     reports: [
       {
         key: 'invoice-aging',
         label: 'Invoice Aging',
-        description: 'Outstanding invoices by bracket, client, and sales owner.',
-        metrics: ['Total outstanding', 'Past due %', 'Top overdue clients'],
-        filters: { voucherType: true, dateRange: true, user: true, notes: true }
+        description: 'Event invoices with issue date, total, and balance.',
+        metrics: ['Outstanding', 'Overdue', 'Collected'],
+        filters: { dateRange: true },
       },
       {
-        key: 'deposit-tracking',
-        label: 'Deposit Tracking',
-        description: 'Deposits collected, pending, forfeited, or transferred.',
-        metrics: ['Deposits due', 'Partial payments', 'At risk of lapse'],
-        filters: { voucherType: true, dateRange: true, user: true, notes: true }
+        key: 'receipts-register',
+        label: 'Receipts Register',
+        description: 'Payments received against events.',
+        metrics: ['Total collected', 'Receipt count', 'Average payment'],
+        filters: { dateRange: true },
       },
       {
-        key: 'folio-balance',
-        label: 'Folio Balance Summary',
-        description: 'Charges, payments, and balances across active event folios.',
-        metrics: ['Debits vs credits', 'Open folios', 'Escalations'],
-        filters: { voucherType: true, dateRange: true, costCenters: true, notes: true }
+        key: 'folio-balances',
+        label: 'Folio Balances',
+        description: 'Open folio charges, payments, and net balance.',
+        metrics: ['Open folios', 'Net balance', 'Events tracked'],
+        filters: { dateRange: true },
       },
       {
-        key: 'ancillary-revenue',
-        label: 'Ancillary Revenue Mix',
-        description: 'Non-room/event revenue split by service center.',
-        metrics: ['Service revenue', 'Margin by center', 'Upsell rate'],
-        filters: { dateRange: true, service: true, costCenters: true, notes: true }
+        key: 'budget-variance',
+        label: 'Budget vs Invoiced',
+        description: 'Quoted budget compared to invoiced amount per event.',
+        metrics: ['Over budget', 'Under budget', 'Net variance'],
+        filters: { dateRange: true, venue: true },
       },
-      {
-        key: 'budget-vs-actual',
-        label: 'Budget vs Actual',
-        description: 'Budget variance per event, segment, or package.',
-        metrics: ['Variance %', 'Shared cost recovery', 'Forecast update'],
-        filters: { dateRange: true, user: true, notes: true }
-      }
-    ]
+    ],
   },
-  {
-    key: 'compliance-vendors',
-    label: 'Compliance & Vendors',
-    icon: '🛡️',
-    description: 'Vendor SLAs, permits, sustainability, and risk governance.',
-    reports: [
-      {
-        key: 'vendor-sla',
-        label: 'Vendor SLA Dashboard',
-        description: 'SLA adherence for catering, décor, AV, and logistics partners.',
-        metrics: ['On-time %', 'Issue count', 'Penalty exposure'],
-        filters: { dateRange: true, service: true, notes: true }
-      },
-      {
-        key: 'compliance-checklist',
-        label: 'Compliance Checklist',
-        description: 'Permits, fire & safety inspections, and local authority filings.',
-        metrics: ['Checklist completion', 'Expired items', 'Jurisdiction summary'],
-        filters: { dateRange: true, room: true, notes: true }
-      },
-      {
-        key: 'insurance-coverage',
-        label: 'Insurance & Liability',
-        description: 'Certificates of insurance, coverage limits, and expiries.',
-        metrics: ['Policies expiring', 'Coverage gaps', 'Vendors missing COI'],
-        filters: { dateRange: true, service: true, notes: true }
-      },
-      {
-        key: 'sustainability',
-        label: 'Sustainability Metrics',
-        description: 'Energy usage, waste diversion, and carbon indicators per event.',
-        metrics: ['kWh per attendee', 'Waste diverted %', 'Carbon estimate'],
-        filters: { dateRange: true, notes: true }
-      },
-      {
-        key: 'risk-register',
-        label: 'Risk Register',
-        description: 'Consolidated operational and contractual risks with owners.',
-        metrics: ['Open risks', 'Severity mix', 'Mitigation progress'],
-        filters: { dateRange: true, user: true, notes: true }
-      }
-    ]
-  }
 ];
 
 export default function EventsConferencesMainDashboard() {
   const router = useRouter();
   const { costCenters, revenueCenters } = useAccountingStore();
-  const [selectedTab, setSelectedTab] = useState('overview');
+  const employees = useEmployeeStore((s) => s.employees);
+  const eventStaffOptions = useMemo(
+    () =>
+      employees
+        .filter((employee) => employee.status === 'active')
+        .map((employee) => {
+          const name = `${employee.firstName} ${employee.lastName}`.trim();
+          return { key: name, label: name };
+        })
+        .filter((option) => option.key),
+    [employees]
+  );
+  const beoCoordinatorOptions = useMemo(
+    () => [{ key: UNASSIGNED_STAFF, label: UNASSIGNED_STAFF }, ...eventStaffOptions],
+    [eventStaffOptions]
+  );
+  const [selectedTab, setSelectedTab] = useState('confirmed');
+  const [venueSearchTerm, setVenueSearchTerm] = useState('');
+  const [venueStatusFilter, setVenueStatusFilter] = useState('all');
+  const [reportsDateFilterMode, setReportsDateFilterMode] = useState<EventsDateFilterMode>('all');
+  const [reportsDateFilterSingle, setReportsDateFilterSingle] = useState('');
+  const [reportsDateFilterFrom, setReportsDateFilterFrom] = useState('');
+  const [reportsDateFilterTo, setReportsDateFilterTo] = useState('');
   const [modernVenues, setModernVenues] = useState<VenueDetails[]>(initialVenueCatalog);
-  const [managementMainTab, setManagementMainTab] = useState<'events' | 'active' | 'completed' | 'invoices' | 'receipts' | 'quotes' | 'folios'>('events');
+  const [managementMainTab, setManagementMainTab] = useState<ManagementMainTabKey>('events');
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [isVenueModalOpen, setIsVenueModalOpen] = useState(false);
   const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
@@ -632,70 +865,51 @@ export default function EventsConferencesMainDashboard() {
     EVENTS_REPORT_CATALOG[0]?.reports[0]?.key || ''
   );
   const [reportFilters, setReportFilters] = useState<ReportFiltersState>(() => buildInitialReportFilters());
-  const [selectedCostCenters, setSelectedCostCenters] = useState<Set<string>>(
-    () => new Set(FALLBACK_COST_CENTERS.map(option => option.value))
-  );
-  const [reportLogEntries, setReportLogEntries] = useState<ReportLogEntry[]>(() => [
-    {
-      id: `log-${Date.now()}`,
-      timestamp: new Date().toLocaleString(),
-      level: 'info',
-      action: 'Reports console initialised',
-      context: 'Default filters loaded'
-    }
-  ]);
-  const costCenterOptions = useMemo(
-    () =>
-      Array.isArray(costCenters) && costCenters.length > 0
-        ? costCenters
-            .filter((cc: any) => cc.isActive !== false)
-            .map((cc: any) => ({
-              label: `${cc.code} - ${cc.name}`,
-              value: cc.code
-            }))
-        : FALLBACK_COST_CENTERS,
-    [costCenters]
-  );
   useEffect(() => {
-    setSelectedCostCenters(prev => {
-      const available = new Set(costCenterOptions.map(option => option.value));
-      if (available.size === 0) {
-        return prev;
+    try {
+      const tab = localStorage.getItem('events.tab');
+      const mgmtTab = localStorage.getItem('events.managementTab');
+      if (tab) {
+        setSelectedTab(tab);
+        localStorage.removeItem('events.tab');
       }
-      const next = new Set<string>();
-      prev.forEach(value => {
-        if (available.has(value)) {
-          next.add(value);
-        }
-      });
-      if (next.size === 0) {
-        available.forEach(value => next.add(value));
+      if (mgmtTab) {
+        setManagementMainTab(
+          mgmtTab === 'people' ? 'events' : (mgmtTab as ManagementMainTabKey)
+        );
+        localStorage.removeItem('events.managementTab');
       }
-      if (next.size === prev.size && Array.from(next).every(value => prev.has(value))) {
-        return prev;
-      }
-      return next;
-    });
-  }, [costCenterOptions]);
-  const logReportAction = useCallback(
-    (action: string, level: ReportLogLevel = 'info', context?: string) => {
-      setReportLogEntries(prev => {
-        const entry: ReportLogEntry = {
-          id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          timestamp: new Date().toLocaleString(),
-          level,
-          action,
-          context
-        };
-        const next = [entry, ...prev];
-        return next.slice(0, 10);
-      });
-    },
-    []
-  );
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const updateReportFilter = useCallback((key: keyof ReportFiltersState, value: string) => {
     setReportFilters(prev => ({ ...prev, [key]: value }));
   }, []);
+
+  useEffect(() => {
+    const bounds = getEventsDateRangeBounds(
+      reportsDateFilterMode,
+      reportsDateFilterSingle,
+      reportsDateFilterFrom,
+      reportsDateFilterTo
+    );
+    if (!bounds) {
+      updateReportFilter('fromDate', '');
+      updateReportFilter('toDate', '');
+      return;
+    }
+    updateReportFilter('fromDate', bounds.from);
+    updateReportFilter('toDate', bounds.to);
+  }, [
+    reportsDateFilterMode,
+    reportsDateFilterSingle,
+    reportsDateFilterFrom,
+    reportsDateFilterTo,
+    updateReportFilter,
+  ]);
+
   const filteredReportCatalog = useMemo(() => {
     const term = reportSearch.trim().toLowerCase();
     if (!term) return EVENTS_REPORT_CATALOG;
@@ -709,6 +923,10 @@ export default function EventsConferencesMainDashboard() {
       })
       .filter(category => category.reports.length > 0);
   }, [reportSearch]);
+  const filteredReportsCount = useMemo(
+    () => filteredReportCatalog.reduce((sum, category) => sum + category.reports.length, 0),
+    [filteredReportCatalog]
+  );
   const selectedReportContext = useMemo(() => {
     for (const category of EVENTS_REPORT_CATALOG) {
       const report = category.reports.find(item => item.key === selectedReportKey);
@@ -723,65 +941,13 @@ export default function EventsConferencesMainDashboard() {
   }, [selectedReportKey]);
   const selectedReport = selectedReportContext?.report;
   const selectedReportCategory = selectedReportContext?.category;
-  const selectedCostCenterList = useMemo(() => Array.from(selectedCostCenters), [selectedCostCenters]);
-  const selectedCostCenterLabels = useMemo(() => {
-    const labelMap = new Map(costCenterOptions.map(option => [option.value, option.label]));
-    return selectedCostCenterList.map(value => labelMap.get(value) || value);
-  }, [selectedCostCenterList, costCenterOptions]);
-  const selectedVoucherType = useMemo(
-    () => REPORT_VOUCHER_TYPES.find(option => option.value === reportFilters.voucherType) || REPORT_VOUCHER_TYPES[0],
-    [reportFilters.voucherType]
-  );
-  const selectedServiceOption = useMemo(
-    () => SERVICE_REPORT_OPTIONS.find(option => option.value === reportFilters.service),
-    [reportFilters.service]
-  );
-  const handleReportSelection = useCallback(
-    (reportKey: string, label: string) => {
-      setSelectedReportKey(reportKey);
-      logReportAction(`Switched to ${label}`, 'info', 'Report focus updated');
-      trackEvent('Analytics.FiltersUpdated', {
-        scope: 'events',
-        reportKey
-      });
-    },
-    [logReportAction]
-  );
-  const handleCostCenterToggle = useCallback(
-    (value: string, label: string) => {
-      setSelectedCostCenters(prev => {
-        const next = new Set(prev);
-        if (next.has(value)) {
-          next.delete(value);
-          logReportAction(`Removed ${label}`, 'warning', 'Cost centre filter updated');
-        } else {
-          next.add(value);
-          logReportAction(`Added ${label}`, 'info', 'Cost centre filter updated');
-        }
-        return next;
-      });
-    },
-    [logReportAction]
-  );
-  const handleReportAction = useCallback(
-    (mode: 'preview' | 'export' | 'schedule') => {
-      if (!selectedReport) return;
-      const context = `${reportFilters.fromDate} → ${reportFilters.toDate}`;
-      const analyticsEventType =
-        mode === 'preview' ? 'Report.Opened' : mode === 'export' ? 'Analytics.Exported' : 'Report.Scheduled';
-      trackEvent(analyticsEventType, {
-        scope: 'events',
-        mode,
-        reportKey: selectedReport.key,
-        costCenters: selectedCostCenterList,
-        filters: reportFilters
-      });
-      const actionLabel =
-        mode === 'preview' ? 'Preview generated' : mode === 'export' ? 'Export prepared' : 'Schedule configured';
-      logReportAction(`${actionLabel} for ${selectedReport.label}`, 'success', context);
-    },
-    [selectedReport, reportFilters, selectedCostCenterList, logReportAction]
-  );
+  const handleReportSelection = useCallback((reportKey: string) => {
+    setSelectedReportKey(reportKey);
+    trackEvent('Analytics.FiltersUpdated', {
+      scope: 'events',
+      reportKey,
+    });
+  }, []);
   type SimpleEventStatus = 'quote' | 'confirmed' | 'invoiced' | 'cancelled';
   const [eventStatus, setEventStatus] = useState<SimpleEventStatus>('quote');
   const eventStatusColorMap: Record<SimpleEventStatus, 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'danger'> = {
@@ -1164,6 +1330,8 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   recordedBy: 'Events Team'
   });
   const [isFolioCreateModalOpen, setIsFolioCreateModalOpen] = useState(false);
+  const [isInvoiceEventPickerOpen, setIsInvoiceEventPickerOpen] = useState(false);
+  const [invoiceCreateEventId, setInvoiceCreateEventId] = useState('');
   const [folioCreateForm, setFolioCreateForm] = useState<{ eventId: string; openingBalance: number; note?: string }>({
     eventId: '',
     openingBalance: 0,
@@ -1254,25 +1422,25 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   const invoiceTemplateOptions = useMemo(() => listTemplates('invoice'), []);
   const [selectedQuoteTemplate, setSelectedQuoteTemplate] = useState<string>(() => printingDefaults?.proforma || quoteTemplateOptions[0]?.key || 'conference-proforma-grid');
   const [selectedInvoiceTemplate, setSelectedInvoiceTemplate] = useState<string>(() => printingDefaults?.invoice || invoiceTemplateOptions[0]?.key || 'corporate-invoice');
-  const [activePrintTab, setActivePrintTab] = useState<'quote' | 'xls'>('quote');
-  const showQuotePrintTab = useMemo(() => {
+  const [activePrintTab, setActivePrintTab] = useState<'quote' | 'invoice' | 'xls'>('quote');
+  const showQuotePrintInModal = useMemo(() => {
     if (!editingEvent) return false;
-    const normalizedStatus = normalizeStatus(editingEvent.status);
-    const computedStatus = (editingEvent as any).eventStatus;
-    const normalizedComputedStatus = computedStatus ? normalizeStatus(computedStatus) : null;
-    const isConfirmedOrHigher =
-      normalizedStatus === 'confirmed' ||
-      normalizedStatus === 'invoiced' ||
-      normalizedComputedStatus === 'confirmed' ||
-      normalizedComputedStatus === 'invoiced';
-    return !isConfirmedOrHigher;
+    const status = normalizeStatus(editingEvent.status || (editingEvent as any).eventStatus);
+    return status === 'quote' || status === 'confirmed' || status === 'cancelled';
   }, [editingEvent]);
 
+  const linkedEventInvoice = useMemo(
+    () => (editingEvent ? eventInvoices.find((inv) => inv.eventId === editingEvent.id) : undefined),
+    [editingEvent, eventInvoices]
+  );
+
+  const showInvoicePrintInModal = useMemo(() => Boolean(linkedEventInvoice), [linkedEventInvoice]);
+
   useEffect(() => {
-    if (!showQuotePrintTab && activePrintTab === 'quote') {
-      setActivePrintTab('xls');
+    if (!showQuotePrintInModal && activePrintTab === 'quote') {
+      setActivePrintTab(showInvoicePrintInModal ? 'invoice' : 'xls');
     }
-  }, [showQuotePrintTab, activePrintTab]);
+  }, [showQuotePrintInModal, showInvoicePrintInModal, activePrintTab]);
 
   useEffect(() => {
     if (printingDefaults?.proforma && printingDefaults.proforma !== selectedQuoteTemplate) {
@@ -1701,6 +1869,7 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   const [orgName, setOrgName] = useState<string>('');
   const [orgContactPhone, setOrgContactPhone] = useState<string>('');
   const [orgClientEmail, setOrgClientEmail] = useState<string>('');
+  const [clientContactName, setClientContactName] = useState<string>('');
   const [eventName, setEventName] = useState<string>('');
   const [isResidential, setIsResidential] = useState<boolean>(false);
   const [phase1Error, setPhase1Error] = useState<string>('');
@@ -1823,104 +1992,20 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   }, [modernVenues, selectedGanttVenue]);
   
   // Conference Rates Management - shared state
-  const [conferenceRates, setConferenceRates] = useState<any[]>([
-    {
-      id: 'rate-001',
-      name: 'Standard Accommodation Rate',
-      type: 'accommodation',
-      baseRate: 200,
-      unit: 'per_room',
-      customLabel: 'Accommodation',
-      applicableDates: { startDate: '2025-01-01', endDate: '2025-12-31', isAllYear: true },
-      clientSpecific: false,
-      clientId: '',
-      clientName: '',
-      isActive: true,
-      notes: 'Standard room rate for all guests',
-      createdAt: '2025-01-01',
-      updatedAt: '2025-01-01'
-    },
-    {
-      id: 'rate-002',
-      name: 'Conference Hall Rate',
-      type: 'conference',
-      baseRate: 300,
-      unit: 'per_person',
-      customLabel: 'Conference',
-      applicableDates: { startDate: '2025-01-01', endDate: '2025-12-31', isAllYear: true },
-      clientSpecific: false,
-      clientId: '',
-      clientName: '',
-      isActive: true,
-      notes: 'Standard conference rate per person per day',
-      createdAt: '2025-01-01',
-      updatedAt: '2025-01-01'
-    },
-    {
-      id: 'rate-003',
-      name: 'Lunch Rate',
-      type: 'lunch',
-      baseRate: 50,
-      unit: 'per_person',
-      customLabel: 'Lunch',
-      applicableDates: { startDate: '2025-01-01', endDate: '2025-12-31', isAllYear: true },
-      clientSpecific: false,
-      clientId: '',
-      clientName: '',
-      isActive: true,
-      notes: 'Standard lunch rate per person',
-      createdAt: '2025-01-01',
-      updatedAt: '2025-01-01'
-    },
-    {
-      id: 'rate-004',
-      name: 'Dinner Rate',
-      type: 'dinner',
-      baseRate: 80,
-      unit: 'per_person',
-      customLabel: 'Dinner',
-      applicableDates: { startDate: '2025-01-01', endDate: '2025-12-31', isAllYear: true },
-      clientSpecific: false,
-      clientId: '',
-      clientName: '',
-      isActive: true,
-      notes: 'Standard dinner rate per person',
-      createdAt: '2025-01-01',
-      updatedAt: '2025-01-01'
-    },
-    {
-      id: 'rate-005',
-      name: 'T-Tel Accommodation & Breakfast Rate',
-      type: 'accommodation',
-      baseRate: 180,
-      unit: 'per_room',
-      customLabel: 'Accommodation & Breakfast',
-      applicableDates: { startDate: '2025-01-01', endDate: '2025-12-31', isAllYear: true },
-      clientSpecific: true,
-      clientId: '',
-      clientName: 'T-Tel',
-      isActive: true,
-      notes: 'Special corporate rate for T-Tel',
-      createdAt: '2025-01-01',
-      updatedAt: '2025-01-01'
-    },
-    {
-      id: 'rate-006',
-      name: 'Agrivest Co Conference with 2 Snacks Rate',
-      type: 'conference',
-      baseRate: 250,
-      unit: 'per_person',
-      customLabel: 'Conference with 2 Snacks',
-      applicableDates: { startDate: '2025-01-01', endDate: '2025-12-31', isAllYear: true },
-      clientSpecific: true,
-      clientId: '',
-      clientName: 'Agrivest Co',
-      isActive: true,
-      notes: 'Negotiated rate for Agrivest Co conferences',
-      createdAt: '2025-01-01',
-      updatedAt: '2025-01-01'
+  const [conferenceRates, setConferenceRates] = useState<any[]>(
+    () => loadStoredConferenceRates() ?? DEFAULT_CONFERENCE_RATES
+  );
+  const [guestRatesFilteredCount, setGuestRatesFilteredCount] = useState(
+    () => (loadStoredConferenceRates() ?? DEFAULT_CONFERENCE_RATES).length
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(guestRatesStorageKey(), JSON.stringify(conferenceRates));
+    } catch {
+      /* ignore storage errors */
     }
-  ]);
+  }, [conferenceRates]);
 
   // Auto-populate rates when organization is selected
   useEffect(() => {
@@ -1929,71 +2014,45 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     const orgNameLower = orgName.toLowerCase().trim();
     if (!orgNameLower) return;
 
-    // Find rates for this organization (client-specific first, then general)
-    // Match if organization name contains rate client name OR rate client name contains organization name
-    const clientSpecificRates = conferenceRates.filter(rate => {
-      if (!rate.isActive || !rate.clientSpecific) return false;
-      const rateClientNameLower = (rate.clientName || '').toLowerCase().trim();
-      return rateClientNameLower && (
-        rateClientNameLower.includes(orgNameLower) || 
-        orgNameLower.includes(rateClientNameLower)
-      );
-    });
-
-    const generalRates = conferenceRates.filter(rate => 
-      rate.isActive && 
-      !rate.clientSpecific
+    const { bestRatesByType } = resolveGuestRatesForEvent(
+      conferenceRates,
+      orgName,
+      startDate,
+      endDate || startDate
     );
 
-    // Use client-specific rates if available, otherwise use general rates
-    const ratesToUse = clientSpecificRates.length > 0 ? clientSpecificRates : generalRates;
-
-    // Check if dates are applicable (if not all year)
-    const applicableRates = ratesToUse.filter(rate => {
-      if (rate.applicableDates.isAllYear) return true;
-      if (!startDate) return true; // If no start date set yet, include all
-      const rateStart = new Date(rate.applicableDates.startDate);
-      const rateEnd = new Date(rate.applicableDates.endDate);
-      const eventStart = new Date(startDate);
-      return eventStart >= rateStart && eventStart <= rateEnd;
-    });
-
-    // Auto-populate rates based on type (only if not already set or if client-specific)
-    // For client-specific rates, always update. For general rates, only if not already set.
-    const shouldUpdate = (type: string) => {
-      if (clientSpecificRates.length > 0) return true; // Always update for client-specific
-      // For general rates, only update if current value is 0 or default
+    const shouldUpdateRate = (type: string) => {
+      const best = bestRatesByType[type];
+      if (!best) return false;
+      if (best.clientSpecific) return true;
       if (type === 'accommodation') return roomRate === 0;
-      if (type === 'conference') return conferenceRate === 250; // Default is 250
+      if (type === 'conference') return conferenceRate === 250;
       if (type === 'lunch') return lunchRate === 0;
       if (type === 'dinner') return dinnerRate === 0;
       return false;
     };
 
-    // Map to store custom labels from rates
     const labelUpdates: Partial<{ conferencePax: string; lunchPax: string; dinnerPax: string; rooms: string }> = {};
 
-    applicableRates.forEach(rate => {
+    Object.values(bestRatesByType).forEach((rate) => {
       const customLabel = rate.customLabel || '';
-      // Always update labels from rates if they have custom labels, even if rate value isn't changing
-      // This ensures custom names from rate management reflect in Phase 3
       if (rate.type === 'accommodation' && rate.unit === 'per_room') {
-        if (shouldUpdate('accommodation')) {
+        if (shouldUpdateRate('accommodation')) {
         setRoomRate(rate.baseRate);
         }
         if (customLabel) labelUpdates.rooms = customLabel;
       } else if (rate.type === 'conference' && rate.unit === 'per_person') {
-        if (shouldUpdate('conference')) {
+        if (shouldUpdateRate('conference')) {
         setConferenceRate(rate.baseRate);
         }
         if (customLabel) labelUpdates.conferencePax = customLabel;
       } else if (rate.type === 'lunch' && rate.unit === 'per_person') {
-        if (shouldUpdate('lunch')) {
+        if (shouldUpdateRate('lunch')) {
         setLunchRate(rate.baseRate);
         }
         if (customLabel) labelUpdates.lunchPax = customLabel;
       } else if (rate.type === 'dinner' && rate.unit === 'per_person') {
-        if (shouldUpdate('dinner')) {
+        if (shouldUpdateRate('dinner')) {
         setDinnerRate(rate.baseRate);
         }
         if (customLabel) labelUpdates.dinnerPax = customLabel;
@@ -2004,7 +2063,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     if (Object.keys(labelUpdates).length > 0) {
       setParticularLabels(prev => ({ ...prev, ...labelUpdates }));
     }
-  }, [orgName, conferenceRates, startDate, isViewMode, roomRate, conferenceRate, lunchRate, dinnerRate]);
+  }, [orgName, conferenceRates, startDate, endDate, isViewMode, roomRate, conferenceRate, lunchRate, dinnerRate]);
   // Phase 4 - Packages & Add-Ons
   type Package = { id: string; name: string; description: string; rateType: 'per_person_per_day'|'flat_per_day'|'flat_total'; price: number };
   type AddOn = { id: string; name: string; price: number; billing: 'per_day'|'flat_total'|'per_person_per_day' };
@@ -2259,37 +2318,29 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   };
   const buildEventPrintData = (docType: 'proforma' | 'invoice') => {
     const settingsState = useSettingsStore.getState() as any;
-    const baseQuote = buildQuoteForExport();
-    const items: Array<{ description: string; qty?: number; unit?: string; unitPrice?: number; amount: number; date?: string }> = [];
-
-    if (baseQuote?.eventTimeline?.length) {
-      baseQuote.eventTimeline.forEach((day: any) => {
-        const dayLabel = day?.label || (day?.dayNumber ? `Day ${day.dayNumber}` : '');
-        (day?.services || []).forEach((service: any) => {
-          const qty = Number(service?.quantity ?? service?.qty ?? 0) || 0;
-          const unitPrice = Number(service?.unitPrice ?? 0) || 0;
-          const amount = Number(service?.totalPrice ?? (qty * unitPrice)) || 0;
-          items.push({
-            description: `${dayLabel ? `${dayLabel} • ` : ''}${service?.serviceName || service?.name || 'Service'}`,
-            qty: qty || undefined,
-            unit: qty ? 'pax' : undefined,
-            unitPrice,
-            amount,
-            date: day?.date
-          });
-        });
-      });
-    }
+    const schedule =
+      dailySchedule.length > 0 ? dailySchedule : ((editingEvent as any)?.dailySchedule || []);
+    const items = buildPrintLineItemsFromSchedule(
+      schedule,
+      {
+        residential: isResidential,
+        roomRate,
+        conferenceRate,
+        lunchRate,
+        dinnerRate,
+      },
+      { arrivalDate: startDate, startDate, departureDate: endDate, endDate }
+    );
 
     if (!items.length) {
       const fallbackAmount = Number(eventTotals.subtotal || 0);
       items.push({
         description: eventName || 'Event Services',
-        qty: dailySchedule.length || undefined,
-        unit: dailySchedule.length > 1 ? 'days' : undefined,
+        qty: schedule.length || undefined,
+        unit: schedule.length > 1 ? 'days' : undefined,
         unitPrice: fallbackAmount,
         amount: fallbackAmount,
-        date: startDate || new Date().toISOString().split('T')[0]
+        date: startDate || new Date().toISOString().split('T')[0],
       });
     }
 
@@ -2299,13 +2350,14 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       phone: settingsState?.organization?.phone || settingsState?.companySettings?.contact?.phone || '',
       email: settingsState?.organization?.email || settingsState?.companySettings?.contact?.email || '',
       taxId: settingsState?.organization?.taxId || settingsState?.companySettings?.taxId || '',
-      logoUrl: settingsState?.branding?.logoUrl || settingsState?.companySettings?.logoUrl || ''
+      logoUrl: settingsState?.branding?.logoUrl || settingsState?.companySettings?.logoUrl || '',
     };
 
-    const totalDays = dailySchedule.length || baseQuote?.totalDays || 1;
-    const documentNumber = docType === 'invoice'
-      ? (editingEvent?.invoiceNumber || (editingEvent?.id ? `INV-${editingEvent.id}` : `INV-${Date.now()}`))
-      : (baseQuote?.quoteNumber || editingEvent?.quoteNumber || `Q-${Date.now()}`);
+    const totalDays = schedule.length || 1;
+    const documentNumber =
+      docType === 'invoice'
+        ? editingEvent?.invoiceNumber || (editingEvent?.id ? `INV-${editingEvent.id}` : `INV-${Date.now()}`)
+        : editingEvent?.quoteNumber || `Q-${Date.now()}`;
     const title = docType === 'invoice' ? 'Invoice' : 'Quotation';
     const taxSpread = mapTaxBreakdownToPrint(eventTotals.taxBreakdown);
     const printTotals: any = {
@@ -2313,7 +2365,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       taxes: taxSpread,
       grandTotal: Number(eventTotals.total || 0),
       payments: prepaymentEnabled ? cappedPrepaymentAmount : 0,
-      balance: balanceDue
+      balance: balanceDue,
     };
     if (eventTotals.discountAmount) {
       printTotals.discount = Number(eventTotals.discountAmount || 0);
@@ -2324,13 +2376,13 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     return {
       org: orgProfile,
       guest: {
-        name: orgName || baseQuote?.clientName || 'Client',
-        company: orgName || baseQuote?.clientName || '',
+        name: orgName || 'Client',
+        company: orgName || '',
         roomNumber: undefined,
         roomType: undefined,
-        arrivalDate: startDate || baseQuote?.startDate || '',
-        departureDate: endDate || baseQuote?.endDate || '',
-        nights: totalDays
+        arrivalDate: startDate || '',
+        departureDate: endDate || '',
+        nights: totalDays,
       },
       docNumber: documentNumber,
       docDate: new Date().toISOString(),
@@ -2341,9 +2393,9 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         'Generated via Events & Conferences workflow.',
         docType === 'invoice'
           ? 'Invoice layout provided by Settings • Template Builder.'
-          : 'Quotation layout provided by Settings • Template Builder.'
+          : 'Quotation layout provided by Settings • Template Builder.',
       ],
-      currency: '₵'
+      currency: '₵',
     };
   };
 
@@ -2357,6 +2409,11 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       setOrgName(eventToLoad?.organization || '');
       setOrgContactPhone(eventToLoad?.contactPhone || eventToLoad?.contact || '');
       setOrgClientEmail(eventToLoad?.contactEmail || eventToLoad?.clientEmail || '');
+      setClientContactName(
+        eventToLoad?.contactPerson && eventToLoad.contactPerson !== eventToLoad?.organization
+          ? eventToLoad.contactPerson
+          : eventToLoad?.contactPerson || ''
+      );
       setIsResidential(Boolean(eventToLoad?.residential ?? eventToLoad?.isResidential));
       setOrgClientId(eventToLoad?.clientId || '');
       setOrgSearch(eventToLoad?.organization || '');
@@ -2418,6 +2475,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       setOrgName('');
       setOrgContactPhone('');
       setOrgClientEmail('');
+      setClientContactName('');
       setIsResidential(false);
       setOrgClientId('');
       setOrgSearch('');
@@ -3019,65 +3077,6 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   const banquetVenueCount = modernVenues.filter(venue => venue.type === 'banquet').length;
   const auditoriumVenueCount = modernVenues.filter(venue => venue.type === 'auditorium').length;
 
-  // Operational items following the superior Front Office pattern
-  const operationalItems = [
-    {
-      category: 'Event Management',
-      items: [
-        { title: 'Event Calendar', icon: '📅', description: 'Complete event scheduling and timeline', status: 'active', count: totalEvents },
-        { title: 'Active Events', icon: '🎯', description: 'Ongoing and upcoming events', status: 'active', count: activeEvents },
-        { title: 'Completed Events', icon: '✅', description: 'Successfully concluded events', status: 'active', count: completedEvents },
-        { title: 'Cancelled Events', icon: '❌', description: 'Cancelled or postponed events', status: 'warning', count: cancelledEvents },
-      ]
-    },
-    {
-      category: 'Venue Management',
-      items: [
-        { title: 'Conference Halls', icon: '🏢', description: 'Large conference and meeting spaces', status: 'active', count: conferenceVenueCount },
-        { title: 'Meeting Rooms', icon: '🪑', description: 'Small to medium meeting spaces', status: 'active', count: meetingVenueCount },
-        { title: 'Banquet Halls', icon: '🍽️', description: 'Wedding and celebration venues', status: 'active', count: banquetVenueCount },
-        { title: 'Auditoriums', icon: '🎭', description: 'Large presentation and performance spaces', status: 'active', count: auditoriumVenueCount },
-      ]
-    },
-    {
-      category: 'Services & Amenities',
-      items: [
-        { title: 'Catering Services', icon: '🍽️', description: 'Food and beverage options', status: 'active', count: 8 },
-        { title: 'Audio Visual', icon: '🎵', description: 'Sound, lighting, and projection', status: 'active', count: 6 },
-        { title: 'Decoration', icon: '🎨', description: 'Event styling and theming', status: 'active', count: 4 },
-        { title: 'Transportation', icon: '🚗', description: 'Guest and equipment transport', status: 'active', count: 2 },
-      ]
-    },
-    {
-      category: 'Operations & Setup',
-      items: [
-        { title: 'Setup in Progress', icon: '🔧', description: 'Venues being prepared', status: 'active', count: setupInProgress },
-        { title: 'Event Reports', icon: '📊', description: 'Performance and analytics', status: 'active', count: 0 },
-        { title: 'Revenue Tracking', icon: '💰', description: 'Financial performance metrics', status: 'active', count: 125000 },
-        { title: 'Attendee Management', icon: '👥', description: 'Guest registration and tracking', status: 'active', count: 1240 },
-      ]
-    }
-  ];
-  const handleQuickAction = (action: string) => {
-    trackEvent('Events.QuickAction', { action });
-    switch (action) {
-      case 'book_venue':
-        setSelectedTab('venues');
-        break;
-      case 'catering':
-        setSelectedTab('services');
-        break;
-      case 'event_reports':
-        setSelectedTab('reports');
-        break;
-      case 'setup_management':
-        setSelectedTab('operations');
-        break;
-      default:
-        break;
-    }
-  };
-
   const validateEventForm = () => {
     const emailOk = !orgClientEmail || /[^\s@]+@[^\s@]+\.[^\s@]+/.test(orgClientEmail);
     if (!eventName.trim()) { setPhase1Error('Event Name is required'); return false; }
@@ -3377,11 +3376,11 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         revenue: totals.total,
         deposit: depositAmount,
         balance: Math.max(0, totals.total - depositAmount),
-        salesManager: editingEvent?.salesManager || 'Unassigned',
+        eventCoordinator: editingEvent?.eventCoordinator || UNASSIGNED_STAFF,
         notes: '',
         specialRequirements: '',
         setupTime: '',
-        contactPerson: orgName,
+        contactPerson: clientContactName.trim() || orgName,
         contactPhone: orgContactPhone,
         contactEmail: orgClientEmail,
         linkedQuote: editingQuote?.quoteNumber || null,
@@ -3414,16 +3413,14 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         roomRate,
         defaultDayRate
       };
+      // This function only runs on an explicit form submission (the user is actively
+      // saving new schedule/pax/rate values), so the snapshot is always recomputed from
+      // whatever was just submitted — regardless of the event's status. Previously this
+      // froze the snapshot for any confirmed/invoiced event unless the save also
+      // re-targeted status to 'quote', so a coordinator adding days or pax to an already-
+      // confirmed event silently kept the old total (and any invoice generated from it).
       const derivedBudgetSnapshot = normalizeBudgetSnapshot(calculateEventBudget(budgetInput));
-      const existingSnapshot = editingEvent?.quoteBudgetSnapshot
-        ? normalizeBudgetSnapshot(editingEvent.quoteBudgetSnapshot)
-        : null;
-      const normalizedTargetStatus = normalizeStatus(eventStatus);
-      const shouldRefreshSnapshot =
-        !existingSnapshot ||
-        !editingEvent ||
-        normalizedTargetStatus === 'quote';
-      const quoteBudgetSnapshot = shouldRefreshSnapshot ? derivedBudgetSnapshot : existingSnapshot!;
+      const quoteBudgetSnapshot = derivedBudgetSnapshot;
       const uiEvent = {
         ...baseEvent,
         quoteBudgetSnapshot,
@@ -3449,36 +3446,42 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       });
       
       // ===== ACCOUNTING INTEGRATION =====
-      // When event is confirmed, auto-capture revenue to AR and create Sales Invoice
+      // When event is confirmed, capture revenue only if no Events invoice exists yet
       if (eventStatus === 'confirmed' && totals.total > 0) {
         try {
-          const result = captureRevenue({
-            id: `EVT-${uiEvent.id}`,
-            source: 'conference',
-            customerId: orgClientId || `client_${uiEvent.id}`,
-            customerName: orgName || 'Conference Client',
-            customerEmail: orgClientEmail,
-            customerPhone: orgContactPhone,
-            reference: uiEvent.id,
-            description: `Conference Booking: ${eventName} - ${venueInfo?.name || 'Venue TBD'}`,
-            items: [
-              {
-                description: `${eventName} - Conference Package (${attendees} pax, ${durationDays} days)`,
-                quantity: 1,
-                unitPrice: totals.total,
-                taxPercent: 0, // Tax calculated separately
-              }
-            ],
-            subtotal: totals.total,
-            taxAmount: 0,
-            total: totals.total,
-            date: new Date().toISOString(),
-          });
-          
-          if (result) {
-            console.log(`[Events] ✅ Booking revenue captured - Invoice: ${result.invoiceId}`);
+          const hasEventsInvoice = eventInvoices.some((inv) => inv.eventId === uiEvent.id);
+          let result: ReturnType<typeof captureRevenue> | undefined;
+          if (!hasEventsInvoice) {
+            result = captureRevenue({
+              id: `EVT-${uiEvent.id}`,
+              source: 'conference',
+              customerId: orgClientId || `client_${uiEvent.id}`,
+              customerName: orgName || 'Conference Client',
+              customerEmail: orgClientEmail,
+              customerPhone: orgContactPhone,
+              reference: uiEvent.id,
+              description: `Conference Booking: ${eventName} - ${venueInfo?.name || 'Venue TBD'}`,
+              items: [
+                {
+                  description: `${eventName} - Conference Package (${attendees} pax, ${durationDays} days)`,
+                  quantity: 1,
+                  unitPrice: totals.subtotal,
+                  taxPercent: 0,
+                },
+              ],
+              subtotal: totals.subtotal,
+              taxAmount: totals.tax,
+              total: totals.total,
+              date: new Date().toISOString(),
+            });
+
+            if (result) {
+              console.log(`[Events] ✅ Booking revenue captured - Invoice: ${result.invoiceId}`);
+            }
+          } else {
+            console.log('[Events] Skipping confirm revenue — Events invoice already exists for', uiEvent.id);
           }
-          
+
           // If deposit was paid, also capture the payment
           if (depositAmount > 0) {
             const paymentResult = capturePayment({
@@ -3517,6 +3520,11 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setOrgName(event?.organization || '');
     setOrgContactPhone(event?.contactPhone || event?.contact || '');
     setOrgClientEmail(event?.contactEmail || event?.clientEmail || '');
+    setClientContactName(
+      event?.contactPerson && event.contactPerson !== event?.organization
+        ? event.contactPerson
+        : event?.contactPerson || ''
+    );
     setIsResidential(Boolean(event?.residential ?? event?.isResidential));
     setOrgClientId(event?.clientId || '');
     setOrgSearch(event?.organization || '');
@@ -3818,6 +3826,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         
         // Sync invoice to folio (this will automatically refresh activeFolio if folio modal is open)
         syncInvoiceToFolio(newInvoice);
+        captureEventInvoiceToAccounting(newInvoice, savedEvent);
         
         // Refresh activeFolio after state updates so totals are current
         setTimeout(() => refreshActiveFolioByEvent(savedEvent.id), 50);
@@ -4139,6 +4148,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
 
     const quoteDraft = {
       id: quoteId,
+      eventId: editingEvent?.id || editingQuote?.eventId,
       quoteNumber: editingQuote?.quoteNumber || `Q-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`,
       clientName: orgName,
       clientEmail: orgClientEmail,
@@ -4180,13 +4190,146 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   const handleGenerateQuoteFromEvent = () => {
     if (!validateEventForm()) return;
     const { quoteDraft, quoteDayDrafts } = buildQuoteFromCurrentEvent();
-    setEditingQuote(quoteDraft);
+    setEditingQuote({ ...quoteDraft, eventId: editingEvent?.id || quoteDraft.eventId });
     setQuoteDays(quoteDayDrafts);
     setQuoteTaxExempt(eventTaxExempt);
     trackEvent('Events.EventCreated', { action: 'quote_modal_opened', quoteId: quoteDraft.id, eventName });
     setIsQuoteModalOpen(true);
     setIsEventModalOpen(false);
     setIsAdjustMode(false);
+  };
+
+  const openBlankQuoteModal = () => {
+    const today = new Date().toISOString().split('T')[0];
+    const quoteId = `quote-${Date.now()}`;
+    const quoteNumber = `Q-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`;
+    setEditingQuote({
+      id: quoteId,
+      quoteNumber,
+      clientName: '',
+      clientEmail: '',
+      clientPhone: '',
+      eventName: '',
+      eventType: 'conference',
+      startDate: today,
+      endDate: today,
+      totalDays: 1,
+      validity: '14 days',
+      status: 'draft',
+      createdAt: new Date().toISOString(),
+      depositRequired: 50,
+      paymentTerms: '50% deposit required to confirm booking',
+      cancellationPolicy: 'Deposit non-refundable within 14 days of event',
+      guaranteePolicy: 'Final numbers guaranteed 48 hours before event',
+      specialRequirements: '',
+      setupTime: '',
+      contactPerson: '',
+    });
+    setQuoteDays([
+      {
+        id: `quote-day-${Date.now()}`,
+        label: 'Day 1',
+        date: today,
+        services: [],
+      },
+    ]);
+    setQuoteTaxExempt(false);
+    setIsQuoteModalOpen(true);
+    trackEvent('Events.EventCreated', { action: 'blank_quote_modal_opened', quoteId });
+  };
+
+  const handleSaveQuoteDraft = () => {
+    const hasServices = quoteDays.some((day) =>
+      day.services.some((service) => Number(service.qty || 0) > 0)
+    );
+    if (!hasServices) {
+      alert('Add at least one service line before saving.');
+      return;
+    }
+    if (!editingQuote?.clientName?.trim() || !editingQuote?.eventName?.trim()) {
+      alert('Enter client name and event name before saving.');
+      return;
+    }
+
+    const exportQuote = buildQuoteForExport(editingQuote);
+    if (!exportQuote) {
+      alert('Unable to build quote from current data.');
+      return;
+    }
+    const totals = calculateQuoteTotals(exportQuote);
+    const quoteNumber = exportQuote.quoteNumber || `Q-${Date.now()}`;
+    const linkedEventId = exportQuote.eventId || editingEvent?.id;
+
+    if (linkedEventId) {
+      setCustomEvents((prev) =>
+        prev.map((ev) =>
+          ev.id === linkedEventId
+            ? {
+                ...ev,
+                linkedQuote: quoteNumber,
+                quoteNumber,
+                revenue: totals.grandTotal,
+                budgetTotal: totals.grandTotal,
+                status:
+                  normalizeStatus(ev.status) === 'invoiced' ? ev.status : ('quote' as const),
+              }
+            : ev
+        )
+      );
+    } else {
+      const newEventId = `EVT-${Date.now().toString().slice(-6)}`;
+      setCustomEvents((prev) => [
+        {
+          id: newEventId,
+          eventName: exportQuote.eventName || 'Untitled Event',
+          organization: exportQuote.clientName || '',
+          clientName: exportQuote.clientName || '',
+          contactEmail: exportQuote.clientEmail || '',
+          contactPhone: exportQuote.clientPhone || '',
+          arrivalDate: exportQuote.startDate,
+          departureDate: exportQuote.endDate,
+          startDate: exportQuote.startDate,
+          endDate: exportQuote.endDate,
+          venue: '',
+          venueName: exportQuote.venueName || '',
+          pax: exportQuote.pax || 0,
+          duration: exportQuote.totalDays || 1,
+          status: 'quote',
+          linkedQuote: quoteNumber,
+          quoteNumber,
+          revenue: totals.grandTotal,
+          budgetTotal: totals.grandTotal,
+          residential: exportQuote.eventType === 'residential-conference',
+        },
+        ...prev,
+      ]);
+      setEditingQuote((prev: any) => ({ ...(prev || {}), eventId: newEventId }));
+    }
+
+    setEditingQuote({ ...exportQuote, quoteNumber, status: 'draft' });
+    trackEvent('Events.EventCreated', { action: 'quote_draft_saved', quoteId: exportQuote.id, quoteNumber });
+    alert(`Quote ${quoteNumber} saved.`);
+    setIsQuoteModalOpen(false);
+  };
+
+  const openCreateInvoicePicker = () => {
+    const eligible = allEvents.filter((ev) => !eventInvoices.some((inv) => inv.eventId === ev.id));
+    if (!eligible.length) {
+      alert('All events already have invoices. Edit an existing invoice instead.');
+      return;
+    }
+    setInvoiceCreateEventId(eligible[0]?.id || '');
+    setIsInvoiceEventPickerOpen(true);
+  };
+
+  const confirmCreateInvoiceForEvent = () => {
+    const event = allEvents.find((ev) => ev.id === invoiceCreateEventId);
+    if (!event) {
+      alert('Select an event to invoice.');
+      return;
+    }
+    setIsInvoiceEventPickerOpen(false);
+    openInvoiceModal('create', undefined, event);
   };
 
   const handleOpenContractFromEvent = () => {
@@ -4349,308 +4492,184 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     trackEvent('Events.EventCreated', { action: 'event_xls_exported', eventName, orgName });
   };
 
-  const handlePrintQuotePdf = () => {
-    const templateKey = selectedQuoteTemplate || printingDefaults?.proforma || quoteTemplateOptions[0]?.key || 'conference-proforma-grid';
-    const data = buildEventPrintData('proforma');
-    if (!data) {
-      console.warn('Unable to generate quote print data for current event.');
-      return;
-    }
-    openPrintPreview('proforma', templateKey, data as any);
-    trackEvent('Events.EventCreated', { action: 'quote_pdf_generated', templateKey, eventName });
-    
-    // ===== CAPTURE PROFORMA TO ACCOUNTING =====
-    try {
-      const totals = computeQuoteTotals();
-      const eventId = editingEvent?.id || `EVT-${Date.now()}`;
-      const proformaResult = captureProforma({
-        id: `PRO-${eventId}-${Date.now()}`,
-        source: 'conference',
-        customerId: orgClientId || `client_${eventId}`,
-        customerName: orgName || 'Conference Client',
-        customerEmail: orgClientEmail || undefined,
-        customerPhone: orgContactPhone || undefined,
-        reference: eventId,
-        description: `Proforma for ${eventName || 'Conference Event'}`,
-        items: quoteDays.flatMap(day => day.services.map(svc => ({
-          description: `${day.label} - ${svc.name}`,
-          quantity: svc.qty,
-          unitPrice: svc.unitPrice,
-          taxPercent: 0,
-        }))).length > 0 ? quoteDays.flatMap(day => day.services.map(svc => ({
-          description: `${day.label} - ${svc.name}`,
-          quantity: svc.qty,
-          unitPrice: svc.unitPrice,
-          taxPercent: 0,
-        }))) : [{
-          description: eventName || 'Conference Services',
-          quantity: 1,
-          unitPrice: totals.subtotal,
-          taxPercent: totals.tax > 0 ? (totals.tax / totals.subtotal) * 100 : 0,
-        }],
-        subtotal: totals.subtotal,
-        taxAmount: totals.tax,
-        total: totals.total,
-        validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        eventId: eventId,
-        pax: expectedPax || 0,
-        checkIn: startDate || undefined,
-        checkOut: endDate || undefined,
-        venue: modernVenues.find(v => v.id === venueKey)?.name || undefined,
-        staffName: 'Events Team',
-        staffRole: 'Events Coordinator',
-      });
-      
-      if (proformaResult) {
-        console.log(`[Events] ✅ Proforma captured to AR: ${proformaResult.proformaId}`);
-      }
-    } catch (error) {
-      console.error('[Events] ❌ Failed to capture proforma:', error);
-    }
-  };
-
-  // Download invoice PDF for a specific invoice
-  const handleDownloadInvoicePdf = (invoice: EventInvoice) => {
-    const event = allEvents.find(ev => ev.id === invoice.eventId);
-    if (!event) {
-      alert('Event not found for this invoice.');
-      return;
-    }
-
+  const buildOrgPrintProfile = () => {
     const settingsState = useSettingsStore.getState() as any;
-    const templateKey = selectedInvoiceTemplate || printingDefaults?.invoice || invoiceTemplateOptions[0]?.key || 'corporate-invoice';
-    
-    // Build invoice print data from invoice and event
-    const orgProfile = {
+    return {
       name: settingsState?.organization?.name || settingsState?.companySettings?.tradingName || 'Hotel',
       address: settingsState?.organization?.address || settingsState?.companySettings?.address?.line1 || '',
       phone: settingsState?.organization?.phone || settingsState?.companySettings?.contact?.phone || '',
       email: settingsState?.organization?.email || settingsState?.companySettings?.contact?.email || '',
       taxId: settingsState?.organization?.taxId || settingsState?.companySettings?.taxId || '',
-      logoUrl: settingsState?.branding?.logoUrl || settingsState?.companySettings?.logoUrl || ''
+      logoUrl: settingsState?.branding?.logoUrl || settingsState?.companySettings?.logoUrl || '',
     };
-
-    // Build items from event's daily schedule if available
-    const items: Array<{ description: string; qty?: number; unit?: string; unitPrice?: number; amount: number; date?: string }> = [];
-    const schedule = (event as any).dailySchedule || [];
-    
-    if (schedule.length > 0) {
-      schedule.forEach((day: any, idx: number) => {
-        const dayLabel = `Day ${idx + 1}`;
-        const date = day.date || event.arrivalDate || event.startDate || '';
-        
-        // Add accommodation if residential
-        if (event.residential && day.rooms && day.rooms > 0) {
-          const roomRate = (event as any).roomRate || 0;
-          items.push({
-            description: `${dayLabel} • Accommodation`,
-            qty: day.rooms,
-            unit: 'rooms',
-            unitPrice: roomRate,
-            amount: day.rooms * roomRate,
-            date
-          });
-        }
-        
-        // Add conference
-        if (day.conferencePax && day.conferencePax > 0) {
-          const confRate = (event as any).conferenceRate || 0;
-          items.push({
-            description: `${dayLabel} • Conference`,
-            qty: day.conferencePax,
-            unit: 'pax',
-            unitPrice: confRate,
-            amount: day.conferencePax * confRate,
-            date
-          });
-        }
-        
-        // Add lunch
-        if (day.lunchPax && day.lunchPax > 0) {
-          const lunchRate = (event as any).lunchRate || 0;
-          items.push({
-            description: `${dayLabel} • Lunch`,
-            qty: day.lunchPax,
-            unit: 'pax',
-            unitPrice: lunchRate,
-            amount: day.lunchPax * lunchRate,
-            date
-          });
-        }
-        
-        // Add dinner
-        if (day.dinnerPax && day.dinnerPax > 0) {
-          const dinnerRate = (event as any).dinnerRate || 0;
-          items.push({
-            description: `${dayLabel} • Dinner`,
-            qty: day.dinnerPax,
-            unit: 'pax',
-            unitPrice: dinnerRate,
-            amount: day.dinnerPax * dinnerRate,
-            date
-          });
-        }
-        
-        // Add extra lines
-        if (day.extraLines && Array.isArray(day.extraLines)) {
-          day.extraLines.forEach((extra: any) => {
-            if (extra.qty && extra.unitPrice) {
-              items.push({
-                description: `${dayLabel} • ${extra.name || 'Extra Service'}`,
-                qty: extra.qty,
-                unit: 'pcs',
-                unitPrice: extra.unitPrice,
-                amount: extra.qty * extra.unitPrice,
-                date
-              });
-            }
-          });
-        }
-      });
-    }
-    
-    // Fallback if no items
-    if (items.length === 0) {
-      items.push({
-        description: invoice.eventName || 'Event Services',
-        amount: invoice.subtotal || invoice.total || 0
-      });
-    }
-
-    const printTotals: any = {
-      subTotal: invoice.subtotal || 0,
-      taxes: invoice.tax > 0 ? [{ name: 'Tax', amount: invoice.tax }] : [],
-      grandTotal: invoice.total || 0,
-      balance: invoice.balance || invoice.total || 0
-    };
-
-    const data = {
-      org: orgProfile,
-      guest: {
-        name: invoice.clientName || event.organization || 'Client',
-        company: invoice.clientName || event.organization || '',
-        roomNumber: undefined,
-        roomType: undefined,
-        arrivalDate: event.arrivalDate || event.startDate || '',
-        departureDate: event.departureDate || event.endDate || '',
-        nights: event.duration || 1
-      },
-      docNumber: invoice.id,
-      docDate: invoice.issueDate || new Date().toISOString(),
-      title: 'Invoice',
-      items,
-      totals: printTotals,
-      footerNotes: [
-        'Generated via Events & Conferences workflow.',
-        'Invoice layout provided by Settings • Template Builder.'
-      ],
-      currency: '₵'
-    };
-
-    openPrintPreview('invoice', templateKey, data as any);
-    trackEvent('Events.EventCreated', { action: 'invoice_pdf_downloaded', templateKey, invoiceId: invoice.id, eventId: invoice.eventId });
   };
 
-  const handleDownloadQuotePdf = (eventData: any) => {
-    if (!eventData) {
-      alert('Quote data not available for this event.');
-      return;
-    }
-
-    const settingsState = useSettingsStore.getState() as any;
-    const orgProfile = {
-      name: settingsState?.organization?.name || settingsState?.companySettings?.tradingName || 'Hotel',
-      address: settingsState?.organization?.address || settingsState?.companySettings?.address?.line1 || '',
-      phone: settingsState?.organization?.phone || settingsState?.companySettings?.contact?.phone || '',
-      email: settingsState?.organization?.email || settingsState?.companySettings?.contact?.email || '',
-      logoUrl: settingsState?.branding?.logoUrl || settingsState?.companySettings?.logoUrl || ''
-    };
-
+  const buildQuotePrintDataFromEvent = (eventData: any) => {
     const budget = getQuoteBudgetSnapshot(eventData);
     const budgetRows = [
       { label: 'Accommodation', amount: budget.accommodation },
       { label: 'Conference', amount: budget.conference },
       { label: 'Lunch', amount: budget.lunch },
       { label: 'Dinner', amount: budget.dinner },
-      { label: 'Extras', amount: budget.extras }
-    ].filter(row => row.amount > 0);
+      { label: 'Extras', amount: budget.extras },
+    ].filter((row) => row.amount > 0);
 
-    const checkIn = eventData.arrivalDate || eventData.startDate || '';
-    const checkOut = eventData.departureDate || eventData.endDate || '';
-    const pax = Number(eventData.expectedPax || eventData.pax || eventData.attendees || 0);
-    const totalAmount = budget.accommodation + budget.conference + budget.lunch + budget.dinner + budget.extras;
+    const items =
+      budgetRows.length > 0
+        ? budgetRows.map((row) => ({
+            description: row.label,
+            amount: row.amount,
+          }))
+        : [
+            {
+              description: eventData.eventName || 'Event Services',
+              amount: budget.total || Number(eventData.revenue || eventData.budgetTotal || 0),
+            },
+          ];
 
-    const html = `
-      <html>
-        <head>
-          <meta charset="UTF-8" />
-          <title>Quote ${eventData.quoteNumber || formatEventId(eventData.id)}</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 40px; color: #111; }
-            .header { display: flex; justify-content: space-between; align-items: center; }
-            .org-info h1 { margin: 0; font-size: 24px; }
-            .section { margin-top: 24px; }
-            .section h2 { font-size: 16px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; color: #555; }
-            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
-            th { background: #f5f5f5; }
-            .totals { font-size: 18px; font-weight: bold; margin-top: 16px; }
-            .footer { margin-top: 40px; font-size: 12px; color: #666; }
-            .logo { max-height: 60px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="org-info">
-              <h1>${orgProfile.name}</h1>
-              <div>${orgProfile.address || ''}</div>
-              <div>${orgProfile.phone || ''}</div>
-              <div>${orgProfile.email || ''}</div>
-            </div>
-            ${orgProfile.logoUrl ? `<img src="${orgProfile.logoUrl}" alt="Logo" class="logo" />` : ''}
-          </div>
-          <div class="section">
-            <h2>Quote Details</h2>
-            <table>
-              <tr><th>Quote ID</th><td>${eventData.quoteNumber || formatEventId(eventData.id)}</td></tr>
-              <tr><th>Client Name</th><td>${eventData.organization || eventData.clientName || 'Unknown Client'}</td></tr>
-              <tr><th>Event Name</th><td>${eventData.eventName || 'Unnamed Event'}</td></tr>
-              <tr><th>Check-In</th><td>${checkIn ? formatDateDisplay(checkIn) : '—'}</td></tr>
-              <tr><th>Check-Out</th><td>${checkOut ? formatDateDisplay(checkOut) : '—'}</td></tr>
-              <tr><th>PAX</th><td>${pax || '—'}</td></tr>
-            </table>
-          </div>
-          <div class="section">
-            <h2>Estimated Charges</h2>
-            <table>
-              <tr><th>Description</th><th>Amount (₵)</th></tr>
-              ${budgetRows.map(row => `<tr><td>${row.label}</td><td>${formatCurrency(row.amount)}</td></tr>`).join('')}
-              ${budgetRows.length === 0 ? '<tr><td colspan="2">No budget items recorded.</td></tr>' : ''}
-            </table>
-            <div class="totals">Total Estimate: ${formatCurrency(totalAmount)}</div>
-          </div>
-          <div class="footer">
-            Generated on ${new Date().toLocaleString()} • Events & Conferences Proforma
-          </div>
-        </body>
-      </html>
-    `;
+    const totalAmount =
+      budget.total ||
+      budgetRows.reduce((sum, row) => sum + row.amount, 0) ||
+      Number(eventData.revenue || eventData.budgetTotal || 0);
 
-    const quoteWindow = window.open('', '_blank', 'width=900,height=1000');
-    if (!quoteWindow) {
-      alert('Unable to open quote PDF. Please allow pop-ups and try again.');
+    return {
+      org: buildOrgPrintProfile(),
+      guest: {
+        name: eventData.organization || eventData.clientName || 'Client',
+        company: eventData.organization || eventData.clientName || '',
+        arrivalDate: eventData.arrivalDate || eventData.startDate || '',
+        departureDate: eventData.departureDate || eventData.endDate || '',
+        nights: eventData.duration || 1,
+      },
+      docNumber: eventData.quoteNumber || formatEventId(eventData.id),
+      docDate: new Date().toISOString(),
+      title: 'Quotation',
+      items,
+      totals: {
+        subTotal: totalAmount,
+        grandTotal: totalAmount,
+        balance: totalAmount,
+      },
+      footerNotes: [
+        'Generated via Events & Conferences workflow.',
+        'Quotation layout provided by Settings • Template Builder.',
+      ],
+      currency: '₵',
+    };
+  };
+
+  const buildInvoicePrintData = (invoice: EventInvoice, event: any) => {
+    const schedule = (event as any).dailySchedule || [];
+    const items = buildPrintLineItemsFromSchedule(
+      schedule,
+      {
+        residential: event.residential,
+        roomRate: (event as any).roomRate || 0,
+        conferenceRate: (event as any).conferenceRate || 0,
+        lunchRate: (event as any).lunchRate || 0,
+        dinnerRate: (event as any).dinnerRate || 0,
+      },
+      {
+        arrivalDate: event.arrivalDate,
+        startDate: event.startDate,
+        departureDate: event.departureDate,
+        endDate: event.endDate,
+      }
+    );
+
+    if (items.length === 0) {
+      items.push({
+        description: invoice.eventName || 'Event Services',
+        amount: invoice.subtotal || invoice.total || 0,
+      });
+    }
+
+    const payments = Math.max(0, (invoice.total || 0) - (invoice.balance || 0));
+
+    return {
+      org: buildOrgPrintProfile(),
+      guest: {
+        name: invoice.clientName || event.organization || 'Client',
+        company: invoice.clientName || event.organization || '',
+        arrivalDate: event.arrivalDate || event.startDate || '',
+        departureDate: event.departureDate || event.endDate || '',
+        nights: event.duration || 1,
+      },
+      docNumber: invoice.id,
+      docDate: invoice.issueDate || new Date().toISOString(),
+      title: 'Invoice',
+      items,
+      totals: {
+        subTotal: invoice.subtotal || 0,
+        taxes: invoice.tax > 0 ? { vat: invoice.tax } : undefined,
+        grandTotal: invoice.total || 0,
+        payments,
+        balance: invoice.balance ?? invoice.total ?? 0,
+      },
+      footerNotes: [
+        'Generated via Events & Conferences workflow.',
+        'Invoice layout provided by Settings • Template Builder.',
+      ],
+      currency: '₵',
+    };
+  };
+
+  const handlePrintQuotePdf = (templateKeyOverride?: string) => {
+    const templateKey =
+      templateKeyOverride ||
+      selectedQuoteTemplate ||
+      printingDefaults?.proforma ||
+      quoteTemplateOptions[0]?.key ||
+      'conference-proforma-grid';
+    const data = buildEventPrintData('proforma');
+    if (!data) {
+      alert('Unable to generate proforma data for this event.');
+      return;
+    }
+    if (!openPrintPreview('proforma', templateKey, data as any)) return;
+    trackEvent('Events.EventCreated', { action: 'quote_pdf_generated', templateKey, eventName });
+  };
+
+  // Print invoice PDF for a specific invoice
+  const handleDownloadInvoicePdf = (invoice: EventInvoice, templateKeyOverride?: string) => {
+    const event = allEvents.find((ev) => ev.id === invoice.eventId);
+    if (!event) {
+      alert('Event not found for this invoice.');
       return;
     }
 
-    quoteWindow.document.write(html);
-    quoteWindow.document.close();
-    quoteWindow.focus();
-    quoteWindow.print();
+    const templateKey =
+      templateKeyOverride ||
+      selectedInvoiceTemplate ||
+      printingDefaults?.invoice ||
+      invoiceTemplateOptions[0]?.key ||
+      'corporate-invoice';
+
+    const data = buildInvoicePrintData(invoice, event);
+    if (!openPrintPreview('invoice', templateKey, data as any)) return;
+    trackEvent('Events.EventCreated', { action: 'invoice_pdf_downloaded', templateKey, invoiceId: invoice.id, eventId: invoice.eventId });
+  };
+
+  const handleDownloadQuotePdf = (eventData: any, templateKeyOverride?: string) => {
+    if (!eventData) {
+      alert('Quote data not available for this event.');
+      return;
+    }
+
+    const templateKey =
+      templateKeyOverride ||
+      selectedQuoteTemplate ||
+      printingDefaults?.proforma ||
+      quoteTemplateOptions[0]?.key ||
+      'conference-proforma-grid';
+
+    const data = buildQuotePrintDataFromEvent(eventData);
+    if (!openPrintPreview('proforma', templateKey, data as any)) return;
 
     trackEvent('Events.EventCreated', {
       action: 'quote_pdf_downloaded',
       eventId: eventData.id,
-      quoteNumber: eventData.quoteNumber || formatEventId(eventData.id)
+      quoteNumber: eventData.quoteNumber || formatEventId(eventData.id),
     });
   };
 
@@ -4720,16 +4739,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       </html>
     `;
 
-    const receiptWindow = window.open('', '_blank', 'width=900,height=1000');
-    if (!receiptWindow) {
-      alert('Unable to open receipt PDF. Please allow pop-ups and try again.');
-      return;
-    }
-    receiptWindow.document.write(html);
-    receiptWindow.document.close();
-    receiptWindow.focus();
-
-    receiptWindow.print();
+    openHtmlPrintWindow(html);
     trackEvent('Events.EventCreated', { action: 'receipt_pdf_downloaded', receiptId: receipt.id, eventId: receipt.eventId, method: receipt.method });
   };
 
@@ -4974,22 +4984,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     }
     const totals = calculateQuoteTotals(exportQuote);
     const html = renderQuoteHtml(exportQuote, { subtotal: totals.subtotal, tax: totals.totalTax, total: totals.grandTotal });
-    if (typeof window === 'undefined') return;
-    const win = window.open('', '_blank');
-    if (!win) {
-      alert('Please allow pop-ups to generate the quote PDF.');
-      return;
-    }
-    win.document.write(html);
-    win.document.close();
-    win.focus();
-    setTimeout(() => {
-      try {
-        win.print();
-      } catch (err) {
-        console.error('Quote print failed', err);
-      }
-    }, 300);
+    if (!openHtmlPrintWindow(html)) return;
     trackEvent('Events.QuoteGenerated', { quoteId: exportQuote.id });
   };
 
@@ -5404,41 +5399,26 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   };
 
   const getContactList = (event: any) => {
-    if (event?.customContacts?.length) {
-      return event.customContacts.map((contact: any) => ({
-        name: contact.name || '',
-        role: contact.role || '',
-        phone: contact.phone || '',
-        email: contact.email || ''
-      }));
+    const contacts = [
+      {
+        name: event?.contactPerson || event?.organization || '',
+        role: 'Client Contact',
+        phone: event?.contactPhone || '',
+        email: event?.contactEmail || '',
+      },
+    ];
+
+    const coordinator = getEventCoordinator(event);
+    if (coordinator !== UNASSIGNED_STAFF) {
+      contacts.push({
+        name: coordinator,
+        role: 'Event Coordinator',
+        phone: '',
+        email: '',
+      });
     }
 
-    return [
-      {
-        name: event.contactPerson,
-        role: 'Event Coordinator',
-        phone: event.contactPhone,
-        email: event.contactEmail
-      },
-      {
-        name: event.salesManager,
-        role: 'Sales Manager',
-        phone: '+233 20 123 4567',
-        email: 'sales@ghana-hotel.com'
-      },
-      {
-        name: 'Operations Manager',
-        role: 'Venue Operations',
-        phone: '+233 20 123 4568',
-        email: 'operations@ghana-hotel.com'
-      },
-      {
-        name: 'Catering Manager',
-        role: 'Food & Beverage',
-        phone: '+233 20 123 4569',
-        email: 'catering@ghana-hotel.com'
-      }
-    ];
+    return contacts;
   };
   useEffect(() => {
     if (isBEOModalOpen && selectedEventForBEO) {
@@ -5451,7 +5431,6 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       const timeline = getEventTimeline(selectedEventForBEO);
       const schedule = getServiceSchedule(selectedEventForBEO);
       const instructions = getSpecialInstructions(selectedEventForBEO);
-      const contacts = getContactList(selectedEventForBEO);
 
       setBeoForm({
         eventInfo: {
@@ -5465,7 +5444,11 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
           duration: String(selectedEventForBEO.duration ?? ''),
           venueName: selectedEventForBEO.venueName || '',
           pax: String(selectedEventForBEO.pax ?? ''),
-          notes: selectedEventForBEO.notes || ''
+          notes: selectedEventForBEO.notes || '',
+          eventCoordinator:
+            getEventCoordinator(selectedEventForBEO) === UNASSIGNED_STAFF
+              ? ''
+              : getEventCoordinator(selectedEventForBEO),
         },
         room: {
           layout: roomSetup.layout || '',
@@ -5512,7 +5495,6 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         timeline: timeline.map((item: any) => ({ ...item })),
         departmentChecklist: schedule.map((item: any) => ({ ...item })),
         instructions: instructions.length ? [...instructions] : [''],
-        contacts: contacts.map((contact: any) => ({ ...contact }))
       });
     } else if (!isBEOModalOpen) {
       setBeoForm(null);
@@ -5587,27 +5569,6 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     });
   };
 
-  const updateBeoContact = (index: number, field: string, value: any) => {
-    setBeoForm((prev: any) => {
-      if (!prev) return prev;
-      const contacts = prev.contacts.map((contact: any, idx: number) => (idx === index ? { ...contact, [field]: value } : contact));
-      return { ...prev, contacts };
-    });
-  };
-
-  const handleAddBeoContact = () => {
-    setBeoForm((prev: any) => (
-      prev ? { ...prev, contacts: [...prev.contacts, { name: '', role: '', phone: '', email: '' }] } : prev
-    ));
-  };
-
-  const handleRemoveBeoContact = (index: number) => {
-    setBeoForm((prev: any) => {
-      if (!prev) return prev;
-      const next = prev.contacts.filter((_item: any, idx: number) => idx !== index);
-      return { ...prev, contacts: next.length ? next : [{ name: '', role: '', phone: '', email: '' }] };
-    });
-  };
   const buildEventFromBeoForm = () => {
     if (!selectedEventForBEO || !beoForm) return selectedEventForBEO;
 
@@ -5682,18 +5643,21 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       notes: item.notes || ''
     }));
 
-    const customContacts = (beoForm.contacts || []).map((contact: any) => ({
-      name: contact.name || '',
-      role: contact.role || '',
-      phone: contact.phone || '',
-      email: contact.email || ''
-    }));
     const customInstructions = (beoForm.instructions || []).filter((instruction: string) => instruction.trim().length > 0);
     const instructionSummary = customInstructions.join('\n');
     const combinedSpecialRequirements = [
       beoForm.room.setupNotes,
       instructionSummary
     ].filter(Boolean).join('\n').trim();
+
+    const eventCoordinator = beoForm.eventInfo.eventCoordinator?.trim() || UNASSIGNED_STAFF;
+    const customContacts = getContactList({
+      contactPerson: beoForm.eventInfo.contactPerson,
+      contactPhone: beoForm.eventInfo.contactPhone,
+      contactEmail: beoForm.eventInfo.contactEmail,
+      organization: beoForm.eventInfo.organization,
+      eventCoordinator,
+    });
 
     return {
       ...selectedEventForBEO,
@@ -5709,6 +5673,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       venue: selectedEventForBEO.venue || selectedEventForBEO.venueKey || '',
       venueKey: selectedEventForBEO.venueKey || selectedEventForBEO.venue || '',
       pax: Number(beoForm.eventInfo.pax || selectedEventForBEO.pax || 0),
+      eventCoordinator,
       specialRequirements: combinedSpecialRequirements || selectedEventForBEO.specialRequirements || '',
       notes: beoForm.eventInfo.notes || beoForm.technical.notes || selectedEventForBEO.notes,
       customRoomSetup,
@@ -5727,29 +5692,47 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     if (!selectedEventForBEO || !beoForm) return;
     const updatedEvent = buildEventFromBeoForm();
     if (!updatedEvent) return;
-    setSelectedEventForBEO(updatedEvent);
-    setCustomEvents((prev) => prev.map((ev) => (ev.id === updatedEvent.id ? { ...ev, ...updatedEvent } : ev)));
 
-    if (updatedEvent.linkedBooking) {
-      const instructionsSummary = (updatedEvent.customInstructions && updatedEvent.customInstructions.length)
-        ? updatedEvent.customInstructions.join('\n')
-        : updatedEvent.specialRequirements || '';
+    const savedEvent = {
+      ...updatedEvent,
+      linkedBEO: updatedEvent.linkedBEO || `BEO-${updatedEvent.id}`,
+    };
 
-      enhancedFrontOfficeStore.updateEventBooking(updatedEvent.linkedBooking, {
-        eventName: updatedEvent.eventName,
-        startDate: updatedEvent.arrivalDate,
-        endDate: updatedEvent.departureDate,
-        attendees: updatedEvent.pax,
-        corporateClientName: updatedEvent.organization,
-        contactPhone: updatedEvent.contactPhone,
-        contactEmail: updatedEvent.contactEmail,
+    setCustomEvents((prev) => {
+      const idx = prev.findIndex((ev) => ev.id === savedEvent.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...next[idx], ...savedEvent };
+        return next;
+      }
+      const fromSeed = [...comprehensiveEvents, ...additionalEvents].find((ev) => ev.id === savedEvent.id);
+      const base = fromSeed || savedEvent;
+      return [...prev, { ...base, ...savedEvent }];
+    });
+
+    setSelectedEventForBEO(savedEvent);
+
+    if (savedEvent.linkedBooking) {
+      const instructionsSummary = (savedEvent.customInstructions && savedEvent.customInstructions.length)
+        ? savedEvent.customInstructions.join('\n')
+        : savedEvent.specialRequirements || '';
+
+      enhancedFrontOfficeStore.updateEventBooking(savedEvent.linkedBooking, {
+        eventName: savedEvent.eventName,
+        startDate: savedEvent.arrivalDate,
+        endDate: savedEvent.departureDate,
+        attendees: savedEvent.pax,
+        corporateClientName: savedEvent.organization,
+        contactPhone: savedEvent.contactPhone,
+        contactEmail: savedEvent.contactEmail,
         specialRequirements: instructionsSummary
       });
     }
 
-    generateBEO(updatedEvent);
-    generateFunctionSheet(updatedEvent);
-    trackEvent('Events.EventCreated', { action: 'beo_saved', eventId: updatedEvent.id });
+    generateBEO(savedEvent);
+    generateFunctionSheet(savedEvent);
+    trackEvent('Events.EventCreated', { action: 'beo_saved', eventId: savedEvent.id });
+    setIsBEOModalOpen(false);
   };
 
   // Helper functions for export operations
@@ -5797,50 +5780,89 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     }
   };
   // Function Schedule Export Functions
+  const buildFunctionSchedulePrintHtml = (events: any[], scheduleTitle: string) => {
+    const confirmedCount = events.filter(
+      (e) =>
+        normalizeStatus(e.status) === 'confirmed' ||
+        e.eventStatus === 'confirmed' ||
+        e.eventStatus === 'in-progress'
+    ).length;
+    const quoteCount = events.filter((e) => normalizeStatus(e.status) === 'quote').length;
+    const totalPax = events.reduce((sum, e) => sum + (e.pax || 0), 0);
+
+    const rows = events
+      .map(
+        (event, index) => `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${event.organization || event.clientName || '—'}</td>
+            <td>${event.eventName || '—'}</td>
+            <td>${event.venueName || event.venue || 'Unassigned'}</td>
+            <td>${event.arrivalDate || event.startDate || '—'} – ${event.departureDate || event.endDate || '—'}</td>
+            <td>${event.duration || 0} days</td>
+            <td>${event.pax || 0}</td>
+            <td>${formatScheduleStatus(event.eventStatus || event.status)}</td>
+            <td>${getFoodBeverageServices(event)}</td>
+            <td>${getHousekeepingNotes(event)}</td>
+          </tr>`
+      )
+      .join('');
+
+    return `<!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Function Schedule - ${scheduleTitle}</title>
+          <style>
+            body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+            h1 { font-size: 24px; margin-bottom: 4px; }
+            .meta { color: #6b7280; margin-bottom: 20px; }
+            .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 24px; }
+            .summary-item { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; text-align: center; }
+            .summary-number { font-size: 22px; font-weight: 700; color: #2563eb; }
+            table { width: 100%; border-collapse: collapse; }
+            th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 12px; }
+            th { background: #f9fafb; }
+          </style>
+        </head>
+        <body>
+          <h1>Provisional Function Schedule</h1>
+          <p class="meta">${scheduleTitle} • Generated ${new Date().toLocaleDateString()}</p>
+          <div class="summary">
+            <div class="summary-item"><div class="summary-number">${events.length}</div><div>Total Functions</div></div>
+            <div class="summary-item"><div class="summary-number">${confirmedCount}</div><div>Confirmed</div></div>
+            <div class="summary-item"><div class="summary-number">${quoteCount}</div><div>Quote</div></div>
+            <div class="summary-item"><div class="summary-number">${totalPax}</div><div>Total Attendees</div></div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>#</th><th>Organization</th><th>Event</th><th>Venue</th><th>Dates</th>
+                <th>Duration</th><th>Attendees</th><th>Status</th><th>Food &amp; Beverage</th><th>Housekeeping</th>
+              </tr>
+            </thead>
+            <tbody>${rows || '<tr><td colspan="10">No events in this schedule.</td></tr>'}</tbody>
+          </table>
+        </body>
+      </html>`;
+  };
+
+  const printFunctionScheduleFromEvents = (
+    events: any[],
+    scheduleTitle: string,
+    trackAction: string
+  ) => {
+    trackEvent('Events.EventCreated', { action: trackAction, eventCount: events.length });
+    const html = buildFunctionSchedulePrintHtml(events, scheduleTitle);
+    if (!openHtmlPrintWindow(html)) return;
+  };
+
   const exportFunctionSchedulePDF = () => {
     try {
-      // Track the export action
-      trackEvent('Events.EventCreated', { action: 'function_schedule_pdf_exported', eventCount: allEvents.length });
-      
-      // Create PDF content
-      const pdfContent = `
-        Provisional Function Schedule - August 2025
-        Generated on: ${new Date().toLocaleDateString()}
-        
-        Total Functions: ${allEvents.length}
-        Confirmed: ${allEvents.filter(e => normalizeStatus(e.status) === 'confirmed').length}
-        Quote: ${allEvents.filter(e => normalizeStatus(e.status) === 'quote').length}
-        Total Attendees: ${allEvents.reduce((sum, e) => sum + e.pax, 0)}
-        
-        ${allEvents.map((event, index) => `
-          ${index + 1}. ${event.eventName}
-          Organization: ${event.organization}
-          Event Type: ${event.eventType}
-          Programme Type: ${getProgrammeType(event)}
-          Venue: ${event.venueName}
-          Dates: ${event.arrivalDate} - ${event.departureDate}
-          Duration: ${event.duration} days
-          Attendees: ${event.pax}
-          Status: ${event.status}
-          Food & Beverage: ${getFoodBeverageServices(event)}
-          Housekeeping/Front Desk: ${getHousekeepingNotes(event)}
-        `).join('\n\n')}
-      `;
-      
-      // Create blob and download
-      const blob = new Blob([pdfContent], { type: 'text/plain' });
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `function-schedule-${new Date().toISOString().split('T')[0]}.txt`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      window.URL.revokeObjectURL(url);
-      
-      console.log('Function Schedule PDF exported successfully');
+      printFunctionScheduleFromEvents(allEvents, 'All Events', 'function_schedule_pdf_exported');
     } catch (error) {
-      console.error('Error exporting PDF:', error);
+      console.error('Error exporting function schedule PDF:', error);
+      alert('Failed to export function schedule. Please try again.');
     }
   };
   const exportFunctionSheetPDF = () => {
@@ -6248,6 +6270,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   const validateInvoiceForm = () => {
     const errors: Record<string, string> = {};
     if (!invoiceForm.eventId) errors.eventId = 'Select an event';
+    else {
+      const targetEvent = allEvents.find(ev => ev.id === invoiceForm.eventId);
+      if ((targetEvent?.status || targetEvent?.eventStatus) === 'cancelled') errors.eventId = 'Cannot invoice a cancelled event';
+    }
     if (!invoiceForm.clientName || !invoiceForm.clientName.trim()) errors.clientName = 'Client name is required';
     if (!invoiceForm.issueDate) errors.issueDate = 'Issue date is required';
     if (!invoiceForm.dueDate) errors.dueDate = 'Due date is required';
@@ -6314,6 +6340,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
         // Auto-sync new invoice to folio (creates folio if needed)
         syncInvoiceToFolio(payload);
+        captureEventInvoiceToAccounting(payload, event);
       } else {
         // Update existing invoice - sync to folio with forceUpdate flag
         syncInvoiceToFolio(payload, true);
@@ -6528,6 +6555,12 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       }
     }
 
+    // Post payment to accounting (idempotent by receipt id)
+    const linkedInvoiceForAccounting = payload.invoiceId
+      ? eventInvoices.find((inv) => inv.id === payload.invoiceId)
+      : undefined;
+    captureEventReceiptToAccounting(payload, linkedInvoiceForAccounting);
+
     // Navigate to the Receipts tab in Event Management if creating a new receipt
     if (isNewReceipt) {
       try {
@@ -6626,26 +6659,35 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       return;
     }
 
+    const entryType = folioEntryForm.type;
+    const entryReference = folioEntryForm.reference || '';
+    const entryMethod = folioEntryForm.method || 'Cash';
+    const entryRecordedBy = folioEntryForm.recordedBy || 'Events Team';
+    const entryCostCenter = folioEntryForm.costCenter;
+    const entryRevenueCenter = folioEntryForm.revenueCenter;
+    const entryDescription = folioEntryForm.description.trim();
+
     const lastBalance = getFolioCurrentBalance(activeFolio);
-    const debit = folioEntryForm.type === 'charge' ? amount : 0;
-    const credit = folioEntryForm.type === 'payment' ? amount : 0;
+    const debit = entryType === 'charge' ? amount : 0;
+    const credit = entryType === 'payment' ? amount : 0;
     const newBalance = lastBalance + debit - credit;
+    const paymentReceiptId = entryType === 'payment' ? `RCPT-${Date.now().toString().slice(-6)}` : '';
 
     const newEntry: EventFolioEntry = {
       id: `FLE-${Date.now().toString().slice(-6)}`,
       date: new Date().toISOString().split('T')[0],
-      description: folioEntryForm.description.trim(),
+      description: entryDescription,
       debit,
       credit,
       balance: newBalance,
-      reference: folioEntryForm.reference || '',
-      costCenter: folioEntryForm.type === 'charge' ? folioEntryForm.costCenter : undefined,
-      revenueCenter: folioEntryForm.type === 'payment' ? folioEntryForm.revenueCenter : undefined
+      reference: entryType === 'payment' ? paymentReceiptId : entryReference,
+      costCenter: entryType === 'charge' ? entryCostCenter : undefined,
+      revenueCenter: entryType === 'payment' ? entryRevenueCenter : undefined
     };
 
     console.log('[Folio] Adding entry:', {
       folioId: activeFolio.id,
-      entryType: folioEntryForm.type,
+      entryType,
       amount: formatCurrency(amount),
       description: newEntry.description,
       previousBalance: formatCurrency(lastBalance),
@@ -6663,120 +6705,96 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     setActiveFolio((folio: any) =>
       folio ? { ...folio, entries: [...folio.entries, newEntry], updatedAt: new Date().toISOString() } : folio
     );
-    setFolioEntryForm({ type: 'charge', amount: 0, description: '', reference: '', costCenter: '', revenueCenter: '', method: 'Cash', recordedBy: 'Events Team' });
     
     // ===== ACCOUNTING INTEGRATION =====
-    // Auto-capture to AR, Sales Invoice/Receipt, and GL
-    // Get staff info from form
     const staffInfo = {
-      staffId: folioEntryForm.recordedBy || 'events-team',
-      staffName: folioEntryForm.recordedBy || 'Events Team',
+      staffId: entryRecordedBy || 'events-team',
+      staffName: entryRecordedBy || 'Events Team',
       staffRole: 'Events Coordinator',
     };
     
-    if (folioEntryForm.type === 'charge') {
-      // Charge = Revenue from conference services
-      // Note: Folio entry is the gross amount (may include tax if pre-calculated)
-      try {
-        const result = captureRevenue({
-          id: newEntry.id,
-          source: 'conference',
-          customerId: activeFolio.clientId || activeFolio.eventId,
-          customerName: activeFolio.clientName || activeFolio.eventName || 'Conference Client',
-          reference: activeFolio.eventId,
-          description: `${activeFolio.eventName || 'Conference'} - ${newEntry.description}`,
-          items: [{
-            description: newEntry.description,
-            quantity: 1,
-            unitPrice: amount,
-            taxPercent: 0, // Tax included in amount or handled separately
-          }],
-          subtotal: amount,
-          taxAmount: 0, // Tax breakdown shown separately if needed
-          total: amount,
-          // Staff tracking
-          ...staffInfo,
-        });
-        
-        if (result) {
-          console.log(`[Events] ✅ Revenue captured - Invoice: ${result.invoiceId}, JE: ${result.journalEntryId}`);
-        }
-        
-        // Also record to cost center if specified (for expense tracking)
-        if (folioEntryForm.costCenter) {
-        const { recordExpense } = useAccountingStore.getState();
-        recordExpense(folioEntryForm.costCenter, amount);
-        console.log('[Folio] Recorded expense to cost center:', folioEntryForm.costCenter, formatCurrency(amount));
-        }
-      } catch (error) {
-        console.error('[Events] ❌ Accounting integration error:', error);
-      }
-    } else if (folioEntryForm.type === 'payment') {
-      // Payment = Receipt from client
-      try {
-        // Map payment method
-        const paymentMethod = (folioEntryForm.method || 'Cash') as 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Cheque';
-        
-        const result = capturePayment({
-          id: newEntry.id,
-          invoiceId: folioEntryForm.reference || undefined,
-          customerId: activeFolio.clientId || activeFolio.eventId,
-          customerName: activeFolio.clientName || activeFolio.eventName || 'Conference Client',
-          amount: amount,
-          paymentMethod: paymentMethod,
-          reference: newEntry.reference || activeFolio.eventId,
-          description: `Payment for ${activeFolio.eventName || 'Conference'} - ${newEntry.description}`,
-          // Staff tracking
-          ...staffInfo,
-        }, 'conference');
-        
-        if (result) {
-          console.log(`[Events] ✅ Payment captured - Receipt: ${result.receiptId}, JE: ${result.journalEntryId}`);
-        }
-      } catch (error) {
-        console.error('[Events] ❌ Payment integration error:', error);
-      }
-    }
-    
-    trackEvent('Events.EventCreated', { 
-      action: 'folio_entry_added', 
-      folioId: activeFolio.id,
-      entryType: folioEntryForm.type,
-      amount: amount,
-      costCenter: folioEntryForm.costCenter || undefined,
-      revenueCenter: folioEntryForm.revenueCenter || undefined
-    });
+    if (entryType === 'charge') {
+      const linkedEventsInvoice =
+        entryReference
+          ? eventInvoices.find((inv) => inv.id === entryReference)
+          : eventInvoices.find((inv) => inv.eventId === activeFolio.eventId);
+      const invoiceAlreadyInAccounting =
+        linkedEventsInvoice &&
+        (isConferenceAccountingCaptured(linkedEventsInvoice.id) ||
+          isConferenceAccountingCaptured(`EVT-${activeFolio.eventId}`));
+      const isInvoiceLineEntry =
+        newEntry.description.includes('Invoice ') ||
+        Boolean(linkedEventsInvoice && entryReference === linkedEventsInvoice.id);
 
-    if (folioEntryForm.type === 'payment') {
-      const linkedInvoice = folioEntryForm.reference
-        ? eventInvoices.find(inv => inv.id === folioEntryForm.reference)
-        : undefined;
-      const receiptId = `RCPT-${Date.now().toString().slice(-6)}`;
+      if (invoiceAlreadyInAccounting && isInvoiceLineEntry) {
+        console.log('[Folio] Skipping duplicate revenue capture — invoice already posted to accounting');
+      } else {
+        try {
+          const result = captureRevenue({
+            id: newEntry.id,
+            source: 'conference',
+            customerId: activeFolio.clientId || activeFolio.eventId,
+            customerName: activeFolio.clientName || activeFolio.eventName || 'Conference Client',
+            reference: activeFolio.eventId,
+            description: `${activeFolio.eventName || 'Conference'} - ${newEntry.description}`,
+            items: [
+              {
+                description: newEntry.description,
+                quantity: 1,
+                unitPrice: amount,
+                taxPercent: 0,
+              },
+            ],
+            subtotal: amount,
+            taxAmount: 0,
+            total: amount,
+            ...staffInfo,
+          });
+
+          if (result) {
+            console.log(`[Events] ✅ Revenue captured - Invoice: ${result.invoiceId}, JE: ${result.journalEntryId}`);
+          }
+
+          if (entryCostCenter) {
+            const { recordExpense } = useAccountingStore.getState();
+            recordExpense(entryCostCenter, amount);
+            console.log('[Folio] Recorded expense to cost center:', entryCostCenter, formatCurrency(amount));
+          }
+        } catch (error) {
+          console.error('[Events] ❌ Accounting integration error:', error);
+        }
+      }
+    } else if (entryType === 'payment') {
+      const linkedInvoice = entryReference
+        ? eventInvoices.find((inv) => inv.id === entryReference)
+        : eventInvoices.find((inv) => inv.eventId === activeFolio.eventId);
       const receipt: EventReceipt = {
-        id: receiptId,
+        id: paymentReceiptId,
         eventId: activeFolio.eventId,
         eventName: activeFolio.eventName || 'Event',
         invoiceId: linkedInvoice?.id || '',
         clientName: activeFolio.clientName || 'Client',
         date: newEntry.date,
         amount: credit,
-        method: (folioEntryForm.method || 'Cash') as ReceiptMethod,
-        reference: newEntry.reference || '',
-        recordedBy: folioEntryForm.recordedBy || 'Events Team',
-        notes: newEntry.description
+        method: entryMethod as ReceiptMethod,
+        reference: entryReference,
+        recordedBy: entryRecordedBy,
+        notes: newEntry.description,
       };
 
-      setEventReceipts(prev => [receipt, ...prev]);
+      captureEventReceiptToAccounting(receipt, linkedInvoice);
+
+      setEventReceipts((prev) => [receipt, ...prev]);
 
       if (linkedInvoice) {
-        setEventInvoices(prev =>
-          prev.map(inv => {
+        setEventInvoices((prev) =>
+          prev.map((inv) => {
             if (inv.id !== linkedInvoice.id) return inv;
             const newBalance = Math.max(0, (inv.balance || inv.total || 0) - credit);
             return {
               ...inv,
               balance: newBalance,
-              status: deriveInvoiceStatus(inv.status, newBalance, inv.total)
+              status: deriveInvoiceStatus(inv.status, newBalance, inv.total),
             };
           })
         );
@@ -6785,11 +6803,22 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       trackEvent('Events.EventCreated', {
         action: 'receipt_created_from_folio_payment',
         folioId: activeFolio.id,
-        receiptId,
+        receiptId: paymentReceiptId,
         invoiceId: receipt.invoiceId || undefined,
-        amount: credit
+        amount: credit,
       });
     }
+    
+    trackEvent('Events.EventCreated', { 
+      action: 'folio_entry_added', 
+      folioId: activeFolio.id,
+      entryType,
+      amount: amount,
+      costCenter: entryCostCenter || undefined,
+      revenueCenter: entryRevenueCenter || undefined
+    });
+
+    setFolioEntryForm({ type: 'charge', amount: 0, description: '', reference: '', costCenter: '', revenueCenter: '', method: 'Cash', recordedBy: 'Events Team' });
   };
   const handleCreateFolio = () => {
     if (!folioCreateForm.eventId) {
@@ -6829,6 +6858,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     setIsFolioCreateModalOpen(false);
     setFolioCreateForm({ eventId: '', openingBalance: 0, note: '' });
     setFolioCreateError('');
+    openFolioDetails(newFolio);
+    trackEvent('Events.EventCreated', { action: 'folio_created', folioId: newFolio.id, eventId: event.id });
   };
 
   const closeFolioModal = () => {
@@ -6914,6 +6945,173 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     }
     
     return folio;
+  };
+
+  const getConferenceAccountingInvoiceId = (eventsInvoiceId: string) =>
+    `INV-CONFERENCE-${eventsInvoiceId}`;
+
+  const isConferenceAccountingCaptured = (transactionId: string) => {
+    const store = useAccountingStore.getState();
+    return store.journalEntries.some(
+      (je) =>
+        je.sourceModule === 'conference' &&
+        je.sourceTransactionId === transactionId &&
+        je.status === 'Posted'
+    );
+  };
+
+  const captureEventInvoiceToAccounting = (invoice: EventInvoice, event?: any) => {
+    if (isConferenceAccountingCaptured(invoice.id)) {
+      console.log('[Events] Accounting revenue already captured for invoice', invoice.id);
+      return null;
+    }
+    if (invoice.eventId && isConferenceAccountingCaptured(`EVT-${invoice.eventId}`)) {
+      // Revenue was already posted at event-confirm time. That doesn't mean nothing more
+      // is owed here: if this invoice's total has since diverged (e.g. a manual edit via
+      // the invoice form) from what was actually posted, post the difference as a real
+      // adjusting entry instead of silently leaving the GL under/over-stated with no
+      // reconciling entry.
+      try {
+        const store = useAccountingStore.getState();
+        const originalEntry = store.journalEntries.find(
+          (je) => je.sourceModule === 'conference' && je.sourceTransactionId === `EVT-${invoice.eventId}` && je.status === 'Posted'
+        );
+        const postedTotal = originalEntry?.totalDebit ?? 0;
+        const currentTotal = Number(invoice.total ?? 0);
+        const delta = Math.round((currentTotal - postedTotal) * 100) / 100;
+        if (Math.abs(delta) >= 0.01) {
+          const arCode = '1200';
+          const revenueCode = '4300';
+          const now = new Date().toISOString();
+          const entryId = `JE-EVT-ADJ-${invoice.id}-${Date.now()}`;
+          const amount = Math.abs(delta);
+          const increase = delta > 0;
+          store.addJournalEntry({
+            id: entryId,
+            entryNumber: `JE-EVTADJ-${invoice.id}`,
+            date: invoice.issueDate || now,
+            reference: invoice.id,
+            description: `Conference invoice adjustment — ${invoice.eventName || invoice.eventId} (${invoice.id}): posted total was ${postedTotal}, invoice now ${currentTotal}`,
+            totalDebit: amount,
+            totalCredit: amount,
+            currency: 'GHS',
+            status: 'Posted',
+            postedBy: 'Events Team',
+            postedAt: now,
+            createdAt: now,
+            updatedAt: now,
+            sourceModule: 'conference',
+            sourceTransactionId: `EVTADJ-${invoice.id}`,
+            lines: [
+              {
+                id: `JL-${entryId}-ar`,
+                journalEntryId: entryId,
+                accountCode: arCode,
+                description: 'AR adjustment',
+                debit: increase ? amount : 0,
+                credit: increase ? 0 : amount,
+                currency: 'GHS',
+                reference: invoice.id,
+              },
+              {
+                id: `JL-${entryId}-rev`,
+                journalEntryId: entryId,
+                accountCode: revenueCode,
+                description: 'Conference revenue adjustment',
+                debit: increase ? 0 : amount,
+                credit: increase ? amount : 0,
+                currency: 'GHS',
+                reference: invoice.id,
+              },
+            ],
+          });
+          console.log(`[Events] Posted GL adjustment of ${delta} for invoice ${invoice.id} (event total changed after confirm-time posting)`);
+        } else {
+          console.log('[Events] Revenue already captured on event confirm and invoice total unchanged; skipping duplicate post for', invoice.eventId);
+        }
+      } catch (e) {
+        console.error('[Events] Failed to post invoice-total adjustment:', e);
+      }
+      return null;
+    }
+
+    try {
+      const subtotal = Number(invoice.subtotal ?? invoice.total ?? 0);
+      const tax = Number(invoice.tax ?? 0);
+      const total = Number(invoice.total ?? subtotal + tax);
+      const result = captureRevenue({
+        id: invoice.id,
+        source: 'conference',
+        customerId: event?.clientId || (event as any)?.orgClientId || `client_${invoice.eventId}`,
+        customerName: invoice.clientName || getEventClientName(event),
+        customerEmail: (event as any)?.contactEmail,
+        customerPhone: (event as any)?.contactPhone,
+        reference: invoice.eventId,
+        description: `Conference Invoice: ${invoice.eventName || 'Event'} (${invoice.id})`,
+        items: [
+          {
+            description: invoice.eventName || 'Event Services',
+            quantity: 1,
+            unitPrice: subtotal,
+            taxPercent: subtotal > 0 ? (tax / subtotal) * 100 : 0,
+          },
+        ],
+        subtotal,
+        taxAmount: tax,
+        total,
+        date: invoice.issueDate,
+        staffName: 'Events Team',
+        staffRole: 'Events Coordinator',
+      });
+      if (result) {
+        console.log(`[Events] ✅ Invoice synced to accounting: ${result.invoiceId}`);
+      }
+      return result;
+    } catch (error) {
+      console.error('[Events] ❌ Failed to capture invoice to accounting:', error);
+      return null;
+    }
+  };
+
+  const captureEventReceiptToAccounting = (
+    receipt: EventReceipt,
+    linkedEventsInvoice?: EventInvoice | null
+  ) => {
+    if (isConferenceAccountingCaptured(receipt.id)) {
+      console.log('[Events] Accounting payment already captured for receipt', receipt.id);
+      return null;
+    }
+
+    const eventsInvoiceId = receipt.invoiceId || linkedEventsInvoice?.id;
+    const accountingInvoiceId = eventsInvoiceId
+      ? getConferenceAccountingInvoiceId(eventsInvoiceId)
+      : undefined;
+
+    try {
+      const result = capturePayment(
+        {
+          id: receipt.id,
+          invoiceId: accountingInvoiceId,
+          customerId: `client_${receipt.eventId}`,
+          customerName: receipt.clientName || 'Conference Client',
+          amount: receipt.amount,
+          paymentMethod: receipt.method as 'Cash' | 'Card' | 'Mobile Money' | 'Bank Transfer' | 'Cheque',
+          reference: receipt.eventId,
+          description: `Payment for ${receipt.eventName || 'Conference'} — ${receipt.notes || receipt.id}`,
+          date: receipt.date,
+          staffName: receipt.recordedBy || 'Events Team',
+          staffRole: 'Events Coordinator',
+        },
+        'conference'
+      );
+      if (result) {
+        console.log(`[Events] ✅ Receipt synced to accounting: ${result.receiptId}`);
+      }
+      return result;
+    } catch (error) {
+      console.error('[Events] ❌ Failed to capture receipt to accounting:', error);
+      return null;
+    }
   };
 
   // Helper: Sync invoice to folio (create entry or update existing)
@@ -7068,6 +7266,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       // Import new invoice
       const success = syncInvoiceToFolio(invoice);
       if (success) {
+        const event = allEvents.find((ev) => ev.id === invoice.eventId);
+        captureEventInvoiceToAccounting(invoice, event);
         alert(`✅ Invoice ${invoice.id} imported successfully to folio!\n\nAmount: ₵${formatCurrency(invoice.total)}`);
         console.log('[Folio] Invoice imported successfully:', invoice.id);
       } else {
@@ -7341,6 +7541,14 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       );
 
       const totalAmount = newReceipts.reduce((sum, r) => sum + r.amount, 0);
+
+      newReceipts.forEach((receipt: EventReceipt) => {
+        const linkedInvoice = receipt.invoiceId
+          ? eventInvoices.find((inv) => inv.id === receipt.invoiceId)
+          : undefined;
+        captureEventReceiptToAccounting(receipt, linkedInvoice);
+      });
+
       alert(`✅ Successfully imported ${newReceipts.length} receipt(s)!\n\nTotal Amount: ₵${formatCurrency(totalAmount)}\nNew Balance: ₵${formatCurrency(currentBalance)}`);
 
       console.log('[Folio] Imported receipts successfully:', newReceipts.length, formatCurrency(totalAmount));
@@ -7381,114 +7589,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     
   const printFunctionSchedule = () => {
     try {
-      // Track the print action
-      trackEvent('Events.EventCreated', { action: 'function_schedule_printed', eventCount: allEvents.length });
-      
-      // Create print-friendly content
-      const printContent = `
-        <html>
-          <head>
-            <title>Function Schedule - August 2025</title>
-            <style>
-              body { font-family: Arial, sans-serif; margin: 20px; }
-              .header { text-align: center; margin-bottom: 30px; }
-              .summary { margin-bottom: 30px; }
-              .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 20px; }
-              .summary-item { text-align: center; padding: 15px; border: 1px solid #ddd; border-radius: 8px; }
-              .summary-number { font-size: 24px; font-weight: bold; color: #2563eb; }
-              .summary-label { font-size: 14px; color: #666; margin-top: 5px; }
-              table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-              th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 12px; }
-              th { background-color: #f8f9fa; font-weight: bold; }
-              .status-confirmed { color: #059669; }
-              .status-pending { color: #d97706; }
-              .status-on-hold { color: #6b7280; }
-              @media print { body { margin: 0; } .no-print { display: none; } }
-            </style>
-          </head>
-          <body>
-            <div class="header">
-              <h1>📋 Provisional Function Schedule</h1>
-              <h2>August 2025</h2>
-              <p>Generated on: ${new Date().toLocaleDateString()}</p>
-            </div>
-            
-            <div class="summary">
-              <div class="summary-grid">
-                <div class="summary-item">
-                  <div class="summary-number">${allEvents.length}</div>
-                  <div class="summary-label">Total Functions</div>
-                </div>
-                <div class="summary-item">
-                  <div class="summary-number">${allEvents.filter(e => normalizeStatus(e.status) === 'confirmed').length}</div>
-                  <div class="summary-label">Confirmed</div>
-                </div>
-                <div class="summary-item">
-                  <div class="summary-number">${allEvents.filter(e => normalizeStatus(e.status) === 'quote').length}</div>
-                  <div class="summary-label">Quote</div>
-                </div>
-                <div class="summary-item">
-                  <div class="summary-number">${allEvents.reduce((sum, e) => sum + e.pax, 0)}</div>
-                  <div class="summary-label">Total Attendees</div>
-                </div>
-              </div>
-            </div>
-            
-            <table>
-              <thead>
-                <tr>
-                  <th>Item</th>
-                  <th>Organization</th>
-                  <th>Event Name</th>
-                  <th>Venue</th>
-                  <th>Dates</th>
-                  <th>Duration</th>
-                  <th>Attendees</th>
-                  <th>Status</th>
-                  <th>Food & Beverage</th>
-                  <th>Housekeeping/Front Desk</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${allEvents.map((event, index) => `
-                  <tr>
-                    <td>${index + 1}</td>
-                    <td>${event.organization}</td>
-                    <td>${event.eventName}</td>
-                    <td>${event.venueName}</td>
-                    <td>${event.arrivalDate} - ${event.departureDate}</td>
-                    <td>${event.duration} days</td>
-                    <td>${event.pax}</td>
-                    <td class="status-${event.status}">${event.status}</td>
-                    <td>${getFoodBeverageServices(event)}</td>
-                    <td>${getHousekeepingNotes(event)}</td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-            
-            <div class="no-print" style="margin-top: 30px; text-align: center;">
-              <button onclick="window.print()">🖨️ Print Schedule</button>
-            </div>
-          </body>
-        </html>
-      `;
-      
-      // Open print window
-      const printWindow = window.open('', '_blank');
-      if (printWindow) {
-        printWindow.document.write(printContent);
-        printWindow.document.close();
-        printWindow.focus();
-        // Auto-print after content loads
-        setTimeout(() => {
-          printWindow.print();
-        }, 500);
-      }
-      
-      console.log('Function Schedule print window opened successfully');
+      printFunctionScheduleFromEvents(allEvents, 'All Events', 'function_schedule_printed');
     } catch (error) {
       console.error('Error printing function schedule:', error);
+      alert('Failed to open print preview. Please try again.');
     }
   };
 
@@ -8410,6 +8514,30 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     return Array.from(map.values());
   }, [customEvents, comprehensiveEvents, additionalEvents]);
 
+  const filteredModernVenues = useMemo(() => {
+    let list = modernVenues;
+
+    if (venueSearchTerm.trim()) {
+      const term = venueSearchTerm.trim().toLowerCase();
+      list = list.filter(
+        venue =>
+          venue.name.toLowerCase().includes(term) ||
+          (venue.location || '').toLowerCase().includes(term) ||
+          venue.type.toLowerCase().includes(term)
+      );
+    }
+
+    if (venueStatusFilter !== 'all') {
+      list = list.filter(venue => venue.status === venueStatusFilter);
+    }
+
+    return list;
+  }, [
+    modernVenues,
+    venueSearchTerm,
+    venueStatusFilter,
+  ]);
+
   const eventOptions = useMemo(
     () =>
       allEvents.map(event => ({
@@ -8642,6 +8770,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   );
 
   const goToVenueManagement = useCallback(() => setSelectedTab('venues'), [setSelectedTab]);
+  const goToGuestRates = useCallback(() => setSelectedTab('quoting'), [setSelectedTab]);
+  const goToReports = useCallback(() => setSelectedTab('reports'), [setSelectedTab]);
 
   const selectedCategoryInsights = useMemo<ReportInsight[]>(() => {
     if (!selectedReportCategory) return [];
@@ -8651,59 +8781,41 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         ? Math.round(((reportingStatusBuckets.confirmed + reportingStatusBuckets.invoiced) / reportingStatusBuckets.total) * 100)
         : 0;
     switch (selectedReportCategory.key) {
-      case 'sales-pipeline':
+      case 'events-pipeline':
         return [
           {
             label: 'Active Opportunities',
             value: activeOpportunities.toLocaleString(),
-            helper: `${reportingStatusBuckets.quote.toLocaleString()} quotes • ${reportingStatusBuckets.confirmed.toLocaleString()} confirmed`
+            helper: `${reportingStatusBuckets.quote.toLocaleString()} quotes • ${reportingStatusBuckets.confirmed.toLocaleString()} confirmed`,
           },
           {
             label: 'Conversion Rate',
             value: `${conversionRate}%`,
-            helper: `${(reportingStatusBuckets.confirmed + reportingStatusBuckets.invoiced).toLocaleString()} wins`
+            helper: `${(reportingStatusBuckets.confirmed + reportingStatusBuckets.invoiced).toLocaleString()} wins`,
           },
           {
             label: 'Pipeline Value',
             value: formatCurrency(reportingPipelineAmounts.total),
-            helper: `${formatCurrency(reportingPipelineAmounts.confirmed)} confirmed`
-          }
+            helper: `${formatCurrency(reportingPipelineAmounts.confirmed)} confirmed`,
+          },
         ];
-      case 'operations-venues':
+      case 'venues-operations':
         return [
           {
-            label: 'Spaces Online',
+            label: 'Venues',
             value: totalVenues.toLocaleString(),
-            helper: `${availableVenues} available / ${bookedVenues} booked`
+            helper: `${availableVenues} available • ${bookedVenues} booked`,
           },
           {
-            label: 'Utilisation Today',
+            label: 'Utilisation',
             value: `${venueUtilizationRate}%`,
-            helper: `${setupInProgress} setups underway`
+            helper: `${setupInProgress} in setup`,
           },
           {
-            label: 'Avg Event Duration',
-            value: `${reportingAverageDuration} days`,
-            helper: `${reportingUpcoming30.length} events in 30 days`
-          }
-        ];
-      case 'guest-experience':
-        return [
-          {
-            label: 'Attendees In System',
-            value: reportingTotalPax.toLocaleString(),
-            helper: `Avg ${reportingAveragePax} pax / event`
+            label: 'BEO Saved',
+            value: reportingEvents.length > 0 ? `${reportingEventsWithBEO}/${reportingEvents.length}` : '0',
+            helper: `${reportingEventsNeedingBEO} pending`,
           },
-          {
-            label: 'VIP / High Touch',
-            value: reportingVipCount.toLocaleString(),
-            helper: `${reportingUpcoming30.length} upcoming`
-          },
-          {
-            label: 'Spend per Attendee',
-            value: formatCurrency(Math.round(onsiteSpendPerAttendee) || 0),
-            helper: `${eventReceipts.length} receipts logged`
-          }
         ];
       case 'finance-billing':
         return [
@@ -8723,24 +8835,6 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             helper: `Net ${formatCurrency(folioBalanceTotal)} • ${unbilledEventsCount.toLocaleString()} unbilled`
           }
         ];
-      case 'compliance-vendors':
-        return [
-          {
-            label: 'Events w/ BEO',
-            value: reportingEvents.length > 0 ? `${reportingEventsWithBEO}/${reportingEvents.length}` : '0',
-            helper: `${reportingEventsNeedingBEO} pending`
-          },
-          {
-            label: 'Events w/ Folio',
-            value: reportingEvents.length > 0 ? `${reportingEventsWithFolio}/${reportingEvents.length}` : '0',
-            helper: `${reportingEventsNeedingFolio} pending`
-          },
-          {
-            label: 'Tracked Cost Centres',
-            value: selectedCostCenterList.length.toLocaleString(),
-            helper: 'Linked vendor/service spend'
-          }
-        ];
       default:
         return [];
     }
@@ -8753,59 +8847,307 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     bookedVenues,
     venueUtilizationRate,
     setupInProgress,
-    reportingAverageDuration,
-    reportingUpcoming30.length,
-    reportingTotalPax,
-    reportingAveragePax,
-    reportingVipCount,
-    onsiteSpendPerAttendee,
-    eventReceipts.length,
+    reportingEvents.length,
+    reportingEventsWithBEO,
+    reportingEventsNeedingBEO,
     invoiceSummary.balance,
     outstandingInvoiceCount,
     receiptsTotal,
     openFolioCount,
     folioBalanceTotal,
-    reportingEvents.length,
-    reportingEventsWithBEO,
-    reportingEventsWithFolio,
-    reportingEventsNeedingBEO,
-    reportingEventsNeedingFolio,
-    selectedCostCenterList.length,
-    unbilledEventsCount
+    unbilledEventsCount,
+    eventReceipts.length,
   ]);
 
   const selectedCategoryLinks = useMemo<ReportQuickLink[]>(() => {
     if (!selectedReportCategory) return [];
     switch (selectedReportCategory.key) {
-      case 'sales-pipeline':
+      case 'events-pipeline':
         return [
           { label: 'Event Master', icon: '📋', action: () => goToEventManagement('events') },
-          { label: 'Quotes Workspace', icon: '📑', action: () => goToEventManagement('quotes') }
+          { label: 'Quotes', icon: '📑', action: () => goToEventManagement('quotes') },
         ];
-      case 'operations-venues':
+      case 'venues-operations':
         return [
-          { label: 'Venue Management', icon: '🏢', action: goToVenueManagement },
-          { label: 'Active Ops Board', icon: '🛠️', action: () => goToEventManagement('active') }
-        ];
-      case 'guest-experience':
-        return [
-          { label: 'Event Master', icon: '🎟️', action: () => goToEventManagement('events') },
-          { label: 'Folios & Guests', icon: '📂', action: () => goToEventManagement('folios') }
+          { label: 'Venues', icon: '🏢', action: goToVenueManagement },
+          { label: 'Active Events', icon: '🟢', action: () => goToEventManagement('active') },
         ];
       case 'finance-billing':
         return [
-          { label: 'Invoices Workspace', icon: '🧾', action: () => goToEventManagement('invoices') }
-        ];
-      case 'compliance-vendors':
-        return [
-          { label: 'Active Events Board', icon: '🛡️', action: () => goToEventManagement('active') },
-          { label: 'Venue Management', icon: '🏢', action: goToVenueManagement }
+          { label: 'Invoices', icon: '🧾', action: () => goToEventManagement('invoices') },
+          { label: 'Receipts', icon: '💳', action: () => goToEventManagement('receipts') },
+          { label: 'Folios', icon: '📂', action: () => goToEventManagement('folios') },
         ];
       default:
         return [];
     }
   }, [selectedReportCategory, goToEventManagement, goToVenueManagement]);
 
+  const activeReportTable = useMemo<ReportTableData>(() => {
+    if (!selectedReport) {
+      return { columns: [], rows: [], emptyMessage: 'Select a report from the list.' };
+    }
+
+    const filteredEvents = filterEventsForReport(reportingEvents, reportFilters);
+    const venueTerm = reportFilters.venue.trim().toLowerCase();
+    const filteredVenues = venueTerm
+      ? modernVenues.filter(
+          (venue) =>
+            venue.name.toLowerCase().includes(venueTerm) ||
+            (venue.location || '').toLowerCase().includes(venueTerm)
+        )
+      : modernVenues;
+
+    const getInvoiceTotalForEvent = (eventId: string) =>
+      eventInvoices
+        .filter((inv) => inv.eventId === eventId)
+        .reduce((sum, inv) => sum + (inv.total || 0), 0);
+
+    switch (selectedReport.key) {
+      case 'pipeline-summary': {
+        const statuses: SimpleEventStatus[] = ['quote', 'confirmed', 'invoiced', 'cancelled'];
+        return {
+          columns: [
+            { key: 'status', label: 'Status' },
+            { key: 'count', label: 'Events' },
+            { key: 'value', label: 'Value (₵)' },
+          ],
+          rows: statuses.map((status) => ({
+            status: eventStatusLabelMap[status],
+            count: String(
+              filteredEvents.filter((event) => normalizeStatus(event.status || event.eventStatus) === status).length
+            ),
+            value: formatCurrency(
+              filteredEvents
+                .filter((event) => normalizeStatus(event.status || event.eventStatus) === status)
+                .reduce((sum, event) => sum + (Number(event.revenue || event.budgetTotal || 0) || 0), 0)
+            ),
+          })),
+        };
+      }
+      case 'open-quotes':
+        return {
+          columns: [
+            { key: 'event', label: 'Event' },
+            { key: 'client', label: 'Client' },
+            { key: 'dates', label: 'Dates' },
+            { key: 'pax', label: 'Pax' },
+            { key: 'value', label: 'Quoted (₵)' },
+          ],
+          rows: filteredEvents
+            .filter((event) => normalizeStatus(event.status || event.eventStatus) === 'quote')
+            .map((event) => ({
+              event: event.eventName || 'Unnamed',
+              client: event.organization || '—',
+              dates: `${event.arrivalDate || event.startDate || '—'} → ${event.departureDate || event.endDate || '—'}`,
+              pax: String(event.pax || event.expectedPax || 0),
+              value: formatCurrency(Number(event.revenue || event.budgetTotal || 0)),
+            })),
+          emptyMessage: 'No quote-stage events in this period.',
+        };
+      case 'confirmed-events':
+        return {
+          columns: [
+            { key: 'event', label: 'Event' },
+            { key: 'venue', label: 'Venue' },
+            { key: 'coordinator', label: 'Coordinator' },
+            { key: 'dates', label: 'Dates' },
+            { key: 'pax', label: 'Pax' },
+          ],
+          rows: filteredEvents
+            .filter((event) => {
+              const status = normalizeStatus(event.status || event.eventStatus);
+              return status === 'confirmed' || event.eventStatus === 'in-progress';
+            })
+            .map((event) => ({
+              event: event.eventName || 'Unnamed',
+              venue: event.venueName || event.venue || '—',
+              coordinator: getEventCoordinator(event),
+              dates: `${event.arrivalDate || event.startDate || '—'} → ${event.departureDate || event.endDate || '—'}`,
+              pax: String(event.pax || event.expectedPax || 0),
+            })),
+          emptyMessage: 'No confirmed events in this period.',
+        };
+      case 'venue-status':
+        return {
+          columns: [
+            { key: 'venue', label: 'Venue' },
+            { key: 'type', label: 'Type' },
+            { key: 'capacity', label: 'Capacity' },
+            { key: 'status', label: 'Status' },
+          ],
+          rows: filteredVenues.map((venue) => ({
+            venue: venue.name,
+            type: venue.type,
+            capacity: String(venue.capacity),
+            status: venue.status,
+          })),
+          emptyMessage: 'No venues match this filter.',
+        };
+      case 'beo-readiness':
+        return {
+          columns: [
+            { key: 'event', label: 'Event' },
+            { key: 'venue', label: 'Venue' },
+            { key: 'coordinator', label: 'Coordinator' },
+            { key: 'beo', label: 'BEO' },
+            { key: 'dates', label: 'Dates' },
+          ],
+          rows: filteredEvents
+            .filter((event) => {
+              const status = normalizeStatus(event.status || event.eventStatus);
+              return status === 'confirmed' || event.eventStatus === 'in-progress';
+            })
+            .map((event) => ({
+              event: event.eventName || 'Unnamed',
+              venue: event.venueName || '—',
+              coordinator: getEventCoordinator(event),
+              beo: event.linkedBEO ? 'Saved' : 'Pending',
+              dates: `${event.arrivalDate || event.startDate || '—'} → ${event.departureDate || event.endDate || '—'}`,
+            })),
+          emptyMessage: 'No confirmed events in this period.',
+        };
+      case 'invoice-aging':
+        return {
+          columns: [
+            { key: 'invoice', label: 'Invoice' },
+            { key: 'event', label: 'Event' },
+            { key: 'issueDate', label: 'Issue Date' },
+            { key: 'total', label: 'Total (₵)' },
+            { key: 'balance', label: 'Balance (₵)' },
+            { key: 'status', label: 'Status' },
+          ],
+          rows: eventInvoices
+            .filter((inv) => matchesReportDate(inv.issueDate, reportFilters))
+            .map((inv) => ({
+              invoice: inv.id,
+              event: inv.eventName || '—',
+              issueDate: inv.issueDate || '—',
+              total: formatCurrency(inv.total || 0),
+              balance: formatCurrency(inv.balance || 0),
+              status: inv.status || '—',
+            })),
+          emptyMessage: 'No invoices in this period.',
+        };
+      case 'receipts-register':
+        return {
+          columns: [
+            { key: 'receipt', label: 'Receipt' },
+            { key: 'event', label: 'Event' },
+            { key: 'date', label: 'Date' },
+            { key: 'amount', label: 'Amount (₵)' },
+            { key: 'method', label: 'Method' },
+          ],
+          rows: eventReceipts
+            .filter((rcpt) => matchesReportDate(rcpt.date, reportFilters))
+            .map((rcpt) => ({
+              receipt: rcpt.id,
+              event: rcpt.eventName || '—',
+              date: rcpt.date || '—',
+              amount: formatCurrency(rcpt.amount || 0),
+              method: rcpt.method || '—',
+            })),
+          emptyMessage: 'No receipts in this period.',
+        };
+      case 'folio-balances':
+        return {
+          columns: [
+            { key: 'folio', label: 'Folio' },
+            { key: 'event', label: 'Event' },
+            { key: 'status', label: 'Status' },
+            { key: 'balance', label: 'Balance (₵)' },
+          ],
+          rows: eventFolios
+            .filter((folio) => matchesReportDate(folio.updatedAt, reportFilters))
+            .map((folio) => ({
+              folio: folio.id,
+              event: folio.eventName || '—',
+              status: folio.status || '—',
+              balance: formatCurrency(getFolioCurrentBalance(folio)),
+            })),
+          emptyMessage: 'No folios in this period.',
+        };
+      case 'budget-variance':
+        return {
+          columns: [
+            { key: 'event', label: 'Event' },
+            { key: 'budget', label: 'Budget (₵)' },
+            { key: 'invoiced', label: 'Invoiced (₵)' },
+            { key: 'variance', label: 'Variance (₵)' },
+          ],
+          rows: filteredEvents.map((event) => {
+            const budget = Number(event.budgetTotal || event.revenue || 0);
+            const invoiced = getInvoiceTotalForEvent(event.id);
+            const variance = invoiced - budget;
+            return {
+              event: event.eventName || 'Unnamed',
+              budget: formatCurrency(budget),
+              invoiced: formatCurrency(invoiced),
+              variance: formatCurrency(variance),
+            };
+          }),
+          emptyMessage: 'No events in this period.',
+        };
+      default:
+        return { columns: [], rows: [], emptyMessage: 'Report not available.' };
+    }
+  }, [
+    selectedReport,
+    reportingEvents,
+    reportFilters,
+    modernVenues,
+    eventInvoices,
+    eventReceipts,
+    eventFolios,
+    eventStatusLabelMap,
+  ]);
+
+  const exportActiveReportPdf = useCallback(() => {
+    if (!selectedReport || activeReportTable.columns.length === 0) return;
+
+    const escapeHtml = (value: string) =>
+      value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const headerCells = activeReportTable.columns.map((col) => `<th>${escapeHtml(col.label)}</th>`).join('');
+    const bodyRows =
+      activeReportTable.rows.length > 0
+        ? activeReportTable.rows
+            .map(
+              (row) =>
+                `<tr>${activeReportTable.columns
+                  .map((col) => `<td>${escapeHtml(String(row[col.key] ?? ''))}</td>`)
+                  .join('')}</tr>`
+            )
+            .join('')
+        : `<tr><td colspan="${activeReportTable.columns.length}">${escapeHtml(activeReportTable.emptyMessage || 'No data')}</td></tr>`;
+
+    const periodLabel =
+      reportFilters.fromDate && reportFilters.toDate
+        ? `${reportFilters.fromDate} → ${reportFilters.toDate}`
+        : 'All dates';
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${escapeHtml(selectedReport.label)}</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+        h1 { font-size: 22px; margin-bottom: 4px; }
+        p { color: #6b7280; font-size: 13px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 13px; }
+        th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; }
+        th { background: #f9fafb; }
+      </style></head><body>
+      <h1>${escapeHtml(selectedReport.label)}</h1>
+      <p>${escapeHtml(selectedReport.description)}</p>
+      <p>Period: ${escapeHtml(periodLabel)}${reportFilters.venue ? ` • Venue filter: ${escapeHtml(reportFilters.venue)}` : ''}</p>
+      <table><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>
+      </body></html>`;
+
+    if (!openHtmlPrintWindow(html)) return;
+    trackEvent('Analytics.Exported', {
+      scope: 'events',
+      reportKey: selectedReport.key,
+      filters: reportFilters,
+    });
+  }, [selectedReport, activeReportTable, reportFilters]);
 
   const eventsByDay = useMemo(() => {
     const map = new Map<string, any[]>();
@@ -9769,11 +10111,20 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   };
 
   // Conference Rate Management Component
-  const ConferenceRateManagement = () => {
+  const ConferenceRateManagement = ({
+    onFilteredCountChange,
+  }: {
+    onFilteredCountChange?: (count: number) => void;
+  }) => {
     const [rateSearchTerm, setRateSearchTerm] = useState('');
     const [rateTypeFilter, setRateTypeFilter] = useState<string>('all');
     const [rateGuestFilter, setRateGuestFilter] = useState<string>('all');
     const [rateGuestSearch, setRateGuestSearch] = useState('');
+    const [rateEffectiveFilter, setRateEffectiveFilter] = useState<'all' | RateEffectiveStatus>('all');
+    const [rateDateFilterMode, setRateDateFilterMode] = useState<EventsDateFilterMode>('all');
+    const [rateDateFilterSingle, setRateDateFilterSingle] = useState('');
+    const [rateDateFilterFrom, setRateDateFilterFrom] = useState('');
+    const [rateDateFilterTo, setRateDateFilterTo] = useState('');
     const [ratePage, setRatePage] = useState(1);
     const [isRateModalOpen, setIsRateModalOpen] = useState(false);
     const [editingRate, setEditingRate] = useState<any>(null);
@@ -9788,9 +10139,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         other: { rate: 0, unit: 'per_person', label: 'Other' }
       },
       applicableDates: {
-        startDate: '',
-        endDate: '',
-        isAllYear: true
+        startDate: `${new Date().getFullYear()}-01-01`,
+        endDate: `${new Date().getFullYear()}-12-31`,
+        isAllYear: false,
       },
       clientSpecific: false,
       clientId: '',
@@ -9806,6 +10157,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     const filteredRates = useMemo(() => {
       let filtered = conferenceRates;
+      const today = new Date().toISOString().slice(0, 10);
+      const dateBounds = getEventsDateRangeBounds(
+        rateDateFilterMode,
+        rateDateFilterSingle,
+        rateDateFilterFrom,
+        rateDateFilterTo
+      );
 
       if (rateSearchTerm) {
         const term = rateSearchTerm.toLowerCase();
@@ -9813,7 +10171,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           rate.name.toLowerCase().includes(term) ||
           rate.type.toLowerCase().includes(term) ||
           (rate.clientName && rate.clientName.toLowerCase().includes(term)) ||
-          rate.notes.toLowerCase().includes(term)
+          rate.notes.toLowerCase().includes(term) ||
+          getRateEffectivePeriodLabel(rate.applicableDates).toLowerCase().includes(term)
         );
       }
 
@@ -9823,16 +10182,73 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
       if (rateGuestFilter !== 'all') {
         if (rateGuestFilter === 'general') {
-          // Show only general rates (not client-specific)
           filtered = filtered.filter(rate => !rate.clientSpecific);
         } else {
-          // Show only rates for the selected guest/company
-          filtered = filtered.filter(rate => rate.clientId === rateGuestFilter);
+          const selectedGuest = (frontOfficeGuests || []).find((guest: any) => guest.id === rateGuestFilter);
+          const selectedOrg = (
+            selectedGuest?.employerCompany ||
+            selectedGuest?.name ||
+            `${selectedGuest?.firstName || ''} ${selectedGuest?.lastName || ''}`
+          )
+            ?.toLowerCase()
+            .trim();
+          filtered = filtered.filter((rate) => {
+            if (rate.clientId === rateGuestFilter) return true;
+            if (!selectedOrg) return false;
+            const rateClient = (rate.clientName || '').toLowerCase().trim();
+            return (
+              rateClient &&
+              (rateClient.includes(selectedOrg) || selectedOrg.includes(rateClient))
+            );
+          });
         }
       }
 
-      return filtered;
-    }, [conferenceRates, rateSearchTerm, rateTypeFilter, rateGuestFilter]);
+      if (rateEffectiveFilter !== 'all') {
+        filtered = filtered.filter(
+          (rate) => getRateEffectiveStatus(rate.applicableDates, today) === rateEffectiveFilter
+        );
+      }
+
+      if (dateBounds) {
+        filtered = filtered.filter((rate) =>
+          rateOverlapsDateRange(rate.applicableDates, dateBounds.from, dateBounds.to)
+        );
+      }
+
+      const statusOrder: Record<RateEffectiveStatus, number> = {
+        effective: 0,
+        'all-year': 1,
+        upcoming: 2,
+        incomplete: 3,
+        expired: 4,
+      };
+
+      return [...filtered].sort((a, b) => {
+        const statusA = getRateEffectiveStatus(a.applicableDates, today);
+        const statusB = getRateEffectiveStatus(b.applicableDates, today);
+        const statusDiff = statusOrder[statusA] - statusOrder[statusB];
+        if (statusDiff !== 0) return statusDiff;
+        if (a.applicableDates.isAllYear && !b.applicableDates.isAllYear) return 1;
+        if (!a.applicableDates.isAllYear && b.applicableDates.isAllYear) return -1;
+        return (a.applicableDates.startDate || '').localeCompare(b.applicableDates.startDate || '');
+      });
+    }, [
+      conferenceRates,
+      rateSearchTerm,
+      rateTypeFilter,
+      rateGuestFilter,
+      rateEffectiveFilter,
+      rateDateFilterMode,
+      rateDateFilterSingle,
+      rateDateFilterFrom,
+      rateDateFilterTo,
+      frontOfficeGuests,
+    ]);
+
+    useEffect(() => {
+      onFilteredCountChange?.(filteredRates.length);
+    }, [filteredRates.length, onFilteredCountChange]);
 
     const paginatedRates = useMemo(() => {
       const start = (ratePage - 1) * rowsPerPage;
@@ -9845,7 +10261,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     useEffect(() => {
       setRatePage(1);
-    }, [rateSearchTerm, rateTypeFilter, rateGuestFilter]);
+    }, [rateSearchTerm, rateTypeFilter, rateGuestFilter, rateEffectiveFilter, rateDateFilterMode, rateDateFilterSingle, rateDateFilterFrom, rateDateFilterTo]);
 
     const openRateModal = (mode: 'create' | 'edit', rate?: any) => {
       if (mode === 'edit' && rate) {
@@ -9914,9 +10330,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             other: { rate: 0, unit: 'per_person', label: 'Other' }
           },
           applicableDates: {
-            startDate: '',
-            endDate: '',
-            isAllYear: true
+            startDate: `${new Date().getFullYear()}-01-01`,
+            endDate: `${new Date().getFullYear()}-12-31`,
+            isAllYear: false,
           },
           clientSpecific: false,
           clientId: '',
@@ -9938,8 +10354,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         errors.clientId = 'Guest/Company must be selected or entered for client-specific rates';
       }
       if (!rateForm.applicableDates.isAllYear) {
-        if (!rateForm.applicableDates.startDate) errors.startDate = 'Start date is required';
-        if (!rateForm.applicableDates.endDate) errors.endDate = 'End date is required';
+        if (!rateForm.applicableDates.startDate) errors.startDate = 'Effective from date is required';
+        if (!rateForm.applicableDates.endDate) errors.endDate = 'Effective to date is required';
         if (rateForm.applicableDates.startDate && rateForm.applicableDates.endDate && 
             new Date(rateForm.applicableDates.startDate) > new Date(rateForm.applicableDates.endDate)) {
           errors.endDate = 'End date must be after start date';
@@ -10121,15 +10537,17 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     }, [frontOfficeGuests]);
 
     return (
-      <div className="space-y-6 mt-4">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+      <div className="space-y-4 mt-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <h3 className="text-xl font-semibold text-ghana-black">Conference Rate Management</h3>
-            <p className="text-sm text-gray-600 mt-1">Manage rates for accommodation, conference, meals, and other services</p>
+            <h3 className="text-xl font-semibold text-ghana-black">Guest Rates</h3>
+            <p className="text-sm text-gray-500">
+              Rates apply only when the event dates fall within the rate&apos;s effective period.
+            </p>
           </div>
           <Button
             color="primary"
+            size="sm"
             onPress={() => openRateModal('create')}
           >
             ➕ New Rate
@@ -10137,135 +10555,108 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         </div>
 
         {/* Filters */}
-        <Card>
-          <CardBody className="p-4">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Input
-                placeholder="Search rates by name, type, or client..."
-                value={rateSearchTerm}
-                onChange={(e) => setRateSearchTerm(e.target.value)}
-                className="flex-1"
-                startContent={<span className="text-gray-400">🔍</span>}
-              />
+        <EventsModuleFilters
+          searchTerm={rateSearchTerm}
+          onSearchChange={setRateSearchTerm}
+          searchPlaceholder="Search rates by name, type, client, or effective period..."
+          statusFilter={rateTypeFilter}
+          onStatusChange={setRateTypeFilter}
+          statusPlaceholder="Filter by type"
+          statusOptions={[
+            { key: 'all', label: 'All Types' },
+            { key: 'accommodation', label: '🏨 Accommodation' },
+            { key: 'conference', label: '📅 Conference' },
+            { key: 'lunch', label: '🍽️ Lunch' },
+            { key: 'dinner', label: '🍴 Dinner' },
+            { key: 'other', label: '📋 Other' },
+          ]}
+          showDateFilter
+          dateFilterMode={rateDateFilterMode}
+          onDateFilterModeChange={setRateDateFilterMode}
+          dateFilterSingle={rateDateFilterSingle}
+          onDateFilterSingleChange={setRateDateFilterSingle}
+          dateFilterFrom={rateDateFilterFrom}
+          onDateFilterFromChange={setRateDateFilterFrom}
+          dateFilterTo={rateDateFilterTo}
+          onDateFilterToChange={setRateDateFilterTo}
+          extraFilters={
+            <>
               <Select
-                placeholder="Filter by type"
-                selectedKeys={rateTypeFilter !== 'all' ? [rateTypeFilter] : []}
+                size="sm"
+                label="Effective status"
+                className="min-w-[180px]"
+                selectedKeys={[rateEffectiveFilter]}
                 onSelectionChange={(keys) => {
-                  const value = Array.from(keys)[0] as string;
-                  setRateTypeFilter(value || 'all');
+                  const value = Array.from(keys)[0] as typeof rateEffectiveFilter | undefined;
+                  setRateEffectiveFilter(value || 'all');
                 }}
-                className="w-full sm:w-48"
               >
-                <SelectItem key="all">All Types</SelectItem>
-                <SelectItem key="accommodation">🏨 Accommodation</SelectItem>
-                <SelectItem key="conference">📅 Conference</SelectItem>
-                <SelectItem key="lunch">🍽️ Lunch</SelectItem>
-                <SelectItem key="dinner">🍴 Dinner</SelectItem>
-                <SelectItem key="other">📋 Other</SelectItem>
+                <SelectItem key="all">All statuses</SelectItem>
+                <SelectItem key="effective">Effective now</SelectItem>
+                <SelectItem key="all-year">Always effective</SelectItem>
+                <SelectItem key="upcoming">Upcoming</SelectItem>
+                <SelectItem key="expired">Expired</SelectItem>
+                <SelectItem key="incomplete">Needs dates</SelectItem>
               </Select>
               <Autocomplete
-                label="Filter by Guest/Company"
-                placeholder="Type at least 2 characters to search..."
-                selectedKey={rateGuestFilter !== 'all' ? rateGuestFilter : null}
-                onSelectionChange={(key) => {
-                  setRateGuestFilter(key as string || 'all');
-                }}
-                inputValue={rateGuestSearch}
-                onInputChange={(value) => {
-                  setRateGuestSearch(value);
-                  if (!value) {
-                    setRateGuestFilter('all');
-                  }
-                }}
-                className="flex-1"
-                allowsCustomValue
-              >
-                {(() => {
-                  const q = (rateGuestSearch || '').trim();
-                  const guests = frontOfficeGuests || [];
-                  const results = q.length >= 2
-                    ? guests.filter((g: any) => {
-                        const org = (g.employerCompany || '').toLowerCase();
-                        const name = (g.name || `${g.firstName || ''} ${g.lastName || ''}`).toLowerCase();
-                        const phone = (g.companyPhone || g.phone || '').toLowerCase();
-                        return org.includes(q.toLowerCase()) || name.includes(q.toLowerCase()) || phone.includes(q.toLowerCase());
-                      }).slice(0, 20)
-                    : [];
-                  
-                  const filterOptions = [];
-                  
-                  // Add "All Rates" option
-                  if (q.length < 2) {
-                    filterOptions.push(
-                      <AutocompleteItem key="all" textValue="All Rates">
-                        <div className="flex items-center gap-2">
-                          <span>📋</span>
-                          <span>All Rates</span>
-                        </div>
-                      </AutocompleteItem>
-                    );
-                  }
-                  
-                  // Add "General Rates" option
-                  if (q.length < 2 || 'general'.includes(q.toLowerCase()) || 'all clients'.includes(q.toLowerCase())) {
-                    filterOptions.push(
-                      <AutocompleteItem key="general" textValue="General Rates">
-                        <div className="flex items-center gap-2">
-                          <span>🌐</span>
-                          <span>General Rates (All Clients)</span>
-                        </div>
-                      </AutocompleteItem>
-                    );
-                  }
-                  
-                  // Add custom option if typing
-                  if (q.length >= 2) {
-                    filterOptions.push(
-                      <AutocompleteItem key={`custom:${q}`} textValue={q}>
-                        <div className="flex justify-between items-center w-full">
-                          <span className="font-medium">Use "{q}"</span>
-                          <span className="text-xs text-gray-500">Click to confirm</span>
-                        </div>
-                      </AutocompleteItem>
-                    );
-                  }
-                  
-                  // Add matching guests/companies
-                  if (q.length >= 2) {
-                    results.forEach((g: any) => {
-                      const org = g.employerCompany || (g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim());
-                      const person = g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
-                      filterOptions.push(
-                        <AutocompleteItem key={g.id} textValue={`${org} ${person}`}>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{org}</span>
-                            <span className="text-xs text-gray-600">{person} • {(g.companyPhone || g.phone || '')}</span>
-                          </div>
-                        </AutocompleteItem>
-                      );
-                    });
-                  }
-                  
-                  return filterOptions.length > 0 ? filterOptions : null;
-                })()}
-              </Autocomplete>
-              {rateGuestFilter !== 'all' && (
-                <Button
-                  size="lg"
-                  variant="flat"
-                  color="default"
-                  onPress={() => {
-                    setRateGuestFilter('all');
-                    setRateGuestSearch('');
-                  }}
-                  className="self-end"
-                >
-                  Clear Filter
-                </Button>
-              )}
-            </div>
-          </CardBody>
-        </Card>
+              label="Filter by Guest/Company"
+              placeholder="Type at least 2 characters to search..."
+              selectedKey={rateGuestFilter !== 'all' ? rateGuestFilter : null}
+              onSelectionChange={(key) => {
+                setRateGuestFilter((key as string) || 'all');
+              }}
+              inputValue={rateGuestSearch}
+              onInputChange={(value) => {
+                setRateGuestSearch(value);
+                if (!value) {
+                  setRateGuestFilter('all');
+                }
+              }}
+              className="flex-1"
+              allowsCustomValue
+            >
+              {(() => {
+                const q = (rateGuestSearch || '').trim();
+                const guests = frontOfficeGuests || [];
+                const results = q.length >= 2
+                  ? guests.filter((g: any) => {
+                      const org = (g.employerCompany || '').toLowerCase();
+                      const name = (g.name || `${g.firstName || ''} ${g.lastName || ''}`).toLowerCase();
+                      const phone = (g.companyPhone || g.phone || '').toLowerCase();
+                      return org.includes(q.toLowerCase()) || name.includes(q.toLowerCase()) || phone.includes(q.toLowerCase());
+                    }).slice(0, 20)
+                  : [];
+
+                const filterOptions = [];
+
+                if (q.length < 2) {
+                  filterOptions.push(
+                    <AutocompleteItem key="all" textValue="All Rates">
+                      All Rates
+                    </AutocompleteItem>
+                  );
+                  filterOptions.push(
+                    <AutocompleteItem key="general" textValue="General Rates Only">
+                      General Rates Only
+                    </AutocompleteItem>
+                  );
+                }
+
+                results.forEach((guest: any) => {
+                  const label = guest.employerCompany || guest.name || `${guest.firstName || ''} ${guest.lastName || ''}`.trim();
+                  filterOptions.push(
+                    <AutocompleteItem key={guest.id} textValue={label}>
+                      {label}
+                    </AutocompleteItem>
+                  );
+                });
+
+                return filterOptions;
+              })()}
+            </Autocomplete>
+            </>
+          }
+        />
 
         {/* Rates Table */}
         <Card>
@@ -10284,7 +10675,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <TableColumn>TYPE</TableColumn>
                 <TableColumn>RATE</TableColumn>
                 <TableColumn>UNIT</TableColumn>
-                <TableColumn>APPLICABLE DATES</TableColumn>
+                <TableColumn>EFFECTIVE PERIOD</TableColumn>
                 <TableColumn>CLIENT</TableColumn>
                 <TableColumn>STATUS</TableColumn>
                 <TableColumn>ACTIONS</TableColumn>
@@ -10300,7 +10691,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     </TableCell>
                   </TableRow>
                 ) : (
-                  paginatedRates.map((rate: any) => (
+                  paginatedRates.map((rate: any) => {
+                    const effectiveStatus = getRateEffectiveStatus(rate.applicableDates);
+                    const effectiveMeta = RATE_EFFECTIVE_STATUS_META[effectiveStatus];
+                    return (
                     <TableRow key={rate.id}>
                       <TableCell>
                         <div>
@@ -10316,14 +10710,12 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       <TableCell className="font-semibold">{formatCurrency(rate.baseRate)}</TableCell>
                       <TableCell className="text-sm text-gray-600">{getUnitLabel(rate.unit)}</TableCell>
                       <TableCell>
-                        {rate.applicableDates.isAllYear ? (
-                          <span className="text-sm">All Year</span>
-                        ) : (
-                          <div className="text-sm">
-                            <p>{new Date(rate.applicableDates.startDate).toLocaleDateString()}</p>
-                            <p className="text-gray-500">to {new Date(rate.applicableDates.endDate).toLocaleDateString()}</p>
-                          </div>
-                        )}
+                        <div className="text-sm font-medium text-ghana-black">
+                          {getRateEffectivePeriodLabel(rate.applicableDates)}
+                        </div>
+                        <Chip color={effectiveMeta.color} size="sm" variant="flat" className="mt-1">
+                          {effectiveMeta.label}
+                        </Chip>
                       </TableCell>
                       <TableCell>
                         {rate.clientSpecific ? (
@@ -10358,7 +10750,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -10519,49 +10912,58 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   )}
                 </div>
 
-                {/* Applicable Dates */}
-                <div className="space-y-2">
+                {/* Effective Period */}
+                <div className="space-y-2 rounded-xl border border-gray-200 bg-gray-50/70 p-4">
+                  <div>
+                    <p className="text-sm font-semibold text-ghana-black">Effective Period</p>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      The rate only auto-applies to events whose dates overlap this period.
+                    </p>
+                  </div>
                   <Switch
                     isSelected={rateForm.applicableDates.isAllYear}
                     onValueChange={(checked) => {
+                      const year = new Date().getFullYear();
                       setRateForm({
                         ...rateForm,
                         applicableDates: {
                           ...rateForm.applicableDates,
                           isAllYear: checked,
-                          startDate: checked ? '' : rateForm.applicableDates.startDate,
-                          endDate: checked ? '' : rateForm.applicableDates.endDate
-                        }
+                          startDate: checked ? '' : rateForm.applicableDates.startDate || `${year}-01-01`,
+                          endDate: checked ? '' : rateForm.applicableDates.endDate || `${year}-12-31`,
+                        },
                       });
                     }}
                   >
-                    <span className="font-medium">Apply to All Year</span>
+                    <span className="font-medium">Always effective (all year)</span>
                   </Switch>
                   {!rateForm.applicableDates.isAllYear && (
-                    <div className="grid grid-cols-2 gap-4 ml-6">
+                    <div className="grid grid-cols-2 gap-4">
                       <Input
-                        label="Start Date"
+                        label="Effective from"
                         type="date"
                         value={rateForm.applicableDates.startDate}
                         onValueChange={(value) => {
                           setRateForm({
                             ...rateForm,
-                            applicableDates: { ...rateForm.applicableDates, startDate: value }
+                            applicableDates: { ...rateForm.applicableDates, startDate: value },
                           });
                         }}
+                        isRequired
                         isInvalid={!!rateErrors.startDate}
                         errorMessage={rateErrors.startDate}
                       />
                       <Input
-                        label="End Date"
+                        label="Effective to"
                         type="date"
                         value={rateForm.applicableDates.endDate}
                         onValueChange={(value) => {
                           setRateForm({
                             ...rateForm,
-                            applicableDates: { ...rateForm.applicableDates, endDate: value }
+                            applicableDates: { ...rateForm.applicableDates, endDate: value },
                           });
                         }}
+                        isRequired
                         isInvalid={!!rateErrors.endDate}
                         errorMessage={rateErrors.endDate}
                       />
@@ -10706,8 +11108,30 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
   // Event Management Component
   const EventManagementTab = () => {
+    const getManagementTabDefaultDateFilter = (tab: ManagementMainTabKey): EventsDateFilterMode => {
+      switch (tab) {
+        case 'events':
+        case 'active':
+          return 'thisMonth';
+        case 'completed':
+        case 'invoices':
+        case 'receipts':
+        case 'quotes':
+        case 'folios':
+          return 'monthToDate';
+        default:
+          return 'monthToDate';
+      }
+    };
+
     const [managementSearchTerm, setManagementSearchTerm] = useState('');
     const [managementStatusFilter, setManagementStatusFilter] = useState<string>('all');
+    const [managementDateFilterMode, setManagementDateFilterMode] = useState<EventsDateFilterMode>(() =>
+      getManagementTabDefaultDateFilter(managementMainTab)
+    );
+    const [managementDateFilterSingle, setManagementDateFilterSingle] = useState('');
+    const [managementDateFilterFrom, setManagementDateFilterFrom] = useState('');
+    const [managementDateFilterTo, setManagementDateFilterTo] = useState('');
     const [managementViewMode, setManagementViewMode] = useState<'table' | 'calendar' | 'gantt' | 'function'>('table');
     const [managementInvoiceSearch, setManagementInvoiceSearch] = useState('');
     const [managementReceiptSearch, setManagementReceiptSearch] = useState('');
@@ -10775,6 +11199,123 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     const managedEvents = reportingEvents;
 
+    const applyManagementEventFilters = useCallback(
+      (events: any[]) => {
+        let filtered = events;
+
+        if (managementSearchTerm.trim()) {
+          const term = managementSearchTerm.trim().toLowerCase();
+          filtered = filtered.filter(
+            (event: any) =>
+              (event.eventName || '').toLowerCase().includes(term) ||
+              (event.organization || '').toLowerCase().includes(term) ||
+              (event.venueName || event.venue || '').toLowerCase().includes(term) ||
+              (event.contactPerson || '').toLowerCase().includes(term) ||
+              getEventCoordinator(event).toLowerCase().includes(term)
+          );
+        }
+
+        if (managementStatusFilter !== 'all') {
+          filtered = filtered.filter((event: any) => event.eventStatus === managementStatusFilter);
+        }
+
+        if (managementDateFilterMode !== 'all') {
+          filtered = filtered.filter((event: any) =>
+            matchesEventsDateFilter(
+              eventPrimaryDate(event),
+              managementDateFilterMode,
+              managementDateFilterSingle,
+              managementDateFilterFrom,
+              managementDateFilterTo
+            )
+          );
+        }
+
+        return filtered;
+      },
+      [
+        managementSearchTerm,
+        managementStatusFilter,
+        managementDateFilterMode,
+        managementDateFilterSingle,
+        managementDateFilterFrom,
+        managementDateFilterTo,
+      ]
+    );
+
+    const managementFilterSearch = useMemo(() => {
+      switch (managementMainTab) {
+        case 'invoices':
+          return managementInvoiceSearch;
+        case 'receipts':
+          return managementReceiptSearch;
+        case 'quotes':
+          return managementQuoteSearch;
+        case 'folios':
+          return managementFolioSearch;
+        default:
+          return managementSearchTerm;
+      }
+    }, [
+      managementMainTab,
+      managementSearchTerm,
+      managementInvoiceSearch,
+      managementReceiptSearch,
+      managementQuoteSearch,
+      managementFolioSearch,
+    ]);
+
+    const setManagementFilterSearch = useCallback(
+      (value: string) => {
+        switch (managementMainTab) {
+          case 'invoices':
+            setManagementInvoiceSearch(value);
+            break;
+          case 'receipts':
+            setManagementReceiptSearch(value);
+            break;
+          case 'quotes':
+            setManagementQuoteSearch(value);
+            break;
+          case 'folios':
+            setManagementFolioSearch(value);
+            break;
+          default:
+            setManagementSearchTerm(value);
+            break;
+        }
+      },
+      [managementMainTab]
+    );
+
+    const managementFilterPlaceholder = useMemo(() => {
+      switch (managementMainTab) {
+        case 'invoices':
+          return 'Search invoices, events, or clients...';
+        case 'receipts':
+          return 'Search receipts, events, or clients...';
+        case 'quotes':
+          return 'Search quotes, events, or clients...';
+        case 'folios':
+          return 'Search folios, events, or clients...';
+        default:
+          return 'Search events...';
+      }
+    }, [managementMainTab]);
+
+    const managementStatusOptions = useMemo(
+      () => [
+        { key: 'all', label: 'All Statuses' },
+        { key: 'confirmed', label: 'Confirmed' },
+        { key: 'in-progress', label: 'In Progress' },
+        { key: 'completed', label: 'Completed' },
+        { key: 'billed', label: 'Billed' },
+      ],
+      []
+    );
+
+    const showManagementStatusFilter = ['events', 'active', 'completed'].includes(managementMainTab);
+
     useEffect(() => {
       if (
         managementSelectedGanttVenue !== 'all' &&
@@ -10786,31 +11327,20 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     }, [managementSelectedGanttVenue, modernVenues]);
 
     const filteredManagedEvents = useMemo(() => {
-      let filtered = managedEvents;
+      let filtered = applyManagementEventFilters(managedEvents);
 
       if (managementMainTab === 'active') {
-        // Active events: confirmed or in-progress
-        filtered = filtered.filter((e: any) => e.eventStatus === 'confirmed' || e.eventStatus === 'in-progress');
+        filtered = filtered.filter(
+          (event: any) => event.eventStatus === 'confirmed' || event.eventStatus === 'in-progress'
+        );
       } else if (managementMainTab === 'completed') {
-        // Completed events: completed or billed
-        filtered = filtered.filter((e: any) => e.eventStatus === 'completed' || e.eventStatus === 'billed');
-      }
-
-      if (managementSearchTerm) {
-        const term = managementSearchTerm.toLowerCase();
-        filtered = filtered.filter((e: any) => 
-          (e.eventName || '').toLowerCase().includes(term) ||
-          (e.organization || '').toLowerCase().includes(term) ||
-          (e.venueName || '').toLowerCase().includes(term)
+        filtered = filtered.filter(
+          (event: any) => event.eventStatus === 'completed' || event.eventStatus === 'billed'
         );
       }
 
-      if (managementStatusFilter !== 'all') {
-        filtered = filtered.filter((e: any) => e.eventStatus === managementStatusFilter);
-      }
-
       return filtered;
-    }, [managedEvents, managementSearchTerm, managementStatusFilter, managementMainTab]);
+    }, [managedEvents, applyManagementEventFilters, managementMainTab]);
 
     const eventStatusBuckets = useMemo(
       () =>
@@ -11010,8 +11540,27 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             .some(field => String(field).toLowerCase().includes(q))
         );
       }
+      if (managementDateFilterMode !== 'all') {
+        filtered = filtered.filter(inv =>
+          matchesEventsDateFilter(
+            inv.issueDate,
+            managementDateFilterMode,
+            managementDateFilterSingle,
+            managementDateFilterFrom,
+            managementDateFilterTo
+          )
+        );
+      }
       return filtered;
-    }, [eventInvoices, getFilteredEventIds, managementInvoiceSearch]);
+    }, [
+      eventInvoices,
+      getFilteredEventIds,
+      managementInvoiceSearch,
+      managementDateFilterMode,
+      managementDateFilterSingle,
+      managementDateFilterFrom,
+      managementDateFilterTo,
+    ]);
 
     const managementFilteredReceipts = useMemo(() => {
       let filtered = eventReceipts.filter(rcpt => getFilteredEventIds.includes(rcpt.eventId));
@@ -11023,8 +11572,27 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             .some(field => String(field).toLowerCase().includes(q))
         );
       }
+      if (managementDateFilterMode !== 'all') {
+        filtered = filtered.filter(rcpt =>
+          matchesEventsDateFilter(
+            rcpt.date,
+            managementDateFilterMode,
+            managementDateFilterSingle,
+            managementDateFilterFrom,
+            managementDateFilterTo
+          )
+        );
+      }
       return filtered;
-    }, [eventReceipts, getFilteredEventIds, managementReceiptSearch]);
+    }, [
+      eventReceipts,
+      getFilteredEventIds,
+      managementReceiptSearch,
+      managementDateFilterMode,
+      managementDateFilterSingle,
+      managementDateFilterFrom,
+      managementDateFilterTo,
+    ]);
     const managementFilteredQuotes = useMemo<QuoteListItem[]>(() => {
       const quotes: QuoteListItem[] = managedEvents.map((event: any) => {
         const checkIn = event.arrivalDate || event.startDate || event.createdAt || '';
@@ -11053,13 +11621,34 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       });
 
       const term = managementQuoteSearch.trim().toLowerCase();
-      if (!term) return quotes;
-      return quotes.filter(q =>
-        q.quoteNumber.toLowerCase().includes(term) ||
-        q.eventName.toLowerCase().includes(term) ||
-        q.clientName.toLowerCase().includes(term)
-      );
-    }, [managedEvents, managementQuoteSearch]);
+      let filtered = quotes;
+      if (term) {
+        filtered = filtered.filter(q =>
+          q.quoteNumber.toLowerCase().includes(term) ||
+          q.eventName.toLowerCase().includes(term) ||
+          q.clientName.toLowerCase().includes(term)
+        );
+      }
+      if (managementDateFilterMode !== 'all') {
+        filtered = filtered.filter(q =>
+          matchesEventsDateFilter(
+            q.issuedOn || q.checkIn,
+            managementDateFilterMode,
+            managementDateFilterSingle,
+            managementDateFilterFrom,
+            managementDateFilterTo
+          )
+        );
+      }
+      return filtered;
+    }, [
+      managedEvents,
+      managementQuoteSearch,
+      managementDateFilterMode,
+      managementDateFilterSingle,
+      managementDateFilterFrom,
+      managementDateFilterTo,
+    ]);
 
     const managementFilteredFolios = useMemo(() => {
       let filtered = eventFolios.filter(folio => getFilteredEventIds.includes(folio.eventId));
@@ -11071,8 +11660,120 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             .some(field => String(field).toLowerCase().includes(q))
         );
       }
+      if (managementDateFilterMode !== 'all') {
+        filtered = filtered.filter(folio =>
+          matchesEventsDateFilter(
+            folio.updatedAt,
+            managementDateFilterMode,
+            managementDateFilterSingle,
+            managementDateFilterFrom,
+            managementDateFilterTo
+          )
+        );
+      }
       return filtered;
-    }, [eventFolios, getFilteredEventIds, managementFolioSearch]);
+    }, [
+      eventFolios,
+      getFilteredEventIds,
+      managementFolioSearch,
+      managementDateFilterMode,
+      managementDateFilterSingle,
+      managementDateFilterFrom,
+      managementDateFilterTo,
+    ]);
+
+    const managementTabCounts = useMemo(() => {
+      const base = applyManagementEventFilters(managedEvents);
+      const completedEventIds = managedEvents
+        .filter((e: any) => e.eventStatus === 'completed' || e.eventStatus === 'billed')
+        .map((e: any) => e.id);
+
+      const countFinancialDocs = <T extends { eventId: string }>(
+        docs: T[],
+        search: string,
+        getSearchFields: (doc: T) => (string | undefined | null)[],
+        getDateValue: (doc: T) => string | undefined | null
+      ) => {
+        let filtered = docs.filter((doc) => completedEventIds.includes(doc.eventId));
+        const q = search.trim().toLowerCase();
+        if (q) {
+          filtered = filtered.filter((doc) =>
+            getSearchFields(doc)
+              .filter(Boolean)
+              .some((field) => String(field).toLowerCase().includes(q))
+          );
+        }
+        if (managementDateFilterMode !== 'all') {
+          filtered = filtered.filter((doc) =>
+            matchesEventsDateFilter(
+              getDateValue(doc),
+              managementDateFilterMode,
+              managementDateFilterSingle,
+              managementDateFilterFrom,
+              managementDateFilterTo
+            )
+          );
+        }
+        return filtered.length;
+      };
+
+      return {
+        events: base.length,
+        active: base.filter(
+          (e: any) => e.eventStatus === 'confirmed' || e.eventStatus === 'in-progress'
+        ).length,
+        completed: base.filter(
+          (e: any) => e.eventStatus === 'completed' || e.eventStatus === 'billed'
+        ).length,
+        invoices: countFinancialDocs(
+          eventInvoices,
+          managementInvoiceSearch,
+          (inv) => [inv.id, inv.eventName, inv.clientName, inv.status, inv.reference],
+          (inv) => inv.issueDate
+        ),
+        receipts: countFinancialDocs(
+          eventReceipts,
+          managementReceiptSearch,
+          (rcpt) => [rcpt.id, rcpt.eventName, rcpt.clientName, rcpt.method, rcpt.reference],
+          (rcpt) => rcpt.date
+        ),
+        quotes: managementFilteredQuotes.length,
+        folios: countFinancialDocs(
+          eventFolios,
+          managementFolioSearch,
+          (folio) => [folio.id, folio.eventName, folio.clientName, folio.status],
+          (folio) => folio.updatedAt
+        ),
+      };
+    }, [
+      managedEvents,
+      applyManagementEventFilters,
+      eventInvoices,
+      eventReceipts,
+      eventFolios,
+      managementInvoiceSearch,
+      managementReceiptSearch,
+      managementFolioSearch,
+      managementFilteredQuotes.length,
+      managementDateFilterMode,
+      managementDateFilterSingle,
+      managementDateFilterFrom,
+      managementDateFilterTo,
+    ]);
+
+    const managementTabOptions = useMemo(
+      () =>
+        [
+          { key: 'events' as const, label: `📊 Event Master (${managementTabCounts.events})` },
+          { key: 'active' as const, label: `🟢 Active Events (${managementTabCounts.active})` },
+          { key: 'completed' as const, label: `✅ Completed Events (${managementTabCounts.completed})` },
+          { key: 'invoices' as const, label: `🧾 Invoices (${managementTabCounts.invoices})` },
+          { key: 'receipts' as const, label: `💳 Receipts (${managementTabCounts.receipts})` },
+          { key: 'quotes' as const, label: `📑 Quotes / Proforma (${managementTabCounts.quotes})` },
+          { key: 'folios' as const, label: `📂 Folios (${managementTabCounts.folios})` },
+        ],
+      [managementTabCounts]
+    );
 
     const eventMasterSortAccessors = useMemo(() => ({
       eventId: (row: any) => row.id || '',
@@ -11082,6 +11783,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       duration: (row: any) => computeEventDurationDays(row),
       pax: (row: any) => Number(row.pax || row.expectedPax || 0),
       status: (row: any) => row.eventStatus || row.status || '',
+      coordinator: (row: any) => getEventCoordinator(row),
+      clientContact: (row: any) => getEventClientContactName(row),
       revenue: (row: any) => Number(row.revenue || row.budgetTotal || 0)
     }), []);
 
@@ -11257,7 +11960,14 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     useEffect(() => {
       setActiveEventsPage(1);
       setCompletedEventsPage(1);
-    }, [managementSearchTerm, managementStatusFilter]);
+    }, [managementSearchTerm, managementStatusFilter, managementDateFilterMode, managementDateFilterSingle, managementDateFilterFrom, managementDateFilterTo]);
+
+    useEffect(() => {
+      setManagementDateFilterMode(getManagementTabDefaultDateFilter(managementMainTab));
+      setManagementDateFilterSingle('');
+      setManagementDateFilterFrom('');
+      setManagementDateFilterTo('');
+    }, [managementMainTab]);
 
     useEffect(() => {
       setInvoicesPage(1);
@@ -11365,37 +12075,11 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     // Wrapper functions for function view exports using filteredManagedEvents
     const exportManagementFunctionSchedulePDF = () => {
       try {
-        trackEvent('Events.EventCreated', { action: 'function_schedule_pdf_exported', eventCount: filteredManagedEvents.length });
-        
-        const pdfContent = `
-          Provisional Function Schedule - ${managementGanttTimelineTitle}
-          Generated on: ${new Date().toLocaleDateString()}
-          
-          Total Functions: ${filteredManagedEvents.length}
-          Confirmed: ${filteredManagedEvents.filter((e: any) => e.eventStatus === 'confirmed' || e.eventStatus === 'in-progress').length}
-          Total Attendees: ${filteredManagedEvents.reduce((sum: number, e: any) => sum + (e.pax || 0), 0)}
-          
-          ${filteredManagedEvents.map((event: any, index: number) => `
-            ${index + 1}. ${event.eventName}
-            Organization: ${event.organization}
-            Event Type: ${event.eventType || 'Conference'}
-            Venue: ${event.venueName || event.venue || 'Unassigned'}
-            Dates: ${event.arrivalDate || event.startDate} - ${event.departureDate || event.endDate}
-            Duration: ${event.duration || 0} days
-            Attendees: ${event.pax || 0}
-            Status: ${getConfirmedStatusLabel(event.eventStatus || event.status)}
-          `).join('\n\n')}
-        `;
-        
-        const blob = new Blob([pdfContent], { type: 'text/plain' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `function-schedule-${new Date().toISOString().split('T')[0]}.txt`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
+        printFunctionScheduleFromEvents(
+          filteredManagedEvents,
+          managementGanttTimelineTitle || 'Filtered Events',
+          'function_schedule_pdf_exported'
+        );
       } catch (error) {
         console.error('Error exporting function schedule PDF:', error);
         alert('Failed to export function schedule. Please try again.');
@@ -11439,148 +12123,87 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     };
 
     return (
-      <div className="space-y-6 mt-4">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="border-2 border-blue-200">
-            <CardBody className="p-4">
-              <p className="text-sm text-gray-600 mb-1">Confirmed</p>
-              <p className="text-2xl font-bold text-blue-700">
-                {managedEvents.filter((e: any) => {
-                  const normalized = normalizeStatus(e.eventStatus || e.status);
-                  return normalized === 'confirmed';
-                }).length}
-              </p>
-            </CardBody>
-          </Card>
-          <Card className="border-2 border-green-200">
-            <CardBody className="p-4">
-              <p className="text-sm text-gray-600 mb-1">Invoiced</p>
-              <p className="text-2xl font-bold text-green-700">
-                {managedEvents.filter((e: any) => {
-                  const normalized = normalizeStatus(e.eventStatus || e.status);
-                  return normalized === 'invoiced';
-                }).length}
-              </p>
-            </CardBody>
-          </Card>
-          <Card className="border-2 border-yellow-200">
-            <CardBody className="p-4">
-              <p className="text-sm text-gray-600 mb-1">Quote</p>
-              <p className="text-2xl font-bold text-yellow-700">
-                {managedEvents.filter((e: any) => {
-                  const normalized = normalizeStatus(e.eventStatus || e.status);
-                  return normalized === 'quote';
-                }).length}
-              </p>
-            </CardBody>
-          </Card>
-          <Card className="border-2 border-purple-200">
-            <CardBody className="p-4">
-              <p className="text-sm text-gray-600 mb-1">Total Budget</p>
-              <p className="text-2xl font-bold text-purple-700">
-                {formatCurrency(managedEvents.reduce((sum: number, e: any) => sum + e.budgetTotal, 0))}
-              </p>
-            </CardBody>
-          </Card>
+      <div className="space-y-4 mt-4">
+        <h3 className="text-xl font-semibold text-ghana-black">Event Management</h3>
+
+        <div
+          role="tablist"
+          aria-label="Event management views"
+          className="flex w-full overflow-x-auto flex-nowrap gap-1 p-1 border border-gray-200 rounded-lg bg-gray-50 scrollbar-thin"
+        >
+          {managementTabOptions.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={managementMainTab === tab.key}
+              onClick={() => setManagementMainTab(tab.key)}
+              className={`whitespace-nowrap flex-shrink-0 px-3 min-h-9 rounded-md text-sm transition-colors ${
+                managementMainTab === tab.key
+                  ? 'bg-white text-ghana-black font-semibold shadow-sm'
+                  : 'text-gray-600 hover:text-ghana-black hover:bg-white/60'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
-        {/* Filters */}
-        <Card>
-          <CardBody className="p-4">
-            <div className="flex flex-col sm:flex-row gap-4">
-              <Input
-                placeholder="Search by event name, organization, or venue..."
-                value={managementSearchTerm}
-                onChange={(e) => setManagementSearchTerm(e.target.value)}
-                className="flex-1"
-                startContent={<span className="text-gray-400">🔍</span>}
-              />
-                  <Select
-                placeholder="Filter by status"
-                selectedKeys={managementStatusFilter !== 'all' ? [managementStatusFilter] : []}
-                onSelectionChange={(keys) => {
-                  const value = Array.from(keys)[0] as string;
-                  setManagementStatusFilter(value || 'all');
-                }}
-                className="w-full sm:w-48"
-              >
-                <SelectItem key="all">All Statuses</SelectItem>
-                <SelectItem key="confirmed">Confirmed</SelectItem>
-                <SelectItem key="in-progress">In Progress</SelectItem>
-                <SelectItem key="completed">Completed</SelectItem>
-                <SelectItem key="billed">Billed</SelectItem>
-              </Select>
-            </div>
-          </CardBody>
-        </Card>
+        <EventsModuleFilters
+          searchTerm={managementFilterSearch}
+          onSearchChange={setManagementFilterSearch}
+          searchPlaceholder={managementFilterPlaceholder}
+          statusFilter={showManagementStatusFilter ? managementStatusFilter : undefined}
+          onStatusChange={showManagementStatusFilter ? setManagementStatusFilter : undefined}
+          statusOptions={showManagementStatusFilter ? managementStatusOptions : undefined}
+          dateFilterMode={managementDateFilterMode}
+          onDateFilterModeChange={setManagementDateFilterMode}
+          dateFilterSingle={managementDateFilterSingle}
+          onDateFilterSingleChange={setManagementDateFilterSingle}
+          dateFilterFrom={managementDateFilterFrom}
+          onDateFilterFromChange={setManagementDateFilterFrom}
+          dateFilterTo={managementDateFilterTo}
+          onDateFilterToChange={setManagementDateFilterTo}
+        />
 
-        {/* Main Tabs */}
+        {managementMainTab === 'quotes' && (
+          <p className="text-xs text-gray-500">
+            Pipeline view — all quotes and proformas, filtered by issue date.
+          </p>
+        )}
+
         <Tabs
           selectedKey={managementMainTab}
           onSelectionChange={(key) => {
-            const newTab = key as 'events' | 'active' | 'completed' | 'invoices' | 'receipts' | 'quotes' | 'folios';
+            const newTab = key as ManagementMainTabKey;
             setManagementMainTab(newTab);
           }}
+          classNames={{
+            base: 'w-full',
+            tabList: 'hidden',
+            panel: 'pt-0',
+          }}
         >
-          <Tab key="events" title="📊 Event Master">
+          <Tab key="events" title={`📊 Event Master (${managementTabCounts.events})`}>
             <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between w-full">
-                  <h3 className="text-lg font-semibold">Event Master</h3>
-                  <div className="flex items-center gap-2">
-                    <Badge content={managedEvents.length} color="primary">
-                      <span className="text-sm text-gray-600">Total Confirmed Events</span>
-                    </Badge>
-                    <Button 
-                      color="success" 
-                      variant="solid"
-                      size="sm"
-                      onClick={openNewEventModal}
-                    >
-                      ➕ New Event
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardBody>
-                <div className="mb-4 flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      size="sm"
-                      placeholder="Search events..."
-                      value={managementSearchTerm}
-                      onValueChange={setManagementSearchTerm}
-                      startContent={<span className="text-gray-400">🔍</span>}
-                      className="max-w-xs"
-                    />
+              <CardBody className="pt-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-base font-semibold text-ghana-black">Event Master</h3>
+                  <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                     <Select
                       size="sm"
-                      selectedKeys={[managementStatusFilter]}
-                      onSelectionChange={(keys) => setManagementStatusFilter(Array.from(keys)[0] as string)}
-                      className="w-40"
-                      variant="flat"
-                    >
-                      <SelectItem key="all">All Statuses</SelectItem>
-                      <SelectItem key="confirmed">Confirmed</SelectItem>
-                      <SelectItem key="in-progress">In Progress</SelectItem>
-                      <SelectItem key="completed">Completed</SelectItem>
-                      <SelectItem key="billed">Billed</SelectItem>
-                    </Select>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Select 
-                      size="sm"
-                      label="View Mode" 
+                      aria-label="View mode"
                       selectedKeys={[managementViewMode]}
-                      onSelectionChange={(keys) => setManagementViewMode(Array.from(keys)[0] as 'table' | 'calendar' | 'gantt' | 'function')}
-                      className="w-48"
+                      onSelectionChange={(keys) =>
+                        setManagementViewMode(Array.from(keys)[0] as 'table' | 'calendar' | 'gantt' | 'function')
+                      }
+                      className="w-36"
                       variant="flat"
                     >
-                      <SelectItem key="table">📋 Table View</SelectItem>
-                      <SelectItem key="calendar">📅 Calendar View</SelectItem>
-                      <SelectItem key="gantt">📊 Gantt Chart</SelectItem>
-                      <SelectItem key="function">📋 Function View</SelectItem>
+                      <SelectItem key="table">📋 Table</SelectItem>
+                      <SelectItem key="calendar">📅 Calendar</SelectItem>
+                      <SelectItem key="gantt">📊 Gantt</SelectItem>
+                      <SelectItem key="function">📋 Function</SelectItem>
                     </Select>
                     <Button
                       size="sm"
@@ -11594,7 +12217,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         }
                       }}
                     >
-                      📄 Export PDF
+                      PDF
                     </Button>
                     <Button
                       size="sm"
@@ -11608,7 +12231,15 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         }
                       }}
                     >
-                      📊 Export XLS
+                      Excel
+                    </Button>
+                    <Button
+                      color="success"
+                      variant="solid"
+                      size="sm"
+                      onPress={openNewEventModal}
+                    >
+                      ➕ New Event
                     </Button>
                   </div>
                 </div>
@@ -11636,6 +12267,12 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     <TableColumn key="status">
                       {renderSortableHeader('Status', 'status', eventMasterSort, handleEventMasterSort)}
                     </TableColumn>
+                    <TableColumn key="coordinator">
+                      {renderSortableHeader('Coordinator', 'coordinator', eventMasterSort, handleEventMasterSort)}
+                    </TableColumn>
+                    <TableColumn key="clientContact">
+                      {renderSortableHeader('Client', 'clientContact', eventMasterSort, handleEventMasterSort)}
+                    </TableColumn>
                     <TableColumn key="revenue">
                       {renderSortableHeader('Revenue', 'revenue', eventMasterSort, handleEventMasterSort)}
                     </TableColumn>
@@ -11644,7 +12281,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   <TableBody>
                     {eventMasterTableRows.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center text-gray-500 py-8">
+                        <TableCell colSpan={11} className="text-center text-gray-500 py-8">
                           <div>
                             <span className="text-4xl">📋</span>
                             <p className="mt-2">No events found</p>
@@ -11697,6 +12334,17 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                             <Badge color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any} variant="flat">
                               {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
                             </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <span className={`text-sm ${getEventCoordinator(event) === UNASSIGNED_STAFF ? 'text-amber-600' : 'text-gray-800'}`}>
+                              {getEventCoordinator(event)}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="text-sm">
+                              <p>{getEventClientContactName(event)}</p>
+                              {event.contactPhone && <p className="text-xs text-gray-500">{event.contactPhone}</p>}
+                            </div>
                           </TableCell>
                           <TableCell>
                             <div className="space-y-1">
@@ -12233,7 +12881,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                           className="flex-1 sm:flex-none min-w-[120px]"
                           onPress={() => exportManagementFunctionSchedulePDF()}
                         >
-                          📄 Export PDF
+                          🖨️ Print Schedule
                         </Button>
                         <Button 
                           size="sm" 
@@ -12434,17 +13082,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               </CardBody>
             </Card>
           </Tab>
-          <Tab key="active" title="🟢 Active Events">
+          <Tab key="active" title={`🟢 Active Events (${managementTabCounts.active})`}>
             <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between w-full">
-                  <h3 className="text-lg font-semibold">Active Events</h3>
-                  <Badge content={filteredManagedEvents.filter((e: any) => e.eventStatus === 'confirmed' || e.eventStatus === 'in-progress').length} color="primary">
-                    <span className="text-sm text-gray-600">Total Events</span>
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardBody>
+              <CardBody className="pt-3">
+                <h3 className="text-base font-semibold text-ghana-black mb-3">Active Events</h3>
                 <Table aria-label="Confirmed events table">
                   <TableHeader>
                     <TableColumn key="eventName">
@@ -12476,7 +13117,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   <TableBody>
                     {paginatedActiveEvents.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center text-gray-500 py-8">
+                        <TableCell colSpan={9} className="text-center text-gray-500 py-8">
                           <div>
                             <span className="text-4xl">📅</span>
                             <p className="mt-2">No active confirmed events found</p>
@@ -12583,17 +13224,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               </CardBody>
             </Card>
           </Tab>
-          <Tab key="completed" title="✅ Completed Events">
+          <Tab key="completed" title={`✅ Completed Events (${managementTabCounts.completed})`}>
             <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between w-full">
-                  <h3 className="text-lg font-semibold">Completed Events</h3>
-                  <Badge content={filteredManagedEvents.filter((e: any) => e.eventStatus === 'completed' || e.eventStatus === 'billed').length} color="primary">
-                    <span className="text-sm text-gray-600">Total Events</span>
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardBody>
+              <CardBody className="pt-3">
+                <h3 className="text-base font-semibold text-ghana-black mb-3">Completed Events</h3>
                 <Table aria-label="Completed events table">
                   <TableHeader>
                     <TableColumn key="eventName">
@@ -12631,7 +13265,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   <TableBody>
                     {paginatedCompletedEvents.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={10} className="text-center text-gray-500 py-8">
+                        <TableCell colSpan={11} className="text-center text-gray-500 py-8">
                           <div>
                             <span className="text-4xl">✅</span>
                             <p className="mt-2">No completed events found</p>
@@ -12725,39 +13359,38 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               </CardBody>
             </Card>
           </Tab>
-          <Tab key="invoices" title="🧾 Invoices">
+          <Tab key="invoices" title={`🧾 Invoices (${managementTabCounts.invoices})`}>
             <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-semibold">Invoices</h3>
-                    <Badge 
-                      color={getEventStatusContext() === 'active' ? 'success' : 'default'} 
-                      variant="flat"
-                      size="sm"
-                    >
-                      {getEventStatusContext() === 'active' ? '🟢 Active Events' : '✅ Completed Events'}
-                    </Badge>
+              <CardBody className="pt-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-base font-semibold text-ghana-black">Invoices</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button size="sm" color="primary" variant="flat" onPress={openCreateInvoicePicker}>
+                      ➕ Create Invoice
+                    </Button>
+                    <Select
+                    size="sm"
+                    label="Invoice print template"
+                    className="max-w-xs"
+                    selectedKeys={selectedInvoiceTemplate ? [selectedInvoiceTemplate] : []}
+                    onSelectionChange={(keys) => {
+                      const value = Array.from(keys)[0] as string | undefined;
+                      if (!value) return;
+                      setSelectedInvoiceTemplate(value);
+                      updatePrintingTemplates?.({ invoice: value });
+                    }}
+                    placeholder="Template"
+                    items={invoiceTemplateOptions}
+                  >
+                    {(tpl) => (
+                      <SelectItem key={tpl.key} textValue={tpl.name}>
+                        {tpl.name}
+                      </SelectItem>
+                    )}
+                  </Select>
                   </div>
-                  <Badge content={managementFilteredInvoices.length} color="primary" variant="flat">
-                    <span className="text-sm text-gray-600">Total</span>
-                  </Badge>
                 </div>
-              </CardHeader>
-              <CardBody>
-                <div className="space-y-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <Input
-                      size="sm"
-                      label="Search invoices"
-                      placeholder="Invoice number, event or client"
-                      value={managementInvoiceSearch}
-                      onValueChange={setManagementInvoiceSearch}
-                      className="w-full md:w-80"
-                    />
-                    {/* No standalone “New Invoice” here – creation lives in the folio workflow */}
-                  </div>
-                  <Table aria-label="Event invoices" className="text-sm">
+                <Table aria-label="Event invoices" className="text-sm">
                     <TableHeader>
                       <TableColumn key="invoiceId">
                         {renderSortableHeader('Invoice', 'invoiceId', invoiceSort, handleInvoiceSort)}
@@ -12837,7 +13470,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                 color="secondary"
                                 onPress={() => handleDownloadInvoicePdf(invoice)}
                               >
-                                📄 PDF
+                                🖨️ Print
                               </Button>
                             </div>
                           </TableCell>
@@ -12856,52 +13489,24 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       />
                     </div>
                   )}
-                </div>
               </CardBody>
             </Card>
           </Tab>
-          <Tab key="receipts" title="💳 Receipts">
+          <Tab key="receipts" title={`💳 Receipts (${managementTabCounts.receipts})`}>
             <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-semibold">Receipts</h3>
-                    <Badge 
-                      color={getEventStatusContext() === 'active' ? 'success' : 'default'} 
-                      variant="flat"
-                      size="sm"
-                    >
-                      {getEventStatusContext() === 'active' ? '🟢 Active Events' : '✅ Completed Events'}
-                    </Badge>
-                  </div>
-                  <Badge content={managementFilteredReceipts.length} color="success" variant="flat">
-                    <span className="text-sm text-gray-600">Total</span>
-                  </Badge>
+              <CardBody className="pt-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-base font-semibold text-ghana-black">Receipts</h3>
+                  <Button
+                    size="sm"
+                    color="success"
+                    variant="flat"
+                    onPress={() => openReceiptModal('create')}
+                  >
+                    ➕ Record Receipt
+                  </Button>
                 </div>
-              </CardHeader>
-              <CardBody>
-                <div className="space-y-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <Input
-                      size="sm"
-                      label="Search receipts"
-                      placeholder="Receipt number, event or reference"
-                      value={managementReceiptSearch}
-                      onValueChange={setManagementReceiptSearch}
-                      className="w-full md:w-80"
-                    />
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        size="sm"
-                        color="success"
-                        variant="flat"
-                        onPress={() => openReceiptModal('create')}
-                      >
-                        ➕ Record Receipt
-                      </Button>
-                    </div>
-                  </div>
-                  <Table aria-label="Confirmed event receipts" className="text-sm">
+                <Table aria-label="Confirmed event receipts" className="text-sm">
                     <TableHeader>
                       <TableColumn key="receiptId">
                         {renderSortableHeader('Receipt', 'receiptId', receiptSort, handleReceiptSort)}
@@ -12970,7 +13575,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                 color="secondary"
                                 onPress={() => handleDownloadReceiptPdf(receipt)}
                               >
-                                📄 PDF
+                                🖨️ Print
                               </Button>
                             </div>
                           </TableCell>
@@ -12989,55 +13594,46 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       />
                     </div>
                   )}
-                </div>
               </CardBody>
             </Card>
           </Tab>
-          <Tab key="quotes" title="📑 Quotes / Proforma">
+          <Tab key="quotes" title={`📑 Quotes / Proforma (${managementTabCounts.quotes})`}>
             <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-semibold">Quotes & Proforma Invoices</h3>
-                    <Badge 
-                      color={getEventStatusContext() === 'active' ? 'success' : 'default'} 
-                      variant="flat"
+              <CardBody className="pt-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-base font-semibold text-ghana-black">Quotes / Proforma</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Select
                       size="sm"
+                      label="Proforma print template"
+                      className="max-w-xs"
+                      selectedKeys={selectedQuoteTemplate ? [selectedQuoteTemplate] : []}
+                      onSelectionChange={(keys) => {
+                        const value = Array.from(keys)[0] as string | undefined;
+                        if (!value) return;
+                        setSelectedQuoteTemplate(value);
+                        updatePrintingTemplates?.({ proforma: value });
+                      }}
+                      placeholder="Template"
+                      items={quoteTemplateOptions}
                     >
-                      {getEventStatusContext() === 'active' ? '🟢 Active Events' : '✅ Completed Events'}
-                    </Badge>
-                  </div>
-                  <Badge content={managementFilteredQuotes.length} color="warning" variant="flat">
-                    <span className="text-sm text-gray-600">Total</span>
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardBody>
-                <div className="space-y-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <Input
+                      {(tpl) => (
+                        <SelectItem key={tpl.key} textValue={tpl.name}>
+                          {tpl.name}
+                        </SelectItem>
+                      )}
+                    </Select>
+                    <Button
                       size="sm"
-                      label="Search quotes"
-                      placeholder="Quote number, event or client"
-                      value={managementQuoteSearch}
-                      onValueChange={setManagementQuoteSearch}
-                      className="w-full md:w-80"
-                    />
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        size="sm"
-                        color="primary"
-                        variant="flat"
-                        onPress={() => {
-                          setEditingQuote(null);
-                          setIsQuoteModalOpen(true);
-                        }}
-                      >
-                        ➕ New Quote
-                      </Button>
-                    </div>
+                      color="primary"
+                      variant="flat"
+                      onPress={openBlankQuoteModal}
+                    >
+                      ➕ New Quote
+                    </Button>
                   </div>
-                  <Table aria-label="Event quotes and proformas" className="text-sm">
+                </div>
+                <Table aria-label="Event quotes and proformas" className="text-sm">
                     <TableHeader>
                       <TableColumn key="quoteNumber">
                         {renderSortableHeader('Quote ID', 'quoteNumber', quoteSort, handleQuoteSort)}
@@ -13120,7 +13716,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                   color="secondary"
                                   onPress={() => handleDownloadQuotePdf(quote.rawEvent)}
                                 >
-                                  📄 PDF
+                                  🖨️ Print
                                 </Button>
                               </div>
                             </TableCell>
@@ -13140,59 +13736,39 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       />
                     </div>
                   )}
-                </div>
               </CardBody>
             </Card>
           </Tab>
-          <Tab key="folios" title="📂 Folios">
+          <Tab key="folios" title={`📂 Folios (${managementTabCounts.folios})`}>
             <Card className="mt-4">
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-semibold">Folios</h3>
-                    <Badge 
-                      color={getEventStatusContext() === 'active' ? 'success' : 'default'} 
-                      variant="flat"
-                      size="sm"
-                    >
-                      {getEventStatusContext() === 'active' ? '🟢 Active Events' : '✅ Completed Events'}
-                    </Badge>
-                  </div>
-                  <Badge content={managementFilteredFolios.length} color="secondary" variant="flat">
-                    <span className="text-sm text-gray-600">Total</span>
-                  </Badge>
+              <CardBody className="pt-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-base font-semibold text-ghana-black">Folios</h3>
+                  <Button
+                    size="sm"
+                    color="secondary"
+                    variant="flat"
+                    onPress={() => {
+                      const eligible = allEvents.filter(
+                        (e: any) => !eventFolios.some((f) => f.eventId === e.id)
+                      );
+                      if (!eligible.length) {
+                        alert('All events already have folios.');
+                        return;
+                      }
+                      setFolioCreateForm({
+                        eventId: eligible[0]?.id || '',
+                        openingBalance: 0,
+                        note: '',
+                      });
+                      setFolioCreateError('');
+                      setIsFolioCreateModalOpen(true);
+                    }}
+                  >
+                    ➕ Generate Folio
+                  </Button>
                 </div>
-              </CardHeader>
-              <CardBody>
-                <div className="space-y-4">
-                  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <Input
-                      size="sm"
-                      label="Search folios"
-                      placeholder="Folio number, event or client"
-                      value={managementFolioSearch}
-                      onValueChange={setManagementFolioSearch}
-                      className="w-full md:w-80"
-                    />
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button
-                        size="sm"
-                        color="secondary"
-                        variant="flat"
-                        onPress={() => {
-                          // Use only active events (confirmed/in-progress)
-                          const activeEvents = managedEvents.filter((e: any) => e.eventStatus === 'confirmed' || e.eventStatus === 'in-progress');
-                          const eventOptions = activeEvents.map((e: any) => ({ id: e.id, name: e.eventName }));
-                          setFolioCreateForm({ eventId: eventOptions[0]?.id || '', openingBalance: 0, note: '' });
-                          setFolioCreateError('');
-                          setIsFolioCreateModalOpen(true);
-                        }}
-                      >
-                        ➕ Generate Folio
-                      </Button>
-                    </div>
-                  </div>
-                  <Table aria-label="Confirmed event folios" className="text-sm">
+                <Table aria-label="Confirmed event folios" className="text-sm">
                     <TableHeader>
                       <TableColumn key="folioId">
                         {renderSortableHeader('Folio', 'folioId', folioSort, handleFolioSort)}
@@ -13270,7 +13846,6 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       />
                     </div>
                   )}
-                </div>
               </CardBody>
             </Card>
           </Tab>
@@ -13369,255 +13944,19 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       {/* Removed top notices; bottom section contains notices & activities */}
       <DeptMessenger from="events" mode="drawer" />
       
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🎉 Events & Conferences Management</h2>
-        <div className="flex items-center gap-3">
-          <Badge color="success" variant="flat">✔ Online</Badge>
-          <Button 
-            color="success" 
-            variant="solid" 
-            size="sm"
-            onClick={openNewEventModal}
-          >
-            ➕ New Event
-          </Button>
-        </div>
+      <div className="mb-6">
+        <h2 className="text-2xl font-bold text-ghana-black">🎪 Events & Conferences</h2>
       </div>
-      {/* Venue Status Overview */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-semibold text-ghana-black flex items-center gap-2">
-            🏢 Venue Status Overview ({totalVenues} Venues)
-          </h3>
-        </div>
-        
-        {/* Status Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          {/* Available Venues */}
-          <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
-            <CardBody className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Available Venues</h4>
-                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
-              </div>
-              <div className="text-3xl font-bold text-green-600 mb-3">{availableVenues}</div>
-              <div className="space-y-1 text-sm text-gray-600">
-                <div className="flex justify-between">
-                  <span>Conference Halls</span>
-                  <span className="font-medium">2</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Meeting Rooms</span>
-                  <span className="font-medium">1</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Auditoriums</span>
-                  <span className="font-medium">0</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-
-          {/* Booked Venues */}
-          <Card className="border-0 shadow-lg border-l-4 border-l-red-500">
-            <CardBody className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Booked Venues</h4>
-                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
-              </div>
-              <div className="text-3xl font-bold text-red-600 mb-3">{bookedVenues}</div>
-              <div className="space-y-1 text-sm text-gray-600">
-                <div className="flex justify-between">
-                  <span>Today's Events</span>
-                  <span className="font-medium">{eventsToday}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Setup in Progress</span>
-                  <span className="font-medium">{setupInProgress}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>VIP Events</span>
-                  <span className="font-medium">1</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-
-          {/* Financial Performance */}
-          <Card className="border-0 shadow-lg border-l-4 border-l-purple-500">
-            <CardBody className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Financial Performance</h4>
-                <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
-              </div>
-              <div className="text-3xl font-bold text-purple-600 mb-3">₵{monthlyRevenue.toLocaleString()}</div>
-              <div className="space-y-1 text-sm text-gray-600">
-                <div className="flex justify-between">
-                  <span>Monthly Revenue</span>
-                  <span className="font-medium">₵{monthlyRevenue.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Avg Event Value</span>
-                  <span className="font-medium">₵{averageEventValue.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Total Attendees</span>
-                  <span className="font-medium">{totalAttendees}</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
-
-        {/* Today's Event Operations */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">📅</span>
-              <h4 className="text-lg font-semibold text-ghana-black">Today's Event Operations</h4>
-            </div>
-            <div className="flex items-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-green-600 font-medium">{eventsToday} Events</span>
-                <span className="text-gray-500">Today</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-blue-600 font-medium">{newBookings} New Bookings</span>
-                <span className="text-gray-500">Received</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-orange-600 font-medium">{setupInProgress} Setup</span>
-                <span className="text-gray-500">In Progress</span>
-              </div>
-            </div>
-          </div>
-          <Button 
-            color="success" 
-            variant="solid"
-            className="bg-green-600 hover:bg-green-700"
-            onClick={() => setSelectedTab('venues')}
-          >
-            🏢 View Full Status
-          </Button>
-        </div>
-      </div>
-
-      {/* Quick Actions */}
-      <Card className="border-0 shadow-lg mb-6">
-        <CardHeader className="pb-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🚀</span>
-            <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
-          </div>
-        </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-
-            <Button
-              color="warning"
-              variant="flat"
-              className="h-24 flex flex-col items-center justify-center gap-2 p-4"
-              onClick={() => handleQuickAction('book_venue')}
-            >
-              <span className="text-2xl">🏢</span>
-              <span className="font-medium">Book Venue</span>
-              <span className="text-xs text-center opacity-80">Reserve venue space</span>
-            </Button>
-            <Button
-              color="danger"
-              variant="flat"
-              className="h-24 flex flex-col items-center justify-center gap-2 p-4"
-              onClick={() => handleQuickAction('catering')}
-            >
-              <span className="text-2xl">🍽️</span>
-              <span className="font-medium">Catering</span>
-              <span className="text-xs text-center opacity-80">Arrange food services</span>
-            </Button>
-            <Button
-              color="primary"
-              variant="flat"
-              className="h-24 flex flex-col items-center justify-center gap-2 p-4"
-              onClick={() => handleQuickAction('event_reports')}
-            >
-              <span className="text-2xl">📊</span>
-              <span className="font-medium">Event Reports</span>
-              <span className="text-xs text-center opacity-80">Generate event reports</span>
-            </Button>
-          </div>
-        </CardBody>
-      </Card>
-      {/* Main Operations Interface */}
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <h3 className="text-xl font-semibold text-ghana-black">📊 Operations Overview</h3>
-        </CardHeader>
-        <CardBody>
-          <Tabs 
+      <Tabs 
             selectedKey={selectedTab} 
             onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
             aria-label="Events and conferences operations"
           >
-            <Tab key="overview" title="📊 Overview">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-4">
-                {operationalItems.map((category, categoryIndex) => (
-                  <Card key={categoryIndex} className="border border-gray-200 shadow-md">
-                    <CardHeader className="pb-3">
-                      <h4 className="text-lg font-semibold text-ghana-black">{category.category}</h4>
-                    </CardHeader>
-                    <CardBody className="pt-0">
-                      <div className="space-y-3">
-                        {category.items.map((item, itemIndex) => (
-                          <div 
-                            key={itemIndex}
-                            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
-                            onClick={() => {
-                              // Handle navigation based on item type
-                              if (item.title.includes('Event Calendar') || item.title.includes('Active Events')) {
-                                setSelectedTab('events');
-                              } else if (item.title.includes('Conference Halls') || item.title.includes('Meeting Rooms')) {
-                                setSelectedTab('venues');
-                              } else if (item.title.includes('Catering Services') || item.title.includes('Audio Visual')) {
-                                setSelectedTab('services');
-                              } else if (item.title.includes('Setup in Progress') || item.title.includes('Operations')) {
-                                setSelectedTab('operations');
-                              } else if (item.title.includes('Event Reports') || item.title.includes('Revenue Tracking')) {
-                                setSelectedTab('reports');
-                              }
-                            }}
-                          >
-                            <div className="flex items-center space-x-3">
-                              <span className="text-xl">{item.icon}</span>
-                              <div>
-                                <div className="flex items-center">
-                                  <InfoIcon description={item.description} />
-                                  <p className="font-medium text-ghana-black">{item.title}</p>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <Badge 
-                                color={item.status === 'active' ? 'success' : item.status === 'warning' ? 'warning' : 'default'}
-                                variant="flat"
-                              >
-                                {item.status}
-                              </Badge>
-                              <Chip size="sm" variant="flat" color="primary">
-                                {item.count}
-                              </Chip>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardBody>
-                  </Card>
-                ))}
-              </div>
-            </Tab>
             <Tab key="confirmed" title="📋 Event Management">
               <EventManagementTab />
             </Tab>
-            <Tab key="venues" title="🏢 Venue Management">
+            <Tab key="venues" title={`🏢 Venue Management (${filteredModernVenues.length})`}>
               <div className="space-y-6 mt-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-xl font-semibold text-ghana-black">Venue Management</h3>
@@ -13630,10 +13969,26 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   </Button>
                 </div>
 
+                <EventsModuleFilters
+                  searchTerm={venueSearchTerm}
+                  onSearchChange={setVenueSearchTerm}
+                  searchPlaceholder="Search venues by name, type, or location..."
+                  statusFilter={venueStatusFilter}
+                  onStatusChange={setVenueStatusFilter}
+                  statusOptions={[
+                    { key: 'all', label: 'All Statuses' },
+                    { key: 'available', label: 'Available' },
+                    { key: 'booked', label: 'Booked' },
+                    { key: 'setup', label: 'Setup' },
+                    { key: 'maintenance', label: 'Maintenance' },
+                  ]}
+                  showDateFilter={false}
+                />
+
                 {/* Venues Table */}
                 <Card>
                   <CardHeader>
-                    <h4 className="font-semibold">All Venues</h4>
+                    <h4 className="font-semibold">All Venues ({filteredModernVenues.length})</h4>
                   </CardHeader>
                   <CardBody>
                     <Table aria-label="Venues table">
@@ -13647,7 +14002,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         <TableColumn>Actions</TableColumn>
                       </TableHeader>
                       <TableBody>
-                        {modernVenues.map((venue) => (
+                        {filteredModernVenues.map((venue) => (
                           <TableRow key={venue.id}>
                             <TableCell>
                               <div>
@@ -13713,30 +14068,40 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 </Card>
               </div>
             </Tab>
-            <Tab key="quoting" title="💰 Guest Rates">
-              <ConferenceRateManagement />
+            <Tab key="quoting" title={`💰 Guest Rates (${guestRatesFilteredCount})`}>
+              <ConferenceRateManagement onFilteredCountChange={setGuestRatesFilteredCount} />
             </Tab>
-            <Tab key="reports" title="📊 Reports & Analytics">
-              <div className="space-y-6 mt-4">
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                  <Card className="lg:col-span-1 border border-gray-200 h-full">
-                    <CardHeader className="flex flex-col gap-1">
-                      <h4 className="font-semibold text-ghana-black flex items-center gap-2">
-                        <span>{selectedReportCategory?.icon || '📁'}</span>
-                        Report Explorer
-                      </h4>
-                      <p className="text-xs text-gray-500">
-                        Full catalog of event sales, venue ops, guest, and finance analytics.
+            <Tab key="reports" title={`📊 Reports & Analytics (${filteredReportsCount})`}>
+              <div className="space-y-4 mt-4">
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+                  <div>
+                    <h3 className="text-xl font-semibold text-ghana-black">Reports & Analytics</h3>
+                    <p className="text-sm text-gray-500">
+                      Live reports from events, venues, invoices, receipts, and folios.
+                    </p>
+                  </div>
+                </div>
+
+                <EventsModuleFilters
+                  searchTerm={reportSearch}
+                  onSearchChange={setReportSearch}
+                  searchPlaceholder="Search reports by name or category..."
+                  dateFilterMode={reportsDateFilterMode}
+                  onDateFilterModeChange={setReportsDateFilterMode}
+                  dateFilterSingle={reportsDateFilterSingle}
+                  onDateFilterSingleChange={setReportsDateFilterSingle}
+                  dateFilterFrom={reportsDateFilterFrom}
+                  onDateFilterFromChange={setReportsDateFilterFrom}
+                  dateFilterTo={reportsDateFilterTo}
+                  onDateFilterToChange={setReportsDateFilterTo}
+                />
+
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+                  <Card className="lg:col-span-4 xl:col-span-3 border border-gray-200 h-full">
+                    <CardBody className="p-3 space-y-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 px-1">
+                        Report Library
                       </p>
-                    </CardHeader>
-                    <CardBody className="space-y-4">
-                      <Input
-                        label="Search reports"
-                        placeholder="Pipeline, BEO, Folio..."
-                        value={reportSearch}
-                        onValueChange={setReportSearch}
-                      />
-                      <Divider />
                       {filteredReportCatalog.length > 0 ? (
                         <Accordion
                           selectionMode="multiple"
@@ -13753,21 +14118,26 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                   {category.label}
                                 </span>
                               }
-                              subtitle={category.description}
+                              subtitle={
+                                <span className="text-xs text-gray-500">
+                                  {category.reports.length} report{category.reports.length === 1 ? '' : 's'}
+                                </span>
+                              }
                             >
                               <div className="space-y-2">
                                 {category.reports.map(report => (
                                   <button
                                     key={report.key}
-                                    onClick={() => handleReportSelection(report.key, report.label)}
-                                    className={`w-full text-left px-3 py-2 rounded-lg border transition-colors ${
+                                    type="button"
+                                    onClick={() => handleReportSelection(report.key)}
+                                    className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors ${
                                       selectedReport?.key === report.key
-                                        ? 'border-ghana-gold bg-ghana-gold/5 text-ghana-black shadow-sm'
-                                        : 'border-gray-200 hover:border-ghana-gold/60'
+                                        ? 'border-ghana-gold bg-ghana-gold/10 text-ghana-black shadow-sm'
+                                        : 'border-gray-200 hover:border-ghana-gold/60 hover:bg-gray-50'
                                     }`}
                                   >
                                     <p className="text-sm font-semibold">{report.label}</p>
-                                    <p className="text-xs text-gray-500">{report.description}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{report.description}</p>
                                   </button>
                                 ))}
                               </div>
@@ -13775,38 +14145,40 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                           ))}
                         </Accordion>
                       ) : (
-                        <div className="text-sm text-gray-500">
+                        <div className="text-sm text-gray-500 px-1 py-6 text-center">
                           No reports match this keyword — try another search.
                         </div>
                       )}
                     </CardBody>
                   </Card>
-                  <div className="lg:col-span-2 space-y-6">
+
+                  <div className="lg:col-span-8 xl:col-span-9 space-y-4">
                     <Card className="border border-gray-200">
-                    <CardHeader>
-                        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-                          <div>
-                            <p className="text-xs uppercase text-gray-400 tracking-wide">
-                              {selectedReportCategory?.label || 'Select a report'}
+                      <CardBody className="space-y-4 pt-4">
+                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h4 className="text-lg font-semibold text-ghana-black">
+                                {selectedReport?.label || 'Choose a report'}
+                              </h4>
+                              {selectedReportCategory && (
+                                <Chip size="sm" variant="flat" color="default">
+                                  {selectedReportCategory.icon} {selectedReportCategory.label}
+                                </Chip>
+                              )}
+                            </div>
+                            {selectedReport?.description && (
+                              <p className="text-sm text-gray-500">{selectedReport.description}</p>
+                            )}
+                            <p className="text-xs text-gray-400">
+                              Period:{' '}
+                              {reportFilters.fromDate && reportFilters.toDate
+                                ? `${reportFilters.fromDate} → ${reportFilters.toDate}`
+                                : 'All dates'}
+                              {reportFilters.venue ? ` • Venue: ${reportFilters.venue}` : ''}
                             </p>
-                            <h4 className="text-lg font-semibold text-ghana-black">
-                              {selectedReport?.label || 'Choose a report to configure'}
-                            </h4>
-                            <p className="text-sm text-gray-500">{selectedReport?.description}</p>
                           </div>
-                          <div className="flex flex-wrap gap-2">
-                            <Chip size="sm" variant="flat" color="primary">
-                              Document: {selectedVoucherType?.label}
-                            </Chip>
-                            <Chip size="sm" variant="flat" color="success">
-                              Date: {reportFilters.fromDate} → {reportFilters.toDate}
-                            </Chip>
-                          </div>
-                        </div>
-                    </CardHeader>
-                      <CardBody className="space-y-6">
-                        {selectedCategoryLinks.length > 0 && (
-                          <div className="flex flex-wrap gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             {selectedCategoryLinks.map(link => (
                               <Button
                                 key={link.label}
@@ -13819,225 +14191,101 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                 {link.label}
                               </Button>
                             ))}
-                          </div>
-                        )}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {selectedReport?.filters.voucherType && (
-                            <Select
-                              label="Document Type"
-                              selectedKeys={[reportFilters.voucherType] as any}
-                              onSelectionChange={keys => {
-                                const value = Array.from(keys)[0]?.toString() || 'all';
-                                updateReportFilter('voucherType', value);
-                              }}
+                            <Button
+                              size="sm"
+                              color="primary"
+                              variant="solid"
+                              startContent="💾"
+                              isDisabled={!selectedReport || activeReportTable.columns.length === 0}
+                              onPress={exportActiveReportPdf}
                             >
-                              {REPORT_VOUCHER_TYPES.map(option => (
-                                <SelectItem key={option.value}>{option.label}</SelectItem>
-                              ))}
-                            </Select>
-                          )}
-                          {selectedReport?.filters.user && (
-                            <Input
-                              label="Event Owner / Planner"
-                              placeholder="Sales owner, event lead"
-                              value={reportFilters.user}
-                              onValueChange={value => updateReportFilter('user', value)}
-                            />
-                          )}
-                          {selectedReport?.filters.room && (
-                            <Input
-                              label="Venue / Space"
-                              placeholder="e.g. Ghana Banquet Hall"
-                              value={reportFilters.room}
-                              onValueChange={value => updateReportFilter('room', value)}
-                            />
-                          )}
-                          {selectedReport?.filters.service && (
-                            <Select
-                              label="Service Track / Package"
-                              selectedKeys={reportFilters.service ? [reportFilters.service] as any : []}
-                              onSelectionChange={keys => {
-                                const value = Array.from(keys)[0]?.toString() || '';
-                                updateReportFilter('service', value);
-                              }}
-                            >
-                              {SERVICE_REPORT_OPTIONS.map(option => (
-                                <SelectItem key={option.value}>{option.label}</SelectItem>
-                              ))}
-                            </Select>
-                          )}
-                          {selectedReport?.filters.dateRange && (
-                            <>
+                              Export PDF
+                            </Button>
+                          </div>
+                        </div>
+
+                        {(selectedReport?.filters.venue || selectedReport?.filters.dateRange) && (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-gray-100 bg-gray-50/80 p-3">
+                            {selectedReport?.filters.venue && (
                               <Input
-                                type="date"
-                                label="From"
-                                value={reportFilters.fromDate}
-                                onValueChange={value => updateReportFilter('fromDate', value)}
+                                label="Venue filter"
+                                placeholder="Filter by venue name"
+                                value={reportFilters.venue}
+                                onValueChange={value => updateReportFilter('venue', value)}
+                                size="sm"
                               />
-                              <Input
-                                type="date"
-                                label="To"
-                                value={reportFilters.toDate}
-                                onValueChange={value => updateReportFilter('toDate', value)}
-                              />
-                            </>
-                          )}
-                        </div>
-                        {selectedReport?.filters.costCenters && (
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <p className="text-sm font-semibold text-gray-600">Cost Centres</p>
-                              <Chip size="sm" variant="flat" color="secondary">
-                                {selectedCostCenterList.length} selected
-                              </Chip>
-                        </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                              {costCenterOptions.map(option => (
-                                <Checkbox
-                                  key={option.value}
-                                  isSelected={selectedCostCenters.has(option.value)}
-                                  onValueChange={() => handleCostCenterToggle(option.value, option.label)}
-                                >
-                                  {option.label}
-                                </Checkbox>
-                              ))}
-                        </div>
-                        </div>
+                            )}
+                            {selectedReport?.filters.dateRange && (
+                              <div className="flex items-end">
+                                <p className="text-xs text-gray-500 pb-2">
+                                  Date range is controlled by the filter bar above.
+                                </p>
+                              </div>
+                            )}
+                          </div>
                         )}
-                        {selectedReport?.filters.notes && (
-                          <Textarea
-                            label="Narrative / Instructions"
-                            placeholder="Add notes that should appear on the rendered report"
-                            value={reportFilters.notes}
-                            minRows={2}
-                            onValueChange={value => updateReportFilter('notes', value)}
-                          />
-                        )}
-                        <div className="flex flex-wrap items-center justify-end gap-3 pt-2">
-                          <Button
-                            color="primary"
-                            variant="solid"
-                            startContent="👁️"
-                            onPress={() => handleReportAction('preview')}
-                          >
-                            Show Report
-                          </Button>
-                          <Button
-                            color="secondary"
-                            variant="flat"
-                            startContent="💾"
-                            onPress={() => handleReportAction('export')}
-                          >
-                            Export PDF
-                          </Button>
-                          <Button
-                            color="success"
-                            variant="flat"
-                            startContent="📧"
-                            onPress={() => handleReportAction('schedule')}
-                          >
-                            Schedule Email
-                          </Button>
-                      </div>
-                    </CardBody>
-                  </Card>
-                    <Card className="border border-gray-200">
-                    <CardHeader>
-                        <div>
-                          <h4 className="font-semibold text-ghana-black">Report Snapshot</h4>
-                          <p className="text-sm text-gray-500">
-                            Quick view of metric focus, filters, and distribution.
-                          </p>
-                        </div>
-                    </CardHeader>
-                      <CardBody className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                            <p className="text-xs uppercase text-gray-500">Document Type</p>
-                            <p className="text-sm font-semibold text-ghana-black">{selectedVoucherType?.label}</p>
-                          </div>
-                          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                            <p className="text-xs uppercase text-gray-500">Date Window</p>
-                            <p className="text-sm font-semibold text-ghana-black">
-                              {reportFilters.fromDate} → {reportFilters.toDate}
-                            </p>
-                          </div>
-                          <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
-                            <p className="text-xs uppercase text-gray-500">Service Focus</p>
-                            <p className="text-sm font-semibold text-ghana-black">
-                              {selectedServiceOption?.label || 'Not applicable'}
-                            </p>
-                          </div>
-                        </div>
+
                         {selectedCategoryInsights.length > 0 && (
-                          <div>
-                            <p className="text-sm font-medium text-gray-600 mb-2">Live KPIs</p>
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                              {selectedCategoryInsights.map(insight => (
-                                <div key={insight.label} className="rounded-lg border border-gray-200 p-3 bg-white">
-                                  <p className="text-xs uppercase text-gray-500">{insight.label}</p>
-                                  <p className="text-lg font-semibold text-ghana-black">{insight.value}</p>
-                                  {insight.helper && (
-                                    <p className="text-xs text-gray-500">{insight.helper}</p>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            {selectedCategoryInsights.map(insight => (
+                              <div
+                                key={insight.label}
+                                className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm"
+                              >
+                                <p className="text-xs uppercase tracking-wide text-gray-500">{insight.label}</p>
+                                <p className="text-xl font-semibold text-ghana-black mt-1">{insight.value}</p>
+                                {insight.helper && (
+                                  <p className="text-xs text-gray-500 mt-0.5">{insight.helper}</p>
+                                )}
+                              </div>
+                            ))}
                           </div>
                         )}
-                        <div>
-                          <p className="text-sm font-medium text-gray-600 mb-2">Focus Metrics</p>
-                          <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1">
-                            {selectedReport?.metrics?.map(metric => (
-                              <li key={metric}>{metric}</li>
-                            ))}
-                          </ul>
-                        </div>
-                        <div className="rounded-lg border border-dashed border-gray-300 p-4 text-sm text-gray-600 space-y-1">
-                          <div className="flex items-center justify-between">
-                            <span className="font-semibold text-ghana-black">Owner & Venue Filters</span>
-                            <Chip size="sm" variant="flat" color="primary">
-                              {reportFilters.user || 'Any owner'} · {reportFilters.room || 'All venues'}
-                            </Chip>
-                          </div>
-                          {selectedReport?.filters.costCenters && (
-                            <p>
-                              Cost Centres: {selectedCostCenterLabels.length > 0 ? selectedCostCenterLabels.join(', ') : 'None'}
-                            </p>
-                          )}
-                          {selectedReport?.filters.notes && reportFilters.notes && (
-                            <p className="italic text-gray-500">Note: {reportFilters.notes}</p>
-                          )}
-                      </div>
-                    </CardBody>
-                  </Card>
+
+                      </CardBody>
+                    </Card>
+
                     <Card className="border border-gray-200">
-                      <CardHeader>
-                        <div className="flex items-center justify-between w-full">
-                          <div>
-                            <h4 className="font-semibold text-ghana-black">Event Report Activity</h4>
-                            <p className="text-sm text-gray-500">Preview, export, and schedule actions stay fully audited.</p>
-                          </div>
-                          <Chip size="sm" variant="flat" color="secondary">
-                            {reportLogEntries.length} entries
+                      <CardBody className="pt-3">
+                        <div className="flex items-center justify-between gap-3 mb-3">
+                          <h4 className="text-base font-semibold text-ghana-black">Report Data</h4>
+                          <Chip size="sm" variant="flat" color="primary">
+                            {activeReportTable.rows.length} row{activeReportTable.rows.length === 1 ? '' : 's'}
                           </Chip>
                         </div>
-                      </CardHeader>
-                      <CardBody className="space-y-3">
-                        {reportLogEntries.map(entry => (
-                          <div key={entry.id} className="border border-gray-100 rounded-lg p-3 bg-white shadow-sm">
-                            <div className="flex items-center justify-between gap-3">
-                              <Chip size="sm" variant="flat" color={REPORT_LOG_COLOR[entry.level]}>
-                                {entry.level.toUpperCase()}
-                              </Chip>
-                              <span className="text-xs text-gray-400">{entry.timestamp}</span>
-                            </div>
-                            <p className="text-sm font-semibold text-ghana-black mt-1">{entry.action}</p>
-                            {entry.context && <p className="text-xs text-gray-500 mt-0.5">{entry.context}</p>}
+                        {activeReportTable.columns.length > 0 ? (
+                          <Table aria-label={`${selectedReport?.label || 'Report'} table`}>
+                            <TableHeader>
+                              {activeReportTable.columns.map(column => (
+                                <TableColumn key={column.key}>{column.label.toUpperCase()}</TableColumn>
+                              ))}
+                            </TableHeader>
+                            <TableBody>
+                              {activeReportTable.rows.length === 0 ? (
+                                <TableRow>
+                                  <TableCell
+                                    colSpan={activeReportTable.columns.length}
+                                    className="text-center text-gray-500 py-10"
+                                  >
+                                    <span className="text-3xl block mb-2">📊</span>
+                                    {activeReportTable.emptyMessage || 'No data for the selected filters.'}
+                                  </TableCell>
+                                </TableRow>
+                              ) : (
+                                activeReportTable.rows.map((row, rowIndex) => (
+                                  <TableRow key={`${selectedReport?.key || 'report'}-${rowIndex}`}>
+                                    {activeReportTable.columns.map(column => (
+                                      <TableCell key={column.key}>{row[column.key] ?? '—'}</TableCell>
+                                    ))}
+                                  </TableRow>
+                                ))
+                              )}
+                            </TableBody>
+                          </Table>
+                        ) : (
+                          <div className="text-center text-gray-500 py-10">
+                            Select a report from the library to view live data.
                           </div>
-                        ))}
-                        {reportLogEntries.length === 0 && (
-                          <p className="text-sm text-gray-500">No activity recorded yet.</p>
                         )}
                       </CardBody>
                     </Card>
@@ -14045,9 +14293,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 </div>
               </div>
             </Tab>
-          </Tabs>
-        </CardBody>
-      </Card>
+      </Tabs>
     </div>
 
       <Modal
@@ -14136,9 +14382,11 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     const g = frontOfficeGuests.find(c => c.id === id);
                     if (g) {
                       const org = g.employerCompany || g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
+                      const person = g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
                       setOrgClientId(g.id);
                       setOrgName(org);
                       setOrgSearch(org);
+                      setClientContactName(person);
                       setOrgContactPhone(g.companyPhone || g.phone || '');
                       setOrgClientEmail(g.email || '');
                     }
@@ -14186,9 +14434,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 </Autocomplete>
                 </div>
 
-                <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-end">
+                <div className="grid grid-cols-1 xl:grid-cols-4 gap-8 items-end">
                 <Input
-                  label="Contact"
+                  label="Client Contact Name"
+                  placeholder="On-site contact person"
+                  value={clientContactName}
+                  onChange={(e) => setClientContactName(e.target.value)}
+                  isReadOnly={isViewMode}
+                />
+                <Input
+                  label="Contact Phone"
                   placeholder="Phone number"
                   value={orgContactPhone}
                   onChange={(e) => setOrgContactPhone(e.target.value)}
@@ -14781,15 +15036,24 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   type="date"
                   defaultValue={editingEvent?.followUpDate || ''}
                 />
-                <Input
-                  size="sm"
-                  label="Sales Manager"
-                  placeholder="Assigned sales manager"
-                  defaultValue={editingEvent?.salesManager || ''}
-                />
               </div>
               
               <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {!isViewMode && !isEditingInvoiceDetails && (
+                  <Card className="border border-gray-200 bg-gray-50/60 lg:col-span-2">
+                    <CardBody className="py-3 px-4">
+                      <p className="text-sm font-semibold text-ghana-black mb-2">Workflow Actions</p>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" color="primary" variant="flat" onPress={handleGenerateQuoteFromEvent}>
+                          📋 Build Quote
+                        </Button>
+                        <Button size="sm" color="secondary" variant="flat" onPress={handleOpenContractFromEvent}>
+                          📄 Generate Contract
+                        </Button>
+                      </div>
+                    </CardBody>
+                  </Card>
+                )}
                 <Textarea
                   minRows={5}
                   label="Special Requirements & Notes"
@@ -14800,7 +15064,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <Card className="border border-dashed border-gray-200 bg-white h-full">
                   <CardHeader className="pb-2 pt-3 px-4">
                     <p className="text-sm font-semibold text-ghana-black">
-                      {isEditingInvoiceDetails ? 'Print Invoice' : 'Print Quote & Invoice'}
+                      {isEditingInvoiceDetails ? 'Print Invoice' : 'Print Documents'}
+                    </p>
+                    <p className="text-xs text-gray-500 font-normal mt-0.5">
+                      Opens the browser print dialog — choose &quot;Save as PDF&quot; to save a file.
                     </p>
                   </CardHeader>
                   <CardBody className="pt-0 px-4 pb-4">
@@ -14819,10 +15086,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                               updatePrintingTemplates?.({ invoice: value });
                             }}
                             placeholder={invoiceTemplateOptions.length ? 'Choose template' : 'No templates available'}
+                            items={invoiceTemplateOptions}
                           >
-                            {invoiceTemplateOptions.map((tpl) => (
-                              <SelectItem key={tpl.key}>{tpl.name}</SelectItem>
-                            ))}
+                            {(tpl) => (
+                              <SelectItem key={tpl.key} textValue={tpl.name}>
+                                {tpl.name}
+                              </SelectItem>
+                            )}
                           </Select>
                         </div>
                         <div className="flex gap-2">
@@ -14832,8 +15102,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                             className="flex-1"
                             isDisabled={!invoiceTemplateOptions.length}
                             onPress={() => {
-                              // Find the current invoice for this event
-                              const invoice = eventInvoices.find(inv => inv.eventId === editingEvent?.id);
+                              const invoice = eventInvoices.find((inv) => inv.eventId === editingEvent?.id);
                               if (invoice) {
                                 handleDownloadInvoicePdf(invoice);
                               } else {
@@ -14841,7 +15110,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                               }
                             }}
                           >
-                            📄 Download PDF
+                            🖨️ Print Invoice
                           </Button>
                           <Button
                             size="sm"
@@ -14858,15 +15127,15 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       size="sm"
                       variant="underlined"
                       selectedKey={activePrintTab}
-                      onSelectionChange={(key) => setActivePrintTab(key as 'quote' | 'xls')}
+                      onSelectionChange={(key) => setActivePrintTab(key as 'quote' | 'invoice' | 'xls')}
                     >
-                      {showQuotePrintTab && editingEvent && (
-                      <Tab key="quote" title="📄 Quote">
+                      {showQuotePrintInModal && editingEvent && (
+                      <Tab key="quote" title="📄 Proforma">
                         <div className="space-y-3">
                           <div className="flex flex-col sm:flex-row sm:items-end sm:gap-3">
                             <Select
                               size="sm"
-                              label="Quote Template"
+                              label="Proforma Template"
                               className="flex-1"
                               selectedKeys={selectedQuoteTemplate ? [selectedQuoteTemplate] : []}
                               onSelectionChange={(keys) => {
@@ -14876,19 +15145,59 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                 updatePrintingTemplates?.({ proforma: value });
                               }}
                               placeholder={quoteTemplateOptions.length ? 'Choose template' : 'No templates available'}
+                              items={quoteTemplateOptions}
                             >
-                              {quoteTemplateOptions.map((tpl) => (
-                                <SelectItem key={tpl.key}>{tpl.name}</SelectItem>
-                              ))}
+                              {(tpl) => (
+                                <SelectItem key={tpl.key} textValue={tpl.name}>
+                                  {tpl.name}
+                                </SelectItem>
+                              )}
                             </Select>
                             <Button
                               size="sm"
                               color="primary"
                               className="mt-3 sm:mt-0 sm:w-auto w-full"
                               isDisabled={!quoteTemplateOptions.length}
-                              onPress={handlePrintQuotePdf}
+                              onPress={() => handlePrintQuotePdf()}
                             >
-                              Generate Quote PDF
+                              🖨️ Print Proforma
+                            </Button>
+                          </div>
+                        </div>
+                      </Tab>
+                      )}
+                      {showInvoicePrintInModal && linkedEventInvoice && (
+                      <Tab key="invoice" title="🧾 Invoice">
+                        <div className="space-y-3">
+                          <div className="flex flex-col sm:flex-row sm:items-end sm:gap-3">
+                            <Select
+                              size="sm"
+                              label="Invoice Template"
+                              className="flex-1"
+                              selectedKeys={selectedInvoiceTemplate ? [selectedInvoiceTemplate] : []}
+                              onSelectionChange={(keys) => {
+                                const value = Array.from(keys)[0] as string | undefined;
+                                if (!value) return;
+                                setSelectedInvoiceTemplate(value);
+                                updatePrintingTemplates?.({ invoice: value });
+                              }}
+                              placeholder={invoiceTemplateOptions.length ? 'Choose template' : 'No templates available'}
+                              items={invoiceTemplateOptions}
+                            >
+                              {(tpl) => (
+                                <SelectItem key={tpl.key} textValue={tpl.name}>
+                                  {tpl.name}
+                                </SelectItem>
+                              )}
+                            </Select>
+                            <Button
+                              size="sm"
+                              color="primary"
+                              className="mt-3 sm:mt-0 sm:w-auto w-full"
+                              isDisabled={!invoiceTemplateOptions.length}
+                              onPress={() => handleDownloadInvoicePdf(linkedEventInvoice)}
+                            >
+                              🖨️ Print Invoice
                             </Button>
                           </div>
                         </div>
@@ -15088,6 +15397,53 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           </ModalHeader>
           <ModalBody>
             <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Input
+                  label="Client Name"
+                  placeholder="Organization or client"
+                  value={editingQuote?.clientName ?? ''}
+                  onChange={(e) =>
+                    setEditingQuote((prev: any) => ({
+                      ...(prev || {}),
+                      clientName: e.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  label="Event Name"
+                  placeholder="Conference or event title"
+                  value={editingQuote?.eventName ?? ''}
+                  onChange={(e) =>
+                    setEditingQuote((prev: any) => ({
+                      ...(prev || {}),
+                      eventName: e.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  label="Start Date"
+                  type="date"
+                  value={editingQuote?.startDate ?? ''}
+                  onChange={(e) =>
+                    setEditingQuote((prev: any) => ({
+                      ...(prev || {}),
+                      startDate: e.target.value,
+                    }))
+                  }
+                />
+                <Input
+                  label="End Date"
+                  type="date"
+                  value={editingQuote?.endDate ?? ''}
+                  onChange={(e) =>
+                    setEditingQuote((prev: any) => ({
+                      ...(prev || {}),
+                      endDate: e.target.value,
+                    }))
+                  }
+                />
+              </div>
+
               <div>
                 <label className="block text-sm font-medium mb-2">📎 Supporting Documents</label>
                 <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center bg-white">
@@ -15392,11 +15748,11 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               <Button color="secondary" variant="flat" onPress={() => setIsQuoteModalOpen(false)}>
                 Cancel
               </Button>
-              <Button color="warning" variant="flat">
+              <Button color="warning" variant="flat" onPress={handleSaveQuoteDraft}>
                 💾 Save Draft
               </Button>
               <Button color="success" variant="flat" onPress={() => generatePDFQuote(editingQuote)}>
-                📄 Generate PDF
+                🖨️ Print Proforma
               </Button>
               <Button color="primary" onPress={() => sendQuoteToClient(editingQuote)}>
                 📧 Send to Client
@@ -15507,6 +15863,30 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         value={beoForm.eventInfo.organization}
                         onChange={(e) => updateBeoFormSection('eventInfo', 'organization', e.target.value)}
                       />
+                      <Select
+                        label="Event Coordinator"
+                        placeholder="Assign hotel coordinator"
+                        selectedKeys={
+                          beoForm.eventInfo.eventCoordinator
+                            ? [beoForm.eventInfo.eventCoordinator]
+                            : [UNASSIGNED_STAFF]
+                        }
+                        onSelectionChange={(keys) => {
+                          const selected = Array.from(keys)[0] as string;
+                          updateBeoFormSection(
+                            'eventInfo',
+                            'eventCoordinator',
+                            selected === UNASSIGNED_STAFF ? '' : selected || ''
+                          );
+                        }}
+                        items={beoCoordinatorOptions}
+                      >
+                        {(option) => (
+                          <SelectItem key={option.key} textValue={option.label}>
+                            {option.label}
+                          </SelectItem>
+                        )}
+                      </Select>
                       <Input
                         label="Contact Person"
                         value={beoForm.eventInfo.contactPerson}
@@ -15862,36 +16242,6 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     </div>
                   </CardBody>
                 </Card>
-
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between w-full">
-                      <h4 className="font-semibold">Key Contacts</h4>
-                      <Button size="sm" color="success" variant="flat" onPress={handleAddBeoContact}>
-                        ➕ Add Contact
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="space-y-4">
-                      {beoForm.contacts.map((contact: any, idx: number) => (
-                        <div key={`contact-${idx}`} className="p-3 border border-gray-200 rounded-lg bg-white space-y-3">
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            <Input label="Name" value={contact.name} onChange={(e) => updateBeoContact(idx, 'name', e.target.value)} />
-                            <Input label="Role" value={contact.role} onChange={(e) => updateBeoContact(idx, 'role', e.target.value)} />
-                            <Input label="Phone" value={contact.phone} onChange={(e) => updateBeoContact(idx, 'phone', e.target.value)} />
-                            <Input label="Email" value={contact.email} onChange={(e) => updateBeoContact(idx, 'email', e.target.value)} />
-                          </div>
-                          <div className="flex justify-end">
-                            <Button size="sm" color="danger" variant="light" onPress={() => handleRemoveBeoContact(idx)}>
-                              Remove
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </CardBody>
-                </Card>
               </form>
             ) : (
               <div className="py-12 text-center text-gray-500">No event selected.</div>
@@ -15901,11 +16251,11 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             <Button color="danger" variant="flat" onPress={() => setIsBEOModalOpen(false)}>
               Cancel
             </Button>
-            <Button color="warning" variant="flat" type="submit" form="beoForm">
-              💾 Save BEO
+            <Button color="primary" variant="solid" onPress={handleSaveBeoForm} isDisabled={!beoForm}>
+              Save
             </Button>
             <Button color="success" variant="flat" onPress={() => exportFunctionSchedulePDF()}>
-              📄 Function Schedule PDF
+              🖨️ Print Function Schedule
             </Button>
             <Button color="primary" variant="flat" onPress={() => exportFunctionSheetPDF()}>
               📋 Function Sheet PDF
@@ -16417,6 +16767,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     
                     // Auto-import to folio
                     syncInvoiceToFolio(newInvoice, false);
+                    captureEventInvoiceToAccounting(newInvoice, event);
                     
                     trackEvent('Events.EventCreated', { action: 'proforma_loaded', invoiceId, eventId: event.id });
                   };
@@ -17336,6 +17687,106 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Button>
             <Button color="success" onPress={handleReceiptSave}>
               {receiptModalMode === 'edit' ? 'Update Receipt' : 'Record Receipt'}
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={isFolioCreateModalOpen}
+        onClose={() => {
+          setIsFolioCreateModalOpen(false);
+          setFolioCreateError('');
+        }}
+        size="md"
+      >
+        <ModalContent>
+          <ModalHeader>Generate Folio</ModalHeader>
+          <ModalBody className="space-y-4">
+            <Select
+              label="Event"
+              placeholder="Select event"
+              selectedKeys={folioCreateForm.eventId ? [folioCreateForm.eventId] : []}
+              onSelectionChange={(keys) => {
+                const value = Array.from(keys)[0] as string | undefined;
+                if (!value) return;
+                setFolioCreateForm((prev) => ({ ...prev, eventId: value }));
+              }}
+            >
+              {allEvents
+                .filter((ev) => !eventFolios.some((f) => f.eventId === ev.id))
+                .map((ev) => (
+                  <SelectItem key={ev.id} textValue={getEventDisplayName(ev)}>
+                    {getEventDisplayName(ev)} • {getEventClientName(ev)}
+                  </SelectItem>
+                ))}
+            </Select>
+            <Input
+              label="Opening Balance (₵)"
+              type="number"
+              value={String(folioCreateForm.openingBalance ?? 0)}
+              onValueChange={(value) =>
+                setFolioCreateForm((prev) => ({
+                  ...prev,
+                  openingBalance: parseFloat(value) || 0,
+                }))
+              }
+            />
+            <Input
+              label="Note (optional)"
+              placeholder="Opening balance note"
+              value={folioCreateForm.note || ''}
+              onValueChange={(value) => setFolioCreateForm((prev) => ({ ...prev, note: value }))}
+            />
+            {folioCreateError && <p className="text-sm text-danger">{folioCreateError}</p>}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setIsFolioCreateModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button color="primary" onPress={handleCreateFolio}>
+              Create Folio
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal
+        isOpen={isInvoiceEventPickerOpen}
+        onClose={() => setIsInvoiceEventPickerOpen(false)}
+        size="md"
+      >
+        <ModalContent>
+          <ModalHeader>Create Invoice</ModalHeader>
+          <ModalBody className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Select an event without an invoice. Totals will be prefilled from the event.
+            </p>
+            <Select
+              label="Event"
+              placeholder="Select event"
+              selectedKeys={invoiceCreateEventId ? [invoiceCreateEventId] : []}
+              onSelectionChange={(keys) => {
+                const value = Array.from(keys)[0] as string | undefined;
+                if (!value) return;
+                setInvoiceCreateEventId(value);
+              }}
+            >
+              {allEvents
+                .filter((ev) => !eventInvoices.some((inv) => inv.eventId === ev.id))
+                .map((ev) => (
+                  <SelectItem key={ev.id} textValue={getEventDisplayName(ev)}>
+                    {getEventDisplayName(ev)} • {formatCurrency(Number(ev.revenue || ev.budgetTotal || 0))}
+                  </SelectItem>
+                ))}
+            </Select>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setIsInvoiceEventPickerOpen(false)}>
+              Cancel
+            </Button>
+            <Button color="primary" onPress={confirmCreateInvoiceForEvent}>
+              Continue
             </Button>
           </ModalFooter>
         </ModalContent>

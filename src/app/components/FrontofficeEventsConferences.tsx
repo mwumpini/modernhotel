@@ -1,11 +1,11 @@
 'use client';
 
-import React, { useState } from 'react';
-import { 
-  Card, 
-  CardBody, 
-  CardHeader, 
-  Button, 
+import React, { useState, useEffect } from 'react';
+import {
+  Card,
+  CardBody,
+  CardHeader,
+  Button,
   Table,
   TableHeader,
   TableColumn,
@@ -25,12 +25,13 @@ import {
   Tabs,
   Tab,
   Autocomplete,
-  AutocompleteItem
+  AutocompleteItem,
+  Textarea
 } from "@heroui/react";
 import OfflineIndicator from './OfflineIndicator';
 import { trackEvent } from '../lib/analytics/trackEvent';
-import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { fetchConferenceHalls, saveConferenceHall, fetchCateringItems, saveCateringItem, fetchEventBookings, saveEventBooking } from '../lib/frontoffice/eventsApi';
 
 interface ConferenceHall {
   id: string;
@@ -104,112 +105,46 @@ export default function FrontofficeEventsConferences() {
     budget: ''
   });
 
-  const conferenceHalls: ConferenceHall[] = [
-    {
-      id: 'H001',
-      name: 'Accra Conference Hall',
-      capacity: 200,
-      type: 'conference',
-      status: 'booked',
-      price: '₵5,000/day',
-      features: ['Projector', 'Sound System', 'Air Conditioning', 'WiFi'],
-      currentEvent: 'Tech Conference 2024'
-    },
-    {
-      id: 'H002',
-      name: 'Kumasi Meeting Room',
-      capacity: 50,
-      type: 'meeting',
-      status: 'available',
-      price: '₵2,000/day',
-      features: ['Projector', 'Whiteboard', 'Coffee Service']
-    },
-    {
-      id: 'H003',
-      name: 'Ghana Banquet Hall',
-      capacity: 300,
-      type: 'banquet',
-      status: 'setup',
-      price: '₵8,000/day',
-      features: ['Dance Floor', 'Bar Setup', 'Catering Kitchen', 'Parking'],
-      currentEvent: 'Wedding Reception'
-    },
-    {
-      id: 'H004',
-      name: 'Accra Auditorium',
-      capacity: 500,
-      type: 'auditorium',
-      status: 'available',
-      price: '₵12,000/day',
-      features: ['Stage', 'Professional Sound', 'Lighting', 'VIP Seating']
-    }
-  ];
+  const [conferenceHalls, setConferenceHalls] = useState<ConferenceHall[]>([]);
+  const [events, setEvents] = useState<Event[]>([]);
 
-  const [events, setEvents] = useState<Event[]>([
-    {
-      id: 'E001',
-      title: 'Tech Conference 2024',
-      organizer: 'Ghana Tech Hub',
-      contactPerson: 'Kwame Mensah',
-      contactPhone: '+233 24 123 4567',
-      contactEmail: 'kwame@ghana-tech.com',
-      hallId: 'H001',
-      hallName: 'Accra Conference Hall',
-      startDate: '2024-01-20',
-      endDate: '2024-01-22',
-      startTime: '09:00',
-      endTime: '17:00',
-      attendees: 180,
-      status: 'confirmed',
-      type: 'conference',
-      catering: true,
-      audioVisual: true,
-      decoration: false,
-      totalCost: '₵25,000'
-    },
-    {
-      id: 'E002',
-      title: 'Wedding Reception - Sarah & John',
-      organizer: 'Sarah Johnson',
-      contactPerson: 'Sarah Johnson',
-      contactPhone: '+233 20 987 6543',
-      contactEmail: 'sarah.j@email.com',
-      hallId: 'H003',
-      hallName: 'Ghana Banquet Hall',
-      startDate: '2024-01-25',
-      endDate: '2024-01-25',
-      startTime: '18:00',
-      endTime: '23:00',
-      attendees: 250,
-      status: 'confirmed',
-      type: 'wedding',
-      catering: true,
-      audioVisual: true,
-      decoration: true,
-      totalCost: '₵35,000'
-    },
-    {
-      id: 'E003',
-      title: 'Corporate Training - ABC Company',
-      organizer: 'ABC Company Ltd.',
-      contactPerson: 'David Osei',
-      contactPhone: '+233 26 555 1234',
-      contactEmail: 'david@abc-company.com',
-      hallId: 'H002',
-      hallName: 'Kumasi Meeting Room',
-      startDate: '2024-01-28',
-      endDate: '2024-01-29',
-      startTime: '08:00',
-      endTime: '16:00',
-      attendees: 40,
-      status: 'pending',
-      type: 'corporate',
-      catering: true,
-      audioVisual: true,
-      decoration: false,
-      totalCost: '₵8,000'
-    }
-  ]);
+  const reloadHalls = () => {
+    fetchConferenceHalls().then((rows: any[]) => setConferenceHalls(rows.map((h) => ({
+      id: h.id,
+      name: h.name,
+      capacity: h.capacity,
+      type: h.type,
+      status: h.status,
+      price: `₵${Number(h.price || 0).toLocaleString()}/day`,
+      features: h.features || [],
+      // currentEvent is computed at render time from live `events` state (see the
+      // Halls table below) rather than baked in here, to avoid a stale closure.
+    }))));
+  };
+  const reloadEvents = () => {
+    fetchEventBookings().then((rows: any[]) => setEvents(rows.map((b) => ({
+      id: b.id,
+      title: b.title,
+      organizer: b.organizer,
+      contactPerson: b.contactPerson || '',
+      contactPhone: b.contactPhone || '',
+      contactEmail: b.contactEmail || '',
+      hallId: b.hallId || '',
+      hallName: b.hallName || '',
+      startDate: (b.startDate || '').slice(0, 10),
+      endDate: (b.endDate || '').slice(0, 10),
+      startTime: b.startTime || '',
+      endTime: b.endTime || '',
+      attendees: b.attendees,
+      status: b.status,
+      type: b.type || 'conference',
+      catering: b.catering,
+      audioVisual: b.audioVisual,
+      decoration: b.decoration,
+      totalCost: `₵${Number(b.totalCost || 0).toLocaleString()}`,
+    }))));
+  };
+  useEffect(() => { reloadHalls(); reloadEvents(); reloadCatering(); }, []);
 
   const validateForm = () => {
     const nextErrors: Record<string, string> = {};
@@ -245,55 +180,16 @@ export default function FrontofficeEventsConferences() {
     setOrgSearch('');
   };
 
-  const handleCreateEvent = () => {
+  const handleCreateEvent = async () => {
     if (!validateForm()) return;
     setSubmitting(true);
     try {
-      const eventTypeMap: Record<string, 'conference' | 'training' | 'wedding' | 'corporate' | 'social'> = {
-        conference: 'conference',
-        seminar: 'conference',
-        corporate: 'corporate',
-        wedding: 'wedding',
-        exhibition: 'social'
-      };
-
-      const mappedType = eventTypeMap[form.type] || 'conference';
-
-      const newBooking = enhancedFrontOfficeStore.createEventBooking({
-        eventName: form.title,
-        eventType: mappedType,
-        startDate: form.startDate,
-        endDate: form.endDate,
-        attendees: form.attendees,
-        // No rate plan/package yet; can be linked later
-        resources: form.hallId ? [{ resourceId: form.hallId, quantity: 1, startTime: form.startTime, endTime: form.endTime }] : [],
-        rooms: [],
-        costBreakdown: {
-          accommodation: { baseCost: 0, corporateDiscount: 0, seasonalAdjustment: 0, finalCost: 0 },
-          package: { baseCost: 0, corporateDiscount: 0, seasonalAdjustment: 0, finalCost: 0 },
-          services: {
-            dinner: form.catering ? 0 : 0,
-            shuttle: 0,
-            equipment: form.audioVisual ? 0 : 0,
-            other: form.decoration ? 0 : 0
-          },
-          taxes: 0,
-          totalCost: 0
-        },
-        totalCost: 0,
-        depositPaid: 0,
-        status: 'pending',
-        clientId: `client_${Date.now()}`,
-        clientName: form.organizer,
-        contactPhone: form.contactPhone,
-        contactEmail: form.contactEmail,
-        specialRequirements: form.specialRequirements
-      });
-
-      // Update UI list immediately
       const hall = conferenceHalls.find(h => h.id === form.hallId);
-      const uiEvent: Event = {
-        id: newBooking.id,
+      const id = `EVT-${Date.now().toString().slice(-8)}`;
+      const budget = Number((form.budget || '0').replace(/[^\d.]/g, '')) || 0;
+
+      const booking = await saveEventBooking({
+        id,
         title: form.title,
         organizer: form.organizer,
         contactPerson: form.contactPerson,
@@ -311,17 +207,17 @@ export default function FrontofficeEventsConferences() {
         catering: form.catering,
         audioVisual: form.audioVisual,
         decoration: form.decoration,
-        totalCost: form.budget && form.budget.trim() ? form.budget : '₵0.00'
-      };
-      setEvents(prev => [uiEvent, ...prev]);
+        totalCost: budget,
+      });
 
       trackEvent('FO.UI.NewEventForm.Submit', {
-        id: newBooking.id,
-        type: mappedType,
+        id: booking.id,
+        type: form.type,
         attendees: form.attendees,
         hallId: form.hallId
       });
 
+      reloadEvents();
       onClose();
       resetForm();
     } finally {
@@ -329,44 +225,56 @@ export default function FrontofficeEventsConferences() {
     }
   };
 
-  const cateringServices: CateringService[] = [
-    {
-      id: 'C001',
-      name: 'Continental Breakfast',
-      description: 'Assorted pastries, fresh fruits, coffee, tea, and juice',
-      price: '₵50/person',
-      category: 'breakfast',
-      minimumOrder: 10,
-      available: true
-    },
-    {
-      id: 'C002',
-      name: 'Ghanaian Lunch Buffet',
-      description: 'Jollof rice, grilled chicken, plantains, and local vegetables',
-      price: '₵80/person',
-      category: 'lunch',
-      minimumOrder: 15,
-      available: true
-    },
-    {
-      id: 'C003',
-      name: 'Elegant Dinner Service',
-      description: 'Three-course meal with wine pairing options',
-      price: '₵120/person',
-      category: 'dinner',
-      minimumOrder: 20,
-      available: true
-    },
-    {
-      id: 'C004',
-      name: 'Coffee & Tea Break',
-      description: 'Assorted coffee, tea, cookies, and light snacks',
-      price: '₵25/person',
-      category: 'snacks',
-      minimumOrder: 5,
-      available: true
-    }
-  ];
+  const [cateringServices, setCateringServices] = useState<CateringService[]>([]);
+  const reloadCatering = () => {
+    fetchCateringItems().then((rows: any[]) => setCateringServices(rows.map((c) => ({
+      id: c.id,
+      name: c.name,
+      description: c.description || '',
+      price: `₵${Number(c.price || 0).toLocaleString()}/person`,
+      category: c.category,
+      minimumOrder: c.minimumOrder,
+      available: c.available,
+    }))));
+  };
+
+  // Add Hall modal
+  const { isOpen: isHallOpen, onOpen: onHallOpen, onClose: onHallClose } = useDisclosure();
+  const [hallForm, setHallForm] = useState({ name: '', capacity: '50', type: 'meeting' as ConferenceHall['type'], price: '0', features: '' });
+  const submitHall = async () => {
+    if (!hallForm.name) return;
+    await saveConferenceHall({
+      id: `HALL-${Date.now().toString().slice(-8)}`,
+      name: hallForm.name,
+      capacity: Number(hallForm.capacity) || 0,
+      type: hallForm.type,
+      status: 'available',
+      price: Number(hallForm.price) || 0,
+      features: hallForm.features.split(',').map((f) => f.trim()).filter(Boolean),
+    });
+    setHallForm({ name: '', capacity: '50', type: 'meeting', price: '0', features: '' });
+    onHallClose();
+    reloadHalls();
+  };
+
+  // Add Catering Item modal
+  const { isOpen: isCateringOpen, onOpen: onCateringOpen, onClose: onCateringClose } = useDisclosure();
+  const [cateringForm, setCateringForm] = useState({ name: '', description: '', price: '0', category: 'breakfast' as CateringService['category'], minimumOrder: '1' });
+  const submitCatering = async () => {
+    if (!cateringForm.name) return;
+    await saveCateringItem({
+      id: `CAT-${Date.now().toString().slice(-8)}`,
+      name: cateringForm.name,
+      description: cateringForm.description,
+      price: Number(cateringForm.price) || 0,
+      category: cateringForm.category,
+      minimumOrder: Number(cateringForm.minimumOrder) || 1,
+      available: true,
+    });
+    setCateringForm({ name: '', description: '', price: '0', category: 'breakfast', minimumOrder: '1' });
+    onCateringClose();
+    reloadCatering();
+  };
 
   const getHallStatusColor = (status: string) => {
     switch (status) {
@@ -515,8 +423,8 @@ export default function FrontofficeEventsConferences() {
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold text-ghana-black">Conference Hall Management</h3>
-                  <Button color="primary" variant="flat" size="sm">
-                    📊 Availability
+                  <Button color="primary" variant="flat" size="sm" onPress={onHallOpen}>
+                    ➕ Add Hall
                   </Button>
                 </div>
                 <Table aria-label="Conference halls table">
@@ -558,11 +466,14 @@ export default function FrontofficeEventsConferences() {
                           </div>
                         </TableCell>
                         <TableCell>
-                          {hall.currentEvent ? (
-                            <span className="text-sm text-gray-600">{hall.currentEvent}</span>
-                          ) : (
-                            <span className="text-gray-400">-</span>
-                          )}
+                          {(() => {
+                            const current = events.find((e) => e.hallId === hall.id && e.status === 'confirmed');
+                            return current ? (
+                              <span className="text-sm text-gray-600">{current.title}</span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
@@ -659,7 +570,7 @@ export default function FrontofficeEventsConferences() {
               <div>
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold text-ghana-black">Catering Services</h3>
-                  <Button color="primary" variant="flat" size="sm">
+                  <Button color="primary" variant="flat" size="sm" onPress={onCateringOpen}>
                     ➕ Add Service
                   </Button>
                 </div>
@@ -859,6 +770,55 @@ export default function FrontofficeEventsConferences() {
               <Button color="primary" isDisabled={submitting} onPress={handleCreateEvent}>
                 {submitting ? 'Creating...' : 'Create Event'}
               </Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        <Modal isOpen={isHallOpen} onClose={onHallClose}>
+          <ModalContent>
+            <ModalHeader>Add Conference Hall</ModalHeader>
+            <ModalBody>
+              <Input label="Name" value={hallForm.name} onChange={(e) => setHallForm({ ...hallForm, name: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Capacity" type="number" value={hallForm.capacity} onChange={(e) => setHallForm({ ...hallForm, capacity: e.target.value })} />
+                <Select label="Type" selectedKeys={[hallForm.type]} onSelectionChange={(k) => setHallForm({ ...hallForm, type: (Array.from(k)[0] as any) || 'meeting' })}>
+                  <SelectItem key="conference">Conference</SelectItem>
+                  <SelectItem key="meeting">Meeting</SelectItem>
+                  <SelectItem key="banquet">Banquet</SelectItem>
+                  <SelectItem key="auditorium">Auditorium</SelectItem>
+                </Select>
+              </div>
+              <Input label="Price per day (₵)" type="number" value={hallForm.price} onChange={(e) => setHallForm({ ...hallForm, price: e.target.value })} />
+              <Input label="Features (comma-separated)" placeholder="Projector, WiFi, Air Conditioning" value={hallForm.features} onChange={(e) => setHallForm({ ...hallForm, features: e.target.value })} />
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={onHallClose}>Cancel</Button>
+              <Button color="primary" onPress={submitHall} isDisabled={!hallForm.name}>Add Hall</Button>
+            </ModalFooter>
+          </ModalContent>
+        </Modal>
+
+        <Modal isOpen={isCateringOpen} onClose={onCateringClose}>
+          <ModalContent>
+            <ModalHeader>Add Catering Service</ModalHeader>
+            <ModalBody>
+              <Input label="Name" value={cateringForm.name} onChange={(e) => setCateringForm({ ...cateringForm, name: e.target.value })} />
+              <Textarea label="Description" value={cateringForm.description} onChange={(e) => setCateringForm({ ...cateringForm, description: e.target.value })} />
+              <div className="grid grid-cols-2 gap-3">
+                <Input label="Price per person (₵)" type="number" value={cateringForm.price} onChange={(e) => setCateringForm({ ...cateringForm, price: e.target.value })} />
+                <Select label="Category" selectedKeys={[cateringForm.category]} onSelectionChange={(k) => setCateringForm({ ...cateringForm, category: (Array.from(k)[0] as any) || 'breakfast' })}>
+                  <SelectItem key="breakfast">Breakfast</SelectItem>
+                  <SelectItem key="lunch">Lunch</SelectItem>
+                  <SelectItem key="dinner">Dinner</SelectItem>
+                  <SelectItem key="snacks">Snacks</SelectItem>
+                  <SelectItem key="beverages">Beverages</SelectItem>
+                </Select>
+              </div>
+              <Input label="Minimum Order (people)" type="number" value={cateringForm.minimumOrder} onChange={(e) => setCateringForm({ ...cateringForm, minimumOrder: e.target.value })} />
+            </ModalBody>
+            <ModalFooter>
+              <Button variant="light" onPress={onCateringClose}>Cancel</Button>
+              <Button color="primary" onPress={submitCatering} isDisabled={!cateringForm.name}>Add Service</Button>
             </ModalFooter>
           </ModalContent>
         </Modal>

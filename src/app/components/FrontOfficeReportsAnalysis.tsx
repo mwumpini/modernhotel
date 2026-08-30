@@ -8,10 +8,13 @@ import {
 } from '@heroui/react';
 import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { useSettingsStore } from '../lib/settings/store';
+import { frontOfficeStore } from '../lib/frontoffice/store';
 
 export default function FrontOfficeReportsAnalysis() {
   const [selectedTab, setSelectedTab] = useState('daily-operations');
   const [selectedReport, setSelectedReport] = useState('arrivals');
+  const [cashierId, setCashierId] = useState('');
+  const [guestId, setGuestId] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [startDate, setStartDate] = useState(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
@@ -82,14 +85,42 @@ export default function FrontOfficeReportsAnalysis() {
         return generateRoomStatusReport;
       case 'check-ins':
         return generateCheckInGuestReport;
+      case 'high-balance':
+        return reportingStore.generateHighBalanceReport(selectedDate);
+      case 'wake-up-calls':
+        return reportingStore.generateWakeUpCallReport(selectedDate);
+      case 'daily-transactions':
+        return reportingStore.generateDailyTransactionReport(selectedDate);
+      case 'cashier-report':
+        return reportingStore.generateCashierReport(selectedDate, cashierId);
+      case 'credit-card-reconciliation':
+        return reportingStore.generateCreditCardReconciliationReport(selectedDate);
+      case 'guest-ledger':
+        return reportingStore.generateGuestLedgerReport(selectedDate);
       case 'daily-flash':
         return generateDailyFlashReport;
+      case 'occupancy':
+        return reportingStore.generateOccupancyReport(selectedDate);
+      case 'pace':
+        return reportingStore.generatePaceReport(selectedDate);
+      case 'no-shows':
+        return reportingStore.generateNoShowReport(selectedDate);
+      case 'source-business':
+        return reportingStore.generateSourceOfBusinessReport(startDate, endDate);
+      case 'market-segmentation':
+        return reportingStore.generateMarketSegmentationReport(startDate, endDate);
       case 'discount-request':
         return reportingStore.generateDiscountRequestReport(startDate, endDate);
       case 'complimentary-room':
         return reportingStore.generateComplimentaryRoomReport(startDate, endDate);
       case 'pricing-analytics':
         return reportingStore.generatePricingAnalyticsReport(startDate, endDate);
+      case 'guest-count-meal-plan':
+        return reportingStore.generateGuestCountMealPlanReport(selectedDate);
+      case 'vip':
+        return reportingStore.generateVIPReport(selectedDate);
+      case 'guest-history':
+        return reportingStore.generateGuestHistoryReport(guestId);
       default:
         return generateArrivalsReport;
     }
@@ -97,11 +128,30 @@ export default function FrontOfficeReportsAnalysis() {
 
   const renderReportTable = () => {
     const data = getCurrentReportData();
-    
-    if (!data || data.length === 0) {
+
+    if (!data || (Array.isArray(data) && data.length === 0)) {
       return (
         <div className="text-center py-8">
           <p className="text-gray-500">No data available for the selected report and date.</p>
+        </div>
+      );
+    }
+
+    // Some reports (daily-flash, occupancy, cashier's report, guest history) return
+    // a single summary object rather than a row-per-record array — render those as
+    // a key/value grid instead of feeding a non-array into the table below.
+    if (!Array.isArray(data)) {
+      const entries = Object.entries(data).filter(([, v]) => typeof v !== 'object' || v === null);
+      return (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          {entries.map(([key, value]) => (
+            <div key={key} className="p-3 bg-gray-50 rounded-lg border">
+              <div className="text-xs text-gray-500">{key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}</div>
+              <div className="text-lg font-semibold text-ghana-black">
+                {typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(value)}
+              </div>
+            </div>
+          ))}
         </div>
       );
     }
@@ -276,7 +326,21 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="credit-card-reconciliation">Credit Card Reconciliation</SelectItem>
                   <SelectItem key="guest-ledger">Guest Ledger Report</SelectItem>
                 </Select>
-                <Button 
+                {selectedReport === 'cashier-report' && (
+                  <Select
+                    selectedKeys={cashierId ? [cashierId] : []}
+                    onSelectionChange={(keys) => setCashierId(Array.from(keys)[0] as string || '')}
+                    className="w-48"
+                    placeholder="Select cashier"
+                  >
+                    {/* Matched against FolioPayment.processedBy, which records a name, not a user id. */}
+                    {settings.users.map(u => {
+                      const name = `${u.firstName} ${u.lastName}`.trim();
+                      return <SelectItem key={name}>{name}</SelectItem>;
+                    })}
+                  </Select>
+                )}
+                <Button
                   color="primary" 
                   variant="flat"
                   onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
@@ -376,6 +440,16 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="vip">VIP Report</SelectItem>
                   <SelectItem key="guest-history">Guest History Report</SelectItem>
                 </Select>
+                {selectedReport === 'guest-history' && (
+                  <Select
+                    selectedKeys={guestId ? [guestId] : []}
+                    onSelectionChange={(keys) => setGuestId(Array.from(keys)[0] as string || '')}
+                    className="w-48"
+                    placeholder="Select guest"
+                  >
+                    {frontOfficeStore.guests.slice(0, 200).map(g => <SelectItem key={g.id}>{g.name}</SelectItem>)}
+                  </Select>
+                )}
                 <Button 
                   color="primary" 
                   variant="flat"

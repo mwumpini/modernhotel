@@ -63,6 +63,28 @@ model Tenant {
   housekeepingTasks HousekeepingTask[]
   maintenanceRequests MaintenanceRequest[]
   roomStatusLogs RoomStatusLog[]
+  housekeepingStaff HousekeepingStaff[]
+  purchaseOrders PurchaseOrder[]
+  purchaseOrderItems PurchaseOrderItem[]
+  bankReconciliations BankReconciliation[]
+  reconcilingItems ReconcilingItem[]
+  hrEmployees HrEmployee[]
+  hrDepartments HrDepartment[]
+  hrPositions HrPosition[]
+  hrPayrollPeriods HrPayrollPeriod[]
+  hrPayrollRecords HrPayrollRecord[]
+  hrLeaveRequests HrLeaveRequest[]
+  hrTrainingPrograms HrTrainingProgram[]
+  hrTrainingRecords HrTrainingRecord[]
+  guestServices GuestService[]
+  serviceRequests ServiceRequest[]
+  conferenceHalls ConferenceHall[]
+  cateringItems CateringItem[]
+  eventBookings EventBooking[]
+  restaurantTables RestaurantTable[]
+  tableReservations TableReservation[]
+  recipes Recipe[]
+  inventoryTransactions InventoryTransaction[]
 
   @@map("tenants")
 }
@@ -569,6 +591,7 @@ model Supplier {
   contactPerson String?
   taxNumber     String?
   address       Json?
+  details       Json?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -576,6 +599,7 @@ model Supplier {
   // Relations
   tenant        Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   expenseVouchers ExpenseVoucher[]
+  inventoryItems InventoryItem[]
 
   @@unique([tenantId, code])
   @@map("suppliers")
@@ -632,6 +656,10 @@ model InventoryItem {
   sellingPrice  Decimal? @db.Decimal(10, 2)
   quantityOnHand Decimal @default(0) @db.Decimal(10, 3)
   reorderLevel  Decimal  @default(0) @db.Decimal(10, 3)
+  minimumStock  Decimal  @default(0) @db.Decimal(10, 3)
+  maximumStock  Decimal  @default(0) @db.Decimal(10, 3)
+  location      String?
+  supplierId    String?
   isActive      Boolean  @default(true)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -640,6 +668,8 @@ model InventoryItem {
   tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   category      ItemCategory?  @relation(fields: [categoryId], references: [id])
   unit          UnitOfMeasure? @relation(fields: [unitId], references: [id])
+  supplier      Supplier?      @relation(fields: [supplierId], references: [id])
+  transactions  InventoryTransaction[]
 
   @@unique([tenantId, code])
   @@map("inventory_items")
@@ -657,11 +687,38 @@ model StockLocation {
   updatedAt   DateTime @updatedAt
 
   // Relations
-  tenant      Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  property    Property? @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  tenant       Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  property     Property?              @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  transactions InventoryTransaction[]
 
   @@unique([tenantId, code])
   @@map("stock_locations")
+}
+
+// Append-only audit trail of every stock movement. InventoryItem.quantityOnHand
+// is the running total this log produces — always write both together in one
+// transaction so the two never drift apart.
+model InventoryTransaction {
+  id            String   @id @default(cuid())
+  tenantId      String
+  itemId        String
+  locationId    String?
+  type          String   // receipt | issue | transfer_in | transfer_out | adjustment | count
+  quantity      Decimal  @db.Decimal(10, 3) // signed: positive adds to stock, negative removes
+  unitCost      Decimal? @db.Decimal(10, 2)
+  referenceType String?  // purchase_order | requisition | transfer | stock_count | manual
+  referenceId   String?
+  notes         String?
+  performedBy   String?
+  createdAt     DateTime @default(now())
+
+  tenant   Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  item     InventoryItem  @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  location StockLocation? @relation(fields: [locationId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, itemId])
+  @@index([tenantId, createdAt])
+  @@map("inventory_transactions")
 }
 
 enum AccountType {
@@ -899,6 +956,10 @@ model FBOrder {
   discountAmount  Decimal   @default(0) @db.Decimal(12, 2)
   serviceCharge   Decimal   @default(0) @db.Decimal(12, 2)
   notes           String?
+  priority        String    @default("normal")
+  assignedToId    String?
+  assignedToName  String?
+  preparingAt     DateTime?
   billedAt        DateTime?
   servedAt        DateTime?
   createdAt       DateTime  @default(now())
@@ -921,6 +982,7 @@ model FBOrderItem {
   menuItemId    String?
   name          String
   category      String?
+  route         String   @default("kitchen")
   quantity      Int
   unitPrice     Decimal  @db.Decimal(10, 2)
   amount        Decimal  @db.Decimal(12, 2)
@@ -950,6 +1012,7 @@ model HousekeepingTask {
   scheduledFor DateTime?
   startedAt    DateTime?
   completedAt  DateTime?
+  details      Json?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
@@ -964,7 +1027,7 @@ model HousekeepingTask {
 model RoomStatusLog {
   id         String   @id @default(cuid())
   tenantId   String
-  roomId     String
+  roomId     String?
   roomNumber String
   fromStatus String
   toStatus   String
@@ -979,6 +1042,26 @@ model RoomStatusLog {
   @@map("room_status_logs")
 }
 
+model HousekeepingStaff {
+  id             String   @id @default(cuid())
+  tenantId       String
+  name           String
+  role           String
+  isActive       Boolean  @default(true)
+  dailyTarget    Int      @default(0)
+  completedToday Int      @default(0)
+  shift          String?
+  phone          String?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, role])
+  @@map("housekeeping_staff")
+}
+
 model MaintenanceRequest {
   id           String    @id @default(cuid())
   tenantId     String
@@ -991,6 +1074,8 @@ model MaintenanceRequest {
   description  String
   reportedBy   String?
   assignedTo   String?
+  estimatedCost Decimal? @db.Decimal(10, 2)
+  actualCost    Decimal? @db.Decimal(10, 2)
   resolvedAt   DateTime?
   notes        String?
   createdAt    DateTime  @default(now())
@@ -1001,4 +1086,523 @@ model MaintenanceRequest {
   @@index([tenantId, status])
   @@index([tenantId, roomId])
   @@map("maintenance_requests")
+}
+
+// Field names/status vocabulary deliberately match src/app/lib/inventory/models.ts's
+// PurchaseOrder/PurchaseOrderItem (the shape the actual UI in supplierStore.ts uses).
+model PurchaseOrder {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  poNumber             String
+  supplierId           String
+  supplierName         String
+  orderDate            DateTime  @default(now())
+  expectedDeliveryDate DateTime?
+  actualDeliveryDate   DateTime?
+  status               String    @default("draft")
+  priority             String    @default("medium")
+  totalAmount          Decimal   @default(0) @db.Decimal(12, 2)
+  taxAmount            Decimal   @default(0) @db.Decimal(12, 2)
+  shippingAmount       Decimal   @default(0) @db.Decimal(12, 2)
+  discountAmount       Decimal   @default(0) @db.Decimal(12, 2)
+  finalAmount          Decimal   @default(0) @db.Decimal(12, 2)
+  currency             String    @default("GHS")
+  paymentTerms         String?
+  notes                String?
+  createdBy            String?
+  approvedBy           String?
+  approvedAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenant Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  PurchaseOrderItem[]
+
+  @@unique([tenantId, poNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, supplierId])
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id               String   @id @default(cuid())
+  tenantId         String
+  purchaseOrderId  String
+  itemId           String
+  itemCode         String
+  itemName         String
+  quantity         Decimal  @db.Decimal(12, 2)
+  unitCost         Decimal  @db.Decimal(10, 2)
+  totalCost        Decimal  @db.Decimal(12, 2)
+  receivedQuantity Decimal  @default(0) @db.Decimal(12, 2)
+  notes            String?
+  createdAt        DateTime @default(now())
+
+  tenant        Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, purchaseOrderId])
+  @@map("purchase_order_items")
+}
+
+model BankReconciliation {
+  id               String    @id @default(cuid())
+  tenantId         String
+  bankAccountId    String
+  periodEndDate    DateTime
+  statementBalance Decimal   @default(0) @db.Decimal(14, 2)
+  cashbookBalance  Decimal   @default(0) @db.Decimal(14, 2)
+  status           String    @default("Draft")
+  preparedAt       DateTime?
+  approvedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  ReconcilingItem[]
+
+  @@unique([tenantId, bankAccountId, periodEndDate])
+  @@index([tenantId, bankAccountId])
+  @@map("bank_reconciliations")
+}
+
+model ReconcilingItem {
+  id                String    @id @default(cuid())
+  tenantId          String
+  reconciliationId  String
+  itemType          String
+  description       String
+  reference         String?
+  transactionDate   DateTime?
+  amount            Decimal   @db.Decimal(14, 2)
+  isCleared         Boolean   @default(false)
+  clearedDate       DateTime?
+  journalEntryId    String?
+  offsetGlCode      String?
+  carriedFromItemId String?
+  createdAt         DateTime  @default(now())
+
+  tenant         Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reconciliation BankReconciliation @relation(fields: [reconciliationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, reconciliationId])
+  @@map("reconciling_items")
+}
+
+// ---------------------------------------------------------------------------
+// HR & Payroll — field names match src/app/lib/hr/models.ts. Nested/evolving
+// structures live in `details Json`, same pattern as frontoffice/repository.ts.
+// ---------------------------------------------------------------------------
+
+model HrEmployee {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  employeeNumber       String
+  firstName            String
+  lastName             String
+  email                String
+  phone                String
+  gender               String?
+  nationality          String?
+  maritalStatus        String?
+  dateOfBirth          DateTime
+  hireDate             DateTime
+  terminationDate      DateTime?
+  departmentId         String?
+  positionId           String?
+  managerId            String?
+  workLocation         String?
+  employmentType       String    @default("full_time")
+  status               String    @default("active")
+  residencyStatus      String?
+  employmentClass      String?
+  secondEmployment     Boolean   @default(false)
+  incomeTaxDeductible  Boolean   @default(true)
+  ssnitEnrolled        Boolean   @default(false)
+  tier2Enrolled        Boolean   @default(false)
+  tier3Enrolled        Boolean   @default(false)
+  tier3ContributionPct Decimal   @default(0) @db.Decimal(5, 2)
+  salary               Decimal   @default(0) @db.Decimal(12, 2)
+  hourlyRate           Decimal?  @db.Decimal(10, 2)
+  overtimeRate         Decimal?  @db.Decimal(10, 2)
+  compensationType     String?
+  basicSalary          Decimal?  @db.Decimal(12, 2)
+  allowances           Decimal?  @db.Decimal(12, 2)
+  paymentFrequency     String?
+  ssnitNumber          String?
+  ghanaCardNumber      String?
+  contractEndDate      DateTime?
+  workPermitExpiryDate DateTime?
+  photo                String?
+  vehicleBenefit       Decimal   @default(0) @db.Decimal(12, 2)
+  housingBenefit       Decimal   @default(0) @db.Decimal(12, 2)
+  otherNonCashBenefits Decimal   @default(0) @db.Decimal(12, 2)
+  notes                String?
+  details              Json?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, employeeNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, departmentId])
+  @@map("hr_employees")
+}
+
+model HrDepartment {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  name               String
+  code               String?
+  description        String?
+  managerId          String?
+  parentDepartmentId String?
+  budget             Decimal  @default(0) @db.Decimal(14, 2)
+  location           String?
+  isActive           Boolean  @default(true)
+  status             String   @default("active")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("hr_departments")
+}
+
+model HrPosition {
+  id               String   @id @default(cuid())
+  tenantId         String
+  title            String
+  code             String?
+  departmentId     String
+  description      String?
+  requirements     Json?
+  responsibilities Json?
+  minSalary        Decimal? @db.Decimal(12, 2)
+  maxSalary        Decimal? @db.Decimal(12, 2)
+  baseSalary       Decimal? @db.Decimal(12, 2)
+  isActive         Boolean  @default(true)
+  status           String   @default("active")
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, departmentId])
+  @@map("hr_positions")
+}
+
+model HrPayrollPeriod {
+  id              String    @id @default(cuid())
+  tenantId        String
+  periodNumber    String
+  startDate       DateTime
+  endDate         DateTime
+  status          String    @default("draft")
+  totalGrossPay   Decimal   @default(0) @db.Decimal(14, 2)
+  totalNetPay     Decimal   @default(0) @db.Decimal(14, 2)
+  totalDeductions Decimal   @default(0) @db.Decimal(14, 2)
+  totalTaxes      Decimal   @default(0) @db.Decimal(14, 2)
+  employeeCount   Int       @default(0)
+  processedBy     String?
+  processedAt     DateTime?
+  approvedBy      String?
+  approvedAt      DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant  Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  records HrPayrollRecord[]
+
+  @@unique([tenantId, periodNumber])
+  @@index([tenantId, status])
+  @@map("hr_payroll_periods")
+}
+
+model HrPayrollRecord {
+  id              String    @id @default(cuid())
+  tenantId        String
+  payrollPeriodId String
+  employeeId      String
+  employeeNumber  String
+  employeeName    String
+  department      String?
+  position        String?
+  basicSalary     Decimal   @default(0) @db.Decimal(12, 2)
+  allowances      Decimal   @default(0) @db.Decimal(12, 2)
+  overtimePay     Decimal   @default(0) @db.Decimal(12, 2)
+  bonuses         Decimal   @default(0) @db.Decimal(12, 2)
+  grossPay        Decimal   @default(0) @db.Decimal(12, 2)
+  deductions      Json
+  netPay          Decimal   @default(0) @db.Decimal(12, 2)
+  bankAccount     String?
+  paymentMethod   String    @default("bank_transfer")
+  status          String    @default("pending")
+  paidAt          DateTime?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  payrollPeriod HrPayrollPeriod @relation(fields: [payrollPeriodId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, payrollPeriodId])
+  @@index([tenantId, employeeId])
+  @@map("hr_payroll_records")
+}
+
+model HrLeaveRequest {
+  id              String    @id @default(cuid())
+  tenantId        String
+  employeeId      String
+  leaveType       String
+  startDate       DateTime
+  endDate         DateTime
+  totalDays       Decimal   @default(0) @db.Decimal(5, 2)
+  reason          String?
+  status          String    @default("pending")
+  requestedBy     String?
+  requestedAt     DateTime  @default(now())
+  approvedBy      String?
+  approvedAt      DateTime?
+  rejectionReason String?
+  notes           String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId])
+  @@index([tenantId, status])
+  @@map("hr_leave_requests")
+}
+
+model HrTrainingProgram {
+  id              String    @id @default(cuid())
+  tenantId        String
+  title           String
+  code            String?
+  description     String?
+  category        String    @default("other")
+  duration        Decimal   @default(0) @db.Decimal(6, 2)
+  cost            Decimal   @default(0) @db.Decimal(12, 2)
+  maxParticipants Int?
+  instructor      String?
+  location        String?
+  startDate       DateTime?
+  endDate         DateTime?
+  status          String    @default("scheduled")
+  mandatory       Boolean   @default(false)
+  materials       Json?
+  objectives      Json?
+  prerequisites   Json?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant  Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  records HrTrainingRecord[]
+
+  @@index([tenantId, status])
+  @@map("hr_training_programs")
+}
+
+model HrTrainingRecord {
+  id                String    @id @default(cuid())
+  tenantId          String
+  trainingProgramId String
+  employeeId        String
+  enrollmentDate    DateTime  @default(now())
+  completionDate    DateTime?
+  status            String    @default("enrolled")
+  score             Decimal?  @db.Decimal(5, 2)
+  certificate       String?
+  feedback          String?
+  cost              Decimal   @default(0) @db.Decimal(12, 2)
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trainingProgram HrTrainingProgram @relation(fields: [trainingProgramId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId])
+  @@index([tenantId, trainingProgramId])
+  @@map("hr_training_records")
+}
+
+// ---------------------------------------------------------------------------
+// Guest Services catalog + request queue (Front Office > Clients & Services)
+// ---------------------------------------------------------------------------
+
+model GuestService {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  category    String
+  description String?
+  price       Decimal  @default(0) @db.Decimal(12, 2)
+  status      String   @default("available")
+  provider    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant   Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requests ServiceRequest[]
+
+  @@index([tenantId])
+  @@map("guest_services")
+}
+
+model ServiceRequest {
+  id            String   @id @default(cuid())
+  tenantId      String
+  serviceId     String
+  guestId       String?
+  reservationId String?
+  clientName    String
+  roomNumber    String?
+  requestDate   DateTime @default(now())
+  status        String   @default("pending")
+  priority      String   @default("medium")
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant  Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  service GuestService @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("service_requests")
+}
+
+// ---------------------------------------------------------------------------
+// Events & Conferences (Front Office > Events & Conferences)
+// ---------------------------------------------------------------------------
+
+model ConferenceHall {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  capacity  Int
+  type      String
+  status    String   @default("available")
+  price     Decimal  @default(0) @db.Decimal(12, 2)
+  features  Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("conference_halls")
+}
+
+model CateringItem {
+  id           String   @id @default(cuid())
+  tenantId     String
+  name         String
+  description  String?
+  price        Decimal  @default(0) @db.Decimal(12, 2)
+  category     String
+  minimumOrder Int      @default(1)
+  available    Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@map("catering_items")
+}
+
+model EventBooking {
+  id            String    @id @default(cuid())
+  tenantId      String
+  title         String
+  organizer     String
+  contactPerson String?
+  contactPhone  String?
+  contactEmail  String?
+  hallId        String?
+  hallName      String?
+  startDate     DateTime
+  endDate       DateTime
+  startTime     String?
+  endTime       String?
+  attendees     Int       @default(0)
+  status        String    @default("pending")
+  type          String?
+  catering      Boolean   @default(false)
+  audioVisual   Boolean   @default(false)
+  decoration    Boolean   @default(false)
+  totalCost     Decimal   @default(0) @db.Decimal(12, 2)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("event_bookings")
+}
+
+model RestaurantTable {
+  id        String   @id @default(cuid())
+  tenantId  String
+  number    String
+  capacity  Int
+  section   String?
+  status    String   @default("available")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant       Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  reservations TableReservation[]
+
+  @@unique([tenantId, number])
+  @@index([tenantId, status])
+  @@map("restaurant_tables")
+}
+
+model TableReservation {
+  id              String    @id @default(cuid())
+  tenantId        String
+  customerName    String
+  phone           String?
+  tableId         String?
+  reservationDate DateTime
+  time            String
+  guests          Int       @default(1)
+  status          String    @default("pending")
+  specialRequests String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  table  RestaurantTable? @relation(fields: [tableId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status])
+  @@index([tenantId, reservationDate])
+  @@map("table_reservations")
+}
+
+model Recipe {
+  id              String   @id @default(cuid())
+  tenantId        String
+  name            String
+  category        String
+  preparationTime Int      @default(0)
+  difficulty      String   @default("medium")
+  allergens       String?
+  ingredients     Json
+  instructions    Json
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, category])
+  @@map("recipes")
 }

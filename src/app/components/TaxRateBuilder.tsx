@@ -78,13 +78,18 @@ interface TaxRuleForm {
   domain?: 'sales' | 'payroll' | 'corporate' | 'custom';
   operation?: 'internal' | 'external' | 'both';
   effect?: 'add' | 'subtract' | 'exclude_total' | 'informational';
+  // Dual-sided contribution + base clamping (e.g. SSNIT: employee `rate`, employer
+  // `employerRate`, both applied to the same base after floor/ceiling clamping).
+  employerRate?: number;
+  ceiling?: number;
+  floor?: number;
 }
 
 export default function TaxRateBuilder() {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const { isOpen: isTypeOpen, onOpen: onOpenType, onClose: onCloseType } = useDisclosure();
   const { isOpen: isAssignOpen, onOpen: onOpenAssign, onClose: onCloseAssign } = useDisclosure();
-  const { taxRules, taxTypes, setCountry, country: selectedCountry } = useComplianceStore();
+  const { taxRules, taxTypes, setCountry, country: selectedCountry, isLoading: complianceLoading } = useComplianceStore();
   const calcTax = useCalculateTax();
 
   const flushAccountingSyncForCountry = React.useCallback((country: string, silent?: boolean) => {
@@ -160,6 +165,14 @@ export default function TaxRateBuilder() {
   };
 
   React.useEffect(() => {
+    // Gate on !complianceLoading — without it, this fires on the transiently-empty render
+    // before the store's initial async fetch resolves (taxRules === [] is not the same as
+    // "the server confirmed zero rules exist"), auto-applying the default template on top
+    // of rules that are about to load a moment later and creating duplicates. This is a
+    // real bug that existed before, but running the payroll rates editor alongside this tab
+    // (both mounted under the same Tabs component) made it fire far more often, since every
+    // save there also refreshes this shared store.
+    if (complianceLoading) return;
     const code = selectedCountry;
     const already = autoAppliedCountries.has(code);
     const count = taxRules.filter(r => r.countryCode === code).length;
@@ -167,6 +180,24 @@ export default function TaxRateBuilder() {
       const keys = getDefaultTemplatesForCountry(code);
       if (keys.length) {
         (async () => {
+          // Client state said zero rules, but client state can still be stale relative to
+          // the server (e.g. another tab/component's fetch is mid-flight). Verify directly
+          // against the server immediately before writing anything — the previous
+          // client-only check let this fire on a stale read and create duplicate rows via
+          // ComplianceDB's read-modify-write (no locking, so a concurrent write from
+          // elsewhere gets silently clobbered too, not just duplicated).
+          try {
+            const res = await fetch(`/api/compliance/taxes?country=${code}`);
+            if (res.ok) {
+              const fresh = await res.json();
+              if (Array.isArray(fresh) && fresh.length > 0) {
+                setAutoAppliedCountries(prev => new Set([...Array.from(prev), code]));
+                return;
+              }
+            }
+          } catch {
+            return; // can't verify — don't risk writing duplicates
+          }
           for (const k of keys) {
             await applyTemplate(k, { silent: true, skipFilterSync: true });
           }
@@ -174,7 +205,7 @@ export default function TaxRateBuilder() {
         })();
       }
     }
-  }, [selectedCountry, taxRules]);
+  }, [selectedCountry, taxRules, complianceLoading]);
   const [editingRule, setEditingRule] = useState<TaxRule | TaxRuleForm | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
   const [formData, setFormData] = useState<TaxRuleForm>({
@@ -282,7 +313,10 @@ export default function TaxRateBuilder() {
         domain: (rule as any).domain || 'sales',
         operation: (rule as any).operation || 'both',
         effect: (rule as any).effect || 'add',
-        tags: rule.tags || []
+        tags: rule.tags || [],
+        employerRate: (rule as any).employerRate,
+        ceiling: (rule as any).ceiling,
+        floor: (rule as any).floor
       });
       setIsEditMode(true);
     } else {
@@ -349,7 +383,10 @@ export default function TaxRateBuilder() {
         domain: formData.domain,
         operation: formData.operation,
         effect: formData.effect,
-        tags: formData.tags
+        tags: formData.tags,
+        employerRate: formData.employerRate,
+        ceiling: formData.ceiling,
+        floor: formData.floor
       };
 
       let response;
@@ -741,6 +778,7 @@ export default function TaxRateBuilder() {
             >
               <SelectItem key="sales">Sales</SelectItem>
               <SelectItem key="purchases">Purchases</SelectItem>
+              <SelectItem key="payroll">Payroll</SelectItem>
               <SelectItem key="corporate">Corporate</SelectItem>
               <SelectItem key="custom">Custom</SelectItem>
             </Select>
@@ -967,6 +1005,7 @@ export default function TaxRateBuilder() {
                 <Select label="Domain" selectedKeys={[sim.domain]} onSelectionChange={(k) => setSim({ ...sim, domain: Array.from(k)[0] as any })} variant="bordered" size="sm">
                   <SelectItem key="sales">Sales</SelectItem>
                   <SelectItem key="purchases">Purchases</SelectItem>
+                  <SelectItem key="payroll">Payroll</SelectItem>
                   <SelectItem key="corporate">Corporate</SelectItem>
                 </Select>
                 <Select label="Centre" selectedKeys={[sim.operation]} onSelectionChange={(k) => setSim({ ...sim, operation: Array.from(k)[0] as any })} variant="bordered" size="sm">
@@ -1292,6 +1331,55 @@ export default function TaxRateBuilder() {
                     <SelectItem key="tiered">Tiered</SelectItem>
                   </Select>
                 </div>
+                {formData.method === 'rate' && formData.domain === 'payroll' && (
+                  <>
+                    <div>
+                      <label className="text-sm font-medium flex items-center gap-1">
+                        <span>Employer Rate %</span>
+                        <Tooltip content="For dual-sided contributions (e.g. SSNIT): the employer-paid percentage, on the same base as Rate %. Leave blank if this rule has no employer-side contribution.">
+                          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help">i</span>
+                        </Tooltip>
+                      </label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={(formData.employerRate ?? '').toString()}
+                        onChange={(e) => setFormData(prev => ({ ...prev, employerRate: e.target.value ? parseFloat(e.target.value) : undefined }))}
+                        variant="bordered"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium flex items-center gap-1">
+                        <span>Ceiling</span>
+                        <Tooltip content="Maximum base the rate applies to (e.g. SSNIT's insurable-earnings ceiling). Leave blank for no cap.">
+                          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help">i</span>
+                        </Tooltip>
+                      </label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={(formData.ceiling ?? '').toString()}
+                        onChange={(e) => setFormData(prev => ({ ...prev, ceiling: e.target.value ? parseFloat(e.target.value) : undefined }))}
+                        variant="bordered"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-sm font-medium flex items-center gap-1">
+                        <span>Floor</span>
+                        <Tooltip content="Minimum base the rate applies to (e.g. SSNIT's minimum insurable earnings — an employee paid below this still contributes as if they earned it). Leave blank for no floor.">
+                          <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help">i</span>
+                        </Tooltip>
+                      </label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        value={(formData.floor ?? '').toString()}
+                        onChange={(e) => setFormData(prev => ({ ...prev, floor: e.target.value ? parseFloat(e.target.value) : undefined }))}
+                        variant="bordered"
+                      />
+                    </div>
+                  </>
+                )}
                 {formData.method === 'fixed' && (
                   <div>
                     <label className="text-sm font-medium">Fixed Amount</label>

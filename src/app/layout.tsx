@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/app/lib/auth/auth";
 import Providers from "./components/Providers";
 import "./globals.css";
 
@@ -30,11 +32,18 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  let session = null;
+  try {
+    session = await getServerSession(authOptions);
+  } catch {
+    // Auth route may still be compiling in dev; client can retry later.
+  }
+
   return (
     <html lang="en" data-theme="light" suppressHydrationWarning>
       <head>
@@ -47,7 +56,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Providers>
+        <Providers session={session}>
           {children}
         </Providers>
       </body>

@@ -10,7 +10,9 @@ import {
   paymentNeedsGlPost,
 } from './accountingProcessPolicy';
 import { logAccountingProcess, logAccountingProcessWarn } from './accountingProcessLog';
-import { computeStackedTaxLines, taxConfigsFromGhanaTemplate } from './taxFromConfig';
+import { computeStackedTaxLines } from './taxFromConfig';
+import { getActiveTaxConfigs } from '../tax/engine';
+import { GHANA_TAX_CODES } from './models';
 
 const GL = {
   AR: '1200',
@@ -18,7 +20,10 @@ const GL = {
   CASH: '1110',
   BANK: '1100',
   VAT: '2110',
-  SALES_REVENUE: '4500',
+  SALES_REVENUE: '4300',
+  WHT_RECEIVABLE: '1230',
+  WHT_VAT_RECEIVABLE: '1240',
+  WHT_PAYABLE: GHANA_TAX_CODES.WITHHOLDING.glCode,
   EXPENSE: '6000',
 } as const;
 
@@ -108,7 +113,12 @@ export function buildSalesInvoiceJournalEntry(
   }
 
   if (tax > 0.005) {
-    const taxConfigs = taxConfigsFromGhanaTemplate()
+    // Real configured rates (Settings → Tax Rate Builder), not the hardcoded template —
+    // the invoice's own tax total (`tax`, already correct) is only being SPLIT across GL
+    // accounts here, but using the hardcoded ratios instead of real ones misallocates the
+    // split whenever a rate has been changed from its default, which corrupts the VAT
+    // return filed off these GL balances even though the journal entry itself still balances.
+    const taxConfigs = getActiveTaxConfigs()
     const { lines: taxLines } = computeStackedTaxLines(subtotal, taxConfigs, 'sales', tax)
     if (taxLines.length > 0) {
       for (const tl of taxLines) {
@@ -299,6 +309,7 @@ export function buildReceiptJournalEntry(
     credit: 0,
     currency: payment.currency || 'GHS',
     reference: payment.paymentNumber,
+    costCenter: payment.revenueCenterCode,
   };
   const creditLine: JournalEntryLine = {
     id: `JL-${entryId}-cr`,
@@ -309,6 +320,7 @@ export function buildReceiptJournalEntry(
     credit: amount,
     currency: payment.currency || 'GHS',
     reference: payment.paymentNumber,
+    costCenter: payment.revenueCenterCode,
   };
 
   const entry: JournalEntry = {
@@ -384,6 +396,163 @@ export function buildSupplierPaymentJournalEntry(
   };
 
   return { ok: true, entry };
+}
+
+/** WHT certificate clearing: Dr WHT receivable(s), Cr AR. */
+export function buildWHTClearingJournalEntry(
+  params: {
+    paymentId: string;
+    invoiceNumber: string;
+    whtAmount: number;
+    whtVatAmount: number;
+    date: string;
+    currency?: string;
+  },
+  partner: BusinessPartner | undefined,
+  opts: { journalSeq: number; postedBy?: string },
+): PostResult {
+  const whtAmount = +(params.whtAmount || 0).toFixed(2);
+  const whtVatAmount = +(params.whtVatAmount || 0).toFixed(2);
+  const total = +(whtAmount + whtVatAmount).toFixed(2);
+  if (total <= 0) return { ok: false, error: 'WHT amount must be greater than zero.' };
+  const currency = params.currency || 'GHS';
+
+  const entryId = `JE-WHT-${params.paymentId}`;
+  const ts = nowIso();
+  let lineSeq = 0;
+  const jl = () => `JL-${entryId}-${++lineSeq}`;
+  const lines: JournalEntryLine[] = [];
+
+  if (whtAmount > 0) {
+    lines.push({
+      id: jl(),
+      journalEntryId: entryId,
+      accountCode: GL.WHT_RECEIVABLE,
+      description: `WHT receivable — ${params.invoiceNumber}`,
+      debit: whtAmount,
+      credit: 0,
+      currency,
+      reference: params.invoiceNumber,
+    });
+  }
+  if (whtVatAmount > 0) {
+    lines.push({
+      id: jl(),
+      journalEntryId: entryId,
+      accountCode: GL.WHT_VAT_RECEIVABLE,
+      description: `WHT-VAT receivable — ${params.invoiceNumber}`,
+      debit: whtVatAmount,
+      credit: 0,
+      currency,
+      reference: params.invoiceNumber,
+    });
+  }
+  lines.push({
+    id: jl(),
+    journalEntryId: entryId,
+    accountCode: partnerArCode(partner),
+    description: `Clear AR for WHT on ${params.invoiceNumber}`,
+    debit: 0,
+    credit: total,
+    currency,
+    reference: params.invoiceNumber,
+  });
+
+  const entry: JournalEntry = {
+    id: entryId,
+    entryNumber: nextEntryNumber(opts.journalSeq),
+    date: params.date,
+    reference: params.invoiceNumber,
+    description: `WHT clearing — ${params.invoiceNumber}`,
+    totalDebit: total,
+    totalCredit: total,
+    currency,
+    status: 'Posted',
+    postedBy: opts.postedBy || 'system',
+    postedAt: ts,
+    createdAt: ts,
+    updatedAt: ts,
+    lines,
+    sourceModule: MANUAL_AR_AP_SOURCE,
+    sourceTransactionId: params.paymentId,
+  };
+
+  return { ok: true, entry };
+}
+
+/** WHT withheld from a supplier payment: Dr AP (clears the withheld portion of the liability), Cr WHT Payable (owed to GRA). */
+export function buildAPWHTPayableJournalEntry(
+  params: {
+    paymentId: string;
+    invoiceNumber: string;
+    whtAmount: number;
+    date: string;
+    currency?: string;
+  },
+  partner: BusinessPartner | undefined,
+  opts: { journalSeq: number; postedBy?: string },
+): PostResult {
+  const whtAmount = +(params.whtAmount || 0).toFixed(2);
+  if (whtAmount <= 0) return { ok: false, error: 'WHT amount must be greater than zero.' };
+  const currency = params.currency || 'GHS';
+
+  const entryId = `JE-APWHT-${params.paymentId}`;
+  const ts = nowIso();
+  const lines: JournalEntryLine[] = [
+    {
+      id: `JL-${entryId}-dr`,
+      journalEntryId: entryId,
+      accountCode: partnerApCode(partner),
+      description: `Clear AP for WHT withheld — ${params.invoiceNumber}`,
+      debit: whtAmount,
+      credit: 0,
+      currency,
+      reference: params.invoiceNumber,
+    },
+    {
+      id: `JL-${entryId}-cr`,
+      journalEntryId: entryId,
+      accountCode: GL.WHT_PAYABLE,
+      description: `WHT payable (to remit to GRA) — ${params.invoiceNumber}`,
+      debit: 0,
+      credit: whtAmount,
+      currency,
+      reference: params.invoiceNumber,
+    },
+  ];
+
+  const entry: JournalEntry = {
+    id: entryId,
+    entryNumber: nextEntryNumber(opts.journalSeq),
+    date: params.date,
+    reference: params.invoiceNumber,
+    description: `WHT withheld on supplier payment — ${params.invoiceNumber}`,
+    totalDebit: whtAmount,
+    totalCredit: whtAmount,
+    currency,
+    status: 'Posted',
+    postedBy: opts.postedBy || 'system',
+    postedAt: ts,
+    createdAt: ts,
+    updatedAt: ts,
+    lines,
+    sourceModule: MANUAL_AR_AP_SOURCE,
+    sourceTransactionId: params.paymentId,
+  };
+
+  return { ok: true, entry };
+}
+
+export function applyJournalEntryToGlBalances(
+  entry: JournalEntry,
+  store: Pick<StoreGlActions, 'updateGLBalance' | 'currentPeriod'>,
+): void {
+  for (const line of entry.lines) {
+    store.updateGLBalance(line.accountCode, store.currentPeriod, {
+      currentDebit: line.debit || 0,
+      currentCredit: line.credit || 0,
+    });
+  }
 }
 
 export interface StoreGlActions {

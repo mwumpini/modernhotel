@@ -62,6 +62,15 @@ export interface TaxRule {
   domain?: 'sales' | 'payroll' | 'corporate' | 'purchases' | 'custom'; // selects rule group
   operation?: 'internal' | 'external' | 'both'; // applicable to operation type
   effect?: 'add' | 'subtract' | 'exclude_total' | 'informational'; // how to affect payable total
+  // Dual-sided contribution support (e.g. SSNIT: employee pays `rate`, employer pays
+  // `employerRate`, both on the same base). Undefined on every non-payroll rule today —
+  // purely additive, doesn't change existing sales/purchases tax behavior.
+  employerRate?: number;
+  // Base clamping for statutory schemes with an insurable-earnings ceiling/floor (e.g.
+  // SSNIT). Applied to the calculation base before `rate`/`employerRate`; only used when
+  // method is 'rate'.
+  ceiling?: number;
+  floor?: number;
   tags?: string[];
   scope?: {
     roomTypes?: string[];

@@ -28,7 +28,7 @@ import { logAccountingProcess, logAccountingProcessError } from './accountingPro
 // GL Account Codes for Ghana Hotel Chart of Accounts
 const GL_ACCOUNTS = {
   // Assets
-  CASH: '1000',
+  CASH: '1110',
   BANK: '1100',
   ACCOUNTS_RECEIVABLE: '1200',
   INVENTORY: '1300',

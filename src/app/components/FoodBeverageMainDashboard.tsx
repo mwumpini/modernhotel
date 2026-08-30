@@ -24,6 +24,7 @@ import RecentActivities from './RecentActivities';
 import FBPOS from './FBPOS';
 import FoodBeverageRestaurantBar from './FoodBeverageRestaurantBar';
 import FoodBeverageKitchen from './FoodBeverageKitchen';
+import { openKitchenDisplay } from '../lib/fb/api';
 import FoodBeverageMenuInventory from './FoodBeverageMenuInventory';
 import FoodBeverageStaffReports from './FoodBeverageStaffReports';
 import FoodBeverageAnalyticsDashboard from './FoodBeverageAnalyticsDashboard';
@@ -84,9 +85,24 @@ export default function FoodBeverageMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const [showPOS, setShowPOS] = useState(false);
   const router = useRouter();
+
+  useEffect(() => {
+    try {
+      const tab = localStorage.getItem('fb.tab');
+      if (tab) {
+        setSelectedTab(tab);
+        localStorage.removeItem('fb.tab');
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
   
   useEffect(() => {
     const unsubscribe = ordersStore.subscribe(() => setTick(t => t + 1));
+    // Pulls in real persisted order history — the subscribe above bumps `tick`
+    // once this resolves and notifies listeners.
+    ordersStore.hydrateFromApi();
     return unsubscribe;
   }, []);
 
@@ -163,7 +179,7 @@ export default function FoodBeverageMainDashboard() {
         setSelectedTab('restaurant');
         break;
       case 'kitchen-display':
-        setSelectedTab('kitchen');
+        openKitchenDisplay();
         break;
       case 'menu-management':
         setSelectedTab('menu');
@@ -432,7 +448,7 @@ export default function FoodBeverageMainDashboard() {
                               } else if (item.title.includes('Restaurant & Bar')) {
                                 setSelectedTab('restaurant');
                               } else if (item.title.includes('Kitchen Operations')) {
-                                setSelectedTab('kitchen');
+                                openKitchenDisplay();
                               } else if (item.title.includes('Menu & Inventory')) {
                                 setSelectedTab('menu');
                               } else if (item.title.includes('Staff Reports')) {

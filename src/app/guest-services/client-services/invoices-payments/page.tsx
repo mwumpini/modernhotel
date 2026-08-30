@@ -124,7 +124,7 @@ export default function InvoicesPaymentsPage() {
   const { isOpen: isFolioModalOpen, onOpen: onFolioModalOpen, onClose: onFolioModalClose } = useDisclosure();
   const [adjustmentAmount, setAdjustmentAmount] = useState<number>(0);
   const [adjustmentReason, setAdjustmentReason] = useState<string>('');
-  const [adjustmentType, setAdjustmentType] = useState<'charge' | 'credit' | 'discount'>('charge');
+  const [adjustmentType, setAdjustmentType] = useState<'charge' | 'credit' | 'discount' | 'complimentary'>('charge');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
   const [invoicePage, setInvoicePage] = useState(1);
@@ -676,6 +676,8 @@ export default function InvoicesPaymentsPage() {
         frontOfficeStore.addPayment(selectedFolio.id, 'Credit', adjustmentAmount, { notes: adjustmentReason, processedBy: 'Front Desk' });
       } else if (adjustmentType === 'discount') {
         frontOfficeStore.addCharge(selectedFolio.id, `Discount: ${adjustmentReason}`, -adjustmentAmount);
+      } else if (adjustmentType === 'complimentary') {
+        frontOfficeStore.addCharge(selectedFolio.id, `Complimentary: ${adjustmentReason}`, -adjustmentAmount);
       }
 
       try { trackEvent('Folio.AdjustmentProcessed' as any, { reservationId: selectedFolio.id, type: adjustmentType, amount: adjustmentAmount }); } catch {}
@@ -2153,11 +2155,12 @@ export default function InvoicesPaymentsPage() {
                         <Select
                           label="Adjustment Type"
                           selectedKeys={new Set([adjustmentType])}
-                          onSelectionChange={(keys) => setAdjustmentType(Array.from(keys as Set<string>)[0] as 'charge' | 'credit' | 'discount' || 'charge')}
+                          onSelectionChange={(keys) => setAdjustmentType(Array.from(keys as Set<string>)[0] as 'charge' | 'credit' | 'discount' | 'complimentary' || 'charge')}
                         >
                           <SelectItem key="charge">Add Charge</SelectItem>
                           <SelectItem key="credit">Add Credit</SelectItem>
                           <SelectItem key="discount">Apply Discount</SelectItem>
+                          <SelectItem key="complimentary">Complimentary (Comp)</SelectItem>
                         </Select>
                         <Input
                           label="Reason/Description"
@@ -2172,6 +2175,7 @@ export default function InvoicesPaymentsPage() {
                             {adjustmentType === 'charge' && `Will add ₵${adjustmentAmount.toLocaleString()} charge: ${adjustmentReason}`}
                             {adjustmentType === 'credit' && `Will add ₵${adjustmentAmount.toLocaleString()} credit: ${adjustmentReason}`}
                             {adjustmentType === 'discount' && `Will apply ₵${adjustmentAmount.toLocaleString()} discount: ${adjustmentReason}`}
+                            {adjustmentType === 'complimentary' && `Will waive ₵${adjustmentAmount.toLocaleString()} as complimentary: ${adjustmentReason}`}
                           </div>
                         </div>
                       )}

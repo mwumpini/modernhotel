@@ -191,12 +191,16 @@ export default function RoomConfigurationDashboard() {
     price: string;
     priceType: 'subtotal' | 'gross_total';
     description: string;
+    marketSegment: string;
+    mealPlan: 'room_only' | 'bed_breakfast' | 'half_board' | 'full_board';
   }>({
     name: '',
     roomType: '',
     price: '0', // Keep as string for input compatibility
     priceType: 'subtotal',
-    description: ''
+    description: '',
+    marketSegment: 'Leisure',
+    mealPlan: 'room_only'
   });
   
   const [bulkRoomData, setBulkRoomData] = useState({
@@ -606,7 +610,8 @@ export default function RoomConfigurationDashboard() {
         priceType: newRatePlan.priceType,
         rateType: 'standard',
                  isActive: true,
-         marketSegment: 'General',
+         marketSegment: newRatePlan.marketSegment,
+         mealPlan: newRatePlan.mealPlan,
          lastUpdated: new Date().toISOString(),
          restrictions: {
           minStay: 1,
@@ -628,7 +633,7 @@ export default function RoomConfigurationDashboard() {
       
       settingsStore.addRatePlan(ratePlan as any);
       logAction('ADD_RATE_PLAN', { ratePlan });
-      setNewRatePlan({ name: '', roomType: '', price: '0', priceType: 'subtotal', description: '' });
+      setNewRatePlan({ name: '', roomType: '', price: '0', priceType: 'subtotal', description: '', marketSegment: 'Leisure', mealPlan: 'room_only' });
     }
   };
 
@@ -2241,9 +2246,31 @@ export default function RoomConfigurationDashboard() {
                     Gross Total (Including Tax)
                   </SelectItem>
                 </Select>
+                <Select
+                  label="Market Segment"
+                  placeholder="Select market segment"
+                  value={newRatePlan.marketSegment}
+                  onChange={(e) => setNewRatePlan({...newRatePlan, marketSegment: e.target.value})}
+                >
+                  <SelectItem key="Leisure">Leisure</SelectItem>
+                  <SelectItem key="Business">Business</SelectItem>
+                  <SelectItem key="Corporate">Corporate</SelectItem>
+                  <SelectItem key="Group">Group</SelectItem>
+                </Select>
+                <Select
+                  label="Meal Plan"
+                  placeholder="Select meal plan"
+                  value={newRatePlan.mealPlan}
+                  onChange={(e) => setNewRatePlan({...newRatePlan, mealPlan: e.target.value as typeof newRatePlan.mealPlan})}
+                >
+                  <SelectItem key="room_only">Room Only</SelectItem>
+                  <SelectItem key="bed_breakfast">Bed & Breakfast</SelectItem>
+                  <SelectItem key="half_board">Half Board</SelectItem>
+                  <SelectItem key="full_board">Full Board</SelectItem>
+                </Select>
                 <div className="flex items-end">
-                  <Button 
-                    color="primary" 
+                  <Button
+                    color="primary"
                     onClick={handleAddRatePlan}
                     className="w-full"
                   >

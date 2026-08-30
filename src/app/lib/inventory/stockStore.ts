@@ -1,5 +1,132 @@
 import { create } from 'zustand';
 import { StockItem, StockMovement, InventoryAlert } from './models';
+import { getClientTenantSubdomain } from '../api/clientTenant';
+
+function invHeaders(): HeadersInit {
+  return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
+}
+
+const CATEGORY_VALUES: StockItem['category'][] = ['food', 'beverage', 'cleaning', 'maintenance', 'office', 'linens', 'amenities', 'electronics', 'furniture', 'other'];
+
+function toCategory(name?: string): StockItem['category'] {
+  const code = (name || '').toLowerCase();
+  return (CATEGORY_VALUES as string[]).includes(code) ? (code as StockItem['category']) : 'other';
+}
+
+function toStockItem(row: any): StockItem {
+  return {
+    id: row.id,
+    itemCode: row.code,
+    name: row.name,
+    description: row.description || '',
+    category: toCategory(row.category?.name),
+    subcategory: '',
+    unit: row.unit?.name || '',
+    unitCost: Number(row.defaultCost || 0),
+    sellingPrice: row.sellingPrice != null ? Number(row.sellingPrice) : undefined,
+    currentStock: Number(row.quantityOnHand || 0),
+    minimumStock: Number(row.minimumStock || 0),
+    maximumStock: Number(row.maximumStock || 0),
+    reorderPoint: Number(row.reorderLevel || 0),
+    supplierId: row.supplierId || undefined,
+    supplierName: row.supplier?.name || undefined,
+    location: row.location || '',
+    isActive: row.isActive,
+    isPerishable: row.isPerishable,
+    isSerialized: row.isSerialized,
+    barcode: row.barcode || undefined,
+    createdAt: new Date(row.createdAt),
+    updatedAt: new Date(row.updatedAt),
+  };
+}
+
+function toStockMovement(row: any): StockMovement {
+  const qty = Math.abs(Number(row.quantity || 0));
+  const movementType: StockMovement['movementType'] =
+    row.type === 'receipt' ? 'in' :
+    row.type === 'issue' ? 'out' :
+    row.type === 'transfer_in' || row.type === 'transfer_out' ? 'transfer' :
+    row.type === 'count' ? 'adjustment' :
+    'adjustment';
+  return {
+    id: row.id,
+    itemId: row.itemId,
+    itemCode: row.item?.code || '',
+    itemName: row.item?.name || '',
+    movementType,
+    quantity: qty,
+    unitCost: Number(row.unitCost || 0),
+    totalValue: qty * Number(row.unitCost || 0),
+    fromLocation: row.type === 'issue' || row.type === 'transfer_out' ? row.location?.name : undefined,
+    toLocation: row.type === 'receipt' || row.type === 'transfer_in' ? row.location?.name : undefined,
+    referenceType: (row.referenceType || 'adjustment') as StockMovement['referenceType'],
+    referenceId: row.referenceId || '',
+    referenceNumber: row.referenceId || '',
+    performedBy: row.performedBy || 'System',
+    notes: row.notes || undefined,
+    createdAt: new Date(row.createdAt),
+  };
+}
+
+function deriveAlerts(items: StockItem[]): InventoryAlert[] {
+  // Computed, not persisted — alerts are a live view of current stock levels,
+  // not a durable business record, so they're recalculated on every hydrate
+  // rather than needing their own table.
+  const alerts: InventoryAlert[] = [];
+  for (const item of items) {
+    if (!item.isActive) continue;
+    if (item.currentStock <= 0 || item.currentStock < item.minimumStock) {
+      alerts.push({
+        id: `low_${item.id}`,
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemName: item.name,
+        alertType: item.currentStock <= 0 ? 'low-stock' : 'low-stock',
+        severity: item.currentStock <= 0 ? 'critical' : 'high',
+        message: item.currentStock <= 0 ? `${item.name} is out of stock` : `${item.name} stock is below minimum`,
+        currentValue: item.currentStock,
+        thresholdValue: item.minimumStock,
+        isActive: true,
+        isAcknowledged: false,
+        createdAt: item.updatedAt,
+        updatedAt: item.updatedAt,
+      });
+    } else if (item.currentStock <= item.reorderPoint) {
+      alerts.push({
+        id: `reorder_${item.id}`,
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemName: item.name,
+        alertType: 'reorder',
+        severity: 'medium',
+        message: `${item.name} has reached its reorder point`,
+        currentValue: item.currentStock,
+        thresholdValue: item.reorderPoint,
+        isActive: true,
+        isAcknowledged: false,
+        createdAt: item.updatedAt,
+        updatedAt: item.updatedAt,
+      });
+    } else if (item.maximumStock > 0 && item.currentStock > item.maximumStock * 0.8) {
+      alerts.push({
+        id: `over_${item.id}`,
+        itemId: item.id,
+        itemCode: item.itemCode,
+        itemName: item.name,
+        alertType: 'overstock',
+        severity: 'low',
+        message: `${item.name} stock is approaching its maximum level`,
+        currentValue: item.currentStock,
+        thresholdValue: item.maximumStock,
+        isActive: true,
+        isAcknowledged: false,
+        createdAt: item.updatedAt,
+        updatedAt: item.updatedAt,
+      });
+    }
+  }
+  return alerts;
+}
 
 interface StockStore {
   stockItems: StockItem[];
@@ -7,7 +134,8 @@ interface StockStore {
   alerts: InventoryAlert[];
   selectedItem: StockItem | null;
   selectedMovement: StockMovement | null;
-  
+  hydrateFromApi: () => Promise<void>;
+
   // Stock Item Management
   addStockItem: (item: Omit<StockItem, 'id' | 'createdAt' | 'updatedAt'>) => void;
   updateStockItem: (id: string, updates: Partial<StockItem>) => void;
@@ -17,32 +145,32 @@ interface StockStore {
   getStockItemsByCategory: (category: StockItem['category']) => StockItem[];
   getStockItemsByLocation: (location: string) => StockItem[];
   getStockItemsBySupplier: (supplierId: string) => StockItem[];
-  
+
   // Stock Level Management
-  updateStockLevel: (itemId: string, quantity: number, operation: 'add' | 'remove' | 'set') => void;
+  updateStockLevel: (itemId: string, quantity: number, operation: 'add' | 'remove' | 'set', receivedUnitCost?: number) => void;
   checkReorderPoint: (itemId: string) => boolean;
   getLowStockItems: () => StockItem[];
   getOutOfStockItems: () => StockItem[];
   getOverstockItems: () => StockItem[];
   getExpiringItems: (daysThreshold: number) => StockItem[];
-  
+
   // Stock Movement Management
   addStockMovement: (movement: Omit<StockMovement, 'id' | 'createdAt'>) => void;
   getMovementsByItem: (itemId: string) => StockMovement[];
   getMovementsByType: (type: StockMovement['movementType']) => StockMovement[];
   getMovementsByDateRange: (startDate: Date, endDate: Date) => StockMovement[];
-  
+
   // Alert Management
   createAlert: (alert: Omit<InventoryAlert, 'id' | 'createdAt' | 'updatedAt'>) => void;
   acknowledgeAlert: (alertId: string, acknowledgedBy: string) => void;
   getActiveAlerts: () => InventoryAlert[];
   getAlertsByType: (type: InventoryAlert['alertType']) => InventoryAlert[];
   getAlertsBySeverity: (severity: InventoryAlert['severity']) => InventoryAlert[];
-  
+
   // Selection
   selectStockItem: (item: StockItem | null) => void;
   selectMovement: (movement: StockMovement | null) => void;
-  
+
   // Analytics
   getTotalInventoryValue: () => number;
   getCategoryBreakdown: () => Record<string, { count: number; value: number }>;
@@ -54,241 +182,99 @@ interface StockStore {
   getOverstockPercentage: () => number;
 }
 
-// Sample data
-const sampleStockItems: StockItem[] = [
-  {
-    id: '1',
-    itemCode: 'F001',
-    name: 'Fresh Tomatoes',
-    description: 'Fresh red tomatoes for kitchen use',
-    category: 'food',
-    subcategory: 'vegetables',
-    unit: 'kg',
-    unitCost: 2.50,
-    sellingPrice: 4.00,
-    currentStock: 25,
-    minimumStock: 10,
-    maximumStock: 50,
-    reorderPoint: 15,
-    supplierId: 'supplier1',
-    supplierName: 'Fresh Farms Ltd',
-    location: 'Kitchen Store',
-    binLocation: 'A1-B2',
-    isActive: true,
-    isPerishable: true,
-    isSerialized: false,
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  {
-    id: '2',
-    itemCode: 'B001',
-    name: 'Premium Coffee Beans',
-    description: 'High-quality Arabica coffee beans',
-    category: 'beverage',
-    subcategory: 'coffee',
-    unit: 'kg',
-    unitCost: 15.00,
-    sellingPrice: 25.00,
-    currentStock: 8,
-    minimumStock: 5,
-    maximumStock: 20,
-    reorderPoint: 7,
-    supplierId: 'supplier2',
-    supplierName: 'Coffee Traders Co',
-    location: 'Bar Store',
-    binLocation: 'B1-C3',
-    isActive: true,
-    isPerishable: false,
-    isSerialized: false,
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  {
-    id: '3',
-    itemCode: 'C001',
-    name: 'Multi-Surface Cleaner',
-    description: 'Professional cleaning solution',
-    category: 'cleaning',
-    subcategory: 'chemicals',
-    unit: 'bottles',
-    unitCost: 8.50,
-    currentStock: 15,
-    minimumStock: 20,
-    maximumStock: 100,
-    reorderPoint: 25,
-    supplierId: 'supplier3',
-    supplierName: 'CleanPro Supplies',
-    location: 'Housekeeping Store',
-    binLocation: 'C1-D4',
-    isActive: true,
-    isPerishable: false,
-    isSerialized: false,
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  {
-    id: '4',
-    itemCode: 'L001',
-    name: 'Bath Towels',
-    description: 'Premium cotton bath towels',
-    category: 'linens',
-    subcategory: 'towels',
-    unit: 'pieces',
-    unitCost: 12.00,
-    currentStock: 45,
-    minimumStock: 30,
-    maximumStock: 120,
-    reorderPoint: 35,
-    supplierId: 'supplier4',
-    supplierName: 'LinenCo',
-    location: 'Linen Store',
-    binLocation: 'D1-E5',
-    isActive: true,
-    isPerishable: false,
-    isSerialized: false,
-    createdAt: new Date(),
-    updatedAt: new Date()
-  },
-  {
-    id: '5',
-    itemCode: 'M001',
-    name: 'AC Filters',
-    description: 'Air conditioning filters for maintenance',
-    category: 'maintenance',
-    subcategory: 'hvac',
-    unit: 'pieces',
-    unitCost: 25.00,
-    currentStock: 3,
-    minimumStock: 10,
-    maximumStock: 50,
-    reorderPoint: 12,
-    supplierId: 'supplier5',
-    supplierName: 'HVAC Supplies',
-    location: 'Maintenance Store',
-    binLocation: 'E1-F6',
-    isActive: true,
-    isPerishable: false,
-    isSerialized: false,
-    createdAt: new Date(),
-    updatedAt: new Date()
-  }
-];
-
-const sampleStockMovements: StockMovement[] = [
-  {
-    id: '1',
-    itemId: '1',
-    itemCode: 'F001',
-    itemName: 'Fresh Tomatoes',
-    movementType: 'in',
-    quantity: 30,
-    unitCost: 2.50,
-    totalValue: 75.00,
-    toLocation: 'Kitchen Store',
-    referenceType: 'purchase',
-    referenceId: 'po001',
-    referenceNumber: 'PO-2024-001',
-    performedBy: 'John Smith',
-    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000) // 2 days ago
-  },
-  {
-    id: '2',
-    itemId: '1',
-    itemCode: 'F001',
-    itemName: 'Fresh Tomatoes',
-    movementType: 'out',
-    quantity: 5,
-    unitCost: 2.50,
-    totalValue: 12.50,
-    fromLocation: 'Kitchen Store',
-    referenceType: 'sale',
-    referenceId: 'sale001',
-    referenceNumber: 'SALE-2024-001',
-    performedBy: 'Chef Maria',
-    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000) // 1 day ago
-  },
-  {
-    id: '3',
-    itemId: '2',
-    itemCode: 'B001',
-    itemName: 'Premium Coffee Beans',
-    movementType: 'in',
-    quantity: 15,
-    unitCost: 15.00,
-    totalValue: 225.00,
-    toLocation: 'Bar Store',
-    referenceType: 'purchase',
-    referenceId: 'po002',
-    referenceNumber: 'PO-2024-002',
-    performedBy: 'John Smith',
-    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000) // 3 days ago
-  }
-];
-
-const sampleAlerts: InventoryAlert[] = [
-  {
-    id: '1',
-    itemId: '5',
-    itemCode: 'M001',
-    itemName: 'AC Filters',
-    alertType: 'low-stock',
-    severity: 'high',
-    message: 'AC Filters stock is below reorder point',
-    currentValue: 3,
-    thresholdValue: 10,
-    isActive: true,
-    isAcknowledged: false,
-    createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000), // 1 day ago
-    updatedAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000)
-  },
-  {
-    id: '2',
-    itemId: '3',
-    itemCode: 'C001',
-    itemName: 'Multi-Surface Cleaner',
-    alertType: 'low-stock',
-    severity: 'medium',
-    message: 'Multi-Surface Cleaner stock is below reorder point',
-    currentValue: 15,
-    thresholdValue: 20,
-    isActive: true,
-    isAcknowledged: false,
-    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000), // 2 days ago
-    updatedAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000)
-  }
-];
-
 export const useStockStore = create<StockStore>((set, get) => ({
-  stockItems: sampleStockItems,
-  stockMovements: sampleStockMovements,
-  alerts: sampleAlerts,
+  stockItems: [],
+  stockMovements: [],
+  alerts: [],
   selectedItem: null,
   selectedMovement: null,
 
+  hydrateFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const [itemsRes, txnsRes] = await Promise.all([
+        fetch('/api/inventory/items', { headers: invHeaders(), cache: 'no-store' }),
+        fetch('/api/inventory/stock-transactions', { headers: invHeaders(), cache: 'no-store' }),
+      ]);
+      const items: StockItem[] = itemsRes.ok ? ((await itemsRes.json()).items || []).map(toStockItem) : [];
+      const movements: StockMovement[] = txnsRes.ok ? ((await txnsRes.json()).transactions || []).map(toStockMovement) : [];
+      set({ stockItems: items, stockMovements: movements, alerts: deriveAlerts(items) });
+    } catch (e) {
+      console.warn('[Inventory] stockStore hydrateFromApi failed:', e);
+    }
+  },
+
   // Stock Item Management
   addStockItem: (itemData) => {
-    const newItem: StockItem = {
-      ...itemData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
+    const tempId = `tmp_${Date.now()}`;
+    const newItem: StockItem = { ...itemData, id: tempId, createdAt: new Date(), updatedAt: new Date() };
     set(state => ({ stockItems: [...state.stockItems, newItem] }));
+
+    fetch('/api/inventory/items', {
+      method: 'POST',
+      headers: invHeaders(),
+      body: JSON.stringify({
+        code: itemData.itemCode,
+        name: itemData.name,
+        description: itemData.description,
+        category: itemData.category,
+        unit: itemData.unit,
+        unitCost: itemData.unitCost,
+        sellingPrice: itemData.sellingPrice,
+        currentStock: itemData.currentStock,
+        minimumStock: itemData.minimumStock,
+        maximumStock: itemData.maximumStock,
+        reorderPoint: itemData.reorderPoint,
+        location: itemData.location,
+        supplierId: itemData.supplierId,
+        isPerishable: itemData.isPerishable,
+        isSerialized: itemData.isSerialized,
+        barcode: itemData.barcode,
+        isActive: itemData.isActive,
+      }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(() => get().hydrateFromApi())
+      .catch((e) => console.warn('[Inventory] Failed to sync new item:', e));
   },
 
   updateStockItem: (id, updates) => {
     set(state => ({
-      stockItems: state.stockItems.map(item => 
-        item.id === id 
-          ? { ...item, ...updates, updatedAt: new Date() }
-          : item
+      stockItems: state.stockItems.map(item =>
+        item.id === id ? { ...item, ...updates, updatedAt: new Date() } : item
       )
     }));
+    if (id.startsWith('tmp_')) return; // not persisted yet — hydrate will replace it shortly
+
+    fetch('/api/inventory/items', {
+      method: 'PATCH',
+      headers: invHeaders(),
+      body: JSON.stringify({
+        id,
+        name: updates.name,
+        description: updates.description,
+        category: updates.category,
+        unit: updates.unit,
+        unitCost: updates.unitCost,
+        sellingPrice: updates.sellingPrice,
+        minimumStock: updates.minimumStock,
+        maximumStock: updates.maximumStock,
+        reorderPoint: updates.reorderPoint,
+        location: updates.location,
+        supplierId: updates.supplierId,
+        isPerishable: updates.isPerishable,
+        isSerialized: updates.isSerialized,
+        barcode: updates.barcode,
+        isActive: updates.isActive,
+      }),
+    }).catch((e) => console.warn('[Inventory] Failed to sync item update:', e));
   },
 
   deleteStockItem: (id) => {
     set(state => ({ stockItems: state.stockItems.filter(item => item.id !== id) }));
+    if (id.startsWith('tmp_')) return;
+    fetch(`/api/inventory/items?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: invHeaders() })
+      .catch((e) => console.warn('[Inventory] Failed to sync item delete:', e));
   },
 
   getStockItem: (id) => get().stockItems.find(item => item.id === id),
@@ -301,25 +287,34 @@ export const useStockStore = create<StockStore>((set, get) => ({
 
   getStockItemsBySupplier: (supplierId) => get().stockItems.filter(item => item.supplierId === supplierId),
 
-  // Stock Level Management
-  updateStockLevel: (itemId, quantity, operation) => {
+  // Stock Level Management — optimistic local update only; the real write happens in
+  // addStockMovement, which every call site in InventorySupplyChainDashboard.tsx calls
+  // immediately after this with the reference/reason metadata this function doesn't have.
+  updateStockLevel: (itemId, quantity, operation, receivedUnitCost) => {
     const item = get().getStockItem(itemId);
     if (!item) return;
 
     let newQuantity = item.currentStock;
+    let newUnitCost = item.unitCost;
     switch (operation) {
       case 'add':
-        newQuantity = Math.min(item.maximumStock, item.currentStock + quantity);
+        newQuantity = item.maximumStock > 0 ? Math.min(item.maximumStock, item.currentStock + quantity) : item.currentStock + quantity;
+        if (typeof receivedUnitCost === 'number' && receivedUnitCost >= 0 && quantity > 0) {
+          const existingValue = item.currentStock * item.unitCost;
+          const receivedValue = quantity * receivedUnitCost;
+          const totalQty = item.currentStock + quantity;
+          newUnitCost = totalQty > 0 ? (existingValue + receivedValue) / totalQty : receivedUnitCost;
+        }
         break;
       case 'remove':
         newQuantity = Math.max(0, item.currentStock - quantity);
         break;
       case 'set':
-        newQuantity = Math.max(0, Math.min(item.maximumStock, quantity));
+        newQuantity = item.maximumStock > 0 ? Math.max(0, Math.min(item.maximumStock, quantity)) : Math.max(0, quantity);
         break;
     }
 
-    get().updateStockItem(itemId, { currentStock: newQuantity });
+    get().updateStockItem(itemId, { currentStock: newQuantity, unitCost: newUnitCost });
   },
 
   checkReorderPoint: (itemId) => {
@@ -328,37 +323,75 @@ export const useStockStore = create<StockStore>((set, get) => ({
     return item.currentStock <= item.reorderPoint;
   },
 
-  getLowStockItems: () => get().stockItems.filter(item => 
-    item.isActive && 
-    item.currentStock > 0 && 
-    item.currentStock <= item.reorderPoint
+  getLowStockItems: () => get().stockItems.filter(item =>
+    item.isActive && item.currentStock > 0 && item.currentStock <= item.reorderPoint
   ),
 
-  getOutOfStockItems: () => get().stockItems.filter(item => 
-    item.isActive && 
-    (item.currentStock === 0 || item.currentStock < item.minimumStock)
+  getOutOfStockItems: () => get().stockItems.filter(item =>
+    item.isActive && (item.currentStock === 0 || item.currentStock < item.minimumStock)
   ),
 
-  getOverstockItems: () => get().stockItems.filter(item => 
-    item.isActive && 
-    item.currentStock > item.maximumStock * 0.8
+  getOverstockItems: () => get().stockItems.filter(item =>
+    item.isActive && item.maximumStock > 0 && item.currentStock > item.maximumStock * 0.8
   ),
 
-  getExpiringItems: (daysThreshold) => {
-    const thresholdDate = new Date(Date.now() + daysThreshold * 24 * 60 * 60 * 1000);
-    return get().stockItems.filter(item => 
-      item.expiryDate && item.expiryDate <= thresholdDate
-    );
-  },
+  getExpiringItems: () => [], // expiry/batch tracking isn't modeled yet — honestly empty, not fabricated
 
-  // Stock Movement Management
+  // Stock Movement Management — the real sync point: translates the UI's movement
+  // vocabulary into a signed InventoryTransaction and persists it.
   addStockMovement: (movementData) => {
-    const newMovement: StockMovement = {
-      ...movementData,
-      id: Date.now().toString(),
-      createdAt: new Date()
-    };
+    const newMovement: StockMovement = { ...movementData, id: `tmp_${Date.now()}`, createdAt: new Date() };
     set(state => ({ stockMovements: [...state.stockMovements, newMovement] }));
+
+    const item = get().getStockItem(movementData.itemId);
+    if (!item || item.id.startsWith('tmp_')) return; // item not persisted yet
+
+    let type: string;
+    let signedQty = movementData.quantity;
+    switch (movementData.movementType) {
+      case 'in':
+      case 'return':
+        type = 'receipt';
+        signedQty = Math.abs(movementData.quantity);
+        break;
+      case 'out':
+      case 'damage':
+      case 'expiry':
+        type = 'issue';
+        signedQty = -Math.abs(movementData.quantity);
+        break;
+      case 'adjustment': {
+        const isUndercount = /undercount/i.test(movementData.reason || movementData.notes || '');
+        type = 'count';
+        signedQty = isUndercount ? -Math.abs(movementData.quantity) : Math.abs(movementData.quantity);
+        break;
+      }
+      case 'transfer':
+        // Location-only change — already persisted via updateStockItem's real PATCH,
+        // no net quantity change to record on this item.
+        return;
+      default:
+        type = 'adjustment';
+    }
+    if (!signedQty) return;
+
+    fetch('/api/inventory/stock-transactions', {
+      method: 'POST',
+      headers: invHeaders(),
+      body: JSON.stringify({
+        itemId: movementData.itemId,
+        type,
+        quantity: signedQty,
+        unitCost: movementData.unitCost,
+        referenceType: movementData.referenceType,
+        referenceId: movementData.referenceId,
+        notes: movementData.notes || movementData.reason,
+        performedBy: movementData.performedBy,
+      }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(() => get().hydrateFromApi())
+      .catch((e) => console.warn('[Inventory] Failed to sync stock movement:', e));
   },
 
   getMovementsByItem: (itemId) => get().stockMovements.filter(movement => movement.itemId === itemId),
@@ -366,39 +399,30 @@ export const useStockStore = create<StockStore>((set, get) => ({
   getMovementsByType: (type) => get().stockMovements.filter(movement => movement.movementType === type),
 
   getMovementsByDateRange: (startDate, endDate) => {
-    return get().stockMovements.filter(movement => 
+    return get().stockMovements.filter(movement =>
       movement.createdAt >= startDate && movement.createdAt <= endDate
     );
   },
 
-  // Alert Management
+  // Alert Management — alerts are a computed view (see deriveAlerts); acknowledgement
+  // is a session-local UI affordance, not persisted, since the underlying alert
+  // recomputes from real stock levels on every hydrate anyway.
   createAlert: (alertData) => {
-    const newAlert: InventoryAlert = {
-      ...alertData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
+    const newAlert: InventoryAlert = { ...alertData, id: Date.now().toString(), createdAt: new Date(), updatedAt: new Date() };
     set(state => ({ alerts: [...state.alerts, newAlert] }));
   },
 
   acknowledgeAlert: (alertId, acknowledgedBy) => {
     set(state => ({
-      alerts: state.alerts.map(alert => 
-        alert.id === alertId 
-          ? { 
-              ...alert, 
-              isAcknowledged: true, 
-              acknowledgedBy, 
-              acknowledgedAt: new Date(),
-              updatedAt: new Date()
-            }
+      alerts: state.alerts.map(alert =>
+        alert.id === alertId
+          ? { ...alert, isAcknowledged: true, acknowledgedBy, acknowledgedAt: new Date(), updatedAt: new Date() }
           : alert
       )
     }));
   },
 
-  getActiveAlerts: () => get().alerts.filter(alert => alert.isActive),
+  getActiveAlerts: () => get().alerts.filter(alert => alert.isActive && !alert.isAcknowledged),
 
   getAlertsByType: (type) => get().alerts.filter(alert => alert.alertType === type),
 
@@ -411,51 +435,38 @@ export const useStockStore = create<StockStore>((set, get) => ({
 
   // Analytics
   getTotalInventoryValue: () => {
-    return get().stockItems.reduce((total, item) => 
-      total + (item.currentStock * item.unitCost), 0
-    );
+    return get().stockItems.reduce((total, item) => total + (item.currentStock * item.unitCost), 0);
   },
 
   getCategoryBreakdown: () => {
     const breakdown: Record<string, { count: number; value: number }> = {};
-    
     get().stockItems.forEach(item => {
-      if (!breakdown[item.category]) {
-        breakdown[item.category] = { count: 0, value: 0 };
-      }
+      if (!breakdown[item.category]) breakdown[item.category] = { count: 0, value: 0 };
       breakdown[item.category].count += item.currentStock;
       breakdown[item.category].value += item.currentStock * item.unitCost;
     });
-    
     return breakdown;
   },
 
   getLocationBreakdown: () => {
     const breakdown: Record<string, { count: number; value: number }> = {};
-    
     get().stockItems.forEach(item => {
-      if (!breakdown[item.location]) {
-        breakdown[item.location] = { count: 0, value: 0 };
-      }
-      breakdown[item.location].count += item.currentStock;
-      breakdown[item.location].value += item.currentStock * item.unitCost;
+      const loc = item.location || 'Unassigned';
+      if (!breakdown[loc]) breakdown[loc] = { count: 0, value: 0 };
+      breakdown[loc].count += item.currentStock;
+      breakdown[loc].value += item.currentStock * item.unitCost;
     });
-    
     return breakdown;
   },
 
   getSupplierBreakdown: () => {
     const breakdown: Record<string, { count: number; value: number }> = {};
-    
     get().stockItems.forEach(item => {
       const supplier = item.supplierName || 'Unknown';
-      if (!breakdown[supplier]) {
-        breakdown[supplier] = { count: 0, value: 0 };
-      }
+      if (!breakdown[supplier]) breakdown[supplier] = { count: 0, value: 0 };
       breakdown[supplier].count += item.currentStock;
       breakdown[supplier].value += item.currentStock * item.unitCost;
     });
-    
     return breakdown;
   },
 
@@ -464,9 +475,7 @@ export const useStockStore = create<StockStore>((set, get) => ({
     const totalOutValue = movements
       .filter(m => m.movementType === 'out')
       .reduce((sum, m) => sum + m.totalValue, 0);
-    
     const averageInventoryValue = get().getTotalInventoryValue();
-    
     return averageInventoryValue > 0 ? totalOutValue / averageInventoryValue : 0;
   },
 
@@ -478,14 +487,12 @@ export const useStockStore = create<StockStore>((set, get) => ({
   getLowStockPercentage: () => {
     const items = get().stockItems;
     const lowStockItems = items.filter(item => item.currentStock <= item.reorderPoint);
-    
     return items.length > 0 ? (lowStockItems.length / items.length) * 100 : 0;
   },
 
   getOverstockPercentage: () => {
     const items = get().stockItems;
-    const overstockItems = items.filter(item => item.currentStock > item.maximumStock * 0.8);
-    
+    const overstockItems = items.filter(item => item.maximumStock > 0 && item.currentStock > item.maximumStock * 0.8);
     return items.length > 0 ? (overstockItems.length / items.length) * 100 : 0;
   }
 }));

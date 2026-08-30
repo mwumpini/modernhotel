@@ -13,7 +13,20 @@
       "employeeRate": 5.5,
       "employerRate": 13,
       "ceiling": 69000,
-      "minimumInsurable": 587.8
+      "minimumInsurable": 587.8,
+      "_note": "Total mandatory pension is 18.5% (5.5 employee + 13 employer). SSNIT retains a Tier 1 portion and forwards a Tier 2 portion to a licensed occupational pension trustee — tier1SplitOfTotalPct/tier2SplitOfTotalPct below encode that split for reporting only (they don't change what's withheld from the employee). VERIFY the current split against SSNIT/NPRA guidance before relying on this for a real payroll run.",
+      "tier1SplitOfTotalPct": 13.5,
+      "tier2SplitOfTotalPct": 5
+    },
+    "tier3": {
+      "name": "Tier 3 Provident Fund",
+      "type": "pension",
+      "employeeRate": 0,
+      "employerRate": 0,
+      "ceiling": null,
+      "isVoluntary": true,
+      "reliefCapPct": 16.5,
+      "_note": "Voluntary — rates are 0 by default and only apply per-employee when Employee.tier3Enrolled is set with a contribution rate. reliefCapPct is the combined employer+employee tax-relief ceiling (% of basic salary) under the National Pensions Act. VERIFY current NPRA guidance before relying on this for a real payroll run."
     }
   },
   "deductions": [

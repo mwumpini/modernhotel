@@ -1,13 +1,18 @@
 import type { JournalEntry } from './models';
+import { isBankOrCashGlCode } from './bankCoaLink';
+import { enrichRollupCoaParents, codeNum } from './coaHierarchy';
 import { shouldIncludeJeLineInRevenueRollup } from './revenueSourcePolicy';
 
-/** Minimal COA row for roll-ups (store or Ghana template). */
+/** Minimal COA row for roll-ups (store or template). */
 export type RollupCoa = {
+  id?: string;
   code: string;
   name: string;
   type: 'Asset' | 'Liability' | 'Equity' | 'Revenue' | 'Expense';
   category?: string;
   level: number;
+  parentId?: string | null;
+  parentAccount?: string;
 };
 
 export type AccountNode = {
@@ -42,9 +47,7 @@ function jeTime(je: JournalEntry): number {
 
 /** Cash & bank GL codes used in integration / folio flows. */
 export function isCashEquivalentAccount(code: string): boolean {
-  if (!code) return false;
-  const c = code.trim();
-  return c === '1000' || c === '1100' || c === '1110' || c === '1120';
+  return isBankOrCashGlCode(code);
 }
 
 /**
@@ -188,24 +191,28 @@ export function buildFinancialAccountTree(allAccounts: RollupCoa[], journalEntri
       if (!accountBalances[code]) {
         accountBalances[code] = { debit: 0, credit: 0 };
       }
-      accountBalances[code].debit += line.debit || 0;
-      accountBalances[code].credit += line.credit || 0;
+      accountBalances[code].debit += Number(line.debit) || 0;
+      accountBalances[code].credit += Number(line.credit) || 0;
     });
   });
 
-  const buildTree = (parentCode?: string, parentLevel?: number): AccountNode[] => {
-    const targetLevel = parentLevel !== undefined ? parentLevel + 1 : 1;
+  const linked = enrichRollupCoaParents(allAccounts);
+  const byId = new Map(linked.filter((a) => a.id).map((a) => [a.id!, a]));
 
-    const children = allAccounts.filter((acc) => {
-      if (acc.level !== targetLevel) return false;
-      if (!parentCode) return true;
-      const parentPrefix = parentCode.slice(0, parentLevel === 1 ? 2 : parentLevel === 2 ? 3 : 4);
-      return acc.code.startsWith(parentPrefix);
-    });
+  const buildTree = (parentKey?: string): AccountNode[] => {
+    const children = linked
+      .filter((acc) => {
+        if (!parentKey) return !acc.parentId;
+        if (byId.has(parentKey)) {
+          return acc.parentId === parentKey;
+        }
+        return acc.parentAccount === parentKey;
+      })
+      .sort((a, b) => codeNum(a.code) - codeNum(b.code));
 
     return children.map((acc) => {
       const bal = accountBalances[acc.code] || { debit: 0, credit: 0 };
-      const childNodes = buildTree(acc.code, acc.level);
+      const childNodes = buildTree(acc.id ?? acc.code);
 
       const childrenDebit = childNodes.reduce((sum, c) => sum + c.debit, 0);
       const childrenCredit = childNodes.reduce((sum, c) => sum + c.credit, 0);
@@ -218,6 +225,7 @@ export function buildFinancialAccountTree(allAccounts: RollupCoa[], journalEntri
       } else {
         balance = totalCredit - totalDebit;
       }
+      if (!Number.isFinite(balance)) balance = 0;
 
       return {
         code: acc.code,

@@ -98,10 +98,11 @@ export default function FrontdeskDashboard() {
   const readySoon = hkAllRooms.filter(r => r.status === 'inspected').length;
   const todayIso = new Date().toISOString().slice(0,10);
   const checkingOutToday = reservations.filter(r => r.status === 'checked-in' && r.departure.slice(0,10) === todayIso).length;
-  const extendedStays = reservations.filter(r => r.status === 'checked-in' && r.departure < new Date().toISOString()).length;
-  const standardAvail = rooms.filter(r => r.roomTypeId === 'rt-standard').length;
-  const deluxeAvail = rooms.filter(r => r.roomTypeId === 'rt-deluxe').length;
-  const suiteAvail = rooms.filter(r => r.roomTypeId === 'rt-suite').length;
+  // "Extended" = still checked-in past their scheduled departure date (not today's departures).
+  const extendedStays = reservations.filter(r => r.status === 'checked-in' && r.departure.slice(0,10) < todayIso).length;
+  const roomTypes = (settings as any)?.roomManagement?.roomTypes || [];
+  const availableByType = (typeId: string) =>
+    hkAllRooms.filter(r => r.roomTypeId === typeId && ['vacant', 'clean', 'inspected'].includes(r.status as any)).length;
   const todayCheckIns = reservations.filter(r => (r.status === 'confirmed' || r.status === 'pending') && r.arrival.slice(0,10) === todayIso).length;
   const todayCheckOuts = checkingOutToday;
 
@@ -173,18 +174,12 @@ export default function FrontdeskDashboard() {
               </div>
               <div className="text-3xl font-bold text-green-600 mb-3">{availableTotal}</div>
               <div className="space-y-1 text-sm text-gray-600">
-                <div className="flex justify-between">
-                  <span>Standard Rooms</span>
-                  <span className="font-medium">{standardAvail}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Deluxe Rooms</span>
-                  <span className="font-medium">{deluxeAvail}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Suite Rooms</span>
-                  <span className="font-medium">{suiteAvail}</span>
-                </div>
+                {roomTypes.map((rt: any) => (
+                  <div key={rt.id} className="flex justify-between">
+                    <span>{rt.name}</span>
+                    <span className="font-medium">{availableByType(rt.id)}</span>
+                  </div>
+                ))}
               </div>
             </CardBody>
           </Card>
@@ -431,19 +426,19 @@ export default function FrontdeskDashboard() {
                             color="primary"
                             variant="flat"
                             className="w-full"
-                          onClick={() => router.push('/guest-services/check-ins?tab=checkins&type=walkin')}
+                          onClick={() => router.push('/guest-services/check-ins?tab=reservations')}
+                        >
+                          ➕ New Reservation
+                        </Button>
+                        <Button
+                          size="sm"
+                          color="primary"
+                          variant="flat"
+                          className="w-full mt-2"
+                          onClick={() => router.push('/guest-services/check-ins?tab=checkins')}
                         >
                           ✅ Process Check-ins
-                          </Button>
-                            <Button
-                              size="sm"
-                              color="secondary"
-                              variant="flat"
-                              className="w-full mt-2"
-                              onClick={() => router.push('/guest-services/check-ins?tab=checkins&type=walkin&quick=true')}
-                            >
-                              🚶‍♂️ Quick Walk-In
-                            </Button>
+                        </Button>
                       </div>
                     </CardBody>
                   </Card>

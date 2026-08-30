@@ -27,6 +27,7 @@ export async function PATCH(
         assignedName: body.assignedName ?? existing.assignedName,
         notes: body.notes ?? existing.notes,
         priority: body.priority ?? existing.priority,
+        details: body.details ?? existing.details,
         ...(body.status === 'in_progress' && !existing.startedAt ? { startedAt: now } : {}),
         ...(body.status === 'completed' && !existing.completedAt ? { completedAt: now } : {}),
       },

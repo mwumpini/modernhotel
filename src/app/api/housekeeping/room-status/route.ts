@@ -11,14 +11,17 @@ export async function POST(request: NextRequest) {
     if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
 
     const body = await request.json()
-    if (!body.roomId || !body.roomNumber || !body.toStatus) {
-      return NextResponse.json({ error: 'roomId, roomNumber and toStatus are required' }, { status: 400 })
+    if (!body.roomNumber || !body.toStatus) {
+      return NextResponse.json({ error: 'roomNumber and toStatus are required' }, { status: 400 })
     }
 
     const log = await prisma.roomStatusLog.create({
       data: {
         tenantId: ctx.tenantId,
-        roomId: body.roomId,
+        // No real Room table is in use anywhere in this app yet — every other module
+        // (Front Office, Settings) identifies rooms by roomNumber alone, so roomId is
+        // optional here rather than forcing a dormant FK that nothing else populates.
+        roomId: body.roomId || undefined,
         roomNumber: body.roomNumber,
         fromStatus: body.fromStatus || 'unknown',
         toStatus: body.toStatus,

@@ -283,15 +283,22 @@ export function voidCharge(self: StoreLike, reservationId: string, chargeId: str
 }
 
 /**
- * Record a refund as negative payment and a matching negative revenue entry.
+ * Refund a payment (fully or partially) by excluding the refunded amount from
+ * totalPayments — the guest again owes it, and the original charge is untouched.
+ * Mirrors updateFolioBalances' `status === 'completed'` filter: a 'refunded'
+ * payment simply drops out of the total instead of needing an offsetting charge.
  */
 export function refundPayment(self: StoreLike, reservationId: string, paymentId: string, amount: number, reason?: string) {
 	const folio = getOrCreateFolio(self, reservationId);
 	const payment = folio.payments.find(p => p.id === paymentId) as any;
-	if (!payment) return false;
+	if (!payment || payment.status === 'refunded') return false;
 	const val = Math.min(amount || payment.amount, payment.amount);
-	folio.payments.push({ id: `P-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), method: payment.method, amount: -Math.abs(val), status: 'completed', notes: `Refund: ${reason || ''}` } as any);
-	folio.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description: `Refund issued${reason ? ` - ${reason}` : ''}`, amount: -Math.abs(val), tax: 0 } as any);
+	if (val >= payment.amount) {
+		payment.status = 'refunded';
+	} else {
+		payment.amount -= val;
+		folio.payments.push({ id: `P-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), method: payment.method, amount: val, status: 'refunded', notes: `Refund: ${reason || ''}` } as any);
+	}
 	updateFolioBalances(self, folio);
 	self.notify();
 	trackEvent('FO.Folio.PaymentRefunded', { reservationId, amount: val });
@@ -382,7 +389,7 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 	processedBy?: string;
 	staffId?: string;
 	ref?: string;
-}) {
+}): import('../types').FolioPayment {
 	const f = getOrCreateFolio(self, reservationId);
 	const paymentId = `P-${Date.now().toString().slice(-6)}`;
 	const payment: FolioPayment = {
@@ -398,6 +405,42 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 	updateFolioBalances(self, f);
 	self.notify();
 	trackEvent('FO.Folio.PaymentReceived', { reservationId, method, amount, invoiceId: options?.invoiceId });
+	return payment;
+}
+
+export function updateFolioPayment(
+	self: StoreLike,
+	reservationId: string,
+	paymentId: string,
+	patch: {
+		amount?: number;
+		method?: FolioPayment['method'];
+		notes?: string;
+		ref?: string;
+	},
+) {
+	const f = self.folios.find((x: Folio) => x.reservationId === reservationId);
+	if (!f) return false;
+	const payment = f.payments.find((p: FolioPayment) => p.id === paymentId);
+	if (!payment || payment.status === 'refunded') return false;
+	if (patch.amount != null) payment.amount = patch.amount;
+	if (patch.method) payment.method = patch.method;
+	if (patch.notes !== undefined) payment.notes = patch.notes;
+	if (patch.ref !== undefined) payment.ref = patch.ref;
+	updateFolioBalances(self, f);
+	self.notify();
+	return true;
+}
+
+export function removeFolioPayment(self: StoreLike, reservationId: string, paymentId: string) {
+	const f = self.folios.find((x: Folio) => x.reservationId === reservationId);
+	if (!f) return false;
+	const idx = f.payments.findIndex((p: FolioPayment) => p.id === paymentId);
+	if (idx < 0) return false;
+	f.payments.splice(idx, 1);
+	updateFolioBalances(self, f);
+	self.notify();
+	return true;
 }
 
 

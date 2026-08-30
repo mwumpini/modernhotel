@@ -3,6 +3,177 @@ import { Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, GoodsReceiptNo
 import type { BusinessPartner } from '../accounting/models';
 import { useStockStore } from './stockStore';
 import { computePurchaseTax } from '../tax/engine';
+import { getClientTenantSubdomain } from '../api/clientTenant';
+import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+
+function poTenantHeaders(): HeadersInit {
+  const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
+  return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
+}
+
+// Best-effort background persistence for a purchase order — the store stays
+// synchronous/in-memory for the UI (unchanged interaction model), but every
+// create/update now also durably persists tenant-scoped to the database instead
+// of living only in this tab's memory.
+function syncPurchaseOrderToApi(order: PurchaseOrder) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/inventory/purchase-orders', {
+    method: 'PUT',
+    headers: poTenantHeaders(),
+    body: JSON.stringify({
+      id: order.id,
+      poNumber: order.poNumber,
+      supplierId: order.supplierId,
+      supplierName: order.supplierName,
+      expectedDeliveryDate: order.expectedDeliveryDate,
+      actualDeliveryDate: order.actualDeliveryDate,
+      status: order.status,
+      priority: order.priority,
+      shippingAmount: order.shippingAmount,
+      discountAmount: order.discountAmount,
+      currency: order.currency,
+      paymentTerms: order.paymentTerms,
+      notes: order.notes,
+      approvedBy: order.approvedBy,
+      approvedAt: order.approvedAt,
+      items: order.items.map((i) => ({
+        itemId: i.itemId,
+        itemCode: i.itemCode,
+        itemName: i.itemName,
+        quantity: i.quantity,
+        unitCost: i.unitCost,
+        receivedQuantity: i.receivedQuantity,
+        notes: i.notes,
+      })),
+    }),
+  }).catch((e) => console.warn('[Inventory] Failed to sync purchase order to server:', e));
+}
+
+function deletePurchaseOrderFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/inventory/purchase-orders?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: poTenantHeaders(),
+  }).catch((e) => console.warn('[Inventory] Failed to delete purchase order on server:', e));
+}
+
+// Prisma serializes Decimal as a string and DateTime as an ISO string over JSON —
+// convert back to the numbers/Dates the rest of the app expects.
+function mapApiOrderToStore(raw: any): PurchaseOrder {
+  return {
+    id: raw.id,
+    poNumber: raw.poNumber,
+    supplierId: raw.supplierId,
+    supplierName: raw.supplierName,
+    orderDate: new Date(raw.orderDate),
+    expectedDeliveryDate: raw.expectedDeliveryDate ? new Date(raw.expectedDeliveryDate) : new Date(raw.orderDate),
+    actualDeliveryDate: raw.actualDeliveryDate ? new Date(raw.actualDeliveryDate) : undefined,
+    status: raw.status,
+    priority: raw.priority,
+    totalAmount: Number(raw.totalAmount),
+    taxAmount: Number(raw.taxAmount),
+    shippingAmount: Number(raw.shippingAmount),
+    discountAmount: Number(raw.discountAmount),
+    finalAmount: Number(raw.finalAmount),
+    currency: raw.currency,
+    paymentTerms: raw.paymentTerms || '',
+    notes: raw.notes ?? undefined,
+    createdBy: raw.createdBy || 'system',
+    approvedBy: raw.approvedBy ?? undefined,
+    approvedAt: raw.approvedAt ? new Date(raw.approvedAt) : undefined,
+    items: (raw.items || []).map((i: any) => ({
+      id: i.id,
+      itemId: i.itemId,
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      quantity: Number(i.quantity),
+      unitCost: Number(i.unitCost),
+      totalCost: Number(i.totalCost),
+      receivedQuantity: Number(i.receivedQuantity),
+      notes: i.notes ?? undefined,
+    })),
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
+// The real Supplier model only has a handful of columns (code, name, email, phone,
+// contactPerson, taxNumber, address, isActive) — everything else the supplier form
+// collects (payment terms, credit limit, rating, categories, contract dates,
+// performance) lives in the `details` Json long-tail column, same pattern as
+// hr/repository.ts's Employee.details.
+function mapApiSupplierToStore(raw: any): Supplier {
+  const addr = (raw.address || {}) as Record<string, any>;
+  const details = (raw.details || {}) as Record<string, any>;
+  return {
+    id: raw.id,
+    code: raw.code,
+    name: raw.name,
+    contactPerson: raw.contactPerson || '',
+    email: raw.email || '',
+    phone: raw.phone || '',
+    address: addr.address || '',
+    city: addr.city || '',
+    country: addr.country || 'Ghana',
+    postalCode: addr.postalCode || '',
+    taxId: raw.taxNumber || '',
+    paymentTerms: details.paymentTerms || 'net30',
+    creditLimit: Number(details.creditLimit || 0),
+    currentBalance: Number(details.currentBalance || 0),
+    rating: Number(details.rating || 0),
+    categories: details.categories || [],
+    isActive: raw.isActive,
+    contractStartDate: details.contractStartDate ? new Date(details.contractStartDate) : new Date(raw.createdAt),
+    contractEndDate: details.contractEndDate ? new Date(details.contractEndDate) : undefined,
+    performance: details.performance || { onTimeDelivery: 0, qualityRating: 0, responseTime: 0, totalOrders: 0 },
+    notes: details.notes ?? undefined,
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
+function syncSupplierToApi(supplier: Partial<Supplier> & { id: string }) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/inventory/suppliers', {
+    method: 'POST',
+    headers: poTenantHeaders(),
+    body: JSON.stringify({
+      id: supplier.id,
+      code: supplier.code,
+      name: supplier.name,
+      email: supplier.email,
+      phone: supplier.phone,
+      contactPerson: supplier.contactPerson,
+      taxNumber: supplier.taxId,
+      isActive: supplier.isActive,
+      address: {
+        address: supplier.address,
+        city: supplier.city,
+        country: supplier.country,
+        postalCode: supplier.postalCode,
+      },
+      details: {
+        paymentTerms: supplier.paymentTerms,
+        creditLimit: supplier.creditLimit,
+        currentBalance: supplier.currentBalance,
+        rating: supplier.rating,
+        categories: supplier.categories,
+        contractStartDate: supplier.contractStartDate,
+        contractEndDate: supplier.contractEndDate,
+        performance: supplier.performance,
+        notes: supplier.notes,
+      },
+    }),
+  }).catch((e) => console.warn('[Inventory] Failed to sync supplier to server:', e));
+}
+
+function deleteSupplierFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/inventory/suppliers?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: poTenantHeaders(),
+  }).catch((e) => console.warn('[Inventory] Failed to delete supplier on server:', e));
+}
 
 interface SupplierStore {
   suppliers: Supplier[];
@@ -22,6 +193,7 @@ interface SupplierStore {
   addSupplier: (supplier: Omit<Supplier, 'updatedAt'> & { id?: string; createdAt?: Date }, skipSync?: boolean) => void;
   updateSupplier: (id: string, updates: Partial<Supplier>, skipSync?: boolean) => void;
   deleteSupplier: (id: string) => void;
+  hydrateSuppliersFromApi: () => Promise<void>;
   generateNextSupplierCode: () => string;
   getSupplier: (id: string) => Supplier | undefined;
   getSupplierByCode: (code: string) => Supplier | undefined;
@@ -30,6 +202,7 @@ interface SupplierStore {
   
   // Purchase Order Management
   createPurchaseOrder: (order: Omit<PurchaseOrder, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  hydratePurchaseOrdersFromApi: () => Promise<void>;
   updatePurchaseOrder: (id: string, updates: Partial<PurchaseOrder>) => void;
   deletePurchaseOrder: (id: string) => void;
   getPurchaseOrder: (id: string) => PurchaseOrder | undefined;
@@ -355,7 +528,7 @@ const samplePurchaseOrders: PurchaseOrder[] = [
 ];
 
 export const useSupplierStore = create<SupplierStore>((set, get) => ({
-  suppliers: sampleSuppliers,
+  suppliers: [],
   purchaseOrders: samplePurchaseOrders,
   requisitions: [],
   goodsReceiptNotes: [],
@@ -395,7 +568,10 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       set(state => ({
         suppliers: state.suppliers.map(s => s.id === existingSupplier.id ? updatedSupplier : s)
       }));
-      
+      // skipSync also means "this came from the accounting mirror, not a real user
+      // edit" — don't push a fake accounting-sourced record into the real backend.
+      if (!skipSync) syncSupplierToApi(updatedSupplier);
+
       // Sync update to accounting if needed
       if (!skipSync && !state._syncingToAccounting) {
         try {
@@ -445,7 +621,8 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       updatedAt: new Date()
     };
     set(state => ({ suppliers: [...state.suppliers, newSupplier] }));
-    
+    if (!skipSync) syncSupplierToApi(newSupplier);
+
     // Sync to accounting store (unless we're syncing from accounting)
     if (!skipSync && !get()._syncingToAccounting) {
       try {
@@ -499,7 +676,8 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
           : supplier
       );
       const updatedSupplier = updatedSuppliers.find(s => s.id === id);
-      
+      if (updatedSupplier && !skipSync) syncSupplierToApi(updatedSupplier);
+
       // Sync to accounting store (unless we're syncing from accounting)
       if (updatedSupplier && !skipSync && !state._syncingToAccounting) {
         try {
@@ -570,9 +748,10 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
   },
 
   deleteSupplier: (id) => {
+    deleteSupplierFromApi(id);
     set(state => {
       const supplier = state.suppliers.find(s => s.id === id);
-      
+
       // Sync to accounting store - mark as inactive instead of deleting
       if (supplier) {
         try {
@@ -632,20 +811,58 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       updatedAt: new Date()
     };
     set(state => ({ purchaseOrders: [...state.purchaseOrders, newOrder] }));
+    syncPurchaseOrderToApi(newOrder);
   },
 
   updatePurchaseOrder: (id, updates) => {
+    let updated: PurchaseOrder | undefined;
     set(state => ({
-      purchaseOrders: state.purchaseOrders.map(order => 
-        order.id === id 
-          ? { ...order, ...updates, updatedAt: new Date() }
-          : order
-      )
+      purchaseOrders: state.purchaseOrders.map(order => {
+        if (order.id !== id) return order;
+        updated = { ...order, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncPurchaseOrderToApi(updated);
   },
 
   deletePurchaseOrder: (id) => {
     set(state => ({ purchaseOrders: state.purchaseOrders.filter(order => order.id !== id) }));
+    deletePurchaseOrderFromApi(id);
+  },
+
+  // Pull real persisted purchase orders from the database, replacing the hardcoded
+  // sample seed. Safe to call repeatedly (e.g. on tab focus) — always takes the
+  // server as source of truth.
+  hydratePurchaseOrdersFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/inventory/purchase-orders', { headers: poTenantHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      // Always replace, even with an empty list — a tenant with zero real purchase
+      // orders should see zero, not fall back to the hardcoded sample seed.
+      const orders = Array.isArray(data.orders) ? data.orders.map(mapApiOrderToStore) : [];
+      set({ purchaseOrders: orders });
+    } catch (e) {
+      console.warn('[Inventory] Failed to hydrate purchase orders from server:', e);
+    }
+  },
+
+  // Pull real persisted suppliers from the database, replacing the hardcoded sample
+  // seed. Always replaces (even with an empty list) so a tenant with zero real
+  // suppliers sees zero, not the fake seed.
+  hydrateSuppliersFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/inventory/suppliers', { headers: poTenantHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const suppliers = Array.isArray(data.suppliers) ? data.suppliers.map(mapApiSupplierToStore) : [];
+      set({ suppliers });
+    } catch (e) {
+      console.warn('[Inventory] Failed to hydrate suppliers from server:', e);
+    }
   },
 
   getPurchaseOrder: (id) => get().purchaseOrders.find(order => order.id === id),
@@ -668,44 +885,47 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       ...itemData,
       id: Date.now().toString()
     };
-    
+
+    let updated: PurchaseOrder | undefined;
     set(state => ({
-      purchaseOrders: state.purchaseOrders.map(order => 
-        order.id === orderId 
-          ? { ...order, items: [...order.items, newItem] }
-          : order
-      )
+      purchaseOrders: state.purchaseOrders.map(order => {
+        if (order.id !== orderId) return order;
+        updated = { ...order, items: [...order.items, newItem] };
+        return updated;
+      })
     }));
+    if (updated) syncPurchaseOrderToApi(updated);
   },
 
   updatePurchaseOrderItem: (orderId, itemId, updates) => {
+    let updated: PurchaseOrder | undefined;
     set(state => ({
-      purchaseOrders: state.purchaseOrders.map(order => 
-        order.id === orderId 
-          ? {
-              ...order,
-              items: order.items.map(item => 
-                item.id === itemId 
-                  ? { ...item, ...updates }
-                  : item
-              )
-            }
-          : order
-      )
+      purchaseOrders: state.purchaseOrders.map(order => {
+        if (order.id !== orderId) return order;
+        updated = {
+          ...order,
+          items: order.items.map(item =>
+            item.id === itemId
+              ? { ...item, ...updates }
+              : item
+          )
+        };
+        return updated;
+      })
     }));
+    if (updated) syncPurchaseOrderToApi(updated);
   },
 
   removePurchaseOrderItem: (orderId, itemId) => {
+    let updated: PurchaseOrder | undefined;
     set(state => ({
-      purchaseOrders: state.purchaseOrders.map(order => 
-        order.id === orderId 
-          ? {
-              ...order,
-              items: order.items.filter(item => item.id !== itemId)
-            }
-          : order
-      )
+      purchaseOrders: state.purchaseOrders.map(order => {
+        if (order.id !== orderId) return order;
+        updated = { ...order, items: order.items.filter(item => item.id !== itemId) };
+        return updated;
+      })
     }));
+    if (updated) syncPurchaseOrderToApi(updated);
   },
 
   // Purchase Order Workflow
@@ -1035,7 +1255,8 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
   approveGRN: (grnId, approvedBy) => {
     const grn = get().goodsReceiptNotes.find(g => g.id === grnId);
     if (!grn) return;
-    
+    if (grn.status === 'approved') return; // idempotency: never post the same GRN's value twice
+
     // Determine cost center based on items
     const itemCategories = grn.items.map(item => {
       try {
@@ -1065,13 +1286,69 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       costCenter = categoryToCenterMap[firstCategory] || 'FO';
     }
     
-    // Record expense to appropriate cost center
+    // Record expense to the cost-center budget tracker (variance reporting — separate
+    // from the actual GL posting below).
     try {
       const { useAccountingStore } = require('../accounting/store');
       const { recordExpense } = useAccountingStore.getState();
       recordExpense(costCenter, grn.totalValue);
     } catch {}
-    
+
+    // Post the real GL entry: Dr Inventory, Cr Accounts Payable. Previously nothing
+    // wrote a journal entry here at all, so received stock never appeared on the
+    // balance sheet or as a real AP liability — the books silently diverged from
+    // actual purchasing activity every time a GRN was approved.
+    if (grn.totalValue > 0) {
+      try {
+        const { useAccountingStore } = require('../accounting/store');
+        const accountingStore = useAccountingStore.getState();
+        const now = new Date().toISOString();
+        const entryId = `JE-GRN-${grn.id}`;
+        const amount = Math.round(grn.totalValue * 100) / 100;
+        accountingStore.addJournalEntry({
+          id: entryId,
+          entryNumber: `JE-GRN-${grn.grnNumber}`,
+          date: now,
+          reference: grn.grnNumber,
+          description: `Goods received — ${grn.supplierName} (PO ${grn.poNumber})`,
+          totalDebit: amount,
+          totalCredit: amount,
+          currency: 'GHS',
+          status: 'Posted',
+          postedBy: approvedBy || 'system',
+          postedAt: now,
+          createdAt: now,
+          updatedAt: now,
+          sourceModule: 'inventory_grn',
+          sourceTransactionId: grn.id,
+          lines: [
+            {
+              id: `JL-${entryId}-dr`,
+              journalEntryId: entryId,
+              accountCode: '1300', // Inventory
+              description: `Goods received from ${grn.supplierName}`,
+              debit: amount,
+              credit: 0,
+              currency: 'GHS',
+              reference: grn.grnNumber,
+            },
+            {
+              id: `JL-${entryId}-cr`,
+              journalEntryId: entryId,
+              accountCode: '2000', // Accounts Payable
+              description: `Payable to ${grn.supplierName}`,
+              debit: 0,
+              credit: amount,
+              currency: 'GHS',
+              reference: grn.grnNumber,
+            },
+          ],
+        });
+      } catch (e) {
+        console.error('[Inventory] Failed to post GRN journal entry:', e);
+      }
+    }
+
     set(state => ({
       goodsReceiptNotes: state.goodsReceiptNotes.map(grn =>
         grn.id === grnId

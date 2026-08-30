@@ -1,151 +1,321 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import { 
-  Card, CardBody, CardHeader, Button, Input, Select, SelectItem,
-  Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Chip, Badge, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure, Textarea, Spinner, Alert, Pagination
-} from "@heroui/react";
+import React, { useState, useMemo, useCallback } from 'react';
+import {
+  Card, CardBody, Input, Select, SelectItem, Button, Spinner, Alert,
+} from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
-import { ChartOfAccounts as ChartOfAccountsType } from '@/app/lib/accounting/models';
+import { buildCoaTree, subtreeMatchesFilter } from '@/app/lib/accounting/coaTree';
+import { toRollupCoa } from '@/app/lib/accounting/coaHierarchy';
+import { coaLevelLabel } from '@/app/lib/accounting/prebuiltChartOfAccounts';
+import {
+  buildFinancialAccountTree,
+  type AccountNode,
+} from '@/app/lib/accounting/financialReportRollup';
+import { COA_ACCOUNT_TYPES, type CoaAccountType, type CoaTreeNode } from '@/app/lib/accounting/models';
+
+function flattenBalances(nodes: AccountNode[], out = new Map<string, number>()): Map<string, number> {
+  for (const n of nodes) {
+    out.set(n.code, Number.isFinite(n.balance) ? n.balance : 0);
+    flattenBalances(n.children, out);
+  }
+  return out;
+}
+
+function formatCoaBalance(amount: number, currency = 'GHS'): string {
+  if (!Number.isFinite(amount) || Math.abs(amount) < 0.005) return '—';
+  const prefix = amount < 0 ? '(' : '';
+  const suffix = amount < 0 ? ')' : '';
+  const abs = Math.abs(amount).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  return `${prefix}${currency} ${abs}${suffix}`;
+}
+
+const TYPE_PILL: Record<string, string> = {
+  Asset: 'bg-[#E6F1FB] text-[#185FA5] dark:bg-[#0C447C] dark:text-[#B5D4F4]',
+  Liability: 'bg-[#FAEEDA] text-[#854F0B] dark:bg-[#633806] dark:text-[#FAC775]',
+  Equity: 'bg-[#EEEDFE] text-[#534AB7] dark:bg-[#3C3489] dark:text-[#CECBF6]',
+  Revenue: 'bg-[#EAF3DE] text-[#3B6D11] dark:bg-[#27500A] dark:text-[#C0DD97]',
+  'Cost of Sales': 'bg-[#FAECE7] text-[#993C1D] dark:bg-[#712B13] dark:text-[#F5C4B3]',
+  'Operating Expense': 'bg-[#FBEAF0] text-[#993556] dark:bg-[#72243E] dark:text-[#F4C0D1]',
+  Contra: 'bg-[#F1EFE8] text-[#5F5E5A] dark:bg-[#444441] dark:text-[#D3D1C7]',
+};
+
+type AddingAt = { parentId: string; inheritType: CoaAccountType } | { parentId: null; inheritType: CoaAccountType };
+
+function TypePill({ type }: { type: string }) {
+  return (
+    <span className={`text-[11px] px-2 py-0.5 rounded-full shrink-0 ${TYPE_PILL[type] ?? TYPE_PILL.Asset}`}>
+      {type}
+    </span>
+  );
+}
+
+function InlineAddForm({
+  inheritType,
+  isChild,
+  onCommit,
+  onCancel,
+}: {
+  inheritType: CoaAccountType;
+  /** A child account can't hold a different fundamental type than its parent — mixing types
+   *  breaks the parent's rollup total (financialReportRollup.ts sums children by assuming they
+   *  share the parent's normal balance side). Locked to `inheritType` when true. */
+  isChild?: boolean;
+  onCommit: (name: string, type: CoaAccountType, code?: string) => void;
+  onCancel: () => void;
+}) {
+  const [code, setCode] = useState('');
+  const [name, setName] = useState('');
+  const [type, setType] = useState<CoaAccountType>(inheritType);
+
+  const commit = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    onCommit(trimmed, isChild ? inheritType : type, code.trim() || undefined);
+  };
+
+  return (
+    <div className="flex items-center gap-1.5 py-1.5 px-2.5 my-0.5 flex-wrap">
+      <Input
+        autoFocus
+        size="sm"
+        placeholder="Code"
+        value={code}
+        onChange={(e) => setCode(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') onCancel();
+        }}
+        classNames={{ input: 'text-xs font-mono', inputWrapper: 'h-7 min-h-7 w-20' }}
+        className="w-20 shrink-0"
+      />
+      <Input
+        size="sm"
+        placeholder="Account name…"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+          if (e.key === 'Escape') onCancel();
+        }}
+        classNames={{ input: 'text-xs', inputWrapper: 'h-7 min-h-7' }}
+        className="flex-1 min-w-[140px]"
+      />
+      <select
+        value={isChild ? inheritType : type}
+        onChange={(e) => setType(e.target.value as CoaAccountType)}
+        disabled={isChild}
+        title={isChild ? 'A child account keeps its parent\'s type' : undefined}
+        className="text-xs h-7 px-1.5 rounded-md border border-default-200 bg-content1 text-foreground disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        {COA_ACCOUNT_TYPES.map((t) => (
+          <option key={t} value={t}>{t}</option>
+        ))}
+      </select>
+      <Button size="sm" color="primary" className="h-7 min-w-0 px-2.5 text-xs" onPress={commit}>
+        Add
+      </Button>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="text-lg leading-none text-default-400 hover:text-foreground px-1"
+        title="Cancel"
+      >
+        ×
+      </button>
+    </div>
+  );
+}
+
+function CoaTreeNodeRow({
+  node,
+  depth,
+  searchTerm,
+  typeFilter,
+  expandedIds,
+  addingAt,
+  onToggle,
+  onStartAdd,
+  onCommitAdd,
+  onCancelAdd,
+  onDelete,
+  balanceByCode,
+}: {
+  node: CoaTreeNode;
+  depth: number;
+  searchTerm: string;
+  typeFilter: string;
+  expandedIds: Set<string>;
+  addingAt: AddingAt | null;
+  onToggle: (id: string) => void;
+  onStartAdd: (parentId: string, inheritType: CoaAccountType) => void;
+  onCommitAdd: (parentId: string | null, name: string, type: CoaAccountType, code?: string) => void;
+  onCancelAdd: () => void;
+  onDelete: (id: string, name: string) => void;
+  balanceByCode: Map<string, number>;
+}) {
+  if (!subtreeMatchesFilter(node, searchTerm, typeFilter)) return null;
+
+  const searching = !!searchTerm.trim() || (typeFilter && typeFilter !== 'all');
+  const isAddingHere = addingAt?.parentId === node.id;
+  const hasChildren = node.children.length > 0;
+  const isOpen = searching || expandedIds.has(node.id) || isAddingHere;
+  const nameClass = depth === 0 ? 'text-sm font-medium' : depth === 1 ? 'text-[13px] font-medium' : 'text-[13px]';
+  const balance = balanceByCode.get(node.code) ?? 0;
+
+  return (
+    <div className="mb-0.5">
+      <div
+        className="group flex items-center gap-2 py-1.5 px-2.5 rounded-md cursor-pointer hover:bg-default-100"
+        onClick={() => onToggle(node.id)}
+      >
+        <span style={{ width: depth * 16 }} className="shrink-0" />
+        <span
+          className={`text-sm text-default-400 shrink-0 transition-transform ${isOpen && (hasChildren || isAddingHere) ? 'rotate-90' : ''}`}
+          aria-hidden
+        >
+          ›
+        </span>
+        <span className="font-mono text-[11px] text-default-400 shrink-0 w-10">{node.code}</span>
+        <span className={`flex-1 min-w-0 truncate text-foreground ${nameClass}`}>{node.name}</span>
+        <span className="text-[10px] text-default-400 shrink-0 hidden sm:inline">{coaLevelLabel(node.level)}</span>
+        <TypePill type={node.type} />
+        <span
+          className={`text-xs font-mono tabular-nums shrink-0 w-32 text-right ${
+            balance < 0 ? 'text-danger' : balance > 0 ? 'text-foreground' : 'text-default-400'
+          }`}
+          title="Rolled-up balance (includes child accounts)"
+        >
+          {formatCoaBalance(balance, node.currency)}
+        </span>
+        <button
+          type="button"
+          className="text-[11px] px-2 py-0.5 rounded-full border border-dashed border-default-400 text-foreground/80 bg-default-100/60 hover:bg-default-200 hover:text-foreground dark:border-default-500 dark:bg-default-100/10 dark:text-default-300 dark:hover:bg-default-100/20 shrink-0"
+          onClick={(e) => {
+            e.stopPropagation();
+            onStartAdd(node.id, node.type);
+          }}
+        >
+          + add child
+        </button>
+        <button
+          type="button"
+          className="opacity-0 group-hover:opacity-100 text-default-400 hover:text-danger text-sm px-1 rounded shrink-0 transition-opacity"
+          title="Delete account and all children"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete(node.id, node.name);
+          }}
+        >
+          🗑
+        </button>
+      </div>
+
+      {isOpen && (hasChildren || isAddingHere) && (
+        <div className="ml-5 border-l border-default-200 pl-2.5 mt-0.5 mb-0.5">
+          {node.children.map((child) => (
+            <CoaTreeNodeRow
+              key={child.id}
+              node={child}
+              depth={depth + 1}
+              searchTerm={searchTerm}
+              typeFilter={typeFilter}
+              expandedIds={expandedIds}
+              addingAt={addingAt}
+              onToggle={onToggle}
+              onStartAdd={onStartAdd}
+              onCommitAdd={onCommitAdd}
+              onCancelAdd={onCancelAdd}
+              onDelete={onDelete}
+              balanceByCode={balanceByCode}
+            />
+          ))}
+          {isAddingHere && addingAt && (
+            <InlineAddForm
+              inheritType={addingAt.inheritType}
+              isChild
+              onCommit={(name, type, code) => onCommitAdd(node.id, name, type, code)}
+              onCancel={onCancelAdd}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ChartOfAccountsPage() {
   const {
     chartOfAccounts,
-    selectedAccount,
+    journalEntries,
     isLoading,
     error,
-    addChartOfAccount,
-    updateChartOfAccount,
+    addCoaChild,
     deleteChartOfAccount,
-    setSelectedAccount
   } = useAccountingStore();
 
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterType, setFilterType] = useState<string>('all');
-  const [filterCategory, setFilterCategory] = useState<string>('all');
-  const [sortBy, setSortBy] = useState<string>('code');
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
-  const [page, setPage] = useState(1);
-  const rowsPerPage = 10;
-  
-  const { isOpen, onOpen, onClose } = useDisclosure();
-  const [editingAccount, setEditingAccount] = useState<ChartOfAccountsType | null>(null);
-  const [isEditMode, setIsEditMode] = useState(false);
+  const [filterType, setFilterType] = useState('all');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [addingAt, setAddingAt] = useState<AddingAt | null>(null);
+  const [rootAdding, setRootAdding] = useState(false);
 
-  // Filter and sort accounts
-  const filteredAndSortedAccounts = useMemo(() => {
-    const filtered = chartOfAccounts.filter(account => {
-      const matchesSearch = account.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           account.code.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesType = filterType === 'all' || account.type === filterType;
-      const matchesCategory = filterCategory === 'all' || account.category === filterCategory;
-      
-      return matchesSearch && matchesType && matchesCategory;
+  const tree = useMemo(() => buildCoaTree(chartOfAccounts), [chartOfAccounts]);
+
+  const balanceByCode = useMemo(() => {
+    const rollup = toRollupCoa(chartOfAccounts);
+    const accountTree = buildFinancialAccountTree(rollup, journalEntries, {
+      kind: 'cumulative',
+      endDate: new Date(),
     });
+    return flattenBalances(accountTree);
+  }, [chartOfAccounts, journalEntries]);
 
-    // Sort accounts
-    filtered.sort((a, b) => {
-      let aValue: any = a[sortBy as keyof ChartOfAccountsType];
-      let bValue: any = b[sortBy as keyof ChartOfAccountsType];
-      
-      if (sortBy === 'code') {
-        aValue = parseInt(a.code);
-        bValue = parseInt(b.code);
+  const coaTypeFilterItems = useMemo(
+    () => [
+      { key: 'all', label: 'All types' },
+      ...COA_ACCOUNT_TYPES.map((t) => ({ key: t, label: t })),
+    ],
+    [],
+  );
+
+  const toggleNode = useCallback((id: string) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleStartAdd = useCallback((parentId: string, inheritType: CoaAccountType) => {
+    setRootAdding(false);
+    setAddingAt({ parentId, inheritType });
+    setExpandedIds((prev) => new Set(prev).add(parentId));
+  }, []);
+
+  const handleCommitAdd = useCallback(
+    (parentId: string | null, name: string, type: CoaAccountType, code?: string) => {
+      addCoaChild(parentId, { name, type, code });
+      setAddingAt(null);
+      setRootAdding(false);
+      if (parentId) {
+        setExpandedIds((prev) => new Set(prev).add(parentId));
       }
-      
-      if (sortOrder === 'asc') {
-        return aValue > bValue ? 1 : -1;
-      } else {
-        return aValue < bValue ? 1 : -1;
-      }
-    });
+    },
+    [addCoaChild]
+  );
 
-    return filtered;
-  }, [chartOfAccounts, searchTerm, filterType, filterCategory, sortBy, sortOrder]);
-
-  // Pagination
-  const pages = Math.ceil(filteredAndSortedAccounts.length / rowsPerPage);
-  const paginatedAccounts = useMemo(() => {
-    const start = (page - 1) * rowsPerPage;
-    const end = start + rowsPerPage;
-    return filteredAndSortedAccounts.slice(start, end);
-  }, [filteredAndSortedAccounts, page]);
-
-  // Get unique categories and types for filters
-  const categories = useMemo(() => {
-    const cats = [...new Set(chartOfAccounts.map(acc => acc.category))];
-    return cats.sort();
-  }, [chartOfAccounts]);
-
-  const types = useMemo(() => {
-    const types = [...new Set(chartOfAccounts.map(acc => acc.type))];
-    return types.sort();
-  }, [chartOfAccounts]);
-
-  // Handle account operations
-  const handleAddAccount = () => {
-    setEditingAccount({
-      id: '',
-      code: '',
-      name: '',
-      type: 'Asset',
-      category: '',
-      description: '',
-      isActive: true,
-      level: 1,
-      currency: 'GHS',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    });
-    setIsEditMode(false);
-    onOpen();
-  };
-
-  const handleEditAccount = (account: ChartOfAccountsType) => {
-    setEditingAccount({ ...account });
-    setIsEditMode(true);
-    onOpen();
-  };
-
-  const handleDeleteAccount = (accountId: string) => {
-    if (confirm('Are you sure you want to delete this account?')) {
-      deleteChartOfAccount(accountId);
-    }
-  };
-
-  const handleSaveAccount = () => {
-    if (!editingAccount) return;
-    
-    if (isEditMode) {
-      updateChartOfAccount(editingAccount.id, editingAccount);
-    } else {
-      addChartOfAccount(editingAccount);
-    }
-    
-    onClose();
-    setEditingAccount(null);
-  };
-
-  const getAccountTypeColor = (type: string) => {
-    switch (type) {
-      case 'Asset': return 'success';
-      case 'Liability': return 'danger';
-      case 'Equity': return 'warning';
-      case 'Revenue': return 'primary';
-      case 'Expense': return 'secondary';
-      default: return 'default';
-    }
-  };
-
-  const getAccountLevelColor = (level: number) => {
-    switch (level) {
-      case 1: return 'primary';
-      case 2: return 'secondary';
-      case 3: return 'default';
-      default: return 'default';
-    }
-  };
+  const handleDelete = useCallback(
+    (id: string, name: string) => {
+      if (!confirm(`Delete "${name}" and all its child accounts?`)) return;
+      deleteChartOfAccount(id);
+    },
+    [deleteChartOfAccount]
+  );
 
   if (isLoading) {
     return (
@@ -156,315 +326,100 @@ export default function ChartOfAccountsPage() {
   }
 
   return (
-    <div className="p-6">
+    <div className="p-6 w-full">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">📊 Chart of Accounts</h1>
-        <p className="text-gray-600 mt-2">
-          Manage your hotel's chart of accounts structure and account hierarchy
+        <h1 className="text-2xl font-semibold text-foreground">Chart of Accounts</h1>
+        <p className="text-default-500 text-sm mt-1">
+          Prebuilt Ghana hotel GL with coded main, sub, and detail accounts — keep, delete, or add your own.
         </p>
       </div>
 
-      {/* Filters and Search */}
-      <Card className="mb-6">
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Input
-              placeholder="Search accounts..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              startContent={<span className="text-gray-400">🔍</span>}
-            />
-            
-            <Select
-              placeholder="Filter by Type"
-              selectedKeys={[filterType]}
-              onSelectionChange={(keys) => setFilterType(Array.from(keys)[0] as string)}
-            >
-              <SelectItem key="all">All Types</SelectItem>
-              <>
-                {types.map(type => (
-                  <SelectItem key={type}>{type}</SelectItem>
-                ))}
-              </>
-            </Select>
-
-            <Select
-              placeholder="Filter by Category"
-              selectedKeys={[filterCategory]}
-              onSelectionChange={(keys) => setFilterCategory(Array.from(keys)[0] as string)}
-            >
-              <SelectItem key="all">All Categories</SelectItem>
-              <>
-                {categories.map(category => (
-                  <SelectItem key={category}>{category}</SelectItem>
-                ))}
-              </>
-            </Select>
-
-            <Select
-              placeholder="Sort by"
-              selectedKeys={[sortBy]}
-              onSelectionChange={(keys) => setSortBy(Array.from(keys)[0] as string)}
-            >
-              <SelectItem key="code">Account Code</SelectItem>
-              <SelectItem key="name">Account Name</SelectItem>
-              <SelectItem key="type">Account Type</SelectItem>
-              <SelectItem key="category">Category</SelectItem>
-            </Select>
-          </div>
-
-          <div className="flex justify-between items-center mt-4">
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant={sortOrder === 'asc' ? 'solid' : 'bordered'}
-                onClick={() => setSortOrder('asc')}
-              >
-                ↑ Ascending
-              </Button>
-              <Button
-                size="sm"
-                variant={sortOrder === 'desc' ? 'solid' : 'bordered'}
-                onClick={() => setSortOrder('desc')}
-              >
-                ↓ Descending
-              </Button>
-            </div>
-
-            <Button
-              color="primary"
-              onClick={handleAddAccount}
-              startContent={<span>➕</span>}
-            >
-              Add Account
-            </Button>
-          </div>
-        </CardBody>
-      </Card>
-
-      {/* Error Alert */}
       {error && (
-        <Alert color="danger" className="mb-6">
-          {error}
-        </Alert>
+        <Alert color="danger" className="mb-4">{error}</Alert>
       )}
 
-      {/* Accounts Table */}
-      <Card>
-        <CardHeader>
-          <div className="flex justify-between items-center">
-            <h3 className="text-lg font-semibold">
-              Accounts ({filteredAndSortedAccounts.length})
-            </h3>
-            <Badge color="success" variant="flat">
-              {chartOfAccounts.filter(acc => acc.isActive).length} Active
-            </Badge>
+      <Card className="mb-4 w-full">
+        <CardBody className="gap-3">
+          <div className="flex gap-2 items-center">
+            <Input
+              placeholder="Search by name or code…"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              size="sm"
+              className="flex-1"
+              startContent={<span className="text-default-400 text-sm">🔍</span>}
+            />
+            <Select
+              size="sm"
+              selectedKeys={[filterType]}
+              onSelectionChange={(keys) => setFilterType(Array.from(keys)[0] as string)}
+              className="w-44"
+              aria-label="Filter by type"
+              items={coaTypeFilterItems}
+            >
+              {(item) => <SelectItem key={item.key}>{item.label}</SelectItem>}
+            </Select>
           </div>
-        </CardHeader>
-        <CardBody className="p-0">
-          <Table aria-label="Chart of Accounts">
-            <TableHeader>
-              <TableColumn>CODE</TableColumn>
-              <TableColumn>NAME</TableColumn>
-              <TableColumn>TYPE</TableColumn>
-              <TableColumn>CATEGORY</TableColumn>
-              <TableColumn>LEVEL</TableColumn>
-              <TableColumn>CURRENCY</TableColumn>
-              <TableColumn>STATUS</TableColumn>
-              <TableColumn>ACTIONS</TableColumn>
-            </TableHeader>
-            <TableBody emptyContent="No accounts found.">
-              {paginatedAccounts.map((account) => (
-                <TableRow key={account.id}>
-                  <TableCell>
-                    <span className="font-mono font-medium">{account.code}</span>
-                  </TableCell>
-                  <TableCell>
-                    <div>
-                      <div className="font-medium">{account.name}</div>
-                      {account.description && (
-                        <div className="text-sm text-gray-500">{account.description}</div>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Chip color={getAccountTypeColor(account.type)} variant="flat" size="sm">
-                      {account.type}
-                    </Chip>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-sm">{account.category}</span>
-                  </TableCell>
-                  <TableCell>
-                    <Chip color={getAccountLevelColor(account.level)} variant="flat" size="sm">
-                      Level {account.level}
-                    </Chip>
-                  </TableCell>
-                  <TableCell>
-                    <span className="font-mono text-sm">{account.currency}</span>
-                  </TableCell>
-                  <TableCell>
-                    <Chip 
-                      color={account.isActive ? 'success' : 'danger'} 
-                      variant="flat" 
-                      size="sm"
-                    >
-                      {account.isActive ? 'Active' : 'Inactive'}
-                    </Chip>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      <Button
-                        size="sm"
-                        variant="bordered"
-                        onClick={() => handleEditAccount(account)}
-                      >
-                        ✏️ Edit
-                      </Button>
-                      <Button
-                        size="sm"
-                        color="danger"
-                        variant="bordered"
-                        onClick={() => handleDeleteAccount(account.id)}
-                      >
-                        🗑️ Delete
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <Button
+            size="sm"
+            variant="bordered"
+            onPress={() => {
+              setAddingAt(null);
+              setRootAdding(true);
+            }}
+          >
+            + Add top-level account
+          </Button>
         </CardBody>
-        {pages > 1 && (
-          <CardBody>
-            <div className="flex justify-center">
-              <Pagination 
-                total={pages} 
-                page={page} 
-                onChange={setPage}
-                showControls
-              />
-            </div>
-          </CardBody>
-        )}
       </Card>
 
-      {/* Add/Edit Account Modal */}
-      <Modal isOpen={isOpen} onClose={onClose} size="2xl">
-        <ModalContent>
-          <ModalHeader>
-            {isEditMode ? 'Edit Account' : 'Add New Account'}
-          </ModalHeader>
-          <ModalBody>
-            {editingAccount && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <Input
-                    label="Account Code"
-                    placeholder="e.g., 1100"
-                    value={editingAccount.code}
-                    onChange={(e) => setEditingAccount({...editingAccount, code: e.target.value})}
-                    required
-                  />
-                  <Input
-                    label="Account Name"
-                    placeholder="e.g., Cash in Hand"
-                    value={editingAccount.name}
-                    onChange={(e) => setEditingAccount({...editingAccount, name: e.target.value})}
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <Select
-                    label="Account Type"
-                    selectedKeys={[editingAccount.type]}
-                    onSelectionChange={(keys) => setEditingAccount({
-                      ...editingAccount, 
-                      type: Array.from(keys)[0] as any
-                    })}
-                    required
-                  >
-                    <SelectItem key="Asset">Asset</SelectItem>
-                    <SelectItem key="Liability">Liability</SelectItem>
-                    <SelectItem key="Equity">Equity</SelectItem>
-                    <SelectItem key="Revenue">Revenue</SelectItem>
-                    <SelectItem key="Expense">Expense</SelectItem>
-                  </Select>
-
-                  <Select
-                    label="Account Level"
-                    selectedKeys={[editingAccount.level.toString()]}
-                    onSelectionChange={(keys) => setEditingAccount({
-                      ...editingAccount, 
-                      level: parseInt(Array.from(keys)[0] as string)
-                    })}
-                    required
-                  >
-                    <SelectItem key="1">Level 1 - Main Account</SelectItem>
-                    <SelectItem key="2">Level 2 - Sub Account</SelectItem>
-                    <SelectItem key="3">Level 3 - Detail Account</SelectItem>
-                  </Select>
-                </div>
-
-                <Input
-                  label="Category"
-                  placeholder="e.g., Current Assets"
-                  value={editingAccount.category}
-                  onChange={(e) => setEditingAccount({...editingAccount, category: e.target.value})}
-                  required
+      <Card className="w-full">
+        <CardBody className="py-3">
+          {tree.length > 0 && (
+            <div className="flex items-center gap-2 px-2.5 pb-2 mb-1 border-b border-default-200 text-[10px] font-medium uppercase tracking-wide text-default-400">
+              <span className="w-4 shrink-0" />
+              <span className="w-10 shrink-0">Code</span>
+              <span className="flex-1 min-w-0">Account</span>
+              <span className="w-12 shrink-0 hidden sm:inline">Level</span>
+              <span className="w-24 shrink-0">Type</span>
+              <span className="w-32 shrink-0 text-right">Balance</span>
+              <span className="w-[148px] shrink-0" />
+            </div>
+          )}
+          {tree.length === 0 && !rootAdding ? (
+            <p className="text-sm text-default-400 px-2.5 py-2">
+              No accounts loaded. Open Accounting to initialize the prebuilt chart, or add a top-level account.
+            </p>
+          ) : (
+            <>
+              {tree.map((node) => (
+                <CoaTreeNodeRow
+                  key={node.id}
+                  node={node}
+                  depth={0}
+                  searchTerm={searchTerm}
+                  typeFilter={filterType}
+                  expandedIds={expandedIds}
+                  addingAt={addingAt}
+                  onToggle={toggleNode}
+                  onStartAdd={handleStartAdd}
+                  onCommitAdd={handleCommitAdd}
+                  onCancelAdd={() => setAddingAt(null)}
+                  onDelete={handleDelete}
+                  balanceByCode={balanceByCode}
                 />
-
-                <Textarea
-                  label="Description"
-                  placeholder="Account description..."
-                  value={editingAccount.description || ''}
-                  onChange={(e) => setEditingAccount({...editingAccount, description: e.target.value})}
+              ))}
+              {rootAdding && (
+                <InlineAddForm
+                  inheritType="Asset"
+                  onCommit={(name, type, code) => handleCommitAdd(null, name, type, code)}
+                  onCancel={() => setRootAdding(false)}
                 />
-
-                <div className="grid grid-cols-2 gap-4">
-                  <Select
-                    label="Currency"
-                    selectedKeys={[editingAccount.currency]}
-                    onSelectionChange={(keys) => setEditingAccount({
-                      ...editingAccount, 
-                      currency: Array.from(keys)[0] as string
-                    })}
-                    required
-                  >
-                    <SelectItem key="GHS">GHS - Ghana Cedi</SelectItem>
-                    <SelectItem key="USD">USD - US Dollar</SelectItem>
-                    <SelectItem key="EUR">EUR - Euro</SelectItem>
-                  </Select>
-
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
-                      id="isActive"
-                      checked={editingAccount.isActive}
-                      onChange={(e) => setEditingAccount({
-                        ...editingAccount, 
-                        isActive: e.target.checked
-                      })}
-                      className="mr-2"
-                    />
-                    <label htmlFor="isActive">Account is Active</label>
-                  </div>
-                </div>
-              </div>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="bordered" onPress={onClose}>
-              Cancel
-            </Button>
-            <Button color="primary" onPress={handleSaveAccount}>
-              {isEditMode ? 'Update' : 'Create'} Account
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+              )}
+            </>
+          )}
+        </CardBody>
+      </Card>
     </div>
   );
 }

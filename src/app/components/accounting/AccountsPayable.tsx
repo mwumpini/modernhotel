@@ -12,6 +12,7 @@ import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useSupplierStore } from '@/app/lib/inventory/supplierStore';
 import { useStockStore } from '@/app/lib/inventory/stockStore';
 import { computePurchaseTax } from '@/app/lib/tax/engine';
+import { computeServiceWht } from '@/app/lib/accounting/purchaseWht';
 
 export default function AccountsPayablePage() {
   const {
@@ -29,7 +30,8 @@ export default function AccountsPayablePage() {
     updateInvoice,
     addPayment,
     postPayment,
-    
+    recordSupplierWHTPayment,
+
   } = useAccountingStore();
   const { generateNextSupplierCode } = useSupplierStore();
   const { stockItems } = useStockStore();
@@ -79,16 +81,18 @@ export default function AccountsPayablePage() {
       if (!form.dueDate) e.dueDate = 'Due date is required';
       if (Number(form.total || 0) < 0) e.total = 'Total must be >= 0';
     } else if (dialogType === 'payment') {
+      const whtAmount = form.applyWht ? Number(form.whtAmount || 0) : 0;
       if (!form.businessPartnerId) e.businessPartnerId = 'Supplier is required';
       if (!form.date) e.date = 'Date is required';
-      if (!form.amount || Number(form.amount) <= 0) e.amount = 'Amount must be > 0';
+      if (!(Number(form.amount || 0) + whtAmount > 0)) e.amount = 'Amount must be > 0';
+      else if (Number(form.amount || 0) < 0) e.amount = 'Amount must be >= 0';
       if (form.paymentMethod === 'Bank' && !form.bankAccountId) e.bankAccountId = 'Bank account required for Bank payments';
       if (form.invoiceId) {
         const inv = purchaseInvoices.find(i => i.id === form.invoiceId);
         if (inv) {
           const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
           const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
-          if (Number(form.amount || 0) > outstanding) e.amount = `Amount exceeds outstanding (₵${outstanding.toLocaleString()})`;
+          if (Number(form.amount || 0) + whtAmount > outstanding + 0.01) e.amount = `Amount exceeds outstanding (₵${outstanding.toLocaleString()})`;
         }
       }
     }
@@ -109,14 +113,26 @@ export default function AccountsPayablePage() {
       .reduce((sum, payment) => sum + payment.amount, 0);
   }, [payments]);
 
-  // Outstanding = sum of per-invoice balances (total − paidAmount on each invoice)
+  // Total Payables = sum of per-invoice balances (total − paidAmount on each invoice)
   const totalPayables = useMemo(() => {
     return invoices
       .filter(invoice => invoice.type === 'Purchase')
       .reduce((sum, invoice) => sum + Math.max(0, (invoice.total || 0) - (invoice.paidAmount || 0)), 0);
   }, [invoices]);
 
-  const outstandingPayables = totalPayables;
+  // Overdue = the portion of totalPayables whose due date has already passed
+  const totalOverduePayables = useMemo(() => {
+    const now = new Date();
+    return invoices
+      .filter(invoice => invoice.type === 'Purchase')
+      .reduce((sum, invoice) => {
+        const balance = Math.max(0, (invoice.total || 0) - (invoice.paidAmount || 0));
+        if (balance <= 0) return sum;
+        const dueDate = new Date(invoice.dueDate || invoice.date);
+        const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+        return daysOverdue > 0 ? sum + balance : sum;
+      }, 0);
+  }, [invoices]);
 
   // Filter suppliers
   const suppliers = useMemo(() => {
@@ -135,77 +151,50 @@ export default function AccountsPayablePage() {
     return payments.filter(payment => payment.type === 'Payment');
   }, [payments]);
 
-  // Supplier Aging Analysis
+  // Supplier Aging Analysis — buckets are each invoice's own remaining balance (total minus
+  // what's actually been paid on it), not the gross invoice total, so a partially- or
+  // fully-paid overdue invoice doesn't keep showing as fully owed. outstandingBalance is the
+  // sum of the same per-invoice balances, so it always reconciles exactly with the buckets.
   const supplierAging = useMemo(() => {
+    const now = new Date();
     return suppliers.map(supplier => {
       const supplierInvoices = purchaseInvoices.filter(inv => inv.businessPartnerId === supplier.id);
       const supplierPaymentsFiltered = supplierPayments.filter(pay => pay.businessPartnerId === supplier.id);
-      
+
       const totalInvoiced = supplierInvoices.reduce((sum, inv) => sum + inv.total, 0);
       const totalPaid = supplierPaymentsFiltered.reduce((sum, pay) => sum + pay.amount, 0);
-      const outstandingBalance = totalInvoiced - totalPaid;
-      
-      // Calculate aging buckets
-      const now = new Date();
-      const current = supplierInvoices
-        .filter(inv => {
-          const dueDate = new Date(inv.dueDate || inv.date);
-          const daysDiff = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-          return daysDiff <= 0;
-        })
-        .reduce((sum, inv) => sum + inv.total, 0) - supplierPaymentsFiltered
-        .filter(pay => {
-          const payDate = new Date(pay.date);
-          const daysDiff = Math.floor((now.getTime() - payDate.getTime()) / (1000 * 60 * 60 * 24));
-          return daysDiff <= 0;
-        })
-        .reduce((sum, pay) => sum + pay.amount, 0);
 
-      const overdue30 = supplierInvoices
-        .filter(inv => {
-          const dueDate = new Date(inv.dueDate || inv.date);
-          const daysDiff = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-          return daysDiff > 0 && daysDiff <= 30;
-        })
-        .reduce((sum, inv) => sum + inv.total, 0);
+      let current = 0, overdue30 = 0, overdue60 = 0, overdue90 = 0, overdue90Plus = 0;
+      supplierInvoices.forEach(inv => {
+        const paidForInvoice = inv.paidAmount != null
+          ? inv.paidAmount
+          : supplierPaymentsFiltered.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
+        const balance = Math.max(0, (inv.total || 0) - paidForInvoice);
+        if (balance <= 0) return;
+        const dueDate = new Date(inv.dueDate || inv.date);
+        const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (daysOverdue <= 0) current += balance;
+        else if (daysOverdue <= 30) overdue30 += balance;
+        else if (daysOverdue <= 60) overdue60 += balance;
+        else if (daysOverdue <= 90) overdue90 += balance;
+        else overdue90Plus += balance;
+      });
 
-      const overdue60 = supplierInvoices
-        .filter(inv => {
-          const dueDate = new Date(inv.dueDate || inv.date);
-          const daysDiff = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-          return daysDiff > 30 && daysDiff <= 60;
-        })
-        .reduce((sum, inv) => sum + inv.total, 0);
-
-      const overdue90 = supplierInvoices
-        .filter(inv => {
-          const dueDate = new Date(inv.dueDate || inv.date);
-          const daysDiff = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-          return daysDiff > 60 && daysDiff <= 90;
-        })
-        .reduce((sum, inv) => sum + inv.total, 0);
-
-      const overdue90Plus = supplierInvoices
-        .filter(inv => {
-          const dueDate = new Date(inv.dueDate || inv.date);
-          const daysDiff = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-          return daysDiff > 90;
-        })
-        .reduce((sum, inv) => sum + inv.total, 0);
+      const outstandingBalance = current + overdue30 + overdue60 + overdue90 + overdue90Plus;
 
       return {
         ...supplier,
         totalInvoiced,
         totalPaid,
         outstandingBalance,
-        current: Math.max(0, current),
+        current,
         overdue30,
         overdue60,
         overdue90,
         overdue90Plus,
-        lastInvoiceDate: supplierInvoices.length > 0 ? 
+        lastInvoiceDate: supplierInvoices.length > 0 ?
           new Date(Math.max(...supplierInvoices.map(inv => new Date(inv.date).getTime()))).toISOString().slice(0,10) : null,
-        lastPaymentDate: supplierPaymentsFiltered.length > 0 ? 
+        lastPaymentDate: supplierPaymentsFiltered.length > 0 ?
           new Date(Math.max(...supplierPaymentsFiltered.map(pay => new Date(pay.date).getTime()))).toISOString().slice(0,10) : null
       };
     });
@@ -260,6 +249,69 @@ export default function AccountsPayablePage() {
   const invoicesPages = Math.ceil(filteredInvoices.length / rowsPerPage);
   const paymentsPages = Math.ceil(supplierPayments.length / rowsPerPage);
 
+  // Opens the "new invoice" dialog pre-filled for a given supplier — used by every quick-action
+  // "Invoice" button so they all create a real invoice instead of misusing `editing` (which
+  // must hold an invoice being edited, never a supplier) and silently no-op'ing on save.
+  const openNewInvoiceFor = (supplierId: string) => {
+    setDialogType('invoice');
+    setEditing(null);
+    const today = new Date().toISOString().slice(0, 10);
+    setForm({
+      businessPartnerId: supplierId,
+      invoiceNumber: '',
+      date: today,
+      dueDate: today,
+      subtotal: 0,
+      taxAmount: 0,
+      total: 0,
+      description: '',
+      lines: [{ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 20, glAccountCode: '5100' }]
+    });
+    setIsOpen(true);
+  };
+
+  // Opens the "record payment" dialog pre-filled for a given supplier/amount.
+  const openNewPaymentFor = (supplierId: string, amount: number, description: string) => {
+    setDialogType('payment');
+    setEditing(null);
+    setForm({
+      businessPartnerId: supplierId,
+      date: new Date().toISOString().slice(0, 10),
+      amount,
+      paymentMethod: 'Bank',
+      reference: description,
+    });
+    setIsOpen(true);
+  };
+
+  // Opens the "record payment" dialog for a specific invoice, pre-selected and pre-split into
+  // cash + any remaining WHT — mirrors the invoice Autocomplete's own selection logic so every
+  // entry point into "pay this invoice" behaves the same way.
+  const openPaymentForInvoice = (inv: (typeof purchaseInvoices)[number]) => {
+    const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
+    const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
+    const whtConfigured = Number(inv.taxBreakdown?.withholding || 0);
+    const whtAlreadyWithheld = payments
+      .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
+      .reduce((s: number, p: any) => s + Number(p.whtAmount || p.amount || 0), 0);
+    const whtRemaining = Math.min(outstanding, Math.max(0, whtConfigured - whtAlreadyWithheld));
+    const applyWht = whtRemaining > 0;
+    const amount = Math.max(0, outstanding - (applyWht ? whtRemaining : 0));
+    setDialogType('payment');
+    setEditing(null);
+    setForm({
+      businessPartnerId: inv.businessPartnerId,
+      invoiceId: inv.id,
+      date: new Date().toISOString().slice(0, 10),
+      amount,
+      applyWht,
+      whtAmount: whtRemaining,
+      paymentMethod: 'Bank',
+      reference: `Payment for invoice ${inv.invoiceNumber}`,
+    });
+    setIsOpen(true);
+  };
+
   if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -289,8 +341,8 @@ export default function AccountsPayablePage() {
 
         <Card>
           <CardBody className="text-center">
-            <div className="text-2xl font-bold text-orange-600">₵{outstandingPayables.toLocaleString()}</div>
-            <div className="text-sm text-gray-600">Outstanding</div>
+            <div className="text-2xl font-bold text-orange-600">₵{totalOverduePayables.toLocaleString()}</div>
+            <div className="text-sm text-gray-600">Overdue</div>
             <Progress value={100} size="sm" color="warning" className="mt-2" />
           </CardBody>
         </Card>
@@ -405,16 +457,8 @@ export default function AccountsPayablePage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-1">
-                            <Button size="sm" variant="bordered" onClick={() => {
-                              setDialogType('invoice');
-                              setEditing(supplier);
-                              setIsOpen(true);
-                            }}>📄 Invoice</Button>
-                            <Button size="sm" color="danger" variant="bordered" onClick={() => {
-                              setDialogType('payment');
-                              setEditing(supplier);
-                              setIsOpen(true);
-                            }}>💳 Payment</Button>
+                            <Button size="sm" variant="bordered" onClick={() => openNewInvoiceFor(supplier.id)}>📄 Invoice</Button>
+                            <Button size="sm" color="danger" variant="bordered" onClick={() => openNewPaymentFor(supplier.id, supplier.outstandingBalance || 0, `Payment to ${supplier.name}`)}>💳 Payment</Button>
                           </div>
                         </TableCell>
                       </TableRow>
@@ -563,22 +607,9 @@ export default function AccountsPayablePage() {
                                 }); 
                                 setIsOpen(true); 
                               }}>✏️ Edit</Button>
-                              <Button size="sm" color="primary" variant="bordered" onClick={() => {
-                                setDialogType('invoice');
-                                setEditing(supplier);
-                                setIsOpen(true);
-                              }}>📄 Invoice</Button>
+                              <Button size="sm" color="primary" variant="bordered" onClick={() => openNewInvoiceFor(supplier.id)}>📄 Invoice</Button>
                               {supplier.balance > 0 && (
-                                <Button size="sm" color="danger" variant="bordered" onClick={() => {
-                                  setDialogType('payment');
-                                  setEditing(supplier);
-                                  setForm({
-                                    businessPartnerId: supplier.id,
-                                    amount: supplier.balance,
-                                    description: `Payment to ${supplier.name}`
-                                  });
-                                  setIsOpen(true);
-                                }}>💳 Payment</Button>
+                                <Button size="sm" color="danger" variant="bordered" onClick={() => openNewPaymentFor(supplier.id, supplier.balance, `Payment to ${supplier.name}`)}>💳 Payment</Button>
                               )}
                             </div>
                           </TableCell>
@@ -795,16 +826,7 @@ export default function AccountsPayablePage() {
                                 setIsOpen(true); 
                               }}>✏️ Edit</Button>
                               {balance > 0 && (
-                                <Button size="sm" color="danger" variant="bordered" onClick={() => {
-                                  setDialogType('payment');
-                                  setEditing(invoice);
-                                  setForm({
-                                    businessPartnerId: invoice.businessPartnerId,
-                                    amount: balance,
-                                    description: `Payment for invoice ${invoice.invoiceNumber}`
-                                  });
-                                  setIsOpen(true);
-                                }}>💳 Payment</Button>
+                                <Button size="sm" color="danger" variant="bordered" onClick={() => openPaymentForInvoice(invoice)}>💳 Payment</Button>
                               )}
                             </div>
                           </TableCell>
@@ -1017,12 +1039,25 @@ export default function AccountsPayablePage() {
               discountAmount: Number(form.discountAmount || 0),
               shippingCharges: Number(form.shippingCharges || 0),
               otherCharges: Number(form.otherCharges || 0),
-              amountDue: +(((Number(form.subtotal ?? subtotalFromLines)) + (Number(form.taxAmount ?? taxFromLines)) + Number(form.shippingCharges || 0) + Number(form.otherCharges || 0) - Number(form.discountAmount || 0)) - Number(form.paidAmount || 0)).toFixed(2),
+              amountDue: +(((Number(form.subtotal ?? subtotalFromLines)) + (Number(form.taxAmount ?? taxFromLines)) + Number(form.shippingCharges || 0) + Number(form.otherCharges || 0) - Number(form.discountAmount || 0) - Number(form.taxBreakdown?.withholding || 0)) - Number(form.paidAmount || 0)).toFixed(2),
               workflowStatus: form.workflowStatus || 'Posted',
               taxBreakdown: form.taxBreakdown || undefined,
               lines
             } as any;
             if (editing) updateInvoice(editing.id, payload); else addInvoice(payload);
+          } else if (dialogType === 'payment' && !editing && form.applyWht && form.invoiceId && Number(form.whtAmount || 0) > 0) {
+            const result = recordSupplierWHTPayment({
+              invoiceId: form.invoiceId,
+              cashAmount: Number(form.amount || 0),
+              whtAmount: Number(form.whtAmount || 0),
+              paymentMethod: form.paymentMethod || 'Bank',
+              bankAccountId: form.bankAccountId || undefined,
+              reference: form.reference || undefined,
+            });
+            if (!result) {
+              setErrors({ amount: 'Could not record payment — check the amount against the outstanding balance.' });
+              return;
+            }
           } else if (dialogType === 'payment') {
             const payload = {
               id: editing?.id || `PAY-${Date.now()}`,
@@ -1336,7 +1371,8 @@ export default function AccountsPayablePage() {
               <Input size="sm" type="number" label="Subtotal" value={form.subtotal ?? 0} onChange={(e) => {
                 const subtotal = parseFloat(e.target.value) || 0;
                 const taxAmount = computePurchaseTax(subtotal).totalTax;
-                setForm({ ...form, subtotal, taxAmount, total: +(subtotal + taxAmount).toFixed(2) });
+                const whtAmount = form.whtApplicable ? (computeServiceWht(subtotal)?.amount || 0) : form.taxBreakdown?.withholding;
+                setForm({ ...form, subtotal, taxAmount, total: +(subtotal + taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholding: whtAmount } });
               }} />
               <Input size="sm" type="number" label="Tax Amount" value={form.taxAmount ?? 0} onChange={(e) => {
                 const taxAmount = parseFloat(e.target.value) || 0;
@@ -1390,6 +1426,37 @@ export default function AccountsPayablePage() {
                   setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2) });
                 }}>Apply Tax</Button>
               </div>
+            </div>
+
+            {/* Withholding Tax (Purchases) — real rate from the compliance tax-rule engine */}
+            <div className="grid grid-cols-4 gap-4 p-3 border rounded items-end">
+              <div className="col-span-4 sm:col-span-1 flex items-center h-10">
+                <Checkbox isSelected={!!form.whtApplicable} onValueChange={(checked) => {
+                  const subtotal = Number(form.subtotal || 0);
+                  if (checked) {
+                    const wht = computeServiceWht(subtotal);
+                    setForm({ ...form, whtApplicable: true, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: wht?.amount || 0 } });
+                  } else {
+                    const tb = { ...(form.taxBreakdown || {}) };
+                    delete tb.withholding;
+                    setForm({ ...form, whtApplicable: false, taxBreakdown: tb });
+                  }
+                }}>Service invoice — withhold tax</Checkbox>
+              </div>
+              {form.whtApplicable && (() => {
+                const wht = computeServiceWht(Number(form.subtotal || 0));
+                if (!wht) {
+                  return <div className="col-span-3 text-xs text-amber-600">No active WHT rule for services — configure one in Books &amp; Taxes → Tax Rate Builder (Purchases).</div>;
+                }
+                return (
+                  <>
+                    <Input size="sm" isReadOnly label="WHT Rate" value={`${wht.rate}%`} />
+                    <Input size="sm" type="number" label="WHT Amount" value={form.taxBreakdown?.withholding ?? wht.amount}
+                      onChange={(e) => setForm({ ...form, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: parseFloat(e.target.value) || 0 } })} />
+                    <div className="text-xs text-gray-500">Retained from payment to supplier; remitted to GRA. Net payable: ₵{(Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0)).toLocaleString()}</div>
+                  </>
+                );
+              })()}
             </div>
 
                 {/* Charges & Discounts */}
@@ -1536,8 +1603,14 @@ export default function AccountsPayablePage() {
                     // Calculate outstanding using payments linked to the invoice (if any)
                     const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
                     const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
-                    const nextAmount = (form.amount || 0) > 0 ? Math.min(form.amount, outstanding) : outstanding;
-                    setForm({ ...form, invoiceId: inv.id, amount: nextAmount, reference: form.reference || `Payment for invoice ${inv.invoiceNumber}` });
+                    const whtConfigured = Number(inv.taxBreakdown?.withholding || 0);
+                    const whtAlreadyWithheld = payments
+                      .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
+                      .reduce((s: number, p: any) => s + Number(p.whtAmount || p.amount || 0), 0);
+                    const whtRemaining = Math.min(outstanding, Math.max(0, whtConfigured - whtAlreadyWithheld));
+                    const applyWht = whtRemaining > 0;
+                    const nextAmount = Math.max(0, outstanding - (applyWht ? whtRemaining : 0));
+                    setForm({ ...form, invoiceId: inv.id, amount: nextAmount, applyWht, whtAmount: whtRemaining, reference: form.reference || `Payment for invoice ${inv.invoiceNumber}` });
                   }}
                   placeholder={form.businessPartnerId ? 'Select purchase invoice' : 'Select supplier first'}
                   isDisabled={!form.businessPartnerId}
@@ -1562,17 +1635,42 @@ export default function AccountsPayablePage() {
                   if (!inv) return null;
                   const paid = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
                   const bal = Math.max(0, (inv.total || 0) - paid);
-                  const newBal = Math.max(0, bal - Number(form.amount || 0));
+                  const settling = Number(form.amount || 0) + (form.applyWht ? Number(form.whtAmount || 0) : 0);
+                  const newBal = Math.max(0, bal - settling);
                   return (
                     <div className="mt-1 text-xs text-gray-600">
                       Outstanding: ₵{bal.toLocaleString()} → New: <span className={newBal === 0 ? 'text-green-600' : 'text-orange-600'}>₵{newBal.toLocaleString()}</span>
                     </div>
                   );
                 })()}
+                {form.invoiceId && (() => {
+                  const inv = purchaseInvoices.find(i => i.id === form.invoiceId);
+                  const whtConfigured = Number(inv?.taxBreakdown?.withholding || 0);
+                  if (!inv || whtConfigured <= 0) return null;
+                  const whtAlreadyWithheld = payments
+                    .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
+                    .reduce((s: number, p: any) => s + Number(p.whtAmount || p.amount || 0), 0);
+                  const whtRemaining = Math.max(0, whtConfigured - whtAlreadyWithheld);
+                  if (whtRemaining <= 0) return null;
+                  return (
+                    <div className="mt-2 flex items-center gap-3">
+                      <Checkbox isSelected={!!form.applyWht} onValueChange={(checked) => {
+                        const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
+                        const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
+                        if (checked) {
+                          setForm({ ...form, applyWht: true, whtAmount: whtRemaining, amount: Math.max(0, outstanding - whtRemaining) });
+                        } else {
+                          setForm({ ...form, applyWht: false, whtAmount: 0, amount: outstanding });
+                        }
+                      }}>Withhold tax on this payment (₵{whtRemaining.toLocaleString()})</Checkbox>
+                    </div>
+                  );
+                })()}
               </div>
             <div>
-              <Input type="number" label="Amount" value={form.amount ?? 0} onChange={(e) => setForm({ ...form, amount: parseFloat(e.target.value) || 0 })} />
+              <Input type="number" label="Amount (cash to supplier)" value={form.amount ?? 0} onChange={(e) => setForm({ ...form, amount: parseFloat(e.target.value) || 0 })} />
               {errors.amount && <div className="text-red-600 text-xs mt-1">{errors.amount}</div>}
+              {form.applyWht && <div className="text-xs text-gray-500 mt-1">+ ₵{Number(form.whtAmount || 0).toLocaleString()} withheld (WHT payable to GRA)</div>}
             </div>
             <Select label="Method" selectedKeys={[form.paymentMethod || 'Bank']} onSelectionChange={(keys) => setForm({ ...form, paymentMethod: Array.from(keys)[0] })}>
               <SelectItem key="Cash">Cash</SelectItem>

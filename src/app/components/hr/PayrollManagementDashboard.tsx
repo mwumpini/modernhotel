@@ -14,7 +14,13 @@ interface Props {
 export default function PayrollManagementDashboard({ onSelect }: Props) {
   const periods = usePayrollStore((s) => s.payrollPeriods);
   const records = usePayrollStore((s) => s.payrollRecords);
+  const hydrateFromApi = usePayrollStore((s) => s.hydrateFromApi);
   const getSummary = useBenefitsStore((s) => s.getSummary);
+
+  React.useEffect(() => {
+    hydrateFromApi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const processingActive = periods.filter((p) => ['draft', 'processing', 'approved'].includes(p.status)).length;
   const payslipsCount = records.length; // generated count placeholder

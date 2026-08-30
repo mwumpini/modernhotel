@@ -4,6 +4,7 @@ import React from 'react';
 import { Card, CardHeader, CardBody, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Select, SelectItem, Chip, Input, Button, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Checkbox } from '@heroui/react';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
+import { useComplianceStore } from '@/app/lib/compliance/store';
 import { amountToWordsGhana, generatePaymentAdvicePDF } from '@/app/lib/hr/payrollPdf';
 
 export default function PayrollProcessingPanel() {
@@ -13,6 +14,28 @@ export default function PayrollProcessingPanel() {
   const getDepartment = useEmployeeStore((s) => s.getDepartment);
   const getPosition = useEmployeeStore((s) => s.getPosition);
   const payrollRecords = usePayrollStore((s) => s.payrollRecords);
+  const taxRules = useComplianceStore((s) => s.taxRules);
+
+  // Tier 1/2/3 are separate, independently-renameable rules (different institutions) — the
+  // column labels and pre-run estimate rates below read the live rule so a rename in
+  // Settings → Tax Rate Builder (or a rate change) shows up here without a code change.
+  const findGhRule = (tag: string) =>
+    taxRules.find((r) => r.countryCode === 'GH' && r.domain === 'payroll' && (r.appliesTo || []).includes(tag));
+  const tier1Rule = findGhRule('TIER1');
+  const tier2Rule = findGhRule('TIER2');
+  const tier3Rule = findGhRule('TIER3_RELIEF_CAP');
+  const tier1Label = tier1Rule?.name || 'Tier 1';
+  const tier2Label = tier2Rule?.name || 'Tier 2';
+  const tier3Label = tier3Rule?.name || 'Tier 3';
+
+  React.useEffect(() => {
+    // This panel can be reached directly (HR & Payroll → Payroll Management → Payroll
+    // Processing) without ever visiting Compliance & Reports first, which is otherwise the
+    // only place the compliance store gets hydrated — without this, taxRules is silently
+    // empty and every Tier 1/2/3 label/rate below falls back to defaults instead of the
+    // live (possibly renamed/rate-changed) rule.
+    void useComplianceStore.getState().syncCountryFromSetup();
+  }, []);
 
   const [statusFilter, setStatusFilter] = React.useState<string>('all');
   const [deptFilter, setDeptFilter] = React.useState<string>('all');
@@ -237,9 +260,9 @@ export default function PayrollProcessingPanel() {
               <TableColumn className={visibleColumns.has('allowances') ? '' : 'hidden'}>ALLOWANCES</TableColumn>
               <TableColumn className={visibleColumns.has('secondEmployment') ? '' : 'hidden'}>SECOND EMPLOY</TableColumn>
               <TableColumn className={visibleColumns.has('incomeTax') ? '' : 'hidden'}>INCOME TAX</TableColumn>
-              <TableColumn className={visibleColumns.has('socialSecurity') ? '' : 'hidden'}>Social Security</TableColumn>
-              <TableColumn className={visibleColumns.has('tier2') ? '' : 'hidden'}>TIER 2</TableColumn>
-              <TableColumn className={visibleColumns.has('tier3') ? '' : 'hidden'}>TIER 3</TableColumn>
+              <TableColumn className={visibleColumns.has('socialSecurity') ? '' : 'hidden'}>{tier1Label}</TableColumn>
+              <TableColumn className={visibleColumns.has('tier2') ? '' : 'hidden'}>{tier2Label}</TableColumn>
+              <TableColumn className={visibleColumns.has('tier3') ? '' : 'hidden'}>{tier3Label}</TableColumn>
               <TableColumn className={visibleColumns.has('actions') ? '' : 'hidden'}>ACTIONS</TableColumn>
             </TableHeader>
             <TableBody>
@@ -259,17 +282,28 @@ export default function PayrollProcessingPanel() {
                 const incomeTaxAmount = latestPayrollRecord?.deductions?.tax || 0;
                 const incomeTaxDisplayAmount = incomeTaxEnrolled ? (incomeTaxAmount > 0 ? incomeTaxAmount : (grossPay * 0.1)) : 0;
 
+                // Tier 1's base is basic salary only (allowances/bonus/overtime excluded per
+                // its insurable-earnings definition) — the pre-run estimate below uses
+                // basicSalary, not grossPay, and the live employee rate from Settings →
+                // Tax Rate Builder rather than a hardcoded percentage.
                 const ssnitEnrolled = (e as any).ssnitEnrolled === true;
                 const ssnitAmount = latestPayrollRecord?.deductions?.socialSecurity || 0;
-                const ssnitDisplayAmount = ssnitEnrolled ? (ssnitAmount > 0 ? ssnitAmount : (grossPay * 0.055)) : 0;
+                const ssnitDisplayAmount = ssnitEnrolled ? (ssnitAmount > 0 ? ssnitAmount : (basicSalary * ((tier1Rule?.rate ?? 5.5) / 100))) : 0;
 
+                // Tier 2 is its own separate, fully-employer-funded rule (0% employee rate
+                // by default) — deductions.pension carries the real amount from the payroll
+                // engine once a record exists (see PayrollBuilderPanel.tsx).
                 const tier2Enrolled = (e as any).tier2Enrolled === true;
                 const tier2Amount = latestPayrollRecord?.deductions?.pension || 0;
-                const tier2DisplayAmount = tier2Enrolled ? (tier2Amount > 0 ? tier2Amount : (grossPay * 0.05)) : 0;
+                const tier2DisplayAmount = tier2Enrolled ? (tier2Amount > 0 ? tier2Amount : (basicSalary * ((tier2Rule?.rate ?? 0) / 100))) : 0;
 
+                // Tier 3 is a real, employee-elected voluntary deduction. Before any payroll
+                // run exists there's no historical record to read, so estimate from the
+                // employee's own configured contribution rate rather than a guessed flat rate.
                 const tier3Enrolled = (e as any).tier3Enrolled === true;
-                const tier3AmountValue = latestPayrollRecord?.deductions?.other || 0;
-                const tier3DisplayAmount = tier3Enrolled ? (tier3AmountValue > 0 ? tier3AmountValue : 0) : 0;
+                const tier3Pct = Number((e as any).tier3ContributionPct || 0);
+                const tier3EstimatedAmount = grossPay * (tier3Pct / 100);
+                const tier3DisplayAmount = tier3Enrolled ? tier3EstimatedAmount : 0;
 
                 return (
                   <TableRow key={e.id}>
