@@ -145,6 +145,28 @@ export default function RoomConfigurationDashboard() {
     multiplier: 1,
     description: ''
   });
+  const [seasonalFormError, setSeasonalFormError] = useState<string | null>(null);
+
+  // Bulk Operations tab — room type selected for "Activate All Rooms of Type"
+  const [bulkActivateRoomTypeId, setBulkActivateRoomTypeId] = useState<string>('');
+  const [roomTypeFormError, setRoomTypeFormError] = useState<string | null>(null);
+  const [editRoomTypeFormError, setEditRoomTypeFormError] = useState<string | null>(null);
+  const [ratePlanFormError, setRatePlanFormError] = useState<string | null>(null);
+  const [editRatePlanFormError, setEditRatePlanFormError] = useState<string | null>(null);
+
+  // Deep-link handler from Settings Overview — moved out of the render body (was calling
+  // setActiveTab/localStorage.removeItem directly during render, which is unsafe under
+  // concurrent rendering: a render that's discarded before committing could clear the
+  // flag without ever actually switching tabs).
+  useEffect(() => {
+    try {
+      const requested = localStorage.getItem('room-config.openTab');
+      if (requested) {
+        setActiveTab(requested);
+        localStorage.removeItem('room-config.openTab');
+      }
+    } catch {}
+  }, []);
   
   // Sorting states
   const [roomsSortField, setRoomsSortField] = useState<string>('number');
@@ -358,7 +380,27 @@ export default function RoomConfigurationDashboard() {
   const handleAddRoomType = () => {
     const baseRate = Number(newRoomType.baseRate);
     const capacity = Number(newRoomType.capacity);
-    if (newRoomType.name && baseRate > 0 && capacity > 0) {
+    if (!newRoomType.name.trim()) {
+      setRoomTypeFormError('Room type name is required.');
+      return;
+    }
+    if (!(baseRate > 0)) {
+      setRoomTypeFormError('Base Rate must be greater than 0.');
+      return;
+    }
+    if (!(capacity > 0)) {
+      setRoomTypeFormError('Capacity must be greater than 0.');
+      return;
+    }
+    const nameTaken = settingsStore.roomManagement.roomTypes.some(
+      rt => rt.name.trim().toLowerCase() === newRoomType.name.trim().toLowerCase()
+    );
+    if (nameTaken) {
+      setRoomTypeFormError(`A room type named "${newRoomType.name}" already exists.`);
+      return;
+    }
+    setRoomTypeFormError(null);
+    {
              const roomType: RoomType = {
          id: Date.now().toString(),
          name: newRoomType.name,
@@ -391,6 +433,7 @@ export default function RoomConfigurationDashboard() {
       baseRate: (roomType.baseRate ?? 0).toString(),
       description: roomType.description || ''
     });
+    setEditRoomTypeFormError(null);
     setEditRoomTypeModalOpen(true);
     logAction('EDIT_ROOM_TYPE_OPEN', { roomType });
   };
@@ -398,19 +441,38 @@ export default function RoomConfigurationDashboard() {
   const handleUpdateRoomType = () => {
     const baseRate = Number(editRoomType.baseRate);
     const capacity = Number(editRoomType.capacity);
-    if (selectedRoomType && editRoomType.name && baseRate > 0 && capacity > 0) {
-      const updates = {
-        name: editRoomType.name,
-        capacity, // Convert string to number
-        baseRate,
-        description: editRoomType.description
-      };
-
-      settingsStore.updateRoomType(selectedRoomType.id, updates);
-      logAction('UPDATE_ROOM_TYPE', { roomTypeId: selectedRoomType.id, updates });
-      setEditRoomTypeModalOpen(false);
-      setSelectedRoomType(null);
+    if (!selectedRoomType) return;
+    if (!editRoomType.name.trim()) {
+      setEditRoomTypeFormError('Room type name is required.');
+      return;
     }
+    if (!(baseRate > 0)) {
+      setEditRoomTypeFormError('Base Rate must be greater than 0.');
+      return;
+    }
+    if (!(capacity > 0)) {
+      setEditRoomTypeFormError('Capacity must be greater than 0.');
+      return;
+    }
+    const nameTaken = settingsStore.roomManagement.roomTypes.some(
+      rt => rt.id !== selectedRoomType.id && rt.name.trim().toLowerCase() === editRoomType.name.trim().toLowerCase()
+    );
+    if (nameTaken) {
+      setEditRoomTypeFormError(`A room type named "${editRoomType.name}" already exists.`);
+      return;
+    }
+    const updates = {
+      name: editRoomType.name,
+      capacity, // Convert string to number
+      baseRate,
+      description: editRoomType.description
+    };
+
+    settingsStore.updateRoomType(selectedRoomType.id, updates);
+    logAction('UPDATE_ROOM_TYPE', { roomTypeId: selectedRoomType.id, updates });
+    setEditRoomTypeFormError(null);
+    setEditRoomTypeModalOpen(false);
+    setSelectedRoomType(null);
   };
 
   const handleDeleteRoomType = (roomType: RoomType) => {
@@ -609,7 +671,27 @@ export default function RoomConfigurationDashboard() {
   };
 
   const handleAddRatePlan = () => {
-    if (newRatePlan.name && newRatePlan.roomType && Number(newRatePlan.price) > 0) {
+    if (!newRatePlan.name.trim()) {
+      setRatePlanFormError('Rate plan name is required.');
+      return;
+    }
+    if (!newRatePlan.roomType) {
+      setRatePlanFormError('Room type is required.');
+      return;
+    }
+    if (!(Number(newRatePlan.price) > 0)) {
+      setRatePlanFormError('Price must be greater than 0.');
+      return;
+    }
+    const nameTaken = settingsStore.roomManagement.ratePlans.some(
+      p => p.roomTypeId === newRatePlan.roomType && p.name.trim().toLowerCase() === newRatePlan.name.trim().toLowerCase()
+    );
+    if (nameTaken) {
+      setRatePlanFormError(`A rate plan named "${newRatePlan.name}" already exists for this room type.`);
+      return;
+    }
+    setRatePlanFormError(null);
+    {
       const ratePlan = {
         id: Date.now().toString(),
         name: newRatePlan.name,
@@ -647,19 +729,38 @@ export default function RoomConfigurationDashboard() {
 
   const handleUpdateRatePlan = () => {
     const price = Number(editRatePlanForm.price);
-    if (selectedRatePlan && editRatePlanForm.name && editRatePlanForm.roomType && price > 0) {
-      const updates = {
-        name: editRatePlanForm.name,
-        roomTypeId: editRatePlanForm.roomType,
-        basePrice: price,
-        priceType: editRatePlanForm.priceType,
-        lastUpdated: new Date().toISOString(),
-      };
-      settingsStore.updateRatePlan(selectedRatePlan.id, updates as any);
-      logAction('UPDATE_RATE_PLAN', { ratePlanId: selectedRatePlan.id, updates });
-      setEditRatePlanModalOpen(false);
-      setSelectedRatePlan(null);
+    if (!selectedRatePlan) return;
+    if (!editRatePlanForm.name.trim()) {
+      setEditRatePlanFormError('Rate plan name is required.');
+      return;
     }
+    if (!editRatePlanForm.roomType) {
+      setEditRatePlanFormError('Room type is required.');
+      return;
+    }
+    if (!(price > 0)) {
+      setEditRatePlanFormError('Price must be greater than 0.');
+      return;
+    }
+    const nameTaken = settingsStore.roomManagement.ratePlans.some(
+      p => p.id !== selectedRatePlan.id && p.roomTypeId === editRatePlanForm.roomType && p.name.trim().toLowerCase() === editRatePlanForm.name.trim().toLowerCase()
+    );
+    if (nameTaken) {
+      setEditRatePlanFormError(`A rate plan named "${editRatePlanForm.name}" already exists for this room type.`);
+      return;
+    }
+    const updates = {
+      name: editRatePlanForm.name,
+      roomTypeId: editRatePlanForm.roomType,
+      basePrice: price,
+      priceType: editRatePlanForm.priceType,
+      lastUpdated: new Date().toISOString(),
+    };
+    settingsStore.updateRatePlan(selectedRatePlan.id, updates as any);
+    logAction('UPDATE_RATE_PLAN', { ratePlanId: selectedRatePlan.id, updates });
+    setEditRatePlanFormError(null);
+    setEditRatePlanModalOpen(false);
+    setSelectedRatePlan(null);
   };
 
   const handleBulkAddRooms = () => {
@@ -1352,17 +1453,6 @@ export default function RoomConfigurationDashboard() {
 
   return (
     <div className="p-6">
-      {/* Deep-link handler from Settings Overview */}
-      {(() => {
-        try {
-          const requested = localStorage.getItem('room-config.openTab');
-          if (requested && requested !== activeTab) {
-            setActiveTab(requested);
-            localStorage.removeItem('room-config.openTab');
-          }
-        } catch {}
-        return null;
-      })()}
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-ghana-black">🏠 Rooms & Pricing</h1>
@@ -1406,12 +1496,17 @@ export default function RoomConfigurationDashboard() {
                <p className="text-sm text-gray-600">Base Rate is the fallback nightly price used until a Rate Plan is set up for this room type, in the Rate Plans tab</p>
              </CardHeader>
              <CardBody>
+               {roomTypeFormError && (
+                 <div className="mb-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
+                   {roomTypeFormError}
+                 </div>
+               )}
                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                  <Input
                    label="Room Type Name"
                    placeholder="e.g., Standard, Deluxe"
                    value={newRoomType.name}
-                   onChange={(e) => setNewRoomType({...newRoomType, name: e.target.value})}
+                   onChange={(e) => { setNewRoomType({...newRoomType, name: e.target.value}); setRoomTypeFormError(null); }}
                  />
 
                  <Input
@@ -1777,17 +1872,11 @@ export default function RoomConfigurationDashboard() {
               </div>
               
               <div className="mt-6 pt-4 border-t">
-                <Button color="primary" variant="flat" onClick={() => {
-                  if (!selectedAmenitiesRoomTypeId) {
-                    alert('Please select a room type first.');
-                    return;
-                  }
-                  const rt = getSelectedAmenitiesRoomType();
-                  logAction('SAVE_AMENITIES_FOR_ROOM_TYPE', { roomTypeId: selectedAmenitiesRoomTypeId, amenities: rt?.amenities || [] });
-                  alert('Amenities updated for ' + getRoomTypeName(selectedAmenitiesRoomTypeId));
-                }}>
-                  Update Amenities for Selected Type
-                </Button>
+                <p className="text-sm text-gray-500">
+                  {selectedAmenitiesRoomTypeId
+                    ? `Changes save automatically as you toggle amenities for ${getRoomTypeName(selectedAmenitiesRoomTypeId)}.`
+                    : 'Select a room type above to manage its amenities — changes save automatically.'}
+                </p>
               </div>
             </CardBody>
           </Card>
@@ -2242,12 +2331,17 @@ export default function RoomConfigurationDashboard() {
               <h3 className="text-xl font-semibold">Add New Rate Plan</h3>
             </CardHeader>
             <CardBody>
+              {ratePlanFormError && (
+                <div className="mb-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
+                  {ratePlanFormError}
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                 <Input
                   label="Rate Plan Name"
                   placeholder="e.g., Weekend Special, Corporate Rate"
                   value={newRatePlan.name}
-                  onChange={(e) => setNewRatePlan({...newRatePlan, name: e.target.value})}
+                  onChange={(e) => { setNewRatePlan({...newRatePlan, name: e.target.value}); setRatePlanFormError(null); }}
                 />
                 <Select
                   label="Room Type"
@@ -2475,6 +2569,7 @@ export default function RoomConfigurationDashboard() {
                                   priceType: (plan.priceType as 'subtotal' | 'gross_total') || 'subtotal',
                                   description: (plan as any).description || '',
                                 });
+                                setEditRatePlanFormError(null);
                                 setEditRatePlanModalOpen(true);
                               }}
                             >
@@ -2505,6 +2600,7 @@ export default function RoomConfigurationDashboard() {
                               onClick={() => {
                                 setSeasonalPlanId(plan.id);
                                 setSeasonalForm({ name: '', startDate: '', endDate: '', multiplier: 1, description: '' });
+                                setSeasonalFormError(null);
                                 setSeasonalModalOpen(true);
                               }}
                             >
@@ -2646,7 +2742,7 @@ export default function RoomConfigurationDashboard() {
                             <div className="pt-2">
                               <div className="text-xs text-gray-500">
                                 <p><strong>Tax Breakdown:</strong></p>
-                                <p>• NHIL + GETFund = {((nhil + getfund) / subtotal * 100).toFixed(1)}% of base</p>
+                                <p>• NHIL + GETFund = {subtotal > 0 ? ((nhil + getfund) / subtotal * 100).toFixed(1) : '0.0'}% of base</p>
                                 <p>• VAT = 15% of (base + levies)</p>
                                 <p>• Tourism = 1% of base</p>
                               </div>
@@ -3142,12 +3238,24 @@ export default function RoomConfigurationDashboard() {
                 <div className="p-3 bg-white rounded-lg border border-blue-200">
                   <h4 className="text-sm font-medium text-blue-800 mb-2">🏷️ Room Type Management</h4>
                   <div className="space-y-2">
-                    <Select size="sm" label="Select Room Type" placeholder="Choose room type" onChange={(e) => { if (e.target.value) { handleBulkRoomStatusChange({ roomTypes: [e.target.value] }, 'available', true); } }}>
+                    <Select size="sm" label="Select Room Type" placeholder="Choose room type" selectedKeys={bulkActivateRoomTypeId ? [bulkActivateRoomTypeId] : []} onChange={(e) => setBulkActivateRoomTypeId(e.target.value)}>
                       {settingsStore.roomManagement.roomTypes.map((type) => (
                         <SelectItem key={type.id}>{type.name}</SelectItem>
                       ))}
                     </Select>
-                    <Button size="sm" color="success" variant="flat" className="w-full" onClick={() => { const selectedType = document.querySelector('select')?.value; if (selectedType) { handleBulkRoomStatusChange({ roomTypes: [selectedType] }, 'available', true); } }}>
+                    <Button
+                      size="sm"
+                      color="success"
+                      variant="flat"
+                      className="w-full"
+                      isDisabled={!bulkActivateRoomTypeId}
+                      onClick={() => {
+                        if (!bulkActivateRoomTypeId) return;
+                        const typeName = settingsStore.roomManagement.roomTypes.find(t => t.id === bulkActivateRoomTypeId)?.name || bulkActivateRoomTypeId;
+                        if (!confirm(`Activate all ${typeName} rooms?`)) return;
+                        handleBulkRoomStatusChange({ roomTypes: [bulkActivateRoomTypeId] }, 'available', true);
+                      }}
+                    >
                       Activate All Rooms of Type
                     </Button>
                   </div>
@@ -3173,12 +3281,17 @@ export default function RoomConfigurationDashboard() {
         <ModalContent>
           <ModalHeader>Edit Room Type</ModalHeader>
           <ModalBody>
+            {editRoomTypeFormError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
+                {editRoomTypeFormError}
+              </div>
+            )}
             <div className="space-y-4">
               <Input
                 label="Room Type Name"
                 placeholder="e.g., Standard, Deluxe"
                 value={editRoomType.name}
-                onChange={(e) => setEditRoomType({...editRoomType, name: e.target.value})}
+                onChange={(e) => { setEditRoomType({...editRoomType, name: e.target.value}); setEditRoomTypeFormError(null); }}
               />
               
               <Input
@@ -3222,12 +3335,17 @@ export default function RoomConfigurationDashboard() {
         <ModalContent>
           <ModalHeader>Edit Rate Plan</ModalHeader>
           <ModalBody>
+            {editRatePlanFormError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
+                {editRatePlanFormError}
+              </div>
+            )}
             <div className="space-y-4">
               <Input
                 label="Rate Plan Name"
                 placeholder="e.g., Weekend Special, Corporate Rate"
                 value={editRatePlanForm.name}
-                onChange={(e) => setEditRatePlanForm({ ...editRatePlanForm, name: e.target.value })}
+                onChange={(e) => { setEditRatePlanForm({ ...editRatePlanForm, name: e.target.value }); setEditRatePlanFormError(null); }}
               />
               <Select
                 label="Room Type"
@@ -3356,6 +3474,11 @@ export default function RoomConfigurationDashboard() {
         <ModalContent>
           <ModalHeader>Add Seasonal Rate</ModalHeader>
           <ModalBody className="max-h-[60vh] overflow-auto">
+            {seasonalFormError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
+                {seasonalFormError}
+              </div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <Input 
                 label="Season Name" 
@@ -3393,7 +3516,30 @@ export default function RoomConfigurationDashboard() {
           <ModalFooter>
             <Button variant="light" onPress={() => setSeasonalModalOpen(false)}>Cancel</Button>
             <Button color="primary" onPress={() => {
-              if (!seasonalPlanId || !seasonalForm.name || !seasonalForm.startDate || !seasonalForm.endDate) return;
+              if (!seasonalPlanId || !seasonalForm.name.trim()) {
+                setSeasonalFormError('Season name is required.');
+                return;
+              }
+              if (!seasonalForm.startDate || !seasonalForm.endDate) {
+                setSeasonalFormError('Start and end dates are required.');
+                return;
+              }
+              if (seasonalForm.endDate <= seasonalForm.startDate) {
+                setSeasonalFormError('End date must be after the start date.');
+                return;
+              }
+              if (!Number.isFinite(seasonalForm.multiplier) || seasonalForm.multiplier <= 0) {
+                setSeasonalFormError('Multiplier must be a positive number (e.g. 1.2 for +20%).');
+                return;
+              }
+              const plan = settingsStore.roomManagement.ratePlans.find(p => p.id === seasonalPlanId);
+              const overlaps = (plan?.seasonalRates || []).some(sr =>
+                seasonalForm.startDate <= sr.endDate && seasonalForm.endDate >= sr.startDate
+              );
+              if (overlaps) {
+                setSeasonalFormError('This date range overlaps an existing seasonal period on this rate plan.');
+                return;
+              }
               const seasonal = {
                 id: Date.now().toString(),
                 name: seasonalForm.name,
@@ -3404,6 +3550,7 @@ export default function RoomConfigurationDashboard() {
               };
               settingsStore.addSeasonalRate(seasonalPlanId, seasonal);
               logAction('ADD_SEASONAL_RATE', { ratePlanId: seasonalPlanId, seasonal });
+              setSeasonalFormError(null);
               setSeasonalModalOpen(false);
             }}>Save Seasonal Rate</Button>
           </ModalFooter>
