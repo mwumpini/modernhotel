@@ -283,6 +283,81 @@ export function capturePpeBookDepreciation(input: {
   }
 }
 
+/** Posts the cost delta when an already-capitalized asset's cost changes (quantity/unit price
+ *  edited after capitalization). The original capitalization JE is left untouched — this adds
+ *  a separate correcting entry, so the GL catches up to the register's new cost instead of
+ *  silently drifting from it. `delta` may be negative (a downward cost correction). */
+export function capturePpeCostAdjustment(input: {
+  ppeAssetId: string;
+  assetCode: string;
+  name: string;
+  date: string;
+  delta: number;
+  paymentGlCode?: string;
+}): { journalEntryId: string } | null {
+  if (Math.abs(input.delta) < 0.01) return null;
+  const store = useAccountingStore.getState();
+  const now = new Date().toISOString();
+  const jeId = `JE-PPE-ADJ-${Date.now()}`;
+  const amount = Math.abs(input.delta);
+  const isIncrease = input.delta > 0;
+  const otherGl = input.paymentGlCode || GL_AP;
+
+  const je: JournalEntry = {
+    id: jeId,
+    entryNumber: jeNumber(),
+    date: input.date.slice(0, 10),
+    reference: input.assetCode,
+    description: `PPE cost adjustment (${isIncrease ? 'increase' : 'decrease'}) — ${input.name}`,
+    totalDebit: amount,
+    totalCredit: amount,
+    currency: 'GHS',
+    status: 'Posted',
+    postedBy: 'system',
+    postedAt: now,
+    createdAt: now,
+    updatedAt: now,
+    sourceModule: 'ppe_register_cost_adjustment',
+    sourceTransactionId: input.ppeAssetId,
+    lines: [
+      {
+        id: lineId(),
+        journalEntryId: jeId,
+        accountCode: GL_COST,
+        description: 'Property & equipment — cost adjustment',
+        debit: isIncrease ? amount : 0,
+        credit: isIncrease ? 0 : amount,
+        currency: 'GHS',
+      },
+      {
+        id: lineId(),
+        journalEntryId: jeId,
+        accountCode: otherGl,
+        description: 'Settlement — AP / cash (cost adjustment)',
+        debit: isIncrease ? 0 : amount,
+        credit: isIncrease ? amount : 0,
+        currency: 'GHS',
+      },
+    ],
+  };
+
+  try {
+    store.addJournalEntry(je as JournalEntry);
+    store.addAuditTrail({
+      id: `AT-PPE-ADJ-${Date.now()}`,
+      tableName: 'PpeAsset',
+      recordId: input.ppeAssetId,
+      action: 'Post',
+      newValues: { type: 'ppe_cost_adjustment', journalEntryId: jeId, delta: input.delta },
+      userId: 'system',
+      timestamp: now,
+    });
+    return { journalEntryId: jeId };
+  } catch {
+    return null;
+  }
+}
+
 export function syncPpeRegisterToLedger(
   assets: PpeAsset[],
   categories: PpeCategory[],

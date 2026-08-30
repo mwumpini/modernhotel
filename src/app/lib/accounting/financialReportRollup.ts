@@ -2,6 +2,7 @@ import type { JournalEntry } from './models';
 import { isBankOrCashGlCode } from './bankCoaLink';
 import { enrichRollupCoaParents, codeNum } from './coaHierarchy';
 import { shouldIncludeJeLineInRevenueRollup } from './revenueSourcePolicy';
+import { CLOSE_SOURCE } from './periodClose';
 
 /** Minimal COA row for roll-ups (store or template). */
 export type RollupCoa = {
@@ -182,6 +183,12 @@ export function buildFinancialAccountTree(allAccounts: RollupCoa[], journalEntri
     const t = jeTime(je);
     if (t > endTs) return;
     if (mode.kind === 'period' && startTs !== null && t < startTs) return;
+    // A period-close entry zeroes revenue/expense accounts back to nil as of the close date.
+    // In cumulative (Balance Sheet) mode that's correct — it's the real effect on retained
+    // earnings. But in period mode (Income Statement movement between two dates), including it
+    // would cancel out real revenue/expense activity for any period whose range spans the
+    // close date, suppressing the very figures the close is supposed to summarize.
+    if (mode.kind === 'period' && je.sourceModule === CLOSE_SOURCE) return;
 
     je.lines.forEach((line) => {
       const code = line.accountCode;

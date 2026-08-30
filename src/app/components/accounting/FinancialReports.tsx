@@ -447,29 +447,29 @@ export default function FinancialReportsPage() {
   }, [trialBalanceRows]);
 
   const printTrialBalance = useCallback(() => {
-    const renderRows = (nodes: AccountNode[], level = 0): string => {
-      return nodes.map(node => {
-        const indent = '&nbsp;'.repeat(level * 6);
-        const levelClass = level === 0 ? 'level-1' : level === 1 ? 'level-2' : 'level-3';
-        const debitBal = node.debit > node.credit ? node.debit - node.credit : 0;
-        const creditBal = node.credit > node.debit ? node.credit - node.debit : 0;
-        const row = `<tr class="${levelClass}">
-          <td class="font-mono">${node.code}</td>
-          <td>${indent}${node.name}</td>
-          <td>${node.type}</td>
-          <td class="text-right font-mono">${debitBal > 0 ? formatCurrency(debitBal) : '-'}</td>
-          <td class="text-right font-mono">${creditBal > 0 ? formatCurrency(creditBal) : '-'}</td>
+    // Print exactly the rows currently on screen (same source, `trialBalanceRows`, already
+    // respecting showZeroBalances/expandedSections) instead of independently re-walking the
+    // full tree — otherwise the printout could show a different set of rows, in a different
+    // order, than what the user was looking at when they clicked Print.
+    const renderRows = (): string => {
+      return trialBalanceRows.map(row => {
+        const indent = '&nbsp;'.repeat(row.level * 6);
+        const levelClass = row.level === 0 ? 'level-1' : row.level === 1 ? 'level-2' : 'level-3';
+        return `<tr class="${levelClass}">
+          <td class="font-mono">${row.code}</td>
+          <td>${indent}${row.name}</td>
+          <td>${row.type}</td>
+          <td class="text-right font-mono">${row.debit > 0 ? formatCurrency(row.debit) : '-'}</td>
+          <td class="text-right font-mono">${row.credit > 0 ? formatCurrency(row.credit) : '-'}</td>
         </tr>`;
-        const children = node.children.length > 0 ? renderRows(node.children, level + 1) : '';
-        return row + children;
       }).join('');
     };
-    
+
     const content = `
       <table>
         <thead><tr><th>Code</th><th>Account Name</th><th>Type</th><th class="text-right">Debit</th><th class="text-right">Credit</th></tr></thead>
         <tbody>
-          ${renderRows(accountTreeCumulative)}
+          ${renderRows()}
           <tr class="total-row">
             <td colspan="3" class="font-bold">TOTAL</td>
             <td class="text-right font-mono font-bold double-underline">${formatCurrency(trialBalanceTotals.debit)}</td>
@@ -479,7 +479,7 @@ export default function FinancialReportsPage() {
       </table>
     `;
     openPrintPreview(generateReportHTML('TRIAL BALANCE', periodLabel, content));
-  }, [accountTreeCumulative, trialBalanceTotals, periodLabel]);
+  }, [trialBalanceRows, trialBalanceTotals, periodLabel]);
 
   const printIncomeStatement = useCallback(() => {
     const renderSection = (nodes: AccountNode[], isExpense = false): string => {

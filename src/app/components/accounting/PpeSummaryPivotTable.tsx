@@ -4,7 +4,7 @@ import React, { useMemo, useState, useCallback } from 'react';
 import { Button, Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Checkbox } from '@heroui/react';
 
 const fmt = (n: number) =>
-  `₵${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  `₵${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const fmtRaw = (n: number) => n.toFixed(2);
 

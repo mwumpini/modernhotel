@@ -4,10 +4,10 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { PpeAsset, PpeCategory } from './ppe/types';
 import { DEFAULT_PPE_CATEGORIES, SAMPLE_PPE_ASSETS } from './ppe/categories';
-import { defaultReportDateStr } from './ppe/calculations';
+import { defaultReportDateStr, assetTotalCost } from './ppe/calculations';
 import { validateAsset, validateCategory } from './ppe/validation';
 import { DEFAULT_ORG_ID } from './ppe/categories';
-import { syncPpeRegisterToLedger } from './ppe/ledgerSync';
+import { syncPpeRegisterToLedger, capturePpeCostAdjustment } from './ppe/ledgerSync';
 
 const STORAGE_KEY = 'ppe.register.v1';
 
@@ -24,7 +24,7 @@ interface PpeRegisterState {
 
   addAsset: (input: Omit<PpeAsset, 'id' | 'createdAt' | 'updatedAt'>) => PpeAsset | null;
   updateAsset: (id: string, updates: Partial<PpeAsset>) => boolean;
-  deleteAsset: (id: string) => void;
+  deleteAsset: (id: string) => boolean;
   setCapitalizationJournalId: (assetId: string, journalEntryId: string) => void;
   setLedgerAccumDepPosted: (assetId: string, amount: number, journalEntryId?: string) => void;
   syncToLedger: () => import('./ppe/ledgerSync').PpeSyncResult;
@@ -113,6 +113,26 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
           set({ error: errors.join('; ') });
           return false;
         }
+
+        // Already capitalized and this edit changes the cost (quantity/unitPrice) — post a
+        // correcting journal entry for the delta so the GL cost account catches up to the
+        // register's new cost instead of silently drifting from it. The original
+        // capitalization JE is left untouched (never rewrite posted history).
+        if (existing.capitalizationJournalEntryId) {
+          const oldCost = assetTotalCost(existing);
+          const newCost = assetTotalCost(merged);
+          const delta = +(newCost - oldCost).toFixed(2);
+          if (Math.abs(delta) >= 0.01) {
+            capturePpeCostAdjustment({
+              ppeAssetId: id,
+              assetCode: existing.assetCode,
+              name: existing.assetName,
+              date: new Date().toISOString(),
+              delta,
+            });
+          }
+        }
+
         set((state) => ({
           assets: state.assets.map((a) =>
             a.id === id ? { ...a, ...updates, updatedAt: new Date().toISOString() } : a
@@ -122,10 +142,21 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
         return true;
       },
 
-      deleteAsset: (id) =>
+      deleteAsset: (id) => {
+        const existing = get().assets.find((a) => a.id === id);
+        if (!existing) return false;
+        if (existing.capitalizationJournalEntryId) {
+          set({
+            error: `Cannot delete "${existing.assetName}": it has been capitalized to the GL. Dispose the asset instead, or void the capitalization journal entry first.`,
+          });
+          return false;
+        }
         set((state) => ({
           assets: state.assets.filter((a) => a.id !== id),
-        })),
+          error: null,
+        }));
+        return true;
+      },
 
       setCapitalizationJournalId: (assetId, journalEntryId) =>
         set((state) => ({

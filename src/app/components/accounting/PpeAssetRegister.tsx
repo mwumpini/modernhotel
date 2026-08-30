@@ -56,7 +56,7 @@ import {
 import { DEFAULT_ORG_ID } from '@/app/lib/accounting/ppe/categories';
 
 const fmt = (n: number) =>
-  `₵${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  `₵${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const CAP_EXP_OPTIONS: CapExpStatus[] = ['Capitalise', 'Expense', 'Disposed'];
 const GRA_METHOD_OPTIONS: GraMethod[] = ['SL', 'RB'];
@@ -409,7 +409,11 @@ export default function PpeAssetRegisterPage() {
                         <TableCell>
                           <div className="flex gap-1">
                             <Button size="sm" variant="light" onPress={() => openEdit(asset)}>Edit</Button>
-                            <Button size="sm" variant="light" color="danger" onPress={() => deleteAsset(asset.id)}>Del</Button>
+                            <Button size="sm" variant="light" color="danger" onPress={() => {
+                              if (confirm(`Delete "${asset.assetName}" (${asset.assetCode})? This cannot be undone.`)) {
+                                deleteAsset(asset.id);
+                              }
+                            }}>Del</Button>
                           </div>
                         </TableCell>
                       </TableRow>

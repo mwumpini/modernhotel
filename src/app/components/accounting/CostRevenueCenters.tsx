@@ -4,16 +4,21 @@ import { useState } from 'react';
 import { useAccountingStore } from '../../lib/accounting/store';
 import type { CostCenter, RevenueCenter } from '../../lib/accounting/models';
 
+function fmt(amount: number): string {
+  return `₵${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export default function CostRevenueCenters() {
-  const { 
-    costCenters, 
+  const {
+    costCenters,
     revenueCenters,
     addCostCenter,
     updateCostCenter,
     deleteCostCenter,
     addRevenueCenter,
     updateRevenueCenter,
-    deleteRevenueCenter
+    deleteRevenueCenter,
+    error,
   } = useAccountingStore();
 
   const [activeTab, setActiveTab] = useState<'cost' | 'revenue'>('cost');
@@ -40,6 +45,9 @@ export default function CostRevenueCenters() {
       };
       addCostCenter(newCenter);
     }
+    // A duplicate-code (or other) validation failure sets store.error and adds nothing —
+    // keep the modal open so the user sees why, instead of closing as if it saved.
+    if (useAccountingStore.getState().error) return;
     setEditingCostCenter(null);
     setShowAddModal(false);
   };
@@ -58,8 +66,19 @@ export default function CostRevenueCenters() {
       };
       addRevenueCenter(newCenter);
     }
+    if (useAccountingStore.getState().error) return;
     setEditingRevenueCenter(null);
     setShowAddModal(false);
+  };
+
+  const handleDeleteCostCenter = (center: CostCenter) => {
+    if (!confirm(`Delete cost centre "${center.name}" (${center.code})?`)) return;
+    deleteCostCenter(center.id);
+  };
+
+  const handleDeleteRevenueCenter = (center: RevenueCenter) => {
+    if (!confirm(`Delete revenue centre "${center.name}" (${center.code})?`)) return;
+    deleteRevenueCenter(center.id);
   };
 
   return (
@@ -68,6 +87,12 @@ export default function CostRevenueCenters() {
         <h1 className="text-2xl font-bold text-gray-900">Cost & Revenue Centers</h1>
         <p className="text-gray-600">Manage cost and revenue centers for financial tracking and reporting</p>
       </div>
+
+      {error && (
+        <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+          {error}
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="mb-6 border-b border-gray-200">
@@ -134,10 +159,10 @@ export default function CostRevenueCenters() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{center.code}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{center.name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{center.department}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{(center.budget || 0).toLocaleString()}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{center.actualExpenses.toLocaleString()}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.budget || 0)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.actualExpenses)}</td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {variance >= 0 ? '+' : ''}{variance.toLocaleString()} ({variancePercent}%)
+                      {variance >= 0 ? '+' : ''}{fmt(variance)} ({variancePercent}%)
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 py-1 text-xs rounded-full ${center.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
@@ -155,7 +180,7 @@ export default function CostRevenueCenters() {
                         Edit
                       </button>
                       <button
-                        onClick={() => deleteCostCenter(center.id)}
+                        onClick={() => handleDeleteCostCenter(center)}
                         className="text-red-600 hover:text-red-900"
                       >
                         Delete
@@ -194,10 +219,10 @@ export default function CostRevenueCenters() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{center.code}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{center.name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{center.department}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{(center.budget || 0).toLocaleString()}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{center.actualRevenue.toLocaleString()}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.budget || 0)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.actualRevenue)}</td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                      {variance >= 0 ? '+' : ''}{variance.toLocaleString()} ({variancePercent}%)
+                      {variance >= 0 ? '+' : ''}{fmt(variance)} ({variancePercent}%)
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <span className={`px-2 py-1 text-xs rounded-full ${center.isActive ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>
@@ -215,7 +240,7 @@ export default function CostRevenueCenters() {
                         Edit
                       </button>
                       <button
-                        onClick={() => deleteRevenueCenter(center.id)}
+                        onClick={() => handleDeleteRevenueCenter(center)}
                         className="text-red-600 hover:text-red-900"
                       >
                         Delete
@@ -234,12 +259,18 @@ export default function CostRevenueCenters() {
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto">
             <h2 className="text-xl font-bold mb-4">
-              {activeTab === 'cost' 
+              {activeTab === 'cost'
                 ? (editingCostCenter ? 'Edit Cost Center' : 'Add Cost Center')
                 : (editingRevenueCenter ? 'Edit Revenue Center' : 'Add Revenue Center')
               }
             </h2>
-            
+
+            {error && (
+              <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+                {error}
+              </div>
+            )}
+
             {activeTab === 'cost' ? (
               <CostCenterForm
                 center={editingCostCenter}

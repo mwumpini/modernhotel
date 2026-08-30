@@ -2755,36 +2755,78 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // Cost Centers Actions
   setCostCenters: (centers) => set({ costCenters: centers }),
   
-  addCostCenter: (center) => set((state) => ({
-    costCenters: [...state.costCenters, center]
-  })),
-  
-  updateCostCenter: (id, updates) => set((state) => ({
-    costCenters: state.costCenters.map(center =>
-      center.id === id ? { ...center, ...updates } : center
-    )
-  })),
-  
-  deleteCostCenter: (id) => set((state) => ({
-    costCenters: state.costCenters.filter(center => center.id !== id)
-  })),
+  addCostCenter: (center) => set((state) => {
+    if (state.costCenters.some((c) => c.code.trim().toLowerCase() === center.code.trim().toLowerCase())) {
+      return { error: `Cost centre code "${center.code}" is already in use.` };
+    }
+    return { costCenters: [...state.costCenters, center], error: null };
+  }),
+
+  updateCostCenter: (id, updates) => set((state) => {
+    if (updates.code) {
+      const clash = state.costCenters.some(
+        (c) => c.id !== id && c.code.trim().toLowerCase() === updates.code!.trim().toLowerCase()
+      );
+      if (clash) return { error: `Cost centre code "${updates.code}" is already in use.` };
+    }
+    return {
+      costCenters: state.costCenters.map(center =>
+        center.id === id ? { ...center, ...updates } : center
+      ),
+      error: null,
+    };
+  }),
+
+  deleteCostCenter: (id) => set((state) => {
+    const center = state.costCenters.find((c) => c.id === id);
+    if (center && Math.abs(center.actualExpenses || 0) > 0.01) {
+      return {
+        error: `Cannot delete "${center.name}": it has ₵${center.actualExpenses.toLocaleString()} of recorded actual expenses. Reassign or clear those first.`,
+      };
+    }
+    return {
+      costCenters: state.costCenters.filter(center => center.id !== id),
+      error: null,
+    };
+  }),
 
   // Revenue Centers Actions
   setRevenueCenters: (centers) => set({ revenueCenters: centers }),
-  
-  addRevenueCenter: (center) => set((state) => ({
-    revenueCenters: [...state.revenueCenters, center]
-  })),
-  
-  updateRevenueCenter: (id, updates) => set((state) => ({
-    revenueCenters: state.revenueCenters.map(center =>
-      center.id === id ? { ...center, ...updates } : center
-    )
-  })),
-  
-  deleteRevenueCenter: (id) => set((state) => ({
-    revenueCenters: state.revenueCenters.filter(center => center.id !== id)
-  })),
+
+  addRevenueCenter: (center) => set((state) => {
+    if (state.revenueCenters.some((c) => c.code.trim().toLowerCase() === center.code.trim().toLowerCase())) {
+      return { error: `Revenue centre code "${center.code}" is already in use.` };
+    }
+    return { revenueCenters: [...state.revenueCenters, center], error: null };
+  }),
+
+  updateRevenueCenter: (id, updates) => set((state) => {
+    if (updates.code) {
+      const clash = state.revenueCenters.some(
+        (c) => c.id !== id && c.code.trim().toLowerCase() === updates.code!.trim().toLowerCase()
+      );
+      if (clash) return { error: `Revenue centre code "${updates.code}" is already in use.` };
+    }
+    return {
+      revenueCenters: state.revenueCenters.map(center =>
+        center.id === id ? { ...center, ...updates } : center
+      ),
+      error: null,
+    };
+  }),
+
+  deleteRevenueCenter: (id) => set((state) => {
+    const center = state.revenueCenters.find((c) => c.id === id);
+    if (center && Math.abs(center.actualRevenue || 0) > 0.01) {
+      return {
+        error: `Cannot delete "${center.name}": it has ₵${center.actualRevenue.toLocaleString()} of recorded actual revenue. Reassign or clear those first.`,
+      };
+    }
+    return {
+      revenueCenters: state.revenueCenters.filter(center => center.id !== id),
+      error: null,
+    };
+  }),
 
   // Helper functions to track costs and revenue with detailed logging
   recordExpense: (costCenterCode, amount) => set((state) => {

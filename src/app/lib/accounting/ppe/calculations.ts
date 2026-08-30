@@ -98,19 +98,14 @@ export function annualDepCharge(asset: PpeAsset, category: PpeCategory, reportDa
   if (asset.disposalDate) return 0;
   if (category.presentationGroup === 'Land') return 0;
 
-  const cost = assetTotalCost(asset);
-  const depreciable = depreciableAmount(cost, category.residualPct);
+  // Charge for the year = closing accumulated depreciation − opening (prior year-end)
+  // accumulated depreciation. This is what makes depOpening + chargeForYear = depClosing hold
+  // by construction, and it automatically pro-rates for an asset bought mid-year (priorAccum
+  // is 0 for a same-year addition, so the charge is just however many months it's actually
+  // been owned) instead of always charging a full year's rate regardless of purchase date.
   const priorAccum = priorYearAccumDep(asset, category, reportDate);
   const currentAccum = accumDep(asset, category, reportDate);
-
-  if (category.iasMethod === 'SL') {
-    if (currentAccum >= depreciable) return 0;
-    return Math.min(
-      depreciable / Math.max(1, category.usefulLifeYrs),
-      depreciable - priorAccum
-    );
-  }
-  return Math.max(0, Math.min((cost - priorAccum) * category.iasRate, depreciable - priorAccum));
+  return Math.max(0, currentAccum - priorAccum);
 }
 
 export function gainLossOnDisposal(
@@ -185,17 +180,15 @@ export function graCapitalAllowance(
   if (asset.capExp !== 'Capitalise') return 0;
   if (asset.disposalDate) return 0;
 
-  const cost = assetTotalCost(asset);
+  // Capital allowance for the year = opening WDV − closing WDV, for both RB and SL. This is
+  // what makes openingWDV + additions − CA = closingWDV reconcile exactly (graWDV/graWDVPrior
+  // already apply the half-year convention via graYearsElapsed/graYearsElapsedPrior), instead
+  // of applying a full year's rate to the full cost regardless of a same-year, half-year
+  // acquisition — which previously left the GRA rollforward not adding up for any current-year
+  // addition bought in the second half of the year.
   const wdvPrior = graWDVPrior(asset, category, reportDate);
-  const yrs = graYearsElapsed(asset.purchaseDate, reportDate);
-
-  if (category.graMethod === 'RB') {
-    return Math.max(0, Math.round(wdvPrior * category.graRate));
-  }
-
-  const annualCA = cost * category.graRate;
-  const alreadyClaimed = cost * category.graRate * Math.max(0, yrs - 1);
-  return Math.round(Math.min(annualCA, Math.max(0, cost - alreadyClaimed)));
+  const wdvCurrent = graWDV(asset, category, reportDate);
+  return Math.max(0, Math.round(wdvPrior - wdvCurrent));
 }
 
 /** Single source of truth for one asset at report date */

@@ -33,6 +33,7 @@ import InventoryFixedAssets from './accounting/InventoryFixedAssets';
 import FinancialReports from './accounting/FinancialReports';
 import AuditControls from './accounting/AuditControls';
 import BankReconciliation from './accounting/BankReconciliation';
+import CostRevenueCenters from './accounting/CostRevenueCenters';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
@@ -289,7 +290,7 @@ export default function AccountingMainDashboard() {
 
   // Tabs hidden entirely when leanMode is on (see the `!leanMode && <Tab .../>` guards below) —
   // navigating to one of these while lean would land on a blank panel, so fall back to Overview.
-  const LEAN_HIDDEN_TABS = new Set(['accounts', 'banking', 'assets', 'reports', 'audit']);
+  const LEAN_HIDDEN_TABS = new Set(['accounts', 'banking', 'assets', 'reports', 'audit', 'cost-centers']);
   const goToTab = (key: string) => setSelectedTab(leanMode && LEAN_HIDDEN_TABS.has(key) ? 'overview' : key);
 
   const handleQuickAction = (action: string) => {
@@ -633,6 +634,12 @@ export default function AccountingMainDashboard() {
                 {!leanMode && (
                 <Tab key="assets" title="🏗️ PPE & Assets">
                   <InventoryFixedAssets />
+                </Tab>
+                )}
+
+                {!leanMode && (
+                <Tab key="cost-centers" title="🏷️ Cost & Revenue Centers">
+                  <CostRevenueCenters />
                 </Tab>
                 )}
 

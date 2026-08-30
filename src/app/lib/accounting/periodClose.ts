@@ -3,7 +3,7 @@ import type { RollupCoa } from './financialReportRollup';
 
 export const RETAINED_EARNINGS_GL = '3200';
 
-const CLOSE_SOURCE = 'pl_period_close';
+export const CLOSE_SOURCE = 'pl_period_close';
 
 function dayEnd(d: Date): Date {
   const x = new Date(d);
