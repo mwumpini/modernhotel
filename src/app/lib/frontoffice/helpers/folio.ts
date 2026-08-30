@@ -18,6 +18,7 @@ import { trackEvent } from '../../analytics/trackEvent';
 import { logAudit } from '../../analytics/auditLogStore';
 import type { Folio, FolioPayment } from '../types';
 import { computeSalesTaxTotal, getCanonicalTaxRates } from '../../tax/engine';
+import { useSettingsStore } from '../../settings/store';
 
 type StoreLike = any;
 
@@ -99,7 +100,7 @@ export function getOrCreateFolio(self: StoreLike, reservationId: string): Folio 
 	let f = self.folios.find((x: any) => x.reservationId === reservationId);
 	if (!f) {
 		f = {
-			id: `F-${Date.now().toString().slice(-6)}`,
+			id: useSettingsStore.getState().getNextModuleNumber('frontOffice', 'folio'),
 			reservationId,
 			charges: [],
 			payments: [],
@@ -116,7 +117,7 @@ export function getOrCreateFolio(self: StoreLike, reservationId: string): Folio 
 				const existingSplit = self.folios.find((x: any) => x.reservationId === reservationId && x.type === 'split');
 				if (!existingSplit) {
 					const split: Folio = {
-						id: `F-${Date.now().toString().slice(-6)}-C`,
+						id: `${useSettingsStore.getState().getNextModuleNumber('frontOffice', 'folio')}-C`,
 						reservationId,
 						charges: [],
 						payments: [],

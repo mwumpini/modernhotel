@@ -15,6 +15,7 @@ import {
   PatrolStatus
 } from './types';
 import { trackEvent } from '../analytics/trackEvent';
+import { useSettingsStore } from '../settings/store';
 
 class SecurityStore {
   private incidents: SecurityIncident[] = [];
@@ -218,7 +219,7 @@ class SecurityStore {
   }): SecurityIncident {
     const incident: SecurityIncident = {
       id: `INC-${Date.now().toString().slice(-6)}`,
-      incidentNumber: `INC-${new Date().getFullYear()}-${String(this.incidents.length + 1).padStart(4, '0')}`,
+      incidentNumber: useSettingsStore.getState().getNextModuleNumber('security', 'incidentReport'),
       ...data,
       status: 'reported',
       reportedAt: new Date().toISOString(),

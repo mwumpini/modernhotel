@@ -1398,11 +1398,11 @@ export default function InventorySupplyChainDashboard() {
     return filteredPOs.slice(start, start + poRowsPerPage);
   }, [filteredPOs, poPage]);
 
-  // Requisition handlers
+  // Requisition handlers — uses the real configured numbering sequence (Settings → Document
+  // Numbering → Inventory → Requisition) instead of `array.length + 1`, which reused an
+  // already-issued number the moment any earlier requisition was deleted.
   const generateRequisitionNumber = () => {
-    const year = new Date().getFullYear();
-    const count = supplierStoreRequisitions.length + 1;
-    return `REQ-${year}-${String(count).padStart(3, '0')}`;
+    return settings.getNextModuleNumber('inventory', 'requisition');
   };
 
   const handleAddRequisition = () => {

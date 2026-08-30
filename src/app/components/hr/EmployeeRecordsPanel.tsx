@@ -7,6 +7,7 @@ import { useEmployeeChangesStore } from '@/app/lib/hr/employeeChangesStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
 import { useTrainingStore } from '@/app/lib/hr/trainingStore';
 import { useComplianceStore } from '@/app/lib/compliance/store';
+import { useSettingsStore } from '@/app/lib/settings/store';
 
 export default function EmployeeRecordsPanel() {
   const employees = useEmployeeStore((s) => s.employees);
@@ -137,7 +138,7 @@ export default function EmployeeRecordsPanel() {
     setEditingId(null);
     setStep(1);
 		setForm({
-      employeeNumber: '',
+      employeeNumber: useSettingsStore.getState().peekNextModuleNumber('hr', 'employeeId'),
       firstName: '',
       lastName: '',
       email: '',
@@ -420,6 +421,7 @@ export default function EmployeeRecordsPanel() {
       return;
     } else {
       console.log('[HR][Records] addEmployee', { form });
+      useSettingsStore.getState().getNextModuleNumber('hr', 'employeeId');
       const created = addEmployee({
         employeeNumber: form.employeeNumber,
         firstName: form.firstName,

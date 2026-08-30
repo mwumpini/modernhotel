@@ -1173,7 +1173,19 @@ interface SettingsStore extends SystemSettings {
   getNextProformaInvoiceNumber: () => string;
   getNextClientNumber: () => string;
   getNextReservationNumber: () => string;
-  
+  /** Generic generator for any of the 16 moduleNumbering series (folio, KOT, requisition,
+   *  work order, incident report, employee ID, etc.) — the single source every real call
+   *  site should use instead of minting its own Date.now()/array-length-based id. */
+  getNextModuleNumber: <C extends keyof ModuleNumberingSettings>(
+    category: C,
+    series: keyof ModuleNumberingSettings[C]
+  ) => string;
+  /** Read-only preview of what getNextModuleNumber would return, without consuming the counter. */
+  peekNextModuleNumber: <C extends keyof ModuleNumberingSettings>(
+    category: C,
+    series: keyof ModuleNumberingSettings[C]
+  ) => string;
+
   // Authorization
   hasPermission: (permission: string) => boolean;
   getUserPermissions: () => string[];
@@ -1310,6 +1322,22 @@ const defaultGhanaCompliance: CountryCompliance = {
     thousandsSeparator: ',',
   },
 };
+
+/** Shared formatter for every document-numbering series in the app — substitutes
+ *  {YEAR}/{NUMBER}/{PREFIX}/{SUFFIX} tokens so editing a series' Prefix/Suffix field in
+ *  Settings actually changes the numbers it produces, not just its Format field. */
+function formatDocumentNumber(
+  pattern: { prefix?: string; suffix?: string; nextNumber: number; numberFormat: string },
+  padLength = 4
+): string {
+  const year = new Date().getFullYear();
+  const padded = pattern.nextNumber.toString().padStart(padLength, '0');
+  return (pattern.numberFormat || '{PREFIX}-{NUMBER}')
+    .replace('{YEAR}', year.toString())
+    .replace('{NUMBER}', padded)
+    .replace('{PREFIX}', pattern.prefix || '')
+    .replace('{SUFFIX}', pattern.suffix || '');
+}
 
 // Default roles
 const defaultRoles: UserRole[] = [
@@ -1604,7 +1632,7 @@ const defaultSettings: SystemSettings = {
     prefix: 'INV',
     suffix: '',
     nextNumber: 1001,
-    numberFormat: 'INV-{YEAR}-{NUMBER}',
+    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}',
     defaultPaymentTerms: 30,
     latePaymentPenalty: 5.0,
     earlyPaymentDiscount: 2.0,
@@ -1621,7 +1649,7 @@ const defaultSettings: SystemSettings = {
     prefix: 'RCP',
     suffix: '',
     nextNumber: 1,
-    numberFormat: 'RCP-{YEAR}-{NUMBER}',
+    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}',
     businessName: 'Demo Hotel Ltd',
     tagline: 'Excellence in Hospitality',
     showTaxBreakdown: true,
@@ -1640,7 +1668,7 @@ const defaultSettings: SystemSettings = {
     prefix: 'PO',
     suffix: '',
     nextNumber: 1001,
-    numberFormat: 'PO-{YEAR}-{NUMBER}',
+    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}',
     requireApproval: true,
     approvalThreshold: 10000,
     approvers: ['admin_001'],
@@ -1657,7 +1685,7 @@ const defaultSettings: SystemSettings = {
     prefix: 'PRO',
     suffix: '',
     nextNumber: 1001,
-    numberFormat: 'PRO-{YEAR}-{NUMBER}',
+    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}',
     validityDays: 30,
     showValidityPeriod: true,
     showTaxBreakdown: true,
@@ -1687,7 +1715,7 @@ const defaultSettings: SystemSettings = {
     prefix: 'C',
     suffix: '',
     nextNumber: 1,
-    numberFormat: 'C{NUMBER}',
+    numberFormat: '{PREFIX}{NUMBER}',
     defaultCategories: ['Individual', 'Business', 'VIP', 'Corporate', 'Travel Agent'],
     allowCustomCategories: true,
     allowCredit: true,
@@ -1703,7 +1731,7 @@ const defaultSettings: SystemSettings = {
     prefix: 'RES',
     suffix: '',
     nextNumber: 1,
-    numberFormat: 'RES-{YEAR}-{NUMBER}'
+    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}'
   },
   
   documentTemplates: {
@@ -1837,37 +1865,37 @@ const defaultSettings: SystemSettings = {
   // Module-scoped numbering defaults (additional to existing invoice/receipt/reservation/client)
   moduleNumbering: {
     frontOffice: {
-      folio: { prefix: 'FOL', suffix: '', nextNumber: 1, numberFormat: 'FOL-{YEAR}-{NUMBER}' },
-      housekeepingTicket: { prefix: 'HK', suffix: '', nextNumber: 1, numberFormat: 'HK-{NUMBER}' },
+      folio: { prefix: 'FOL', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      housekeepingTicket: { prefix: 'HK', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
     },
     foodBeverage: {
-      order: { prefix: 'ORD', suffix: '', nextNumber: 1, numberFormat: 'ORD-{NUMBER}' },
-      kitchenOrderTicket: { prefix: 'KOT', suffix: '', nextNumber: 1, numberFormat: 'KOT-{NUMBER}' },
+      order: { prefix: 'ORD', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+      kitchenOrderTicket: { prefix: 'KOT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
     },
     inventory: {
-      requisition: { prefix: 'REQ', suffix: '', nextNumber: 1, numberFormat: 'REQ-{NUMBER}' },
-      stockTransfer: { prefix: 'ST', suffix: '', nextNumber: 1, numberFormat: 'ST-{NUMBER}' },
-      goodsReceipt: { prefix: 'GRN', suffix: '', nextNumber: 1, numberFormat: 'GRN-{NUMBER}' },
+      requisition: { prefix: 'REQ', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      stockTransfer: { prefix: 'ST', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+      goodsReceipt: { prefix: 'GRN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
     },
     accounting: {
-      creditNote: { prefix: 'CN', suffix: '', nextNumber: 1, numberFormat: 'CN-{YEAR}-{NUMBER}' },
-      debitNote: { prefix: 'DN', suffix: '', nextNumber: 1, numberFormat: 'DN-{YEAR}-{NUMBER}' },
+      creditNote: { prefix: 'CN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      debitNote: { prefix: 'DN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
     },
     events: {
-      eventBooking: { prefix: 'EVT', suffix: '', nextNumber: 1, numberFormat: 'EVT-{YEAR}-{NUMBER}' },
-      quotation: { prefix: 'QT', suffix: '', nextNumber: 1, numberFormat: 'QT-{YEAR}-{NUMBER}' },
+      eventBooking: { prefix: 'EVT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      quotation: { prefix: 'QT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
     },
     maintenance: {
-      workOrder: { prefix: 'WO', suffix: '', nextNumber: 1, numberFormat: 'WO-{YEAR}-{NUMBER}' },
-      inspection: { prefix: 'INSP', suffix: '', nextNumber: 1, numberFormat: 'INSP-{NUMBER}' },
+      workOrder: { prefix: 'WO', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      inspection: { prefix: 'INSP', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
     },
     security: {
-      incidentReport: { prefix: 'INC', suffix: '', nextNumber: 1, numberFormat: 'INC-{YEAR}-{NUMBER}' },
-      accessPass: { prefix: 'PASS', suffix: '', nextNumber: 1, numberFormat: 'PASS-{NUMBER}' },
+      incidentReport: { prefix: 'INC', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      accessPass: { prefix: 'PASS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
     },
     hr: {
-      employeeId: { prefix: 'EMP', suffix: '', nextNumber: 1, numberFormat: 'EMP{NUMBER}' },
-      timesheet: { prefix: 'TS', suffix: '', nextNumber: 1, numberFormat: 'TS-{YEAR}-{NUMBER}' },
+      employeeId: { prefix: 'EMP', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}{NUMBER}' },
+      timesheet: { prefix: 'TS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
     },
   },
 
@@ -3116,93 +3144,83 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     get().publish();
   },
   
-  // Document Number Generation
+  // Document Number Generation — every generator below now consistently supports
+  // {PREFIX}/{SUFFIX} tokens (previously only the receipt generator did), so editing a
+  // series' Prefix/Suffix field actually changes the numbers it produces. A numberFormat
+  // that doesn't reference {PREFIX}/{SUFFIX} at all (e.g. an already-customized value saved
+  // before this fix) is left exactly as it was — nothing is silently rewritten.
   getNextInvoiceNumber: () => {
     const state = get();
     const settings = state.invoiceSettings;
-    const year = new Date().getFullYear();
-    const number = settings.nextNumber;
-    
-    // Update the next number
-    state.updateInvoiceSettings({ nextNumber: number + 1 });
-    
-    // Format the number according to the pattern
-    return settings.numberFormat
-      .replace('{YEAR}', year.toString())
-      .replace('{NUMBER}', number.toString().padStart(4, '0'));
+    const result = formatDocumentNumber(settings, 4);
+    state.updateInvoiceSettings({ nextNumber: settings.nextNumber + 1 });
+    return result;
   },
-  
+
   getNextReceiptNumber: () => {
     const state = get();
     const settings = state.receiptSettings;
-    // Use configured numbering if present, else fallback to timestamp-based
-    if (settings?.numberFormat && settings?.prefix !== undefined) {
-      const year = new Date().getFullYear();
-      const number = settings.nextNumber || 1;
-      // update next number if we control it
-      set({ receiptSettings: { ...settings, nextNumber: number + 1 } as any });
-      const padded = number.toString().padStart(4, '0');
-      return (settings.numberFormat as string)
-        .replace('{YEAR}', year.toString())
-        .replace('{NUMBER}', padded)
-        .replace('{PREFIX}', settings.prefix || '')
-        .replace('{SUFFIX}', settings.suffix || '');
-    }
-    return `RCP-${Date.now().toString().slice(-6)}`;
+    if (!settings?.numberFormat) return `RCP-${Date.now().toString().slice(-6)}`;
+    const nextNumber = settings.nextNumber || 1;
+    const result = formatDocumentNumber({ prefix: settings.prefix, suffix: settings.suffix, numberFormat: settings.numberFormat, nextNumber }, 4);
+    set({ receiptSettings: { ...settings, nextNumber: nextNumber + 1 } as any });
+    return result;
   },
-  
+
   getNextPurchaseOrderNumber: () => {
     const state = get();
     const settings = state.purchaseOrderSettings;
-    const year = new Date().getFullYear();
-    const number = settings.nextNumber;
-    
-    // Update the next number
-    state.updatePurchaseOrderSettings({ nextNumber: number + 1 });
-    
-    // Format the number according to the pattern
-    return settings.numberFormat
-      .replace('{YEAR}', year.toString())
-      .replace('{NUMBER}', number.toString().padStart(4, '0'));
+    const result = formatDocumentNumber(settings, 4);
+    state.updatePurchaseOrderSettings({ nextNumber: settings.nextNumber + 1 });
+    return result;
   },
-  
+
   getNextProformaInvoiceNumber: () => {
     const state = get();
     const settings = state.proformaInvoiceSettings;
-    const year = new Date().getFullYear();
-    const number = settings.nextNumber;
-    
-    // Update the next number
-    state.updateProformaInvoiceSettings({ nextNumber: number + 1 });
-    
-    // Format the number according to the pattern
-    return settings.numberFormat
-      .replace('{YEAR}', year.toString())
-      .replace('{NUMBER}', number.toString().padStart(4, '0'));
+    const result = formatDocumentNumber(settings, 4);
+    state.updateProformaInvoiceSettings({ nextNumber: settings.nextNumber + 1 });
+    return result;
   },
-  
+
   getNextClientNumber: () => {
     const state = get();
     const settings = state.clientSettings;
-    const number = settings.nextNumber;
-    
-    // Update the next number
-    state.updateClientSettings({ nextNumber: number + 1 });
-    
-    // Format the number according to the pattern
-    return settings.numberFormat
-      .replace('{NUMBER}', number.toString().padStart(3, '0'));
+    const result = formatDocumentNumber(settings, 3);
+    state.updateClientSettings({ nextNumber: settings.nextNumber + 1 });
+    return result;
   },
 
   getNextReservationNumber: () => {
     const state = get();
     const settings = state.reservationSettings;
-    const year = new Date().getFullYear();
-    const number = settings.nextNumber;
-    state.updateReservationSettings({ nextNumber: number + 1 });
-    return settings.numberFormat
-      .replace('{YEAR}', year.toString())
-      .replace('{NUMBER}', number.toString().padStart(5, '0'));
+    const result = formatDocumentNumber(settings, 5);
+    state.updateReservationSettings({ nextNumber: settings.nextNumber + 1 });
+    return result;
+  },
+
+  getNextModuleNumber: (category, series) => {
+    const state = get();
+    const pattern = (state.moduleNumbering as any)?.[category]?.[series];
+    if (!pattern) return `${category.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-6)}`;
+    const result = formatDocumentNumber(pattern, 4);
+    const nextModuleNumbering = {
+      ...state.moduleNumbering,
+      [category]: {
+        ...(state.moduleNumbering as any)[category],
+        [series]: { ...pattern, nextNumber: pattern.nextNumber + 1 },
+      },
+    };
+    set({ moduleNumbering: nextModuleNumbering as any });
+    state.saveSettings();
+    return result;
+  },
+
+  peekNextModuleNumber: (category, series) => {
+    const state = get();
+    const pattern = (state.moduleNumbering as any)?.[category]?.[series];
+    if (!pattern) return `${category.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-6)}`;
+    return formatDocumentNumber(pattern, 4);
   },
   
   // Additional Settings Management Methods

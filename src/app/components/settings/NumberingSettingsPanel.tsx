@@ -87,7 +87,37 @@ export default function NumberingSettingsPanel() {
 
   const setMod = (path: (m: any) => any) => setModuleNumbering((m: any) => path({ ...m }));
 
+  const validateSeries = (label: string, format: string, next: number, priorNext: number, errors: string[]) => {
+    if (!format || format.trim() === '') {
+      errors.push(`${label}: format cannot be empty`);
+    } else if (!format.includes('{NUMBER}')) {
+      errors.push(`${label}: format must include {NUMBER}`);
+    }
+    if (!Number.isFinite(next) || next < 1) {
+      errors.push(`${label}: next number must be at least 1`);
+    } else if (next < priorNext) {
+      errors.push(`${label}: next number can't go backwards (currently ${priorNext}) — that would reissue a number already used`);
+    }
+  };
+
   const handleSave = () => {
+    const errors: string[] = [];
+    validateSeries('Invoice', core.invoiceFormat, Number(core.invoiceNext), settings.invoiceSettings.nextNumber, errors);
+    validateSeries('Receipt', core.receiptFormat, Number(core.receiptNext), settings.receiptSettings.nextNumber || 1, errors);
+    validateSeries('Reservation', core.reservationFormat, Number(core.reservationNext), settings.reservationSettings.nextNumber, errors);
+    validateSeries('Guest Profile', core.clientFormat, Number(core.clientNext), settings.clientSettings.nextNumber, errors);
+    const priorMod = (settings as any).moduleNumbering || DEFAULT_MODULE_NUMBERING;
+    for (const category of Object.keys(moduleNumbering)) {
+      for (const series of Object.keys(moduleNumbering[category])) {
+        const pattern = moduleNumbering[category][series];
+        const priorNext = priorMod?.[category]?.[series]?.nextNumber ?? 1;
+        validateSeries(`${category}.${series}`, pattern.numberFormat, Number(pattern.nextNumber), priorNext, errors);
+      }
+    }
+    if (errors.length > 0) {
+      alert(`Please fix the following before saving:\n\n${errors.join('\n')}`);
+      return;
+    }
     updateNestedSetting('invoiceSettings.prefix', core.invoicePrefix);
     updateNestedSetting('invoiceSettings.numberFormat', core.invoiceFormat);
     updateNestedSetting('invoiceSettings.nextNumber', Number(core.invoiceNext));

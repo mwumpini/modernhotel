@@ -5,6 +5,7 @@ import { useStockStore } from './stockStore';
 import { computePurchaseTax } from '../tax/engine';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+import { useSettingsStore } from '../settings/store';
 
 function poTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -1214,15 +1215,11 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
     return analysis;
   },
 
-  // GRN Management Functions
+  // GRN Management Functions — real configured sequence (Settings → Document Numbering →
+  // Inventory → Goods Receipt) instead of counting existing records, which reissued an
+  // already-used GRN number the moment any earlier one was deleted.
   generateNextGRNNumber: () => {
-    const year = new Date().getFullYear();
-    const existingGRNs = get().goodsReceiptNotes.filter(grn => {
-      const grnYear = grn.grnNumber.split('-')[1];
-      return grnYear === String(year);
-    });
-    const nextNumber = existingGRNs.length + 1;
-    return `GRN-${year}-${String(nextNumber).padStart(3, '0')}`;
+    return useSettingsStore.getState().getNextModuleNumber('inventory', 'goodsReceipt');
   },
 
   createGRN: (grnData) => {
