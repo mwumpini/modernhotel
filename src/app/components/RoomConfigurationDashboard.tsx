@@ -161,12 +161,14 @@ export default function RoomConfigurationDashboard() {
   const [newRoomType, setNewRoomType] = useState({
     name: '',
     capacity: '1', // Keep as string for input compatibility
+    baseRate: '0',
     description: ''
   });
-  
+
   const [editRoomType, setEditRoomType] = useState({
     name: '',
     capacity: '1', // Keep as string for input compatibility
+    baseRate: '0',
     description: ''
   });
   
@@ -354,12 +356,14 @@ export default function RoomConfigurationDashboard() {
   };
 
   const handleAddRoomType = () => {
-    if (newRoomType.name) {
+    const baseRate = Number(newRoomType.baseRate);
+    const capacity = Number(newRoomType.capacity);
+    if (newRoomType.name && baseRate > 0 && capacity > 0) {
              const roomType: RoomType = {
          id: Date.now().toString(),
          name: newRoomType.name,
-         baseRate: 0, // Add default baseRate
-         capacity: Number(newRoomType.capacity), // Convert string to number
+         baseRate,
+         capacity, // Convert string to number
          amenities: [],
          isActive: true,
          category: 'other',
@@ -372,10 +376,10 @@ export default function RoomConfigurationDashboard() {
            pets: false,
          }
        };
-      
+
       settingsStore.addRoomType(roomType);
       logAction('ADD_ROOM_TYPE', { roomType });
-      setNewRoomType({ name: '', capacity: '1', description: '' });
+      setNewRoomType({ name: '', capacity: '1', baseRate: '0', description: '' });
     }
   };
 
@@ -384,6 +388,7 @@ export default function RoomConfigurationDashboard() {
     setEditRoomType({
       name: roomType.name,
       capacity: roomType.capacity.toString(), // Convert number to string for form
+      baseRate: (roomType.baseRate ?? 0).toString(),
       description: roomType.description || ''
     });
     setEditRoomTypeModalOpen(true);
@@ -391,13 +396,16 @@ export default function RoomConfigurationDashboard() {
   };
 
   const handleUpdateRoomType = () => {
-    if (selectedRoomType && editRoomType.name) {
+    const baseRate = Number(editRoomType.baseRate);
+    const capacity = Number(editRoomType.capacity);
+    if (selectedRoomType && editRoomType.name && baseRate > 0 && capacity > 0) {
       const updates = {
         name: editRoomType.name,
-        capacity: Number(editRoomType.capacity), // Convert string to number
+        capacity, // Convert string to number
+        baseRate,
         description: editRoomType.description
       };
-      
+
       settingsStore.updateRoomType(selectedRoomType.id, updates);
       logAction('UPDATE_ROOM_TYPE', { roomTypeId: selectedRoomType.id, updates });
       setEditRoomTypeModalOpen(false);
@@ -634,6 +642,23 @@ export default function RoomConfigurationDashboard() {
       settingsStore.addRatePlan(ratePlan as any);
       logAction('ADD_RATE_PLAN', { ratePlan });
       setNewRatePlan({ name: '', roomType: '', price: '0', priceType: 'subtotal', description: '', marketSegment: 'Leisure', mealPlan: 'room_only' });
+    }
+  };
+
+  const handleUpdateRatePlan = () => {
+    const price = Number(editRatePlanForm.price);
+    if (selectedRatePlan && editRatePlanForm.name && editRatePlanForm.roomType && price > 0) {
+      const updates = {
+        name: editRatePlanForm.name,
+        roomTypeId: editRatePlanForm.roomType,
+        basePrice: price,
+        priceType: editRatePlanForm.priceType,
+        lastUpdated: new Date().toISOString(),
+      };
+      settingsStore.updateRatePlan(selectedRatePlan.id, updates as any);
+      logAction('UPDATE_RATE_PLAN', { ratePlanId: selectedRatePlan.id, updates });
+      setEditRatePlanModalOpen(false);
+      setSelectedRatePlan(null);
     }
   };
 
@@ -1378,27 +1403,37 @@ export default function RoomConfigurationDashboard() {
                      <Card className="mb-6">
              <CardHeader>
                <h3 className="text-xl font-semibold">Add New Room Type</h3>
-               <p className="text-sm text-gray-600">Pricing is managed through Rate Plans in the Rate Plans tab</p>
+               <p className="text-sm text-gray-600">Base Rate is the fallback nightly price used until a Rate Plan is set up for this room type, in the Rate Plans tab</p>
              </CardHeader>
              <CardBody>
-               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                  <Input
                    label="Room Type Name"
                    placeholder="e.g., Standard, Deluxe"
                    value={newRoomType.name}
                    onChange={(e) => setNewRoomType({...newRoomType, name: e.target.value})}
                  />
-                 
+
                  <Input
                    label="Capacity (Adults)"
                    type="number"
+                   min={1}
                    placeholder="2"
                    value={newRoomType.capacity}
                    onChange={(e) => setNewRoomType({...newRoomType, capacity: e.target.value})}
                  />
+                 <Input
+                   label="Base Rate (₵/night)"
+                   type="number"
+                   min={0.01}
+                   step="0.01"
+                   placeholder="e.g., 450"
+                   value={newRoomType.baseRate}
+                   onChange={(e) => setNewRoomType({...newRoomType, baseRate: e.target.value})}
+                 />
                  <div className="flex items-end">
-                   <Button 
-                     color="primary" 
+                   <Button
+                     color="primary"
                      onClick={handleAddRoomType}
                      className="w-full"
                    >
@@ -2432,6 +2467,14 @@ export default function RoomConfigurationDashboard() {
                               isIconOnly
                               onClick={() => {
                                 setSelectedRatePlan(plan);
+                                setEditRatePlanForm({
+                                  name: plan.name,
+                                  roomType: plan.roomTypeId,
+                                  price: String(plan.basePrice ?? 0),
+                                  currency: 'GHS',
+                                  priceType: (plan.priceType as 'subtotal' | 'gross_total') || 'subtotal',
+                                  description: (plan as any).description || '',
+                                });
                                 setEditRatePlanModalOpen(true);
                               }}
                             >
@@ -3141,9 +3184,19 @@ export default function RoomConfigurationDashboard() {
               <Input
                 label="Capacity (Adults)"
                 type="number"
+                min={1}
                 placeholder="2"
                 value={editRoomType.capacity}
                 onChange={(e) => setEditRoomType({...editRoomType, capacity: e.target.value})}
+              />
+              <Input
+                label="Base Rate (₵/night)"
+                type="number"
+                min={0.01}
+                step="0.01"
+                placeholder="e.g., 450"
+                value={editRoomType.baseRate}
+                onChange={(e) => setEditRoomType({...editRoomType, baseRate: e.target.value})}
               />
               <Textarea
                 label="Description (Optional)"
@@ -3159,6 +3212,74 @@ export default function RoomConfigurationDashboard() {
             </Button>
             <Button color="primary" onPress={handleUpdateRoomType}>
               Update Room Type
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Edit Rate Plan Modal */}
+      <Modal isOpen={editRatePlanModalOpen} onClose={() => setEditRatePlanModalOpen(false)} size="2xl">
+        <ModalContent>
+          <ModalHeader>Edit Rate Plan</ModalHeader>
+          <ModalBody>
+            <div className="space-y-4">
+              <Input
+                label="Rate Plan Name"
+                placeholder="e.g., Weekend Special, Corporate Rate"
+                value={editRatePlanForm.name}
+                onChange={(e) => setEditRatePlanForm({ ...editRatePlanForm, name: e.target.value })}
+              />
+              <Select
+                label="Room Type"
+                placeholder="Select room type"
+                selectedKeys={editRatePlanForm.roomType ? [editRatePlanForm.roomType] : []}
+                onChange={(e) => setEditRatePlanForm({ ...editRatePlanForm, roomType: e.target.value })}
+              >
+                {settingsStore.roomManagement.roomTypes.map((type) => (
+                  <SelectItem key={type.id}>
+                    {type.name}
+                  </SelectItem>
+                ))}
+              </Select>
+              <Input
+                label={`Price (₵) - ${editRatePlanForm.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total'}`}
+                type="number"
+                min={0.01}
+                step="0.01"
+                placeholder="750"
+                value={editRatePlanForm.price}
+                onChange={(e) => setEditRatePlanForm({ ...editRatePlanForm, price: e.target.value })}
+              />
+              <Select
+                label="Price Type"
+                placeholder="Select price type"
+                selectedKeys={[editRatePlanForm.priceType]}
+                onChange={(e) => setEditRatePlanForm({ ...editRatePlanForm, priceType: e.target.value as 'subtotal' | 'gross_total' })}
+              >
+                <SelectItem key="subtotal">
+                  Subtotal (Before Tax)
+                </SelectItem>
+                <SelectItem key="gross_total">
+                  Gross Total (Including Tax)
+                </SelectItem>
+              </Select>
+              <Textarea
+                label="Description (Optional)"
+                placeholder="Additional details about this rate plan..."
+                value={editRatePlanForm.description}
+                onChange={(e) => setEditRatePlanForm({ ...editRatePlanForm, description: e.target.value })}
+              />
+              <p className="text-xs text-gray-500">
+                Market segment, meal plan, stay restrictions, and seasonal rates aren&apos;t editable here yet — delete and recreate the plan (seasonal rates will need re-entering) if those need to change.
+              </p>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={() => setEditRatePlanModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button color="primary" onPress={handleUpdateRatePlan}>
+              Update Rate Plan
             </Button>
           </ModalFooter>
         </ModalContent>

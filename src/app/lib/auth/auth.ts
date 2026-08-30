@@ -1,5 +1,7 @@
 import { NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
+import bcrypt from 'bcryptjs'
+import { prisma } from '@/app/lib/database/client'
 
 // Extend the built-in session types
 declare module 'next-auth' {
@@ -51,52 +53,6 @@ declare module 'next-auth/jwt' {
   }
 }
 
-// Mock user data for development
-const mockUsers = [
-  {
-    id: '1',
-    email: 'admin@demohotel.com',
-    name: 'Admin User',
-    role: 'admin',
-    tenantId: 'demo',
-    tenant: {
-      id: 'demo',
-      name: 'Demo Hotel Accra',
-      subdomain: 'demo',
-      plan: 'professional',
-      status: 'active'
-    }
-  },
-  {
-    id: '2',
-    email: 'manager@demohotel.com',
-    name: 'Manager User',
-    role: 'manager',
-    tenantId: 'demo',
-    tenant: {
-      id: 'demo',
-      name: 'Demo Hotel Accra',
-      subdomain: 'demo',
-      plan: 'professional',
-      status: 'active'
-    }
-  },
-  {
-    id: '3',
-    email: 'staff@demohotel.com',
-    name: 'Staff User',
-    role: 'staff',
-    tenantId: 'demo',
-    tenant: {
-      id: 'demo',
-      name: 'Demo Hotel Accra',
-      subdomain: 'demo',
-      plan: 'professional',
-      status: 'active'
-    }
-  }
-]
-
 export const authOptions: NextAuthOptions = {
   providers: [
     CredentialsProvider({
@@ -112,17 +68,40 @@ export const authOptions: NextAuthOptions = {
             return null
           }
 
-          // For development, accept any password if email and tenant match
-          const user = mockUsers.find(u => 
-            u.email === credentials.email && 
-            u.tenantId === credentials.tenantId
-          )
+          // `tenantId` from the login form is actually the tenant's subdomain (e.g. "demo"),
+          // not its database id — resolve the real tenant first.
+          const tenant = await prisma.tenant.findUnique({
+            where: { subdomain: credentials.tenantId.trim().toLowerCase() },
+          })
+          if (!tenant || tenant.status !== 'active') return null
 
-          if (user) {
-            return user
+          const user = await prisma.user.findUnique({
+            where: { tenantId_email: { tenantId: tenant.id, email: credentials.email } },
+          })
+          if (!user || !user.isActive || !user.password) return null
+
+          const passwordValid = await bcrypt.compare(credentials.password, user.password)
+          if (!passwordValid) return null
+
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { lastLoginAt: new Date() },
+          })
+
+          return {
+            id: user.id,
+            email: user.email,
+            name: user.name,
+            role: user.role,
+            tenantId: tenant.id,
+            tenant: {
+              id: tenant.id,
+              name: tenant.name,
+              subdomain: tenant.subdomain,
+              plan: tenant.plan,
+              status: tenant.status,
+            },
           }
-
-          return null
         } catch (error) {
           console.error('Auth error:', error)
           return null

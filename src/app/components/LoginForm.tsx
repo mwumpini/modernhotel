@@ -138,10 +138,10 @@ export default function LoginForm() {
 
           <div className="text-center">
             <p className="text-xs text-gray-500">
-              Demo Credentials: demo / admin@demohotel.com / any password
+              Demo Credentials: demo / admin@demohotel.com / password123
             </p>
             <p className="text-xs text-gray-500 mt-1">
-              Also try: manager@demohotel.com or staff@demohotel.com
+              Also try: manager@demohotel.com or staff@demohotel.com (same password)
             </p>
           </div>
         </form>

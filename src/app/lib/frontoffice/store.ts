@@ -1025,7 +1025,7 @@ class FrontOfficeStore {
     } catch {}
   }
 
-  // Simple weekday/weekend rate calculator; can be extended with seasons
+  // Weekday/weekend rate calculator with per-night seasonal rate-plan overrides.
   calculateRateBreakdown(roomTypeId: string, arrival: string, departure: string, base?: number, priceType?: string) {
     const start = new Date(arrival);
     const end = new Date(departure);
@@ -1048,24 +1048,35 @@ class FrontOfficeStore {
       : undefined;
     const planType = (activePlan as { priceType?: string } | undefined)?.priceType || 'subtotal';
     const resolvedPriceType = priceType || planType;
-    const nightlyNet = (() => {
-      if (typeof base === 'number' && !isNaN(base)) return resolveNightlyNet(base, resolvedPriceType);
-      if (activePlan && typeof planBase === 'number') {
-        return resolveNightlyNet(planBase, planType);
-      }
-      return roomTypeBase;
-    })();
-    const nightlyGross = resolveNightlyGross(
-      typeof base === 'number' && !isNaN(base)
-        ? base
-        : (activePlan && typeof planBase === 'number' ? planBase : roomTypeBase),
-      resolvedPriceType
-    );
+    const hasExplicitBase = typeof base === 'number' && !isNaN(base);
+    const seasonalRates = (activePlan as RatePlan | undefined)?.seasonalRates;
+
+    // Seasonal overrides configured on the active rate plan (Settings → Rooms & Pricing) apply
+    // per night — a stay spanning a season boundary is only priced at the season's multiplier
+    // for the nights actually inside it. Multiplier is a direct factor (1.2 = 120% of base),
+    // matching the "Multiplier (e.g., 1.2)" label on that editor. Skipped when the caller
+    // passed an explicit `base` override, since that's already the exact rate to charge.
+    const seasonalMultiplierFor = (dateStr: string): number => {
+      if (hasExplicitBase || !seasonalRates?.length) return 1;
+      const d = new Date(dateStr);
+      const season = seasonalRates.find((sr) => d >= new Date(sr.startDate) && d <= new Date(sr.endDate));
+      return season ? season.multiplier : 1;
+    };
+
     for (const d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
+      const dateStr = d.toISOString().slice(0, 10);
+      const seasonMult = seasonalMultiplierFor(dateStr);
+      const rawBase = hasExplicitBase
+        ? (base as number)
+        : (activePlan && typeof planBase === 'number' ? planBase : roomTypeBase) * seasonMult;
+      const net = hasExplicitBase || (activePlan && typeof planBase === 'number')
+        ? resolveNightlyNet(rawBase, hasExplicitBase ? resolvedPriceType : planType)
+        : rawBase;
+      const gross = resolveNightlyGross(rawBase, resolvedPriceType);
       nightly.push({
-        date: d.toISOString().slice(0, 10),
-        base: parseFloat(nightlyNet.toFixed(2)),
-        total: parseFloat(nightlyGross.toFixed(2)),
+        date: dateStr,
+        base: parseFloat(net.toFixed(2)),
+        total: parseFloat(gross.toFixed(2)),
       });
     }
     return nightly;

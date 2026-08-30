@@ -2208,25 +2208,22 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   saveSettings: () => {
     try {
       const state = get();
-      
-      // Save system settings
-      localStorage.setItem('system.settings', JSON.stringify({
-        systemName: state.systemName,
-        version: state.version,
-        environment: state.environment,
-        defaultCountry: state.defaultCountry,
-        supportedCountries: state.supportedCountries,
-        initialSetupCompleted: state.initialSetupCompleted,
-        companySettings: state.companySettings,
-        hotelSettings: state.hotelSettings,
-        financialSettings: state.financialSettings,
-        receiptSettings: state.receiptSettings,
-        moduleNumbering: state.moduleNumbering,
-        security: state.security,
-        integrations: state.integrations,
-        backup: state.backup,
-      }));
-      
+
+      // Persist every data field except the handful saved separately under their own keys
+      // below (avoids duplicating them) — action functions don't need to be excluded by
+      // name since JSON.stringify silently drops function-valued properties. This used to
+      // be a hand-picked whitelist of ~14 fields that silently left ~20 other settings
+      // sections (invoice/PO/proforma numbering, document templates, printing defaults,
+      // module toggles, systemPreferences, and more) never actually written to storage —
+      // every `update*` action for those appeared to succeed but the change was lost on
+      // the next reload. Serializing everything else here means a new settings field never
+      // has to be remembered to add to this list again.
+      const {
+        roomManagement, posSettings, countryCompliance, users, roles, currentUser,
+        ...rest
+      } = state as any;
+      localStorage.setItem('system.settings', JSON.stringify(rest));
+
       // Save room management settings
       localStorage.setItem('room.management', JSON.stringify(state.roomManagement));
       syncNoShowPolicyToApi(state.roomManagement);

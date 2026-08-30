@@ -2,14 +2,16 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession, signOut } from 'next-auth/react';
+import { Spinner } from '@heroui/react';
 import { useSettingsStore } from './lib/settings/store';
 import Navigation from './components/Navigation';
+import LoginForm from './components/LoginForm';
 
 export default function Home() {
   const router = useRouter();
+  const { status } = useSession();
   const initialSetupCompleted = useSettingsStore(s => s.initialSetupCompleted);
-  // Temporarily disable authentication to resolve NextAuth errors
-  // TODO: Re-enable when NextAuth is properly configured
 
   // Role-based landing (client-safe, runs after mount)
   React.useEffect(() => {
@@ -38,9 +40,21 @@ export default function Home() {
     } catch {}
   }, [initialSetupCompleted, router]);
 
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (status !== 'authenticated') {
+    return <LoginForm />;
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navigation onLogout={() => console.log('Logout clicked')} />
+      <Navigation onLogout={() => signOut({ callbackUrl: '/' })} />
     </div>
   );
 }

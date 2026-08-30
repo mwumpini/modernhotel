@@ -106,10 +106,13 @@ export class EnhancedFrontOfficeStore {
     }
 
     const baseRoomRate = ratePlan.basePrice;
-    
-    // Apply seasonal rates (existing logic)
+
+    // Apply seasonal rates — `seasonalAdjustment` is a direct multiplier (e.g. 1.2 = 120% of
+    // base, matching the "Multiplier (e.g., 1.2)" label on the Seasonal Rates editor in
+    // Settings → Rooms & Pricing), not an additive percentage. It previously got wrapped in
+    // `(1 + seasonalAdjustment)` here, turning a configured "1.2x" season into 2.2x.
     const seasonalAdjustment = this.calculateRatePlanSeasonalAdjustment(ratePlan, startDate);
-    const adjustedRoomRate = baseRoomRate * (1 + seasonalAdjustment);
+    const adjustedRoomRate = baseRoomRate * seasonalAdjustment;
     
     // Apply event-specific pricing
     let eventDiscount = 0;
@@ -128,9 +131,9 @@ export class EnhancedFrontOfficeStore {
       if (eventPackage) {
         packageCost = eventPackage.basePrice * attendees * duration;
         
-        // Apply seasonal pricing to package
+        // Apply seasonal pricing to package — same direct-multiplier convention as room rates.
         const packageSeasonalAdjustment = this.calculatePackageSeasonalAdjustment(eventPackage, startDate);
-        packageCost *= (1 + packageSeasonalAdjustment);
+        packageCost *= packageSeasonalAdjustment;
       }
     }
     
@@ -250,7 +253,7 @@ export class EnhancedFrontOfficeStore {
       return targetDate >= start && targetDate <= end;
     });
     
-    return seasonalRate ? seasonalRate.multiplier : 0;
+    return seasonalRate ? seasonalRate.multiplier : 1;
   }
 
   /**
@@ -264,7 +267,7 @@ export class EnhancedFrontOfficeStore {
       return targetDate >= start && targetDate <= end;
     });
     
-    return seasonalPricing ? seasonalPricing.multiplier : 0;
+    return seasonalPricing ? seasonalPricing.multiplier : 1;
   }
 
   /**
