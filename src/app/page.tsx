@@ -10,8 +10,15 @@ import LoginForm from './components/LoginForm';
 
 export default function Home() {
   const router = useRouter();
-  const { status } = useSession();
+  const { data: session, status } = useSession();
   const initialSetupCompleted = useSettingsStore(s => s.initialSetupCompleted);
+  const setSessionRole = useSettingsStore(s => s.setSessionRole);
+
+  // Keep the settings store's RBAC engine pointed at the real logged-in user's
+  // role from the NextAuth session, not a disconnected local "current user".
+  React.useEffect(() => {
+    setSessionRole(status === 'authenticated' ? (session?.user as any)?.role ?? null : null);
+  }, [status, session, setSessionRole]);
 
   // Role-based landing (client-safe, runs after mount)
   React.useEffect(() => {

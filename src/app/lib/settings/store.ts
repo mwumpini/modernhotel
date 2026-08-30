@@ -554,7 +554,8 @@ export interface SystemSettings {
   users: User[];
   roles: UserRole[];
   currentUser?: User;
-  
+  sessionRoleId: string | null;
+
   // Security Settings
   security: {
     sessionTimeout: number; // minutes
@@ -1187,7 +1188,11 @@ interface SettingsStore extends SystemSettings {
   ) => string;
 
   // Authorization
+  /** setSessionRole syncs sessionRoleId (declared on SystemSettings) from the NextAuth session — e.g. 'admin', 'manager', 'staff', 'night_manager'. */
+  setSessionRole: (roleId: string | null) => void;
   hasPermission: (permission: string) => boolean;
+  /** True if the current role holds '*', '<modulePrefix>.*', or any '<modulePrefix>.xxx' leaf permission — used for nav-level module gating. */
+  hasModuleAccess: (modulePrefix: string) => boolean;
   getUserPermissions: () => string[];
   
   // Subscribers
@@ -1357,8 +1362,14 @@ const defaultRoles: UserRole[] = [
     permissions: [
       'dashboard.view',
       'frontdesk.*',
+      'events-conferences.*',
       'housekeeping.*',
       'f&b.*',
+      'inventory.*',
+      'security.*',
+      'hr.*',
+      'accounting.*',
+      'compliance.*',
       'reports.view',
       'settings.view',
     ],
@@ -1388,6 +1399,8 @@ const defaultRoles: UserRole[] = [
     permissions: [
       'dashboard.view',
       'frontdesk.*',
+      'housekeeping.view',
+      'f&b.*',
       'reports.view',
       'settings.view',
     ],
@@ -1598,7 +1611,8 @@ const defaultSettings: SystemSettings = {
       twoFactorEnabled: false,
     },
   },
-  
+  sessionRoleId: null,
+
   security: {
     sessionTimeout: 30,
     twoFactorAuth: true,
@@ -2247,7 +2261,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       // the next reload. Serializing everything else here means a new settings field never
       // has to be remembered to add to this list again.
       const {
-        roomManagement, posSettings, countryCompliance, users, roles, currentUser,
+        roomManagement, posSettings, countryCompliance, users, roles, currentUser, sessionRoleId,
         ...rest
       } = state as any;
       localStorage.setItem('system.settings', JSON.stringify(rest));
@@ -3043,22 +3057,45 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
   
   // Authorization
+  setSessionRole: (roleId) => {
+    set({ sessionRoleId: roleId });
+  },
+
   hasPermission: (permission) => {
     const state = get();
-    if (!state.currentUser) return false;
-    
-    const userRole = state.roles.find(role => role.id === state.currentUser!.roleId);
-    if (!userRole) return false;
-    
-    return userRole.permissions.includes('*') || userRole.permissions.includes(permission);
+    const roleId = state.sessionRoleId ?? state.currentUser?.roleId;
+    if (!roleId) return false;
+
+    const userRole = state.roles.find(role => role.id === roleId);
+    if (!userRole || !userRole.isActive) return false;
+
+    return userRole.permissions.some(granted => {
+      if (granted === '*' || granted === permission) return true;
+      if (granted.endsWith('.*')) {
+        return permission.startsWith(granted.slice(0, -1));
+      }
+      return false;
+    });
   },
-  
+
   getUserPermissions: () => {
     const state = get();
-    if (!state.currentUser) return [];
-    
-    const userRole = state.roles.find(role => role.id === state.currentUser!.roleId);
+    const roleId = state.sessionRoleId ?? state.currentUser?.roleId;
+    if (!roleId) return [];
+
+    const userRole = state.roles.find(role => role.id === roleId);
     return userRole?.permissions || [];
+  },
+
+  hasModuleAccess: (modulePrefix) => {
+    const state = get();
+    const roleId = state.sessionRoleId ?? state.currentUser?.roleId;
+    if (!roleId) return false;
+
+    const userRole = state.roles.find(role => role.id === roleId);
+    if (!userRole || !userRole.isActive) return false;
+
+    return userRole.permissions.some(p => p === '*' || p === `${modulePrefix}.*` || p.startsWith(`${modulePrefix}.`));
   },
   
   subscribe: (callback) => {

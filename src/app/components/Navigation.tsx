@@ -3,8 +3,17 @@
 import React, { Suspense, lazy } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Accordion, AccordionItem, Badge, Avatar } from "@heroui/react";
+import { useSession } from 'next-auth/react';
 import { isLeanAccountingUI } from '../lib/accounting/tenantAccountingConfig';
 import { useComplianceStore } from '../lib/compliance/store';
+import { useSettingsStore } from '../lib/settings/store';
+
+const ROLE_LABELS: Record<string, string> = {
+  admin: 'System Administrator',
+  manager: 'Hotel Manager',
+  staff: 'Staff Member',
+  night_manager: 'Night Manager',
+};
 
 // Lazy load heavy components to prevent chunk loading errors
 const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
@@ -62,6 +71,33 @@ interface NavigationProps {
 
 type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'compliance' | 'inventory' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs';
 
+/** Maps any ActiveSection (including deep sub-pages) to the top-level module key used for
+ *  nav-menu access control (navigationSections[].key / hasModuleAccess). */
+function sectionToModuleKey(section: ActiveSection): string {
+  const frontdesk = new Set(['frontdesk', 'rooms-bookings', 'invoices-payments', 'clients-services', 'guest-experience-manager', 'mobile-guest-services', 'frontdesk-activities', 'check-ins', 'in-house', 'check-outs']);
+  const events = new Set(['events-conferences', 'events-conferences-standalone', 'events-conferences-analytics', 'events-conferences-preferences']);
+  const fb = new Set(['f&b', 'restaurant', 'kitchen', 'pos', 'food-beverage', 'fb-analytics', 'fb-preferences', 'fb-pos', 'fb-restaurant-bar', 'fb-kitchen', 'fb-menu-inventory', 'fb-staff-reports', 'fb-activities']);
+  const housekeeping = new Set(['housekeeping', 'housekeeping-analytics', 'housekeeping-preferences', 'housekeeping-activities']);
+  const inventory = new Set(['inventory', 'inventory-supply-chain', 'inventory-analytics', 'inventory-preferences', 'inventory-activities']);
+  const security = new Set(['security', 'security-compliance', 'security-analytics', 'security-preferences', 'security-activities']);
+  const hr = new Set(['hr', 'hr-payroll-management', 'hr-analytics', 'hr-preferences', 'hr-activities']);
+  const accounting = new Set(['accounting', 'accounting-management', 'accounting-activities', 'chart-of-accounts', 'bank-cash-management', 'accounts-payable', 'inventory-fixed-assets', 'financial-reports', 'audit-controls']);
+  const compliance = new Set(['compliance', 'reports-analytics']);
+
+  if (section === 'dashboard') return 'dashboard';
+  if (frontdesk.has(section)) return 'frontdesk';
+  if (events.has(section)) return 'events-conferences';
+  if (fb.has(section)) return 'f&b';
+  if (housekeeping.has(section)) return 'housekeeping';
+  if (inventory.has(section)) return 'inventory';
+  if (security.has(section)) return 'security';
+  if (hr.has(section)) return 'hr';
+  if (accounting.has(section)) return 'accounting';
+  if (compliance.has(section)) return 'compliance';
+  if (section === 'settings') return 'settings';
+  return 'dashboard';
+}
+
 function resolveNavSection(target: string): ActiveSection {
   switch (target) {
     case 'user-management-unified':
@@ -112,6 +148,14 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
   const leanMode = isLeanAccountingUI();
+  // Re-render the menu (and re-evaluate hasModuleAccess) whenever the real session role
+  // or the editable role/permission list changes.
+  useSettingsStore(s => s.sessionRoleId);
+  useSettingsStore(s => s.roles);
+  const hasModuleAccess = useSettingsStore.getState().hasModuleAccess;
+  const { data: session } = useSession();
+  const currentUserName = session?.user?.name || 'User';
+  const currentUserRoleLabel = ROLE_LABELS[(session?.user as any)?.role] || (session?.user as any)?.role || '';
 
   // Every revenue centre (Front Office, F&B, Events & Conferences, Room Configuration,
   // checkout) reads tax rates via getActiveTaxConfigs(), which falls back to a hardcoded
@@ -241,6 +285,19 @@ export default function Navigation({ onLogout }: NavigationProps) {
       items: []
     }
   ];
+
+  const visibleNavigationSections = navigationSections.filter(section => hasModuleAccess(section.key));
+
+  // If the current role loses access to whatever section is active (role changed, or a
+  // stale deep link from a previous, more-privileged session), fall back to the dashboard
+  // instead of silently continuing to render restricted content.
+  React.useEffect(() => {
+    const activeModuleKey = sectionToModuleKey(activeSection);
+    if (activeModuleKey !== 'dashboard' && !hasModuleAccess(activeModuleKey)) {
+      setActiveSection('dashboard');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSection, hasModuleAccess]);
 
   const handleSelectionChange = (keys: any) => {
     // Handle both Set<string> and Selection types
@@ -546,7 +603,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
             onSelectionChange={handleSelectionChange}
             className="space-y-2"
           >
-            {navigationSections.map((section) => (
+            {visibleNavigationSections.map((section) => (
               <AccordionItem
                 key={section.key}
                 aria-label={section.title}
@@ -618,12 +675,12 @@ export default function Navigation({ onLogout }: NavigationProps) {
           <div className="mt-8 pt-6 border-t border-gray-200">
             <div className="flex items-center mb-4">
               <Avatar
-                name="Admin User"
+                name={currentUserName}
                 className="h-10 w-10 bg-gradient-to-br from-ghana-green to-ghana-gold text-white mr-3"
               />
               <div>
-                <p className="font-semibold text-ghana-black">System Administrator</p>
-                <p className="text-xs text-gray-600">Ghana Hotel Management</p>
+                <p className="font-semibold text-ghana-black">{currentUserName}</p>
+                <p className="text-xs text-gray-600">{currentUserRoleLabel || 'Ghana Hotel Management'}</p>
               </div>
             </div>
             <Button
