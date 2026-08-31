@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { 
   Card, 
   CardBody, 
@@ -43,6 +44,7 @@ import {
 } from '../lib/tax/engine';
 import { resolveNightlyGross } from '../lib/frontoffice/helpers/rates';
 import { canMarkNoShow } from '../lib/frontoffice/arrivals';
+import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 
 interface ReservationFormData {
   guestName: string;
@@ -182,6 +184,7 @@ const AuditLogSection = ({ reservationId }: { reservationId: string }) => {
 };
 
 export default function ReservationsBookingsManager({ mode = 'reservation', embed = false, autoOpenNew = false }: ReservationsManagerProps) {
+  const router = useRouter();
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [filteredReservations, setFilteredReservations] = useState<Reservation[]>([]);
   const [resPage, setResPage] = useState(1);
@@ -1713,14 +1716,47 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     </div>
                     </div>
                     {(() => { const { nights, nightly, subtotal, taxRate, tax, grandTotal } = getComputedTotalsForReservation(selectedReservation); return (
-                      <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                        <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toFixed(2)}</div></CardBody></Card>
-                        <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
-                        <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toFixed(2)}</div></CardBody></Card>
-                        <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toFixed(2)}</div></CardBody></Card>
-                        <Card><CardBody><div className="text-xs text-gray-600">Grand Total</div><div className="text-lg font-semibold">₵{grandTotal.toFixed(2)}</div></CardBody></Card>
+                      <div className="mb-2">
+                        <div className="text-xs font-medium text-gray-500 mb-2">Rate Quote — contracted rate × nights, not the live folio</div>
+                        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                          <Card><CardBody><div className="text-xs text-gray-600">Nightly</div><div className="text-lg font-semibold">₵{nightly.toFixed(2)}</div></CardBody></Card>
+                          <Card><CardBody><div className="text-xs text-gray-600">Nights</div><div className="text-lg font-semibold">{nights}</div></CardBody></Card>
+                          <Card><CardBody><div className="text-xs text-gray-600">Subtotal</div><div className="text-lg font-semibold">₵{subtotal.toFixed(2)}</div></CardBody></Card>
+                          <Card><CardBody><div className="text-xs text-gray-600">Taxes ({Math.round(taxRate*100)}%)</div><div className="text-lg font-semibold">₵{tax.toFixed(2)}</div></CardBody></Card>
+                          <Card><CardBody><div className="text-xs text-gray-600">Quoted Total</div><div className="text-lg font-semibold">₵{grandTotal.toFixed(2)}</div></CardBody></Card>
+                        </div>
                       </div>
                     ); })()}
+
+                    {(() => {
+                      const folio = findMainFolio(frontOfficeStore.folios, selectedReservation.id);
+                      if (!folio) return null;
+                      const { totalCharges, totalPayments, outstandingBalance } = getFolioDisplayTotals(folio);
+                      return (
+                        <Card className="border-primary-200 bg-primary-50">
+                          <CardBody>
+                            <div className="flex items-center justify-between flex-wrap gap-3">
+                              <div>
+                                <div className="text-xs font-medium text-gray-500 mb-1">Folio — actually posted to date</div>
+                                <div className="flex gap-4 text-sm">
+                                  <span>Charged: <strong>₵{totalCharges.toFixed(2)}</strong></span>
+                                  <span>Paid: <strong>₵{totalPayments.toFixed(2)}</strong></span>
+                                  <span>Balance: <strong className={outstandingBalance > 0 ? 'text-orange-600' : 'text-green-600'}>₵{outstandingBalance.toFixed(2)}</strong></span>
+                                </div>
+                              </div>
+                              <Button
+                                size="sm"
+                                color="primary"
+                                variant="flat"
+                                onClick={() => { onClose(); router.push('/guest-services/client-services/invoices-payments'); }}
+                              >
+                                View Folio →
+                              </Button>
+                            </div>
+                          </CardBody>
+                        </Card>
+                      );
+                    })()}
 
                     {(selectedReservation.remarksToGuest || selectedReservation.internalNotes) && (
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
