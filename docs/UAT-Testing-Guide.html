@@ -257,7 +257,7 @@
   <div class="flag-bar">🇬🇭 🏨 🇬🇭</div>
   <h1>Akwaaba Grand Hotel</h1>
   <div class="subtitle">System Audit &amp; Testing Guide — Friend &amp; Stakeholder Edition</div>
-  <div class="version">Ghana Hotel Management System · June 2026</div>
+  <div class="version">Ghana Hotel Management System · September 2026</div>
 </div>
 
 <div class="container">
@@ -288,10 +288,59 @@
     </p>
   </div>
 
+  <!-- ═══════════════════════════════════════════════════
+       LOGIN — REQUIRED BEFORE ANY OTHER STEP
+  ═══════════════════════════════════════════════════ -->
+  <div class="section" id="s0">
+    <div class="section-header">
+      <div class="section-num">0</div>
+      <div>
+        <h2>Log In First</h2>
+        <div class="section-sub">Do this before anything else in this guide</div>
+      </div>
+    </div>
+    <div class="section-body">
+      <div class="warn">
+        <div class="warn-label">The system now requires a real login</div>
+        <p>You will land on a <strong>"Welcome Back"</strong> sign-in screen, not the dashboard. Use the demo account below — do not create a new account or use your own email.</p>
+      </div>
+
+      <table class="data-table">
+        <tr><th style="width:35%">Field</th><th>Enter This</th></tr>
+        <tr><td class="field">Tenant ID</td><td class="value">demo</td></tr>
+        <tr><td class="field">Email Address</td><td class="value">admin@demohotel.com</td></tr>
+        <tr><td class="field">Password</td><td class="value">password123</td></tr>
+      </table>
+
+      <div class="expect">
+        <div class="expect-label">✓ What you should see</div>
+        <ul>
+          <li>You're taken to the <strong>Master Command Center</strong> dashboard, with a full menu on the left</li>
+          <li>Your name and role (e.g. <em>System Administrator</em>) appear at the bottom of the left menu</li>
+        </ul>
+      </div>
+
+      <div class="warn">
+        <div class="warn-label">Optional — testing a non-admin role</div>
+        <p>
+          Three other demo logins share the same password (<span class="value">password123</span>), same Tenant ID
+          (<span class="value">demo</span>): <span class="value">manager@demohotel.com</span>,
+          <span class="value">staff@demohotel.com</span>, and <span class="value">night@demohotel.com</span>.
+          Each role sees a different, deliberately restricted set of menu items — for example, logging in as
+          <span class="value">staff@demohotel.com</span> should only show Dashboard, Front Office, Housekeeping, and
+          Food &amp; Beverage, with Accounting/HR/Settings hidden. If you want to test that, log out (bottom of the
+          left menu) and back in as a different role — otherwise stay signed in as <strong>admin</strong> for the
+          rest of this guide, since later sections (Accounting, HR &amp; Payroll, Settings) need full access.
+        </p>
+      </div>
+    </div>
+  </div>
+
   <!-- TABLE OF CONTENTS -->
   <div class="toc">
     <h3>Contents</h3>
     <ol>
+      <li><a href="#s0">Log In First</a></li>
       <li><a href="#s1">System Setup &amp; Hotel Profile</a></li>
       <li><a href="#s2">Settings — Taxes, Rooms &amp; Configuration</a></li>
       <li><a href="#s3">Ghana Tax Stack Explained</a></li>
@@ -403,7 +452,7 @@
 
       <div class="warn">
         <div class="warn-label">Important — Do NOT edit rates here</div>
-        <p>The rates shown in Settings are display-only references. The actual rates used in calculations live in <span class="nav">Accounting → Tax Rate Builder</span>. If you want to verify or change rates, use the button provided.</p>
+        <p>The rates shown in Settings are display-only references. The actual rates used in calculations live in <span class="nav">Accounting &amp; Finance → Taxes</span>. If you want to verify or change rates, use the button provided.</p>
       </div>
 
       <div class="step">
@@ -511,7 +560,7 @@
       <div class="section-num">4</div>
       <div>
         <h2>Room Management — Create Room Types &amp; Rooms</h2>
-        <div class="section-sub">Go to: Rooms / Room Management</div>
+        <div class="section-sub">Go to: Settings → Rooms & Pricing</div>
       </div>
     </div>
     <div class="section-body">
@@ -520,7 +569,7 @@
         <div class="step-badge">1</div>
         <div class="step-content">
           <h4>Create Three Room Types</h4>
-          <p>Navigate to <span class="nav">Rooms → Room Types</span>. Click <span class="btn-sample">+ Add Room Type</span> and create each of the following:</p>
+          <p>Navigate to <span class="nav">Settings → Rooms &amp; Pricing → Room Types &amp; Categories</span>. Click <span class="btn-sample">+ Add Room Type</span> and create each of the following:</p>
         </div>
       </div>
 
@@ -550,7 +599,7 @@
         <div class="step-badge">2</div>
         <div class="step-content">
           <h4>Create Individual Rooms</h4>
-          <p>Go to <span class="nav">Rooms → Room List</span> and create at least 6 rooms. Assign them to the room types you just created:</p>
+          <p>Still in <span class="nav">Settings → Rooms &amp; Pricing</span>, switch to the <strong>Rooms</strong> tab and create at least 6 individual rooms. Assign them to the room types you just created:</p>
         </div>
       </div>
 
@@ -594,7 +643,7 @@
         <div class="step-badge">1</div>
         <div class="step-content">
           <h4>Create a Reservation</h4>
-          <p>Go to <span class="nav">Front Office → New Booking</span>. Enter the guest details below:</p>
+          <p>Go to <span class="nav">Front Office Operations → Reservations</span> and create a new booking. Enter the guest details below:</p>
         </div>
       </div>
 
@@ -629,7 +678,7 @@
         <div class="step-badge">2</div>
         <div class="step-content">
           <h4>Check In the Guest</h4>
-          <p>Find the reservation in <span class="nav">Front Office → Reservations</span>. Click <span class="btn-sample">Check In</span>. Confirm room assignment. Room 201 status should change.</p>
+          <p>Find the reservation in <span class="nav">Front Office Operations → Reservations</span>. Click <span class="btn-sample">Check In</span>. Confirm room assignment. Room 201 status should change.</p>
         </div>
       </div>
 
@@ -672,7 +721,7 @@
           <li>Room 201 status changes to <strong>Dirty</strong> (awaiting housekeeping)</li>
           <li>Folio shows <strong>GHS 0.00 balance</strong> (fully settled)</li>
           <li>A <strong>guest invoice</strong> is generated and viewable</li>
-          <li>The payment appears in <span class="nav">Accounting → Accounts Receivable</span></li>
+          <li>The payment appears in <span class="nav">Accounting &amp; Finance → Accounts Receivable</span></li>
         </ul>
       </div>
 
@@ -718,7 +767,7 @@
       <div class="section-num">6</div>
       <div>
         <h2>Restaurant / F&amp;B — Post Charges to a Room</h2>
-        <div class="section-sub">Go to: Restaurant or Point of Sale</div>
+        <div class="section-sub">Go to: Food &amp; Beverage</div>
       </div>
     </div>
     <div class="section-body">
@@ -732,7 +781,7 @@
         <div class="step-badge">1</div>
         <div class="step-content">
           <h4>Post F&amp;B Charge to Kwame Asante's Room</h4>
-          <p>While Guest A (Kwame Asante) is still checked in, go to <span class="nav">Restaurant / F&amp;B</span>. Create a charge and post it to <strong>Room 201</strong>:</p>
+          <p>While Guest A (Kwame Asante) is still checked in, go to <span class="nav">Food &amp; Beverage</span>. Create a charge and post it to <strong>Room 201</strong>:</p>
         </div>
       </div>
 
@@ -776,7 +825,7 @@
       <div class="section-num">7</div>
       <div>
         <h2>Accounting — KPIs, Payables &amp; Receivables</h2>
-        <div class="section-sub">Go to: Accounting in the main navigation</div>
+        <div class="section-sub">Go to: Accounting &amp; Finance in the main navigation</div>
       </div>
     </div>
     <div class="section-body">
@@ -787,7 +836,7 @@
         <div class="step-badge">1</div>
         <div class="step-content">
           <h4>Review the Accounting Dashboard</h4>
-          <p>Open <span class="nav">Accounting</span>. The dashboard shows key financial metrics. After completing the front office steps, these should reflect real data — not zeros.</p>
+          <p>Open <span class="nav">Accounting &amp; Finance</span>. The dashboard shows key financial metrics. After completing the front office steps, these should reflect real data — not zeros.</p>
         </div>
       </div>
 
@@ -807,7 +856,7 @@
         <div class="step-badge">2</div>
         <div class="step-content">
           <h4>Create a Supplier (Business Partner)</h4>
-          <p>Go to <span class="nav">Accounting → Accounts Payable</span>. Click <span class="btn-sample">+ New Vendor</span> and enter:</p>
+          <p>Go to <span class="nav">Accounting &amp; Finance → Accounts Payable</span>. Click <span class="btn-sample">+ New Vendor</span> and enter:</p>
         </div>
       </div>
 
@@ -881,7 +930,7 @@
         <div class="step-badge">5</div>
         <div class="step-content">
           <h4>Collect Payment from Abena Mensah</h4>
-          <p>Go to <span class="nav">Accounting → Accounts Receivable</span>. Find the invoice for <strong>Abena Mensah / Accra Business Ventures Ltd</strong>. Record full payment:</p>
+          <p>Go to <span class="nav">Accounting &amp; Finance → Accounts Receivable</span>. Find the invoice for <strong>Abena Mensah / Accra Business Ventures Ltd</strong>. Record full payment:</p>
         </div>
       </div>
 
@@ -911,7 +960,7 @@
       <div class="section-num">8</div>
       <div>
         <h2>Tax &amp; Compliance — Verify the Levy Stack</h2>
-        <div class="section-sub">Go to: Accounting → Tax Rate Builder</div>
+        <div class="section-sub">Go to: Accounting &amp; Finance → Taxes</div>
       </div>
     </div>
     <div class="section-body">
@@ -920,7 +969,7 @@
         <div class="step-badge">1</div>
         <div class="step-content">
           <h4>Open the Tax Rate Builder</h4>
-          <p>Go to <span class="nav">Accounting → Taxes</span> (or click <strong>Manage Tax Rates →</strong> from Settings). You should be in the <strong>Tax Rate Builder</strong> tab. Country should be set to <strong>🇬🇭 Ghana</strong>.</p>
+          <p>Go to <span class="nav">Accounting &amp; Finance → Taxes</span> (or click <strong>Manage Tax Rates →</strong> from Settings). You should be in the <strong>Tax Rate Builder</strong> tab. Country should be set to <strong>🇬🇭 Ghana</strong>.</p>
         </div>
       </div>
 
@@ -989,7 +1038,7 @@
       <div class="section-num">9</div>
       <div>
         <h2>HR &amp; Payroll — Add Staff, Run PAYE</h2>
-        <div class="section-sub">Go to: HR / Human Resources</div>
+        <div class="section-sub">Go to: HR &amp; Payroll</div>
       </div>
     </div>
     <div class="section-body">
@@ -1000,7 +1049,7 @@
         <div class="step-badge">1</div>
         <div class="step-content">
           <h4>Add Front Desk Agent</h4>
-          <p>Go to <span class="nav">HR → Employees → Add Employee</span>. Enter the details below:</p>
+          <p>Go to <span class="nav">HR &amp; Payroll → Employee Records</span> and add a new employee. Enter the details below:</p>
         </div>
       </div>
 
@@ -1043,7 +1092,7 @@
         <div class="step-badge">3</div>
         <div class="step-content">
           <h4>Open the Payroll Builder</h4>
-          <p>Go to <span class="nav">HR → Payroll</span> or <span class="nav">Payroll Builder</span>. Click <span class="btn-sample">Load Template</span> and select <strong>Ghana</strong>. Then click <span class="btn-sample">Process Monthly Payroll</span>.</p>
+          <p>Go to <span class="nav">HR &amp; Payroll → Payroll Builder</span>. Click <span class="btn-sample">Load Template</span> and select <strong>Ghana</strong>. Then click <span class="btn-sample">Process Monthly Payroll</span>.</p>
         </div>
       </div>
 
@@ -1105,6 +1154,11 @@
       </div>
     </div>
     <div class="section-body">
+
+      <div class="sub-header">Log In</div>
+      <ul class="checklist">
+        <li><input type="checkbox" class="check-box"><label> Logged in as admin@demohotel.com and reached the Master Command Center dashboard</label></li>
+      </ul>
 
       <div class="sub-header">Setup &amp; Configuration</div>
       <ul class="checklist">
@@ -1195,7 +1249,7 @@
 
 <footer>
   <p><strong>Akwaaba Grand Hotel Management System</strong> — Friend &amp; Stakeholder Audit Guide</p>
-  <p style="margin-top:4px;">Ghana Revenue Authority tax rates current as at GRA 2024 gazette · Document generated June 2026</p>
+  <p style="margin-top:4px;">Ghana Revenue Authority tax rates current as at GRA 2024 gazette · Document updated September 2026</p>
 </footer>
 
 </body>
