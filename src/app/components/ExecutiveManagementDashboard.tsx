@@ -11,6 +11,9 @@ import { useStockStore } from '../lib/inventory/stockStore';
 import { announcementStore } from '../lib/analytics/announcementStore';
 import { ordersStore } from '../lib/fb/ordersStore';
 import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
+import { useAccountingStore } from '../lib/accounting/store';
+import { toRollupCoa } from '../lib/accounting/coaHierarchy';
+import { buildFinancialAccountTree } from '../lib/accounting/financialReportRollup';
 import OfflineIndicator from './OfflineIndicator';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
@@ -33,6 +36,10 @@ export default function ExecutiveManagementDashboard() {
   // IMPORTANT: Keep initial render deterministic across server and client
   const [occupancy, setOccupancy] = React.useState<ReturnType<typeof calculateOccupancyAnalytics> | null>(null);
   const [revenueToday, setRevenueToday] = React.useState<number>(0);
+  // Real GL-posted revenue for the selected date (from Chart of Accounts / journal entries),
+  // as distinct from revenueToday (folio charges accrued today, which can include an in-house
+  // guest's room charges days before they check out and those charges actually post to the GL).
+  const [postedRevenue, setPostedRevenue] = React.useState<number>(0);
   const [recent, setRecent] = React.useState<AuditRecord[]>([]);
   const [adr, setAdr] = React.useState<number>(0);
   const [revpar, setRevpar] = React.useState<number>(0);
@@ -97,6 +104,20 @@ export default function ExecutiveManagementDashboard() {
       other: flash?.revenue?.otherRevenue || 0,
       total: flash?.revenue?.totalRevenue || 0
     });
+
+    // Real GL-posted revenue for this date, straight from the Chart of Accounts /
+    // journal entries — the same computation Financial Reports and the Chart of
+    // Accounts screen use, so this figure always ties out to the books.
+    try {
+      const { chartOfAccounts, journalEntries } = useAccountingStore.getState();
+      const rollup = toRollupCoa(chartOfAccounts as any);
+      const dayDate = new Date(isoDate);
+      const tree = buildFinancialAccountTree(rollup, journalEntries, { kind: 'period', startDate: dayDate, endDate: dayDate });
+      const revenueForDay = tree.filter(n => n.type === 'Revenue').reduce((s, n) => s + n.balance, 0);
+      setPostedRevenue(Number.isFinite(revenueForDay) ? revenueForDay : 0);
+    } catch {
+      setPostedRevenue(0);
+    }
 
     // Live operations snapshot from Front Office store
     try {
@@ -244,11 +265,12 @@ export default function ExecutiveManagementDashboard() {
 
   const handleExportCSV = () => {
     const data = {
-      date: new Date().toISOString().split('T')[0],
+      date: selectedDate || new Date().toISOString().split('T')[0],
       totalRooms,
       occupiedRooms,
       availableRooms,
       revenueToday,
+      postedRevenue,
       adr,
       revpar,
       arrivals,
@@ -267,8 +289,8 @@ export default function ExecutiveManagementDashboard() {
 
   const handleExportPDF = async () => {
     const data = {
-      date: new Date().toISOString().split('T')[0],
-      kpis: { totalRooms, occupiedRooms, availableRooms, revenueToday, adr, revpar, arrivals, departures },
+      date: selectedDate || new Date().toISOString().split('T')[0],
+      kpis: { totalRooms, occupiedRooms, availableRooms, revenueToday, postedRevenue, adr, revpar, arrivals, departures },
       trend: occupancyTrend,
       revenueSplit
     };
@@ -417,9 +439,11 @@ export default function ExecutiveManagementDashboard() {
             <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">Today's Financial Pulse</h3></CardHeader>
             <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="text-xs text-gray-600">REVENUE</div>
-                <div className="text-2xl font-bold text-ghana-black">{formatCurrency(revenueToday)}</div>
-                <div className="text-xs text-gray-500">Target: {formatCurrency(revenueToday * 1.05)}</div>
+                <div className="text-xs text-gray-600">REVENUE (Posted to GL)</div>
+                <div className="text-2xl font-bold text-ghana-black">{formatCurrency(postedRevenue)}</div>
+                <div className="text-xs text-gray-500" title="Room/F&B charges accrued on guest folios today, before checkout posts them to the ledger">
+                  Charges billed today (pre-checkout): {formatCurrency(revenueToday)}
+                </div>
               </div>
               <div className="p-4 bg-gray-50 rounded-lg">
                 <div className="text-xs text-gray-600">OCCUPANCY</div>
