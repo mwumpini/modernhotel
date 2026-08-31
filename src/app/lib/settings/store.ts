@@ -2248,6 +2248,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   saveSettings: () => {
+    if (typeof window === 'undefined') return;
     try {
       const state = get();
 

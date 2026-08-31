@@ -41,6 +41,10 @@ export default function ExecutiveManagementDashboard() {
   const [occupancyTrend, setOccupancyTrend] = React.useState<Array<{date: string; rate: number}>>([]);
   const [revenueSplit, setRevenueSplit] = React.useState<{room: number; fb: number; other: number; total: number}>({ room: 0, fb: 0, other: 0, total: 0 });
   const [selectedDate, setSelectedDate] = React.useState<string>('');
+  // Room counts for the selected date — kept separate from `occupancy` (which is
+  // always "today") so CSV/PDF exports don't mix today's room counts with a
+  // different selected date's revenue/ADR/arrivals figures.
+  const [roomCounts, setRoomCounts] = React.useState<{ totalRooms: number; occupiedRooms: number; availableRooms: number }>({ totalRooms: 0, occupiedRooms: 0, availableRooms: 0 });
 
   // LIVE OPS SNAPSHOT
   const [inHouse, setInHouse] = React.useState<number>(0);
@@ -79,8 +83,12 @@ export default function ExecutiveManagementDashboard() {
     const flash = generateDailyFlashReport(isoDate);
     setRevenueToday(flash?.revenue?.totalRevenue || 0);
     setAdr(flash?.revenue?.averageDailyRate || 0);
-    const rooms = flash?.occupancy?.totalRooms || 0;
-    setRevpar(rooms > 0 ? (flash?.revenue?.totalRevenue || 0) / rooms : 0);
+    setRevpar(flash?.revenue?.revenuePerAvailableRoom || 0);
+    setRoomCounts({
+      totalRooms: flash?.occupancy?.totalRooms || 0,
+      occupiedRooms: flash?.occupancy?.occupiedRooms || 0,
+      availableRooms: flash?.occupancy?.availableRooms || 0
+    });
     setArrivals(flash?.arrivals?.total || 0);
     setDepartures(flash?.departures?.total || 0);
     setRevenueSplit({
@@ -230,9 +238,7 @@ export default function ExecutiveManagementDashboard() {
     };
   }, [selectedDate, refreshForDate]);
 
-  const totalRooms = occupancy?.totalRooms ?? 0;
-  const occupiedRooms = occupancy?.occupiedRooms ?? 0;
-  const availableRooms = occupancy?.availableRooms ?? 0;
+  const { totalRooms, occupiedRooms, availableRooms } = roomCounts;
 
   const go = (href: string) => { window.location.href = href; };
 

@@ -590,9 +590,11 @@ export const useAnalyticsStore = create<AnalyticsStore>((set, get) => ({
       occupancyTrend: Array.from({ length: 7 }, (_, i) => {
         const date = new Date();
         date.setDate(date.getDate() - i);
+        const isoDate = date.toISOString().split('T')[0];
+        const dayReport = i === 0 ? dailyFlashReport : reportingStore.generateDailyFlashReport(isoDate);
         return {
-          date: date.toISOString().split('T')[0],
-          rate: 70 + Math.random() * 20
+          date: isoDate,
+          rate: dayReport?.occupancy?.occupancyRate ?? 0
         };
       }).reverse()
     };
