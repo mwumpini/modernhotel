@@ -104,7 +104,17 @@ export function getFolioDisplayTotals(folio: Folio) {
  * company-billed split) should go through this instead of a raw `.find`.
  */
 export function findMainFolio(folios: Folio[] | undefined, reservationId: string): Folio | undefined {
-	return (folios || []).find((f: any) => f.reservationId === reservationId && f.type !== 'split');
+	const candidates = (folios || []).filter((f: any) => f.reservationId === reservationId && f.type !== 'split');
+	if (candidates.length <= 1) return candidates[0];
+	// A hydration race (getOrCreateFolio called client-side before the async GET
+	// /api/folios pull resolves) can leave several folio rows for the same
+	// reservation — the real one plus empty duplicates created and persisted
+	// before the server's copy was known locally. Prefer whichever actually has
+	// charges/payments over an empty placeholder so old data isn't shadowed by
+	// a duplicate that happens to sit earlier in the array.
+	return (
+		candidates.find((f: any) => (f.charges?.length || 0) > 0 || (f.payments?.length || 0) > 0) || candidates[0]
+	);
 }
 
 /**
@@ -171,6 +181,17 @@ export function updateFolioBalances(self: StoreLike, folio: Folio) {
 	// Single write-through chokepoint: every folio mutation recomputes balances,
 	// so persisting here keeps the database row authoritative without wiring each
 	// individual helper (charge, payment, transfer, split, void, refund, close).
+	//
+	// Skip persisting a folio that's still completely empty. getOrCreateFolio
+	// creates one synchronously whenever a reservation's real folio hasn't been
+	// pulled from the server yet (the GET /api/folios hydration is async), so an
+	// empty folio here doesn't mean "this reservation has no charges" — it can
+	// just mean "the real one hasn't loaded yet." Persisting it anyway created a
+	// second, empty DB row per race, and findMainFolio's `.find()` could then
+	// return that empty duplicate instead of the real one. Nothing is lost by
+	// waiting: the moment this folio gets an actual charge/payment, this same
+	// function runs again and persists then.
+	if ((folio.charges?.length || 0) === 0 && (folio.payments?.length || 0) === 0) return;
 	try { self.persistFolio?.(folio); } catch {}
 }
 

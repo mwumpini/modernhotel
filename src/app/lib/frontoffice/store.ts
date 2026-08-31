@@ -171,9 +171,31 @@ class FrontOfficeStore {
   // ---------------------------------------------------------------------------
   private tenant(): string | null { return getClientTenantSubdomain(); }
 
+  // A failed write (network blip, brief server hiccup) used to be silently
+  // dropped forever — the in-memory charge/reservation stayed correct on
+  // screen but the database never got it, so it vanished on the next reload.
+  // Retry a few times with backoff before giving up; this fixes the common
+  // transient case without needing a full offline write queue.
+  private async withRetry<T>(fn: () => Promise<T>, attempts = 3, baseDelayMs = 500): Promise<T> {
+    let lastErr: unknown;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fn();
+      } catch (e) {
+        lastErr = e;
+        if (i < attempts - 1) {
+          await new Promise((resolve) => setTimeout(resolve, baseDelayMs * Math.pow(2, i)));
+        }
+      }
+    }
+    throw lastErr;
+  }
+
   private enqueueWrite(fn: () => Promise<unknown>) {
     if (typeof window === 'undefined' || !this.tenant()) return;
-    this.writeQueue = this.writeQueue.then(fn).catch(e => console.warn('FO: persist failed', e));
+    this.writeQueue = this.writeQueue
+      .then(() => this.withRetry(fn))
+      .catch(e => console.warn('FO: persist failed after retries', e));
   }
 
   private persistNewReservation(r: Reservation) {
@@ -211,7 +233,15 @@ class FrontOfficeStore {
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.reservations) && data.reservations.length > 0) {
-          this.reservations = data.reservations.map((r: Reservation) => this.ensureReservationRates(r));
+          // Merge by id (like guests/folios below) instead of replacing the array
+          // wholesale. A reservation created locally moments before this GET
+          // resolves may not have finished its own async POST to the server yet;
+          // a wholesale replace would silently drop it from view until whatever
+          // later refresh happens to catch it after the POST lands.
+          const byId = new Map<string, Reservation>();
+          this.reservations.forEach((r) => byId.set(r.id, r));
+          data.reservations.forEach((r: Reservation) => byId.set(r.id, this.ensureReservationRates(r)));
+          this.reservations = Array.from(byId.values());
           this.reservations.forEach((r) => {
             if (r.status === 'checked-in') {
               try { this.ensureFolioRoomCharges(r.id); } catch {}
