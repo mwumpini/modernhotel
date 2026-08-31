@@ -390,6 +390,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [showBillingPersonSearch, setShowBillingPersonSearch] = useState(false);
   const [isBillingPersonSearching, setIsBillingPersonSearching] = useState(false);
   const [billingPersonSearchError, setBillingPersonSearchError] = useState<string | null>(null);
+  const [showNewBillingPersonModal, setShowNewBillingPersonModal] = useState(false);
+  const [newBillingPersonForm, setNewBillingPersonForm] = useState({ name: '', company: '', jobTitle: '', phone: '', email: '' });
+  const [newBillingPersonError, setNewBillingPersonError] = useState<string | null>(null);
   
   // Bulk reservation state
   // Single-guest flow removed; always use bulk reservations
@@ -883,6 +886,40 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       billingPersonName: (billingPerson as any).name,
       company: (billingPerson as any).employerCompany
     });
+  };
+
+  const openNewBillingPersonModal = () => {
+    setNewBillingPersonForm({ name: '', company: '', jobTitle: '', phone: '', email: '' });
+    setNewBillingPersonError(null);
+    setShowNewBillingPersonModal(true);
+  };
+
+  const handleCreateBillingPerson = () => {
+    const name = newBillingPersonForm.name.trim();
+    if (!name) {
+      setNewBillingPersonError('Name is required');
+      return;
+    }
+    const [firstName, ...rest] = name.split(' ');
+    // Billing persons are third-party payers (a company contact, travel agent, etc.), not
+    // hotel guests — createGuest's KYC fields (nationality/idType/idNumber/emergencyContact)
+    // don't apply here, so they're filled with harmless placeholders (same escape hatch
+    // FrontofficeCalendar.tsx already uses for walk-in guest creation).
+    const guest = frontOfficeStore.createGuest({
+      firstName: firstName || name,
+      lastName: rest.join(' ') || '-',
+      name,
+      employerCompany: newBillingPersonForm.company.trim() || undefined,
+      jobTitle: newBillingPersonForm.jobTitle.trim() || undefined,
+      phone: newBillingPersonForm.phone.trim() || undefined,
+      email: newBillingPersonForm.email.trim() || undefined,
+      nationality: 'ghanaian',
+      idType: 'other',
+      idNumber: '',
+      emergencyContact: { name: '', relationship: 'other', phone: '' },
+    } as any);
+    handleBillingPersonSelection(guest);
+    setShowNewBillingPersonModal(false);
   };
 
   const handleSaveReservation = () => {
@@ -2396,10 +2433,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                             size="sm"
                             color="primary"
                             variant="bordered"
-                            onClick={() => {
-                              // This would open a modal to create a new billing person
-                              alert('Feature: Create new billing person - Coming soon!');
-                            }}
+                            onClick={openNewBillingPersonModal}
                           >
                             ➕ Add New Billing Person
                           </Button>
@@ -2407,6 +2441,50 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       </div>
                     )}
                   </div>
+
+                  {showNewBillingPersonModal && (
+                    <Modal isOpen={showNewBillingPersonModal} onClose={() => setShowNewBillingPersonModal(false)}>
+                      <ModalContent>
+                        <ModalHeader>Add New Billing Person</ModalHeader>
+                        <ModalBody>
+                          <div className="space-y-3 pb-2">
+                            <Input
+                              label="Name *"
+                              value={newBillingPersonForm.name}
+                              onChange={(e) => { setNewBillingPersonForm(prev => ({ ...prev, name: e.target.value })); setNewBillingPersonError(null); }}
+                              isInvalid={!!newBillingPersonError}
+                              errorMessage={newBillingPersonError || undefined}
+                            />
+                            <Input
+                              label="Company"
+                              value={newBillingPersonForm.company}
+                              onChange={(e) => setNewBillingPersonForm(prev => ({ ...prev, company: e.target.value }))}
+                            />
+                            <Input
+                              label="Job Title"
+                              value={newBillingPersonForm.jobTitle}
+                              onChange={(e) => setNewBillingPersonForm(prev => ({ ...prev, jobTitle: e.target.value }))}
+                            />
+                            <Input
+                              label="Phone"
+                              value={newBillingPersonForm.phone}
+                              onChange={(e) => setNewBillingPersonForm(prev => ({ ...prev, phone: e.target.value }))}
+                            />
+                            <Input
+                              label="Email"
+                              type="email"
+                              value={newBillingPersonForm.email}
+                              onChange={(e) => setNewBillingPersonForm(prev => ({ ...prev, email: e.target.value }))}
+                            />
+                          </div>
+                        </ModalBody>
+                        <ModalFooter>
+                          <Button variant="light" onClick={() => setShowNewBillingPersonModal(false)}>Cancel</Button>
+                          <Button color="primary" onClick={handleCreateBillingPerson}>Save & Select</Button>
+                        </ModalFooter>
+                      </ModalContent>
+                    </Modal>
+                  )}
 
                   {/* Source */}
                   <div className="mb-4 p-3 bg-yellow-50 rounded-lg">

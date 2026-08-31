@@ -566,9 +566,9 @@ class FrontOfficeStore {
   createReservation(r: Omit<Reservation,'id'|'createdAt'|'updatedAt'|'status'> & { status?: Reservation['status'] }) {
     // Ensure required fields have default values
     const settings = useSettingsStore.getState();
-    const reservation: Reservation = { 
-      ...r, 
-      id: `R-${Date.now().toString().slice(-6)}`, 
+    const reservation: Reservation = {
+      ...r,
+      id: `R-${Date.now().toString().slice(-6)}`,
       resId: settings.getNextReservationNumber(),
       createdAt: new Date().toISOString(), 
       updatedAt: new Date().toISOString(), 

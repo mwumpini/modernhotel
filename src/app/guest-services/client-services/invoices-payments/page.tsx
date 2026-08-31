@@ -34,6 +34,7 @@ import { listTemplates } from '../../../lib/print/templates';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
 import { logAudit } from '../../../lib/analytics/auditLogStore';
 import { computeSalesTaxTotal, effectiveSalesTaxRate } from '../../../lib/tax/engine';
+import { formatMoney } from '../../../lib/format/currency';
 
 interface InvoiceItem {
   id: string;
@@ -827,7 +828,7 @@ export default function InvoicesPaymentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Collected</p>
-                <p className="text-2xl font-bold text-green-600">₵{stats.totalCollected.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-green-600">₵{formatMoney(stats.totalCollected)}</p>
               </div>
               <div className="text-green-500 text-2xl">💰</div>
             </div>
@@ -840,7 +841,7 @@ export default function InvoicesPaymentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Outstanding</p>
-                <p className="text-2xl font-bold text-orange-600">₵{stats.totalOutstanding.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-orange-600">₵{formatMoney(stats.totalOutstanding)}</p>
               </div>
               <div className="text-orange-500 text-2xl">⏰</div>
             </div>
@@ -853,7 +854,7 @@ export default function InvoicesPaymentsPage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-gray-600">Overdue</p>
-                <p className="text-2xl font-bold text-red-600">₵{stats.overdueAmount.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-red-600">₵{formatMoney(stats.overdueAmount)}</p>
               </div>
               <div className="text-red-500 text-2xl">🚨</div>
             </div>
@@ -1009,10 +1010,10 @@ export default function InvoicesPaymentsPage() {
                     </TableCell>
                     <TableCell>
                       <div>
-                        <p className="font-medium">₵{invoice.totalAmount.toFixed(2)}</p>
-                        <p className="text-sm text-gray-500">Tax: ₵{invoice.taxAmount.toFixed(2)}</p>
+                        <p className="font-medium">₵{formatMoney(invoice.totalAmount)}</p>
+                        <p className="text-sm text-gray-500">Tax: ₵{formatMoney(invoice.taxAmount)}</p>
                         {invoice.discountAmount > 0 && (
-                          <p className="text-sm text-green-600">Discount: -₵{invoice.discountAmount.toFixed(2)}</p>
+                          <p className="text-sm text-green-600">Discount: -₵{formatMoney(invoice.discountAmount)}</p>
                         )}
                       </div>
                     </TableCell>
@@ -1170,15 +1171,15 @@ export default function InvoicesPaymentsPage() {
                     <TableCell>
                       <div>
                         {payment.amount < 0 ? (
-                          <span className="font-semibold text-purple-600">−₵{Math.abs(payment.amount).toFixed(2)}</span>
+                          <span className="font-semibold text-purple-600">−₵{formatMoney(Math.abs(payment.amount))}</span>
                         ) : (
-                          <span className="font-medium text-gray-900">₵{payment.amount.toFixed(2)}</span>
+                          <span className="font-medium text-gray-900">₵{formatMoney(payment.amount)}</span>
                         )}
                         {payment.amount < 0 && (
                           <p className="text-xs text-purple-500 font-medium">Refund</p>
                         )}
                         {payment.creditApplied && payment.creditApplied > 0 && (
-                          <p className="text-xs text-green-600">Credit: ₵{payment.creditApplied.toFixed(2)}</p>
+                          <p className="text-xs text-green-600">Credit: ₵{formatMoney(payment.creditApplied)}</p>
                         )}
                       </div>
                     </TableCell>
@@ -1188,7 +1189,7 @@ export default function InvoicesPaymentsPage() {
                         if (!res) return '—';
                         const folio = frontOfficeStore.getOrCreateFolio(res.id);
                         const balance = folio.balance || 0;
-                        return <span className="font-medium">₵{balance.toFixed(2)}</span>;
+                        return <span className="font-medium">₵{formatMoney(balance)}</span>;
                       })()}
                     </TableCell>
                     <TableCell>
@@ -1401,16 +1402,16 @@ export default function InvoicesPaymentsPage() {
                           <div className="space-y-1">
                             <div className="flex justify-between text-sm">
                               <span>Charges:</span>
-                              <span className="font-medium">₵{(folio.totalCharges || 0).toLocaleString()}</span>
+                              <span className="font-medium">₵{formatMoney((folio.totalCharges || 0))}</span>
                             </div>
                             <div className="flex justify-between text-sm">
                               <span>Payments:</span>
-                              <span className="font-medium text-green-600">₵{(folio.totalPayments || 0).toLocaleString()}</span>
+                              <span className="font-medium text-green-600">₵{formatMoney((folio.totalPayments || 0))}</span>
                             </div>
                             <div className="flex justify-between text-sm font-semibold">
                               <span>Balance:</span>
                               <span className={((folio.balance || 0) > 0) ? 'text-red-600' : 'text-green-600'}>
-                                ₵{(folio.balance || 0).toLocaleString()}
+                                ₵{formatMoney((folio.balance || 0))}
                               </span>
                             </div>
                           </div>
@@ -1541,8 +1542,8 @@ export default function InvoicesPaymentsPage() {
                         <TableRow key={item.id}>
                           <TableCell>{item.description}</TableCell>
                           <TableCell>{item.quantity}</TableCell>
-                          <TableCell>₵{item.unitPrice.toFixed(2)}</TableCell>
-                          <TableCell>₵{item.totalPrice.toFixed(2)}</TableCell>
+                          <TableCell>₵{formatMoney(item.unitPrice)}</TableCell>
+                          <TableCell>₵{formatMoney(item.totalPrice)}</TableCell>
                           <TableCell><Chip size="sm" variant="flat">{item.category}</Chip></TableCell>
                         </TableRow>
                       ))}
@@ -1553,11 +1554,11 @@ export default function InvoicesPaymentsPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <h4 className="font-semibold mb-2">Summary</h4>
-                    <p><strong>Subtotal:</strong> ₵{selectedInvoice.subtotal.toFixed(2)}</p>
-                    <p><strong>Tax:</strong> ₵{selectedInvoice.taxAmount.toFixed(2)}</p>
-                    {selectedInvoice.discountAmount > 0 && (<p><strong>Discount:</strong> -₵{selectedInvoice.discountAmount.toFixed(2)}</p>)}
-                    <p className="text-lg font-bold"><strong>Total:</strong> ₵{selectedInvoice.totalAmount.toFixed(2)}</p>
-                    <p><strong>Balance:</strong> ₵{selectedInvoice.balance.toFixed(2)}</p>
+                    <p><strong>Subtotal:</strong> ₵{formatMoney(selectedInvoice.subtotal)}</p>
+                    <p><strong>Tax:</strong> ₵{formatMoney(selectedInvoice.taxAmount)}</p>
+                    {selectedInvoice.discountAmount > 0 && (<p><strong>Discount:</strong> -₵{formatMoney(selectedInvoice.discountAmount)}</p>)}
+                    <p className="text-lg font-bold"><strong>Total:</strong> ₵{formatMoney(selectedInvoice.totalAmount)}</p>
+                    <p><strong>Balance:</strong> ₵{formatMoney(selectedInvoice.balance)}</p>
                   </div>
                   <div>
                     <h4 className="font-semibold mb-2">Payment Actions</h4>
@@ -1589,7 +1590,7 @@ export default function InvoicesPaymentsPage() {
                               onPress={() => handleApplyCreditToInvoice(selectedInvoice)}
                               className="w-full"
                             >
-                              Apply Credit (₵{Math.min(creditBalance, selectedInvoice.balance).toFixed(2)})
+                              Apply Credit (₵{formatMoney(Math.min(creditBalance, selectedInvoice.balance))})
                             </Button>
                           ) : null;
                         })()}
@@ -1630,12 +1631,12 @@ export default function InvoicesPaymentsPage() {
                                 <div>
                                   <span className="text-sm">{getPaymentMethodLabel(payment.paymentMethod)}</span>
                                   {payment.creditApplied && payment.creditApplied > 0 && (
-                                    <p className="text-xs text-green-600">Credit: ₵{payment.creditApplied.toFixed(2)}</p>
+                                    <p className="text-xs text-green-600">Credit: ₵{formatMoney(payment.creditApplied)}</p>
                                   )}
                                 </div>
                               </TableCell>
                               <TableCell>
-                                <span className="font-medium">₵{payment.amount.toFixed(2)}</span>
+                                <span className="font-medium">₵{formatMoney(payment.amount)}</span>
                               </TableCell>
                               <TableCell>
                                 <Badge color={getPaymentStatusColor(payment.status)} variant="flat" size="sm">
@@ -1690,7 +1691,7 @@ export default function InvoicesPaymentsPage() {
                           <span className="ml-2 text-xs text-indigo-600">{r.companyName || r.billingPersonName}</span>
                         )}
                       </div>
-                      <div className="text-right font-semibold text-red-600">₵{(frontOfficeStore.getOrCreateFolio(r.id).balance || 0).toLocaleString()}</div>
+                      <div className="text-right font-semibold text-red-600">₵{formatMoney((frontOfficeStore.getOrCreateFolio(r.id).balance || 0))}</div>
                     </div>
                 ))}
                 {frontOfficeStore.reservations.filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0).length === 0 && (
@@ -1711,7 +1712,7 @@ export default function InvoicesPaymentsPage() {
               const result = frontOfficeStore.postCorporateReceipt(payer, outstanding, amount, corpReference.trim() || undefined);
               try { trackEvent('Invoice.CorporateReceipt' as any, { payer, amount, appliedTo: result.allocations?.length || 0 }); } catch {}
               try { logAudit({ area: 'accounting', action: 'create', entity: 'Payment', entityId: `CORP-${Date.now()}`, details: `Corporate receipt ₵${amount} from ${payer}${corpReference ? ` ref: ${corpReference}` : ''}, allocated to ${result.allocations?.length || 0} folios`, severity: 'medium' }); } catch {}
-              showNotification('success', `Corporate receipt ₵${amount.toLocaleString()} from ${payer} allocated to ${result.allocations?.length || 0} folio(s). Unallocated: ₵${result.remaining?.toFixed(2) || '0.00'}`);
+              showNotification('success', `Corporate receipt ₵${formatMoney(amount)} from ${payer} allocated to ${result.allocations?.length || 0} folio(s). Unallocated: ₵${formatMoney(result.remaining)}`);
               setCorpPayerName('');
               setCorpAmount('');
               setCorpReference('');
@@ -1732,10 +1733,10 @@ export default function InvoicesPaymentsPage() {
                     <h4 className="font-semibold mb-2">Transaction</h4>
                     <p><strong>ID:</strong> {selectedPayment.transactionId}</p>
                     <p><strong>Invoice:</strong> {selectedPayment.invoiceId}</p>
-                    <p><strong>Amount:</strong> ₵{selectedPayment.amount.toFixed(2)}</p>
+                    <p><strong>Amount:</strong> ₵{formatMoney(selectedPayment.amount)}</p>
                     <p><strong>Method:</strong> {getPaymentMethodLabel(selectedPayment.paymentMethod)}</p>
                     {selectedPayment.creditApplied && selectedPayment.creditApplied > 0 && (
-                      <p><strong>Credit Applied:</strong> ₵{selectedPayment.creditApplied.toFixed(2)}</p>
+                      <p><strong>Credit Applied:</strong> ₵{formatMoney(selectedPayment.creditApplied)}</p>
                     )}
                     {selectedPayment.reference && (
                       <p><strong>Reference:</strong> {selectedPayment.reference}</p>
@@ -1793,7 +1794,7 @@ export default function InvoicesPaymentsPage() {
                       <Input label="Description" placeholder="Item description" value={item.description} onChange={(e) => updateInvoiceItem(item.id, 'description', e.target.value)} size="sm" />
                       <Input label="Qty" type="number" min="1" value={item.quantity.toString()} onChange={(e) => updateInvoiceItem(item.id, 'quantity', parseInt(e.target.value) || 1)} size="sm" />
                       <Input label="Unit Price" type="number" min="0" step="0.01" placeholder="0.00" value={item.unitPrice.toString()} onChange={(e) => updateInvoiceItem(item.id, 'unitPrice', parseFloat(e.target.value) || 0)} size="sm" />
-                      <Input label="Total" value={`₵${item.totalPrice.toFixed(2)}`} isReadOnly size="sm" />
+                      <Input label="Total" value={`₵${formatMoney(item.totalPrice)}`} isReadOnly size="sm" />
                       <Select label="Category" size="sm" value={item.category} onChange={(e) => updateInvoiceItem(item.id, 'category', e.target.value)}>
                         <SelectItem key="room">Room</SelectItem>
                         <SelectItem key="food">Food</SelectItem>
@@ -1816,10 +1817,10 @@ export default function InvoicesPaymentsPage() {
               <div className="bg-gray-50 p-4 rounded-lg">
                 <h4 className="font-semibold mb-3 text-gray-800">Invoice Summary</h4>
                 <div className="space-y-2 text-right">
-                  <div className="flex justify-between"><span>Subtotal:</span><span className="font-medium">₵{calculateInvoiceTotals().subtotal.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span>Tax ({(effectiveSalesTaxRate() * 100).toFixed(1).replace(/\.0$/, '')}%):</span><span className="font-medium">₵{calculateInvoiceTotals().taxAmount.toFixed(2)}</span></div>
+                  <div className="flex justify-between"><span>Subtotal:</span><span className="font-medium">₵{formatMoney(calculateInvoiceTotals().subtotal)}</span></div>
+                  <div className="flex justify-between"><span>Tax ({(effectiveSalesTaxRate() * 100).toFixed(1).replace(/\.0$/, '')}%):</span><span className="font-medium">₵{formatMoney(calculateInvoiceTotals().taxAmount)}</span></div>
                   <Divider />
-                  <div className="flex justify-between text-lg font-bold"><span>Total:</span><span className="text-primary">₵{calculateInvoiceTotals().totalAmount.toFixed(2)}</span></div>
+                  <div className="flex justify-between text-lg font-bold"><span>Total:</span><span className="text-primary">₵{formatMoney(calculateInvoiceTotals().totalAmount)}</span></div>
                 </div>
               </div>
             </div>
@@ -1843,15 +1844,15 @@ export default function InvoicesPaymentsPage() {
                   <div className="space-y-1">
                     <div className="flex justify-between">
                       <span>Total Amount:</span>
-                      <span className="font-medium">₵{selectedInvoice.totalAmount.toFixed(2)}</span>
+                      <span className="font-medium">₵{formatMoney(selectedInvoice.totalAmount)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Amount Paid:</span>
-                      <span className="font-medium text-green-600">₵{(selectedInvoice.totalAmount - selectedInvoice.balance).toFixed(2)}</span>
+                      <span className="font-medium text-green-600">₵{formatMoney((selectedInvoice.totalAmount - selectedInvoice.balance))}</span>
                     </div>
                     <div className="flex justify-between">
                       <span>Outstanding Balance:</span>
-                      <span className="font-medium text-orange-600">₵{selectedInvoice.balance.toFixed(2)}</span>
+                      <span className="font-medium text-orange-600">₵{formatMoney(selectedInvoice.balance)}</span>
                     </div>
                   </div>
                 </div>
@@ -1910,8 +1911,8 @@ export default function InvoicesPaymentsPage() {
                       <h4 className="font-semibold mb-2 text-blue-800">Available Credit</h4>
                       <div className="flex justify-between items-center">
                         <div>
-                          <p className="text-sm text-blue-600">Guest has ₵{creditBalance.toFixed(2)} credit available</p>
-                          <p className="text-xs text-blue-500">Can apply up to ₵{Math.min(creditBalance, selectedInvoice.balance).toFixed(2)}</p>
+                          <p className="text-sm text-blue-600">Guest has ₵{formatMoney(creditBalance)} credit available</p>
+                          <p className="text-xs text-blue-500">Can apply up to ₵{formatMoney(Math.min(creditBalance, selectedInvoice.balance))}</p>
                         </div>
                         <Button
                           size="sm"
@@ -1952,7 +1953,7 @@ export default function InvoicesPaymentsPage() {
                       paymentForm.notes || undefined,
                       paymentForm.reference || undefined
                     );
-                    showNotification('success', `Payment of ₵${amount.toFixed(2)} recorded for ${selectedInvoice.invoiceNumber}`);
+                    showNotification('success', `Payment of ₵${formatMoney(amount)} recorded for ${selectedInvoice.invoiceNumber}`);
                     setPaymentForm({ amount: '', method: 'cash', notes: '', reference: '' });
                     onAddPaymentClose();
                   }
@@ -2031,15 +2032,15 @@ export default function InvoicesPaymentsPage() {
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                           <div className="text-center p-4 bg-blue-50 rounded-lg">
                             <div className="text-sm text-blue-600">Total Charges</div>
-                            <div className="text-2xl font-bold text-blue-700">₵{(folio.totalCharges || 0).toLocaleString()}</div>
+                            <div className="text-2xl font-bold text-blue-700">₵{formatMoney((folio.totalCharges || 0))}</div>
                           </div>
                           <div className="text-center p-4 bg-green-50 rounded-lg">
                             <div className="text-sm text-green-600">Total Payments</div>
-                            <div className="text-2xl font-bold text-green-700">₵{(folio.totalPayments || 0).toLocaleString()}</div>
+                            <div className="text-2xl font-bold text-green-700">₵{formatMoney((folio.totalPayments || 0))}</div>
                           </div>
                           <div className="text-center p-4 bg-orange-50 rounded-lg">
                             <div className="text-sm text-orange-600">Outstanding Balance</div>
-                            <div className="text-2xl font-bold text-orange-700">₵{(folio.balance || 0).toLocaleString()}</div>
+                            <div className="text-2xl font-bold text-orange-700">₵{formatMoney((folio.balance || 0))}</div>
                           </div>
                           <div className="text-center p-4 bg-purple-50 rounded-lg">
                             <div className="text-sm text-purple-600">Transactions</div>
@@ -2077,8 +2078,8 @@ export default function InvoicesPaymentsPage() {
                                 <TableRow key={charge.id}>
                                   <TableCell>{new Date(charge.date).toLocaleDateString()}</TableCell>
                                   <TableCell>{charge.description}</TableCell>
-                                  <TableCell className="text-right">₵{charge.amount.toLocaleString()}</TableCell>
-                                  <TableCell className="text-right">₵{(charge.tax || 0).toLocaleString()}</TableCell>
+                                  <TableCell className="text-right">₵{formatMoney(charge.amount)}</TableCell>
+                                  <TableCell className="text-right">₵{formatMoney((charge.tax || 0))}</TableCell>
                                   <TableCell>
                                     <div className="flex gap-2">
                                       <Button size="sm" variant="light" onPress={() => frontOfficeStore.voidCharge(selectedFolio.id, charge.id, 'User action')}>Void</Button>
@@ -2114,7 +2115,7 @@ export default function InvoicesPaymentsPage() {
                                 <TableRow key={payment.id}>
                                   <TableCell>{new Date(payment.date).toLocaleDateString()}</TableCell>
                                   <TableCell>{payment.method}</TableCell>
-                                  <TableCell className="text-right">₵{payment.amount.toLocaleString()}</TableCell>
+                                  <TableCell className="text-right">₵{formatMoney(payment.amount)}</TableCell>
                                   <TableCell>
                                     <Badge color={payment.status === 'completed' ? 'success' : 'warning'} variant="flat">
                                       {payment.status}
@@ -2172,10 +2173,10 @@ export default function InvoicesPaymentsPage() {
                       {adjustmentAmount > 0 && adjustmentReason.trim() && (
                         <div className="p-3 bg-blue-50 rounded-lg">
                           <div className="text-sm text-blue-600">
-                            {adjustmentType === 'charge' && `Will add ₵${adjustmentAmount.toLocaleString()} charge: ${adjustmentReason}`}
-                            {adjustmentType === 'credit' && `Will add ₵${adjustmentAmount.toLocaleString()} credit: ${adjustmentReason}`}
-                            {adjustmentType === 'discount' && `Will apply ₵${adjustmentAmount.toLocaleString()} discount: ${adjustmentReason}`}
-                            {adjustmentType === 'complimentary' && `Will waive ₵${adjustmentAmount.toLocaleString()} as complimentary: ${adjustmentReason}`}
+                            {adjustmentType === 'charge' && `Will add ₵${formatMoney(adjustmentAmount)} charge: ${adjustmentReason}`}
+                            {adjustmentType === 'credit' && `Will add ₵${formatMoney(adjustmentAmount)} credit: ${adjustmentReason}`}
+                            {adjustmentType === 'discount' && `Will apply ₵${formatMoney(adjustmentAmount)} discount: ${adjustmentReason}`}
+                            {adjustmentType === 'complimentary' && `Will waive ₵${formatMoney(adjustmentAmount)} as complimentary: ${adjustmentReason}`}
                           </div>
                         </div>
                       )}

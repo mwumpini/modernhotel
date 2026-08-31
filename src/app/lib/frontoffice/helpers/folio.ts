@@ -124,29 +124,6 @@ export function getOrCreateFolio(self: StoreLike, reservationId: string): Folio 
 		};
 		self.folios.unshift(f);
 
-		// Auto-create split folio for corporate payer to hold company-billable charges
-		try {
-			const res = self.reservations?.find((r: any) => r.id === reservationId);
-			const isCorporate = !!(res?.companyName || res?.billingPersonName);
-			if (isCorporate) {
-				const existingSplit = self.folios.find((x: any) => x.reservationId === reservationId && x.type === 'split');
-				if (!existingSplit) {
-					const split: Folio = {
-						id: `${useSettingsStore.getState().getNextModuleNumber('frontOffice', 'folio')}-C`,
-						reservationId,
-						charges: [],
-						payments: [],
-						currency: 'GHS',
-						status: 'active',
-						type: 'split',
-						description: 'Company Folio',
-						responsibleParty: res.companyName || res.billingPersonName
-					};
-					self.folios.unshift(split);
-				}
-			}
-		} catch {}
-
 		updateFolioBalances(self, f);
 		self.notify();
 	}
