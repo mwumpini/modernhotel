@@ -30,14 +30,11 @@ import { useSettingsStore } from '../../lib/settings/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { openPrintPreview } from '../../lib/print/engine';
 import { listTemplates } from '../../lib/print/templates';
-import { computeSalesTaxTotal } from '../../lib/tax/engine';
-
-const formatMoney = (amount: number) =>
-  amount.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+import { grossFromExclusive, computeSalesTaxTotal } from '../../lib/tax/engine';
+import { formatMoney } from '../../lib/format/currency';
 
 /** Line total incl. Ghana stacked taxes (table / guest-facing amounts). */
-const serviceChargeGross = (netLineAmount: number) =>
-  netLineAmount + computeSalesTaxTotal(netLineAmount);
+const serviceChargeGross = grossFromExclusive;
 
 interface ServiceCharge {
   id: string;

@@ -39,6 +39,7 @@ import { useSettingsStore } from '../../lib/settings/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { salesTaxBreakdown } from '../../lib/tax/engine';
 import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
+import { formatMoney } from '../../lib/format/currency';
 
 interface CheckOutData {
   id: string; // Reservation ID
@@ -482,8 +483,6 @@ export default function CheckOutsPage() {
   }, [filteredCheckOuts]);
 
   const formatDate = (dateString: string) => new Date(dateString).toLocaleDateString('en-GH', { year: 'numeric', month: 'short', day: 'numeric' });
-  const formatMoney = (amount: number) =>
-    amount.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const formatTime = (dateString: string) => new Date(dateString).toLocaleTimeString('en-GH', { hour: '2-digit', minute: '2-digit', hour12: true });
 
   const getAnalyticsData = (checkOut: CheckOutData) => ({
@@ -952,11 +951,11 @@ export default function CheckOutsPage() {
                         <div className="space-y-1 p-4">
                           <div className="flex justify-between items-center py-2 border-b border-gray-100">
                             <span className="text-sm text-gray-600">Room Charges</span>
-                            <span className="font-semibold text-blue-600">₵{folioTotals.roomChargesInclusive.toFixed(2)}</span>
+                            <span className="font-semibold text-blue-600">₵{folioTotals.roomCharges.toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between items-center py-2 border-b border-gray-100">
                             <span className="text-sm text-gray-600">Service Charges</span>
-                            <span className="font-semibold text-orange-600">₵{folioTotals.serviceChargesInclusive.toFixed(2)}</span>
+                            <span className="font-semibold text-orange-600">₵{folioTotals.serviceCharges.toFixed(2)}</span>
                           </div>
                           <div className="flex justify-between items-center py-2 border-b border-gray-100">
                             <span className="text-sm text-gray-600">Other Charges</span>

@@ -4,7 +4,7 @@ type StoreLike = any;
 import { useSettingsStore } from '../../settings/store';
 import { useAccountingStore } from '../../accounting/store';
 import { postGuestFolioCheckoutToLedger } from '../../accounting/simpleFlow';
-import { folioChargeGlCode } from './folio';
+import { folioChargeGlCode, getFolioDisplayTotals } from './folio';
 
 /**
  * Generate and post an accounting invoice from a reservation folio.
@@ -23,11 +23,10 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
   const folio = self.getOrCreateFolio(reservationId);
   self.updateFolioBalances(folio);
 
-  const subtotal = folio.charges.reduce((sum: number, c: any) => sum + c.amount, 0);
-  const taxAmount = folio.charges.reduce((sum: number, c: any) => sum + (c.tax || 0), 0);
-  const total = subtotal + taxAmount;
-  const paid = folio.totalPayments || 0;
-  const balance = Math.max(0, (folio.balance ?? (total - paid)));
+  // Canonical aggregation (folio.ts) instead of re-deriving from folio.charges here —
+  // this is the same subtotal/tax/total math getFolioDisplayTotals already does for
+  // every other folio screen.
+  const { subtotal, taxTotal: taxAmount, totalCharges: total, totalPayments: paid, outstandingBalance: balance } = getFolioDisplayTotals(folio);
 
   if (total <= 0) {
     folio.status = 'closed';

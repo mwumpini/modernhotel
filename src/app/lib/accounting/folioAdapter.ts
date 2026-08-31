@@ -11,10 +11,11 @@
  */
 
 import { frontOfficeStore } from '../frontoffice/store';
+import { findMainFolio } from '../frontoffice/helpers/folio';
 import type { Folio } from '../frontoffice/types';
 
 export function getOperationalFolioForReservation(reservationId: string): Folio | undefined {
-  return frontOfficeStore.folios.find((f) => f.reservationId === reservationId);
+  return findMainFolio(frontOfficeStore.folios, reservationId);
 }
 
 export function getOperationalFolioById(folioId: string): Folio | undefined {

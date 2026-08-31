@@ -14,6 +14,7 @@ import {
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { frontOfficeStore } from '@/app/lib/frontoffice/store';
 import { useFrontOfficeSelector } from '@/app/lib/frontoffice/useFoStore';
+import { findMainFolio } from '@/app/lib/frontoffice/helpers/folio';
 import {
 	buildFolioReceiptTargets,
 	buildInvoiceReceiptTargets,
@@ -451,7 +452,7 @@ export default function AccountsReceivable() {
 		if (!selectedPrintTarget) return [] as StoredReceiptPayment[];
 		const folio =
 			selectedPrintTarget.kind === 'folio'
-				? foFolios.find((f) => f.reservationId === selectedPrintTarget.id)
+				? findMainFolio(foFolios, selectedPrintTarget.id)
 				: null;
 		return resolvePaymentsForReceiptTarget(
 			selectedPrintTarget,
@@ -486,7 +487,7 @@ export default function AccountsReceivable() {
 				? foReservations.find((r) => r.id === payment.reservationId)
 				: undefined;
 			const folio = reservation
-				? foFolios.find((f) => f.reservationId === reservation.id)
+				? findMainFolio(foFolios, reservation.id)
 				: undefined;
 			const data = buildCustomerReceiptPrintData({
 				payment,
@@ -1166,7 +1167,7 @@ export default function AccountsReceivable() {
 		if (!target) return;
 		const folio =
 			target.kind === 'folio'
-				? foFolios.find((f) => f.reservationId === target.id)
+				? findMainFolio(foFolios, target.id)
 				: null;
 		const list = resolvePaymentsForReceiptTarget(
 			target,

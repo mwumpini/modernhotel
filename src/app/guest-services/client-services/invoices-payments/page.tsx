@@ -33,7 +33,7 @@ import { openPrintPreview } from '../../../lib/print/engine';
 import { listTemplates } from '../../../lib/print/templates';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
 import { logAudit } from '../../../lib/analytics/auditLogStore';
-import { computeSalesTaxTotal } from '../../../lib/tax/engine';
+import { computeSalesTaxTotal, effectiveSalesTaxRate } from '../../../lib/tax/engine';
 
 interface InvoiceItem {
   id: string;
@@ -1817,7 +1817,7 @@ export default function InvoicesPaymentsPage() {
                 <h4 className="font-semibold mb-3 text-gray-800">Invoice Summary</h4>
                 <div className="space-y-2 text-right">
                   <div className="flex justify-between"><span>Subtotal:</span><span className="font-medium">₵{calculateInvoiceTotals().subtotal.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span>Tax (15%):</span><span className="font-medium">₵{calculateInvoiceTotals().taxAmount.toFixed(2)}</span></div>
+                  <div className="flex justify-between"><span>Tax ({(effectiveSalesTaxRate() * 100).toFixed(1).replace(/\.0$/, '')}%):</span><span className="font-medium">₵{calculateInvoiceTotals().taxAmount.toFixed(2)}</span></div>
                   <Divider />
                   <div className="flex justify-between text-lg font-bold"><span>Total:</span><span className="text-primary">₵{calculateInvoiceTotals().totalAmount.toFixed(2)}</span></div>
                 </div>

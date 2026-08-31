@@ -93,11 +93,26 @@ export function getFolioDisplayTotals(folio: Folio) {
 }
 
 /**
+ * The guest's own folio for a reservation — excludes the auto-created 'split'
+ * "Company Folio" that corporate reservations get alongside their main one.
+ * A corporate reservation has TWO Folio rows sharing the same reservationId
+ * (main + split), so any plain `folios.find(f => f.reservationId === id)`
+ * is a coin-flip between them once the split folio exists (it did until this
+ * fix — the split is unshifted to index 0, so the guest's real folio was
+ * silently unreachable by id-only lookup after its first creation). Every
+ * call site that wants "the guest's folio" (as opposed to explicitly the
+ * company-billed split) should go through this instead of a raw `.find`.
+ */
+export function findMainFolio(folios: Folio[] | undefined, reservationId: string): Folio | undefined {
+	return (folios || []).find((f: any) => f.reservationId === reservationId && f.type !== 'split');
+}
+
+/**
  * Get existing folio for a reservation or create a new active folio.
  * Notifies the store when a new folio is created.
  */
 export function getOrCreateFolio(self: StoreLike, reservationId: string): Folio {
-	let f = self.folios.find((x: any) => x.reservationId === reservationId);
+	let f = findMainFolio(self.folios, reservationId);
 	if (!f) {
 		f = {
 			id: useSettingsStore.getState().getNextModuleNumber('frontOffice', 'folio'),
@@ -420,7 +435,7 @@ export function updateFolioPayment(
 		ref?: string;
 	},
 ) {
-	const f = self.folios.find((x: Folio) => x.reservationId === reservationId);
+	const f = findMainFolio(self.folios, reservationId);
 	if (!f) return false;
 	const payment = f.payments.find((p: FolioPayment) => p.id === paymentId);
 	if (!payment || payment.status === 'refunded') return false;
@@ -434,7 +449,7 @@ export function updateFolioPayment(
 }
 
 export function removeFolioPayment(self: StoreLike, reservationId: string, paymentId: string) {
-	const f = self.folios.find((x: Folio) => x.reservationId === reservationId);
+	const f = findMainFolio(self.folios, reservationId);
 	if (!f) return false;
 	const idx = f.payments.findIndex((p: FolioPayment) => p.id === paymentId);
 	if (idx < 0) return false;

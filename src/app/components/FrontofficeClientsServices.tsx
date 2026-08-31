@@ -29,7 +29,7 @@ import {
 } from "@heroui/react";
 import OfflineIndicator from './OfflineIndicator';
 import { frontOfficeStore } from '../lib/frontoffice/store';
-import { getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
+import { getFolioDisplayTotals, findMainFolio } from '../lib/frontoffice/helpers/folio';
 import { fetchGuestServices, saveGuestService, fetchServiceRequests, saveServiceRequest } from '../lib/frontoffice/guestServicesApi';
 // GuestForm removed in favor of canonical client form redirect
 
@@ -82,7 +82,7 @@ export default function FrontofficeClientsServices() {
   const clients: Client[] = frontOfficeStore.guests.map((g) => {
     const guestReservations = frontOfficeStore.reservations.filter((r) => r.guestId === g.id);
     const totalSpent = guestReservations.reduce((sum, r) => {
-      const folio = frontOfficeStore.folios.find((f) => f.reservationId === r.id);
+      const folio = findMainFolio(frontOfficeStore.folios, r.id);
       return sum + (folio ? getFolioDisplayTotals(folio).totalCharges : 0);
     }, 0);
     const lastVisit = guestReservations

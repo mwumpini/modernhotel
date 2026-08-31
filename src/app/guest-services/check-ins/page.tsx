@@ -47,6 +47,7 @@ import { calculateStayNights } from '../../lib/frontoffice/helpers/rates';
 import { postRoomChargeForDate, isRoomLine } from '../../lib/frontoffice/roomCharges';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import type { Reservation } from '../../lib/frontoffice/types';
+import { formatMoney } from '../../lib/format/currency';
 
 interface CheckInGuest {
   id: string;
@@ -88,10 +89,6 @@ function formatDate(dateString: string) {
 function formatTime(dateString: string) {
   return new Date(dateString).toLocaleTimeString('en-GH', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
-function formatMoney(amount: number) {
-  return amount.toLocaleString('en-GH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
-
 function CheckInsSection() {
   const [guests, setGuests] = useState<CheckInGuest[]>([]);
   const [filteredGuests, setFilteredGuests] = useState<CheckInGuest[]>([]);

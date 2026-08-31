@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { frontOfficeStore } from './store';
 import { trackEvent } from '../analytics/trackEvent';
-import { getFolioDisplayTotals, folioChargeGlCode } from './helpers/folio';
+import { getFolioDisplayTotals, folioChargeGlCode, findMainFolio } from './helpers/folio';
 import { housekeepingStore } from '../housekeeping/store';
 
 // Report Types
@@ -598,7 +598,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       .map(reservation => {
         const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
-        const folio = frontOfficeStore.folios.find(f => f.reservationId === reservation.id);
+        const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
         
         const { totalCharges, totalPayments, balance } = folio
           ? getFolioDisplayTotals(folio)
@@ -651,7 +651,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       .map(reservation => {
         const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
-        const folio = frontOfficeStore.folios.find(f => f.reservationId === reservation.id);
+        const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
         
         const { totalCharges, totalPayments, balance } = folio
           ? getFolioDisplayTotals(folio)
@@ -687,7 +687,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       )
       .map(reservation => {
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
-        const folio = frontOfficeStore.folios.find(f => f.reservationId === reservation.id);
+        const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
         const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const creditLimit = guest?.creditLimit || defaultCreditLimit;
 
@@ -853,7 +853,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       )
       .map(reservation => {
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
-        const folio = frontOfficeStore.folios.find(f => f.reservationId === reservation.id);
+        const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
         
         const { totalCharges, totalPayments, balance: outstandingBalance } = folio
           ? getFolioDisplayTotals(folio)
@@ -1055,7 +1055,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       const sourceReservations = inRange.filter(r => r.source === source);
       const bookings = sourceReservations.length;
       const revenue = sourceReservations.reduce((sum, r) => {
-        const folio = frontOfficeStore.folios.find(f => f.reservationId === r.id);
+        const folio = findMainFolio(frontOfficeStore.folios, r.id);
         return sum + (folio ? getFolioDisplayTotals(folio).totalCharges : 0);
       }, 0);
 
@@ -1090,7 +1090,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       let revenue = 0;
       let totalNights = 0;
       for (const r of segReservations) {
-        const folio = frontOfficeStore.folios.find(f => f.reservationId === r.id);
+        const folio = findMainFolio(frontOfficeStore.folios, r.id);
         revenue += folio ? getFolioDisplayTotals(folio).totalCharges : 0;
         totalNights += Math.max(0, Math.ceil((new Date(r.departure).getTime() - new Date(r.arrival).getTime()) / (1000 * 60 * 60 * 24)));
       }
@@ -1183,7 +1183,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     }, 0);
     
     const totalSpent = guestReservations.reduce((sum, r) => {
-      const folio = frontOfficeStore.folios.find(f => f.reservationId === r.id);
+      const folio = findMainFolio(frontOfficeStore.folios, r.id);
       return sum + (folio ? getFolioDisplayTotals(folio).totalCharges : 0);
     }, 0);
     

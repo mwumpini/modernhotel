@@ -56,6 +56,12 @@ export function buildFolioReceiptTargets(
 
   return folios
     .filter((f) => {
+      // A corporate reservation carries two Folio rows (its own + an auto-created
+      // 'split' "Company Folio") sharing the same reservationId. This list is keyed
+      // by reservationId only, so including both would render two entries with the
+      // exact same guest name/label and no way to tell which is which — exclude the
+      // split folio here rather than ship an ambiguous duplicate.
+      if (f.type === 'split') return false;
       const res = resById.get(f.reservationId);
       if (!res) return false;
       if (res.status !== 'checked-in') return false;
