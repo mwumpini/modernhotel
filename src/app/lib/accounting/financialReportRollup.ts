@@ -161,6 +161,38 @@ export function computeCashFlowFromJournals(
   };
 }
 
+export type UnmappedGlCode = { code: string; debit: number; credit: number };
+
+/**
+ * Posted journal lines whose accountCode has no matching entry in the current Chart of
+ * Accounts. buildFinancialAccountTree() only walks the COA's own parent/child structure to
+ * build its tree, so a line posted to a code that isn't (or is no longer) in the COA is
+ * silently excluded from every rollup built from it — Balance Sheet, Income Statement, Trial
+ * Balance totals all just... don't include it, with no error. That money isn't lost from the
+ * ledger, just invisible in every report, and it's exactly the kind of thing that makes a
+ * debit=credit balance check fail for no apparent reason. Surface it explicitly instead.
+ */
+export function findUnmappedGlCodes(allAccounts: RollupCoa[], journalEntries: JournalEntry[]): UnmappedGlCode[] {
+  const known = new Set(allAccounts.map((a) => a.code));
+  const totals: Record<string, { debit: number; credit: number }> = {};
+
+  journalEntries
+    .filter((je) => je.status === 'Posted')
+    .forEach((je) => {
+      je.lines.forEach((line) => {
+        const code = line.accountCode;
+        if (known.has(code)) return;
+        if (!totals[code]) totals[code] = { debit: 0, credit: 0 };
+        totals[code].debit += Number(line.debit) || 0;
+        totals[code].credit += Number(line.credit) || 0;
+      });
+    });
+
+  return Object.entries(totals)
+    .map(([code, t]) => ({ code, debit: t.debit, credit: t.credit }))
+    .filter((u) => Math.abs(u.debit) > 0.005 || Math.abs(u.credit) > 0.005);
+}
+
 type BuildMode = { kind: 'period'; startDate: Date; endDate: Date } | { kind: 'cumulative'; endDate: Date };
 
 /**

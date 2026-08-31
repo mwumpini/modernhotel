@@ -24,7 +24,11 @@ const GL = {
   WHT_RECEIVABLE: '1230',
   WHT_VAT_RECEIVABLE: '1240',
   WHT_PAYABLE: GHANA_TAX_CODES.WITHHOLDING.glCode,
-  EXPENSE: '6000',
+  // '5000' is the real top-level Operating Expenses account in the prebuilt Chart of
+  // Accounts — this used to be '6000', a code the chart doesn't define, so any purchase
+  // invoice line without its own glAccountCode silently dropped out of every financial
+  // report instead of landing in Operating Expenses.
+  EXPENSE: '5000',
 } as const;
 
 const PAYMENT_GL_MAP: Record<string, string> = {

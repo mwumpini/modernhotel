@@ -13,6 +13,7 @@ import { GHANA_CHART_OF_ACCOUNTS } from '@/app/lib/accounting/models';
 import {
   buildFinancialAccountTree,
   computeCashFlowFromJournals,
+  findUnmappedGlCodes,
   type AccountNode,
   type RollupCoa,
 } from '@/app/lib/accounting/financialReportRollup';
@@ -33,8 +34,8 @@ const formatCurrency = (amount: number, showZero = false) => {
   return `₵${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
-const formatCurrencyWithSign = (amount: number) => {
-  if (Math.abs(amount) < 0.01) return '-';
+const formatCurrencyWithSign = (amount: number, showZero = false) => {
+  if (!showZero && Math.abs(amount) < 0.01) return '-';
   const sign = amount < 0 ? '(' : '';
   const end = amount < 0 ? ')' : '';
   return `${sign}₵${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${end}`;
@@ -261,6 +262,14 @@ export default function FinancialReportsPage() {
   );
 
   const getAccountsByType = useCallback((tree: AccountNode[], type: string) => tree.filter((node) => node.type === type), []);
+
+  // Posted journal lines pointing at a GL code that isn't in the current Chart of
+  // Accounts — invisible in every rollup above, and the most common reason the
+  // Balance Check below shows a difference with no obvious cause.
+  const unmappedGlCodes = useMemo(
+    () => findUnmappedGlCodes(rollupCoa, journalEntries),
+    [rollupCoa, journalEntries]
+  );
 
   const assetAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Asset'), [accountTreeCumulative, getAccountsByType]);
   const liabilityAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Liability'), [accountTreeCumulative, getAccountsByType]);
@@ -518,25 +527,25 @@ export default function FinancialReportsPage() {
   const printBalanceSheet = useCallback(() => {
     const renderSection = (nodes: AccountNode[]): string => {
       return nodes.map(node => {
-        const mainRow = `<tr class="level-1"><td>${node.code} ${node.name}</td><td class="text-right font-mono">${formatCurrency(node.balance)}</td></tr>`;
-        const childRows = node.children.map(child => 
-          `<tr class="level-2"><td>${child.code} ${child.name}</td><td class="text-right font-mono">${formatCurrency(child.balance)}</td></tr>`
+        const mainRow = `<tr class="level-1"><td>${node.code} ${node.name}</td><td class="text-right font-mono">${formatCurrencyWithSign(node.balance)}</td></tr>`;
+        const childRows = node.children.map(child =>
+          `<tr class="level-2"><td>${child.code} ${child.name}</td><td class="text-right font-mono">${formatCurrencyWithSign(child.balance)}</td></tr>`
         ).join('');
         return mainRow + childRows;
       }).join('');
     };
-    
+
     const content = `
       <div class="section">
         <div class="section-title">Assets</div>
         <table><tbody>${renderSection(assetAccounts)}
-          <tr class="total-row"><td class="font-bold">TOTAL ASSETS</td><td class="text-right font-mono font-bold double-underline">${formatCurrency(totals.totalAssets)}</td></tr>
+          <tr class="total-row"><td class="font-bold">TOTAL ASSETS</td><td class="text-right font-mono font-bold double-underline">${formatCurrencyWithSign(totals.totalAssets)}</td></tr>
         </tbody></table>
       </div>
       <div class="section">
         <div class="section-title">Liabilities</div>
         <table><tbody>${renderSection(liabilityAccounts)}
-          <tr class="subtotal-row"><td class="font-bold">Total Liabilities</td><td class="text-right font-mono font-bold underline">${formatCurrency(totals.totalLiabilities)}</td></tr>
+          <tr class="subtotal-row"><td class="font-bold">Total Liabilities</td><td class="text-right font-mono font-bold underline">${formatCurrencyWithSign(totals.totalLiabilities)}</td></tr>
         </tbody></table>
       </div>
       <div class="section">
@@ -544,8 +553,8 @@ export default function FinancialReportsPage() {
         <table><tbody>${renderSection(equityAccounts)}
           ${Math.abs(totals.accumulatedUnclosedPlug) >= 0.01 ? `<tr class="level-2"><td><em>Accumulated results (unclosed P&amp;L)</em></td><td class="text-right font-mono">${formatCurrencyWithSign(totals.accumulatedUnclosedPlug)}</td></tr>` : ''}
           <tr class="level-2"><td colspan="2" style="font-size:9px;color:#666">Profit/(loss) for period (SoPL): ${formatCurrencyWithSign(totals.netIncome)} — reference only.</td></tr>
-          <tr class="subtotal-row"><td class="font-bold">Total Equity</td><td class="text-right font-mono font-bold underline">${formatCurrency(totals.totalEquity)}</td></tr>
-          <tr class="total-row"><td class="font-bold">TOTAL LIABILITIES AND EQUITY</td><td class="text-right font-mono font-bold double-underline">${formatCurrency(totals.totalLiabAndEquity)}</td></tr>
+          <tr class="subtotal-row"><td class="font-bold">Total Equity</td><td class="text-right font-mono font-bold underline">${formatCurrencyWithSign(totals.totalEquity)}</td></tr>
+          <tr class="total-row"><td class="font-bold">TOTAL LIABILITIES AND EQUITY</td><td class="text-right font-mono font-bold double-underline">${formatCurrencyWithSign(totals.totalLiabAndEquity)}</td></tr>
         </tbody></table>
       </div>
     `;
@@ -864,7 +873,7 @@ export default function FinancialReportsPage() {
                   </Card>
                   <Card className="bg-slate-50 border border-slate-200 shadow-none">
                     <CardBody className="py-4 text-center">
-                      <div className="text-lg md:text-2xl font-bold text-slate-700">{formatCurrency(totals.totalAssets, true)}</div>
+                      <div className="text-lg md:text-2xl font-bold text-slate-700">{formatCurrencyWithSign(totals.totalAssets, true)}</div>
                       <div className="text-xs md:text-sm text-slate-500">Total Assets</div>
                     </CardBody>
                   </Card>
@@ -892,13 +901,13 @@ export default function FinancialReportsPage() {
                     <CardHeader className="pb-2 bg-slate-50"><h3 className="font-semibold text-gray-700">Balance Sheet Summary</h3></CardHeader>
                     <CardBody className="pt-2">
                       <div className="space-y-2 text-sm">
-                        <div className="flex justify-between"><span className="text-gray-600">Total Assets</span><span className="font-mono">{formatCurrency(totals.totalAssets, true)}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-600">Total Liabilities</span><span className="font-mono">{formatCurrency(totals.totalLiabilities, true)}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-600">Total Equity</span><span className="font-mono">{formatCurrency(totals.totalEquity, true)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">Total Assets</span><span className="font-mono">{formatCurrencyWithSign(totals.totalAssets, true)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">Total Liabilities</span><span className="font-mono">{formatCurrencyWithSign(totals.totalLiabilities, true)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">Total Equity</span><span className="font-mono">{formatCurrencyWithSign(totals.totalEquity, true)}</span></div>
                         <Divider />
                         <div className="flex justify-between font-semibold">
                           <span>Liabilities + Equity</span>
-                          <span className="font-mono">{formatCurrency(totals.totalLiabAndEquity, true)}</span>
+                          <span className="font-mono">{formatCurrencyWithSign(totals.totalLiabAndEquity, true)}</span>
                         </div>
                       </div>
                     </CardBody>
@@ -919,6 +928,29 @@ export default function FinancialReportsPage() {
                     </div>
                   </CardBody>
                 </Card>
+
+                {unmappedGlCodes.length > 0 && (
+                  <Card className="mt-3 shadow-none border bg-rose-50 border-rose-200">
+                    <CardBody className="py-3 text-sm">
+                      <p className="font-medium text-rose-800">
+                        ⚠ Posted entries reference {unmappedGlCodes.length} account code{unmappedGlCodes.length > 1 ? 's' : ''} not in your Chart of Accounts
+                      </p>
+                      <p className="text-rose-700 text-xs mt-1">
+                        These amounts are real (posted) but excluded from every total above — add the code(s) below to
+                        the Chart of Accounts to bring them into your reports and likely resolve the balance
+                        difference.
+                      </p>
+                      <ul className="mt-2 space-y-0.5 font-mono text-xs text-rose-800">
+                        {unmappedGlCodes.map((u) => (
+                          <li key={u.code} className="flex justify-between max-w-xs">
+                            <span>{u.code}</span>
+                            <span>{u.debit > 0 ? `Dr ${formatCurrency(u.debit, true)}` : `Cr ${formatCurrency(u.credit, true)}`}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </CardBody>
+                  </Card>
+                )}
               </div>
             </Tab>
 
@@ -1022,7 +1054,7 @@ export default function FinancialReportsPage() {
                       </Table>
                       <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300">
                         <span>TOTAL ASSETS</span>
-                        <span className="font-mono">{formatCurrency(totals.totalAssets, true)}</span>
+                        <span className="font-mono">{formatCurrencyWithSign(totals.totalAssets, true)}</span>
                       </div>
                     </CardBody>
                   </Card>
@@ -1043,7 +1075,7 @@ export default function FinancialReportsPage() {
                         </Table>
                         <div className="bg-slate-100 px-4 py-1 flex justify-between font-semibold text-sm">
                           <span>Total Liabilities</span>
-                          <span className="font-mono">{formatCurrency(totals.totalLiabilities, true)}</span>
+                          <span className="font-mono">{formatCurrencyWithSign(totals.totalLiabilities, true)}</span>
                         </div>
                       </div>
                       {/* Equity */}
@@ -1079,12 +1111,12 @@ export default function FinancialReportsPage() {
                         </p>
                         <div className="bg-slate-100 px-4 py-1 flex justify-between font-semibold text-sm">
                           <span>Total Equity</span>
-                          <span className="font-mono">{formatCurrency(totals.totalEquity, true)}</span>
+                          <span className="font-mono">{formatCurrencyWithSign(totals.totalEquity, true)}</span>
                         </div>
                       </div>
                       <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300">
                         <span>TOTAL LIABILITIES & EQUITY</span>
-                        <span className="font-mono">{formatCurrency(totals.totalLiabAndEquity, true)}</span>
+                        <span className="font-mono">{formatCurrencyWithSign(totals.totalLiabAndEquity, true)}</span>
                       </div>
                     </CardBody>
                   </Card>
