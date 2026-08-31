@@ -99,7 +99,7 @@ export default function ComplianceHospitalityReference({ countryCode }: Props) {
           </div>
         </AccordionItem>
 
-        <AccordionItem key="paye" title="PAYE (2026 bands)">
+        <AccordionItem key="paye" title="Income Taxes (2026 bands)">
           <div className="space-y-3">
             <p className="text-sm text-gray-600">{ref.paye.description}</p>
             <p className="text-sm">

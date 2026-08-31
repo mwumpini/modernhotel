@@ -1046,10 +1046,14 @@ export default function RoomConfigurationDashboard() {
     const context = { numPersons: 1, numNights: 1 };
     const { taxes, total } = calcTax(base, category, context);
     const mapped: any = { subtotal: base, totalTax: taxes.reduce((s: number, t: any) => s + t.amount, 0), finalBill: total };
-    taxes.forEach((t: any) => { mapped[t.name.toLowerCase().replace(/[^a-z]/g, '')] = t.amount; });
-    if (mapped.vatstandardrate != null) mapped.vat = mapped.vatstandardrate;
-    if (mapped.tourismlevy != null) mapped.tourism = mapped.tourismlevy;
-    if (mapped.getfundlevy != null) mapped.getfund = mapped.getfundlevy;
+    taxes.forEach((t: any) => {
+      const key = t.name.toLowerCase().replace(/[^a-z]/g, '');
+      mapped[key] = t.amount;
+      mapped[`${key}Rate`] = t.rate;
+    });
+    if (mapped.vatstandardrate != null) { mapped.vat = mapped.vatstandardrate; mapped.vatRate = mapped.vatstandardrateRate; }
+    if (mapped.tourismlevy != null) { mapped.tourism = mapped.tourismlevy; mapped.tourismRate = mapped.tourismlevyRate; }
+    if (mapped.getfundlevy != null) { mapped.getfund = mapped.getfundlevy; mapped.getfundRate = mapped.getfundlevyRate; }
     return mapped;
   };
 
@@ -2297,6 +2301,11 @@ export default function RoomConfigurationDashboard() {
               <h3 className="text-lg font-semibold text-blue-800">💰 Understanding Price Types</h3>
             </CardHeader>
             <CardBody>
+              {(() => {
+                const exampleBase = 600;
+                const { total: exampleTax } = salesTaxBreakdown(exampleBase);
+                const exampleGross = exampleBase + exampleTax;
+                return (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-3">
                   <h4 className="font-medium text-blue-700">Subtotal (Before Tax)</h4>
@@ -2304,7 +2313,7 @@ export default function RoomConfigurationDashboard() {
                     <li>• You set the base room rate</li>
                     <li>• Taxes are calculated and added on top</li>
                     <li>• Guest pays: Base Rate + Taxes</li>
-                    <li>• Example: ₵600 + ₵132 = ₵732 total</li>
+                    <li>• Example: ₵{exampleBase.toFixed(2)} + ₵{exampleTax.toFixed(2)} = ₵{exampleGross.toFixed(2)} total</li>
                   </ul>
                 </div>
                 <div className="space-y-3">
@@ -2313,10 +2322,12 @@ export default function RoomConfigurationDashboard() {
                     <li>• You set the final guest price</li>
                     <li>• Taxes are included in your rate</li>
                     <li>• Guest pays exactly what you set</li>
-                    <li>• Example: ₵732 (taxes already included)</li>
+                    <li>• Example: ₵{exampleGross.toFixed(2)} (taxes already included)</li>
                   </ul>
                 </div>
               </div>
+                );
+              })()}
               <div className="mt-4 p-3 bg-blue-100 rounded-lg">
                 <p className="text-sm text-blue-800">
                   <strong>💡 Tip:</strong> Use "Subtotal" if you want to control your base revenue, 
@@ -2408,28 +2419,36 @@ export default function RoomConfigurationDashboard() {
                 </div>
               </div>
 
-              {/* Live tax preview */}
-              {getLivePreview() && (
+              {/* Live tax preview — rates in the labels come from the live preview itself
+                  (i.e. the real Tax Rate Builder config), not hardcoded percentages, so this
+                  never goes stale if VAT/NHIL/GETFund/Tourism rates change there. */}
+              {(() => {
+                const preview = getLivePreview();
+                if (!preview) return null;
+                const getfundAmt = preview.getfundlevy ?? preview.getfund;
+                const getfundRate = preview.getfundlevyRate ?? preview.getfundRate;
+                const pct = (r: number | undefined) => Number.isFinite(r) ? `${(r as number).toFixed(1).replace(/\.0$/, '')}%` : '—';
+                return (
                 <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 p-4 rounded-lg border">
                   <div>
                     <h4 className="font-medium mb-2">Live Preview</h4>
                     <div className="text-sm text-gray-700">
-                      <div className="flex justify-between"><span>Base (Subtotal):</span><span className="font-mono">₵{getLivePreview()?.subtotal?.toFixed(2) || '0.00'}</span></div>
-                      <div className="flex justify-between"><span>NHIL (2.5%):</span><span className="font-mono">₵{getLivePreview()?.nhil?.toFixed(2) || '0.00'}</span></div>
-                      <div className="flex justify-between"><span>GETFund (2.5%):</span><span className="font-mono">₵{getLivePreview()?.getfundlevy?.toFixed(2) || getLivePreview()?.getfund?.toFixed(2) || '0.00'}</span></div>
-                      <div className="flex justify-between"><span>VAT (15% on base+levies):</span><span className="font-mono">₵{getLivePreview()?.vat?.toFixed(2) || '0.00'}</span></div>
-                      <div className="flex justify-between"><span>Tourism Levy (1%):</span><span className="font-mono">₵{getLivePreview()?.tourism?.toFixed(2) || '0.00'}</span></div>
+                      <div className="flex justify-between"><span>Base (Subtotal):</span><span className="font-mono">₵{preview.subtotal?.toFixed(2) || '0.00'}</span></div>
+                      <div className="flex justify-between"><span>NHIL ({pct(preview.nhilRate)}):</span><span className="font-mono">₵{preview.nhil?.toFixed(2) || '0.00'}</span></div>
+                      <div className="flex justify-between"><span>GETFund ({pct(getfundRate)}):</span><span className="font-mono">₵{getfundAmt?.toFixed(2) || '0.00'}</span></div>
+                      <div className="flex justify-between"><span>VAT ({pct(preview.vatRate)} on base+levies):</span><span className="font-mono">₵{preview.vat?.toFixed(2) || '0.00'}</span></div>
+                      <div className="flex justify-between"><span>Tourism Levy ({pct(preview.tourismRate)}):</span><span className="font-mono">₵{preview.tourism?.toFixed(2) || '0.00'}</span></div>
                     </div>
                   </div>
                   <div className="flex items-center">
                     <div className="w-full">
                       <div className="flex justify-between text-sm text-gray-700">
                         <span>Total Tax:</span>
-                        <span className="font-mono font-semibold text-red-600">₵{getLivePreview()?.totalTax?.toFixed(2) || '0.00'}</span>
+                        <span className="font-mono font-semibold text-red-600">₵{preview.totalTax?.toFixed(2) || '0.00'}</span>
                       </div>
                       <div className="flex justify-between text-base mt-2">
                         <span className="text-gray-800 font-medium">Guest Pays:</span>
-                        <span className="font-mono font-bold text-green-700">₵{getLivePreview()?.finalBill?.toFixed(2) || '0.00'}</span>
+                        <span className="font-mono font-bold text-green-700">₵{preview.finalBill?.toFixed(2) || '0.00'}</span>
                       </div>
                     </div>
                   </div>
@@ -2437,7 +2456,8 @@ export default function RoomConfigurationDashboard() {
                     Changes respond instantly to price and price type. Switch between Subtotal and Gross Total anytime.
                   </div>
                 </div>
-              )}
+                );
+              })()}
             </CardBody>
           </Card>
 
@@ -2689,6 +2709,8 @@ export default function RoomConfigurationDashboard() {
                     const subtotal = subtotalFromPlanPrice(transformedPlan.basePrice, transformedPlan.priceType);
                     const { nhil, getfund, vat, tourism, total: totalTax } = salesTaxBreakdown(subtotal);
                     const grossTotal = subtotal + totalTax;
+                    const canonicalRates = getCanonicalTaxRates();
+                    const fmtRate = (r: number | undefined) => Number.isFinite(r) ? `${(r as number).toFixed(1).replace(/\.0$/, '')}%` : '—';
 
                     return (
                     <div className="p-4 border rounded-lg bg-gray-50">
@@ -2697,15 +2719,15 @@ export default function RoomConfigurationDashboard() {
                             <h4 className="font-semibold text-lg">{transformedPlan.name}</h4>
                             <p className="text-sm text-gray-600">{roomType.name} • {transformedPlan.priceType === 'subtotal' ? 'Subtotal Rate' : 'Gross Rate'}</p>
                           </div>
-                          <Chip 
-                            size="sm" 
-                            color={transformedPlan.priceType === 'subtotal' ? 'primary' : 'success'} 
+                          <Chip
+                            size="sm"
+                            color={transformedPlan.priceType === 'subtotal' ? 'primary' : 'success'}
                             variant="flat"
                           >
                             {transformedPlan.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total'}
                           </Chip>
                         </div>
-                        
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                           <div className="space-y-2">
                             <div className="flex justify-between">
@@ -2713,19 +2735,19 @@ export default function RoomConfigurationDashboard() {
                               <span className="font-mono">₵{subtotal.toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">NHIL (2.5%):</span>
+                              <span className="text-sm text-gray-600">NHIL ({fmtRate(canonicalRates.nhil)}):</span>
                               <span className="font-mono text-orange-600">₵{nhil.toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">GETFund (2.5%):</span>
+                              <span className="text-sm text-gray-600">GETFund ({fmtRate(canonicalRates.getfund)}):</span>
                               <span className="font-mono text-orange-600">₵{getfund.toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">VAT (15.0%):</span>
+                              <span className="text-sm text-gray-600">VAT ({fmtRate(canonicalRates.vat)}):</span>
                               <span className="font-mono text-orange-600">₵{vat.toFixed(2)}</span>
                             </div>
                             <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">Tourism (1.0%):</span>
+                              <span className="text-sm text-gray-600">Tourism ({fmtRate(canonicalRates.tourismLevy)}):</span>
                               <span className="font-mono text-orange-600">₵{tourism.toFixed(2)}</span>
                             </div>
                           </div>
@@ -2743,8 +2765,8 @@ export default function RoomConfigurationDashboard() {
                               <div className="text-xs text-gray-500">
                                 <p><strong>Tax Breakdown:</strong></p>
                                 <p>• NHIL + GETFund = {subtotal > 0 ? ((nhil + getfund) / subtotal * 100).toFixed(1) : '0.0'}% of base</p>
-                                <p>• VAT = 15% of (base + levies)</p>
-                                <p>• Tourism = 1% of base</p>
+                                <p>• VAT = {fmtRate(canonicalRates.vat)} of (base + levies)</p>
+                                <p>• Tourism = {fmtRate(canonicalRates.tourismLevy)} of base</p>
                               </div>
                             </div>
                           </div>

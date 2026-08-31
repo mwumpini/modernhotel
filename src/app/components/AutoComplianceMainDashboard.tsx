@@ -134,7 +134,7 @@ export default function AutoComplianceMainDashboard() {
               </div>
             </Tab>
 
-            <Tab key="payroll" title="PAYE">
+            <Tab key="payroll" title="Income Taxes">
               <div className="mt-4">
                 <p className="text-sm text-gray-600 mb-4">
                   Payroll tax bands and statutory deductions for the selected country — separate from sales tax rules.

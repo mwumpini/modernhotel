@@ -131,7 +131,7 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       icon: '⚖️',
       items: [
         { title: 'Tax Management', href: '/', badge: 'Rules', complianceTab: 'tax' },
-        { title: 'PAYE', href: '/', badge: 'Payroll', complianceTab: 'payroll' },
+        { title: 'Income Taxes', href: '/', badge: 'Payroll', complianceTab: 'payroll' },
         { title: 'Reports & Filing', href: '/', badge: 'VAT', complianceTab: 'reports' },
       ]
     },

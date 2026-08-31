@@ -2186,6 +2186,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       const systemSettings = localStorage.getItem('system.settings');
       if (systemSettings) {
         const parsed = JSON.parse(systemSettings);
+        // Defensive: strip `subscribers` even if it's present in already-persisted data
+        // from before saveSettings() excluded it — a raw merge here would otherwise
+        // replace the real Set with whatever JSON.stringify turned it into (`{}`),
+        // permanently breaking publish() until the browser's storage is cleared.
+        delete (parsed as any).subscribers;
         set(parsed);
       }
       
@@ -2261,8 +2266,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       // every `update*` action for those appeared to succeed but the change was lost on
       // the next reload. Serializing everything else here means a new settings field never
       // has to be remembered to add to this list again.
+      //
+      // `subscribers` is the one field that DOES need excluding by name: unlike a function,
+      // a Set doesn't vanish under JSON.stringify — it serializes as `{}` (no own enumerable
+      // keys). loadSettings() then does a raw `set(parsed)`, so that `{}` overwrote the real
+      // Set on next load, and every later `publish()` crashed with
+      // "subscribers.forEach is not a function" — silently breaking any action that
+      // publishes after saving (e.g. creating a reservation).
       const {
-        roomManagement, posSettings, countryCompliance, users, roles, currentUser, sessionRoleId,
+        roomManagement, posSettings, countryCompliance, users, roles, currentUser, sessionRoleId, subscribers,
         ...rest
       } = state as any;
       localStorage.setItem('system.settings', JSON.stringify(rest));
