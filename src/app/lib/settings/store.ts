@@ -1174,6 +1174,11 @@ interface SettingsStore extends SystemSettings {
   getNextProformaInvoiceNumber: () => string;
   getNextClientNumber: () => string;
   getNextReservationNumber: () => string;
+  /** Raises a numbering series' nextNumber to stay ahead of IDs that already exist
+   *  (e.g. pulled from the server on hydration) — never lowers it. These counters
+   *  only ever live in this browser's localStorage, so a second browser/session/
+   *  storage reset can otherwise hand out a number already used elsewhere. */
+  reconcileNumberFloor: (series: 'reservation' | 'client' | 'invoice', existingIds: (string | undefined)[]) => void;
   /** Generic generator for any of the 16 moduleNumbering series (folio, KOT, requisition,
    *  work order, incident report, employee ID, etc.) — the single source every real call
    *  site should use instead of minting its own Date.now()/array-length-based id. */
@@ -3253,6 +3258,26 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const result = formatDocumentNumber(settings, 5);
     state.updateReservationSettings({ nextNumber: settings.nextNumber + 1 });
     return result;
+  },
+
+  reconcileNumberFloor: (series, existingIds) => {
+    let maxUsed = 0;
+    for (const id of existingIds) {
+      if (!id) continue;
+      const m = /(\d+)$/.exec(id);
+      if (!m) continue;
+      const n = parseInt(m[1], 10);
+      if (!Number.isNaN(n) && n > maxUsed) maxUsed = n;
+    }
+    const floor = maxUsed + 1;
+    const state = get();
+    if (series === 'reservation' && floor > state.reservationSettings.nextNumber) {
+      state.updateReservationSettings({ nextNumber: floor });
+    } else if (series === 'client' && floor > state.clientSettings.nextNumber) {
+      state.updateClientSettings({ nextNumber: floor });
+    } else if (series === 'invoice' && floor > state.invoiceSettings.nextNumber) {
+      state.updateInvoiceSettings({ nextNumber: floor });
+    }
   },
 
   getNextModuleNumber: (category, series) => {

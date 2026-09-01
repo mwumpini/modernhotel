@@ -62,6 +62,7 @@ import { buildChartOfAccountsFromTemplate, resolveAccountingCountryCode } from '
 import { buildOperationalAccountingSeed, EMPTY_TRANSACTION_SEED } from './operationalSeed';
 import { isAccountingDemoMode } from './tenantAccountingConfig';
 import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments } from './helpers/api';
+import { useSettingsStore } from '../settings/store';
 import {
   syncInvoiceToLedger,
   syncPaymentToLedger,
@@ -3168,7 +3169,17 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         set((s) => {
           const byId = new Map(s.invoices.map(i => [i.id, i]));
           serverInvoices.forEach(i => byId.set(i.id, i));
-          return { invoices: Array.from(byId.values()) };
+          const invoices = Array.from(byId.values());
+          // invoiceSettings.nextNumber only lives in this browser's localStorage —
+          // raise it past every invoiceNumber the server already has, so a fresh or
+          // reset browser can't hand out a number a previous session already used.
+          try {
+            useSettingsStore.getState().reconcileNumberFloor(
+              'invoice',
+              invoices.filter((i) => i.type === 'Sales').map((i) => i.invoiceNumber)
+            );
+          } catch {}
+          return { invoices };
         });
       }
       if (serverPayments && serverPayments.length > 0) {

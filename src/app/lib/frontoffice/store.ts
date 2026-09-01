@@ -254,6 +254,10 @@ class FrontOfficeStore {
           // A prior checkout may have failed only at the GL-post step (invoiceStatus
           // stuck at 'gl_pending'); retry those now that folios/reservations are fresh.
           try { this.retryAllPendingGlPosts(); } catch (e) { console.warn('FO: retryAllPendingGlPosts failed', e); }
+          // The resId counter only lives in this browser's localStorage — raise it past
+          // whatever the server already has so a fresh/reset browser can't hand out a
+          // resId a previous session already used (root cause of duplicate resIds).
+          try { useSettingsStore.getState().reconcileNumberFloor('reservation', this.reservations.map((r) => r.resId)); } catch {}
           this.notify();
         }
       }
@@ -267,6 +271,7 @@ class FrontOfficeStore {
           this.guests.forEach(g => byId.set(g.id, g));
           data.guests.forEach((g: GuestProfile) => byId.set(g.id, g));
           this.guests = Array.from(byId.values());
+          try { useSettingsStore.getState().reconcileNumberFloor('client', this.guests.map((g) => g.serialNumber)); } catch {}
           this.notify();
         }
       }
