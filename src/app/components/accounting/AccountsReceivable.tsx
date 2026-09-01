@@ -206,25 +206,6 @@ export default function AccountsReceivable() {
 		console.log('[AR] 🔄 Data refreshed');
 	}, [initializeAccounting]);
 
-	// Get active tax rates from config or use defaults
-	const activeTaxRates = useMemo(() => {
-		const defaultRates = {
-			VAT:     { name: 'VAT',          rate: 20.0 },
-			NHIL:    { name: 'NHIL',         rate: 2.5  },
-			GETFUND: { name: 'GETFund Levy', rate: 2.5  },
-			TOURISM: { name: 'Tourism Levy', rate: 1.0  },
-		};
-		
-		if (taxConfigs && taxConfigs.length > 0) {
-			const rates: Record<string, { name: string; rate: number }> = {};
-			taxConfigs.filter(t => t.isActive).forEach(t => {
-				rates[t.code] = { name: t.name, rate: t.rate };
-			});
-			return Object.keys(rates).length > 0 ? rates : defaultRates;
-		}
-		return defaultRates;
-	}, [taxConfigs]);
-
 	// Filter customers and sales data
     const customers = useMemo(() => businessPartners.filter(p => p.type === 'Customer' || p.type === 'Both'), [businessPartners]);
 	const allSalesInvoices = useMemo(() => invoices.filter(inv => inv.type === 'Sales'), [invoices]);
@@ -797,6 +778,18 @@ export default function AccountsReceivable() {
 			<td class="amount">₵${Number(r.amount).toLocaleString()}</td>
 		</tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#6b7280">No payments recorded</td></tr>';
 
+		// Same canonical stacked-tax reconstruction as the on-screen invoice modal, so the
+		// PDF itemizes VAT/NHIL/GETFund/Tourism instead of a single opaque "Tax" line.
+		const pdfSubtotal = Number(invoice.subtotal || 0);
+		const pdfTotalTax = Number(invoice.taxAmount || 0);
+		const pdfTaxBreakdown: { name: string; rate: number; amount: number }[] =
+			invoice.taxBreakdown && invoice.taxBreakdown.length > 0
+				? invoice.taxBreakdown
+				: (pdfSubtotal > 0 ? computeSalesTax(pdfSubtotal, pdfTotalTax).lines.map(l => ({ name: l.name, rate: l.rate, amount: l.amount })) : []);
+		const taxBreakdownRows = pdfTaxBreakdown.map(t =>
+			`<tr><td>${t.name} (${t.rate}%)</td><td class="amount">₵${Number(t.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>`
+		).join('');
+
 		const html = generatePdfHtml(isProforma ? 'Proforma Invoice' : 'Sales Invoice', `
 			<div class="header">
 				<h1>${isProforma ? '📋' : '🧾'} ${isProforma ? 'PROFORMA INVOICE' : 'SALES INVOICE'}</h1>
@@ -836,11 +829,20 @@ export default function AccountsReceivable() {
 			</div>
 			` : ''}
 
+			${taxBreakdownRows ? `
+			<div class="section">
+				<div class="section-title">Tax Breakdown (Ghana GRA)</div>
+				<table>
+					${taxBreakdownRows}
+				</table>
+			</div>
+			` : ''}
+
 			<div class="section">
 				<div class="section-title">Financial Summary</div>
 				<table>
 					<tr><td style="width:70%">Subtotal</td><td class="amount">₵${Number(invoice.subtotal || 0).toLocaleString()}</td></tr>
-					<tr><td>Tax</td><td class="amount">₵${Number(invoice.taxAmount || 0).toLocaleString()}</td></tr>
+					<tr><td>Total Tax</td><td class="amount">₵${Number(invoice.taxAmount || 0).toLocaleString()}</td></tr>
 					<tr class="total-row"><td><strong>Total</strong></td><td class="amount"><strong>₵${Number(invoice.total || 0).toLocaleString()}</strong></td></tr>
 					${!isProforma ? `
 					<tr><td>Paid</td><td class="amount" style="color:#16a34a">₵${Number(invoice.paidAmount || 0).toLocaleString()}</td></tr>
@@ -3304,29 +3306,18 @@ export default function AccountsReceivable() {
 						const subtotal = Number(selectedInvoice.subtotal || 0);
 						const totalTax = Number(selectedInvoice.taxAmount || 0);
 						
-						// Use stored tax breakdown if available, otherwise calculate from config
-						const taxBreakdown = selectedInvoice.taxBreakdown || (() => {
-							if (totalTax <= 0) return [];
-							const breakdown: { code: string; name: string; rate: number; amount: number }[] = [];
-							const taxCodes = ['NHIL', 'GETFUND', 'VAT', 'TOURISM'] as const; // Order matters for Ghana (VAT after levies in stored breakdowns)
-							let remainingTax = totalTax;
-							
-							taxCodes.forEach(code => {
-								const config = (activeTaxRates as Record<string, { name: string; rate: number }>)[code];
-								if (config) {
-									const amount = subtotal * (config.rate / 100);
-									breakdown.push({
-										code,
-										name: config.name,
-										rate: config.rate,
-										amount: Math.min(amount, remainingTax)
-									});
-									remainingTax -= amount;
-								}
-							});
-							return breakdown;
-						})();
-						
+						// Use stored tax breakdown if available, otherwise reconstruct from the same
+						// canonical stacked-tax engine used at checkout (computeSalesTax), so every
+						// component that was actually charged (VAT/NHIL/GETFund/Tourism) shows up.
+						const taxBreakdown = selectedInvoice.taxBreakdown && selectedInvoice.taxBreakdown.length > 0
+							? selectedInvoice.taxBreakdown
+							: (subtotal > 0 ? computeSalesTax(subtotal, totalTax).lines.map(l => ({
+								code: l.taxCode,
+								name: l.name,
+								rate: l.rate,
+								amount: l.amount,
+							})) : []);
+
 						const totalTaxRate = taxBreakdown.reduce((sum: number, t: any) => sum + t.rate, 0);
 						
 						// Line items
