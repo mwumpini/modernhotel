@@ -853,9 +853,13 @@ export default function RoomConfigurationDashboard() {
     return settingsStore.roomManagement.rooms.filter(room => room.typeId === typeId).length;
   };
 
+  // "Available" mirrors Front Office's own definition (bookable housekeeping
+  // states) — room.status here is a housekeeping status (vacant/clean/
+  // inspected/dirty/occupied/maintenance), never the literal string
+  // 'available', so that exact-match check always returned zero.
   const getAvailableRoomCountByType = (typeId: string) => {
-    return settingsStore.roomManagement.rooms.filter(room => 
-      room.typeId === typeId && room.status === 'available'
+    return settingsStore.roomManagement.rooms.filter(room =>
+      room.typeId === typeId && ['vacant', 'clean', 'inspected'].includes(room.status)
     ).length;
   };
 
