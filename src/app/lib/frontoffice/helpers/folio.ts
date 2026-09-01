@@ -35,14 +35,22 @@ const OTHER_SERVICE_KEYWORDS = [
 export { calculateStayNights } from './rates';
 
 function isRoomCharge(description?: string) {
-	return (description || '').toLowerCase().includes('room');
+	const desc = (description || '').toLowerCase();
+	// Excludes service charges whose description happens to contain "room" (e.g.
+	// "Room Service") — otherwise those get double-counted as both a room charge
+	// and a service charge in getFolioDisplayTotals's independent filters below.
+	return desc.includes('room') && !isServiceCharge(description);
 }
 
 /** Map folio charge to GL revenue account at checkout (simpleFlow). */
 export function folioChargeGlCode(charge: { description?: string; category?: string }): string {
 	const cat = (charge.category || '').toLowerCase();
-	if (isRoomCharge(charge.description) || cat === 'room') return '4100';
+	// F&B keyword check (includes the phrase "room service") must run before the
+	// generic room-charge check below — "room service" contains "room" as a plain
+	// substring, so checking room-charge first was misrouting Room Service charges
+	// to Room Revenue (4100) instead of Food & Beverage (4200).
 	if (cat === 'f&b' || cat === 'fb' || matchesKeyword(charge.description, FB_KEYWORDS)) return '4200';
+	if (isRoomCharge(charge.description) || cat === 'room') return '4100';
 	if (cat === 'conference' || (charge.description || '').toLowerCase().includes('conference')) return '4300';
 	if (matchesKeyword(charge.description, OTHER_SERVICE_KEYWORDS)) return '4400';
 	return '4300';
