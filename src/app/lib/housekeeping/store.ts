@@ -57,6 +57,46 @@ class HousekeepingStore {
     } catch (e) {
       console.warn('HK: Room sync subscription failed', e);
     }
+    // Keep "occupied" reconciled with actual reservation state — catches
+    // reservations that become checked-in without going through checkIn()
+    // (e.g. demo/seed fixtures, or rows pulled fresh from the server on
+    // hydration) whose room would otherwise sit at 'vacant' forever despite
+    // a guest actually being in it. Only ever escalates TO 'occupied'; never
+    // downgrades, so it can't fight housekeeping's own post-checkout cleaning
+    // progress (checkOut() already does that one-time, deliberately, itself).
+    //
+    // Deferred via setTimeout and gated to the client: frontoffice/store.ts and
+    // this module import each other (frontOfficeStore already calls into
+    // housekeepingStore from checkIn/checkOut), so touching the frontOfficeStore
+    // binding synchronously here — during either module's own top-level
+    // evaluation — hits it before its `const` is initialized (TDZ), which
+    // crashes SSR entirely. Existing call sites in this file only ever touch it
+    // from inside methods invoked later, never at construction time.
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        try {
+          this.reconcileOccupancyFromFrontOffice();
+          frontOfficeStore.subscribe(() => this.reconcileOccupancyFromFrontOffice());
+        } catch (e) {
+          console.warn('HK: Front Office occupancy reconciliation subscription failed', e);
+        }
+      }, 0);
+    }
+  }
+
+  private reconcileOccupancyFromFrontOffice() {
+    try {
+      frontOfficeStore.reservations.forEach((r) => {
+        if (r.status === 'checked-in' && r.roomId && r.roomId !== 'TBD') {
+          const room = this.rooms.get(r.roomId);
+          if (room && room.status !== 'occupied') {
+            this.updateRoomStatus(r.roomId, 'occupied', 'System', 'Reconciled: guest already checked in');
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('HK: occupancy reconciliation failed', e);
+    }
   }
 
   /**
