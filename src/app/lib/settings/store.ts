@@ -2222,8 +2222,14 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       }
       set({ countryCompliance });
       
-      // Load users and roles
-      const users = localStorage.getItem('system.users') ? JSON.parse(localStorage.getItem('system.users')!) : [];
+      // Load users and roles. Falls back to the seeded defaults both when the key is
+      // missing AND when it parses to an empty array — a browser that hit the old
+      // `: []` fallback (instead of `: defaultSettings.users`) on its very first load
+      // would have since persisted that empty array back via saveSettings(), so a
+      // present-but-empty "system.users" is itself a symptom of the bug this fixes,
+      // not a real "admin deleted every user" state.
+      const storedUsers = localStorage.getItem('system.users') ? JSON.parse(localStorage.getItem('system.users')!) : [];
+      const users = storedUsers.length > 0 ? storedUsers : defaultSettings.users;
       const roles = localStorage.getItem('system.roles') ? JSON.parse(localStorage.getItem('system.roles')!) : defaultRoles;
       set({ users, roles });
       

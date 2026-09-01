@@ -383,7 +383,7 @@ export default function UserManagementUnified() {
             <div>
               <p className="text-sm font-medium text-gray-600">Active Users</p>
               <p className="text-2xl font-bold text-ghana-black">{activeUsers}</p>
-              <p className="text-sm text-green-600">{Math.round((activeUsers/totalUsers)*100)}% of total</p>
+              <p className="text-sm text-green-600">{totalUsers > 0 ? Math.round((activeUsers/totalUsers)*100) : 0}% of total</p>
             </div>
             <div className="text-3xl">✅</div>
           </div>
