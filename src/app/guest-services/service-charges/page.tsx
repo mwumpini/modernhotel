@@ -230,7 +230,13 @@ export default function ServiceChargesPage() {
       customerType: formData.customerType
     }, { sourceModule: 'Guest Services' });
 
-    // Reset form and close modal
+    resetAddForm();
+  };
+
+  // Reset the Add Service Charge form (used on successful submit, and before
+  // reopening the modal, so a prior guest/category selection can never carry
+  // over into the next charge).
+  const resetAddForm = () => {
     setFormData({
       guestId: '',
       roomNumber: '',
@@ -262,6 +268,8 @@ export default function ServiceChargesPage() {
         amount: category.basePrice,
         discountAmount: 0
       }));
+    } else {
+      setFormData(prev => ({ ...prev, category: '', description: '', amount: 0, discountAmount: 0 }));
     }
   };
 
@@ -274,6 +282,8 @@ export default function ServiceChargesPage() {
         guestId,
         roomNumber: guest.roomNumber || ''
       }));
+    } else {
+      setFormData(prev => ({ ...prev, guestId: '', roomNumber: '' }));
     }
   };
 
@@ -380,9 +390,23 @@ export default function ServiceChargesPage() {
           <p className="text-gray-600">Manage additional charges for guests (swimming pool, laundry, spa, etc.)</p>
         </div>
         <div className="flex gap-2">
-          <Button 
-            color="primary" 
-            onClick={() => setIsAddModalOpen(true)}
+          <Button
+            color="primary"
+            onClick={() => {
+              setFormData({
+                guestId: '',
+                roomNumber: '',
+                category: '',
+                description: '',
+                amount: 0,
+                quantity: 1,
+                discountAmount: 0,
+                notes: '',
+                customerType: 'inhouse'
+              });
+              setExternalGuestData({ name: '', phone: '', email: '', company: '' });
+              setIsAddModalOpen(true);
+            }}
             className="bg-ghana-gold text-white"
           >
             ➕ Add Service Charge
@@ -681,12 +705,12 @@ export default function ServiceChargesPage() {
                 <Select
                   label="Guest & Room"
                   placeholder="Select in-house guest"
-                  value={formData.guestId}
-                  onChange={(e) => handleGuestSelect(e.target.value)}
+                  selectedKeys={formData.guestId ? [formData.guestId] : []}
+                  onSelectionChange={(keys) => handleGuestSelect(Array.from(keys)[0] as string || '')}
                   isRequired
                 >
                   {availableGuests.map(guest => (
-                    <SelectItem key={guest.guestId}>
+                    <SelectItem key={guest.guestId} textValue={`${guest.guestName} - Room ${guest.roomNumber}`}>
                       {guest.guestName} - Room {guest.roomNumber} ({guest.roomType})
                     </SelectItem>
                   ))}
@@ -728,12 +752,12 @@ export default function ServiceChargesPage() {
               <Select
                 label="Service Category"
                 placeholder="Select category"
-                value={formData.category}
-                onChange={(e) => handleCategorySelect(e.target.value)}
+                selectedKeys={formData.category ? [formData.category] : []}
+                onSelectionChange={(keys) => handleCategorySelect(Array.from(keys)[0] as string || '')}
                 isRequired
               >
                 {serviceChargesConfig.map(category => (
-                  <SelectItem key={category.id}>
+                  <SelectItem key={category.id} textValue={`${category.name} - ₵${category.basePrice}`}>
                     {category.icon} {category.name} - ₵{category.basePrice} {getUnitLabel(category.unit)}
                   </SelectItem>
                 ))}
