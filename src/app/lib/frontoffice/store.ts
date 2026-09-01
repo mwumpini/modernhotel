@@ -34,6 +34,7 @@ import { postFirstNightAtCheckIn } from './roomCharges';
 import { runNightAudit, type NightAuditResult } from './nightAudit';
 import { postNoShowPenaltyToLedger } from '../accounting/simpleFlow';
 import { DEMO_BILLING_PERSONS, isDemoFixturesEnabled } from '../demo';
+import { notifyError } from '../notifications/notify';
 
 class FrontOfficeStore {
   reservations: Reservation[] = [];
@@ -195,7 +196,10 @@ class FrontOfficeStore {
     if (typeof window === 'undefined' || !this.tenant()) return;
     this.writeQueue = this.writeQueue
       .then(() => this.withRetry(fn))
-      .catch(e => console.warn('FO: persist failed after retries', e));
+      .catch(e => {
+        console.warn('FO: persist failed after retries', e);
+        notifyError('A change (reservation, folio, or guest update) could not be saved. Check your connection and try the action again.');
+      });
   }
 
   private persistNewReservation(r: Reservation) {
