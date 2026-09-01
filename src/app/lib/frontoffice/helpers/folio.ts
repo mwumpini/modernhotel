@@ -22,10 +22,14 @@ import { useSettingsStore } from '../../settings/store';
 
 type StoreLike = any;
 
-const SERVICE_CHARGE_KEYWORDS = [
-	'service', 'swimming', 'laundry', 'pool', 'spa', 'gym', 'restaurant', 'bar',
-	'room service', 'minibar', 'parking', 'wifi', 'internet', 'breakfast', 'lunch',
+const FB_KEYWORDS = [
+	'restaurant', 'bar', 'room service', 'minibar', 'breakfast', 'lunch',
 	'dinner', 'snack', 'beverage', 'drink', 'food', 'meal',
+];
+
+const OTHER_SERVICE_KEYWORDS = [
+	'swimming', 'laundry', 'pool', 'spa', 'gym', 'parking', 'wifi', 'internet',
+	'service',
 ];
 
 export { calculateStayNights } from './rates';
@@ -38,14 +42,20 @@ function isRoomCharge(description?: string) {
 export function folioChargeGlCode(charge: { description?: string; category?: string }): string {
 	const cat = (charge.category || '').toLowerCase();
 	if (isRoomCharge(charge.description) || cat === 'room') return '4100';
-	if (cat === 'f&b' || cat === 'fb' || isServiceCharge(charge.description)) return '4200';
+	if (cat === 'f&b' || cat === 'fb' || matchesKeyword(charge.description, FB_KEYWORDS)) return '4200';
 	if (cat === 'conference' || (charge.description || '').toLowerCase().includes('conference')) return '4300';
+	if (matchesKeyword(charge.description, OTHER_SERVICE_KEYWORDS)) return '4400';
 	return '4300';
 }
 
-function isServiceCharge(description?: string) {
+function matchesKeyword(description: string | undefined, keywords: string[]) {
 	const desc = (description || '').toLowerCase();
-	return SERVICE_CHARGE_KEYWORDS.some((k) => desc.includes(k));
+	return keywords.some((k) => desc.includes(k));
+}
+
+/** Non-room charge (F&B or other service) — used for billing-screen subtotal grouping, not GL routing. */
+function isServiceCharge(description?: string) {
+	return matchesKeyword(description, FB_KEYWORDS) || matchesKeyword(description, OTHER_SERVICE_KEYWORDS);
 }
 
 /** Canonical folio totals for tables, modals, and billing screens. */
