@@ -5,9 +5,18 @@
 
 import { GHANA_TAX_CODES } from '../accounting/models';
 
-/** Legacy compliance-builder codes → chart leaf accounts */
+/** Legacy compliance-builder codes → chart leaf accounts.
+ *
+ *  '2150' is deliberately NOT remapped here even though an older compliance
+ *  builder once used it for NHIL: current compliance tax rules (seed-taxes.json
+ *  and the live DB) use '2150' as Tourism's own real glCode, matching the
+ *  chart directly. Remapping it to NHIL's account caused the Tourism sync to
+ *  delete the just-synced NHIL tax config as a false "same GL" conflict (both
+ *  ended up with glAccountCode '2120'), while leaving the old template's
+ *  Tourism entry (glAccountCode '2150', untouched by the misdirected conflict
+ *  check) to survive alongside the new one — NHIL vanishing and Tourism
+ *  showing twice on every invoice's tax breakdown. */
 export const LEGACY_COMPLIANCE_GL_REMAP: Record<string, string> = {
-  '2150': GHANA_TAX_CODES.NHIL.glCode,      // was NHIL in builder
   '2151': GHANA_TAX_CODES.GETFUND.glCode,   // was GETFund in builder
   '2153': GHANA_TAX_CODES.VAT.glCode,       // was VAT in builder
   '2154': GHANA_TAX_CODES.TOURISM.glCode,   // was Tourism in builder
