@@ -109,15 +109,20 @@ export default function FrontofficeReservations() {
     if (selectedRoom) {
       frontOfficeStore.assignRoom(selectedReservation.id, selectedRoom.id);
     } else {
-      // Auto-assign room
-      const availableRooms = frontOfficeStore.rooms.filter(room => 
-        !(room as any).isOutOfService && 
-        room.roomTypeId === selectedReservation.roomTypeId
+      // Auto-assign room — same eligibility check as the manual picker list below
+      // (out-of-service + actually free for these dates), so auto-assign can never
+      // hand out a room another guest already occupies for an overlapping stay.
+      const availableRooms = frontOfficeStore.rooms.filter(room =>
+        !(room as any).isOutOfService &&
+        room.roomTypeId === selectedReservation.roomTypeId &&
+        frontOfficeStore.isRoomFreeForRange(room.id, selectedReservation.arrival, selectedReservation.departure, selectedReservation.id)
       );
-      
+
       if (availableRooms.length > 0) {
         const assignedRoom = availableRooms[0];
         frontOfficeStore.assignRoom(selectedReservation.id, assignedRoom.id);
+      } else {
+        alert('No rooms of this type are free for the selected dates. Please pick a specific room or change the reservation dates.');
       }
     }
     
