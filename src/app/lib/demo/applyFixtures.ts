@@ -20,6 +20,15 @@ let applied = false;
 export function applyDemoFixturesIfNeeded(): void {
   if (!isDemoFixturesEnabled() || applied) return;
 
+  // This runs from a module-import-time microtask (see ./init.ts), which fires
+  // before any component's useEffect — including the one that normally hydrates
+  // this store from localStorage. Without loading first, the checks below see
+  // only in-memory defaults (empty roomManagement) even when real settings were
+  // already saved, and the saveSettings() call further down would then persist
+  // that default state over the real one, wiping out everything the user saved
+  // (including initialSetupCompleted) on every fresh page load.
+  useSettingsStore.getState().loadSettings();
+
   const state = useSettingsStore.getState();
   const rm = state.roomManagement;
   const needsRoomTypes = (rm.roomTypes?.length ?? 0) === 0;

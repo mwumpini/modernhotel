@@ -1225,6 +1225,13 @@ interface SettingsStore extends SystemSettings {
   subscribe: (callback: () => void) => () => void;
   publish: () => void;
 
+  /** True once loadSettings() has run at least once this page load. Module-scope
+   *  singletons (e.g. frontOfficeStore) construct — and can trigger a save — before
+   *  the useEffect that hydrates this store from localStorage ever runs; saving that
+   *  early would persist still-default state over whatever was really saved last
+   *  time. saveSettings() no-ops until this flips true. */
+  hydrated: boolean;
+
   // Printing defaults management
   updatePrintingTemplates: (tpl: Partial<SettingsStore['printing']>) => void;
 
@@ -2194,6 +2201,7 @@ const DEFAULT_PRINTING: SettingsStore['printing'] = {
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   ...defaultSettings,
   subscribers: new Set(),
+  hydrated: false,
   printing: DEFAULT_PRINTING,
   docBuilder: { templates: [] },
   addDocBuilderTemplate: (template) => {
@@ -2322,11 +2330,20 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     } catch (error) {
       console.error('Error loading settings:', error);
+    } finally {
+      set({ hydrated: true });
     }
   },
 
   saveSettings: () => {
     if (typeof window === 'undefined') return;
+    // Guard against saving before loadSettings() has run at least once this page
+    // load (see the `hydrated` field doc comment) — a save this early would
+    // persist still-default state over whatever was really saved last time.
+    // Anything mutated in memory before hydration gets replaced wholesale by
+    // loadSettings()'s set(parsed) the moment it does run, so skipping the write
+    // here loses nothing real.
+    if (!get().hydrated) return;
     try {
       const state = get();
 
