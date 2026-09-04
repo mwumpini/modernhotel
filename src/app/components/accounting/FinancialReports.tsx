@@ -604,7 +604,7 @@ export default function FinancialReportsPage() {
     }
     if (
       !window.confirm(
-        `Post profit/loss close to retained earnings (GL ${RETAINED_EARNINGS_GL}) as at ${closeAsOfDate}? This creates a posted journal entry.`
+        `Post profit/loss close to retained earnings (GL ${RETAINED_EARNINGS_GL}) as at ${closeAsOfDate}? This creates a posted journal entry, and locks every date on or before ${closeAsOfDate} against new postings.`
       )
     ) {
       return;
@@ -1181,7 +1181,10 @@ export default function FinancialReportsPage() {
                       </p>
                     )}
                     <p className="text-xs text-gray-500">
-                      One posted close per calendar date. Reversals are not automated — void or adjust manually if needed.
+                      One posted close per calendar date. Once posted, every posting path (folio checkout,
+                      manual invoices/payments, departmental capture) refuses new entries dated on or before
+                      this date — reopen by voiding the close entry if a correction is needed.
+                      Reversals are not automated — void or adjust manually if needed.
                     </p>
                   </CardBody>
                 </Card>

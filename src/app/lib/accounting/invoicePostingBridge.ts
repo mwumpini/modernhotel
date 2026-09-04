@@ -14,6 +14,7 @@ import { computeStackedTaxLines } from './taxFromConfig';
 import { getActiveTaxConfigs } from '../tax/engine';
 import { GHANA_TAX_CODES } from './models';
 import { GL_ACCOUNTS, PAYMENT_GL_MAP } from './integration';
+import { assertPeriodNotClosed } from './periodClose';
 
 // AR/CASH/BANK share the one canonical GL_ACCOUNTS table (integration.ts) so every
 // posting path lands guest/departmental transactions in the same leaf accounts.
@@ -575,6 +576,15 @@ export function syncInvoiceToLedger(
     return { ok: true, skipped: true };
   }
 
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, invoice.date);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('AccountingInvoicePost', 'Invoice GL post blocked — closed period', {
+      invoiceId: invoice.id,
+      error: periodCheck.error,
+    });
+    return periodCheck;
+  }
+
   const result = buildInvoiceJournalEntry(invoice, partner, {
     journalSeq: store.journalEntries.length,
   });
@@ -618,6 +628,15 @@ export function syncPaymentToLedger(
 ): PostResult | { ok: true; skipped: true } {
   if (!paymentNeedsGlPost(payment, store.journalEntries)) {
     return { ok: true, skipped: true };
+  }
+
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, payment.date);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('AccountingPaymentPost', 'Payment GL post blocked — closed period', {
+      paymentId: payment.id,
+      error: periodCheck.error,
+    });
+    return periodCheck;
   }
 
   let cashGl = PAYMENT_GL_MAP[payment.paymentMethod] || GL.CASH;

@@ -14,6 +14,7 @@ import {
 import {
   buildProfitLossCloseEntry,
   hasPeriodCloseForDate,
+  assertPeriodNotClosed,
 } from '../src/app/lib/accounting/periodClose';
 import {
   isAuthoritativeRevenueSource,
@@ -188,6 +189,18 @@ function assert(cond: boolean, msg: string) {
     assert(hasPeriodCloseForDate(jes, '2026-06-30'), 'close recorded');
     const second = buildProfitLossCloseEntry(jes, coa, '2026-06-30');
     assert(!second.ok, 'duplicate close rejected');
+
+    // Period-lock guard — the real gap the earlier "Close Period is cosmetic"
+    // finding was about: after closing through a date, nothing should be able
+    // to post a new entry dated on or before it.
+    const closedCheck = assertPeriodNotClosed(jes, '2026-06-15');
+    assert(!closedCheck.ok, 'posting into an already-closed period is rejected');
+    const sameDayCheck = assertPeriodNotClosed(jes, '2026-06-30');
+    assert(!sameDayCheck.ok, 'posting on the close date itself is rejected');
+    const openCheck = assertPeriodNotClosed(jes, '2026-07-01');
+    assert(openCheck.ok, 'posting after the close date is allowed');
+    const neverClosedCheck = assertPeriodNotClosed([], '2020-01-01');
+    assert(neverClosedCheck.ok, 'no close ever posted — nothing is locked');
   }
 }
 

@@ -65,6 +65,41 @@ export function hasPeriodCloseForDate(journalEntries: JournalEntry[], asOfDateIs
   );
 }
 
+/** The latest date "the books" have been closed through, or null if never closed. */
+export function latestClosedThroughDate(journalEntries: JournalEntry[]): string | null {
+  let latest: string | null = null;
+  for (const je of journalEntries) {
+    if (je.status !== 'Posted' || je.sourceModule !== CLOSE_SOURCE) continue;
+    const d = je.date.slice(0, 10);
+    if (!latest || d > latest) latest = d;
+  }
+  return latest;
+}
+
+/**
+ * Guard for every real posting path — "Close Period" (buildProfitLossCloseEntry)
+ * is otherwise purely cosmetic: it zeroes P&L into retained earnings once, but
+ * nothing stops a later transaction from still landing on a date that's already
+ * been reported and rolled forward. Call this before committing any new posting
+ * and reject/hold it (the same way an unbalanced entry is rejected) rather than
+ * silently letting it corrupt a period someone already closed the books on.
+ */
+export function assertPeriodNotClosed(
+  journalEntries: JournalEntry[],
+  entryDateIso: string
+): { ok: true } | { ok: false; error: string } {
+  const closedThrough = latestClosedThroughDate(journalEntries);
+  if (!closedThrough) return { ok: true };
+  const key = entryDateIso.slice(0, 10);
+  if (key <= closedThrough) {
+    return {
+      ok: false,
+      error: `${key} falls in a period already closed (books closed through ${closedThrough}). Post this dated after the close, or reopen the period first.`,
+    };
+  }
+  return { ok: true };
+}
+
 export type PeriodCloseResult =
   | { ok: true; entry: JournalEntry }
   | { ok: false; error: string };

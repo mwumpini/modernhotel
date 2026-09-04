@@ -24,6 +24,7 @@
 import { useAccountingStore } from './store';
 import { computeStackedTaxLines, getEffectiveTaxConfigs } from './taxFromConfig';
 import { logAccountingProcess, logAccountingProcessError } from './accountingProcessLog';
+import { assertPeriodNotClosed } from './periodClose';
 
 // GL Account Codes for Ghana Hotel Chart of Accounts — leaf (postable) codes only,
 // cross-checked against GHANA_CHART_OF_ACCOUNTS in models.ts. '1100'/'1200'/'2000'
@@ -253,6 +254,17 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
   });
   
   try {
+    const periodCheck = assertPeriodNotClosed(store.journalEntries, transactionDate);
+    if (!periodCheck.ok) {
+      console.error('[Accounting Integration] Revenue capture aborted — closed period', periodCheck.error);
+      logAccountingProcessError('AccountingCapture', 'Revenue capture aborted — closed period', {
+        source: transaction.source,
+        transactionDate,
+        error: periodCheck.error,
+      });
+      return null;
+    }
+
     const existingJe = store.journalEntries.find(
       (je) =>
         je.sourceModule === transaction.source &&
@@ -605,6 +617,12 @@ export function capturePayment(
   });
   
   try {
+    const periodCheck = assertPeriodNotClosed(store.journalEntries, transactionDate);
+    if (!periodCheck.ok) {
+      console.error('[Accounting Integration] Payment capture aborted — closed period', periodCheck.error);
+      return null;
+    }
+
     const existingPayJe = store.journalEntries.find(
       (je) =>
         je.sourceModule === source &&
