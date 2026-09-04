@@ -303,7 +303,18 @@ class FrontOfficeStore {
         if (Array.isArray(data.folios) && data.folios.length > 0) {
           const byId = new Map<string, Folio>();
           this.folios.forEach(f => byId.set(f.id, f));
-          data.folios.forEach((f: Folio) => byId.set(f.id, f));
+          data.folios.forEach((f: Folio) => {
+            // This GET can be in flight when a local charge/payment lands (e.g. via
+            // addCharge -> updateFolioBalances -> persistFolio) and resolve with a
+            // snapshot taken before that write reached the database — blindly
+            // preferring the server copy would silently erase the just-added line
+            // (a swimming pool charge, say) the moment this pull's response arrives.
+            // Keep whichever copy actually has more charges/payments recorded.
+            const local = byId.get(f.id);
+            const localCount = (local?.charges?.length || 0) + (local?.payments?.length || 0);
+            const serverCount = (f.charges?.length || 0) + (f.payments?.length || 0);
+            byId.set(f.id, serverCount >= localCount ? f : (local as Folio));
+          });
           this.folios = Array.from(byId.values());
           this.notify();
         }
