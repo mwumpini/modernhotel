@@ -1558,8 +1558,6 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
     [editingEvent, eventInvoices]
   );
 
-  const showInvoicePrintInModal = useMemo(() => Boolean(linkedEventInvoice), [linkedEventInvoice]);
-
   const linkedEventReceipts = useMemo(
     () => (editingEvent ? eventReceipts.filter((rcpt) => rcpt.eventId === editingEvent.id) : []),
     [editingEvent, eventReceipts]
@@ -1571,10 +1569,13 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   );
 
   useEffect(() => {
-    if (!showQuotePrintInModal && activePrintTab === 'quote') {
-      setActivePrintTab(showInvoicePrintInModal ? 'invoice' : 'xls');
+    // Proforma, Invoice and Receipt all share showQuotePrintInModal's gate now
+    // (any event with computed totals, not just ones formally invoiced) — so
+    // once it's false, XLS is the only tab left standing.
+    if (!showQuotePrintInModal && activePrintTab !== 'xls') {
+      setActivePrintTab('xls');
     }
-  }, [showQuotePrintInModal, showInvoicePrintInModal, activePrintTab]);
+  }, [showQuotePrintInModal, activePrintTab]);
 
   const addQuoteDay = () => {
     const nextIndex = quoteDays.length + 1;
@@ -4803,6 +4804,21 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     }
     if (!openPrintPreview(type, templateOverride || resolveEventTemplateKey(type), data as any)) return;
     trackEvent('Events.EventCreated', { action: 'quote_pdf_generated', eventName });
+  };
+
+  // Print an invoice straight from the event's live computed totals — for a
+  // Confirmed/Quote event that doesn't (yet) have a separately tracked
+  // EventInvoice record (see the "Quick Import & Create" folio workflow for
+  // that). Keeps Invoice/Receipt usable on any priced event, not just ones
+  // someone remembered to formally invoice first.
+  const handlePrintEventInvoicePdf = (templateOverride?: string) => {
+    const { type, data } = buildEventPrintData('invoice');
+    if (!data) {
+      alert('Unable to generate invoice data for this event.');
+      return;
+    }
+    if (!openPrintPreview(type, templateOverride || resolveEventTemplateKey(type), data as any)) return;
+    trackEvent('Events.EventCreated', { action: 'invoice_pdf_generated_from_totals', eventName });
   };
 
   // Print invoice PDF for a specific invoice
@@ -15283,13 +15299,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         </Tab>
                         );
                       })()}
-                      {showInvoicePrintInModal && linkedEventInvoice && (() => {
+                      {showQuotePrintInModal && editingEvent && (() => {
                         const invoiceType = EVENT_DOC_TYPE[editingEventDocSection].invoice;
                         const invoiceOptions = listSelectableTemplates(invoiceType);
                         const invoiceDefault = resolveEventTemplateKey(invoiceType) || invoiceOptions[0]?.key || '';
                         return (
                         <Tab key="invoice" title="🧾 Invoice">
                           <div className="space-y-3">
+                            {!linkedEventInvoice && (
+                              <p className="text-xs text-gray-500">No invoice has been formally created for this event yet — this prints straight from the current totals below.</p>
+                            )}
                             <Select
                               size="sm"
                               label="Template"
@@ -15302,7 +15321,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                               size="sm"
                               color="primary"
                               className="w-full"
-                              onPress={() => handleDownloadInvoicePdf(linkedEventInvoice, selectedInvoiceTemplate || invoiceDefault)}
+                              onPress={() => linkedEventInvoice
+                                ? handleDownloadInvoicePdf(linkedEventInvoice, selectedInvoiceTemplate || invoiceDefault)
+                                : handlePrintEventInvoicePdf(selectedInvoiceTemplate || invoiceDefault)}
                             >
                               🖨️ Print Invoice
                             </Button>
@@ -15310,23 +15331,26 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         </Tab>
                         );
                       })()}
-                      {showInvoicePrintInModal && linkedEventInvoice && (() => {
+                      {showQuotePrintInModal && editingEvent && (() => {
                         const receiptType = EVENT_DOC_TYPE[editingEventDocSection].receipt;
                         const receiptOptions = listSelectableTemplates(receiptType);
                         const receiptDefault = resolveEventTemplateKey(receiptType) || receiptOptions[0]?.key || '';
+                        const outstandingBalance = linkedEventInvoice
+                          ? (linkedEventInvoice.balance || 0)
+                          : Math.max(0, balanceDue - linkedEventReceipts.reduce((s, r) => s + (r.amount || 0), 0));
                         return (
                         <Tab key="receipt" title="💰 Receipt">
                           <div className="space-y-3">
                             <div className="flex items-center justify-between p-2 rounded-md bg-gray-50 border border-gray-200">
                               <span className="text-xs text-gray-600">Outstanding Balance</span>
-                              <span className="text-sm font-semibold text-ghana-black">{formatCurrency(linkedEventInvoice.balance || 0)}</span>
+                              <span className="text-sm font-semibold text-ghana-black">{formatCurrency(outstandingBalance)}</span>
                             </div>
                             <Button
                               size="sm"
                               color="success"
                               className="w-full"
-                              isDisabled={(linkedEventInvoice.balance || 0) <= 0}
-                              onPress={() => openReceiptModal('create', undefined, { ...editingEvent, balance: linkedEventInvoice.balance })}
+                              isDisabled={outstandingBalance <= 0}
+                              onPress={() => openReceiptModal('create', undefined, { ...editingEvent, balance: outstandingBalance, invoiceId: linkedEventInvoice?.id })}
                             >
                               💵 Record Payment
                             </Button>
