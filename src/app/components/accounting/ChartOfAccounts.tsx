@@ -13,6 +13,7 @@ import {
   type AccountNode,
 } from '@/app/lib/accounting/financialReportRollup';
 import { COA_ACCOUNT_TYPES, type CoaAccountType, type CoaTreeNode } from '@/app/lib/accounting/models';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 
 function flattenBalances(nodes: AccountNode[], out = new Map<string, number>()): Map<string, number> {
   for (const n of nodes) {
@@ -22,15 +23,13 @@ function flattenBalances(nodes: AccountNode[], out = new Map<string, number>()):
   return out;
 }
 
-function formatCoaBalance(amount: number, currency = 'GHS'): string {
+// formatAccountingCurrency always shows a magnitude, so the accounting-convention
+// parentheses for negative balances are applied on top of it here.
+function formatCoaBalance(amount: number, currency?: string): string {
   if (!Number.isFinite(amount) || Math.abs(amount) < 0.005) return '—';
   const prefix = amount < 0 ? '(' : '';
   const suffix = amount < 0 ? ')' : '';
-  const abs = Math.abs(amount).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return `${prefix}${currency} ${abs}${suffix}`;
+  return `${prefix}${formatAccountingCurrency(amount, currency)}${suffix}`;
 }
 
 const TYPE_PILL: Record<string, string> = {

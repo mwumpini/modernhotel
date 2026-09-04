@@ -63,7 +63,5 @@ export const EMPTY_TRANSACTION_SEED = {
   businessPartners: [] as import('./models').BusinessPartner[],
   bankAccounts: [] as import('./models').BankAccount[],
   bankTransactions: [] as import('./models').BankTransaction[],
-  fixedAssets: [] as import('./models').FixedAsset[],
-  depreciationSchedules: [] as import('./models').DepreciationSchedule[],
   auditTrail: [] as import('./models').AuditTrail[],
 };

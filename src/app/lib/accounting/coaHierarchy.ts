@@ -82,16 +82,3 @@ export function verifyCoaHierarchy(accounts: ChartOfAccounts[]): string[] {
   return errors;
 }
 
-// Legacy exports kept for any remaining imports
-export function hasChildAccounts(parentId: string, allAccounts: ChartOfAccounts[]): boolean {
-  return allAccounts.some((a) => a.parentId === parentId);
-}
-
-export function getParentDisplayName(
-  parentId: string | null | undefined,
-  allAccounts: ChartOfAccounts[]
-): string {
-  if (!parentId) return '—';
-  const p = allAccounts.find((a) => a.id === parentId);
-  return p ? p.name : parentId;
-}

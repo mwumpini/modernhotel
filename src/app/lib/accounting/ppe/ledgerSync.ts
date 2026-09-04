@@ -428,12 +428,3 @@ export function syncPpeRegisterToLedger(
   };
 }
 
-export function navigateToPpeAssetsTab() {
-  if (typeof window === 'undefined') return;
-  localStorage.setItem('accounting.tab', 'assets');
-  window.dispatchEvent(new Event('accounting-navigate'));
-}
-
-export function formatReportDateFromDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}

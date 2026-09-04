@@ -45,9 +45,11 @@ import {
 } from '@/app/lib/accounting/bankRecon/ledgerSync';
 import type { ReconcilingItem, ReconcilingItemType, ReconSide } from '@/app/lib/accounting/bankRecon/types';
 import type { BankTransaction } from '@/app/lib/accounting/models';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 
-const fmt = (n: number) =>
-  `₵${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// formatAccountingCurrency always shows a magnitude, so the sign is reattached in front
+// of it here (reconciling items can be negative adjustments).
+const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
 
 const fmtSigned = (n: number, deduct = false) => {
   if (Math.abs(n) < 0.01) return '—';

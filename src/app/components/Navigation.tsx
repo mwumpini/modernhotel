@@ -63,7 +63,6 @@ const AccountsPayablePage = lazy(() => import('./accounting/AccountsPayable'));
 const InventoryFixedAssetsPage = lazy(() => import('./accounting/InventoryFixedAssets'));
 const FinancialReportsPage = lazy(() => import('./accounting/FinancialReports'));
 const AuditControlsPage = lazy(() => import('./accounting/AuditControls'));
-const AccountingViewActivitiesPage = lazy(() => import('./accounting/ViewActivities'));
 
 interface NavigationProps {
   onLogout: () => void;

@@ -24,21 +24,25 @@ import {
   RETAINED_EARNINGS_GL,
 } from '@/app/lib/accounting/periodClose';
 import { logAccountingProcess } from '@/app/lib/accounting/accountingProcessLog';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { downloadCSV, openPrintPreview } from '@/app/lib/accounting/helpers/exportHelpers';
 
 type PeriodType = 'custom' | 'month' | 'quarter' | 'year' | 'ytd';
 type ReportFormat = 'summary' | 'detailed';
 
 // ==================== HELPERS ====================
+// Financial-statement-specific presentation on top of the shared currency formatter:
+// zero amounts collapse to a dash, negatives render in parentheses (accounting convention).
 const formatCurrency = (amount: number, showZero = false) => {
   if (!showZero && Math.abs(amount) < 0.01) return '-';
-  return `₵${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatAccountingCurrency(amount);
 };
 
 const formatCurrencyWithSign = (amount: number, showZero = false) => {
   if (!showZero && Math.abs(amount) < 0.01) return '-';
   const sign = amount < 0 ? '(' : '';
   const end = amount < 0 ? ')' : '';
-  return `${sign}₵${Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${end}`;
+  return `${sign}${formatAccountingCurrency(amount)}${end}`;
 };
 
 // Get period dates helper
@@ -125,35 +129,6 @@ const generateReportHTML = (title: string, period: string, content: string) => `
 </body>
 </html>
 `;
-
-const openPrintPreview = (html: string) => {
-  const win = window.open('', '_blank');
-  if (win) {
-    win.document.write(html);
-    win.document.close();
-    setTimeout(() => win.print(), 500);
-  }
-};
-
-// Download CSV helper
-const downloadCSV = (data: any[], filename: string, columns: { key: string; label: string }[]) => {
-  const header = columns.map(c => c.label).join(',');
-  const rows = data.map(row => 
-    columns.map(c => {
-      const val = row[c.key];
-      const str = String(val ?? '').replace(/"/g, '""');
-      return str.includes(',') ? `"${str}"` : str;
-    }).join(',')
-  );
-  const csv = [header, ...rows].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${filename}_${new Date().toISOString().split('T')[0]}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-};
 
 // ==================== MAIN COMPONENT ====================
 export default function FinancialReportsPage() {

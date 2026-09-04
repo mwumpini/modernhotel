@@ -25,35 +25,24 @@ import { useAccountingStore } from './store';
 import { computeStackedTaxLines, getEffectiveTaxConfigs } from './taxFromConfig';
 import { logAccountingProcess, logAccountingProcessError } from './accountingProcessLog';
 
-// GL Account Codes for Ghana Hotel Chart of Accounts
+// GL Account Codes for Ghana Hotel Chart of Accounts — leaf (postable) codes only,
+// cross-checked against GHANA_CHART_OF_ACCOUNTS in models.ts. '1100'/'1200'/'2000'
+// look plausible but are category HEADER rows, not postable accounts.
 const GL_ACCOUNTS = {
   // Assets
   CASH: '1110',
-  BANK: '1100',
-  ACCOUNTS_RECEIVABLE: '1200',
-  INVENTORY: '1300',
-  
-  // Liabilities (fallback codes; tax postings use `TaxConfig.glAccountCode` when present)
-  ACCOUNTS_PAYABLE: '2000',
-  VAT_PAYABLE: '2110',
-  NHIL_PAYABLE: '2120',
-  GETFUND_PAYABLE: '2130',
-  TOURISM_LEVY_PAYABLE: '2150',
-  
+  BANK: '1120',
+  ACCOUNTS_RECEIVABLE: '1210',
+
   // Revenue
   ROOM_REVENUE: '4100',
   FB_REVENUE: '4200',
   CONFERENCE_REVENUE: '4300',
   SERVICE_CHARGES: '4400',
-  OTHER_REVENUE: '4500',
+  // No dedicated GL line exists for spa/misc department revenue — it shares
+  // the chart's one general "Other Revenue" bucket with conference revenue.
+  OTHER_REVENUE: '4300',
   ROUNDING_ADJUSTMENT: '4900',
-  
-  // Cost of Sales
-  ROOM_COGS: '5100',
-  FB_COGS: '5200',
-  
-  // Expenses
-  OPERATING_EXPENSES: '6000',
 };
 
 // Revenue Center Codes
@@ -67,12 +56,14 @@ const REVENUE_CENTERS = {
 };
 
 // Payment method to GL mapping. Single source shared with the folio checkout
-// flow (simpleFlow.ts); covers both departmental and folio payment vocabularies.
+// flow (simpleFlow.ts) and the AR/AP subledger bridge (invoicePostingBridge.ts);
+// covers the departmental, folio, and manual-invoice payment vocabularies.
 const PAYMENT_GL_MAP: Record<string, string> = {
   'Cash': GL_ACCOUNTS.CASH,
   'Card': GL_ACCOUNTS.BANK,
   'Mobile Money': GL_ACCOUNTS.BANK,
   'Bank Transfer': GL_ACCOUNTS.BANK,
+  'Bank': GL_ACCOUNTS.BANK,
   'Cheque': GL_ACCOUNTS.BANK,
   'Check': GL_ACCOUNTS.BANK,
   'Credit': GL_ACCOUNTS.BANK,
@@ -455,131 +446,6 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
 }
 
 /**
- * Generate a unique proforma number
- */
-function generateProformaNumber(source: DepartmentSource): string {
-  const prefixes: Record<DepartmentSource, string> = {
-    front_office: 'PRO-FO',
-    restaurant: 'PRO-REST',
-    bar: 'PRO-BAR',
-    room_service: 'PRO-RS',
-    conference: 'PRO-CONF',
-    spa: 'PRO-SPA',
-    other: 'PRO',
-  };
-  const prefix = prefixes[source] || 'PRO';
-  const year = new Date().getFullYear();
-  const timestamp = Date.now().toString().slice(-6);
-  return `${prefix}-${year}-${timestamp}`;
-}
-
-/**
- * PROFORMA FUNCTION: Capture proforma/quote
- * 
- * This function is called when a proforma invoice or quote is created.
- * It automatically:
- * 1. Creates a Proforma Invoice (not yet revenue - just a quote)
- * 2. Adds to audit trail
- * 
- * Note: Proformas do NOT post to GL until converted to actual invoices
- */
-export function captureProforma(transaction: ProformaTransaction): { proformaId: string } | null {
-  const store = useAccountingStore.getState();
-  const now = new Date().toISOString();
-  const transactionDate = transaction.date || now;
-  
-  console.log(`[Accounting Integration] Capturing proforma from ${transaction.source}:`, {
-    customer: transaction.customerName,
-    total: transaction.total,
-    reference: transaction.reference,
-    eventId: transaction.eventId,
-    reservationId: transaction.reservationId,
-  });
-  
-  try {
-    const proformaId = `PRO-${transaction.source.toUpperCase()}-${Date.now()}`;
-    const proformaNumber = generateProformaNumber(transaction.source);
-    
-    const proformaLines = transaction.items.map((item, idx) => ({
-      id: `PL-${Date.now()}-${idx}`,
-      invoiceId: proformaId,
-      description: item.description,
-      quantity: item.quantity,
-      unitPrice: item.unitPrice,
-      amount: +(item.quantity * item.unitPrice).toFixed(2),
-      taxAmount: +((item.quantity * item.unitPrice * (item.taxPercent || 0)) / 100).toFixed(2),
-    }));
-    
-    const proforma = {
-      id: proformaId,
-      invoiceNumber: proformaNumber,
-      type: 'Sales' as const,
-      isProforma: true,
-      date: transactionDate,
-      dueDate: transaction.validUntil || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-      businessPartnerId: transaction.customerId || `GUEST-${Date.now()}`,
-      reference: transaction.reference,
-      description: transaction.description,
-      subtotal: transaction.subtotal,
-      taxAmount: transaction.taxAmount,
-      total: transaction.total,
-      currency: transaction.currency || 'GHS',
-      status: 'Draft' as const,
-      paidAmount: 0,
-      createdAt: now,
-      updatedAt: now,
-      lines: proformaLines,
-      // Extended fields
-      sourceModule: transaction.source,
-      customerName: transaction.customerName,
-      customerEmail: transaction.customerEmail,
-      customerPhone: transaction.customerPhone,
-      staffId: transaction.staffId,
-      staffName: transaction.staffName,
-      staffRole: transaction.staffRole,
-      // Proforma-specific metadata
-      eventId: transaction.eventId,
-      reservationId: transaction.reservationId,
-      pax: transaction.pax,
-      checkIn: transaction.checkIn,
-      checkOut: transaction.checkOut,
-      venue: transaction.venue,
-    };
-    
-    store.addInvoice(proforma as any);
-    console.log(`[Accounting Integration] Created Proforma: ${proformaNumber}`);
-    
-    // Add Audit Trail
-    store.addAuditTrail({
-      id: `AT-${Date.now()}`,
-      tableName: 'AccountingIntegration',
-      recordId: proformaId,
-      action: 'Create',
-      oldValues: null as any,
-      newValues: {
-        type: 'ProformaCapture',
-        source: transaction.source,
-        proformaId,
-        total: transaction.total,
-        customer: transaction.customerName,
-        eventId: transaction.eventId,
-        reservationId: transaction.reservationId,
-      },
-      userId: transaction.staffId || 'system',
-      timestamp: now,
-    });
-    
-    console.log(`[Accounting Integration] ✅ Proforma capture complete for ${transaction.customerName}: GHS ${transaction.total.toLocaleString()}`);
-    
-    return { proformaId };
-    
-  } catch (error) {
-    console.error('[Accounting Integration] ❌ Error capturing proforma:', error);
-    return null;
-  }
-}
-
-/**
  * Convert proforma to sales invoice
  * Called when a proforma is confirmed and becomes an actual invoice
  */
@@ -951,46 +817,7 @@ export function captureCompleteSale(
 }
 
 /**
- * Get accounting summary for a department
- */
-export function getDepartmentAccountingSummary(source: DepartmentSource): {
-  totalRevenue: number;
-  totalReceivables: number;
-  totalReceipts: number;
-  invoiceCount: number;
-  receiptCount: number;
-} {
-  const store = useAccountingStore.getState();
-  
-  const departmentInvoices = store.invoices.filter(
-    (inv: any) => inv.sourceModule === source && inv.type === 'Sales'
-  );
-  
-  const departmentReceipts = store.payments.filter(
-    (pmt: any) => pmt.sourceModule === source && pmt.type === 'Receipt'
-  );
-  
-  const totalRevenue = departmentInvoices.reduce((sum: number, inv: any) => sum + (inv.total || 0), 0);
-  const totalReceivables = departmentInvoices.reduce(
-    (sum: number, inv: any) => sum + ((inv.total || 0) - (inv.paidAmount || 0)),
-    0
-  );
-  const totalReceipts = departmentReceipts.reduce((sum: number, pmt: any) => sum + (pmt.amount || 0), 0);
-  
-  return {
-    totalRevenue,
-    totalReceivables,
-    totalReceipts,
-    invoiceCount: departmentInvoices.length,
-    receiptCount: departmentReceipts.length,
-  };
-}
-
-/**
  * Export GL Account codes for use in other modules
  */
 export { GL_ACCOUNTS, REVENUE_CENTERS, PAYMENT_GL_MAP };
-
-/** Expense, AP, PO, inventory, payroll, fixed assets, accruals, prepayments, tax — Menish extended architecture */
-export * from './integrationExtendedCaptures';
 

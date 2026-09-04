@@ -13,9 +13,6 @@ import {
   Payment,
   PaymentVoucher,
   PaymentVoucherLine,
-  FixedAsset,
-  DepreciationSchedule,
-  CapitalAllowanceClaim,
   CostCenter,
   RevenueCenter,
   Project,
@@ -23,18 +20,7 @@ import {
   AuditTrail,
   WHTCertificate,
 } from './models';
-import { getTaxWrittenDownValue, resolveCapitalAllowancePool } from './capitalAllowance';
 import type { Supplier } from '../inventory/models';
-import type {
-  PurchaseOrder,
-  InventoryAccountingTransaction,
-  PayrollLedgerEntry,
-  SsnitRegisterEntry,
-  PayeRegisterEntry,
-  AccrualLedgerEntry,
-  PrepaymentLedgerEntry,
-  TaxProvisionEntry,
-} from './accountingArchitectureModels';
 import {
   computeTrialBalanceGLBalances,
   computeIncomeStatementFromJE,
@@ -117,12 +103,7 @@ interface AccountingState {
   
   // WHT Certificates
   whtCertificates: WHTCertificate[];
-  
-  // Fixed Assets
-  fixedAssets: FixedAsset[];
-  depreciationSchedules: DepreciationSchedule[];
-  capitalAllowanceClaims: CapitalAllowanceClaim[];
-  
+
   // Cost Centers & Projects
   costCenters: CostCenter[];
   revenueCenters: RevenueCenter[];
@@ -134,16 +115,6 @@ interface AccountingState {
   // Audit Trail
   auditTrail: AuditTrail[];
 
-  /** Menish / extended architecture registers (PO, inventory GL, payroll, adjustments, tax provisions) */
-  purchaseOrders: PurchaseOrder[];
-  inventoryAccountingTransactions: InventoryAccountingTransaction[];
-  payrollLedgerEntries: PayrollLedgerEntry[];
-  ssnitRegisterEntries: SsnitRegisterEntry[];
-  payeRegisterEntries: PayeRegisterEntry[];
-  accrualLedgerEntries: AccrualLedgerEntry[];
-  prepaymentLedgerEntries: PrepaymentLedgerEntry[];
-  taxRegisterEntries: TaxProvisionEntry[];
-  
   // UI State
   isLoading: boolean;
   error: string | null;
@@ -300,18 +271,6 @@ interface AccountingState {
   setPaymentVoucherPdf: (id: string, pdf: { url: string; fileName?: string; generatedBy?: string; generatedAt?: Date | string; }) => void;
   addPaymentVoucherAttachment: (id: string, fileName: string) => void;
   
-  // Fixed Assets
-  setFixedAssets: (assets: FixedAsset[]) => void;
-  addFixedAsset: (asset: FixedAsset) => void;
-  updateFixedAsset: (id: string, updates: Partial<FixedAsset>) => void;
-  deleteFixedAsset: (id: string) => void;
-  
-  // Depreciation
-  setDepreciationSchedules: (schedules: DepreciationSchedule[]) => void;
-  calculateDepreciation: (assetId: string, period: string) => Promise<void>;
-  postDepreciation: (scheduleId: string) => Promise<void>;
-  recordCapitalAllowanceClaim: (assetId: string, period: string, amount: number) => CapitalAllowanceClaim | null;
-  
   // Cost Centers & Projects
   setCostCenters: (centers: CostCenter[]) => void;
   addCostCenter: (center: CostCenter) => void;
@@ -339,16 +298,6 @@ interface AccountingState {
   // Audit Trail
   addAuditTrail: (trail: AuditTrail) => void;
 
-  addPurchaseOrder: (po: PurchaseOrder) => void;
-  updatePurchaseOrder: (id: string, updates: Partial<PurchaseOrder>) => void;
-  addInventoryAccountingTransaction: (t: InventoryAccountingTransaction) => void;
-  addPayrollLedgerEntry: (p: PayrollLedgerEntry) => void;
-  addSsnitRegisterEntry: (e: SsnitRegisterEntry) => void;
-  addPayeRegisterEntry: (e: PayeRegisterEntry) => void;
-  addAccrualLedgerEntry: (e: AccrualLedgerEntry) => void;
-  addPrepaymentLedgerEntry: (e: PrepaymentLedgerEntry) => void;
-  addTaxRegisterEntry: (e: TaxProvisionEntry) => void;
-  
   // Utility Functions
   getAccountBalance: (accountCode: string, period?: string) => number;
   getAccountBalances: (period?: string) => GLBalance[];
@@ -416,22 +365,11 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   payments: [],
   paymentVouchers: [],
   whtCertificates: [],
-  fixedAssets: [],
-  depreciationSchedules: [],
-  capitalAllowanceClaims: [],
   costCenters: [],
   revenueCenters: [],
   projects: [],
   financialReports: [],
   auditTrail: [],
-  purchaseOrders: [],
-  inventoryAccountingTransactions: [],
-  payrollLedgerEntries: [],
-  ssnitRegisterEntries: [],
-  payeRegisterEntries: [],
-  accrualLedgerEntries: [],
-  prepaymentLedgerEntries: [],
-  taxRegisterEntries: [],
   isLoading: false,
   error: null,
 
@@ -2588,171 +2526,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     }));
   },
 
-  // Fixed Assets Actions
-  setFixedAssets: (assets) => set({ fixedAssets: assets }),
-  
-  addFixedAsset: (asset) => set((state) => ({
-    fixedAssets: [...state.fixedAssets, asset]
-  })),
-  
-  updateFixedAsset: (id, updates) => set((state) => ({
-    fixedAssets: state.fixedAssets.map(asset =>
-      asset.id === id ? { ...asset, ...updates } : asset
-    )
-  })),
-  
-  deleteFixedAsset: (id) => set((state) => ({
-    fixedAssets: state.fixedAssets.filter(asset => asset.id !== id)
-  })),
-
-  // Depreciation Actions
-  setDepreciationSchedules: (schedules) => set({ depreciationSchedules: schedules }),
-  
-  calculateDepreciation: async (assetId, period) => {
-    set({ isLoading: true, error: null });
-    try {
-      const state = get();
-      const asset = state.fixedAssets.find(a => a.id === assetId);
-      if (!asset) {
-        throw new Error('Asset not found');
-      }
-
-      // Prevent duplicate schedule for same period
-      const existing = state.depreciationSchedules.find(s => s.assetId === assetId && s.period === period);
-      if (existing) {
-        return;
-      }
-
-      const monthsOfUsefulLife = Math.max(1, asset.usefulLife * 12);
-      const depreciableBase = Math.max(0, asset.purchaseCost - asset.salvageValue);
-
-      let depreciationAmount = 0;
-      if (asset.depreciationMethod === 'Straight Line') {
-        depreciationAmount = +(depreciableBase / monthsOfUsefulLife).toFixed(2);
-      } else if (asset.depreciationMethod === 'Declining Balance') {
-        const annualRate = asset.depreciationRate / 100;
-        const monthlyRate = annualRate / 12;
-        const currentNBV = Math.max(0, asset.netBookValue);
-        depreciationAmount = +(currentNBV * monthlyRate).toFixed(2);
-      } else {
-        // Units of Production not supported here; fallback to straight line
-        depreciationAmount = +(depreciableBase / monthsOfUsefulLife).toFixed(2);
-      }
-
-      // Cap to what's actually left to depreciate — otherwise a period run after the
-      // asset is already fully depreciated (or a rounding-driven final period) posts
-      // more than the remaining depreciable balance, pushing net book value negative.
-      const remainingToDepreciate = Math.max(0, depreciableBase - asset.accumulatedDepreciation);
-      depreciationAmount = Math.min(depreciationAmount, remainingToDepreciate);
-
-      const newAccumulated = +(Math.min(asset.purchaseCost - asset.salvageValue, asset.accumulatedDepreciation + depreciationAmount)).toFixed(2);
-      const newNBV = +(Math.max(asset.salvageValue, asset.purchaseCost - newAccumulated)).toFixed(2);
-
-      // Create schedule row
-      const schedule = {
-        id: Date.now().toString(),
-        assetId: asset.id,
-        period,
-        depreciationAmount,
-        accumulatedDepreciation: newAccumulated,
-        netBookValue: newNBV,
-        isPosted: false,
-        createdAt: new Date().toISOString()
-      } as any;
-
-      set((prev) => ({
-        depreciationSchedules: [...prev.depreciationSchedules, schedule],
-      }));
-
-      // Log audit
-      get().addAuditTrail({
-        id: `AT-${Date.now()}`,
-        tableName: 'DepreciationSchedule',
-        recordId: schedule.id,
-        action: 'Create',
-        newValues: schedule,
-        userId: 'system',
-        timestamp: new Date().toISOString()
-      });
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to calculate depreciation' });
-    } finally {
-      set({ isLoading: false });
-    }
-  },
-  
-  postDepreciation: async (scheduleId) => {
-    set({ isLoading: true, error: null });
-    try {
-      const schedule = get().depreciationSchedules.find((s) => s.id === scheduleId);
-      if (!schedule) throw new Error('Depreciation schedule not found');
-      if (schedule.isPosted) throw new Error('Depreciation already posted');
-
-      // Post to the ledger FIRST — only remove the schedule row once that succeeds,
-      // so a failed post (missing asset, GL error) leaves the schedule intact for retry
-      // instead of silently vanishing with no journal entry and no way to recompute it.
-      const { captureDepreciation } = await import('./integrationExtendedCaptures');
-      const result = captureDepreciation({
-        assetId: schedule.assetId,
-        period: schedule.period,
-        amount: schedule.depreciationAmount,
-      });
-      if (!result) throw new Error('Failed to post depreciation to the ledger');
-
-      set((state) => ({
-        depreciationSchedules: state.depreciationSchedules.filter((s) => s.id !== scheduleId),
-      }));
-    } catch (error) {
-      set({ error: error instanceof Error ? error.message : 'Failed to post depreciation' });
-    } finally {
-      set({ isLoading: false });
-    }
-  },
-
-  recordCapitalAllowanceClaim: (assetId, period, amount) => {
-    const asset = get().fixedAssets.find((a) => a.id === assetId);
-    if (!asset) {
-      set({ error: 'Asset not found' });
-      return null;
-    }
-    const wdv = getTaxWrittenDownValue(asset);
-    const claimAmount = Math.min(Math.max(0, amount), wdv);
-    if (claimAmount <= 0) {
-      set({ error: 'No qualifying tax written-down value remaining' });
-      return null;
-    }
-    const newAccum = +( (asset.accumulatedCapitalAllowance ?? 0) + claimAmount).toFixed(2);
-    const claim: CapitalAllowanceClaim = {
-      id: `CA-${Date.now()}`,
-      assetId,
-      taxYear: parseInt(period.slice(0, 4), 10),
-      period,
-      pool: resolveCapitalAllowancePool(asset.category, asset.capitalAllowancePool),
-      allowanceAmount: claimAmount,
-      writtenDownValueAfter: Math.max(0, +(asset.purchaseCost - newAccum).toFixed(2)),
-      createdAt: new Date().toISOString(),
-    };
-    set((state) => ({
-      capitalAllowanceClaims: [...state.capitalAllowanceClaims, claim],
-      fixedAssets: state.fixedAssets.map((a) =>
-        a.id === assetId
-          ? { ...a, accumulatedCapitalAllowance: newAccum, updatedAt: new Date().toISOString() }
-          : a
-      ),
-      error: null,
-    }));
-    get().addAuditTrail({
-      id: `AT-CA-${Date.now()}`,
-      tableName: 'CapitalAllowanceClaim',
-      recordId: claim.id,
-      action: 'Create',
-      newValues: claim,
-      userId: 'system',
-      timestamp: new Date().toISOString(),
-    });
-    return claim;
-  },
-
   // Cost Centers Actions
   setCostCenters: (centers) => set({ costCenters: centers }),
   
@@ -2945,34 +2718,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     auditTrail: [...state.auditTrail, trail]
   })),
 
-  addPurchaseOrder: (po) => set((state) => ({
-    purchaseOrders: [...state.purchaseOrders, po],
-  })),
-  updatePurchaseOrder: (id, updates) => set((state) => ({
-    purchaseOrders: state.purchaseOrders.map((p) => (p.id === id ? { ...p, ...updates, updatedAt: new Date().toISOString() } : p)),
-  })),
-  addInventoryAccountingTransaction: (t) => set((state) => ({
-    inventoryAccountingTransactions: [...state.inventoryAccountingTransactions, t],
-  })),
-  addPayrollLedgerEntry: (p) => set((state) => ({
-    payrollLedgerEntries: [...state.payrollLedgerEntries, p],
-  })),
-  addSsnitRegisterEntry: (e) => set((state) => ({
-    ssnitRegisterEntries: [...state.ssnitRegisterEntries, e],
-  })),
-  addPayeRegisterEntry: (e) => set((state) => ({
-    payeRegisterEntries: [...state.payeRegisterEntries, e],
-  })),
-  addAccrualLedgerEntry: (e) => set((state) => ({
-    accrualLedgerEntries: [...state.accrualLedgerEntries, e],
-  })),
-  addPrepaymentLedgerEntry: (e) => set((state) => ({
-    prepaymentLedgerEntries: [...state.prepaymentLedgerEntries, e],
-  })),
-  addTaxRegisterEntry: (e) => set((state) => ({
-    taxRegisterEntries: [...state.taxRegisterEntries, e],
-  })),
-
   // Utility Functions
   getAccountBalance: (accountCode, period) => {
     const balances = get().glBalances;
@@ -3071,8 +2816,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         businessPartners: samplePartners,
         bankAccounts: sampleBankAccounts,
         bankTransactions: sampleBankTxns,
-        fixedAssets: sampleAssets,
-        depreciationSchedules: sampleDepSchedules,
         auditTrail: sampleAudit,
       } = transactionSeed;
 
@@ -3144,8 +2887,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         businessPartners: mergeTx(samplePartners, prev.businessPartners),
         bankAccounts: mergeTx(sampleBankAccounts, prev.bankAccounts),
         bankTransactions: mergeTx(sampleBankTxns, prev.bankTransactions),
-        fixedAssets: mergeTx(sampleAssets, prev.fixedAssets),
-        depreciationSchedules: mergeTx(sampleDepSchedules, prev.depreciationSchedules),
         costCenters: mergeCostCenters(sampleCostCenters, prev.costCenters),
         revenueCenters: mergeRevenueCenters(sampleRevenueCenters, prev.revenueCenters),
         auditTrail: demoMode ? mergeById(sampleAudit, prev.auditTrail) : prev.auditTrail,

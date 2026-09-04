@@ -54,9 +54,11 @@ import {
   type IasMethod,
 } from '@/app/lib/accounting/ppe';
 import { DEFAULT_ORG_ID } from '@/app/lib/accounting/ppe/categories';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 
-const fmt = (n: number) =>
-  `₵${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// formatAccountingCurrency always shows a magnitude, so the sign (disposal gain/loss
+// can be negative) is reattached in front of it here.
+const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
 
 const CAP_EXP_OPTIONS: CapExpStatus[] = ['Capitalise', 'Expense', 'Disposed'];
 const GRA_METHOD_OPTIONS: GraMethod[] = ['SL', 'RB'];

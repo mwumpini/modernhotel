@@ -13,33 +13,30 @@ import { logAccountingProcess, logAccountingProcessWarn } from './accountingProc
 import { computeStackedTaxLines } from './taxFromConfig';
 import { getActiveTaxConfigs } from '../tax/engine';
 import { GHANA_TAX_CODES } from './models';
+import { GL_ACCOUNTS, PAYMENT_GL_MAP } from './integration';
 
+// AR/CASH/BANK share the one canonical GL_ACCOUNTS table (integration.ts) so every
+// posting path lands guest/departmental transactions in the same leaf accounts.
+// The rest here (AP, VAT, WHT, EXPENSE) are specific to manual/legacy AR-AP
+// documents and have no equivalent in GL_ACCOUNTS.
 const GL = {
-  AR: '1200',
-  AP: '2000',
-  CASH: '1110',
-  BANK: '1100',
+  AR: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+  AP: '2200',
+  CASH: GL_ACCOUNTS.CASH,
+  BANK: GL_ACCOUNTS.BANK,
   VAT: '2110',
   SALES_REVENUE: '4300',
   WHT_RECEIVABLE: '1230',
   WHT_VAT_RECEIVABLE: '1240',
   WHT_PAYABLE: GHANA_TAX_CODES.WITHHOLDING.glCode,
-  // '5000' is the real top-level Operating Expenses account in the prebuilt Chart of
-  // Accounts — this used to be '6000', a code the chart doesn't define, so any purchase
-  // invoice line without its own glAccountCode silently dropped out of every financial
-  // report instead of landing in Operating Expenses.
+  // '5000' is "Operating Expenses" — the top-level header for the whole Expense
+  // type, not a postable leaf. The chart has no generic catch-all expense leaf
+  // (every 5xxx leaf is a specific category like Utilities/Repairs/Admin), so
+  // any purchase invoice line without its own glAccountCode still has nowhere
+  // correct to land. Needs either a new "Miscellaneous Expense" leaf added to
+  // the chart, or requiring a category on every manual expense line.
   EXPENSE: '5000',
 } as const;
-
-const PAYMENT_GL_MAP: Record<string, string> = {
-  Cash: GL.CASH,
-  Card: GL.BANK,
-  'Mobile Money': GL.BANK,
-  'Bank Transfer': GL.BANK,
-  Cheque: GL.BANK,
-  Check: GL.BANK,
-  Bank: GL.BANK,
-};
 
 function nowIso(): string {
   return new Date().toISOString();

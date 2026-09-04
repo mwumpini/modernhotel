@@ -13,6 +13,7 @@ import { useSupplierStore } from '@/app/lib/inventory/supplierStore';
 import { useStockStore } from '@/app/lib/inventory/stockStore';
 import { computePurchaseTax } from '@/app/lib/tax/engine';
 import { computeServiceWht } from '@/app/lib/accounting/purchaseWht';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 
 export default function AccountsPayablePage() {
   const {
@@ -38,20 +39,7 @@ export default function AccountsPayablePage() {
 
   const [selectedTab, setSelectedTab] = useState("balances");
   const [isOpen, setIsOpen] = useState(false);
-  // Legacy voucher stubs (voucher feature removed)
-  const isVoucherModalOpen = false as const;
-  const setIsVoucherModalOpen = (_: boolean) => {};
-  const editingVoucher: any = null;
-  const voucherForm: any = {};
-  const generateNextVoucherNumber = () => '';
-  const createPaymentVoucher = (_: any) => ({ id: '', lines: [], date: new Date() });
-  const updatePaymentVoucher = (_id: string, _u: any) => {};
-  const deletePaymentVoucher = (_id: string) => {};
-  const preparePaymentVoucher = (_id: string, _by: string) => {};
-  const approvePaymentVoucher = (_id: string, _by: string) => {};
-  const recordPaymentVoucher = (_id: string, _by: string) => {};
-  const postPaymentVoucher = async (_id: string) => {};
-  const [dialogType, setDialogType] = useState<'supplier'|'invoice'|'payment'|'voucher'>('supplier');
+  const [dialogType, setDialogType] = useState<'supplier'|'invoice'|'payment'>('supplier');
   const [editing, setEditing] = useState<any>(null);
   const [form, setForm] = useState<any>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -92,7 +80,7 @@ export default function AccountsPayablePage() {
         if (inv) {
           const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
           const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
-          if (Number(form.amount || 0) + whtAmount > outstanding + 0.01) e.amount = `Amount exceeds outstanding (₵${outstanding.toLocaleString()})`;
+          if (Number(form.amount || 0) + whtAmount > outstanding + 0.01) e.amount = `Amount exceeds outstanding (${formatAccountingCurrency(outstanding)})`;
         }
       }
     }
@@ -333,7 +321,7 @@ export default function AccountsPayablePage() {
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
         <Card>
           <CardBody className="text-center">
-            <div className="text-2xl font-bold text-red-600">₵{totalPayables.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-red-600">{formatAccountingCurrency(totalPayables)}</div>
             <div className="text-sm text-gray-600">Total Payables</div>
             <Progress value={100} size="sm" color="danger" className="mt-2" />
           </CardBody>
@@ -341,7 +329,7 @@ export default function AccountsPayablePage() {
 
         <Card>
           <CardBody className="text-center">
-            <div className="text-2xl font-bold text-orange-600">₵{totalOverduePayables.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-orange-600">{formatAccountingCurrency(totalOverduePayables)}</div>
             <div className="text-sm text-gray-600">Overdue</div>
             <Progress value={100} size="sm" color="warning" className="mt-2" />
           </CardBody>
@@ -349,7 +337,7 @@ export default function AccountsPayablePage() {
 
         <Card>
           <CardBody className="text-center">
-            <div className="text-2xl font-bold text-blue-600">₵{totalInvoices.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-blue-600">{formatAccountingCurrency(totalInvoices)}</div>
             <div className="text-sm text-gray-600">Total Invoices</div>
             <Progress value={100} size="sm" color="primary" className="mt-2" />
           </CardBody>
@@ -357,7 +345,7 @@ export default function AccountsPayablePage() {
 
         <Card>
           <CardBody className="text-center">
-            <div className="text-2xl font-bold text-green-600">₵{totalPayments.toLocaleString()}</div>
+            <div className="text-2xl font-bold text-green-600">{formatAccountingCurrency(totalPayments)}</div>
             <div className="text-sm text-gray-600">Total Payments</div>
             <Progress value={100} size="sm" color="success" className="mt-2" />
           </CardBody>
@@ -432,22 +420,22 @@ export default function AccountsPayablePage() {
                           <div className="text-xs text-gray-500 font-mono">{supplier.code}</div>
                         </TableCell>
                         <TableCell className="text-right font-semibold text-red-600">
-                          ₵{supplier.outstandingBalance.toLocaleString()}
+                          {formatAccountingCurrency(supplier.outstandingBalance)}
                         </TableCell>
                         <TableCell className="text-right text-green-600">
-                          ₵{supplier.current.toLocaleString()}
+                          {formatAccountingCurrency(supplier.current)}
                         </TableCell>
                         <TableCell className="text-right text-yellow-600">
-                          ₵{supplier.overdue30.toLocaleString()}
+                          {formatAccountingCurrency(supplier.overdue30)}
                         </TableCell>
                         <TableCell className="text-right text-orange-600">
-                          ₵{supplier.overdue60.toLocaleString()}
+                          {formatAccountingCurrency(supplier.overdue60)}
                         </TableCell>
                         <TableCell className="text-right text-red-600">
-                          ₵{supplier.overdue90.toLocaleString()}
+                          {formatAccountingCurrency(supplier.overdue90)}
                         </TableCell>
                         <TableCell className="text-right text-red-800 font-bold">
-                          ₵{supplier.overdue90Plus.toLocaleString()}
+                          {formatAccountingCurrency(supplier.overdue90Plus)}
                         </TableCell>
                         <TableCell>
                           <div className="text-xs">
@@ -543,11 +531,11 @@ export default function AccountsPayablePage() {
                             </div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="font-medium">₵{(supplier.creditLimit || 0).toLocaleString()}</div>
+                            <div className="font-medium">{formatAccountingCurrency((supplier.creditLimit || 0))}</div>
                           </TableCell>
                           <TableCell className="text-right">
                             <div className={`font-semibold ${supplier.balance >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                              ₵{Math.abs(supplier.balance).toLocaleString()}
+                              {formatAccountingCurrency(Math.abs(supplier.balance))}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -746,20 +734,20 @@ export default function AccountsPayablePage() {
                             <div className="text-xs text-gray-500">{new Date(invoice.dueDate).toLocaleDateString('en-US', { weekday: 'short' })}</div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="font-medium">₵{invoice.subtotal.toLocaleString()}</div>
+                            <div className="font-medium">{formatAccountingCurrency(invoice.subtotal)}</div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="text-sm">₵{invoice.taxAmount.toLocaleString()}</div>
+                            <div className="text-sm">{formatAccountingCurrency(invoice.taxAmount)}</div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="font-semibold text-red-600">₵{invoice.total.toLocaleString()}</div>
+                            <div className="font-semibold text-red-600">{formatAccountingCurrency(invoice.total)}</div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="text-green-600">₵{paidAmount.toLocaleString()}</div>
+                            <div className="text-green-600">{formatAccountingCurrency(paidAmount)}</div>
                           </TableCell>
                           <TableCell className="text-right">
                             <div className={`font-semibold ${balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                              ₵{balance.toLocaleString()}
+                              {formatAccountingCurrency(balance)}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -883,7 +871,7 @@ export default function AccountsPayablePage() {
                         </TableCell>
                         <TableCell className="text-right">
                           <div className="font-medium">
-                            ₵{payment.amount.toLocaleString()}
+                            {formatAccountingCurrency(payment.amount)}
                           </div>
                         </TableCell>
                         <TableCell>
@@ -1290,7 +1278,7 @@ export default function AccountsPayablePage() {
                       <TableRow key={i}>
                         <TableCell>{t.name}</TableCell>
                         <TableCell><span className="font-mono text-sm">{t.glCode}</span></TableCell>
-                        <TableCell>₵{Number(t.amount||0).toFixed(2)}</TableCell>
+                        <TableCell>{formatAccountingCurrency(Number(t.amount||0))}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -1453,7 +1441,7 @@ export default function AccountsPayablePage() {
                     <Input size="sm" isReadOnly label="WHT Rate" value={`${wht.rate}%`} />
                     <Input size="sm" type="number" label="WHT Amount" value={form.taxBreakdown?.withholding ?? wht.amount}
                       onChange={(e) => setForm({ ...form, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: parseFloat(e.target.value) || 0 } })} />
-                    <div className="text-xs text-gray-500">Retained from payment to supplier; remitted to GRA. Net payable: ₵{(Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0)).toLocaleString()}</div>
+                    <div className="text-xs text-gray-500">Retained from payment to supplier; remitted to GRA. Net payable: {formatAccountingCurrency((Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0)))}</div>
                   </>
                 );
               })()}
@@ -1559,7 +1547,7 @@ export default function AccountsPayablePage() {
                             ))}
                           </Autocomplete>
                         </TableCell>
-                        <TableCell>₵{lineAmount.toLocaleString()}</TableCell>
+                        <TableCell>{formatAccountingCurrency(lineAmount)}</TableCell>
                         <TableCell><Button size="sm" color="danger" variant="bordered" onClick={() => { const next = (form.lines || []).filter((_: any, i: number) => i !== idx); const subtotal: number = next.reduce((s: number, l: any) => s + (Number(l.quantity||0)*Number(l.unitPrice||0)), 0); const taxAmount: number = next.reduce((s: number, l: any) => s + ((Number(l.quantity||0)*Number(l.unitPrice||0)) * Number(l.taxPercent||0) / 100), 0); setForm({ ...form, lines: next, subtotal: +subtotal.toFixed(2), taxAmount: +taxAmount.toFixed(2), total: +(subtotal+taxAmount).toFixed(2) }); }}>🗑️ Remove</Button></TableCell>
                       </TableRow>
                     );
@@ -1624,7 +1612,7 @@ export default function AccountsPayablePage() {
                         <AutocompleteItem key={inv.id} textValue={`${inv.invoiceNumber}`}>
                           <div className="flex items-center justify-between gap-3 w-full">
                             <span className="font-mono text-xs">{inv.invoiceNumber}</span>
-                            <span className="text-xs text-gray-600">₵{bal.toLocaleString()} outstanding</span>
+                            <span className="text-xs text-gray-600">{formatAccountingCurrency(bal)} outstanding</span>
                           </div>
                         </AutocompleteItem>
                       );
@@ -1639,7 +1627,7 @@ export default function AccountsPayablePage() {
                   const newBal = Math.max(0, bal - settling);
                   return (
                     <div className="mt-1 text-xs text-gray-600">
-                      Outstanding: ₵{bal.toLocaleString()} → New: <span className={newBal === 0 ? 'text-green-600' : 'text-orange-600'}>₵{newBal.toLocaleString()}</span>
+                      Outstanding: {formatAccountingCurrency(bal)} → New: <span className={newBal === 0 ? 'text-green-600' : 'text-orange-600'}>{formatAccountingCurrency(newBal)}</span>
                     </div>
                   );
                 })()}
@@ -1662,7 +1650,7 @@ export default function AccountsPayablePage() {
                         } else {
                           setForm({ ...form, applyWht: false, whtAmount: 0, amount: outstanding });
                         }
-                      }}>Withhold tax on this payment (₵{whtRemaining.toLocaleString()})</Checkbox>
+                      }}>Withhold tax on this payment ({formatAccountingCurrency(whtRemaining)})</Checkbox>
                     </div>
                   );
                 })()}
@@ -1670,7 +1658,7 @@ export default function AccountsPayablePage() {
             <div>
               <Input type="number" label="Amount (cash to supplier)" value={form.amount ?? 0} onChange={(e) => setForm({ ...form, amount: parseFloat(e.target.value) || 0 })} />
               {errors.amount && <div className="text-red-600 text-xs mt-1">{errors.amount}</div>}
-              {form.applyWht && <div className="text-xs text-gray-500 mt-1">+ ₵{Number(form.whtAmount || 0).toLocaleString()} withheld (WHT payable to GRA)</div>}
+              {form.applyWht && <div className="text-xs text-gray-500 mt-1">+ {formatAccountingCurrency(Number(form.whtAmount || 0))} withheld (WHT payable to GRA)</div>}
             </div>
             <Select label="Method" selectedKeys={[form.paymentMethod || 'Bank']} onSelectionChange={(keys) => setForm({ ...form, paymentMethod: Array.from(keys)[0] })}>
               <SelectItem key="Cash">Cash</SelectItem>
@@ -1735,13 +1723,13 @@ export default function AccountsPayablePage() {
           <ModalHeader>Invoice Totals</ModalHeader>
           <ModalBody>
             <div className="space-y-2">
-              <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span>₵{Number(form.subtotal||0).toLocaleString()}</span></div>
-              <div className="flex justify-between text-sm text-gray-600"><span>Tax</span><span>₵{Number(form.taxAmount||0).toLocaleString()}</span></div>
-              <div className="flex justify-between text-sm text-gray-600"><span>Discount</span><span>₵{Number(form.discountAmount||0).toLocaleString()}</span></div>
-              <div className="flex justify-between text-sm text-gray-600"><span>Shipping</span><span>₵{Number(form.shippingCharges||0).toLocaleString()}</span></div>
-              <div className="flex justify-between text-sm text-gray-600"><span>Other</span><span>₵{Number(form.otherCharges||0).toLocaleString()}</span></div>
+              <div className="flex justify-between text-sm text-gray-600"><span>Subtotal</span><span>{formatAccountingCurrency(Number(form.subtotal||0))}</span></div>
+              <div className="flex justify-between text-sm text-gray-600"><span>Tax</span><span>{formatAccountingCurrency(Number(form.taxAmount||0))}</span></div>
+              <div className="flex justify-between text-sm text-gray-600"><span>Discount</span><span>{formatAccountingCurrency(Number(form.discountAmount||0))}</span></div>
+              <div className="flex justify-between text-sm text-gray-600"><span>Shipping</span><span>{formatAccountingCurrency(Number(form.shippingCharges||0))}</span></div>
+              <div className="flex justify-between text-sm text-gray-600"><span>Other</span><span>{formatAccountingCurrency(Number(form.otherCharges||0))}</span></div>
               <Divider/>
-              <div className="flex justify-between font-semibold"><span>Total</span><span>₵{Number(form.total||0).toLocaleString()}</span></div>
+              <div className="flex justify-between font-semibold"><span>Total</span><span>{formatAccountingCurrency(Number(form.total||0))}</span></div>
             </div>
           </ModalBody>
           <ModalFooter>

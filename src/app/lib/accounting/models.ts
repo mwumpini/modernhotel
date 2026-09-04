@@ -437,61 +437,6 @@ export interface PaymentVoucherLine {
   reference?: string;
 }
 
-// Fixed Asset
-export interface FixedAsset {
-  id: string;
-  assetNumber: string;
-  name: string;
-  description?: string;
-  category: string;
-  purchaseDate: string;
-  purchaseCost: number;
-  currency: string;
-  exchangeRate?: number;
-  usefulLife: number; // years
-  salvageValue: number;
-  depreciationMethod: 'Straight Line' | 'Declining Balance' | 'Units of Production';
-  depreciationRate: number;
-  accumulatedDepreciation: number;
-  netBookValue: number;
-  /** Ghana tax pool for capital allowance (wear & tear). */
-  capitalAllowancePool?: import('./capitalAllowance').CapitalAllowancePool;
-  /** Cumulative tax capital allowance claimed (does not affect book NBV). */
-  accumulatedCapitalAllowance?: number;
-  location?: string;
-  department?: string;
-  status: 'Active' | 'Disposed' | 'Under Maintenance';
-  glAccountCode: string;
-  capitalizationJournalEntryId?: string;
-  createdAt: string;
-  updatedAt: string;
-}
-
-/** Tax capital allowance claim register (no book JE — feeds tax computation). */
-export interface CapitalAllowanceClaim {
-  id: string;
-  assetId: string;
-  taxYear: number;
-  period: string; // YYYY-MM
-  pool: import('./capitalAllowance').CapitalAllowancePool;
-  allowanceAmount: number;
-  writtenDownValueAfter: number;
-  createdAt: string;
-}
-
-// Depreciation Schedule
-export interface DepreciationSchedule {
-  id: string;
-  assetId: string;
-  period: string; // YYYY-MM
-  depreciationAmount: number;
-  accumulatedDepreciation: number;
-  netBookValue: number;
-  isPosted: boolean;
-  journalEntryId?: string;
-  createdAt: string;
-}
-
 // Cost Center - Tracks expenses by department
 export interface CostCenter {
   id: string;

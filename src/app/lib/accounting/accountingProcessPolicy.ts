@@ -13,7 +13,6 @@ import {
   REVENUE_SOURCE_GROUPS,
   isAuthoritativeRevenueSource,
   revenueSourceGroup,
-  revenueSourceLabel,
   shouldIncludeJeLineInRevenueRollup,
 } from './revenueSourcePolicy';
 
@@ -22,7 +21,6 @@ export {
   REVENUE_SOURCE_GROUPS,
   isAuthoritativeRevenueSource,
   revenueSourceGroup,
-  revenueSourceLabel,
   shouldIncludeJeLineInRevenueRollup,
 };
 

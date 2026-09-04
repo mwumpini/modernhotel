@@ -3,9 +3,12 @@
 import { useState } from 'react';
 import { useAccountingStore } from '../../lib/accounting/store';
 import type { CostCenter, RevenueCenter } from '../../lib/accounting/models';
+import { formatAccountingCurrency } from '../../lib/accounting/tenantAccountingConfig';
 
+// formatAccountingCurrency always shows a magnitude, so the sign is reattached in front
+// of it here (budget variance can be negative).
 function fmt(amount: number): string {
-  return `₵${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return (amount < 0 ? '-' : '') + formatAccountingCurrency(amount);
 }
 
 export default function CostRevenueCenters() {

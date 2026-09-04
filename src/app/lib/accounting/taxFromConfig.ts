@@ -247,11 +247,6 @@ export function computeStackedTaxLines(
   return { lines, totalTax, gross: roundMoney2(net + totalTax) };
 }
 
-export function resolveTaxGlAccount(configs: TaxConfig[], code: string, fallback: string): string {
-  const c = configs.find((t) => t.code === code && t.isActive);
-  return (c?.glAccountCode || fallback).trim();
-}
-
 /** Use store configs when initialized; otherwise Ghana template (matches `initializeAccounting` seed). */
 export function getEffectiveTaxConfigs(configs: TaxConfig[]): TaxConfig[] {
   return configs.length > 0 ? configs : taxConfigsFromGhanaTemplate();

@@ -50,29 +50,10 @@ import { roundMoney2 } from '@/app/lib/accounting/taxFromConfig';
 import { convertProformaToInvoice } from '@/app/lib/accounting/integration';
 import { computeSalesTax } from '@/app/lib/tax/engine';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { downloadCSV, openPrintPreview } from '@/app/lib/accounting/helpers/exportHelpers';
 
 // ===== EXPORT UTILITIES =====
-
-// Download CSV
-const downloadCSV = (data: any[], filename: string, columns: { key: string; label: string }[]) => {
-	const header = columns.map(c => c.label).join(',');
-	const rows = data.map(row => 
-		columns.map(c => {
-			const val = row[c.key];
-			// Escape quotes and wrap in quotes if contains comma
-			const str = String(val ?? '').replace(/"/g, '""');
-			return str.includes(',') ? `"${str}"` : str;
-		}).join(',')
-	);
-	const csv = [header, ...rows].join('\n');
-	const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-	const url = URL.createObjectURL(blob);
-	const link = document.createElement('a');
-	link.href = url;
-	link.download = `${filename}_${new Date().toISOString().split('T')[0]}.csv`;
-	link.click();
-	URL.revokeObjectURL(url);
-};
 
 // Generate PDF HTML
 const generatePdfHtml = (title: string, content: string, footer?: string) => `
@@ -118,16 +99,6 @@ const generatePdfHtml = (title: string, content: string, footer?: string) => `
 </body>
 </html>
 `;
-
-// Open print preview
-const openPdfPreview = (html: string) => {
-	const win = window.open('', '_blank');
-	if (win) {
-		win.document.write(html);
-		win.document.close();
-		setTimeout(() => win.print(), 500);
-	}
-};
 
 function InfoTip({ label, children }: { label: string; children: React.ReactNode }) {
 	return (
@@ -617,9 +588,9 @@ export default function AccountsReceivable() {
 				<td>${inv.customerName || '-'}</td>
 				<td>${getSourceLabel(inv.sourceModule).label}</td>
 				<td>${new Date(inv.date).toLocaleDateString()}</td>
-				<td class="amount">₵${Number(inv.total || 0).toLocaleString()}</td>
-				<td class="amount">₵${Number(inv.paidAmount || 0).toLocaleString()}</td>
-				<td class="amount">₵${balance.toLocaleString()}</td>
+				<td class="amount">${formatAccountingCurrency(Number(inv.total || 0))}</td>
+				<td class="amount">${formatAccountingCurrency(Number(inv.paidAmount || 0))}</td>
+				<td class="amount">${formatAccountingCurrency(balance)}</td>
 				<td><span class="badge ${status === 'Paid' ? 'badge-success' : status === 'Overdue' ? 'badge-danger' : 'badge-warning'}">${status}</span></td>
 			</tr>`;
 		}).join('');
@@ -632,16 +603,16 @@ export default function AccountsReceivable() {
 			</div>
 			<div class="meta">
 				<div class="meta-item"><div class="meta-label">Total Invoices</div><div class="meta-value">${filteredSalesInvoices.length}</div></div>
-				<div class="meta-item"><div class="meta-label">Total Amount</div><div class="meta-value">₵${totalAmount.toLocaleString()}</div></div>
-				<div class="meta-item"><div class="meta-label">Total Paid</div><div class="meta-value">₵${totalPaid.toLocaleString()}</div></div>
-				<div class="meta-item"><div class="meta-label">Outstanding</div><div class="meta-value">₵${(totalAmount - totalPaid).toLocaleString()}</div></div>
+				<div class="meta-item"><div class="meta-label">Total Amount</div><div class="meta-value">${formatAccountingCurrency(totalAmount)}</div></div>
+				<div class="meta-item"><div class="meta-label">Total Paid</div><div class="meta-value">${formatAccountingCurrency(totalPaid)}</div></div>
+				<div class="meta-item"><div class="meta-label">Outstanding</div><div class="meta-value">${formatAccountingCurrency((totalAmount - totalPaid))}</div></div>
 			</div>
 			<table>
 				<thead><tr><th>Invoice #</th><th>Customer</th><th>Source</th><th>Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead>
 				<tbody>${rows}</tbody>
 			</table>
 		`, 'Accounts Receivable • Sales Invoices');
-		openPdfPreview(html);
+		openPrintPreview(html);
 	}, [filteredSalesInvoices]);
 
 	// Print Proformas Table as PDF
@@ -654,7 +625,7 @@ export default function AccountsReceivable() {
 				<td>${inv.eventId || '-'}</td>
 				<td>${inv.pax || '-'}</td>
 				<td>${inv.venue || '-'}</td>
-				<td class="amount">₵${Number(inv.total || 0).toLocaleString()}</td>
+				<td class="amount">${formatAccountingCurrency(Number(inv.total || 0))}</td>
 				<td>${new Date(inv.dueDate).toLocaleDateString()}</td>
 				<td><span class="badge ${isExpired ? 'badge-danger' : 'badge-info'}">${isExpired ? 'Expired' : 'Active'}</span></td>
 			</tr>`;
@@ -667,14 +638,14 @@ export default function AccountsReceivable() {
 			</div>
 			<div class="meta">
 				<div class="meta-item"><div class="meta-label">Total Proformas</div><div class="meta-value">${filteredProformas.length}</div></div>
-				<div class="meta-item"><div class="meta-label">Total Value</div><div class="meta-value">₵${totalAmount.toLocaleString()}</div></div>
+				<div class="meta-item"><div class="meta-label">Total Value</div><div class="meta-value">${formatAccountingCurrency(totalAmount)}</div></div>
 			</div>
 			<table>
 				<thead><tr><th>Proforma #</th><th>Client</th><th>Event</th><th>Pax</th><th>Venue</th><th>Amount</th><th>Valid Until</th><th>Status</th></tr></thead>
 				<tbody>${rows}</tbody>
 			</table>
 		`, 'Accounts Receivable • Proforma Invoices');
-		openPdfPreview(html);
+		openPrintPreview(html);
 	}, [filteredProformas]);
 
 	// Print Receipts Table as PDF
@@ -685,7 +656,7 @@ export default function AccountsReceivable() {
 			<td>${getSourceLabel(r.sourceModule).label}</td>
 			<td>${new Date(r.date).toLocaleString()}</td>
 			<td>${r.paymentMethod || 'Cash'}</td>
-			<td class="amount">₵${Number(r.amount || 0).toLocaleString()}</td>
+			<td class="amount">${formatAccountingCurrency(Number(r.amount || 0))}</td>
 			<td>${r.staffName || '-'}</td>
 		</tr>`).join('');
 		const totalAmount = filteredReceipts.reduce((s: number, r: any) => s + (r.amount || 0), 0);
@@ -696,14 +667,14 @@ export default function AccountsReceivable() {
 			</div>
 			<div class="meta">
 				<div class="meta-item"><div class="meta-label">Total Receipts</div><div class="meta-value">${filteredReceipts.length}</div></div>
-				<div class="meta-item"><div class="meta-label">Total Received</div><div class="meta-value">₵${totalAmount.toLocaleString()}</div></div>
+				<div class="meta-item"><div class="meta-label">Total Received</div><div class="meta-value">${formatAccountingCurrency(totalAmount)}</div></div>
 			</div>
 			<table>
 				<thead><tr><th>Receipt #</th><th>Customer</th><th>Source</th><th>Date/Time</th><th>Method</th><th>Amount</th><th>Staff</th></tr></thead>
 				<tbody>${rows}</tbody>
 			</table>
 		`, 'Accounts Receivable • Receipts');
-		openPdfPreview(html);
+		openPrintPreview(html);
 	}, [filteredReceipts]);
 
 	// Print Aging Report as PDF
@@ -711,14 +682,14 @@ export default function AccountsReceivable() {
 		const rows = customerAging.map((c: any) => `<tr>
 			<td>${c.customerName}</td>
 			<td>${c.invoiceCount}</td>
-			<td class="amount">₵${c.totalInvoiced.toLocaleString()}</td>
-			<td class="amount">₵${c.totalPaid.toLocaleString()}</td>
-			<td class="amount" style="font-weight:bold">₵${c.balance.toLocaleString()}</td>
-			<td class="amount">${c.current > 0 ? `₵${c.current.toLocaleString()}` : '-'}</td>
-			<td class="amount" style="color:#ca8a04">${c.days30 > 0 ? `₵${c.days30.toLocaleString()}` : '-'}</td>
-			<td class="amount" style="color:#ea580c">${c.days60 > 0 ? `₵${c.days60.toLocaleString()}` : '-'}</td>
-			<td class="amount" style="color:#dc2626">${c.days90 > 0 ? `₵${c.days90.toLocaleString()}` : '-'}</td>
-			<td class="amount" style="color:#991b1b;font-weight:bold">${c.over90 > 0 ? `₵${c.over90.toLocaleString()}` : '-'}</td>
+			<td class="amount">${formatAccountingCurrency(c.totalInvoiced)}</td>
+			<td class="amount">${formatAccountingCurrency(c.totalPaid)}</td>
+			<td class="amount" style="font-weight:bold">${formatAccountingCurrency(c.balance)}</td>
+			<td class="amount">${c.current > 0 ? `${formatAccountingCurrency(c.current)}` : '-'}</td>
+			<td class="amount" style="color:#ca8a04">${c.days30 > 0 ? `${formatAccountingCurrency(c.days30)}` : '-'}</td>
+			<td class="amount" style="color:#ea580c">${c.days60 > 0 ? `${formatAccountingCurrency(c.days60)}` : '-'}</td>
+			<td class="amount" style="color:#dc2626">${c.days90 > 0 ? `${formatAccountingCurrency(c.days90)}` : '-'}</td>
+			<td class="amount" style="color:#991b1b;font-weight:bold">${c.over90 > 0 ? `${formatAccountingCurrency(c.over90)}` : '-'}</td>
 		</tr>`).join('');
 		const totals = customerAging.reduce((acc: any, c: any) => ({
 			balance: acc.balance + c.balance,
@@ -735,25 +706,25 @@ export default function AccountsReceivable() {
 			</div>
 			<div class="meta">
 				<div class="meta-item"><div class="meta-label">Active Customers</div><div class="meta-value">${customerAging.length}</div></div>
-				<div class="meta-item"><div class="meta-label">Total Outstanding</div><div class="meta-value">₵${totals.balance.toLocaleString()}</div></div>
-				<div class="meta-item"><div class="meta-label">Overdue (30+ days)</div><div class="meta-value">₵${(totals.days30 + totals.days60 + totals.days90 + totals.over90).toLocaleString()}</div></div>
+				<div class="meta-item"><div class="meta-label">Total Outstanding</div><div class="meta-value">${formatAccountingCurrency(totals.balance)}</div></div>
+				<div class="meta-item"><div class="meta-label">Overdue (30+ days)</div><div class="meta-value">${formatAccountingCurrency((totals.days30 + totals.days60 + totals.days90 + totals.over90))}</div></div>
 			</div>
 			<table>
 				<thead><tr><th>Customer</th><th>Invoices</th><th>Invoiced</th><th>Paid</th><th>Balance</th><th>Current</th><th>1-30</th><th>31-60</th><th>61-90</th><th>90+</th></tr></thead>
 				<tbody>${rows}
 				<tr class="total-row">
 					<td colspan="4"><strong>TOTAL</strong></td>
-					<td class="amount">₵${totals.balance.toLocaleString()}</td>
-					<td class="amount">₵${totals.current.toLocaleString()}</td>
-					<td class="amount">₵${totals.days30.toLocaleString()}</td>
-					<td class="amount">₵${totals.days60.toLocaleString()}</td>
-					<td class="amount">₵${totals.days90.toLocaleString()}</td>
-					<td class="amount">₵${totals.over90.toLocaleString()}</td>
+					<td class="amount">${formatAccountingCurrency(totals.balance)}</td>
+					<td class="amount">${formatAccountingCurrency(totals.current)}</td>
+					<td class="amount">${formatAccountingCurrency(totals.days30)}</td>
+					<td class="amount">${formatAccountingCurrency(totals.days60)}</td>
+					<td class="amount">${formatAccountingCurrency(totals.days90)}</td>
+					<td class="amount">${formatAccountingCurrency(totals.over90)}</td>
 				</tr>
 				</tbody>
 			</table>
 		`, 'Accounts Receivable • Customer Aging Analysis');
-		openPdfPreview(html);
+		openPrintPreview(html);
 	}, [customerAging]);
 
 	// Print Individual Invoice/Proforma PDF
@@ -767,7 +738,7 @@ export default function AccountsReceivable() {
 			<td>${r.paymentNumber || r.id}</td>
 			<td>${new Date(r.date).toLocaleString()}</td>
 			<td>${r.paymentMethod}</td>
-			<td class="amount">₵${Number(r.amount).toLocaleString()}</td>
+			<td class="amount">${formatAccountingCurrency(Number(r.amount))}</td>
 		</tr>`).join('') || '<tr><td colspan="4" style="text-align:center;color:#6b7280">No payments recorded</td></tr>';
 
 		// Same canonical stacked-tax reconstruction as the on-screen invoice modal, so the
@@ -779,7 +750,7 @@ export default function AccountsReceivable() {
 				? invoice.taxBreakdown
 				: (pdfSubtotal > 0 ? computeSalesTax(pdfSubtotal, pdfTotalTax).lines.map(l => ({ name: l.name, rate: l.rate, amount: l.amount })) : []);
 		const taxBreakdownRows = pdfTaxBreakdown.map(t =>
-			`<tr><td>${t.name} (${t.rate}%)</td><td class="amount">₵${Number(t.amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td></tr>`
+			`<tr><td>${t.name} (${t.rate}%)</td><td class="amount">${formatAccountingCurrency(Number(t.amount))}</td></tr>`
 		).join('');
 
 		const html = generatePdfHtml(isProforma ? 'Proforma Invoice' : 'Sales Invoice', `
@@ -833,12 +804,12 @@ export default function AccountsReceivable() {
 			<div class="section">
 				<div class="section-title">Financial Summary</div>
 				<table>
-					<tr><td style="width:70%">Subtotal</td><td class="amount">₵${Number(invoice.subtotal || 0).toLocaleString()}</td></tr>
-					<tr><td>Total Tax</td><td class="amount">₵${Number(invoice.taxAmount || 0).toLocaleString()}</td></tr>
-					<tr class="total-row"><td><strong>Total</strong></td><td class="amount"><strong>₵${Number(invoice.total || 0).toLocaleString()}</strong></td></tr>
+					<tr><td style="width:70%">Subtotal</td><td class="amount">${formatAccountingCurrency(Number(invoice.subtotal || 0))}</td></tr>
+					<tr><td>Total Tax</td><td class="amount">${formatAccountingCurrency(Number(invoice.taxAmount || 0))}</td></tr>
+					<tr class="total-row"><td><strong>Total</strong></td><td class="amount"><strong>${formatAccountingCurrency(Number(invoice.total || 0))}</strong></td></tr>
 					${!isProforma ? `
-					<tr><td>Paid</td><td class="amount" style="color:#16a34a">₵${Number(invoice.paidAmount || 0).toLocaleString()}</td></tr>
-					<tr><td><strong>Balance Due</strong></td><td class="amount" style="color:${balance > 0 ? '#ea580c' : '#16a34a'};font-weight:bold">₵${balance.toLocaleString()}</td></tr>
+					<tr><td>Paid</td><td class="amount" style="color:#16a34a">${formatAccountingCurrency(Number(invoice.paidAmount || 0))}</td></tr>
+					<tr><td><strong>Balance Due</strong></td><td class="amount" style="color:${balance > 0 ? '#ea580c' : '#16a34a'};font-weight:bold">${formatAccountingCurrency(balance)}</td></tr>
 					` : ''}
 				</table>
 			</div>
@@ -861,7 +832,7 @@ export default function AccountsReceivable() {
 				</div>
 			</div>
 		`, `Generated on ${new Date().toLocaleString()}`);
-		openPdfPreview(html);
+		openPrintPreview(html);
 	}, [getInvoiceReceipts]);
 
 	// Print Individual Receipt (hotel template via folio/invoice picker context)
@@ -1328,7 +1299,7 @@ export default function AccountsReceivable() {
 			const totalEntered = roundMoney2(cash + wht + whtVat);
 			if (totalEntered > balanceDue + 0.01) {
 				setFormError(
-					`Total (₵${totalEntered.toLocaleString()}) exceeds balance due (₵${balanceDue.toLocaleString()})`,
+					`Total (${formatAccountingCurrency(totalEntered)}) exceeds balance due (${formatAccountingCurrency(balanceDue)})`,
 				);
 				return;
 			}
@@ -1446,7 +1417,7 @@ export default function AccountsReceivable() {
 		}
 
 		if (selectedReceiptTarget && amount > receiptBalanceDue + 0.01) {
-			setFormError(`Amount cannot exceed balance due (₵${receiptBalanceDue.toLocaleString()})`);
+			setFormError(`Amount cannot exceed balance due (${formatAccountingCurrency(receiptBalanceDue)})`);
 			return;
 		}
 		if (receiptNeedsBankAccount && activeBankAccounts.length > 0 && !receiptForm.bankAccountId) {
@@ -1623,7 +1594,7 @@ export default function AccountsReceivable() {
 			Number(whtPaymentForm.whtVatAmount || 0),
 		);
 		if (totalEntered > balanceDue + 0.01) {
-			setFormError(`Total (₵${totalEntered.toLocaleString()}) exceeds balance due (₵${balanceDue.toLocaleString()})`);
+			setFormError(`Total (${formatAccountingCurrency(totalEntered)}) exceeds balance due (${formatAccountingCurrency(balanceDue)})`);
 			return;
 		}
 
@@ -1813,9 +1784,9 @@ export default function AccountsReceivable() {
 										<div className="text-sm">{inv.staffName || '-'}</div>
 										<div className="text-xs text-gray-500">{inv.staffRole || ''}</div>
 									</TableCell>
-									<TableCell className="text-right font-medium">₵{Number(inv.total || 0).toLocaleString()}</TableCell>
-									<TableCell className="text-right text-green-600">₵{Number(inv.paidAmount || 0).toLocaleString()}</TableCell>
-									<TableCell className="text-right text-orange-600 font-medium">₵{balance.toLocaleString()}</TableCell>
+									<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(inv.total || 0))}</TableCell>
+									<TableCell className="text-right text-green-600">{formatAccountingCurrency(Number(inv.paidAmount || 0))}</TableCell>
+									<TableCell className="text-right text-orange-600 font-medium">{formatAccountingCurrency(balance)}</TableCell>
 									<TableCell>
 										<Chip size="sm" color={balance === 0 ? 'success' : isOverdue ? 'danger' : 'warning'} variant="flat">
 											{balance === 0 ? 'Paid' : isOverdue ? 'Overdue' : 'Open'}
@@ -1948,7 +1919,7 @@ export default function AccountsReceivable() {
 									<TableCell>
 										<div className="text-sm truncate max-w-[120px]">{inv.venue || '-'}</div>
 									</TableCell>
-									<TableCell className="text-right font-bold text-purple-700">₵{Number(inv.total || 0).toLocaleString()}</TableCell>
+									<TableCell className="text-right font-bold text-purple-700">{formatAccountingCurrency(Number(inv.total || 0))}</TableCell>
 									<TableCell className={isExpired ? 'text-red-600' : 'text-gray-600'}>
 										{new Date(inv.dueDate).toLocaleDateString()}
 									</TableCell>
@@ -2008,7 +1979,6 @@ export default function AccountsReceivable() {
 									(posted invoices + GL).
 								</p>
 								<p>In-house guest folios are operational only until checkout posts here.</p>
-								<p className="text-default-500 text-xs">API: /api/accounting/receivables/aging</p>
 							</div>
 						</InfoTip>
 					</p>
@@ -2033,35 +2003,35 @@ export default function AccountsReceivable() {
 			<div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
 				<Card>
 					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-blue-600">₵{totalRevenue.toLocaleString()}</div>
+						<div className="text-2xl font-bold text-blue-600">{formatAccountingCurrency(totalRevenue)}</div>
 						<div className="text-sm text-gray-600">Total Invoiced</div>
 						<div className="text-xs text-gray-400 mt-1">{salesInvoices.length} invoices</div>
 					</CardBody>
 				</Card>
 				<Card>
 					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-orange-600">₵{totalOutstanding.toLocaleString()}</div>
+						<div className="text-2xl font-bold text-orange-600">{formatAccountingCurrency(totalOutstanding)}</div>
 						<div className="text-sm text-gray-600">Outstanding AR</div>
 						<Progress value={totalRevenue > 0 ? (totalOutstanding / totalRevenue) * 100 : 0} size="sm" color="warning" className="mt-2" />
 					</CardBody>
 				</Card>
 				<Card>
 					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-green-600">₵{totalReceived.toLocaleString()}</div>
+						<div className="text-2xl font-bold text-green-600">{formatAccountingCurrency(totalReceived)}</div>
 						<div className="text-sm text-gray-600">Total Receipts</div>
 						<div className="text-xs text-gray-400 mt-1">{receipts.length} receipts</div>
 					</CardBody>
 				</Card>
 				<Card>
 					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-purple-600">₵{totalProforma.toLocaleString()}</div>
+						<div className="text-2xl font-bold text-purple-600">{formatAccountingCurrency(totalProforma)}</div>
 						<div className="text-sm text-gray-600">Proformas</div>
 						<div className="text-xs text-gray-400 mt-1">{proformaInvoices.length} proformas</div>
 					</CardBody>
 				</Card>
 				<Card>
 					<CardBody className="text-center py-4">
-						<div className="text-2xl font-bold text-amber-600">₵{totalWHTReceivable.toLocaleString()}</div>
+						<div className="text-2xl font-bold text-amber-600">{formatAccountingCurrency(totalWHTReceivable)}</div>
 						<div className="text-sm text-gray-600">WHT Credits</div>
 						<div className="text-xs text-gray-400 mt-1">{whtCertificates?.length || 0} certificates</div>
 					</CardBody>
@@ -2123,14 +2093,14 @@ export default function AccountsReceivable() {
 													<TableCell>
 														<Chip size="sm" color={source.color} variant="flat">{source.icon}</Chip>
 													</TableCell>
-													<TableCell className="text-right">₵{c.totalInvoiced.toLocaleString()}</TableCell>
-													<TableCell className="text-right text-green-600">₵{c.totalPaid.toLocaleString()}</TableCell>
-													<TableCell className="text-right font-bold">₵{c.balance.toLocaleString()}</TableCell>
-													<TableCell className="text-right">{c.current > 0 ? `₵${c.current.toLocaleString()}` : '-'}</TableCell>
-													<TableCell className="text-right text-yellow-600">{c.days30 > 0 ? `₵${c.days30.toLocaleString()}` : '-'}</TableCell>
-													<TableCell className="text-right text-orange-600">{c.days60 > 0 ? `₵${c.days60.toLocaleString()}` : '-'}</TableCell>
-													<TableCell className="text-right text-red-500">{c.days90 > 0 ? `₵${c.days90.toLocaleString()}` : '-'}</TableCell>
-													<TableCell className="text-right text-red-700 font-medium">{c.over90 > 0 ? `₵${c.over90.toLocaleString()}` : '-'}</TableCell>
+													<TableCell className="text-right">{formatAccountingCurrency(c.totalInvoiced)}</TableCell>
+													<TableCell className="text-right text-green-600">{formatAccountingCurrency(c.totalPaid)}</TableCell>
+													<TableCell className="text-right font-bold">{formatAccountingCurrency(c.balance)}</TableCell>
+													<TableCell className="text-right">{c.current > 0 ? `${formatAccountingCurrency(c.current)}` : '-'}</TableCell>
+													<TableCell className="text-right text-yellow-600">{c.days30 > 0 ? `${formatAccountingCurrency(c.days30)}` : '-'}</TableCell>
+													<TableCell className="text-right text-orange-600">{c.days60 > 0 ? `${formatAccountingCurrency(c.days60)}` : '-'}</TableCell>
+													<TableCell className="text-right text-red-500">{c.days90 > 0 ? `${formatAccountingCurrency(c.days90)}` : '-'}</TableCell>
+													<TableCell className="text-right text-red-700 font-medium">{c.over90 > 0 ? `${formatAccountingCurrency(c.over90)}` : '-'}</TableCell>
 											</TableRow>
 											);
 										})}
@@ -2141,31 +2111,31 @@ export default function AccountsReceivable() {
 								<div className="mt-6 grid grid-cols-5 gap-4">
 									<Card className="bg-green-50">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-green-700">₵{customerAging.reduce((s, c) => s + c.current, 0).toLocaleString()}</div>
+											<div className="text-lg font-bold text-green-700">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.current, 0))}</div>
 											<div className="text-xs text-green-600">Current</div>
 										</CardBody>
 									</Card>
 									<Card className="bg-yellow-50">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-yellow-700">₵{customerAging.reduce((s, c) => s + c.days30, 0).toLocaleString()}</div>
+											<div className="text-lg font-bold text-yellow-700">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.days30, 0))}</div>
 											<div className="text-xs text-yellow-600">1-30 Days</div>
 										</CardBody>
 									</Card>
 									<Card className="bg-orange-50">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-orange-700">₵{customerAging.reduce((s, c) => s + c.days60, 0).toLocaleString()}</div>
+											<div className="text-lg font-bold text-orange-700">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.days60, 0))}</div>
 											<div className="text-xs text-orange-600">31-60 Days</div>
 										</CardBody>
 									</Card>
 									<Card className="bg-red-50">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-red-600">₵{customerAging.reduce((s, c) => s + c.days90, 0).toLocaleString()}</div>
+											<div className="text-lg font-bold text-red-600">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.days90, 0))}</div>
 											<div className="text-xs text-red-500">61-90 Days</div>
 										</CardBody>
 									</Card>
 									<Card className="bg-red-100">
 										<CardBody className="text-center py-3">
-											<div className="text-lg font-bold text-red-800">₵{customerAging.reduce((s, c) => s + c.over90, 0).toLocaleString()}</div>
+											<div className="text-lg font-bold text-red-800">{formatAccountingCurrency(customerAging.reduce((s, c) => s + c.over90, 0))}</div>
 											<div className="text-xs text-red-700">90+ Days</div>
 										</CardBody>
 									</Card>
@@ -2180,7 +2150,7 @@ export default function AccountsReceivable() {
 									<h3 className="text-lg font-semibold">Sales Invoices</h3>
 									<div className="flex items-center gap-2">
 										<Chip color="primary" variant="flat">{filteredSalesInvoices.length} invoices</Chip>
-										<Chip color="success" variant="flat">₵{filteredSalesInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0).toLocaleString()}</Chip>
+										<Chip color="success" variant="flat">{formatAccountingCurrency(filteredSalesInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0))}</Chip>
 										<Dropdown>
 											<DropdownTrigger>
 												<Button variant="flat" size="sm">📥 Export</Button>
@@ -2205,7 +2175,7 @@ export default function AccountsReceivable() {
 									<h3 className="text-lg font-semibold">Proforma Invoices</h3>
 									<div className="flex items-center gap-2">
 										<Chip color="secondary" variant="flat">{filteredProformas.length} proformas</Chip>
-										<Chip color="warning" variant="flat">₵{filteredProformas.reduce((s: number, i: any) => s + (i.total || 0), 0).toLocaleString()}</Chip>
+										<Chip color="warning" variant="flat">{formatAccountingCurrency(filteredProformas.reduce((s: number, i: any) => s + (i.total || 0), 0))}</Chip>
 										<Dropdown>
 											<DropdownTrigger>
 												<Button variant="flat" size="sm">📥 Export</Button>
@@ -2230,7 +2200,7 @@ export default function AccountsReceivable() {
                                     <h3 className="text-lg font-semibold">Customer Receipts</h3>
 									<div className="flex items-center gap-2">
 										<Chip color="success" variant="flat">{filteredReceipts.length} receipts</Chip>
-										<Chip color="primary" variant="flat">₵{filteredReceipts.reduce((s: number, r: any) => s + (r.amount || 0), 0).toLocaleString()}</Chip>
+										<Chip color="primary" variant="flat">{formatAccountingCurrency(filteredReceipts.reduce((s: number, r: any) => s + (r.amount || 0), 0))}</Chip>
 										<Dropdown>
 											<DropdownTrigger>
 												<Button variant="flat" size="sm">📥 Export</Button>
@@ -2290,7 +2260,7 @@ export default function AccountsReceivable() {
 															<span className="font-mono text-xs text-blue-600">{r.invoiceId.slice(0, 15)}...</span>
 														) : '-'}
 													</TableCell>
-													<TableCell className="text-right font-medium text-green-600">₵{Number(r.amount || 0).toLocaleString()}</TableCell>
+													<TableCell className="text-right font-medium text-green-600">{formatAccountingCurrency(Number(r.amount || 0))}</TableCell>
 													<TableCell>
 														<Chip size="sm" color={r.status === 'Posted' ? 'success' : r.status === 'Void' ? 'danger' : 'default'} variant="flat">{r.status || 'Draft'}</Chip>
 													</TableCell>
@@ -2358,7 +2328,7 @@ export default function AccountsReceivable() {
 									</h3>
 									<div className="flex items-center gap-2">
 										<Chip color="warning" variant="flat">{filteredWHTCerts.length} certificates</Chip>
-										<Chip color="primary" variant="flat">₵{totalWHTReceivable.toLocaleString()} receivable</Chip>
+										<Chip color="primary" variant="flat">{formatAccountingCurrency(totalWHTReceivable)} receivable</Chip>
 										{pendingWHTCerts > 0 && (
 											<Chip color="danger" variant="flat">{pendingWHTCerts} pending</Chip>
 										)}
@@ -2396,9 +2366,9 @@ export default function AccountsReceivable() {
 													<span className="font-mono text-xs text-gray-600">{cert.invoiceNumber}</span>
 												</TableCell>
 												<TableCell>{cert.taxPeriod}</TableCell>
-												<TableCell className="text-right font-medium">₵{Number(cert.whtAmount || 0).toLocaleString()}</TableCell>
-												<TableCell className="text-right font-medium">₵{Number(cert.whtVatAmount || 0).toLocaleString()}</TableCell>
-												<TableCell className="text-right font-bold text-amber-600">₵{Number(cert.totalWithheld || 0).toLocaleString()}</TableCell>
+												<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(cert.whtAmount || 0))}</TableCell>
+												<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(cert.whtVatAmount || 0))}</TableCell>
+												<TableCell className="text-right font-bold text-amber-600">{formatAccountingCurrency(Number(cert.totalWithheld || 0))}</TableCell>
 												<TableCell>
 													<Chip 
 														size="sm" 
@@ -2483,11 +2453,11 @@ export default function AccountsReceivable() {
 											</div>
 											<div>
 												<div className="text-gray-500">Invoice Total</div>
-												<div className="font-bold">₵{Number(whtPaymentForm.invoiceTotal || 0).toLocaleString()}</div>
+												<div className="font-bold">{formatAccountingCurrency(Number(whtPaymentForm.invoiceTotal || 0))}</div>
 											</div>
 											<div>
 												<div className="text-gray-500">Balance Due</div>
-												<div className="font-bold text-orange-600">₵{Number(whtPaymentForm.balanceDue || 0).toLocaleString()}</div>
+												<div className="font-bold text-orange-600">{formatAccountingCurrency(Number(whtPaymentForm.balanceDue || 0))}</div>
 											</div>
 										</div>
 									</CardBody>
@@ -2589,20 +2559,20 @@ export default function AccountsReceivable() {
 										<div className="grid grid-cols-4 gap-4 text-sm">
 											<div>
 												<div className="text-gray-500">Cash Received</div>
-												<div className="font-bold text-green-600">₵{Number(whtPaymentForm.cashAmount || 0).toLocaleString()}</div>
+												<div className="font-bold text-green-600">{formatAccountingCurrency(Number(whtPaymentForm.cashAmount || 0))}</div>
 											</div>
 											<div>
 												<div className="text-gray-500">WHT Credit</div>
-												<div className="font-bold text-amber-600">₵{Number(whtPaymentForm.whtAmount || 0).toLocaleString()}</div>
+												<div className="font-bold text-amber-600">{formatAccountingCurrency(Number(whtPaymentForm.whtAmount || 0))}</div>
 											</div>
 											<div>
 												<div className="text-gray-500">WHT-VAT Credit</div>
-												<div className="font-bold text-amber-600">₵{Number(whtPaymentForm.whtVatAmount || 0).toLocaleString()}</div>
+												<div className="font-bold text-amber-600">{formatAccountingCurrency(Number(whtPaymentForm.whtVatAmount || 0))}</div>
 											</div>
 											<div>
 												<div className="text-gray-500">Total Clearing AR</div>
 												<div className="font-bold text-blue-600">
-													₵{(Number(whtPaymentForm.cashAmount || 0) + Number(whtPaymentForm.whtAmount || 0) + Number(whtPaymentForm.whtVatAmount || 0)).toLocaleString()}
+													{formatAccountingCurrency((Number(whtPaymentForm.cashAmount || 0) + Number(whtPaymentForm.whtAmount || 0) + Number(whtPaymentForm.whtVatAmount || 0)))}
 												</div>
 											</div>
 										</div>
@@ -2672,7 +2642,7 @@ export default function AccountsReceivable() {
 												</div>
 												<div className="flex justify-between">
 													<span className="text-gray-600">Gross Amount:</span>
-													<span className="font-bold">₵{Number(selectedWHTCert.grossAmount || 0).toLocaleString()}</span>
+													<span className="font-bold">{formatAccountingCurrency(Number(selectedWHTCert.grossAmount || 0))}</span>
 												</div>
 											</div>
 										</CardBody>
@@ -2693,17 +2663,17 @@ export default function AccountsReceivable() {
 												<TableRow>
 													<TableCell>Withholding Tax (WHT)</TableCell>
 													<TableCell>{selectedWHTCert.whtRate || 5}%</TableCell>
-													<TableCell className="text-right font-medium">₵{Number(selectedWHTCert.whtAmount || 0).toLocaleString()}</TableCell>
+													<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(selectedWHTCert.whtAmount || 0))}</TableCell>
                                                     </TableRow>
 												<TableRow>
 													<TableCell>Withholding VAT (WHT-VAT)</TableCell>
 													<TableCell>{selectedWHTCert.whtVatRate || 7}%</TableCell>
-													<TableCell className="text-right font-medium">₵{Number(selectedWHTCert.whtVatAmount || 0).toLocaleString()}</TableCell>
+													<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(selectedWHTCert.whtVatAmount || 0))}</TableCell>
 												</TableRow>
 												<TableRow className="bg-amber-50">
 													<TableCell className="font-bold">TOTAL TAX CREDIT</TableCell>
 													<TableCell>-</TableCell>
-													<TableCell className="text-right font-bold text-amber-600">₵{Number(selectedWHTCert.totalWithheld || 0).toLocaleString()}</TableCell>
+													<TableCell className="text-right font-bold text-amber-600">{formatAccountingCurrency(Number(selectedWHTCert.totalWithheld || 0))}</TableCell>
 												</TableRow>
                                         </TableBody>
                                     </Table>
@@ -2717,15 +2687,15 @@ export default function AccountsReceivable() {
 										<div className="grid grid-cols-3 gap-4 text-sm">
 											<div>
 												<div className="text-gray-600">Total Credit</div>
-												<div className="font-bold text-lg">₵{Number(selectedWHTCert.totalWithheld || 0).toLocaleString()}</div>
+												<div className="font-bold text-lg">{formatAccountingCurrency(Number(selectedWHTCert.totalWithheld || 0))}</div>
                                     </div>
 											<div>
 												<div className="text-gray-600">Used</div>
-												<div className="font-bold text-lg text-gray-500">₵{Number(selectedWHTCert.taxCreditUsedAmount || 0).toLocaleString()}</div>
+												<div className="font-bold text-lg text-gray-500">{formatAccountingCurrency(Number(selectedWHTCert.taxCreditUsedAmount || 0))}</div>
                                 </div>
 											<div>
 												<div className="text-gray-600">Remaining Balance</div>
-												<div className="font-bold text-lg text-green-600">₵{Number(selectedWHTCert.taxCreditBalance || selectedWHTCert.totalWithheld || 0).toLocaleString()}</div>
+												<div className="font-bold text-lg text-green-600">{formatAccountingCurrency(Number(selectedWHTCert.taxCreditBalance || selectedWHTCert.totalWithheld || 0))}</div>
 											</div>
 										</div>
                                                 </CardBody>
@@ -2982,7 +2952,7 @@ export default function AccountsReceivable() {
 															created at checkout.
 														</InfoTip>
 													</div>
-													<div className="font-bold text-orange-600">₵{receiptBalanceDue.toLocaleString()}</div>
+													<div className="font-bold text-orange-600">{formatAccountingCurrency(receiptBalanceDue)}</div>
 												</div>
 											</div>
 										</CardBody>
@@ -3004,20 +2974,20 @@ export default function AccountsReceivable() {
 												</div>
 												<div>
 													<div className="text-gray-500">Invoice total</div>
-													<div className="font-medium">₵{Number(selectedReceiptInvoice.total || 0).toLocaleString()}</div>
+													<div className="font-medium">{formatAccountingCurrency(Number(selectedReceiptInvoice.total || 0))}</div>
 												</div>
 												<div>
 													<div className="text-gray-500">Balance due</div>
-													<div className="font-bold text-orange-600">₵{receiptBalanceDue.toLocaleString()}</div>
+													<div className="font-bold text-orange-600">{formatAccountingCurrency(receiptBalanceDue)}</div>
 												</div>
 												<div>
 													<div className="text-gray-500">After this receipt</div>
 													<div className="font-bold text-green-700">
-														₵{Math.max(0, receiptBalanceDue - roundMoney2(
+														{formatAccountingCurrency(Math.max(0, receiptBalanceDue - roundMoney2(
 															Number(receiptForm.amount || 0) +
 															Number(receiptForm.whtAmount || 0) +
 															Number(receiptForm.whtVatAmount || 0)
-														)).toLocaleString()}
+														)))}
 													</div>
 												</div>
 											</div>
@@ -3038,7 +3008,7 @@ export default function AccountsReceivable() {
 										startContent="₵"
 										description={
 											selectedReceiptTarget
-												? `Balance due ₵${receiptBalanceDue.toLocaleString()}`
+												? `Balance due ${formatAccountingCurrency(receiptBalanceDue)}`
 												: 'Enter amount received'
 										}
 										endContent={
@@ -3405,16 +3375,16 @@ export default function AccountsReceivable() {
 															<td className="py-2 text-gray-500">{idx + 1}</td>
 															<td className="py-2">{item.description || item.name}</td>
 															<td className="py-2 text-right">{item.quantity || item.qty || 1}</td>
-															<td className="py-2 text-right">₵{Number(item.unitPrice || item.price || 0).toLocaleString()}</td>
-															<td className="py-2 text-right font-medium">₵{Number((item.quantity || item.qty || 1) * (item.unitPrice || item.price || 0)).toLocaleString()}</td>
+															<td className="py-2 text-right">{formatAccountingCurrency(Number(item.unitPrice || item.price || 0))}</td>
+															<td className="py-2 text-right font-medium">{formatAccountingCurrency(Number((item.quantity || item.qty || 1) * (item.unitPrice || item.price || 0)))}</td>
 														</tr>
 													)) : (
 														<tr className="border-b border-gray-100">
 															<td className="py-2 text-gray-500">1</td>
 															<td className="py-2">{selectedInvoice.description || 'Services/Products'}</td>
 															<td className="py-2 text-right">1</td>
-															<td className="py-2 text-right">₵{subtotal.toLocaleString()}</td>
-															<td className="py-2 text-right font-medium">₵{subtotal.toLocaleString()}</td>
+															<td className="py-2 text-right">{formatAccountingCurrency(subtotal)}</td>
+															<td className="py-2 text-right font-medium">{formatAccountingCurrency(subtotal)}</td>
 														</tr>
 													)}
 												</tbody>
@@ -3437,7 +3407,7 @@ export default function AccountsReceivable() {
 															{taxBreakdown.length > 0 ? taxBreakdown.map((tax: any, idx: number) => (
 																<tr key={tax.code || idx} className="border-b border-gray-200">
 																	<td className="py-2 text-gray-600">{tax.name} ({tax.rate}%)</td>
-																	<td className="py-2 text-right font-mono">₵{Number(tax.amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+																	<td className="py-2 text-right font-mono">{formatAccountingCurrency(Number(tax.amount || 0))}</td>
 																</tr>
 															)) : (
 																<tr className="border-b border-gray-200">
@@ -3446,7 +3416,7 @@ export default function AccountsReceivable() {
 															)}
 															<tr className="font-semibold">
 																<td className="py-2 text-gray-800">Total Tax ({totalTaxRate.toFixed(1)}%)</td>
-																<td className="py-2 text-right font-mono">₵{totalTax.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+																<td className="py-2 text-right font-mono">{formatAccountingCurrency(totalTax)}</td>
 															</tr>
 														</tbody>
 													</table>
@@ -3461,23 +3431,23 @@ export default function AccountsReceivable() {
 														<tbody>
 															<tr className="border-b border-gray-200">
 																<td className="py-2 text-gray-600">Subtotal</td>
-																<td className="py-2 text-right font-mono">₵{subtotal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+																<td className="py-2 text-right font-mono">{formatAccountingCurrency(subtotal)}</td>
 															</tr>
 															<tr className="border-b border-gray-200">
 																<td className="py-2 text-gray-600">Total Tax</td>
-																<td className="py-2 text-right font-mono">₵{totalTax.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+																<td className="py-2 text-right font-mono">{formatAccountingCurrency(totalTax)}</td>
 															</tr>
 															<tr className="border-b border-gray-200 font-semibold text-base">
 																<td className="py-3 text-gray-900">TOTAL AMOUNT</td>
-																<td className="py-3 text-right font-mono">₵{Number(selectedInvoice.total || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+																<td className="py-3 text-right font-mono">{formatAccountingCurrency(Number(selectedInvoice.total || 0))}</td>
 															</tr>
 															<tr className="border-b border-gray-200">
 																<td className="py-2 text-green-700">Amount Paid</td>
-																<td className="py-2 text-right font-mono text-green-700">₵{Number(selectedInvoice.paidAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+																<td className="py-2 text-right font-mono text-green-700">{formatAccountingCurrency(Number(selectedInvoice.paidAmount || 0))}</td>
 															</tr>
 															<tr className={`font-bold text-lg ${balance > 0 ? 'text-red-700' : 'text-green-700'}`}>
 																<td className="py-3">BALANCE DUE</td>
-																<td className="py-3 text-right font-mono">₵{balance.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+																<td className="py-3 text-right font-mono">{formatAccountingCurrency(balance)}</td>
 															</tr>
 														</tbody>
 													</table>
@@ -3507,7 +3477,7 @@ export default function AccountsReceivable() {
 																	<td className="py-2">{new Date(r.date).toLocaleString()}</td>
 																	<td className="py-2">{r.paymentMethod}</td>
 																	<td className="py-2">{r.staffName || '-'}</td>
-																	<td className="py-2 text-right font-semibold text-green-700">₵{Number(r.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+																	<td className="py-2 text-right font-semibold text-green-700">{formatAccountingCurrency(Number(r.amount))}</td>
 																</tr>
 															))}
 														</tbody>
@@ -3607,7 +3577,7 @@ export default function AccountsReceivable() {
 										{/* Amount Received - Clean Highlight */}
 										<div className="text-center py-6 border-b">
 											<p className="text-sm text-gray-500 uppercase tracking-wide mb-2">Amount Received</p>
-											<p className="text-4xl font-bold text-gray-900">₵{Number(selectedReceipt.amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</p>
+											<p className="text-4xl font-bold text-gray-900">{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</p>
 											<p className="text-sm text-gray-500 mt-2">{selectedReceipt.currency || 'GHS'} • {selectedReceipt.paymentMethod || 'Cash'}</p>
 										</div>
 
@@ -3662,7 +3632,7 @@ export default function AccountsReceivable() {
 														</tr>
 														<tr className="font-semibold">
 															<td className="py-2 text-gray-800">Amount</td>
-															<td className="py-2 text-right font-mono text-green-700">₵{Number(selectedReceipt.amount || 0).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+															<td className="py-2 text-right font-mono text-green-700">{formatAccountingCurrency(Number(selectedReceipt.amount || 0))}</td>
 														</tr>
 													</tbody>
 												</table>
@@ -3682,15 +3652,15 @@ export default function AccountsReceivable() {
 															</tr>
 															<tr className="border-b border-gray-200">
 																<td className="py-2 text-gray-600">Invoice Total</td>
-																<td className="py-2 text-right font-mono">₵{Number(linkedInvoice.total || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+																<td className="py-2 text-right font-mono">{formatAccountingCurrency(Number(linkedInvoice.total || 0))}</td>
 															</tr>
 															<tr className="border-b border-gray-200">
 																<td className="py-2 text-gray-600">Total Paid (incl. this receipt)</td>
-																<td className="py-2 text-right font-mono text-green-700">₵{Number(linkedInvoice.paidAmount || 0).toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+																<td className="py-2 text-right font-mono text-green-700">{formatAccountingCurrency(Number(linkedInvoice.paidAmount || 0))}</td>
 															</tr>
 															<tr className={`font-semibold ${invoiceBalance > 0 ? 'text-red-700' : 'text-green-700'}`}>
 																<td className="py-2">Invoice Balance</td>
-																<td className="py-2 text-right font-mono">₵{invoiceBalance.toLocaleString(undefined, {minimumFractionDigits: 2})}</td>
+																<td className="py-2 text-right font-mono">{formatAccountingCurrency(invoiceBalance)}</td>
 															</tr>
 														</tbody>
 													</table>

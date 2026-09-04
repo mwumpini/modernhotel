@@ -4,6 +4,11 @@ import { useMemo, useState } from 'react';
 import { Card, CardBody, CardHeader, Chip, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell } from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { rollupTaxLedger } from '@/app/lib/tax/ledgerRollup';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+
+// formatAccountingCurrency always shows a magnitude, so the sign is reattached in front
+// of it here (net tax position can be a credit, i.e. negative).
+const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
 
 export default function BooksTaxes() {
 	const journalEntries = useAccountingStore((s) => s.journalEntries);
@@ -60,27 +65,27 @@ export default function BooksTaxes() {
 				<CardBody className="grid grid-cols-1 md:grid-cols-5 gap-4">
 					<div>
 						<div className="text-sm text-gray-500">Output Tax Collected</div>
-						<div className="text-2xl font-semibold text-green-700">GHS {totals.outputCollected.toFixed(2)}</div>
+						<div className="text-2xl font-semibold text-green-700">{fmt(totals.outputCollected)}</div>
 						<div className="text-xs text-gray-400">Inflow (Cr liability)</div>
 					</div>
 					<div>
 						<div className="text-sm text-gray-500">Input Tax Offset</div>
-						<div className="text-2xl font-semibold text-blue-700">GHS {totals.inputOffset.toFixed(2)}</div>
+						<div className="text-2xl font-semibold text-blue-700">{fmt(totals.inputOffset)}</div>
 						<div className="text-xs text-gray-400">Recoverable (Dr liability)</div>
 					</div>
 					<div>
 						<div className="text-sm text-gray-500">Payroll Withheld</div>
-						<div className="text-2xl font-semibold text-orange-700">GHS {totals.payrollWithheld.toFixed(2)}</div>
+						<div className="text-2xl font-semibold text-orange-700">{fmt(totals.payrollWithheld)}</div>
 						<div className="text-xs text-gray-400">PAYE / SSNIT</div>
 					</div>
 					<div>
 						<div className="text-sm text-gray-500">Remitted</div>
-						<div className="text-2xl font-semibold text-red-700">GHS {totals.remitted.toFixed(2)}</div>
+						<div className="text-2xl font-semibold text-red-700">{fmt(totals.remitted)}</div>
 						<div className="text-xs text-gray-400">Outflow to GRA</div>
 					</div>
 					<div>
 						<div className="text-sm text-gray-500">Net Tax Position</div>
-						<div className="text-2xl font-semibold">GHS {totals.netPosition.toFixed(2)}</div>
+						<div className="text-2xl font-semibold">{fmt(totals.netPosition)}</div>
 						<div className="text-xs text-gray-400">Owed after offsets</div>
 					</div>
 				</CardBody>
@@ -103,11 +108,11 @@ export default function BooksTaxes() {
 							<TableCell>{r.period}</TableCell>
 							<TableCell>{r.taxName}</TableCell>
 							<TableCell>{r.glAccountCode}</TableCell>
-							<TableCell className="text-right text-green-700">GHS {r.outputCollected.toFixed(2)}</TableCell>
-							<TableCell className="text-right text-blue-700">GHS {r.inputOffset.toFixed(2)}</TableCell>
-							<TableCell className="text-right text-orange-700">GHS {r.payrollWithheld.toFixed(2)}</TableCell>
-							<TableCell className="text-right text-red-700">GHS {r.remitted.toFixed(2)}</TableCell>
-							<TableCell className="text-right font-medium">GHS {r.netPosition.toFixed(2)}</TableCell>
+							<TableCell className="text-right text-green-700">{fmt(r.outputCollected)}</TableCell>
+							<TableCell className="text-right text-blue-700">{fmt(r.inputOffset)}</TableCell>
+							<TableCell className="text-right text-orange-700">{fmt(r.payrollWithheld)}</TableCell>
+							<TableCell className="text-right text-red-700">{fmt(r.remitted)}</TableCell>
+							<TableCell className="text-right font-medium">{fmt(r.netPosition)}</TableCell>
 						</TableRow>
 					))}
 				</TableBody>

@@ -8,25 +8,7 @@ import {
   Tabs, Tab, Spinner, Alert, Progress, Pagination
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
-
-function downloadCSV(data: any[], filename: string, columns: { key: string; label: string }[]) {
-  const header = columns.map(c => c.label).join(',');
-  const rows = data.map(row =>
-    columns.map(c => {
-      const val = row[c.key];
-      const str = String(val ?? '').replace(/"/g, '""');
-      return str.includes(',') ? `"${str}"` : str;
-    }).join(',')
-  );
-  const csv = [header, ...rows].join('\n');
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = `${filename}_${new Date().toISOString().split('T')[0]}.csv`;
-  link.click();
-  URL.revokeObjectURL(url);
-}
+import { downloadCSV } from '@/app/lib/accounting/helpers/exportHelpers';
 
 export default function AuditControlsPage() {
   const {

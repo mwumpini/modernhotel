@@ -17,9 +17,14 @@ import {
 import BankReconciliation from './BankReconciliation';
 import type { BankTransaction } from '@/app/lib/accounting/models';
 import { BANK_MANUAL_SOURCE } from '@/app/lib/accounting/bankTransactionLedger';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 
-const formatAmount = (value: number | undefined | null) =>
-  (value ?? 0).toLocaleString();
+// formatAccountingCurrency always shows a magnitude (and the ₵ symbol), so the sign is
+// reattached in front of it here (balances/net cash flow can be negative).
+const formatAmount = (value: number | undefined | null) => {
+  const n = value ?? 0;
+  return (n < 0 ? '-' : '') + formatAccountingCurrency(n);
+};
 
 type BankAccountForm = {
   id?: string;
@@ -341,7 +346,7 @@ export default function BankCashManagementPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
         <Card>
           <CardBody className="text-center">
-            <div className="text-2xl font-bold text-green-600">₵{formatAmount(totalBankBalance)}</div>
+            <div className="text-2xl font-bold text-green-600">{formatAmount(totalBankBalance)}</div>
             <div className="text-sm text-gray-600">Total Bank Balance</div>
             <Progress value={100} size="sm" color="success" className="mt-2" />
           </CardBody>
@@ -349,7 +354,7 @@ export default function BankCashManagementPage() {
 
         <Card>
           <CardBody className="text-center">
-            <div className="text-2xl font-bold text-blue-600">₵{formatAmount(totalCash)}</div>
+            <div className="text-2xl font-bold text-blue-600">{formatAmount(totalCash)}</div>
             <div className="text-sm text-gray-600">Total Cash</div>
             <Progress value={100} size="sm" color="primary" className="mt-2" />
           </CardBody>
@@ -357,7 +362,7 @@ export default function BankCashManagementPage() {
 
         <Card>
           <CardBody className="text-center">
-            <div className="text-2xl font-bold text-green-600">₵{formatAmount(totalCashFlow)}</div>
+            <div className="text-2xl font-bold text-green-600">{formatAmount(totalCashFlow)}</div>
             <div className="text-sm text-gray-600">Net Cash Flow</div>
             <Progress value={75} size="sm" color="success" className="mt-2" />
           </CardBody>
@@ -414,8 +419,8 @@ export default function BankCashManagementPage() {
                           </div>
                         </TableCell>
                         <TableCell><span className="font-mono text-sm">{acc.currency}</span></TableCell>
-                        <TableCell className="text-right">₵{formatAmount(acc.openingBalance)}</TableCell>
-                        <TableCell className="text-right font-semibold">₵{formatAmount(acc.currentBalance)}</TableCell>
+                        <TableCell className="text-right">{formatAmount(acc.openingBalance)}</TableCell>
+                        <TableCell className="text-right font-semibold">{formatAmount(acc.currentBalance)}</TableCell>
                         <TableCell>
                           <Chip color={acc.isActive ? 'success' : 'danger'} variant="flat" size="sm">{acc.isActive ? 'Active' : 'Inactive'}</Chip>
                         </TableCell>
@@ -510,7 +515,7 @@ export default function BankCashManagementPage() {
                           <Chip variant="flat" size="sm">{txn.type}</Chip>
                         </TableCell>
                         <TableCell className={`text-right font-medium ${dir === 'in' ? 'text-green-600' : 'text-red-600'}`}>
-                          {dir === 'in' ? '+' : '−'}₵{formatAmount(txn.amount)}
+                          {dir === 'in' ? '+' : '−'}{formatAmount(txn.amount)}
                         </TableCell>
                         <TableCell>
                           <Chip color={txn.status === 'Reconciled' ? 'success' : txn.status === 'Cleared' ? 'primary' : 'warning'} variant="flat" size="sm">{txn.status}</Chip>

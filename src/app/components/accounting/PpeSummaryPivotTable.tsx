@@ -2,9 +2,12 @@
 
 import React, { useMemo, useState, useCallback } from 'react';
 import { Button, Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Checkbox } from '@heroui/react';
+import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { openPrintPreview } from '@/app/lib/accounting/helpers/exportHelpers';
 
-const fmt = (n: number) =>
-  `₵${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// formatAccountingCurrency always shows a magnitude, so the sign (disposals/negative
+// movements can occur in these pivot columns) is reattached in front of it here.
+const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
 
 const fmtRaw = (n: number) => n.toFixed(2);
 
@@ -124,11 +127,7 @@ function printPivotTable(
 </table>
 </body></html>`;
 
-  const win = window.open('', '_blank');
-  if (!win) return;
-  win.document.write(html);
-  win.document.close();
-  setTimeout(() => win.print(), 400);
+  openPrintPreview(html);
 }
 
 export default function PpeSummaryPivotTable({

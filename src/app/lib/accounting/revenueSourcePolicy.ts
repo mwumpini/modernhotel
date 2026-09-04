@@ -44,17 +44,6 @@ export function revenueSourceGroup(sourceModule?: string): 'folio_checkout' | 'd
   return 'unknown';
 }
 
-export function revenueSourceLabel(sourceModule?: string): string {
-  const g = revenueSourceGroup(sourceModule);
-  if (g === 'folio_checkout') {
-    if (sourceModule === REVENUE_SOURCE_GROUPS.GUEST_NOSHOW) return 'Guest folio (no-show penalty)';
-    return 'Guest folio (checkout)';
-  }
-  if (g === 'departmental') return `Departmental live (${sourceModule})`;
-  if (g === 'preset') return 'Accounting preset (NHIA / insurance)';
-  return sourceModule || 'Unspecified';
-}
-
 /**
  * Revenue P&L rollups: guest folio revenue at checkout/no-show; walk-in at departmental capture.
  * Excludes `front_office` operational folio builders that duplicate checkout.

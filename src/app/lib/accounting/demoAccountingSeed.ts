@@ -8,8 +8,6 @@ import type {
   BusinessPartner,
   BankAccount,
   BankTransaction,
-  FixedAsset,
-  DepreciationSchedule,
   AuditTrail,
 } from './models';
 
@@ -21,8 +19,6 @@ export type DemoTransactionSeed = {
   businessPartners: BusinessPartner[];
   bankAccounts: BankAccount[];
   bankTransactions: BankTransaction[];
-  fixedAssets: FixedAsset[];
-  depreciationSchedules: DepreciationSchedule[];
   auditTrail: AuditTrail[];
 };
 
@@ -1142,46 +1138,6 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
         }
       ];
 
-      // Initialize sample fixed assets
-      const sampleAssets: FixedAsset[] = [
-        {
-          id: 'FA-1',
-          assetNumber: 'FA-0001',
-          name: 'Hotel Furniture',
-          description: 'Lobby and room furniture',
-          category: 'Furniture & Fixtures',
-          purchaseDate: new Date(new Date().getFullYear(), 0, 15).toISOString(),
-          purchaseCost: 50000,
-          currency: 'GHS',
-          usefulLife: 5,
-          salvageValue: 5000,
-          depreciationMethod: 'Straight Line',
-          depreciationRate: 20,
-          accumulatedDepreciation: 10000,
-          netBookValue: 40000,
-          capitalAllowancePool: 'furniture',
-          accumulatedCapitalAllowance: 8000,
-          status: 'Active',
-          glAccountCode: '1510',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        }
-      ];
-
-      // Initialize sample depreciation schedule
-      const sampleDepSchedules: DepreciationSchedule[] = [
-        {
-          id: 'DS-1',
-          assetId: 'FA-1',
-          period: new Date().toISOString().slice(0,7),
-          depreciationAmount: 750,
-          accumulatedDepreciation: 10750,
-          netBookValue: 39250,
-          isPosted: false,
-          createdAt: new Date().toISOString()
-        }
-      ];
-
       const sampleAudit: AuditTrail[] = [
         { id: 'AT-1', tableName: 'JournalEntry', recordId: '1', action: 'Post', userId: 'admin', timestamp: new Date().toISOString() },
         { id: 'AT-2', tableName: 'Invoice', recordId: '1', action: 'Create', userId: 'admin', timestamp: new Date().toISOString() },
@@ -1275,8 +1231,6 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
     businessPartners: samplePartners,
     bankAccounts: sampleBankAccounts,
     bankTransactions: sampleBankTxns,
-    fixedAssets: sampleAssets,
-    depreciationSchedules: sampleDepSchedules,
     auditTrail: sampleAudit,
   };
 }
