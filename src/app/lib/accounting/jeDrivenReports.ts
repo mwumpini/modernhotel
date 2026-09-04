@@ -238,69 +238,6 @@ export function computeIncomeStatementFromJE(
   };
 }
 
-export type BalanceSheetJE = {
-  asOfPeriod: string;
-  asOfDate: string;
-  currentAssets: number;
-  fixedAssets: number;
-  totalAssets: number;
-  currentLiabilities: number;
-  longTermLiabilities: number;
-  totalLiabilities: number;
-  totalEquityLedger: number;
-  totalEquity: number;
-  totalLiabilitiesAndEquity: number;
-  balanced: boolean;
-  imbalance: number;
-};
-
-function sumByCategory(nodes: AccountNode[], test: (cat: string) => boolean): number {
-  return nodes.filter((n) => test((n.category || '').toLowerCase())).reduce((s, n) => s + n.balance, 0);
-}
-
-export function computeBalanceSheetFromJE(
-  chartOfAccounts: ChartOfAccounts[],
-  journalEntries: JournalEntry[],
-  rollupFallback: RollupCoa[],
-  period: string
-): BalanceSheetJE {
-  const rollup = coaToRollup(chartOfAccounts, rollupFallback);
-  const { endDate } = periodToMonthRange(period);
-  const tree = buildFinancialAccountTree(rollup, journalEntries, { kind: 'cumulative', endDate });
-  const assets = tree.filter((n) => n.type === 'Asset');
-  const liabilities = tree.filter((n) => n.type === 'Liability');
-  const equity = tree.filter((n) => n.type === 'Equity');
-
-  const totalAssets = assets.reduce((s, n) => s + n.balance, 0);
-  const totalLiabilities = liabilities.reduce((s, n) => s + n.balance, 0);
-  const totalEquityLedger = equity.reduce((s, n) => s + n.balance, 0);
-  const totalEquity = totalAssets - totalLiabilities;
-  const totalLiabilitiesAndEquity = totalLiabilities + totalEquity;
-  const imbalance = totalAssets - totalLiabilitiesAndEquity;
-
-  const currentAssets = sumByCategory(assets, (c) => c.includes('current'));
-  const fixedAssets = sumByCategory(assets, (c) => c.includes('fixed'));
-  const currentLiabilities = sumByCategory(liabilities, (c) => c.includes('current'));
-  const longTermLiabilities = Math.max(0, totalLiabilities - currentLiabilities);
-
-  return {
-    asOfPeriod: period,
-    asOfDate: endDate.toISOString().slice(0, 10),
-    currentAssets,
-    fixedAssets,
-    totalAssets,
-    currentLiabilities,
-    longTermLiabilities,
-    totalLiabilities,
-    totalEquityLedger,
-    totalEquity,
-    totalLiabilitiesAndEquity,
-    // Matches the 0.01 tolerance used throughout FinancialReports.tsx's own balance checks.
-    balanced: Math.abs(imbalance) < 0.01,
-    imbalance,
-  };
-}
-
 export type CashFlowJE = {
   operatingCashFlow: number;
   investingCashFlow: number;

@@ -17,7 +17,6 @@ import {
 } from '../src/app/lib/accounting/periodClose';
 import {
   isAuthoritativeRevenueSource,
-  shouldIncludeJeLineInRevenueRollup,
 } from '../src/app/lib/accounting/revenueSourcePolicy';
 import type { Invoice, JournalEntry, Payment } from '../src/app/lib/accounting/models';
 import { defaultRollupCoa } from '../src/app/lib/accounting/jeDrivenReports';
@@ -78,7 +77,7 @@ function assert(cond: boolean, msg: string) {
   assert(result.ok, 'sales JE built');
   if (result.ok) {
     assert(result.entry.totalDebit === result.entry.totalCredit, 'sales JE balanced');
-    assert(result.entry.lines.some((l) => l.accountCode === '1200' && l.debit === 605), 'Dr AR');
+    assert(result.entry.lines.some((l) => l.accountCode === '1210' && l.debit === 605), 'Dr AR');
     assert(result.entry.sourceModule === MANUAL_AR_AP_SOURCE, 'manual source tag');
   }
 }
@@ -192,14 +191,15 @@ function assert(cond: boolean, msg: string) {
   }
 }
 
-// Revenue rollup policy (regression)
+// Revenue source classification (regression). Note: this classification is no longer
+// wired into the rollup itself (financialReportRollup.ts) — a line-level exclusion
+// there let a non-authoritative entry's Revenue line drop out while its AR/tax lines
+// stayed in, breaking debit=credit for the Trial Balance/Balance Check. Every posted
+// entry's lines are now included in full, unconditionally; isAuthoritativeRevenueSource
+// remains as source-module classification for other policy decisions.
 {
-  const checkoutJe = { sourceModule: 'front_office_checkout' } as JournalEntry;
-  const foJe = { sourceModule: 'front_office' } as JournalEntry;
   assert(isAuthoritativeRevenueSource('front_office_checkout'), 'checkout authoritative');
   assert(!isAuthoritativeRevenueSource('front_office'), 'fo builder excluded');
-  assert(shouldIncludeJeLineInRevenueRollup(checkoutJe, 'Revenue'), 'checkout in rollup');
-  assert(!shouldIncludeJeLineInRevenueRollup(foJe, 'Revenue'), 'fo revenue excluded');
 }
 
 // Linked JE detection prevents re-post

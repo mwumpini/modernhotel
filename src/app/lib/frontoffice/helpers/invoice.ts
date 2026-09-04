@@ -69,9 +69,13 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
     total,
     roundingAdjustment,
     currency: 'GHS',
-    status: balance === 0 ? 'Paid' : 'Posted',
-    paidAmount: Math.min(total, paid),
-    paidDate: balance === 0 ? new Date().toISOString() : undefined,
+    // paidAmount/status start at zero/Posted — the payment loop right below calls
+    // accounting.addPayment() for every folio payment, and addPayment() is what
+    // actually increments paidAmount and flips status to 'Paid' once it's covered.
+    // Pre-baking the folio's paid total here too would double-count it the moment
+    // the first addPayment() call lands on top.
+    status: 'Posted',
+    paidAmount: 0,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     lines,

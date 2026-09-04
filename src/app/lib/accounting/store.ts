@@ -24,7 +24,6 @@ import type { Supplier } from '../inventory/models';
 import {
   computeTrialBalanceGLBalances,
   computeIncomeStatementFromJE,
-  computeBalanceSheetFromJE,
   computeCashFlowForPeriod,
   defaultRollupCoa,
 } from './jeDrivenReports';
@@ -303,7 +302,6 @@ interface AccountingState {
   getAccountBalances: (period?: string) => GLBalance[];
   getTrialBalance: (period?: string) => GLBalance[];
   getIncomeStatement: (period: string) => any;
-  getBalanceSheet: (period: string) => any;
   getCashFlow: (period: string) => any;
   
   // Tax Calculations
@@ -2744,13 +2742,6 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     const p = period || st.currentPeriod;
     const rollup = defaultRollupCoa();
     return computeIncomeStatementFromJE(st.chartOfAccounts, st.journalEntries, rollup, p);
-  },
-
-  getBalanceSheet: (period) => {
-    const st = get();
-    const p = period || st.currentPeriod;
-    const rollup = defaultRollupCoa();
-    return computeBalanceSheetFromJE(st.chartOfAccounts, st.journalEntries, rollup, p);
   },
 
   getCashFlow: (period) => {

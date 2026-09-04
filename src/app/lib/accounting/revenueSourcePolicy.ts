@@ -8,8 +8,6 @@
  * Walk-in / events revenue: departmental capture at point of sale.
  */
 
-import type { JournalEntry } from './models';
-
 export const REVENUE_SOURCE_GROUPS = {
   /** One invoice + JEs at guest checkout; authoritative for room/charges on that folio */
   GUEST_FOLIO_CHECKOUT: 'front_office_checkout',
@@ -55,13 +53,4 @@ export function isAuthoritativeRevenueSource(sourceModule?: string): boolean {
   if (sourceModule === 'front_office') return false;
   if ((REVENUE_SOURCE_GROUPS.DEPARTMENTAL_REALTIME as readonly string[]).includes(sourceModule)) return true;
   return true;
-}
-
-/** When rolling up Revenue accounts, skip JEs from non-authoritative sources. */
-export function shouldIncludeJeLineInRevenueRollup(
-  je: JournalEntry,
-  accountType: string | undefined,
-): boolean {
-  if (accountType !== 'Revenue') return true;
-  return isAuthoritativeRevenueSource(je.sourceModule);
 }

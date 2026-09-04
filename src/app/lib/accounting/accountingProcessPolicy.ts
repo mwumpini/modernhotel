@@ -13,7 +13,6 @@ import {
   REVENUE_SOURCE_GROUPS,
   isAuthoritativeRevenueSource,
   revenueSourceGroup,
-  shouldIncludeJeLineInRevenueRollup,
 } from './revenueSourcePolicy';
 
 export {
@@ -21,7 +20,6 @@ export {
   REVENUE_SOURCE_GROUPS,
   isAuthoritativeRevenueSource,
   revenueSourceGroup,
-  shouldIncludeJeLineInRevenueRollup,
 };
 
 /** Sources that create invoice + JE together in integration.ts */

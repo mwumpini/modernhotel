@@ -159,7 +159,7 @@ export function postGuestFolioCheckoutToLedger(params: {
     reference: params.reference,
     description: `Guest folio posted — ${params.invoiceNumber}`,
     totalDebit: sumDebit,
-    totalCredit: sumDebit,
+    totalCredit: sumCredit,
     currency: 'GHS',
     status: 'Posted' as const,
     postedBy: 'system',

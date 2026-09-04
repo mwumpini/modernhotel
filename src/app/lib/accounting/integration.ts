@@ -307,46 +307,12 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
           }))
         : [];
     
-    const invoice = {
-      id: invoiceId,
-      invoiceNumber,
-      type: 'Sales' as const,
-      date: transactionDate,
-      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
-      businessPartnerId: transaction.customerId || `GUEST-${Date.now()}`,
-      reference: transaction.reference,
-      description: transaction.description,
-      subtotal: transaction.subtotal,
-      taxAmount: transaction.taxAmount,
-      total: transaction.total,
-      taxBreakdown, // Store tax breakdown for display
-      currency: transaction.currency || 'GHS',
-      status: 'Posted' as const,
-      paidAmount: 0,
-      createdAt: now,
-      updatedAt: now,
-      lines: invoiceLines,
-      items: transaction.items, // Store original items for display
-      // Extended fields for tracking
-      sourceModule: transaction.source,
-      customerName: transaction.customerName,
-      customerEmail: transaction.customerEmail,
-      customerPhone: transaction.customerPhone,
-      // Staff who processed the transaction
-      staffId: transaction.staffId,
-      staffName: transaction.staffName,
-      staffRole: transaction.staffRole,
-    };
-    
-    store.addInvoice(invoice as any);
-    console.log(`[Accounting Integration] Created Sales Invoice: ${invoiceNumber}`);
-    
-    // 2. Record to Revenue Center
+    // 2. Build the Journal Entry (Dr: AR, Cr: Revenue, Cr: each tax payable per
+    // TaxConfig) BEFORE touching the invoice — tax computation is the step most
+    // likely to throw on bad config data, and building+validating it first means
+    // nothing gets committed at all if it fails, instead of leaving a "Posted"
+    // invoice behind with no journal entry ever backing it.
     const revenueCenterCode = getRevenueCenterCode(transaction.source);
-    store.recordRevenue(revenueCenterCode, transaction.subtotal);
-    console.log(`[Accounting Integration] Recorded revenue to center: ${revenueCenterCode}, Amount: ${transaction.subtotal}`);
-    
-    // 3. Create Journal Entry (Dr: AR, Cr: Revenue, Cr: each tax payable per TaxConfig)
     const journalEntryId = `JE-${transaction.source.toUpperCase()}-${transaction.id}`;
     let jlSeq = 0;
     const nextJeLineId = () => `JL-${journalEntryId}-${++jlSeq}-${Math.random().toString(36).slice(2, 7)}`;
@@ -382,7 +348,19 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
         costCenter: revenueCenterCode,
       });
     }
-    
+
+    const lineDebit = journalLines.reduce((s, l) => s + (l.debit || 0), 0);
+    const lineCredit = journalLines.reduce((s, l) => s + (l.credit || 0), 0);
+    if (Math.abs(lineDebit - lineCredit) > 0.02) {
+      console.error('[Accounting Integration] Revenue JE not balanced — capture aborted, nothing posted', { lineDebit, lineCredit, transaction });
+      logAccountingProcessError('AccountingCapture', 'Revenue capture aborted — unbalanced JE', {
+        source: transaction.source,
+        lineDebit,
+        lineCredit,
+      });
+      return null;
+    }
+
     const journalEntry = {
       id: journalEntryId,
       entryNumber: `JE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`,
@@ -391,8 +369,8 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
       reference: transaction.reference || invoiceNumber,
       status: 'Posted' as const,
       lines: journalLines,
-      totalDebit: transaction.total,
-      totalCredit: transaction.total,
+      totalDebit: lineDebit,
+      totalCredit: lineCredit,
       createdBy: 'system',
       postedBy: 'system',
       postedAt: now,
@@ -401,9 +379,48 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
       sourceModule: transaction.source,
       sourceTransactionId: transaction.id,
     };
-    
+
+    // 3. Now commit — invoice and its journal entry together, back to back, with
+    // nothing left that can throw in between.
+    const invoice = {
+      id: invoiceId,
+      invoiceNumber,
+      type: 'Sales' as const,
+      date: transactionDate,
+      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+      businessPartnerId: transaction.customerId || `GUEST-${Date.now()}`,
+      reference: transaction.reference,
+      description: transaction.description,
+      subtotal: transaction.subtotal,
+      taxAmount: transaction.taxAmount,
+      total: transaction.total,
+      taxBreakdown, // Store tax breakdown for display
+      currency: transaction.currency || 'GHS',
+      status: 'Posted' as const,
+      paidAmount: 0,
+      createdAt: now,
+      updatedAt: now,
+      lines: invoiceLines,
+      items: transaction.items, // Store original items for display
+      journalEntryId,
+      // Extended fields for tracking
+      sourceModule: transaction.source,
+      customerName: transaction.customerName,
+      customerEmail: transaction.customerEmail,
+      customerPhone: transaction.customerPhone,
+      // Staff who processed the transaction
+      staffId: transaction.staffId,
+      staffName: transaction.staffName,
+      staffRole: transaction.staffRole,
+    };
+
+    store.addInvoice(invoice as any);
+    console.log(`[Accounting Integration] Created Sales Invoice: ${invoiceNumber}`);
+
+    store.recordRevenue(revenueCenterCode, transaction.subtotal);
+    console.log(`[Accounting Integration] Recorded revenue to center: ${revenueCenterCode}, Amount: ${transaction.subtotal}`);
+
     store.addJournalEntry(journalEntry as any);
-    store.updateInvoice(invoiceId, { journalEntryId });
     console.log(`[Accounting Integration] Posted Journal Entry: ${journalEntry.entryNumber}`);
     
     // 4. Add Audit Trail

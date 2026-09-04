@@ -14,6 +14,7 @@ import { useStockStore } from '@/app/lib/inventory/stockStore';
 import { computePurchaseTax } from '@/app/lib/tax/engine';
 import { computeServiceWht } from '@/app/lib/accounting/purchaseWht';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { filterFinanceApInvoices } from '@/app/lib/accounting/apSubledger';
 
 export default function AccountsPayablePage() {
   const {
@@ -101,18 +102,23 @@ export default function AccountsPayablePage() {
       .reduce((sum, payment) => sum + payment.amount, 0);
   }, [payments]);
 
+  // Filter purchase invoices — excludes Draft/Void, which have no GL impact and
+  // shouldn't count toward payables/aging any more than a Draft/Void sale counts
+  // toward receivables (see arSubledger.ts's isFinanceArInvoice, its AR mirror).
+  const purchaseInvoices = useMemo(() => {
+    return filterFinanceApInvoices(invoices);
+  }, [invoices]);
+
   // Total Payables = sum of per-invoice balances (total − paidAmount on each invoice)
   const totalPayables = useMemo(() => {
-    return invoices
-      .filter(invoice => invoice.type === 'Purchase')
+    return purchaseInvoices
       .reduce((sum, invoice) => sum + Math.max(0, (invoice.total || 0) - (invoice.paidAmount || 0)), 0);
-  }, [invoices]);
+  }, [purchaseInvoices]);
 
   // Overdue = the portion of totalPayables whose due date has already passed
   const totalOverduePayables = useMemo(() => {
     const now = new Date();
-    return invoices
-      .filter(invoice => invoice.type === 'Purchase')
+    return purchaseInvoices
       .reduce((sum, invoice) => {
         const balance = Math.max(0, (invoice.total || 0) - (invoice.paidAmount || 0));
         if (balance <= 0) return sum;
@@ -120,19 +126,14 @@ export default function AccountsPayablePage() {
         const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
         return daysOverdue > 0 ? sum + balance : sum;
       }, 0);
-  }, [invoices]);
+  }, [purchaseInvoices]);
 
   // Filter suppliers
   const suppliers = useMemo(() => {
-    return businessPartners.filter(partner => 
+    return businessPartners.filter(partner =>
       partner.type === 'Supplier' || partner.type === 'Both'
     );
   }, [businessPartners]);
-
-  // Filter purchase invoices
-  const purchaseInvoices = useMemo(() => {
-    return invoices.filter(invoice => invoice.type === 'Purchase');
-  }, [invoices]);
 
   // Filter payments
   const supplierPayments = useMemo(() => {
@@ -505,11 +506,16 @@ export default function AccountsPayablePage() {
                       const supplierPaymentsFiltered = supplierPayments.filter(pay => pay.businessPartnerId === supplier.id);
                       const totalInvoiced = supplierInvoices.reduce((sum, inv) => sum + inv.total, 0);
                       const totalPaid = supplierPaymentsFiltered.reduce((sum, pay) => sum + pay.amount, 0);
-                      const lastInvoiceDate = supplierInvoices.length > 0 ? 
+                      const lastInvoiceDate = supplierInvoices.length > 0 ?
                         new Date(Math.max(...supplierInvoices.map(inv => new Date(inv.date).getTime()))).toISOString().slice(0,10) : null;
-                      const lastPaymentDate = supplierPaymentsFiltered.length > 0 ? 
+                      const lastPaymentDate = supplierPaymentsFiltered.length > 0 ?
                         new Date(Math.max(...supplierPaymentsFiltered.map(pay => new Date(pay.date).getTime()))).toISOString().slice(0,10) : null;
-                      
+                      // supplier.balance is a stored field nudged by many scattered call sites and
+                      // directly hand-editable — it can and does drift from the real invoice-derived
+                      // balance. Use the same live computation the Aging tab already gets right,
+                      // instead of a second, unreliable number for the same thing.
+                      const outstandingBalance = supplierAging.find(a => a.id === supplier.id)?.outstandingBalance ?? 0;
+
                       return (
                         <TableRow key={supplier.id}>
                           <TableCell>
@@ -534,8 +540,8 @@ export default function AccountsPayablePage() {
                             <div className="font-medium">{formatAccountingCurrency((supplier.creditLimit || 0))}</div>
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className={`font-semibold ${supplier.balance >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                              {formatAccountingCurrency(Math.abs(supplier.balance))}
+                            <div className={`font-semibold ${outstandingBalance >= 0 ? 'text-red-600' : 'text-green-600'}`}>
+                              {formatAccountingCurrency(Math.abs(outstandingBalance))}
                             </div>
                           </TableCell>
                           <TableCell>
@@ -550,17 +556,17 @@ export default function AccountsPayablePage() {
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Chip 
+                            <Chip
                               color={
-                                supplier.balance > (supplier.creditLimit || 0) ? 'danger' : 
-                                supplier.balance > 0 ? 'warning' : 
+                                outstandingBalance > (supplier.creditLimit || 0) ? 'danger' :
+                                outstandingBalance > 0 ? 'warning' :
                                 'success'
-                              } 
-                              variant="flat" 
+                              }
+                              variant="flat"
                               size="sm"
                             >
-                              {supplier.balance > (supplier.creditLimit || 0) ? 'Over Limit' : 
-                               supplier.balance > 0 ? 'Outstanding' : 
+                              {outstandingBalance > (supplier.creditLimit || 0) ? 'Over Limit' :
+                               outstandingBalance > 0 ? 'Outstanding' :
                                'Current'}
                             </Chip>
                           </TableCell>
@@ -588,7 +594,7 @@ export default function AccountsPayablePage() {
                                                 supplier.paymentTerms === 60 ? 'net60' :
                                                 supplier.paymentTerms === 90 ? 'net90' : 'net30',
                                   creditLimit: supplier.creditLimit || 0,
-                                  currentBalance: supplier.balance || 0,
+                                  currentBalance: outstandingBalance,
                                   rating: 0, // BusinessPartner doesn't have rating
                                   categories: [], // BusinessPartner doesn't have categories
                                   isActive: supplier.isActive !== undefined ? supplier.isActive : true
@@ -596,8 +602,8 @@ export default function AccountsPayablePage() {
                                 setIsOpen(true); 
                               }}>✏️ Edit</Button>
                               <Button size="sm" color="primary" variant="bordered" onClick={() => openNewInvoiceFor(supplier.id)}>📄 Invoice</Button>
-                              {supplier.balance > 0 && (
-                                <Button size="sm" color="danger" variant="bordered" onClick={() => openNewPaymentFor(supplier.id, supplier.balance, `Payment to ${supplier.name}`)}>💳 Payment</Button>
+                              {outstandingBalance > 0 && (
+                                <Button size="sm" color="danger" variant="bordered" onClick={() => openNewPaymentFor(supplier.id, outstandingBalance, `Payment to ${supplier.name}`)}>💳 Payment</Button>
                               )}
                             </div>
                           </TableCell>

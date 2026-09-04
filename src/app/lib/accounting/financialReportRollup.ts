@@ -1,7 +1,6 @@
 import type { JournalEntry } from './models';
 import { isBankOrCashGlCode } from './bankCoaLink';
 import { enrichRollupCoaParents, codeNum } from './coaHierarchy';
-import { shouldIncludeJeLineInRevenueRollup } from './revenueSourcePolicy';
 import { CLOSE_SOURCE } from './periodClose';
 
 /** Minimal COA row for roll-ups (store or template). */
@@ -222,11 +221,21 @@ export function buildFinancialAccountTree(allAccounts: RollupCoa[], journalEntri
     // close date, suppressing the very figures the close is supposed to summarize.
     if (mode.kind === 'period' && je.sourceModule === CLOSE_SOURCE) return;
 
+    // Every line of every posted-and-in-range entry is included, unconditionally —
+    // this function backs the Trial Balance / Balance Check as well as the Income
+    // Statement and Balance Sheet, and debit=credit across a set of complete,
+    // individually-balanced entries only holds if lines are never selectively
+    // dropped. An earlier version filtered out non-"authoritative" revenue lines
+    // here to avoid double-counting a hypothetical duplicate posting — but doing
+    // that while keeping that same entry's AR/tax lines is exactly what broke the
+    // invariant (a real, structural Balance Check blind spot, confirmed by audit,
+    // even though no current code path actually triggers it). If revenue
+    // double-counting across posting paths ever becomes real, it needs a
+    // dedicated, entry-level guard at POST time (reject/merge the duplicate
+    // entry before it's ever written) — not a line-level filter applied after
+    // the fact inside the rollup that every report and integrity check relies on.
     je.lines.forEach((line) => {
       const code = line.accountCode;
-      const accType = allAccounts.find((a) => a.code === code)?.type;
-      if (!shouldIncludeJeLineInRevenueRollup(je, accType)) return;
-
       if (!accountBalances[code]) {
         accountBalances[code] = { debit: 0, credit: 0 };
       }

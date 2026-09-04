@@ -61,11 +61,15 @@ export async function listJournalEntries(tenantId: string): Promise<JournalEntry
 
 export async function createJournalEntry(tenantId: string, je: Partial<JournalEntry>): Promise<JournalEntry> {
   if (!je.entryNumber) throw new Error('entryNumber is required')
-  const totalDebit = je.totalDebit ?? 0
-  const totalCredit = je.totalCredit ?? 0
-  if (Math.abs(totalDebit - totalCredit) > 0.01) {
+  // Sum the actual lines rather than trusting the caller's totalDebit/totalCredit
+  // summary fields — a caller could (and one live path did) mislabel those while
+  // the real lines were still fine, or vice versa. The lines are what actually get
+  // persisted and what every GL balance/report is computed from.
+  const lineDebit = (je.lines || []).reduce((s, l) => s + (l.debit ?? 0), 0)
+  const lineCredit = (je.lines || []).reduce((s, l) => s + (l.credit ?? 0), 0)
+  if (Math.abs(lineDebit - lineCredit) > 0.01) {
     throw new Error(
-      `Journal entry is unbalanced: debits ${totalDebit.toFixed(2)} ≠ credits ${totalCredit.toFixed(2)}`
+      `Journal entry is unbalanced: line debits ${lineDebit.toFixed(2)} ≠ line credits ${lineCredit.toFixed(2)}`
     )
   }
   const row = await prisma.journalEntry.create({

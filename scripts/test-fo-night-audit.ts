@@ -15,9 +15,7 @@ import {
 import { getZonedClockParts, formatPropertyClockStamp } from '../src/app/lib/frontoffice/propertyTime';
 import {
   isAuthoritativeRevenueSource,
-  shouldIncludeJeLineInRevenueRollup,
 } from '../src/app/lib/accounting/revenueSourcePolicy';
-import type { JournalEntry } from '../src/app/lib/accounting/models';
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(`FAIL: ${msg}`);
@@ -116,15 +114,14 @@ assert(!isRoomLine('Restaurant'), 'non-room');
   assert(formatPropertyClockStamp(oneAm, tz).includes('1:01'), `stamp ${formatPropertyClockStamp(oneAm, tz)}`);
 }
 
-// Revenue rollup source policy
+// Revenue source classification. Note: no longer wired into the financial-report
+// rollup itself — a line-level exclusion there let a non-authoritative entry's
+// Revenue line drop while its Asset/AR lines stayed in, breaking debit=credit for
+// the Trial Balance/Balance Check. Every posted entry's lines are now included in
+// full; this classification remains for other policy decisions only.
 {
-  const checkoutJe = { sourceModule: 'front_office_checkout' } as JournalEntry;
-  const foJe = { sourceModule: 'front_office' } as JournalEntry;
   assert(isAuthoritativeRevenueSource('front_office_checkout'), 'checkout ok');
   assert(!isAuthoritativeRevenueSource('front_office'), 'fo builder excluded');
-  assert(shouldIncludeJeLineInRevenueRollup(checkoutJe, 'Revenue'), 'checkout revenue line');
-  assert(!shouldIncludeJeLineInRevenueRollup(foJe, 'Revenue'), 'fo revenue excluded');
-  assert(shouldIncludeJeLineInRevenueRollup(foJe, 'Asset'), 'fo asset lines still included');
 }
 
 console.log('All front-office night-audit regression checks passed.');
