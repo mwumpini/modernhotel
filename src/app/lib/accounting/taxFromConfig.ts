@@ -1,6 +1,20 @@
 /**
  * Tax amounts + GL accounts from `TaxConfig[]` (store / settings).
- * Stacking: pre-VAT levies (NHIL, GETFund, Tourism, …) on tax-exclusive base; VAT on (exclusive + sum(pre-VAT)).
+ *
+ * Basis: VAT, NHIL, GETFund, Tourism (and any "Other") are each computed
+ * independently on the plain tax-exclusive base — none of them feed into
+ * another's base. This matches the Value Added Tax Act, 2025 (Act 1151,
+ * effective 1 Jan 2026), which recoupled NHIL/GETFund with VAT onto one flat
+ * base and scrapped the old cascading calculation (NHIL+GETFund+COVID added
+ * to the price first, VAT then charged on top of that). A ₵1,000 taxable
+ * sale now produces VAT 150 + NHIL 25 + GETFund 25 = ₵200 tax, not the old
+ * cascaded ~₵206. The Tourism Development Levy was never part of the VAT
+ * base even under the old law (Tourism Levy Regulations 2012, L.I. 2185 —
+ * calculated on the VAT-exclusive net price, remitted to the Ghana Tourism
+ * Authority, not GRA) — it was already meant to be independent; this fixes
+ * a pre-existing bug where this file folded it in alongside NHIL/GETFund.
+ * The COVID-19 Health Recovery Levy was abolished by the same Act; its
+ * template rate is already 0 (see GHANA_TAX_CODES in models.ts).
  * Withholding is excluded from automatic stacks unless you add dedicated flows.
  */
 
@@ -160,7 +174,9 @@ export function computeStackedTaxLines(
 
   const buildRawLines = (): StackedTaxLine[] => {
     const out: StackedTaxLine[] = [];
-    let preSum = 0;
+    // NHIL/GETFund/Tourism/Other each apply to the plain net amount — none of
+    // them compound into another's base (see file header: Act 1151 recoupled
+    // NHIL/GETFund onto VAT's own flat base; Tourism was always independent).
     for (const c of preVat) {
       const amount = roundMoney2(net * (c.rate / 100));
       if (amount <= 0) continue;
@@ -172,11 +188,9 @@ export function computeStackedTaxLines(
         amount,
         glAccountCode: c.glAccountCode,
       });
-      preSum += amount;
     }
-    const vatBase = net + preSum;
     if (vatCfg) {
-      const vatAmt = roundMoney2(vatBase * (vatCfg.rate / 100));
+      const vatAmt = roundMoney2(net * (vatCfg.rate / 100));
       if (vatAmt > 0) {
         out.push({
           taxCode: vatCfg.code,
