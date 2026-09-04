@@ -622,6 +622,7 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '5665', name: 'Hiring Charges', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5670', name: 'Cleaning and Sanitation', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5675', name: 'Audit Fees', type: 'Expense', category: 'Expenses', level: 3 },
+  { code: '5680', name: 'Miscellaneous Expenses', type: 'Expense', category: 'Expenses', level: 3, description: 'Catch-all for purchase/expense lines with no more specific category — the expense-side mirror of Other Revenue (4300)' },
   { code: '5700', name: 'Depreciation Expense', type: 'Expense', category: 'Expenses', level: 2 },
   { code: '5710', name: 'Depreciation - Property & Equipment', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5800', name: 'Tax Expenses', type: 'Expense', category: 'Expenses', level: 2 },

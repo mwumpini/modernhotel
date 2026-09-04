@@ -4,12 +4,11 @@ export const BANK_MANUAL_SOURCE = 'bank_manual_transaction';
 export const BANK_MANUAL_REVERSAL_SOURCE = 'bank_manual_reversal';
 
 const GL_OTHER_REVENUE = '4300';
-// '5000' is the real top-level Operating Expenses account in the prebuilt Chart of
-// Accounts (models.ts) — this used to say '6000', a code that doesn't exist anywhere
-// in the chart, so every manual bank withdrawal posted through here silently vanished
-// from every financial report (Balance Sheet, Income Statement, Trial Balance) while
-// still being a real, posted, unbalanced-looking journal entry.
-const GL_OPERATING_EXPENSE = '5000';
+// '5000' ("Operating Expenses") is the top-level header for the whole Expense
+// type, not a postable leaf — posting here still doesn't land in any specific
+// report line. '5680' ("Miscellaneous Expenses") is the real catch-all leaf
+// for an uncategorized manual bank withdrawal, mirroring GL_OTHER_REVENUE.
+const GL_OPERATING_EXPENSE = '5680';
 const GL_INTEREST_INCOME = '4300';
 const GL_BANK_CHARGES = '5625';
 

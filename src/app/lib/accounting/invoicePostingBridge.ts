@@ -29,13 +29,9 @@ const GL = {
   WHT_RECEIVABLE: '1230',
   WHT_VAT_RECEIVABLE: '1240',
   WHT_PAYABLE: GHANA_TAX_CODES.WITHHOLDING.glCode,
-  // '5000' is "Operating Expenses" — the top-level header for the whole Expense
-  // type, not a postable leaf. The chart has no generic catch-all expense leaf
-  // (every 5xxx leaf is a specific category like Utilities/Repairs/Admin), so
-  // any purchase invoice line without its own glAccountCode still has nowhere
-  // correct to land. Needs either a new "Miscellaneous Expense" leaf added to
-  // the chart, or requiring a category on every manual expense line.
-  EXPENSE: '5000',
+  // Catch-all leaf for a purchase invoice line with no glAccountCode of its
+  // own — the expense-side mirror of SALES_REVENUE/4300 on the revenue side.
+  EXPENSE: '5680',
 } as const;
 
 function nowIso(): string {

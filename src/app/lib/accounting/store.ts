@@ -2842,10 +2842,21 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         return Array.from(m.values());
       };
 
-      /** First visit: load prebuilt COA. After that: keep user edits (incl. deletions). */
+      // Codes added to the default chart after a tenant's first visit — resolveChartOfAccounts
+      // otherwise never touches an existing tenant's COA again (by design, to preserve user
+      // edits/deletions), so a brand-new default leaf would silently never reach them.
+      // Backfill by code only; never overwrites a code the tenant already has (incl. if they
+      // deliberately deleted it).
+      const BACKFILL_COA_CODES = ['5680']; // Miscellaneous Expenses — catch-all posting target
+
+      /** First visit: load prebuilt COA. After that: keep user edits (incl. deletions), backfilling only newly-added default codes. */
       const resolveChartOfAccounts = (seed: ChartOfAccounts[], existing: ChartOfAccounts[]) => {
         if (existing.length === 0 && seed.length > 0) return normalizeCoaList(seed);
-        if (existing.length > 0) return normalizeCoaList(existing);
+        if (existing.length > 0) {
+          const existingCodes = new Set(existing.map((a) => a.code));
+          const backfill = seed.filter((a) => BACKFILL_COA_CODES.includes(a.code) && !existingCodes.has(a.code));
+          return normalizeCoaList(backfill.length ? [...existing, ...backfill] : existing);
+        }
         return normalizeCoaList(seed);
       };
 
