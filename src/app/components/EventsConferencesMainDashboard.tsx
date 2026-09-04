@@ -57,7 +57,7 @@ import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import { listBuiltInTemplates } from '../lib/print/blockDefaults';
 import { useSettingsStore } from '../lib/settings/store';
 import { useAccountingStore } from '../lib/accounting/store';
-import { captureRevenue, capturePayment } from '../lib/accounting/integration';
+import { captureRevenue, capturePayment, recognizeDeferredRevenue } from '../lib/accounting/integration';
 import { computeQuoteTax, exclusiveFromGross } from '../lib/tax/engine';
 import EventsModuleFilters, {
   matchesEventsDateFilter,
@@ -3648,10 +3648,16 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
               taxAmount: totals.tax,
               total: totals.total,
               date: new Date().toISOString(),
+            }, {
+              // Confirming a booking isn't delivering the event — the money is
+              // committed/collected now, but not earned until the event actually
+              // happens. Held as Deferred Revenue until markEventAsCompleted()
+              // recognizes it (see checkInEventGroup/markEventAsCompleted below).
+              deferred: true,
             });
 
             if (result) {
-              console.log(`[Events] ✅ Booking revenue captured - Invoice: ${result.invoiceId}`);
+              console.log(`[Events] ✅ Booking revenue captured (deferred) - Invoice: ${result.invoiceId}`);
             }
           } else {
             console.log('[Events] Skipping confirm revenue — Events invoice already exists for', uiEvent.id);
@@ -7216,9 +7222,14 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         date: invoice.issueDate,
         staffName: 'Events Team',
         staffRole: 'Events Coordinator',
+      }, {
+        // Same reasoning as the confirm-time capture: billing an event ahead of
+        // its actual date isn't earning the revenue yet. Recognized at
+        // markEventAsCompleted() via recognizeDeferredRevenue().
+        deferred: true,
       });
       if (result) {
-        console.log(`[Events] ✅ Invoice synced to accounting: ${result.invoiceId}`);
+        console.log(`[Events] ✅ Invoice synced to accounting (deferred): ${result.invoiceId}`);
       }
       return result;
     } catch (error) {
@@ -9645,10 +9656,23 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       };
       
       // This will trigger allEvents to recompute, which will then trigger managedEvents to recompute
-      setCustomEvents(prev => prev.map(ev => 
+      setCustomEvents(prev => prev.map(ev =>
         ev.id === event.id ? updatedEvent : ev
       ));
-      
+
+      // The event is actually delivered now — reclassify whatever confirm-time
+      // revenue was held as Deferred Revenue into real, recognized revenue.
+      // No-ops cleanly if this event was never confirmed (nothing was deferred)
+      // or was already recognized (re-completing an already-completed event).
+      try {
+        const recognized = recognizeDeferredRevenue('conference', event.id, `${updatedEvent.eventName || event.eventName || 'Event'} — delivered`);
+        if (recognized) {
+          console.log(`[Events] ✅ Deferred revenue recognized — JE(s): ${recognized.journalEntryIds.join(', ')}`);
+        }
+      } catch (e) {
+        console.warn('[Events] Deferred revenue recognition failed', e);
+      }
+
       // Auto-create folio if it doesn't exist
       const existingFolio = eventFolios.find(f => f.eventId === event.id);
       if (!existingFolio) {

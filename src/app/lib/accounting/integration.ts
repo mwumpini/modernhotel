@@ -35,6 +35,9 @@ const GL_ACCOUNTS = {
   BANK: '1120',
   ACCOUNTS_RECEIVABLE: '1210',
 
+  // Liabilities
+  DEFERRED_REVENUE: '2400',
+
   // Revenue
   ROOM_REVENUE: '4100',
   FB_REVENUE: '4200',
@@ -237,7 +240,21 @@ function generateReceiptNumber(source: DepartmentSource): string {
  * 3. Posts journal entry to GL (Dr: AR, Cr: Revenue)
  * 4. Adds to audit trail
  */
-export function captureRevenue(transaction: RevenueTransaction): { invoiceId: string; journalEntryId: string } | null {
+export function captureRevenue(
+  transaction: RevenueTransaction,
+  opts?: {
+    /**
+     * Money committed/collected for a service not yet delivered (e.g. a
+     * confirmed-but-not-yet-held event booking) isn't earned income yet —
+     * credit Deferred Revenue (a liability) instead of the revenue account.
+     * Call recognizeDeferredRevenue() once the service is actually delivered
+     * to reclassify it into real revenue. AR/the invoice are unaffected —
+     * the client owes the same money either way; only which GL account
+     * absorbs the credit side changes.
+     */
+    deferred?: boolean;
+  }
+): { invoiceId: string; journalEntryId: string } | null {
   const store = useAccountingStore.getState();
   const now = new Date().toISOString();
   const transactionDate = transaction.date || now;
@@ -326,6 +343,7 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
     // invoice behind with no journal entry ever backing it.
     const revenueCenterCode = getRevenueCenterCode(transaction.source);
     const journalEntryId = `JE-${transaction.source.toUpperCase()}-${transaction.id}`;
+    const creditAccount = opts?.deferred ? GL_ACCOUNTS.DEFERRED_REVENUE : revenueGLAccount;
     let jlSeq = 0;
     const nextJeLineId = () => `JL-${journalEntryId}-${++jlSeq}-${Math.random().toString(36).slice(2, 7)}`;
     const journalLines: any[] = [
@@ -341,8 +359,10 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
       {
         id: nextJeLineId(),
         journalEntryId,
-        accountCode: revenueGLAccount,
-        description: `Revenue - ${transaction.description}`,
+        accountCode: creditAccount,
+        description: opts?.deferred
+          ? `Deferred revenue (not yet delivered) - ${transaction.description}`
+          : `Revenue - ${transaction.description}`,
         debit: 0,
         credit: transaction.subtotal,
         costCenter: revenueCenterCode,
@@ -472,6 +492,125 @@ export function captureRevenue(transaction: RevenueTransaction): { invoiceId: st
     });
     return null;
   }
+}
+
+/**
+ * Reclassify every prior captureRevenue({ deferred: true }) posting tagged
+ * with this reference (an event id, typically) into real, recognized
+ * revenue — call this once the service booked/paid for in advance is
+ * actually delivered (e.g. an event's completion). A booking can accumulate
+ * more than one deferred entry (confirm-time capture, a later invoice sync,
+ * a folio adjustment) — every one still holding a Deferred Revenue balance
+ * gets its own matching recognition entry (Dr Deferred Revenue, Cr revenue),
+ * so nothing here needs to guess which single entry to look for.
+ * Idempotent per source entry: each recognition entry's id is derived from
+ * the entry it recognizes, so a second call only recognizes what's new since
+ * the last call (and no-ops entirely if there's nothing left to recognize —
+ * never captured, captured as regular non-deferred revenue, or already
+ * fully recognized).
+ */
+export function recognizeDeferredRevenue(
+  source: DepartmentSource,
+  reference: string,
+  description: string
+): { journalEntryIds: string[] } | null {
+  const store = useAccountingStore.getState();
+  const now = new Date().toISOString();
+  const revenueGLAccount = getRevenueGLAccount(source);
+  const revenueCenterCode = getRevenueCenterCode(source);
+
+  const deferredEntries = store.journalEntries.filter(
+    (je) =>
+      je.status === 'Posted' &&
+      je.sourceModule === source &&
+      je.reference === reference &&
+      je.lines.some((l) => l.accountCode === GL_ACCOUNTS.DEFERRED_REVENUE && (l.credit || 0) > 0)
+  );
+  if (!deferredEntries.length) {
+    console.log('[Accounting Integration] No deferred-capture entries found to recognize for', reference);
+    return null;
+  }
+
+  const postedIds: string[] = [];
+  for (const deferredJe of deferredEntries) {
+    const recognitionJeId = `JE-RECOGNIZE-${deferredJe.id}`;
+    if (store.journalEntries.some((je) => je.id === recognitionJeId && je.status === 'Posted')) {
+      continue; // already recognized this one
+    }
+
+    const deferredAmount = deferredJe.lines
+      .filter((l) => l.accountCode === GL_ACCOUNTS.DEFERRED_REVENUE)
+      .reduce((s, l) => s + (l.credit || 0), 0);
+    if (deferredAmount <= 0) continue;
+
+    try {
+      const periodCheck = assertPeriodNotClosed(store.journalEntries, now);
+      if (!periodCheck.ok) {
+        console.error('[Accounting Integration] Revenue recognition aborted — closed period', periodCheck.error);
+        continue;
+      }
+
+      const entry = {
+        id: recognitionJeId,
+        entryNumber: `JE-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`,
+        date: now,
+        description: `Revenue recognized (delivered) — ${description}`,
+        reference,
+        status: 'Posted' as const,
+        totalDebit: deferredAmount,
+        totalCredit: deferredAmount,
+        createdBy: 'system',
+        postedBy: 'system',
+        postedAt: now,
+        createdAt: now,
+        updatedAt: now,
+        sourceModule: source,
+        sourceTransactionId: `RECOGNIZE-${deferredJe.id}`,
+        lines: [
+          {
+            id: `JL-${recognitionJeId}-1`,
+            journalEntryId: recognitionJeId,
+            accountCode: GL_ACCOUNTS.DEFERRED_REVENUE,
+            description: `Clear deferred revenue — ${description}`,
+            debit: deferredAmount,
+            credit: 0,
+            costCenter: revenueCenterCode,
+          },
+          {
+            id: `JL-${recognitionJeId}-2`,
+            journalEntryId: recognitionJeId,
+            accountCode: revenueGLAccount,
+            description: `Revenue recognized — ${description}`,
+            debit: 0,
+            credit: deferredAmount,
+            costCenter: revenueCenterCode,
+          },
+        ],
+      };
+
+      store.addJournalEntry(entry as any);
+      store.recordRevenue(revenueCenterCode, deferredAmount);
+      postedIds.push(recognitionJeId);
+    } catch (error) {
+      console.error('[Accounting Integration] ❌ Error recognizing deferred revenue:', error);
+      logAccountingProcessError('AccountingCapture', 'Deferred revenue recognition failed', {
+        source,
+        reference,
+        deferredEntryId: deferredJe.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  if (!postedIds.length) return null;
+
+  logAccountingProcess('AccountingCapture', 'Deferred revenue recognized', {
+    source,
+    reference,
+    journalEntryIds: postedIds,
+  });
+
+  return { journalEntryIds: postedIds };
 }
 
 /**
