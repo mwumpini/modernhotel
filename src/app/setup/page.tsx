@@ -119,6 +119,7 @@ export default function SetupWizardPage() {
   const [company, setCompany] = React.useState<any>(() => ({
     legalName: settings.companySettings?.legalName || '',
     tradingName: settings.companySettings?.tradingName || '',
+    tagline: settings.companySettings?.tagline || '',
     registrationNumber: settings.companySettings?.registrationNumber || '',
     taxId: settings.companySettings?.taxId || '',
     address: {
@@ -523,6 +524,7 @@ export default function SetupWizardPage() {
                 </Select>
                 <Input label="Company Legal Name" value={company.legalName} onChange={e => setCompany((v: any) => ({ ...v, legalName: e.target.value }))} />
                 <Input label="Trading Name" value={company.tradingName} onChange={e => setCompany((v: any) => ({ ...v, tradingName: e.target.value }))} />
+                <Input label="Tagline" placeholder="e.g., Excellence in Hospitality" value={company.tagline} onChange={e => setCompany((v: any) => ({ ...v, tagline: e.target.value }))} />
                 <div className="flex flex-col gap-2">
                   <label className="text-sm text-gray-600">Company Logo (upload)</label>
                   <input

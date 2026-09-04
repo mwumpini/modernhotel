@@ -123,7 +123,11 @@ export default function ExecutiveManagementDashboard() {
     try {
       const res = frontOfficeStore.reservations || [];
       const today = isoDate;
-      const inHouseNow = res.filter(r => r.status === 'checked-in' && r.arrival <= today && r.departure > today).length;
+      // Individually checked-in reservations, plus pax from bulk accommodation
+      // event bookings checked in as a group (headcounts only — see
+      // EventsConferencesMainDashboard's checkInEventGroup / addInHouseGroup).
+      const inHouseNow = res.filter(r => r.status === 'checked-in' && r.arrival <= today && r.departure > today).length
+        + frontOfficeStore.getInHouseGroupPax();
       const arr = res.filter(r => r.arrival === today).length;
       const dep = res.filter(r => r.departure === today).length;
       setInHouse(inHouseNow);

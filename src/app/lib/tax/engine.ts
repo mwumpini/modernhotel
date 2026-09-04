@@ -10,6 +10,7 @@ import { useAccountingStore } from '../accounting/store';
 import {
   computeStackedTaxLines,
   roundMoney2,
+  roundToIncrement,
   type StackedTaxLine,
   type TaxStackContext,
 } from '../accounting/taxFromConfig';
@@ -155,4 +156,4 @@ export function salesTaxBreakdown(exclusiveAmount: number): {
   };
 }
 
-export { roundMoney2, type StackedTaxLine, type TaxStackContext };
+export { roundMoney2, roundToIncrement, type StackedTaxLine, type TaxStackContext };

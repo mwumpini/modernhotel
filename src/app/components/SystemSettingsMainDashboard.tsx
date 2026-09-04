@@ -17,8 +17,9 @@ import { useRouter } from 'next/navigation';
 import RoomConfigurationDashboard from './RoomConfigurationDashboard';
 import UserManagementUnified from './UserManagementUnified';
 import NumberingSettingsPanel from './settings/NumberingSettingsPanel';
+import DocumentTemplatesPanel from './settings/DocumentTemplatesPanel';
 
-const VALID_TABS = ['users', 'rooms', 'numbering', 'security'] as const;
+const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'security'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 function resolveInitialTab(searchParams: URLSearchParams): SettingsTab {
@@ -143,6 +144,10 @@ export default function SystemSettingsMainDashboard() {
 
             <Tab key="numbering" title="Document Numbering">
               <NumberingSettingsPanel />
+            </Tab>
+
+            <Tab key="templates" title="Document Templates">
+              <DocumentTemplatesPanel />
             </Tab>
 
             <Tab key="security" title="Security">

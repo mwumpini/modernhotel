@@ -1,8 +1,26 @@
 'use client';
 
 import React from 'react';
+import { useRouter } from 'next/navigation';
 import { Card, CardHeader, CardBody, Input, Button, Chip } from '@heroui/react';
 import { useSettingsStore } from '../../lib/settings/store';
+
+/**
+ * Common numbering patterns so most series can be set without typing token syntax
+ * by hand. Values use the {PREFIX} token (not the literal prefix text) so a preset
+ * stays selected — and correct — if the Prefix field is edited afterwards; the
+ * prefix only appears in the human-readable example.
+ */
+const FORMAT_PRESETS = (prefix: string) => {
+  const p = prefix || 'PREFIX';
+  return [
+    { value: '{PREFIX}-{YEAR}-{NUMBER}', label: `Prefix-Year-Number (e.g. ${p}-2026-1002)` },
+    { value: '{PREFIX}-{NUMBER}', label: `Prefix-Number (e.g. ${p}-1002)` },
+    { value: '{PREFIX}{NUMBER}', label: `PrefixNumber (e.g. ${p}1002)` },
+    { value: '{YEAR}-{PREFIX}-{NUMBER}', label: `Year-Prefix-Number (e.g. 2026-${p}-1002)` },
+    { value: '{PREFIX}/{YEAR}/{NUMBER}', label: `Prefix/Year/Number (e.g. ${p}/2026/1002)` },
+  ];
+};
 
 /**
  * System-wide document numbering. Relocated out of the first-run setup wizard so
@@ -11,37 +29,37 @@ import { useSettingsStore } from '../../lib/settings/store';
  */
 const DEFAULT_MODULE_NUMBERING = {
   frontOffice: {
-    folio: { prefix: 'FOL', suffix: '', nextNumber: 1, numberFormat: 'FOL-{YEAR}-{NUMBER}' },
-    housekeepingTicket: { prefix: 'HK', suffix: '', nextNumber: 1, numberFormat: 'HK-{NUMBER}' },
+    folio: { prefix: 'FOL', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+    housekeepingTicket: { prefix: 'HK', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
   },
   foodBeverage: {
-    order: { prefix: 'ORD', suffix: '', nextNumber: 1, numberFormat: 'ORD-{NUMBER}' },
-    kitchenOrderTicket: { prefix: 'KOT', suffix: '', nextNumber: 1, numberFormat: 'KOT-{NUMBER}' },
+    order: { prefix: 'ORD', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+    kitchenOrderTicket: { prefix: 'KOT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
   },
   inventory: {
-    requisition: { prefix: 'REQ', suffix: '', nextNumber: 1, numberFormat: 'REQ-{NUMBER}' },
-    stockTransfer: { prefix: 'ST', suffix: '', nextNumber: 1, numberFormat: 'ST-{NUMBER}' },
-    goodsReceipt: { prefix: 'GRN', suffix: '', nextNumber: 1, numberFormat: 'GRN-{NUMBER}' },
+    requisition: { prefix: 'REQ', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+    stockTransfer: { prefix: 'ST', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+    goodsReceipt: { prefix: 'GRN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
   },
   accounting: {
-    creditNote: { prefix: 'CN', suffix: '', nextNumber: 1, numberFormat: 'CN-{YEAR}-{NUMBER}' },
-    debitNote: { prefix: 'DN', suffix: '', nextNumber: 1, numberFormat: 'DN-{YEAR}-{NUMBER}' },
+    creditNote: { prefix: 'CN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+    debitNote: { prefix: 'DN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
   },
   events: {
-    eventBooking: { prefix: 'EVT', suffix: '', nextNumber: 1, numberFormat: 'EVT-{YEAR}-{NUMBER}' },
-    quotation: { prefix: 'QT', suffix: '', nextNumber: 1, numberFormat: 'QT-{YEAR}-{NUMBER}' },
+    eventBooking: { prefix: 'EVT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+    quotation: { prefix: 'QT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
   },
   maintenance: {
-    workOrder: { prefix: 'WO', suffix: '', nextNumber: 1, numberFormat: 'WO-{YEAR}-{NUMBER}' },
-    inspection: { prefix: 'INSP', suffix: '', nextNumber: 1, numberFormat: 'INSP-{NUMBER}' },
+    workOrder: { prefix: 'WO', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+    inspection: { prefix: 'INSP', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
   },
   security: {
-    incidentReport: { prefix: 'INC', suffix: '', nextNumber: 1, numberFormat: 'INC-{YEAR}-{NUMBER}' },
-    accessPass: { prefix: 'PASS', suffix: '', nextNumber: 1, numberFormat: 'PASS-{NUMBER}' },
+    incidentReport: { prefix: 'INC', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+    accessPass: { prefix: 'PASS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
   },
   hr: {
-    employeeId: { prefix: 'EMP', suffix: '', nextNumber: 1, numberFormat: 'EMP{NUMBER}' },
-    timesheet: { prefix: 'TS', suffix: '', nextNumber: 1, numberFormat: 'TS-{YEAR}-{NUMBER}' },
+    employeeId: { prefix: 'EMP', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}{NUMBER}' },
+    timesheet: { prefix: 'TS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
   },
 };
 
@@ -49,16 +67,38 @@ function Trio({ label, prefix, format, next, onPrefix, onFormat, onNext }: {
   label: string; prefix: string; format: string; next: number;
   onPrefix: (v: string) => void; onFormat: (v: string) => void; onNext: (v: number) => void;
 }) {
+  const presets = FORMAT_PRESETS(prefix);
+  const isPreset = presets.some(p => p.value === format);
   return (
     <>
       <Input label={`${label} Prefix`} value={prefix} onChange={e => onPrefix(e.target.value)} />
-      <Input label={`${label} Format`} value={format} onChange={e => onFormat(e.target.value)} />
+      <div>
+        <label className="text-xs text-gray-600">{label} Format</label>
+        <select
+          className="mt-1 w-full border rounded-md p-2 text-sm"
+          value={isPreset ? format : 'custom'}
+          onChange={e => { if (e.target.value !== 'custom') onFormat(e.target.value); }}
+        >
+          {presets.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+          <option value="custom">Custom…</option>
+        </select>
+        {!isPreset && (
+          <input
+            type="text"
+            className="mt-2 w-full border rounded-md p-2 text-sm"
+            value={format}
+            onChange={e => onFormat(e.target.value)}
+            placeholder="e.g. {PREFIX}-{YEAR}-{NUMBER}"
+          />
+        )}
+      </div>
       <Input type="number" label={`${label} Next`} value={String(next)} onChange={e => onNext(Number(e.target.value))} />
     </>
   );
 }
 
 export default function NumberingSettingsPanel() {
+  const router = useRouter();
   const settings = useSettingsStore();
   const updateNestedSetting = useSettingsStore(s => s.updateNestedSetting);
   const updateSetting = useSettingsStore(s => s.updateSetting);
@@ -136,11 +176,20 @@ export default function NumberingSettingsPanel() {
   };
 
   return (
-    <div className="space-y-6 mt-4">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6 mt-4 relative">
+      <Button
+        isIconOnly
+        variant="light"
+        className="!absolute right-0 -top-2"
+        aria-label="Close document numbering"
+        onPress={() => router.replace('/')}
+      >
+        ×
+      </Button>
+      <div className="flex items-center justify-between pr-10">
         <div>
           <h3 className="text-xl font-semibold">Document Numbering</h3>
-          <p className="text-sm text-gray-600">Prefixes, formats, and next numbers for every document series. Tokens: {'{YEAR}'}, {'{NUMBER}'}.</p>
+          <p className="text-sm text-gray-600">Prefixes, formats, and next numbers for every document series. Tokens: {'{PREFIX}'}, {'{YEAR}'}, {'{NUMBER}'}, {'{SUFFIX}'}.</p>
         </div>
         <div className="flex items-center gap-3">
           {savedAt && <Chip color="success" variant="flat" size="sm">Saved</Chip>}

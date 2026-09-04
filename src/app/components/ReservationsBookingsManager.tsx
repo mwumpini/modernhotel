@@ -33,6 +33,7 @@ import {
 import { Autocomplete, AutocompleteItem } from "@heroui/react";
 import GuestSearchEmptyState from './frontoffice/GuestSearchEmptyState';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { resolveGuestAddress } from '../lib/frontoffice/helpers/guests';
 import { useSettingsStore } from '../lib/settings/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
@@ -41,10 +42,13 @@ import {
   effectiveSalesTaxRate,
   exclusiveFromGross,
   grossFromExclusive,
+  salesTaxBreakdown,
 } from '../lib/tax/engine';
 import { resolveNightlyGross } from '../lib/frontoffice/helpers/rates';
 import { canMarkNoShow } from '../lib/frontoffice/arrivals';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
+import { openPrintPreview, renderPrint } from '../lib/print/engine';
+import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 
 interface ReservationFormData {
   guestName: string;
@@ -299,6 +303,79 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     return getComputedTotals(reservation.arrival, reservation.departure, reservation.roomTypeId);
   };
 
+  // Reservation confirmation via the Document Templates engine (logo, granular
+  // guest/stay-details, proper tax breakdown) rather than the raw window.print()
+  // of this tab's own DOM below — printed as 'accommodation-proforma' since a
+  // confirmation is functionally a quote for the stay, same document family as
+  // Events & Conferences' accommodation leg.
+  const buildReservationConfirmationPrintData = (reservation: Reservation) => {
+    const settingsState = useSettingsStore.getState();
+    const address = resolveGuestAddress(frontOfficeStore.guests, reservation.guestId);
+    const roomTypeName = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Room';
+    const { nights, nightly, subtotal, grandTotal } = getComputedTotalsForReservation(reservation);
+    const breakdown = salesTaxBreakdown(subtotal);
+    const company = reservation.companyName || reservation.billingPersonName;
+    return {
+      org: buildOrgProfile(settingsState),
+      guest: {
+        name: reservation.guestName,
+        company: company || undefined,
+        address,
+        roomType: roomTypeName,
+        roomRate: nightly,
+        arrivalDate: reservation.arrival,
+        departureDate: reservation.departure,
+        nights,
+      },
+      docNumber: reservation.resId || reservation.id,
+      docDate: new Date().toISOString(),
+      title: 'Reservation Confirmation',
+      items: [{ description: roomTypeName, qty: nights, unit: nights === 1 ? 'night' : 'nights', unitPrice: nights ? subtotal / nights : subtotal, amount: subtotal }],
+      totals: {
+        subTotal: subtotal,
+        taxes: { vat: breakdown.vat, nhil: breakdown.nhil, levy: breakdown.tourism, gefl: breakdown.getfund },
+        grandTotal,
+      },
+      footerNotes: [reservation.remarksToGuest || 'We look forward to welcoming you.'],
+      currency: '₵',
+    } as any;
+  };
+
+  // html2canvas (bundled inside html2pdf.js) can't parse the oklch() color
+  // functions Tailwind v4 emits, so screenshotting this tab's own live DOM
+  // (the "Summary / Print" panel above, styled with Tailwind classes) throws
+  // "Attempting to parse an unsupported color function oklch" and silently
+  // produces no PDF. Rendering the Document Templates engine's HTML instead —
+  // same content, but with the hardcoded hex/rgb CSS every built-in template
+  // uses, no Tailwind involved — into an off-screen iframe sidesteps that
+  // entirely; html2canvas rasterizes the iframe's real, laid-out document.
+  const renderReservationPdfSource = async (reservation: Reservation): Promise<{ el: HTMLElement; cleanup: () => void }> => {
+    const settingsState = useSettingsStore.getState();
+    const html = renderPrint(
+      'accommodation-proforma' as any,
+      settingsState.printing['accommodation-proforma'] || 'builtin-accommodation-proforma-standard',
+      buildReservationConfirmationPrintData(reservation)
+    );
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed';
+    iframe.style.left = '-10000px';
+    iframe.style.top = '0';
+    iframe.style.width = '800px';
+    iframe.style.height = '1200px';
+    iframe.style.border = '0';
+    document.body.appendChild(iframe);
+    await new Promise<void>((resolve) => {
+      iframe.onload = () => resolve();
+      iframe.srcdoc = html;
+    });
+    const body = iframe.contentDocument?.body;
+    if (!body) {
+      iframe.remove();
+      throw new Error('Failed to render PDF source');
+    }
+    return { el: body, cleanup: () => iframe.remove() };
+  };
+
   // Display helper: nightly rate including taxes for reservation
   const getDisplayNightlyRateGross = (reservation: Reservation) => {
     return frontOfficeStore.getReservationQuote(reservation).nightlyGross;
@@ -407,6 +484,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     roomId?: string;
     ratePlanId?: string;
     customRate?: number;
+    // Raw text of the "Enter Custom Rate" input, tracked separately from the
+    // derived tax-exclusive `customRate` it's converted to — without this,
+    // the input's displayed value was recomputed from customRate on every
+    // keystroke (gross -> net -> gross again), and rounding in that round
+    // trip silently nudged whatever the guest typed (e.g. typing "50" would
+    // redisplay as "50.07"). Now the field shows exactly what was typed.
+    customRateInput?: string;
     specialRequests?: string;
     adults: number;
     children: number;
@@ -1264,8 +1348,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                 <div>
                   <p className="text-sm font-medium text-gray-600">International Guests</p>
                   <p className="text-2xl font-bold text-indigo-600">
-                    {reservations.filter(r => r.guestName && 
-                      frontOfficeStore.guests.find(g => g.name === r.guestName)?.nationality !== 'ghanaian').length}
+                    {reservations.filter(r =>
+                      frontOfficeStore.guests.find(g => g.id === r.guestId)?.nationality !== 'ghanaian').length}
                   </p>
                   <p className="text-xs text-gray-500">
                     Non-Ghanaian
@@ -1793,40 +1877,46 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                     </div>
 
                     <div className="flex flex-wrap gap-2 justify-end pt-4">
-                      <Button variant="flat" onClick={() => {
-                        trackEvent('Proforma.Printed', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName }, { sourceModule: 'FrontOffice' });
-                        window.print();
-                      }}>🖨️ Print</Button>
+                      <Button color="primary" variant="flat" onClick={() => {
+                        trackEvent('Proforma.Printed', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName, via: 'template' }, { sourceModule: 'FrontOffice' });
+                        const settingsState = useSettingsStore.getState();
+                        openPrintPreview('accommodation-proforma' as any, settingsState.printing['accommodation-proforma'] || 'builtin-accommodation-proforma-standard', buildReservationConfirmationPrintData(selectedReservation));
+                      }}>🧾 Print Confirmation</Button>
                       <Button variant="flat" onClick={async () => {
+                        let cleanup: (() => void) | undefined;
                         try {
-                          const el = document.getElementById('reservation-summary');
-                          if (!el) return;
+                          const { el, cleanup: c } = await renderReservationPdfSource(selectedReservation!);
+                          cleanup = c;
                           // lazy load html2pdf.js
                           // @ts-ignore
-                          const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); }); 
+                          const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); });
                           // @ts-ignore
                           const h2p = await ensure();
                           const filename = `reservation-${selectedReservation?.resId || selectedReservation?.id || 'summary'}.pdf`;
-                          h2p().set({ filename, jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).save();
-                          
+                          await h2p().set({ filename, jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).save();
+                          cleanup();
+
                           trackEvent('Proforma.Downloaded', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName, filename }, { sourceModule: 'FrontOffice' });
                         } catch {
+                          cleanup?.();
                           trackEvent('Proforma.Printed', { reservationId: selectedReservation?.id, guestName: selectedReservation?.guestName, fallbackToPrint: true }, { sourceModule: 'FrontOffice' });
                           window.print();
                         }
                       }}>⬇️ Download PDF</Button>
                       <Button color="primary" onClick={async () => {
+                        let cleanup: (() => void) | undefined;
                         try {
-                          const el = document.getElementById('reservation-summary');
-                          if (!el) return;
-                          
+                          const { el, cleanup: c } = await renderReservationPdfSource(selectedReservation!);
+                          cleanup = c;
+
                           // Generate PDF
                           // @ts-ignore
-                          const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); }); 
+                          const ensure = async () => (window as any).html2pdf || await new Promise((res, rej) => { const s=document.createElement('script'); s.src='https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js'; s.onload=()=>res((window as any).html2pdf); s.onerror=()=>rej(); document.body.appendChild(s); });
                           // @ts-ignore
                           const h2p = await ensure();
                           const pdfBuffer = await h2p().set({ jsPDF: { unit: 'pt', format: 'a4', orientation: 'portrait' }, margin: 16 }).from(el).outputPdf('datauristring');
-                          
+                          cleanup();
+
                           // Send via API
                           const response = await fetch('/api/email/send-proforma', {
                             method: 'POST',
@@ -1857,6 +1947,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                             alert(`Failed to send proforma: ${error.error || 'Unknown error'}`);
                           }
                         } catch (error) {
+                          cleanup?.();
                           console.error('Error sending proforma:', error);
                           alert('Failed to send proforma. Please try again.');
                         }
@@ -2132,6 +2223,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           // Default to Custom Rate at 0.00 on room type change
                           updateBulkGuest(bulkGuest.id, 'ratePlanId', 'custom');
                           updateBulkGuest(bulkGuest.id, 'customRate', 0);
+                          updateBulkGuest(bulkGuest.id, 'customRateInput', '0.00');
                                     }}
                         placeholder="Select room type"
                                   >
@@ -2157,10 +2249,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                             // Switch to editable custom mode and reset to 0.00 gross
                             updateBulkGuest(bulkGuest.id, 'ratePlanId', 'custom');
                             updateBulkGuest(bulkGuest.id, 'customRate', 0);
+                            updateBulkGuest(bulkGuest.id, 'customRateInput', '0.00');
                           } else {
                             updateBulkGuest(bulkGuest.id, 'ratePlanId', selected);
                             // Store plan into customRate as NET is not needed; keep zero so custom is independent
                             updateBulkGuest(bulkGuest.id, 'customRate', 0);
+                            updateBulkGuest(bulkGuest.id, 'customRateInput', '0.00');
                           }
                         }}
                       >
@@ -2180,8 +2274,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           label="Enter Custom Rate (₵ incl. taxes)"
                           type="number"
                           placeholder="Override rate"
-                          value={(() => { const gross = grossFromExclusive(bulkGuest.customRate || 0); return Number.isFinite(gross) ? gross.toFixed(2) : '0.00'; })()}
+                          value={bulkGuest.customRateInput ?? (() => { const gross = grossFromExclusive(bulkGuest.customRate || 0); return Number.isFinite(gross) ? gross.toFixed(2) : '0.00'; })()}
                           onChange={(e) => {
+                            // Shown value always mirrors exactly what was typed — no
+                            // round-trip through the net conversion, so entering any
+                            // amount sticks instead of drifting to a rounded value.
+                            updateBulkGuest(bulkGuest.id, 'customRateInput', e.target.value);
                             const gross = parseFloat(e.target.value);
                             if (isNaN(gross) || gross < 0) { updateBulkGuest(bulkGuest.id, 'customRate', 0); return; }
                             const net = exclusiveFromGross(gross);
@@ -2244,6 +2342,21 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           <div className="text-sm">Search for guests above and click "Add" to include them</div>
                   </div>
                       )}
+                      <div className="mt-2 pt-3 border-t border-purple-200 text-sm text-purple-800 flex items-center justify-between flex-wrap gap-2">
+                        <span>🏨 Booking a large group by headcount, without individual guest names?</span>
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="secondary"
+                          onPress={() => {
+                            try { localStorage.setItem('nav.section', 'events-conferences'); } catch {}
+                            onClose();
+                            router.push('/');
+                          }}
+                        >
+                          Use Bulk Accommodation (Events & Conferences) →
+                        </Button>
+                      </div>
                 </div>
                   )}
               

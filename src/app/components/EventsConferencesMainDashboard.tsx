@@ -47,9 +47,14 @@ import { useFrontOfficeSelector } from '../lib/frontoffice/useFoStore';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useCalculateTax } from '../hooks/useCalculateTax';
 import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
+import { frontOfficeStore } from '../lib/frontoffice/store';
 import type { EventBooking, GuestProfile } from '../lib/frontoffice/types';
+import { genId } from '../lib/frontoffice/helpers/ids';
 import { openPrintPreview, openHtmlPrintWindow } from '../lib/print/engine';
-import { listTemplates } from '../lib/print/templates';
+import type { PrintType } from '../lib/print/templates';
+import { paymentMethodLabel } from '../lib/accounting/receiptPrint';
+import { buildOrgProfile } from '../lib/print/buildOrgProfile';
+import { listBuiltInTemplates } from '../lib/print/blockDefaults';
 import { useSettingsStore } from '../lib/settings/store';
 import { useAccountingStore } from '../lib/accounting/store';
 import { captureRevenue, capturePayment } from '../lib/accounting/integration';
@@ -589,6 +594,129 @@ const buildPrintLineItemsFromSchedule = (
 
   return items;
 };
+
+/**
+ * Maps the live daily-schedule state (Phase 3: Daily Schedule & Headcounts,
+ * "Rate by package" off / Particulars mode) into the generic day-by-day matrix
+ * PrintData contract — dates as columns, particulars (incl. custom rows) as rows.
+ * Real hotels format quotes/proformas exactly this way (dates across the top,
+ * categories down the side) — flattening into a per-day item list loses that shape.
+ */
+const buildMatrixTableFromSchedule = (
+  schedule: Array<{ date: string; rooms: number; dinnerPax: number; lunchPax: number; conferencePax: number; extras?: Record<string, number> }>,
+  particularLabels: { rooms: string; dinnerPax: string; lunchPax: string; conferencePax: string },
+  rates: { roomRate: number; dinnerRate: number; lunchRate: number; conferenceRate: number },
+  hiddenParticulars: Record<string, boolean>,
+  customParticulars: Array<{ id: string; label: string; rate: number }>
+): { columns: Array<{ key: string; label: string; sublabel?: string }>; rows: Array<{ label: string; rate?: number; cells: Record<string, number>; totalCount: number; subtotal: number }> } | undefined => {
+  if (!schedule.length) return undefined;
+
+  const columns = schedule.map((day, idx) => ({
+    key: day.date || `day-${idx}`,
+    label: day.date ? new Date(day.date).toLocaleDateString('en-GB', { weekday: 'short' }) : `Day ${idx + 1}`,
+    sublabel: day.date ? new Date(day.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : undefined,
+  }));
+
+  const rateOf: Record<string, number> = { rooms: rates.roomRate, dinnerPax: rates.dinnerRate, lunchPax: rates.lunchRate, conferencePax: rates.conferenceRate };
+  const standardKeys = (['rooms', 'dinnerPax', 'lunchPax', 'conferencePax'] as const).filter(k => !hiddenParticulars[k]);
+
+  const rows = standardKeys.map((key) => {
+    const cells: Record<string, number> = {};
+    let totalCount = 0;
+    schedule.forEach((day, idx) => {
+      const v = (day as any)[key] || 0;
+      if (v > 0) cells[columns[idx].key] = v;
+      totalCount += v;
+    });
+    const rate = rateOf[key] || 0;
+    return { label: particularLabels[key], rate, cells, totalCount, subtotal: totalCount * rate };
+  }).filter(r => r.totalCount > 0);
+
+  customParticulars.forEach((p) => {
+    const cells: Record<string, number> = {};
+    let totalCount = 0;
+    schedule.forEach((day, idx) => {
+      const v = day.extras?.[p.id] || 0;
+      if (v > 0) cells[columns[idx].key] = v;
+      totalCount += v;
+    });
+    if (totalCount > 0) rows.push({ label: p.label, rate: p.rate, cells, totalCount, subtotal: totalCount * (p.rate || 0) });
+  });
+
+  if (!rows.length) return undefined;
+  return { columns, rows };
+};
+
+/**
+ * The mirror image of buildMatrixTableFromSchedule — same particulars (rows)
+ * and rates, but as dates-as-ROWS entries grouped under each particular
+ * instead of a dates-as-columns pivot. Feeds the "Daily Schedule (dates as
+ * rows)" built-in template (schedule-table block) the same way the matrix
+ * builder feeds "Daily Schedule (dates as columns)".
+ */
+const buildScheduleTableFromSchedule = (
+  schedule: Array<{ date: string; rooms: number; dinnerPax: number; lunchPax: number; conferencePax: number; extras?: Record<string, number> }>,
+  particularLabels: { rooms: string; dinnerPax: string; lunchPax: string; conferencePax: string },
+  rates: { roomRate: number; dinnerRate: number; lunchRate: number; conferenceRate: number },
+  hiddenParticulars: Record<string, boolean>,
+  customParticulars: Array<{ id: string; label: string; rate: number }>
+): { groups: Array<{ description: string; entries: Array<{ day: string; date?: string; qty?: number; unitPrice?: number; total: number }> }> } | undefined => {
+  if (!schedule.length) return undefined;
+
+  const dayLabel = (day: { date: string }, idx: number) =>
+    day.date ? new Date(day.date).toLocaleDateString('en-GB', { weekday: 'short' }) : `Day ${idx + 1}`;
+
+  const rateOf: Record<string, number> = { rooms: rates.roomRate, dinnerPax: rates.dinnerRate, lunchPax: rates.lunchRate, conferencePax: rates.conferenceRate };
+  const standardKeys = (['rooms', 'dinnerPax', 'lunchPax', 'conferencePax'] as const).filter(k => !hiddenParticulars[k]);
+
+  const groups = standardKeys.map((key) => {
+    const rate = rateOf[key] || 0;
+    const entries = schedule
+      .map((day, idx) => ({ day, idx, v: (day as any)[key] || 0 }))
+      .filter(({ v }) => v > 0)
+      .map(({ day, idx, v }) => ({ day: dayLabel(day, idx), date: day.date, qty: v, unitPrice: rate, total: v * rate }));
+    return { description: particularLabels[key], entries };
+  }).filter(g => g.entries.length > 0);
+
+  customParticulars.forEach((p) => {
+    const entries = schedule
+      .map((day, idx) => ({ day, idx, v: day.extras?.[p.id] || 0 }))
+      .filter(({ v }) => v > 0)
+      .map(({ day, idx, v }) => ({ day: dayLabel(day, idx), date: day.date, qty: v, unitPrice: p.rate || 0, total: v * (p.rate || 0) }));
+    if (entries.length) groups.push({ description: p.label, entries });
+  });
+
+  if (!groups.length) return undefined;
+  return { groups };
+};
+
+/**
+ * Accommodation and Conference & Events each get their own document types
+ * (see print/templates.ts) rather than sharing 'invoice'/'proforma'/'receipt'
+ * with a data filter — so editing one in Settings → Document Templates never
+ * changes the other.
+ */
+const EVENT_DOC_TYPE: Record<'accommodation' | 'events', Record<'proforma' | 'invoice' | 'receipt', PrintType>> = {
+  accommodation: { proforma: 'accommodation-proforma', invoice: 'accommodation-invoice', receipt: 'accommodation-receipt' },
+  events: { proforma: 'event-proforma', invoice: 'event-invoice', receipt: 'event-receipt' },
+};
+
+/**
+ * A booking is a bulk "Accommodation" document only when it has zero
+ * conference/catering component — the moment any conference hall or catering
+ * usage is present, the whole booking (accommodation included) is one "Event"
+ * document. Accommodation alone never makes this true.
+ */
+const scheduleHasEventComponent = (
+  schedule: Array<{ conferencePax?: number; lunchPax?: number; dinnerPax?: number; extras?: Record<string, number> }>,
+  customParticulars: Array<{ id: string }> = []
+): boolean =>
+  schedule.some((d) => (d.conferencePax || 0) > 0 || (d.lunchPax || 0) > 0 || (d.dinnerPax || 0) > 0) ||
+  customParticulars.some((p) => schedule.some((d) => (d.extras?.[p.id] || 0) > 0));
+
+/** Same predicate for the QuoteBudgetSnapshot shape (already-saved events without a live daily schedule). */
+const budgetHasEventComponent = (budget: { conference?: number; lunch?: number; dinner?: number; extras?: number }): boolean =>
+  (budget.conference || 0) + (budget.lunch || 0) + (budget.dinner || 0) + (budget.extras || 0) > 0;
 
 const RATE_EFFECTIVE_STATUS_META: Record<
   RateEffectiveStatus,
@@ -1410,19 +1538,15 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
       console.error('[Events] Failed to refresh tax rules:', error);
     }
   }, [complianceCountry, setComplianceCountry]);
-  const printingDefaults = useSettingsStore(state => state.printing);
-  const updatePrintingTemplates = useSettingsStore(state => state.updatePrintingTemplates);
-  
   // Quote builder state
   const [quoteTaxExempt, setQuoteTaxExempt] = useState<boolean>(false);
   type QuoteServiceLine = { id: string; name: string; category: string; qty: number; unitPrice: number; taxGroup: string };
   type QuoteDay = { id: string; label: string; date: string; services: QuoteServiceLine[] };
   const [quoteDays, setQuoteDays] = useState<QuoteDay[]>([]);
-  const quoteTemplateOptions = useMemo(() => listTemplates('proforma'), []);
-  const invoiceTemplateOptions = useMemo(() => listTemplates('invoice'), []);
-  const [selectedQuoteTemplate, setSelectedQuoteTemplate] = useState<string>(() => printingDefaults?.proforma || quoteTemplateOptions[0]?.key || 'conference-proforma-grid');
-  const [selectedInvoiceTemplate, setSelectedInvoiceTemplate] = useState<string>(() => printingDefaults?.invoice || invoiceTemplateOptions[0]?.key || 'corporate-invoice');
-  const [activePrintTab, setActivePrintTab] = useState<'quote' | 'invoice' | 'xls'>('quote');
+  const [activePrintTab, setActivePrintTab] = useState<'quote' | 'invoice' | 'receipt' | 'xls'>('quote');
+  const [selectedProformaTemplate, setSelectedProformaTemplate] = useState<string>('');
+  const [selectedInvoiceTemplate, setSelectedInvoiceTemplate] = useState<string>('');
+  const [selectedReceiptTemplate, setSelectedReceiptTemplate] = useState<string>('');
   const showQuotePrintInModal = useMemo(() => {
     if (!editingEvent) return false;
     const status = normalizeStatus(editingEvent.status || (editingEvent as any).eventStatus);
@@ -1436,23 +1560,21 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
 
   const showInvoicePrintInModal = useMemo(() => Boolean(linkedEventInvoice), [linkedEventInvoice]);
 
+  const linkedEventReceipts = useMemo(
+    () => (editingEvent ? eventReceipts.filter((rcpt) => rcpt.eventId === editingEvent.id) : []),
+    [editingEvent, eventReceipts]
+  );
+
+  const editingEventDocSection: 'accommodation' | 'events' = useMemo(
+    () => (scheduleHasEventComponent(editingEvent?.dailySchedule || [], editingEvent?.customParticulars || []) ? 'events' : 'accommodation'),
+    [editingEvent]
+  );
+
   useEffect(() => {
     if (!showQuotePrintInModal && activePrintTab === 'quote') {
       setActivePrintTab(showInvoicePrintInModal ? 'invoice' : 'xls');
     }
   }, [showQuotePrintInModal, showInvoicePrintInModal, activePrintTab]);
-
-  useEffect(() => {
-    if (printingDefaults?.proforma && printingDefaults.proforma !== selectedQuoteTemplate) {
-      setSelectedQuoteTemplate(printingDefaults.proforma);
-    }
-  }, [printingDefaults?.proforma]);
-
-  useEffect(() => {
-    if (printingDefaults?.invoice && printingDefaults.invoice !== selectedInvoiceTemplate) {
-      setSelectedInvoiceTemplate(printingDefaults.invoice);
-    }
-  }, [printingDefaults?.invoice]);
 
   const addQuoteDay = () => {
     const nextIndex = quoteDays.length + 1;
@@ -1871,7 +1993,11 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   const [orgClientEmail, setOrgClientEmail] = useState<string>('');
   const [clientContactName, setClientContactName] = useState<string>('');
   const [eventName, setEventName] = useState<string>('');
-  const [isResidential, setIsResidential] = useState<boolean>(false);
+  // Defaults on for a new event — most bookings here are residential, so this
+  // way the accommodation fields are already visible for the common case and
+  // the rarer day-only event is the one that costs a click (to uncheck it),
+  // not the other way around.
+  const [isResidential, setIsResidential] = useState<boolean>(true);
   const [phase1Error, setPhase1Error] = useState<string>('');
   // Phase 2 & 3 state
   const [startDate, setStartDate] = useState<string>('');
@@ -2143,6 +2269,42 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     return map;
   }, [activeComplianceRules]);
 
+  const calculateTaxBreakdownFor = (subtotal: number, category: string, context: Record<string, any>) => {
+    let taxImpact = 0;
+    const taxBreakdown: Array<{ name: string; rate: number | null; method?: string; fixedAmount?: number | null; amount: number; effect?: string }> = [];
+
+    if (subtotal > 0 && typeof complianceCalculateTax === 'function') {
+      const taxResult = complianceCalculateTax(subtotal, category, context);
+
+      (taxResult?.taxes || []).forEach((tax: any) => {
+        const rule = complianceRuleMap.get(tax.name);
+        const method = rule?.method || 'rate';
+        const effect = rule?.effect || 'add';
+        const rateValue = method === 'rate' ? (rule?.rate ?? null) : null;
+        const fixedAmount = method === 'fixed' ? (rule?.fixedAmount ?? null) : null;
+        const baseAmount = Number(tax?.amount || 0);
+        const appliedAmount = eventTaxExempt
+          ? 0
+          : effect === 'subtract'
+            ? -Math.abs(baseAmount)
+            : baseAmount;
+        if (!eventTaxExempt && effect !== 'exclude_total' && effect !== 'informational') {
+          taxImpact += appliedAmount;
+        }
+        taxBreakdown.push({
+          name: tax.name,
+          rate: rateValue,
+          method,
+          fixedAmount,
+          amount: appliedAmount,
+          effect
+        });
+      });
+    }
+
+    return { taxImpact, taxBreakdown };
+  };
+
   const computeEventTotals = () => {
     const numDays = dailySchedule.length;
     const totalPax = dailySchedule.reduce((s, r) => s + (r.conferencePax || 0), 0);
@@ -2201,43 +2363,17 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       return s + (ao.price || 0);
     }, 0);
     subtotal += addOnSubtotal;
-    let taxImpact = 0;
-    const taxBreakdown: Array<{ name: string; rate: number | null; method?: string; fixedAmount?: number | null; amount: number; effect?: string }> = [];
 
-    if (subtotal > 0 && typeof complianceCalculateTax === 'function') {
-      const taxResult = complianceCalculateTax(subtotal, 'EVENT', {
-        domain: 'sales',
-        operation: 'external',
-        numPersons: totalPax || expectedPax || 0,
-        numNights: numDays || 0,
-        isResidential
-      });
-
-      (taxResult?.taxes || []).forEach((tax: any) => {
-        const rule = complianceRuleMap.get(tax.name);
-        const method = rule?.method || 'rate';
-        const effect = rule?.effect || 'add';
-        const rateValue = method === 'rate' ? (rule?.rate ?? null) : null;
-        const fixedAmount = method === 'fixed' ? (rule?.fixedAmount ?? null) : null;
-        const baseAmount = Number(tax?.amount || 0);
-        const appliedAmount = eventTaxExempt
-          ? 0
-          : effect === 'subtract'
-            ? -Math.abs(baseAmount)
-            : baseAmount;
-        if (!eventTaxExempt && effect !== 'exclude_total' && effect !== 'informational') {
-          taxImpact += appliedAmount;
-        }
-        taxBreakdown.push({
-          name: tax.name,
-          rate: rateValue,
-          method,
-          fixedAmount,
-          amount: appliedAmount,
-          effect
-        });
-      });
-    }
+    // Bulk accommodation-only bookings are taxed under the room category (e.g. Tourism
+    // Levy scoping); anything with a conference/catering component is taxed as an event.
+    const taxCategory = ratesByParticulars && !scheduleHasEventComponent(dailySchedule, customParticulars) ? 'ROOM' : 'EVENT';
+    const { taxImpact, taxBreakdown } = calculateTaxBreakdownFor(subtotal, taxCategory, {
+      domain: 'sales',
+      operation: 'external',
+      numPersons: totalPax || expectedPax || 0,
+      numNights: numDays || 0,
+      isResidential
+    });
 
     const total = subtotal + taxImpact;
 
@@ -2264,6 +2400,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   };
 
   const eventTotals = computeEventTotals();
+
   const prepaymentDisplay = prepaymentEnabled ? (prepaymentType === 'percent' ? `${prepaymentValue}%` : `₵${prepaymentValue}`) : '—';
   const prepaymentAmount = prepaymentEnabled
     ? Math.max(0, prepaymentType === 'percent'
@@ -2316,6 +2453,17 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     });
     return taxes;
   };
+
+  // Corporate clients are picked once at booking time (orgClientId, stored on the
+  // event as corporateClientId/clientId) — look the profile back up at print time
+  // so the letter-style templates' recipient address line has something to show.
+  const resolveClientAddress = (clientId?: string): string | undefined => {
+    if (!clientId) return undefined;
+    const g = frontOfficeGuests.find(p => p.id === clientId);
+    if (!g) return undefined;
+    return [g.address, g.city, g.country].filter(Boolean).join('\n') || undefined;
+  };
+
   const buildEventPrintData = (docType: 'proforma' | 'invoice') => {
     const settingsState = useSettingsStore.getState() as any;
     const schedule =
@@ -2332,10 +2480,37 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       { arrivalDate: startDate, startDate, departureDate: endDate, endDate }
     );
 
+    const matrixTable = ratesByParticulars
+      ? buildMatrixTableFromSchedule(
+          schedule,
+          particularLabels,
+          { roomRate, dinnerRate, lunchRate, conferenceRate },
+          hiddenParticulars,
+          customParticulars
+        )
+      : undefined;
+
+    // Same particulars data as matrixTable, reshaped for the "Daily Schedule
+    // (dates as rows)" template — harmless to compute alongside matrixTable
+    // since a template only reads whichever of the two block types it uses.
+    const scheduleTable = ratesByParticulars
+      ? buildScheduleTableFromSchedule(
+          schedule,
+          particularLabels,
+          { roomRate, dinnerRate, lunchRate, conferenceRate },
+          hiddenParticulars,
+          customParticulars
+        )
+      : undefined;
+
+    // Accommodation only if there's genuinely no conference/catering component —
+    // otherwise (including a mixed group with rooms) it's a single Event document.
+    const section: 'accommodation' | 'events' = scheduleHasEventComponent(schedule, customParticulars) ? 'events' : 'accommodation';
+
     if (!items.length) {
       const fallbackAmount = Number(eventTotals.subtotal || 0);
       items.push({
-        description: eventName || 'Event Services',
+        description: section === 'accommodation' ? (particularLabels.rooms || 'Accommodation') : (eventName || 'Event Services'),
         qty: schedule.length || undefined,
         unit: schedule.length > 1 ? 'days' : undefined,
         unitPrice: fallbackAmount,
@@ -2344,20 +2519,13 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       });
     }
 
-    const orgProfile = {
-      name: settingsState?.organization?.name || settingsState?.companySettings?.tradingName || 'Hotel',
-      address: settingsState?.organization?.address || settingsState?.companySettings?.address?.line1 || '',
-      phone: settingsState?.organization?.phone || settingsState?.companySettings?.contact?.phone || '',
-      email: settingsState?.organization?.email || settingsState?.companySettings?.contact?.email || '',
-      taxId: settingsState?.organization?.taxId || settingsState?.companySettings?.taxId || '',
-      logoUrl: settingsState?.branding?.logoUrl || settingsState?.companySettings?.logoUrl || '',
-    };
+    const orgProfile = buildOrgProfile(settingsState);
 
     const totalDays = schedule.length || 1;
     const documentNumber =
       docType === 'invoice'
-        ? editingEvent?.invoiceNumber || (editingEvent?.id ? `INV-${editingEvent.id}` : `INV-${Date.now()}`)
-        : editingEvent?.quoteNumber || `Q-${Date.now()}`;
+        ? editingEvent?.invoiceNumber || settingsState.getNextInvoiceNumber()
+        : editingEvent?.quoteNumber || settingsState.getNextProformaInvoiceNumber();
     const title = docType === 'invoice' ? 'Invoice' : 'Quotation';
     const taxSpread = mapTaxBreakdownToPrint(eventTotals.taxBreakdown);
     const printTotals: any = {
@@ -2374,28 +2542,34 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       printTotals.advance = cappedPrepaymentAmount;
     }
     return {
-      org: orgProfile,
-      guest: {
-        name: orgName || 'Client',
-        company: orgName || '',
-        roomNumber: undefined,
-        roomType: undefined,
-        arrivalDate: startDate || '',
-        departureDate: endDate || '',
-        nights: totalDays,
+      type: EVENT_DOC_TYPE[section][docType],
+      data: {
+        org: orgProfile,
+        guest: {
+          name: orgName || 'Client',
+          company: orgName || '',
+          address: resolveClientAddress(orgClientId),
+          roomNumber: undefined,
+          roomType: undefined,
+          arrivalDate: startDate || '',
+          departureDate: endDate || '',
+          nights: totalDays,
+        },
+        docNumber: documentNumber,
+        docDate: new Date().toISOString(),
+        title,
+        items,
+        matrixTable,
+        scheduleTable,
+        totals: printTotals,
+        footerNotes: [
+          'Generated via Events & Conferences workflow.',
+          docType === 'invoice'
+            ? 'Invoice layout provided by Settings • Template Builder.'
+            : 'Quotation layout provided by Settings • Template Builder.',
+        ],
+        currency: '₵',
       },
-      docNumber: documentNumber,
-      docDate: new Date().toISOString(),
-      title,
-      items,
-      totals: printTotals,
-      footerNotes: [
-        'Generated via Events & Conferences workflow.',
-        docType === 'invoice'
-          ? 'Invoice layout provided by Settings • Template Builder.'
-          : 'Quotation layout provided by Settings • Template Builder.',
-      ],
-      currency: '₵',
     };
   };
 
@@ -2476,7 +2650,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       setOrgContactPhone('');
       setOrgClientEmail('');
       setClientContactName('');
-      setIsResidential(false);
+      setIsResidential(true);
       setOrgClientId('');
       setOrgSearch('');
       setStartDate('');
@@ -3693,16 +3867,21 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       pax: seedPax,
       status: eventStatus,
       statusColor: eventStatusColorMap[eventStatus],
-      residential: false
+      // Most bookings here are residential — default a new event to that so
+      // the accommodation fields are visible from the start; the rarer
+      // day-only event costs one click (unchecking it) instead of the common
+      // case costing one.
+      residential: true
     };
 
     setIsCreatingEvent(true);
+    setIsEditingInvoiceDetails(false);
     resetEventFormState({
       arrivalDate: arrival,
       departureDate: departure,
       venue: seedVenue,
       pax: seedPax,
-      residential: false
+      residential: true
     });
     setEditingEvent(blankEvent);
     setIsEventModalOpen(true);
@@ -3713,6 +3892,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setIsViewMode(false);
     setIsAdjustMode(adjustMode);
     setIsCreatingInvoiceFromFolio(createInvoice);
+    setIsEditingInvoiceDetails(false);
     setEditingEvent(event);
     convertCustomEventToFormState(event);
     if (createInvoice) {
@@ -3725,6 +3905,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setIsCreatingEvent(false);
     setIsViewMode(true);
     setIsCreatingInvoiceFromFolio(false); // Reset flag when viewing
+    setIsEditingInvoiceDetails(false);
     setEditingEvent(event);
     convertCustomEventToFormState(event);
     setIsEventModalOpen(true);
@@ -3786,7 +3967,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         const dueDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
         
         const newInvoice: EventInvoice = {
-          id: `INV-${Date.now().toString().slice(-6)}`,
+          id: genId('INV'),
           eventId: savedEvent.id,
           eventName: savedEvent.eventName || 'Unnamed Event',
           clientName: savedEvent.organization || 'Unknown Client',
@@ -4277,7 +4458,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         )
       );
     } else {
-      const newEventId = `EVT-${Date.now().toString().slice(-6)}`;
+      const newEventId = genId('EVT');
       setCustomEvents((prev) => [
         {
           id: newEventId,
@@ -4398,18 +4579,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     });
 
     const settingsState = useSettingsStore.getState() as any;
-    const orgProfile = {
-      name: settingsState?.organization?.name || settingsState?.companySettings?.tradingName || 'Demo Hotel',
-      address: [
-        settingsState?.organization?.address,
-        settingsState?.companySettings?.address?.line1,
-        settingsState?.companySettings?.address?.city,
-        settingsState?.companySettings?.address?.country
-      ].filter(Boolean).join(', '),
-      phone: settingsState?.organization?.phone || settingsState?.companySettings?.contact?.phone || '',
-      email: settingsState?.organization?.email || settingsState?.companySettings?.contact?.email || '',
-      taxId: settingsState?.organization?.taxId || settingsState?.companySettings?.taxId || ''
-    };
+    const orgProfile = buildOrgProfile(settingsState);
 
     const taxSpread = mapTaxBreakdownToPrint(eventTotals.taxBreakdown || []);
     const taxLabelMap: Record<string, string> = {
@@ -4492,21 +4662,20 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     trackEvent('Events.EventCreated', { action: 'event_xls_exported', eventName, orgName });
   };
 
-  const buildOrgPrintProfile = () => {
-    const settingsState = useSettingsStore.getState() as any;
-    return {
-      name: settingsState?.organization?.name || settingsState?.companySettings?.tradingName || 'Hotel',
-      address: settingsState?.organization?.address || settingsState?.companySettings?.address?.line1 || '',
-      phone: settingsState?.organization?.phone || settingsState?.companySettings?.contact?.phone || '',
-      email: settingsState?.organization?.email || settingsState?.companySettings?.contact?.email || '',
-      taxId: settingsState?.organization?.taxId || settingsState?.companySettings?.taxId || '',
-      logoUrl: settingsState?.branding?.logoUrl || settingsState?.companySettings?.logoUrl || '',
-    };
-  };
+  const buildOrgPrintProfile = () => buildOrgProfile(useSettingsStore.getState() as any);
+
+  /** Resolves a document type's configured template (Settings → Document Templates), so edits there always land exactly where they should. */
+  const resolveEventTemplateKey = (type: PrintType) => (useSettingsStore.getState() as any).printing?.[type];
+
+  /** Built-in + custom (Template Builder) templates available for a document type, for the per-print template picker. */
+  const listSelectableTemplates = (type: PrintType) => [
+    ...listBuiltInTemplates(type).map((t) => ({ key: t.id, name: t.name })),
+    ...useSettingsStore.getState().getDocBuilderTemplatesByType(type).map((t) => ({ key: t.id, name: t.name })),
+  ];
 
   const buildQuotePrintDataFromEvent = (eventData: any) => {
     const budget = getQuoteBudgetSnapshot(eventData);
-    const budgetRows = [
+    const allRows = [
       { label: 'Accommodation', amount: budget.accommodation },
       { label: 'Conference', amount: budget.conference },
       { label: 'Lunch', amount: budget.lunch },
@@ -4515,8 +4684,8 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     ].filter((row) => row.amount > 0);
 
     const items =
-      budgetRows.length > 0
-        ? budgetRows.map((row) => ({
+      allRows.length > 0
+        ? allRows.map((row) => ({
             description: row.label,
             amount: row.amount,
           }))
@@ -4529,32 +4698,38 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
 
     const totalAmount =
       budget.total ||
-      budgetRows.reduce((sum, row) => sum + row.amount, 0) ||
+      allRows.reduce((sum, row) => sum + row.amount, 0) ||
       Number(eventData.revenue || eventData.budgetTotal || 0);
 
+    const section: 'accommodation' | 'events' = budgetHasEventComponent(budget) ? 'events' : 'accommodation';
+
     return {
-      org: buildOrgPrintProfile(),
-      guest: {
-        name: eventData.organization || eventData.clientName || 'Client',
-        company: eventData.organization || eventData.clientName || '',
-        arrivalDate: eventData.arrivalDate || eventData.startDate || '',
-        departureDate: eventData.departureDate || eventData.endDate || '',
-        nights: eventData.duration || 1,
+      type: EVENT_DOC_TYPE[section].proforma,
+      data: {
+        org: buildOrgPrintProfile(),
+        guest: {
+          name: eventData.organization || eventData.clientName || 'Client',
+          company: eventData.organization || eventData.clientName || '',
+          address: resolveClientAddress(eventData.corporateClientId || eventData.clientId),
+          arrivalDate: eventData.arrivalDate || eventData.startDate || '',
+          departureDate: eventData.departureDate || eventData.endDate || '',
+          nights: eventData.duration || 1,
+        },
+        docNumber: eventData.quoteNumber || formatEventId(eventData.id),
+        docDate: new Date().toISOString(),
+        title: 'Quotation',
+        items,
+        totals: {
+          subTotal: totalAmount,
+          grandTotal: totalAmount,
+          balance: totalAmount,
+        },
+        footerNotes: [
+          'Generated via Events & Conferences workflow.',
+          'Quotation layout provided by Settings • Template Builder.',
+        ],
+        currency: '₵',
       },
-      docNumber: eventData.quoteNumber || formatEventId(eventData.id),
-      docDate: new Date().toISOString(),
-      title: 'Quotation',
-      items,
-      totals: {
-        subTotal: totalAmount,
-        grandTotal: totalAmount,
-        balance: totalAmount,
-      },
-      footerNotes: [
-        'Generated via Events & Conferences workflow.',
-        'Quotation layout provided by Settings • Template Builder.',
-      ],
-      currency: '₵',
     };
   };
 
@@ -4586,85 +4761,71 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
 
     const payments = Math.max(0, (invoice.total || 0) - (invoice.balance || 0));
 
+    const section: 'accommodation' | 'events' = scheduleHasEventComponent(schedule, (event as any).customParticulars || []) ? 'events' : 'accommodation';
+
     return {
-      org: buildOrgPrintProfile(),
-      guest: {
-        name: invoice.clientName || event.organization || 'Client',
-        company: invoice.clientName || event.organization || '',
-        arrivalDate: event.arrivalDate || event.startDate || '',
-        departureDate: event.departureDate || event.endDate || '',
-        nights: event.duration || 1,
+      type: EVENT_DOC_TYPE[section].invoice,
+      data: {
+        org: buildOrgPrintProfile(),
+        guest: {
+          name: invoice.clientName || event.organization || 'Client',
+          company: invoice.clientName || event.organization || '',
+          address: resolveClientAddress((event as any).corporateClientId || (event as any).clientId),
+          arrivalDate: event.arrivalDate || event.startDate || '',
+          departureDate: event.departureDate || event.endDate || '',
+          nights: event.duration || 1,
+        },
+        docNumber: invoice.id,
+        docDate: invoice.issueDate || new Date().toISOString(),
+        title: 'Invoice',
+        items,
+        totals: {
+          subTotal: invoice.subtotal || 0,
+          taxes: invoice.tax > 0 ? { vat: invoice.tax } : undefined,
+          grandTotal: invoice.total || 0,
+          payments,
+          balance: invoice.balance ?? invoice.total ?? 0,
+        },
+        footerNotes: [
+          'Generated via Events & Conferences workflow.',
+          'Invoice layout provided by Settings • Template Builder.',
+        ],
+        currency: '₵',
       },
-      docNumber: invoice.id,
-      docDate: invoice.issueDate || new Date().toISOString(),
-      title: 'Invoice',
-      items,
-      totals: {
-        subTotal: invoice.subtotal || 0,
-        taxes: invoice.tax > 0 ? { vat: invoice.tax } : undefined,
-        grandTotal: invoice.total || 0,
-        payments,
-        balance: invoice.balance ?? invoice.total ?? 0,
-      },
-      footerNotes: [
-        'Generated via Events & Conferences workflow.',
-        'Invoice layout provided by Settings • Template Builder.',
-      ],
-      currency: '₵',
     };
   };
 
-  const handlePrintQuotePdf = (templateKeyOverride?: string) => {
-    const templateKey =
-      templateKeyOverride ||
-      selectedQuoteTemplate ||
-      printingDefaults?.proforma ||
-      quoteTemplateOptions[0]?.key ||
-      'conference-proforma-grid';
-    const data = buildEventPrintData('proforma');
+  const handlePrintQuotePdf = (templateOverride?: string) => {
+    const { type, data } = buildEventPrintData('proforma');
     if (!data) {
       alert('Unable to generate proforma data for this event.');
       return;
     }
-    if (!openPrintPreview('proforma', templateKey, data as any)) return;
-    trackEvent('Events.EventCreated', { action: 'quote_pdf_generated', templateKey, eventName });
+    if (!openPrintPreview(type, templateOverride || resolveEventTemplateKey(type), data as any)) return;
+    trackEvent('Events.EventCreated', { action: 'quote_pdf_generated', eventName });
   };
 
   // Print invoice PDF for a specific invoice
-  const handleDownloadInvoicePdf = (invoice: EventInvoice, templateKeyOverride?: string) => {
+  const handleDownloadInvoicePdf = (invoice: EventInvoice, templateOverride?: string) => {
     const event = allEvents.find((ev) => ev.id === invoice.eventId);
     if (!event) {
       alert('Event not found for this invoice.');
       return;
     }
 
-    const templateKey =
-      templateKeyOverride ||
-      selectedInvoiceTemplate ||
-      printingDefaults?.invoice ||
-      invoiceTemplateOptions[0]?.key ||
-      'corporate-invoice';
-
-    const data = buildInvoicePrintData(invoice, event);
-    if (!openPrintPreview('invoice', templateKey, data as any)) return;
-    trackEvent('Events.EventCreated', { action: 'invoice_pdf_downloaded', templateKey, invoiceId: invoice.id, eventId: invoice.eventId });
+    const { type, data } = buildInvoicePrintData(invoice, event);
+    if (!openPrintPreview(type, templateOverride || resolveEventTemplateKey(type), data as any)) return;
+    trackEvent('Events.EventCreated', { action: 'invoice_pdf_downloaded', invoiceId: invoice.id, eventId: invoice.eventId });
   };
 
-  const handleDownloadQuotePdf = (eventData: any, templateKeyOverride?: string) => {
+  const handleDownloadQuotePdf = (eventData: any) => {
     if (!eventData) {
       alert('Quote data not available for this event.');
       return;
     }
 
-    const templateKey =
-      templateKeyOverride ||
-      selectedQuoteTemplate ||
-      printingDefaults?.proforma ||
-      quoteTemplateOptions[0]?.key ||
-      'conference-proforma-grid';
-
-    const data = buildQuotePrintDataFromEvent(eventData);
-    if (!openPrintPreview('proforma', templateKey, data as any)) return;
+    const { type, data } = buildQuotePrintDataFromEvent(eventData);
+    openPrintPreview(type, resolveEventTemplateKey(type), data as any);
 
     trackEvent('Events.EventCreated', {
       action: 'quote_pdf_downloaded',
@@ -4673,73 +4834,50 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     });
   };
 
-  const handleDownloadReceiptPdf = (receipt: EventReceipt) => {
-    const event = allEvents.find(ev => ev.id === receipt.eventId);
-    const settingsState = useSettingsStore.getState() as any;
-
-    const orgProfile = {
-      name: settingsState?.organization?.name || settingsState?.companySettings?.tradingName || 'Hotel',
-      address: settingsState?.organization?.address || settingsState?.companySettings?.address?.line1 || '',
-      phone: settingsState?.organization?.phone || settingsState?.companySettings?.contact?.phone || '',
-      email: settingsState?.organization?.email || settingsState?.companySettings?.contact?.email || '',
-      taxId: settingsState?.organization?.taxId || settingsState?.companySettings?.taxId || '',
-      logoUrl: settingsState?.branding?.logoUrl || settingsState?.companySettings?.logoUrl || ''
+  /** Mirrors buildCustomerReceiptPrintData() in lib/accounting/receiptPrint.ts for front-desk receipts. */
+  const buildEventReceiptPrintData = (receipt: EventReceipt) => {
+    const method = paymentMethodLabel(receipt.method);
+    const event = allEvents.find((ev) => ev.id === receipt.eventId) as any;
+    const section: 'accommodation' | 'events' = scheduleHasEventComponent(event?.dailySchedule || [], event?.customParticulars || []) ? 'events' : 'accommodation';
+    return {
+      type: EVENT_DOC_TYPE[section].receipt,
+      data: {
+        org: buildOrgPrintProfile(),
+        guest: {
+          name: receipt.clientName,
+          company: event?.organization || undefined,
+          address: resolveClientAddress(event?.corporateClientId || event?.clientId),
+        },
+        docNumber: receipt.id,
+        docDate: receipt.date,
+        title: 'Receipt',
+        items: [
+          {
+            description: `Payment received (${method})${receipt.reference ? ` · ${receipt.reference}` : ''}`,
+            amount: receipt.amount,
+            date: receipt.date,
+          },
+        ],
+        totals: {
+          subTotal: receipt.amount,
+          payments: receipt.amount,
+          balance: 0,
+          grandTotal: receipt.amount,
+        },
+        footerNotes: [
+          receipt.notes,
+          receipt.invoiceId ? `Applied to: Invoice ${receipt.invoiceId}` : undefined,
+          `Recorded by ${receipt.recordedBy || 'Events Team'}`,
+          'Generated via Events & Conferences workflow.',
+        ].filter(Boolean) as string[],
+        currency: '₵',
+      },
     };
+  };
 
-    const html = `
-      <html>
-        <head>
-          <meta charset="UTF-8" />
-          <title>Receipt ${receipt.id}</title>
-          <style>
-            body { font-family: Arial, sans-serif; margin: 40px; color: #111; }
-            .header { display: flex; justify-content: space-between; align-items: center; }
-            .org-info h1 { margin: 0; font-size: 24px; }
-            .section { margin-top: 24px; }
-            .section h2 { font-size: 16px; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; color: #555; }
-            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
-            td { padding: 6px 4px; vertical-align: top; }
-            .totals { font-size: 18px; font-weight: bold; margin-top: 16px; }
-            .footer { margin-top: 40px; font-size: 12px; color: #666; }
-            .logo { max-height: 60px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <div class="org-info">
-              <h1>${orgProfile.name}</h1>
-              <div>${orgProfile.address || ''}</div>
-              <div>${orgProfile.phone || ''}</div>
-              <div>${orgProfile.email || ''}</div>
-            </div>
-            ${orgProfile.logoUrl ? `<img src="${orgProfile.logoUrl}" alt="Logo" class="logo" />` : ''}
-          </div>
-          <div class="section">
-            <h2>Receipt Details</h2>
-            <table>
-              <tr><td><strong>Receipt #</strong></td><td>${receipt.id}</td></tr>
-              <tr><td><strong>Date</strong></td><td>${formatDateDisplay(receipt.date)}</td></tr>
-              <tr><td><strong>Event</strong></td><td>${receipt.eventName}</td></tr>
-              <tr><td><strong>Client</strong></td><td>${receipt.clientName}</td></tr>
-              <tr><td><strong>Recorded By</strong></td><td>${receipt.recordedBy || 'Events Team'}</td></tr>
-              <tr><td><strong>Payment Method</strong></td><td>${receipt.method}</td></tr>
-              <tr><td><strong>Reference</strong></td><td>${receipt.reference || '—'}</td></tr>
-              <tr><td><strong>Invoice</strong></td><td>${receipt.invoiceId || '—'}</td></tr>
-            </table>
-            <div class="totals">Amount Received: ${formatCurrency(receipt.amount)}</div>
-          </div>
-          <div class="section">
-            <h2>Notes</h2>
-            <div>${receipt.notes || 'Payment received via folio.'}</div>
-          </div>
-          <div class="footer">
-            Generated via Events & Conferences • ${new Date().toLocaleString()}
-          </div>
-        </body>
-      </html>
-    `;
-
-    openHtmlPrintWindow(html);
+  const handleDownloadReceiptPdf = (receipt: EventReceipt, templateOverride?: string) => {
+    const { type, data } = buildEventReceiptPrintData(receipt);
+    if (!openPrintPreview(type, templateOverride || resolveEventTemplateKey(type), data as any)) return;
     trackEvent('Events.EventCreated', { action: 'receipt_pdf_downloaded', receiptId: receipt.id, eventId: receipt.eventId, method: receipt.method });
   };
 
@@ -6156,7 +6294,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     // If eventOverride is provided with invoice form fields, use them directly
     if (eventOverride && (eventOverride.eventId || eventOverride.eventName)) {
       setInvoiceForm({
-        id: `INV-${Date.now().toString().slice(-6)}`,
+        id: genId('INV'),
         eventId: eventOverride.eventId || '',
         eventName: eventOverride.eventName || '',
         clientName: eventOverride.clientName || '',
@@ -6188,7 +6326,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const defaultDue = new Date(today.getTime() + 7 * DAY_IN_MS).toISOString().split('T')[0];
 
     setInvoiceForm({
-      id: `INV-${Date.now().toString().slice(-6)}`,
+      id: genId('INV'),
       eventId: defaultEvent?.id || '',
       eventName: getEventDisplayName(defaultEvent),
       clientName: getEventClientName(defaultEvent),
@@ -6293,7 +6431,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const balance = Number(invoiceForm.balance ?? total);
 
     const payload: EventInvoice = {
-      id: invoiceForm.id || `INV-${Date.now().toString().slice(-6)}`,
+      id: invoiceForm.id || genId('INV'),
       eventId: invoiceForm.eventId || '',
       eventName: invoiceForm.eventName || getEventDisplayName(event),
       clientName: invoiceForm.clientName || getEventClientName(event),
@@ -6383,7 +6521,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       receipt
         ? { ...receipt }
         : {
-            id: `RCPT-${Date.now().toString().slice(-6)}`,
+            id: genId('RCPT'),
             eventId: defaultEvent?.id || '',
             eventName: getEventDisplayName(defaultEvent),
             invoiceId: '',
@@ -6418,7 +6556,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const amount = Number(receiptForm.amount ?? 0);
 
     const payload: EventReceipt = {
-      id: receiptForm.id || `RCPT-${Date.now().toString().slice(-6)}`,
+      id: receiptForm.id || genId('RCPT'),
       eventId: receiptForm.eventId || '',
       eventName: receiptForm.eventName || getEventDisplayName(event),
       invoiceId: receiptForm.invoiceId || '',
@@ -6464,7 +6602,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           if (folio) {
             const lastBalance = getFolioCurrentBalance(folio);
             const paymentEntry: EventFolioEntry = {
-              id: `FLE-${Date.now().toString().slice(-6)}`,
+              id: genId('FLE'),
               date: payload.date || new Date().toISOString().split('T')[0],
               description: `Payment - Receipt ${payload.id}${payload.invoiceId ? ` (Invoice ${payload.invoiceId})` : ''}`,
               debit: 0,
@@ -6496,7 +6634,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             if (createdFolio) {
               const lastBalance = getFolioCurrentBalance(createdFolio);
               const paymentEntry: EventFolioEntry = {
-                id: `FLE-${Date.now().toString().slice(-6)}`,
+                id: genId('FLE'),
                 date: payload.date || new Date().toISOString().split('T')[0],
                 description: `Payment - Receipt ${payload.id}${payload.invoiceId ? ` (Invoice ${payload.invoiceId})` : ''}`,
                 debit: 0,
@@ -6526,7 +6664,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       if (folio) {
         const lastBalance = getFolioCurrentBalance(folio);
         const paymentEntry: EventFolioEntry = {
-          id: `FLE-${Date.now().toString().slice(-6)}`,
+          id: genId('FLE'),
           date: payload.date || new Date().toISOString().split('T')[0],
           description: `Payment - Receipt ${payload.id} (${payload.method})`,
           debit: 0,
@@ -6671,10 +6809,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const debit = entryType === 'charge' ? amount : 0;
     const credit = entryType === 'payment' ? amount : 0;
     const newBalance = lastBalance + debit - credit;
-    const paymentReceiptId = entryType === 'payment' ? `RCPT-${Date.now().toString().slice(-6)}` : '';
+    const paymentReceiptId = entryType === 'payment' ? genId('RCPT') : '';
 
     const newEntry: EventFolioEntry = {
-      id: `FLE-${Date.now().toString().slice(-6)}`,
+      id: genId('FLE'),
       date: new Date().toISOString().split('T')[0],
       description: entryDescription,
       debit,
@@ -6834,7 +6972,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const initialEntries: EventFolioEntry[] = opening
       ? [
           {
-            id: `FLE-${Date.now().toString().slice(-6)}`,
+            id: genId('FLE'),
             date: new Date().toISOString().split('T')[0],
             description: folioCreateForm.note?.trim() || 'Opening Balance',
             debit: opening > 0 ? opening : 0,
@@ -6844,7 +6982,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         ]
       : [];
     const newFolio: EventFolio = {
-      id: `FOL-${Date.now().toString().slice(-6)}`,
+      id: genId('FOL'),
       eventId: event.id,
       eventName: getEventDisplayName(event),
       clientName: getEventClientName(event),
@@ -6916,7 +7054,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         const invoice = eventInvoices.find((inv: any) => inv.eventId === eventId);
         if (invoice && invoice.total > 0) {
           entries.push({
-            id: `FLE-${Date.now().toString().slice(-6)}`,
+            id: genId('FLE'),
             date: invoice.issueDate || new Date().toISOString().split('T')[0],
             description: `Invoice ${invoice.id} - Event Charges`,
             debit: invoice.total,
@@ -6928,7 +7066,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       }
       
       folio = {
-        id: `FOL-${Date.now().toString().slice(-6)}`,
+        id: genId('FOL'),
         eventId: event.id,
         eventName: event.eventName || 'Unnamed Event',
         clientName: event.organization || 'Unknown Client',
@@ -7187,7 +7325,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         // Add new invoice entry
         const lastBalance = getFolioCurrentBalance(folio);
         const newEntry: EventFolioEntry = {
-          id: `FLE-${Date.now().toString().slice(-6)}`,
+          id: genId('FLE'),
           date: invoice.issueDate || new Date().toISOString().split('T')[0],
           description: `Invoice ${invoice.id} - Event Charges`,
           debit: invoice.total,
@@ -7302,13 +7440,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     
     const lastBalance = getFolioCurrentBalance(folio);
     const newEntry: EventFolioEntry = {
-      id: `FLE-${Date.now().toString().slice(-6)}`,
+      id: genId('FLE'),
       date: new Date().toISOString().split('T')[0],
       description: `Refund - ${refundMethod}`,
       debit: amount, // Refund increases what we owe (debit)
       credit: 0,
       balance: lastBalance + amount, // Moves balance toward zero
-      reference: `REF-${Date.now().toString().slice(-6)}`
+      reference: genId('REF')
     };
     
     setEventFolios((prev: any) =>
@@ -7351,13 +7489,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     
     const lastBalance = getFolioCurrentBalance(folio);
     const newEntry: EventFolioEntry = {
-      id: `FLE-${Date.now().toString().slice(-6)}`,
+      id: genId('FLE'),
       date: new Date().toISOString().split('T')[0],
       description: `Credit Note - ${reason}`,
       debit: amount, // Credit note reduces overpayment
       credit: 0,
       balance: lastBalance + amount, // Moves balance toward zero
-      reference: `CN-${Date.now().toString().slice(-6)}`
+      reference: genId('CN')
     };
     
     setEventFolios((prev: any) =>
@@ -7433,7 +7571,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const reversalAmount = entry.debit > 0 ? entry.debit : entry.credit;
     
     const newEntry: EventFolioEntry = {
-      id: `FLE-${Date.now().toString().slice(-6)}`,
+      id: genId('FLE'),
       date: new Date().toISOString().split('T')[0],
       description: `REVERSAL: ${entry.description}`,
       debit: entry.credit > 0 ? reversalAmount : 0, // Reverse: if original was credit, reversal is debit
@@ -7513,7 +7651,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       const newEntries: EventFolioEntry[] = newReceipts.map((receipt: any) => {
         currentBalance = currentBalance - receipt.amount; // Payments reduce balance
         return {
-          id: `FLE-${Date.now().toString().slice(-6)}-${receipt.id.slice(-3)}`,
+          id: genId('FLE'),
           date: receipt.date || new Date().toISOString().split('T')[0],
           description: `Receipt ${receipt.id} - ${receipt.method}`,
           debit: 0,
@@ -9508,7 +9646,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         // If invoice exists, add it as an initial charge entry
         if (invoice && invoice.total > 0) {
           entries.push({
-            id: `FLE-${Date.now().toString().slice(-6)}`,
+            id: genId('FLE'),
             date: invoice.issueDate || new Date().toISOString().split('T')[0],
             description: `Invoice ${invoice.id} - Event Charges`,
             debit: invoice.total,
@@ -9518,7 +9656,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         }
         
         const newFolio: EventFolio = {
-          id: `FOL-${Date.now().toString().slice(-6)}`,
+          id: genId('FOL'),
           eventId: updatedEvent.id,
           eventName: updatedEvent.eventName || 'Unnamed Event',
           clientName: updatedEvent.organization || 'Unknown Client',
@@ -9546,6 +9684,29 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       return true;
     }
     return false;
+  };
+
+  // Bulk group check-in — for a confirmed, accommodation-only booking (no
+  // conference/catering component; see scheduleHasEventComponent) there's no
+  // per-guest reservation to check in one at a time, and no individual room/
+  // name assignment (the whole point of booking this way — see the pasted
+  // Menish/Noda-style day-by-day headcounts). This just marks the group
+  // in-house as one action, mirroring markEventAsCompleted's side-field
+  // pattern rather than overloading the business `status` union.
+  const checkInEventGroup = (event: any): boolean => {
+    if (event.checkedIn) return false;
+    // Matches the same fallback order the Active Events table itself displays
+    // (event.pax || event.expectedPax || 0) — keeps the confirm dialog, the
+    // stored headcount, and the KPI contribution all reading the same number.
+    const pax = event.pax || event.expectedPax || event.attendees || 0;
+    const confirmMessage = `Check in this group${pax ? ` (${pax} pax)` : ''}? This marks the whole booking as in-house — it does not create individual guest or room records.`;
+    if (!confirm(confirmMessage)) return false;
+
+    const updatedEvent = { ...event, checkedIn: true, checkedInAt: new Date().toISOString() };
+    setCustomEvents(prev => prev.map(ev => (ev.id === event.id ? updatedEvent : ev)));
+    frontOfficeStore.addInHouseGroup(event.id, pax, event.eventName);
+    trackEvent('Events.EventStatusUpdated', { eventId: event.id, action: 'group_checked_in' });
+    return true;
   };
 
   // Generate Gantt chart data for a specific venue
@@ -12029,7 +12190,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           // If invoice exists, add it as an initial charge entry
           if (invoice && invoice.total > 0) {
             entries.push({
-              id: `FLE-${Date.now().toString().slice(-6)}`,
+              id: genId('FLE'),
               date: invoice.issueDate || new Date().toISOString().split('T')[0],
               description: `Invoice ${invoice.id} - Event Charges`,
               debit: invoice.total,
@@ -12039,7 +12200,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           }
           
           const newFolio: EventFolio = {
-            id: `FOL-${Date.now().toString().slice(-6)}`,
+            id: genId('FOL'),
             eventId: event.id,
             eventName: event.eventName || 'Unnamed Event',
             clientName: event.organization || 'Unknown Client',
@@ -13178,9 +13339,14 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                           <TableCell className="text-center">{event.pax || event.expectedPax || 0}</TableCell>
                           <TableCell className="font-semibold">{formatCurrency(event.budgetTotal || 0)}</TableCell>
                           <TableCell>
-                            <Chip color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any} size="sm" variant="flat">
-                              {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
-                            </Chip>
+                            <div className="flex flex-col gap-1 items-start">
+                              <Chip color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any} size="sm" variant="flat">
+                                {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
+                              </Chip>
+                              {event.checkedIn && (
+                                <Chip color="success" size="sm" variant="dot">🏨 In-House</Chip>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell>
                             <div className="flex gap-2">
@@ -13192,6 +13358,17 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                               >
                                 View
                               </Button>
+                              {(event.eventStatus === 'confirmed' || event.status === 'confirmed') && !event.checkedIn &&
+                                !scheduleHasEventComponent(event.dailySchedule || [], event.customParticulars || []) && (
+                                <Button
+                                  size="sm"
+                                  color="secondary"
+                                  variant="flat"
+                                  onPress={() => checkInEventGroup(event)}
+                                >
+                                  🏨 Check In Group
+                                </Button>
+                              )}
                               {event.eventStatus !== 'completed' && event.eventStatus !== 'billed' && (
                                 <Button
                                   size="sm"
@@ -13368,26 +13545,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     <Button size="sm" color="primary" variant="flat" onPress={openCreateInvoicePicker}>
                       ➕ Create Invoice
                     </Button>
-                    <Select
-                    size="sm"
-                    label="Invoice print template"
-                    className="max-w-xs"
-                    selectedKeys={selectedInvoiceTemplate ? [selectedInvoiceTemplate] : []}
-                    onSelectionChange={(keys) => {
-                      const value = Array.from(keys)[0] as string | undefined;
-                      if (!value) return;
-                      setSelectedInvoiceTemplate(value);
-                      updatePrintingTemplates?.({ invoice: value });
-                    }}
-                    placeholder="Template"
-                    items={invoiceTemplateOptions}
-                  >
-                    {(tpl) => (
-                      <SelectItem key={tpl.key} textValue={tpl.name}>
-                        {tpl.name}
-                      </SelectItem>
-                    )}
-                  </Select>
+                    <span className="text-xs text-gray-500">Layout set in Settings → Document Templates</span>
                   </div>
                 </div>
                 <Table aria-label="Event invoices" className="text-sm">
@@ -13497,14 +13655,17 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               <CardBody className="pt-3">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-base font-semibold text-ghana-black">Receipts</h3>
-                  <Button
-                    size="sm"
-                    color="success"
-                    variant="flat"
-                    onPress={() => openReceiptModal('create')}
-                  >
-                    ➕ Record Receipt
-                  </Button>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-gray-500">Layout set in Settings → Document Templates</span>
+                    <Button
+                      size="sm"
+                      color="success"
+                      variant="flat"
+                      onPress={() => openReceiptModal('create')}
+                    >
+                      ➕ Record Receipt
+                    </Button>
+                  </div>
                 </div>
                 <Table aria-label="Confirmed event receipts" className="text-sm">
                     <TableHeader>
@@ -13603,26 +13764,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-base font-semibold text-ghana-black">Quotes / Proforma</h3>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Select
-                      size="sm"
-                      label="Proforma print template"
-                      className="max-w-xs"
-                      selectedKeys={selectedQuoteTemplate ? [selectedQuoteTemplate] : []}
-                      onSelectionChange={(keys) => {
-                        const value = Array.from(keys)[0] as string | undefined;
-                        if (!value) return;
-                        setSelectedQuoteTemplate(value);
-                        updatePrintingTemplates?.({ proforma: value });
-                      }}
-                      placeholder="Template"
-                      items={quoteTemplateOptions}
-                    >
-                      {(tpl) => (
-                        <SelectItem key={tpl.key} textValue={tpl.name}>
-                          {tpl.name}
-                        </SelectItem>
-                      )}
-                    </Select>
+                    <span className="text-xs text-gray-500">Layout set in Settings → Document Templates</span>
                     <Button
                       size="sm"
                       color="primary"
@@ -14634,7 +14776,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   </>
                 ) : (
                   <div className="flex flex-wrap items-end gap-3">
-                    <Input size="sm" type="number" label="Room Rate (₵)" value={String(roomRate)} onChange={(e)=> setRoomRate(parseFloat(e.target.value || '0') || 0)} className="w-40" isReadOnly={isViewMode} />
+                    {isResidential && (
+                      <Input size="sm" type="number" label="Room Rate (₵)" value={String(roomRate)} onChange={(e)=> setRoomRate(parseFloat(e.target.value || '0') || 0)} className="w-40" isReadOnly={isViewMode} />
+                    )}
                     <Input size="sm" type="number" label="Dinner Rate (₵)" value={String(dinnerRate)} onChange={(e)=> setDinnerRate(parseFloat(e.target.value || '0') || 0)} className="w-40" isReadOnly={isViewMode} />
                     <Input size="sm" type="number" label="Lunch Rate (₵)" value={String(lunchRate)} onChange={(e)=> setLunchRate(parseFloat(e.target.value || '0') || 0)} className="w-40" isReadOnly={isViewMode} />
                     <Input size="sm" type="number" label="Conference Rate (₵)" value={String(conferenceRate)} onChange={(e)=> setConferenceRate(parseFloat(e.target.value || '0') || 0)} className="w-40" isReadOnly={isViewMode} />
@@ -14657,7 +14801,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                        <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.rooms}</th>
+                        {isResidential && (
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.rooms}</th>
+                        )}
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.dinnerPax}</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.lunchPax}</th>
                         <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">{particularLabels.conferencePax}</th>
@@ -14672,13 +14818,15 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         return (
                           <tr key={row.date} className="hover:bg-gray-50">
                             <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">{row.date}</td>
-                            <td className="px-4 py-3">
-                              <Input size="sm" type="number" value={String(row.rooms)} onChange={(e) => {
-                                const v = parseInt(e.target.value || '0', 10) || 0;
-                                setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, rooms: v } : r));
-                                updateScheduleData(row.date, { rooms: v });
-                              }} isReadOnly={isViewMode} className="w-20" />
-                            </td>
+                            {isResidential && (
+                              <td className="px-4 py-3">
+                                <Input size="sm" type="number" value={String(row.rooms)} onChange={(e) => {
+                                  const v = parseInt(e.target.value || '0', 10) || 0;
+                                  setDailySchedule(prev => prev.map((r, i) => i === idx ? { ...r, rooms: v } : r));
+                                  updateScheduleData(row.date, { rooms: v });
+                                }} isReadOnly={isViewMode} className="w-20" />
+                              </td>
+                            )}
                             <td className="px-4 py-3">
                               <Input size="sm" type="number" value={String(row.dinnerPax)} onChange={(e) => {
                                 const v = parseInt(e.target.value || '0', 10) || 0;
@@ -14757,7 +14905,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     <tbody className="bg-white divide-y divide-gray-200">
                       {/* Standard Particulars Rows */}
                       {(['rooms', 'dinnerPax', 'lunchPax', 'conferencePax'] as const)
-                        .filter(k => !hiddenParticulars[k])
+                        .filter(k => !hiddenParticulars[k] && (k !== 'rooms' || isResidential))
                         .map((key) => {
                           const label = particularLabels[key];
                           const rate = key === 'conferencePax' ? conferenceRate : key === 'lunchPax' ? lunchRate : key === 'dinnerPax' ? dinnerRate : roomRate;
@@ -15073,34 +15221,12 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   <CardBody className="pt-0 px-4 pb-4">
                     {isEditingInvoiceDetails ? (
                       <div className="space-y-4">
-                        <div className="flex flex-col sm:flex-row sm:items-end sm:gap-3">
-                          <Select
-                            size="sm"
-                            label="Invoice Template"
-                            className="flex-1"
-                            selectedKeys={selectedInvoiceTemplate ? [selectedInvoiceTemplate] : []}
-                            onSelectionChange={(keys) => {
-                              const value = Array.from(keys)[0] as string | undefined;
-                              if (!value) return;
-                              setSelectedInvoiceTemplate(value);
-                              updatePrintingTemplates?.({ invoice: value });
-                            }}
-                            placeholder={invoiceTemplateOptions.length ? 'Choose template' : 'No templates available'}
-                            items={invoiceTemplateOptions}
-                          >
-                            {(tpl) => (
-                              <SelectItem key={tpl.key} textValue={tpl.name}>
-                                {tpl.name}
-                              </SelectItem>
-                            )}
-                          </Select>
-                        </div>
+                        <p className="text-xs text-gray-500">Layout set in Settings → Document Templates</p>
                         <div className="flex gap-2">
                           <Button
                             size="sm"
                             color="primary"
                             className="flex-1"
-                            isDisabled={!invoiceTemplateOptions.length}
                             onPress={() => {
                               const invoice = eventInvoices.find((inv) => inv.eventId === editingEvent?.id);
                               if (invoice) {
@@ -15127,82 +15253,106 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       size="sm"
                       variant="underlined"
                       selectedKey={activePrintTab}
-                      onSelectionChange={(key) => setActivePrintTab(key as 'quote' | 'invoice' | 'xls')}
+                      onSelectionChange={(key) => setActivePrintTab(key as 'quote' | 'invoice' | 'receipt' | 'xls')}
                     >
-                      {showQuotePrintInModal && editingEvent && (
-                      <Tab key="quote" title="📄 Proforma">
-                        <div className="space-y-3">
-                          <div className="flex flex-col sm:flex-row sm:items-end sm:gap-3">
+                      {showQuotePrintInModal && editingEvent && (() => {
+                        const proformaType = EVENT_DOC_TYPE[editingEventDocSection].proforma;
+                        const proformaOptions = listSelectableTemplates(proformaType);
+                        const proformaDefault = resolveEventTemplateKey(proformaType) || proformaOptions[0]?.key || '';
+                        return (
+                        <Tab key="quote" title="📄 Proforma">
+                          <div className="space-y-3">
+                            <p className="text-xs text-gray-500">Uses the Accommodation layout for a bulk rooms-only booking, or the Conference &amp; Events layout (with accommodation included) once any conference/catering is added.</p>
                             <Select
                               size="sm"
-                              label="Proforma Template"
-                              className="flex-1"
-                              selectedKeys={selectedQuoteTemplate ? [selectedQuoteTemplate] : []}
-                              onSelectionChange={(keys) => {
-                                const value = Array.from(keys)[0] as string | undefined;
-                                if (!value) return;
-                                setSelectedQuoteTemplate(value);
-                                updatePrintingTemplates?.({ proforma: value });
-                              }}
-                              placeholder={quoteTemplateOptions.length ? 'Choose template' : 'No templates available'}
-                              items={quoteTemplateOptions}
+                              label="Template"
+                              selectedKeys={[selectedProformaTemplate || proformaDefault]}
+                              onSelectionChange={(keys) => setSelectedProformaTemplate(Array.from(keys)[0] as string)}
                             >
-                              {(tpl) => (
-                                <SelectItem key={tpl.key} textValue={tpl.name}>
-                                  {tpl.name}
-                                </SelectItem>
-                              )}
+                              {proformaOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
                             </Select>
                             <Button
                               size="sm"
                               color="primary"
-                              className="mt-3 sm:mt-0 sm:w-auto w-full"
-                              isDisabled={!quoteTemplateOptions.length}
-                              onPress={() => handlePrintQuotePdf()}
+                              className="w-full"
+                              onPress={() => handlePrintQuotePdf(selectedProformaTemplate || proformaDefault)}
                             >
                               🖨️ Print Proforma
                             </Button>
                           </div>
-                        </div>
-                      </Tab>
-                      )}
-                      {showInvoicePrintInModal && linkedEventInvoice && (
-                      <Tab key="invoice" title="🧾 Invoice">
-                        <div className="space-y-3">
-                          <div className="flex flex-col sm:flex-row sm:items-end sm:gap-3">
+                        </Tab>
+                        );
+                      })()}
+                      {showInvoicePrintInModal && linkedEventInvoice && (() => {
+                        const invoiceType = EVENT_DOC_TYPE[editingEventDocSection].invoice;
+                        const invoiceOptions = listSelectableTemplates(invoiceType);
+                        const invoiceDefault = resolveEventTemplateKey(invoiceType) || invoiceOptions[0]?.key || '';
+                        return (
+                        <Tab key="invoice" title="🧾 Invoice">
+                          <div className="space-y-3">
                             <Select
                               size="sm"
-                              label="Invoice Template"
-                              className="flex-1"
-                              selectedKeys={selectedInvoiceTemplate ? [selectedInvoiceTemplate] : []}
-                              onSelectionChange={(keys) => {
-                                const value = Array.from(keys)[0] as string | undefined;
-                                if (!value) return;
-                                setSelectedInvoiceTemplate(value);
-                                updatePrintingTemplates?.({ invoice: value });
-                              }}
-                              placeholder={invoiceTemplateOptions.length ? 'Choose template' : 'No templates available'}
-                              items={invoiceTemplateOptions}
+                              label="Template"
+                              selectedKeys={[selectedInvoiceTemplate || invoiceDefault]}
+                              onSelectionChange={(keys) => setSelectedInvoiceTemplate(Array.from(keys)[0] as string)}
                             >
-                              {(tpl) => (
-                                <SelectItem key={tpl.key} textValue={tpl.name}>
-                                  {tpl.name}
-                                </SelectItem>
-                              )}
+                              {invoiceOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
                             </Select>
                             <Button
                               size="sm"
                               color="primary"
-                              className="mt-3 sm:mt-0 sm:w-auto w-full"
-                              isDisabled={!invoiceTemplateOptions.length}
-                              onPress={() => handleDownloadInvoicePdf(linkedEventInvoice)}
+                              className="w-full"
+                              onPress={() => handleDownloadInvoicePdf(linkedEventInvoice, selectedInvoiceTemplate || invoiceDefault)}
                             >
                               🖨️ Print Invoice
                             </Button>
                           </div>
-                        </div>
-                      </Tab>
-                      )}
+                        </Tab>
+                        );
+                      })()}
+                      {showInvoicePrintInModal && linkedEventInvoice && (() => {
+                        const receiptType = EVENT_DOC_TYPE[editingEventDocSection].receipt;
+                        const receiptOptions = listSelectableTemplates(receiptType);
+                        const receiptDefault = resolveEventTemplateKey(receiptType) || receiptOptions[0]?.key || '';
+                        return (
+                        <Tab key="receipt" title="💰 Receipt">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between p-2 rounded-md bg-gray-50 border border-gray-200">
+                              <span className="text-xs text-gray-600">Outstanding Balance</span>
+                              <span className="text-sm font-semibold text-ghana-black">{formatCurrency(linkedEventInvoice.balance || 0)}</span>
+                            </div>
+                            <Button
+                              size="sm"
+                              color="success"
+                              className="w-full"
+                              isDisabled={(linkedEventInvoice.balance || 0) <= 0}
+                              onPress={() => openReceiptModal('create', undefined, { ...editingEvent, balance: linkedEventInvoice.balance })}
+                            >
+                              💵 Record Payment
+                            </Button>
+                            {linkedEventReceipts.length > 0 && (
+                              <div className="space-y-2">
+                                <Select
+                                  size="sm"
+                                  label="Print Template"
+                                  selectedKeys={[selectedReceiptTemplate || receiptDefault]}
+                                  onSelectionChange={(keys) => setSelectedReceiptTemplate(Array.from(keys)[0] as string)}
+                                >
+                                  {receiptOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
+                                </Select>
+                                <p className="text-xs text-gray-500">Receipts on file</p>
+                                {linkedEventReceipts.map((rcpt) => (
+                                  <div key={rcpt.id} className="flex items-center justify-between gap-2 text-sm">
+                                    <span className="text-gray-600">{rcpt.date} · {formatCurrency(rcpt.amount)} · {paymentMethodLabel(rcpt.method)}</span>
+                                    <Button size="sm" variant="flat" onPress={() => handleDownloadReceiptPdf(rcpt, selectedReceiptTemplate || receiptDefault)}>🖨️ Print</Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </Tab>
+                        );
+                      })()}
                       <Tab key="xls" title="📊 XLS">
                         <div className="space-y-3">
                           <p className="text-xs text-gray-600">
@@ -15237,6 +15387,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     setIsCreatingEvent(false);
                     setIsViewMode(false);
                     setIsAdjustMode(false);
+                    setIsEditingInvoiceDetails(false);
                     setHoveredGanttEventId(null);
                   }}
                 >
@@ -15262,6 +15413,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     setIsCreatingEvent(false);
                     setIsViewMode(false);
                     setIsAdjustMode(false);
+                    setIsEditingInvoiceDetails(false);
                     setHoveredGanttEventId(null);
                   }}
                 >
@@ -16681,7 +16833,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                               if (note) {
                               const lastBalance = activeFolioBalance;
                                 const newEntry: EventFolioEntry = {
-                                  id: `FLE-${Date.now().toString().slice(-6)}`,
+                                  id: genId('FLE'),
                                   date: new Date().toISOString().split('T')[0],
                                   description: `Note: ${note}`,
                                   debit: 0,
@@ -16746,7 +16898,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     const budgetTax = budgetTotal - budgetSubtotal;
                     
                     // Create invoice from proforma
-                    const invoiceId = `INV-${Date.now().toString().slice(-6)}`;
+                    const invoiceId = genId('INV');
                     const newInvoice: EventInvoice = {
                       id: invoiceId,
                       eventId: event.id,

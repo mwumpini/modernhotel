@@ -26,7 +26,7 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
   // Canonical aggregation (folio.ts) instead of re-deriving from folio.charges here —
   // this is the same subtotal/tax/total math getFolioDisplayTotals already does for
   // every other folio screen.
-  const { subtotal, taxTotal: taxAmount, totalCharges: total, totalPayments: paid, outstandingBalance: balance } = getFolioDisplayTotals(folio);
+  const { subtotal, taxTotal: taxAmount, totalCharges: total, roundingAdjustment, totalPayments: paid, outstandingBalance: balance } = getFolioDisplayTotals(folio);
 
   if (total <= 0) {
     folio.status = 'closed';
@@ -67,6 +67,7 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
     subtotal,
     taxAmount,
     total,
+    roundingAdjustment,
     currency: 'GHS',
     status: balance === 0 ? 'Paid' : 'Posted',
     paidAmount: Math.min(total, paid),
@@ -140,6 +141,7 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
     subtotal,
     taxAmount,
     total,
+    roundingAdjustment,
     payments: paymentRows,
   };
 

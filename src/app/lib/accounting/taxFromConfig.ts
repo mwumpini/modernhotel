@@ -6,9 +6,46 @@
 
 import type { TaxConfig } from './models';
 import { GHANA_TAX_CODES } from './models';
+import { useSettingsStore } from '../settings/store';
+
+/** Setup > Rounding Rule (defaults to 'nearest' outside the browser or before it's set). */
+function getRoundingRule(): 'nearest' | 'up' | 'down' {
+  try {
+    return useSettingsStore.getState().financialSettings?.roundingRule || 'nearest';
+  } catch {
+    return 'nearest';
+  }
+}
 
 export function roundMoney2(n: number): number {
+  const rule = getRoundingRule();
+  if (rule === 'up') return Math.ceil(n * 100 - Number.EPSILON) / 100;
+  if (rule === 'down') return Math.floor(n * 100 + Number.EPSILON) / 100;
   return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Cash-rounding for a folio/invoice grand total — Setup/Settings "Round Total To
+ * Nearest" (e.g. 0.50) applied in the same direction as the Rounding Rule. Tax
+ * lines stay exact; callers post the gap as a separate rounding-adjustment GL line
+ * so debits still equal credits (see postGuestFolioCheckoutToLedger).
+ */
+export function roundToIncrement(amount: number): number {
+  let increment = 0;
+  try {
+    increment = Number(useSettingsStore.getState().financialSettings?.roundToNearest) || 0;
+  } catch {
+    increment = 0;
+  }
+  if (!(increment > 0)) return roundMoney2(amount);
+
+  const rule = getRoundingRule();
+  const units = amount / increment;
+  let roundedUnits: number;
+  if (rule === 'up') roundedUnits = Math.ceil(units - 1e-9);
+  else if (rule === 'down') roundedUnits = Math.floor(units + 1e-9);
+  else roundedUnits = Math.round(units + 1e-9);
+  return roundMoney2(roundedUnits * increment);
 }
 
 export type StackedTaxLine = {

@@ -9,6 +9,8 @@
  */
 
 import type { Reservation } from './types';
+import { roundMoney2 } from '../tax/engine';
+import { genId } from './helpers/ids';
 
 type StoreLike = {
   reservations: Reservation[];
@@ -35,14 +37,24 @@ export function getRoomChargeDatesOnFolio(folio: { charges?: Array<{ description
 }
 
 export function resolveRateForDate(store: StoreLike, reservation: Reservation, date: string): number {
+  return resolveDayPricing(store, reservation, date).base;
+}
+
+/**
+ * Net + gross for a stay date, both from the same rate-breakdown entry. Gross-priced
+ * plans store their exact manager-entered total in `.total` — reusing it (rather than
+ * re-deriving tax from the already-rounded `.base` independently) avoids a double
+ * rounding gap, e.g. a ₵500.00 gross rate landing on the folio as ₵499.99.
+ */
+function resolveDayPricing(store: StoreLike, reservation: Reservation, date: string): { base: number; gross?: number } {
   const breakdown =
     reservation.rateBreakdown?.length
       ? reservation.rateBreakdown
       : store.calculateRateBreakdown(reservation.roomTypeId, reservation.arrival, reservation.departure);
   const day = breakdown.find((n) => n.date === date);
-  if (typeof day?.base === 'number') return day.base;
+  if (typeof day?.base === 'number') return { base: day.base, gross: day.total };
   const fallback = store.ratePlans.find((rp) => rp.roomTypeId === reservation.roomTypeId);
-  return fallback?.basePrice ?? fallback?.price ?? 0;
+  return { base: fallback?.basePrice ?? fallback?.price ?? 0 };
 }
 
 /** Idempotent: skip if a room line already exists for businessDate. */
@@ -62,15 +74,16 @@ export function postRoomChargeForDate(
   const existing = getRoomChargeDatesOnFolio(folio);
   if (existing.has(businessDate)) return false;
 
-  const amount = resolveRateForDate(store, reservation, businessDate);
+  const { base: amount, gross } = resolveDayPricing(store, reservation, businessDate);
   if (amount <= 0) return false;
 
   store.addFolioCharge(folio.id, {
-    id: `C-RM-${businessDate.replace(/-/g, '')}-${Date.now().toString().slice(-4)}`,
+    id: genId('C-RM'),
     date: businessDate,
     description: ROOM_CHARGE_DESCRIPTION,
     amount,
     category: 'room',
+    ...(typeof gross === 'number' && gross >= amount ? { tax: roundMoney2(gross - amount) } : {}),
   });
   store.updateFolioBalances(folio);
   return true;

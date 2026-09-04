@@ -42,12 +42,16 @@ import {
   Textarea
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
+import { resolveGuestAddress } from '../../lib/frontoffice/helpers/guests';
 import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
 import { calculateStayNights } from '../../lib/frontoffice/helpers/rates';
 import { postRoomChargeForDate, isRoomLine } from '../../lib/frontoffice/roomCharges';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import type { Reservation } from '../../lib/frontoffice/types';
 import { formatMoney } from '../../lib/format/currency';
+import { useSettingsStore } from '../../lib/settings/store';
+import { openPrintPreview } from '../../lib/print/engine';
+import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 
 interface CheckInGuest {
   id: string;
@@ -311,6 +315,38 @@ function CheckInsSection() {
     setIsFolioModalOpen(true);
   };
 
+  // Registration Card — printed at check-in, before anything's been charged:
+  // guest/stay details + signature, no line items or totals (see
+  // registrationCardBlocks in lib/print/blockDefaults.ts).
+  const handlePrintRegistrationCard = (guest: CheckInGuest) => {
+    const settingsState = useSettingsStore.getState();
+    const address = resolveGuestAddress(frontOfficeStore.guests, guest.guestProfileId);
+    const resId = frontOfficeStore.reservations.find(r => r.id === guest.id)?.resId || guest.id;
+    const data = {
+      org: buildOrgProfile(settingsState),
+      guest: {
+        name: guest.guestName,
+        company: guest.billingPerson || undefined,
+        address,
+        roomNumber: guest.roomNumber,
+        roomType: guest.roomType,
+        roomRate: guest.roomRate,
+        arrivalDate: guest.checkInDate,
+        departureDate: guest.checkOutDate,
+        nights: guest.bookedNights ?? guest.nightsStayed,
+      },
+      docNumber: resId,
+      docDate: new Date().toISOString(),
+      title: 'Registration Card',
+      items: [],
+      totals: { subTotal: 0 },
+      footerNotes: guest.specialRequests ? [`Remarks: ${guest.specialRequests}`] : undefined,
+      currency: '₵',
+    } as any;
+    trackEvent('RegistrationCard.Printed', { reservationId: guest.id, guestName: guest.guestName }, { sourceModule: 'CheckIns' });
+    openPrintPreview('registration-card' as any, settingsState.printing['registration-card'] || 'builtin-registration-card-standard', data);
+  };
+
   const handlePaymentClick = (guest: CheckInGuest, paymentType: 'deposit' | 'payment' | 'prepayment' = 'payment') => {
     setSelectedFolioGuest(guest);
     setPaymentData({
@@ -528,6 +564,15 @@ function CheckInsSection() {
                                   </Button>
                       <Button
                         size="sm"
+                        color="default"
+                        variant="solid"
+                        className="bg-gray-600 text-white font-semibold px-3 py-1"
+                        onClick={() => handlePrintRegistrationCard(guest)}
+                      >
+                        🧾 Print
+                      </Button>
+                      <Button
+                        size="sm"
                         color="success"
                         variant="solid"
                         className="bg-green-600 text-white font-semibold px-3 py-1"
@@ -589,7 +634,7 @@ function CheckInsSection() {
       <Modal isOpen={isOpen} onClose={onClose} size="2xl"><ModalContent><ModalHeader>Manage Guest - {selectedGuest?.guestName}</ModalHeader><ModalBody>{selectedGuest && (<div className="grid grid-cols-2 gap-4"><div><p className="text-sm text-gray-600">Room</p><p className="text-lg font-semibold">{selectedGuest.roomNumber}</p></div><div><p className="text-sm text-gray-600">Check-in</p><p className="text-lg">{formatDate(selectedGuest.checkInDate)}</p></div><div><p className="text-sm text-gray-600">Check-out</p><p className="text-lg">{formatDate(selectedGuest.checkOutDate)}</p></div><div><p className="text-sm text-gray-600">Status</p><p className="text-lg font-semibold text-green-600">{selectedGuest.status}</p></div></div>)}</ModalBody><ModalFooter><Button variant="flat" onPress={onClose}>Close</Button><Button color="primary" onPress={() => selectedGuest && handleExtendStay(selectedGuest, 1)}>Extend Stay</Button><Button color="danger" variant="flat" onPress={() => selectedGuest && handleEarlyCheckout(selectedGuest)} isLoading={isProcessing}>Early Checkout</Button></ModalFooter></ModalContent></Modal>
 
       {/* Folio Modal */}
-      <Modal isOpen={isFolioModalOpen} onClose={() => setIsFolioModalOpen(false)} size="5xl">
+      <Modal isOpen={isFolioModalOpen} onClose={() => setIsFolioModalOpen(false)} size="5xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader className="bg-gradient-to-r from-blue-600 to-purple-600 text-white">
             <div className="flex items-center gap-3">
@@ -614,6 +659,46 @@ function CheckInsSection() {
               
               return (
                 <div className="space-y-6">
+                  {/* Guest Information */}
+                  <Card>
+                    <CardHeader>
+                      <h4 className="text-lg font-semibold">Guest Information</h4>
+                    </CardHeader>
+                    <CardBody>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <div className="text-sm text-gray-600">Guest Name</div>
+                          <div className="font-medium">{selectedFolioGuest.guestName || 'Unknown'}</div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-600">Room Number</div>
+                          <div className="font-medium">{selectedFolioGuest.roomNumber || 'TBD'}</div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-600">Status</div>
+                          <Badge color={selectedFolioGuest.status === 'checked-in' ? 'success' : 'warning'} variant="flat">
+                            {selectedFolioGuest.status}
+                          </Badge>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-600">Arrival</div>
+                          <div className="font-medium">
+                            {formatDate(selectedFolioGuest.checkInDate)}
+                            <span className="text-xs text-gray-500 ml-1">{formatTime(selectedFolioGuest.checkInDateTime)}</span>
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-600">Departure</div>
+                          <div className="font-medium">{formatDate(selectedFolioGuest.checkOutDate)}</div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-gray-600">Nights</div>
+                          <div className="font-medium">{selectedFolioGuest.bookedNights ?? selectedFolioGuest.nightsStayed}</div>
+                        </div>
+                      </div>
+                    </CardBody>
+                  </Card>
+
                   {/* Financial Summary Cards */}
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
@@ -680,6 +765,14 @@ function CheckInsSection() {
                             <span className="text-gray-600">Taxes (VAT + NHIL + GETFund + Tourism)</span>
                             <span className="font-semibold text-red-600">₵{formatMoney(taxTotal)}</span>
                         </div>
+                          {Math.abs(folioTotals.roundingAdjustment || 0) >= 0.01 && (
+                            <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                              <span className="text-gray-600">Rounding Adjustment</span>
+                              <span className="font-semibold text-gray-600">
+                                {folioTotals.roundingAdjustment > 0 ? '+' : ''}₵{formatMoney(folioTotals.roundingAdjustment)}
+                              </span>
+                            </div>
+                          )}
                           <div className="flex justify-between items-center py-3 bg-gray-50 rounded-lg px-3">
                             <span className="font-bold text-gray-800">Total Charges (Incl. Tax)</span>
                             <span className="font-bold text-lg text-gray-800">₵{formatMoney(folioTotals.totalCharges)}</span>
@@ -1072,8 +1165,8 @@ function CheckInsPageInner() {
       <div className="p-6">
         <div className="mb-6">
           <FrontOfficeBackButton />
-          <h1 className="text-3xl font-bold text-ghana-black">🔑 Guest Check-In & Check-Ins Management</h1>
-          <p className="text-gray-600 mt-2">Process check-ins for reservations and walk-ins, then manage guests during their stay</p>
+          <h1 className="text-3xl font-bold text-ghana-black">🏨 Front Office Operations</h1>
+          <p className="text-gray-600 mt-2">Reservations, check-ins, check-outs, service charges, and guest billing — all in one place</p>
                       </div>
 
         <Tabs selectedKey={selectedTab} onSelectionChange={(key) => setSelectedTab(key as string)} className="w-full">

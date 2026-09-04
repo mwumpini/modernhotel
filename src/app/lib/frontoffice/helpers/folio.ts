@@ -17,8 +17,9 @@
 import { trackEvent } from '../../analytics/trackEvent';
 import { logAudit } from '../../analytics/auditLogStore';
 import type { Folio, FolioPayment } from '../types';
-import { computeSalesTaxTotal, getCanonicalTaxRates } from '../../tax/engine';
+import { computeSalesTaxTotal, getCanonicalTaxRates, roundToIncrement, roundMoney2 } from '../../tax/engine';
 import { useSettingsStore } from '../../settings/store';
+import { genId as genChargeId } from './ids';
 
 type StoreLike = any;
 
@@ -72,7 +73,12 @@ export function getFolioDisplayTotals(folio: Folio) {
 	const payments = folio.payments || [];
 	const subtotal = charges.reduce((s, c) => s + (c.amount || 0), 0);
 	const taxTotal = charges.reduce((s, c) => s + (c.tax || 0), 0);
-	const totalCharges = subtotal + taxTotal;
+	const exactTotalCharges = subtotal + taxTotal;
+	// Settings > Billing & Rounding "Round Total To Nearest" — line items (subtotal/taxTotal
+	// above) stay exact; only the amount the guest is asked to settle is nudged to the
+	// increment. The gap is posted as a rounding-adjustment GL line at checkout (invoice.ts).
+	const totalCharges = roundToIncrement(exactTotalCharges);
+	const roundingAdjustment = roundMoney2(totalCharges - exactTotalCharges);
 	const totalPayments = payments
 		.filter((p) => p.status === 'completed')
 		.reduce((s, p) => s + (p.amount || 0), 0);
@@ -99,6 +105,7 @@ export function getFolioDisplayTotals(folio: Folio) {
 		subtotal,
 		taxTotal,
 		totalCharges,
+		roundingAdjustment,
 		totalPayments,
 		balance,
 		outstandingBalance,
@@ -136,6 +143,24 @@ export function findMainFolio(folios: Folio[] | undefined, reservationId: string
 }
 
 /**
+ * Drops later items that repeat an earlier item's id, keeping the first
+ * occurrence. Returns the same array reference when nothing was removed, so
+ * callers can cheaply tell whether anything changed.
+ */
+function dedupeById<T extends { id: string }>(items: T[] | undefined): T[] {
+	if (!items || !items.length) return items || [];
+	const seen = new Set<string>();
+	let sawDupe = false;
+	const out: T[] = [];
+	for (const item of items) {
+		if (seen.has(item.id)) { sawDupe = true; continue; }
+		seen.add(item.id);
+		out.push(item);
+	}
+	return sawDupe ? out : items;
+}
+
+/**
  * Get existing folio for a reservation or create a new active folio.
  * Notifies the store when a new folio is created.
  */
@@ -154,6 +179,20 @@ export function getOrCreateFolio(self: StoreLike, reservationId: string): Folio 
 
 		updateFolioBalances(self, f);
 		self.notify();
+	} else {
+		// One-time cleanup for folios that picked up a duplicate charge/payment
+		// id before ids were made collision-resistant (see genChargeId above) —
+		// a duplicate id breaks React's list rendering ("two children with the
+		// same key") wherever charges/payments are rendered, and would also
+		// double-count that charge/payment in the folio's totals.
+		const dedupedCharges = dedupeById(f.charges as any);
+		const dedupedPayments = dedupeById(f.payments as any);
+		if (dedupedCharges !== f.charges || dedupedPayments !== f.payments) {
+			f.charges = dedupedCharges as any;
+			f.payments = dedupedPayments as any;
+			updateFolioBalances(self, f);
+			self.notify();
+		}
 	}
 	return f as Folio;
 }
@@ -170,13 +209,15 @@ export function getFolioById(self: StoreLike, folioId: string): Folio | undefine
  * Safe to call after any folio mutation.
  */
 export function updateFolioBalances(self: StoreLike, folio: Folio) {
-	const totalCharges = folio.charges.reduce((sum, charge) => sum + charge.amount + (charge.tax || 0), 0);
+	const exactTotalCharges = folio.charges.reduce((sum, charge) => sum + charge.amount + (charge.tax || 0), 0);
+	const totalCharges = roundToIncrement(exactTotalCharges);
 	const totalPayments = (folio.payments || [])
 		.filter((p: any) => p.status === 'completed')
 		.reduce((sum: number, payment: any) => sum + payment.amount, 0);
 	const balance = totalCharges - totalPayments;
 
 	folio.totalCharges = totalCharges;
+	folio.roundingAdjustment = roundMoney2(totalCharges - exactTotalCharges);
 	folio.totalPayments = totalPayments;
 	folio.balance = balance;
 
@@ -267,7 +308,7 @@ export function transferCharge(self: StoreLike, fromReservationId: string, charg
 	if (idx === -1) return false;
 	const charge = fromFolio.charges[idx];
 	fromFolio.charges.splice(idx, 1);
-	toFolio.charges.push({ ...charge, id: `C-${Date.now().toString().slice(-6)}`, description: `${charge.description} (Transferred${note ? `: ${note}` : ''})` } as any);
+	toFolio.charges.push({ ...charge, id: genChargeId('C'), description: `${charge.description} (Transferred${note ? `: ${note}` : ''})` } as any);
 	updateFolioBalances(self, fromFolio);
 	updateFolioBalances(self, toFolio);
 	self.notify();
@@ -290,7 +331,7 @@ export function splitCharge(self: StoreLike, reservationId: string, chargeId: st
 	const taxMove = tax * (move / (charge.amount || 1));
 	source.charges[idx] = { ...charge, amount: charge.amount - move, tax: Math.max(0, (tax as number) - taxMove) } as any;
 	const target = getOrCreateFolio(self, targetReservationId);
-	target.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description: `${charge.description} (Split${note ? `: ${note}` : ''})`, amount: move, tax: taxMove } as any);
+	target.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description: `${charge.description} (Split${note ? `: ${note}` : ''})`, amount: move, tax: taxMove } as any);
 	updateFolioBalances(self, source);
 	updateFolioBalances(self, target);
 	self.notify();
@@ -306,7 +347,7 @@ export function voidCharge(self: StoreLike, reservationId: string, chargeId: str
 	const folio = getOrCreateFolio(self, reservationId);
 	const ch = folio.charges.find(c => c.id === chargeId);
 	if (!ch) return false;
-	folio.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description: `VOID ${ch.description} - ${reason}`, amount: -Math.abs(ch.amount), tax: -(ch.tax || 0) } as any);
+	folio.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description: `VOID ${ch.description} - ${reason}`, amount: -Math.abs(ch.amount), tax: -(ch.tax || 0) } as any);
 	updateFolioBalances(self, folio);
 	self.notify();
 	trackEvent('FO.Folio.ChargeVoided', { reservationId, amount: ch.amount });
@@ -329,7 +370,7 @@ export function refundPayment(self: StoreLike, reservationId: string, paymentId:
 		payment.status = 'refunded';
 	} else {
 		payment.amount -= val;
-		folio.payments.push({ id: `P-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), method: payment.method, amount: val, status: 'refunded', notes: `Refund: ${reason || ''}` } as any);
+		folio.payments.push({ id: genChargeId('P'), date: new Date().toISOString(), method: payment.method, amount: val, status: 'refunded', notes: `Refund: ${reason || ''}` } as any);
 	}
 	updateFolioBalances(self, folio);
 	self.notify();
@@ -374,7 +415,7 @@ export function postCorporateReceipt(self: StoreLike, payer: string, reservation
 			area: 'frontdesk',
 			action: 'create',
 			entity: 'Payment',
-			entityId: `CORP-${Date.now().toString().slice(-6)}`,
+			entityId: genChargeId('CORP'),
 			details: `Corporate receipt ₵${totalAmount} from ${payer} allocated to ${allocations.length} folios` ,
 			severity: 'medium',
 			meta: { allocations, reference, remaining }
@@ -405,7 +446,7 @@ export function getTaxRates(_self: StoreLike) {
 export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number) {
 	const f = getOrCreateFolio(self, reservationId);
 	const tax = computeSalesTaxTotal(amount);
-	f.charges.push({ id: `C-${Date.now().toString().slice(-6)}`, date: new Date().toISOString(), description, amount, tax } as any);
+	f.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description, amount, tax } as any);
 	updateFolioBalances(self, f);
 	self.notify();
 	trackEvent('FO.Folio.ChargePosted', { reservationId, description, amount, tax });
@@ -423,7 +464,7 @@ export function addPayment(self: StoreLike, reservationId: string, method: 'Cash
 	ref?: string;
 }): import('../types').FolioPayment {
 	const f = getOrCreateFolio(self, reservationId);
-	const paymentId = `P-${Date.now().toString().slice(-6)}`;
+	const paymentId = genChargeId('P');
 	const payment: FolioPayment = {
 		id: paymentId,
 		date: new Date().toISOString(),

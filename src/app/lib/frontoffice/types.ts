@@ -299,6 +299,46 @@ export interface GuestPreferences {
   disability?: string; // Accessibility needs or disability description
 }
 
+/** Corporate client metadata captured on the "Add/Edit Client" form's Corporate section. */
+export interface GuestCorporateMeta {
+  industry?: string;
+  registrationNumber?: string;
+  taxId?: string;
+  vatNumber?: string;
+  website?: string;
+  address?: {
+    countryCode?: string;
+    line1?: string;
+    line2?: string;
+    city?: string;
+    region?: string;
+    postalCode?: string;
+  };
+  contactPerson?: {
+    name?: string;
+    position?: string;
+    phone?: string;
+    email?: string;
+  };
+  terms?: {
+    paymentTerms?: string;
+    creditLimit?: number;
+    corporateAccountNumber?: string;
+    requirePO?: boolean;
+    poRequirement?: string;
+    invoiceDelivery?: string;
+    invoiceCurrency?: string;
+    accountsEmail?: string;
+  };
+  contacts?: Array<Record<string, unknown>>;
+  contract?: {
+    start?: string;
+    end?: string;
+    status?: string;
+    notes?: string;
+  };
+}
+
 export interface GuestProfile {
   id: string;
   serialNumber: string; // Sequential client number (e.g., C001, C002)
@@ -321,6 +361,13 @@ export interface GuestProfile {
   billingContactName?: string;
   billingContactEmail?: string;
   billingContactPhone?: string;
+  // Individual vs corporate guest — canonical source of truth (see isCorporateGuest() in helpers/guests.ts).
+  // Legacy records may only have companyName set, or lastName === 'corporate'; treat isCorporate as
+  // authoritative when present, and fall back to those heuristics only when it's undefined.
+  isCorporate?: boolean;
+  companyName?: string;
+  companyEmail?: string;
+  corporateMeta?: GuestCorporateMeta;
   createdAt?: string;
   updatedAt?: string;
   preferences?: GuestPreferences;
@@ -467,23 +514,12 @@ export interface Folio {
   description?: string;
   responsibleParty?: string;
   creditBalance?: number; // Available credit for this folio
-  totalCharges?: number; // Total charges on this folio
+  totalCharges?: number; // Total charges on this folio, cash-rounded per Settings > Billing & Rounding
   totalPayments?: number; // Total payments received
   balance?: number; // Current balance (charges - payments; negative = overpayment/credit)
+  roundingAdjustment?: number; // totalCharges minus the exact (unrounded) sum of charges+tax
   _creditDeducted?: number; // In-memory: credit already applied to guest profile
 }
-
-// Utility functions for GuestProfile
-export const getFullName = (guest: GuestProfile): string => {
-  return [guest.firstName, guest.middleName, guest.lastName].filter(Boolean).join(' ');
-};
-
-export const getDisplayName = (guest: GuestProfile): string => {
-  if (guest.middleName) {
-    return `${guest.firstName} ${guest.middleName} ${guest.lastName}`;
-  }
-  return `${guest.firstName} ${guest.lastName}`;
-};
 
 // NEW: Corporate Rate Management System
 export interface CorporateClient {

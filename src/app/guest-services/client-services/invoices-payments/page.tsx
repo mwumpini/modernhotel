@@ -29,8 +29,9 @@ import {
 } from '@heroui/react';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
-import { openPrintPreview } from '../../../lib/print/engine';
+import { openPrintPreview, openHtmlPrintWindow } from '../../../lib/print/engine';
 import { listTemplates } from '../../../lib/print/templates';
+import { buildOrgProfile } from '../../../lib/print/buildOrgProfile';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
 import { logAudit } from '../../../lib/analytics/auditLogStore';
 import { computeSalesTaxTotal, effectiveSalesTaxRate } from '../../../lib/tax/engine';
@@ -463,17 +464,7 @@ export default function InvoicesPaymentsPage() {
   };
 
   const handlePrintInvoice = (invoice: Invoice) => {
-    const org = (() => {
-      const biz = settings.countryCompliance[settings.defaultCountry]?.businessInfo;
-      return {
-        name: biz?.name || settings.systemName,
-        address: biz?.address,
-        phone: biz?.phone,
-        email: biz?.email,
-        taxId: biz?.taxId,
-        logoUrl: undefined
-      };
-    })();
+    const org = buildOrgProfile(settings);
 
     const data = {
       org,
@@ -514,17 +505,7 @@ export default function InvoicesPaymentsPage() {
 
   const handlePrintReceipt = (payment: Payment) => {
     const inv = invoices.find(i => i.id === payment.invoiceId);
-    const org = (() => {
-      const biz = settings.countryCompliance[settings.defaultCountry]?.businessInfo;
-      return {
-        name: biz?.name || settings.systemName,
-        address: biz?.address,
-        phone: biz?.phone,
-        email: biz?.email,
-        taxId: biz?.taxId,
-        logoUrl: undefined
-      };
-    })();
+    const org = buildOrgProfile(settings);
     const data = {
       org,
       guest: {
@@ -553,6 +534,134 @@ export default function InvoicesPaymentsPage() {
     openPrintPreview('receipt', settings.printing.receipt, data);
     try { trackEvent('Print.Receipt' as any, { paymentId: payment.id, amount: payment.amount }); } catch {}
     try { logAudit({ area: 'accounting', action: 'print', entity: 'Payment', entityId: payment.id, details: `Printed receipt for ${payment.transactionId}`, severity: 'low' }); } catch {}
+  };
+
+  // Folio Management modal's "Print Folio" — was a bare window.print() of the
+  // modal's own live Tailwind-styled DOM (broken: see html2pdf's oklch() error
+  // for the same pattern elsewhere). This is a fixed-layout internal report
+  // (Guest Information / Financial Summary / Charges & Services / Payments &
+  // Credits, mirroring the modal above) — NOT one of the Document Templates
+  // engine's customizable invoice/receipt/proforma documents, since a folio
+  // report isn't something a tenant reformats per guest-facing branding the
+  // way an invoice is; it always looks the same, just with the org's own
+  // header up top. Built and opened directly rather than via openPrintPreview.
+  const handlePrintFolio = (reservation: any) => {
+    if (!reservation) return;
+    const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
+    const org = buildOrgProfile(settings);
+    const currency = settings.countryCompliance[settings.defaultCountry]?.currencySymbol || '₵';
+    const fmt = (n?: number) => `${currency}${formatMoney(n || 0)}`;
+
+    const totalCharges = folio.totalCharges || 0;
+    const totalPayments = folio.totalPayments || 0;
+    const balance = folio.balance || 0;
+    const transactionCount = (folio.charges?.length || 0) + (folio.payments?.length || 0);
+    const nights = Math.ceil((new Date(reservation.departure).getTime() - new Date(reservation.arrival).getTime()) / 86400000);
+
+    const chargeRows = (folio.charges || []).length
+      ? (folio.charges || []).map((c: any) => `
+        <tr>
+          <td>${new Date(c.date).toLocaleDateString()}</td>
+          <td>${c.description || 'Charge'}</td>
+          <td class="right">${fmt(c.amount)}</td>
+          <td class="right">${fmt(c.tax)}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="4" class="empty">No charges recorded</td></tr>`;
+
+    const paymentRows = (folio.payments || []).length
+      ? (folio.payments || []).map((p: any) => `
+        <tr>
+          <td>${new Date(p.date).toLocaleDateString()}</td>
+          <td>${p.method || ''}</td>
+          <td class="right">${fmt(p.amount)}</td>
+          <td>${p.status || ''}</td>
+          <td>${p.reference || '-'}</td>
+        </tr>`).join('')
+      : `<tr><td colspan="5" class="empty">No payments recorded</td></tr>`;
+
+    const html = `
+    <!doctype html><html><head><meta charset="utf-8" />
+    <title>Folio — ${reservation.guestName || ''}</title>
+    <style>
+      :root { --fg:#111; --muted:#555; --border:#ddd; }
+      * { box-sizing:border-box; }
+      body { font-family: Arial, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", sans-serif; color:var(--fg); margin:0; padding:24px; }
+      h1,h2,h3,h4 { margin:0; }
+      .header { text-align:center; border-bottom:2px solid var(--border); padding-bottom:16px; margin-bottom:16px; }
+      .logo { max-width:120px; max-height:80px; object-fit:contain; margin-bottom:8px; }
+      .org-name { font-size:1.4em; font-weight:700; }
+      .org-detail { font-size:12px; color:var(--muted); margin-top:2px; }
+      .doc-title { text-align:center; font-size:1.2em; font-weight:700; margin:4px 0 20px; text-decoration:underline; }
+      .section { margin-bottom:20px; }
+      .section-title { font-size:1.05em; font-weight:700; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:4px; }
+      .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
+      .field-label { font-size:11px; color:var(--muted); }
+      .field-value { font-weight:600; margin-top:2px; }
+      .stats { display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; }
+      .stat-card { text-align:center; padding:12px; border-radius:8px; border:1px solid var(--border); }
+      .stat-value { font-size:1.4em; font-weight:700; }
+      .stat-label { font-size:11px; color:var(--muted); margin-top:2px; }
+      table { width:100%; border-collapse:collapse; margin-top:8px; font-size:12px; }
+      th, td { border:1px solid var(--border); padding:6px 8px; text-align:left; }
+      th { background:#f7f7f7; }
+      .right { text-align:right; }
+      .empty { text-align:center; color:var(--muted); padding:16px; }
+      .footer { margin-top:24px; font-size:11px; color:var(--muted); text-align:center; }
+      @media print { body { padding:0; } }
+    </style>
+    </head><body>
+      <div class="header">
+        ${org.logoUrl ? `<img class="logo" src="${org.logoUrl}" />` : ''}
+        <div class="org-name">${org.name || ''}</div>
+        <div class="org-detail">${[org.address, org.phone, org.email].filter(Boolean).join(' • ')}</div>
+      </div>
+
+      <div class="doc-title">Guest Folio Statement</div>
+
+      <div class="section">
+        <div class="section-title">Guest Information</div>
+        <div class="grid">
+          <div><div class="field-label">Guest Name</div><div class="field-value">${reservation.guestName || 'Unknown'}</div></div>
+          <div><div class="field-label">Room Number</div><div class="field-value">${reservation.roomId || 'TBD'}</div></div>
+          <div><div class="field-label">Status</div><div class="field-value">${reservation.status || ''}</div></div>
+          <div><div class="field-label">Arrival</div><div class="field-value">${new Date(reservation.arrival).toLocaleDateString()}</div></div>
+          <div><div class="field-label">Departure</div><div class="field-value">${new Date(reservation.departure).toLocaleDateString()}</div></div>
+          <div><div class="field-label">Nights</div><div class="field-value">${nights}</div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Financial Summary</div>
+        <div class="stats">
+          <div class="stat-card" style="background:#eff6ff;"><div class="stat-value" style="color:#2563eb;">${fmt(totalCharges)}</div><div class="stat-label">Total Charges</div></div>
+          <div class="stat-card" style="background:#f0fdf4;"><div class="stat-value" style="color:#16a34a;">${fmt(totalPayments)}</div><div class="stat-label">Total Payments</div></div>
+          <div class="stat-card" style="background:#fff7ed;"><div class="stat-value" style="color:#c2410c;">${fmt(balance)}</div><div class="stat-label">Outstanding Balance</div></div>
+          <div class="stat-card" style="background:#faf5ff;"><div class="stat-value" style="color:#7e22ce;">${transactionCount}</div><div class="stat-label">Transactions</div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Charges &amp; Services</div>
+        <table>
+          <thead><tr><th>Date</th><th>Description</th><th class="right">Amount</th><th class="right">Tax</th></tr></thead>
+          <tbody>${chargeRows}</tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Payments &amp; Credits</div>
+        <table>
+          <thead><tr><th>Date</th><th>Method</th><th class="right">Amount</th><th>Status</th><th>Reference</th></tr></thead>
+          <tbody>${paymentRows}</tbody>
+        </table>
+      </div>
+
+      <div class="footer">Generated ${new Date().toLocaleString()}</div>
+    </body></html>`;
+
+    openHtmlPrintWindow(html);
+    try { trackEvent('Print.Folio' as any, { reservationId: reservation.id, guestName: reservation.guestName }); } catch {}
+    try { logAudit({ area: 'frontdesk', action: 'print', entity: 'Folio', entityId: reservation.id, details: `Printed folio for ${reservation.guestName}`, severity: 'low' }); } catch {}
   };
 
   const handleViewInvoice = (invoice: Invoice) => {
@@ -1970,12 +2079,15 @@ export default function InvoicesPaymentsPage() {
       {/* Folio Management Modal */}
         <Modal isOpen={isFolioModalOpen} onClose={onFolioModalClose} size="5xl" scrollBehavior="inside">
         <ModalContent>
-          <ModalHeader>
-            <div className="flex items-center justify-between w-full">
-              <h3 className="text-xl font-semibold">📊 Folio Management</h3>
-              <Badge color="primary" variant="flat">
-                {selectedFolio?.guestName || 'Unknown Guest'} - Room {selectedFolio?.roomId || 'TBD'}
-              </Badge>
+          <ModalHeader className="bg-gradient-to-r from-blue-600 to-purple-600 text-white">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                <span className="text-xl">📊</span>
+              </div>
+              <div>
+                <h2 className="text-xl font-bold">Folio Management</h2>
+                <p className="text-blue-100 text-sm">{selectedFolio?.guestName || 'Unknown Guest'} • Room {selectedFolio?.roomId || 'TBD'}</p>
+              </div>
             </div>
           </ModalHeader>
           <ModalBody>
@@ -2190,9 +2302,9 @@ export default function InvoicesPaymentsPage() {
             <Button variant="flat" onClick={onFolioModalClose}>
               Close
             </Button>
-            <Button 
-              color="secondary" 
-              onClick={() => window.print()}
+            <Button
+              color="secondary"
+              onClick={() => handlePrintFolio(selectedFolio)}
               startContent={<span>🖨️</span>}
             >
               Print Folio

@@ -2299,51 +2299,38 @@ export default function RoomConfigurationDashboard() {
         </Tab>
 
         <Tab key="rate-plans" title="Rate Plans">
-          {/* Price Type Information */}
-          <Card className="mb-6 bg-blue-50 border-blue-200">
-            <CardHeader>
-              <h3 className="text-lg font-semibold text-blue-800">💰 Understanding Price Types</h3>
-            </CardHeader>
-            <CardBody>
-              {(() => {
-                const exampleBase = 600;
-                const { total: exampleTax } = salesTaxBreakdown(exampleBase);
-                const exampleGross = exampleBase + exampleTax;
-                return (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-3">
-                  <h4 className="font-medium text-blue-700">Subtotal (Before Tax)</h4>
-                  <ul className="text-sm text-blue-600 space-y-1">
-                    <li>• You set the base room rate</li>
-                    <li>• Taxes are calculated and added on top</li>
-                    <li>• Guest pays: Base Rate + Taxes</li>
-                    <li>• Example: ₵{exampleBase.toFixed(2)} + ₵{exampleTax.toFixed(2)} = ₵{exampleGross.toFixed(2)} total</li>
-                  </ul>
-                </div>
-                <div className="space-y-3">
-                  <h4 className="font-medium text-blue-700">Gross Total (Including Tax)</h4>
-                  <ul className="text-sm text-blue-600 space-y-1">
-                    <li>• You set the final guest price</li>
-                    <li>• Taxes are included in your rate</li>
-                    <li>• Guest pays exactly what you set</li>
-                    <li>• Example: ₵{exampleGross.toFixed(2)} (taxes already included)</li>
-                  </ul>
-                </div>
-              </div>
-                );
-              })()}
-              <div className="mt-4 p-3 bg-blue-100 rounded-lg">
-                <p className="text-sm text-blue-800">
-                  <strong>💡 Tip:</strong> Use "Subtotal" if you want to control your base revenue, 
-                  use "Gross Total" if you want to control the final guest price.
-                </p>
-              </div>
-            </CardBody>
-          </Card>
-
           <Card className="mb-6">
-            <CardHeader>
+            <CardHeader className="flex items-center justify-between">
               <h3 className="text-xl font-semibold">Add New Rate Plan</h3>
+              <Tooltip
+                content={(() => {
+                  const exampleBase = 600;
+                  const { total: exampleTax } = salesTaxBreakdown(exampleBase);
+                  const exampleGross = exampleBase + exampleTax;
+                  return (
+                    <div className="max-w-sm text-sm space-y-2 p-1">
+                      <div>
+                        <strong className="text-blue-700">Subtotal (Before Tax):</strong> you set the base room rate,
+                        taxes are added on top. Guest pays Base Rate + Taxes — e.g. ₵{exampleBase.toFixed(2)} + ₵{exampleTax.toFixed(2)} = ₵{exampleGross.toFixed(2)}.
+                      </div>
+                      <div>
+                        <strong className="text-blue-700">Gross Total (Including Tax):</strong> you set the final guest price,
+                        taxes are already included in it. Guest pays exactly ₵{exampleGross.toFixed(2)}.
+                      </div>
+                      <div className="text-gray-600">💡 Use Subtotal to control base revenue, Gross Total to control the final guest price.</div>
+                    </div>
+                  );
+                })()}
+              >
+                <span
+                  role="img"
+                  aria-label="Understanding Price Types"
+                  className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center cursor-pointer select-none text-sm font-semibold"
+                  title="Understanding Price Types"
+                >
+                  i
+                </span>
+              </Tooltip>
             </CardHeader>
             <CardBody>
               {ratePlanFormError && (
@@ -2370,13 +2357,6 @@ export default function RoomConfigurationDashboard() {
                     </SelectItem>
                   ))}
                 </Select>
-                <Input
-                  label={`Price (₵) - ${newRatePlan.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total'}`}
-                  type="number"
-                  placeholder="750"
-                  value={newRatePlan.price}
-                  onChange={(e) => setNewRatePlan({...newRatePlan, price: e.target.value})}
-                />
                 <Select
                   label="Price Type"
                   placeholder="Select price type"
@@ -2390,6 +2370,13 @@ export default function RoomConfigurationDashboard() {
                     Gross Total (Including Tax)
                   </SelectItem>
                 </Select>
+                <Input
+                  label={`Price (₵) - ${newRatePlan.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total'}`}
+                  type="number"
+                  placeholder="750"
+                  value={newRatePlan.price}
+                  onChange={(e) => setNewRatePlan({...newRatePlan, price: e.target.value})}
+                />
                 <Select
                   label="Market Segment"
                   placeholder="Select market segment"
@@ -3093,7 +3080,7 @@ export default function RoomConfigurationDashboard() {
                   <div>
                     <div className="text-sm text-gray-700 font-medium">Post first night at check-in</div>
                     <div className="text-xs text-gray-500 mt-1">
-                      When off (default), room charges post nightly via night audit only. Idempotency prevents double posting if both run.
+                      When on (default), the first night posts immediately at check-in so the folio isn't ₵0 until night audit runs. Idempotency prevents double posting if both run.
                     </div>
                   </div>
                   <Switch
@@ -3219,6 +3206,64 @@ export default function RoomConfigurationDashboard() {
                       </label>
                     </div>
                   </div>
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card className="border-0 shadow-md">
+              <CardHeader className="pb-2 flex items-center justify-between">
+                <h4 className="text-lg font-semibold text-ghana-black">Billing & Rounding</h4>
+              </CardHeader>
+              <CardBody className="pt-0">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs text-gray-600">Rounding Rule</label>
+                    <select
+                      className="mt-1 w-full border rounded-md p-2 text-sm"
+                      value={settingsStore.financialSettings.roundingRule || 'nearest'}
+                      onChange={(e) => settingsStore.updateNestedSetting('financialSettings.roundingRule', e.target.value)}
+                    >
+                      <option value="nearest">Nearest</option>
+                      <option value="up">Round Up</option>
+                      <option value="down">Round Down</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs text-gray-600">Round Total To Nearest</label>
+                    <div className="mt-1 flex gap-2">
+                      <select
+                        className="border rounded-md p-2 text-sm flex-1"
+                        value={(() => {
+                          const presets = ['0', '0.01', '0.05', '0.10', '0.50', '1.00'];
+                          const current = String(settingsStore.financialSettings.roundToNearest ?? 0.5);
+                          return presets.includes(current) ? current : 'custom';
+                        })()}
+                        onChange={(e) => {
+                          if (e.target.value === 'custom') return;
+                          settingsStore.updateNestedSetting('financialSettings.roundToNearest', Number(e.target.value));
+                        }}
+                      >
+                        <option value="0">Off (exact pesewa)</option>
+                        <option value="0.01">₵0.01</option>
+                        <option value="0.05">₵0.05</option>
+                        <option value="0.10">₵0.10</option>
+                        <option value="0.50">₵0.50</option>
+                        <option value="1.00">₵1.00</option>
+                        <option value="custom">Custom…</option>
+                      </select>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        className="w-24 border rounded-md p-2 text-sm"
+                        value={settingsStore.financialSettings.roundToNearest ?? 0.5}
+                        onChange={(e) => settingsStore.updateNestedSetting('financialSettings.roundToNearest', Math.max(0, Number(e.target.value || '0')))}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="text-xs text-gray-500 mt-2">
+                  Rounding Rule controls tax/line-item precision to the pesewa everywhere (invoices, folios, POS). Round Total To Nearest additionally nudges the folio/invoice amount due to a round cash figure (e.g. ₵0.50) — pick a preset or type your own; 0 turns it off. The gap between the two is posted as a Rounding Adjustment GL line (4900) at checkout, so the books still balance. Set here or in Setup — both share the same values.
                 </div>
               </CardBody>
             </Card>
@@ -3385,15 +3430,6 @@ export default function RoomConfigurationDashboard() {
                   </SelectItem>
                 ))}
               </Select>
-              <Input
-                label={`Price (₵) - ${editRatePlanForm.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total'}`}
-                type="number"
-                min={0.01}
-                step="0.01"
-                placeholder="750"
-                value={editRatePlanForm.price}
-                onChange={(e) => setEditRatePlanForm({ ...editRatePlanForm, price: e.target.value })}
-              />
               <Select
                 label="Price Type"
                 placeholder="Select price type"
@@ -3407,6 +3443,15 @@ export default function RoomConfigurationDashboard() {
                   Gross Total (Including Tax)
                 </SelectItem>
               </Select>
+              <Input
+                label={`Price (₵) - ${editRatePlanForm.priceType === 'subtotal' ? 'Subtotal' : 'Gross Total'}`}
+                type="number"
+                min={0.01}
+                step="0.01"
+                placeholder="750"
+                value={editRatePlanForm.price}
+                onChange={(e) => setEditRatePlanForm({ ...editRatePlanForm, price: e.target.value })}
+              />
               <Textarea
                 label="Description (Optional)"
                 placeholder="Additional details about this rate plan..."

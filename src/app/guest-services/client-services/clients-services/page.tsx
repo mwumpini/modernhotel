@@ -11,6 +11,7 @@ import { useSettingsStore } from '../../../lib/settings/store';
 import { COUNTRIES, countryCodeToNationalityAdjective } from '../../../lib/countries';
 import { Autocomplete, AutocompleteItem } from '@heroui/react';
 import { GuestProfile, Reservation, Nationality } from '../../../lib/frontoffice/types';
+import { isCorporateGuest } from '../../../lib/frontoffice/helpers/guests';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
 import { PencilSquareIcon, TrashIcon, AdjustmentsHorizontalIcon, InformationCircleIcon, EyeIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
 
@@ -297,7 +298,7 @@ function ClientsServicesContent() {
 
 			const rowsData: ClientRow[] = guests.map((g: GuestProfile) => {
             const lastIsCorporate = String((g as any).lastName || '').toLowerCase() === 'corporate';
-            const isCorp = (g as any).type === 'corporate' || (g as any).isCorporate === true || lastIsCorporate;
+            const isCorp = isCorporateGuest(g);
             const corpMeta: any = (g as any).corporateMeta || {};
             const corpContact = corpMeta.contactPerson || {};
             
@@ -390,7 +391,7 @@ function ClientsServicesContent() {
                 const lastIsCorporate = String(g?.lastName || '').toLowerCase() === 'corporate';
                 const inferredCompany = lastIsCorporate ? g?.firstName : undefined;
                 const companyName: string | undefined = g?.companyName || g?.corporateMeta?.companyName || inferredCompany;
-                const looksCorporate = !!(g?.isCorporate || g?.type === 'corporate' || lastIsCorporate || companyName);
+                const looksCorporate = isCorporateGuest(g) || !!companyName;
                 if (looksCorporate) {
                     const updates: any = {};
                     if (!g.isCorporate) updates.isCorporate = true;
@@ -609,21 +610,17 @@ function ClientsServicesContent() {
             return;
         }
         
-        // Generate a unique client ID independent of display numbering to avoid collisions
-        const settingsState = useSettingsStore.getState();
-        const clientId = editClientId || `G-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*1000).toString().padStart(3,'0')}`;
-        
         const nationality = countryCodeToNationalityAdjective(newClient.countryCode) as Nationality;
-        
-        // Create guest profile
-        const newGuest: GuestProfile = {
-            id: clientId,
-            serialNumber: frontOfficeStore.getNextClientNumber(),
-            firstName: newClient.type === 'corporate' 
-                ? newClient.companyName 
+
+        // Guest fields shared by create + edit. serialNumber/id are deliberately absent:
+        // createGuest() mints them once internally on create, and an edit must never
+        // touch the guest's existing serial number.
+        const newGuest: Partial<GuestProfile> = {
+            firstName: newClient.type === 'corporate'
+                ? newClient.companyName
                 : newClient.firstName,
-            lastName: newClient.type === 'corporate' 
-                ? '' 
+            lastName: newClient.type === 'corporate'
+                ? ''
                 : newClient.lastName,
             middleName: newClient.middleName || undefined,
             phone: newClient.phone || undefined,
@@ -642,18 +639,15 @@ function ClientsServicesContent() {
                 address: newClient.emergencyAddress || ''
             },
             source: 'walkin',
-            createdAt: editClientId ? 
-                (frontOfficeStore.guests?.find(g => g.id === clientId)?.createdAt) || new Date().toISOString() : 
-                new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             employerCompany: (newClient as any).employerCompany || undefined,
             companyPhone: (newClient as any).companyPhone || undefined,
             jobTitle: (newClient as any).jobTitle || undefined,
+            isCorporate: newClient.type === 'corporate',
         };
 
         // Add corporate metadata if corporate client
         if (newClient.type === 'corporate') {
-            (newGuest as any).isCorporate = true;
             (newGuest as any).companyName = newClient.companyName;
             (newGuest as any).companyEmail = newClient.companyEmail;
             (newGuest as any).corporateMeta = {
@@ -696,28 +690,14 @@ function ClientsServicesContent() {
             };
         }
         
-        // Update store
-        // Use store APIs to avoid accidental array truncation or ID collisions
-        const updated = frontOfficeStore.updateGuest(clientId, newGuest as any);
-        if (!updated) {
-            frontOfficeStore.createGuest({
-                firstName: newGuest.firstName,
-                lastName: newGuest.lastName,
-                middleName: newGuest.middleName,
-                phone: newGuest.phone,
-                email: newGuest.email,
-                nationality: newGuest.nationality,
-                idType: newGuest.idType,
-                idNumber: newGuest.idNumber,
-                dateOfBirth: newGuest.dateOfBirth,
-                gender: newGuest.gender,
-                emergencyContact: newGuest.emergencyContact,
-                address: undefined,
-                city: newGuest.city as any,
-                country: undefined,
-                notes: undefined,
-                source: 'walkin'
-            });
+        // Update store. Branching explicitly on editClientId (rather than "try update,
+        // fall back to create") avoids pre-minting a serialNumber that would either
+        // clobber an existing guest's number (edit) or get silently discarded and
+        // double-burn the counter (create) — see getNextClientNumber() in settings/store.ts.
+        if (editClientId) {
+            frontOfficeStore.updateGuest(editClientId, newGuest as any);
+        } else {
+            frontOfficeStore.createGuest({ ...newGuest, createdAt: new Date().toISOString() } as any);
         }
         
         // Reset form
@@ -862,7 +842,7 @@ function ClientsServicesContent() {
             email: g.email || '',
             phone: g.phone || '',
             secondaryPhone: g.secondaryPhone || '',
-            type: (g.companyName || g.isCorporate) ? 'corporate' : 'individual',
+            type: isCorporateGuest(g) ? 'corporate' : 'individual',
             companyName: g.companyName || '',
             industry: g.corporateMeta?.industry || '',
             industryOther: '',
@@ -904,7 +884,7 @@ function ClientsServicesContent() {
             countryCode: g.nationality ? (g.nationality === 'ghanaian' ? defaultCountryCode : g.countryCode || defaultCountryCode) : defaultCountryCode,
             idType: g.idType || 'ghana_card',
             idNumber: g.idNumber || '',
-            gender: ((g.companyName || g.isCorporate) ? 'prefer_not_to_say' : (g.gender || 'prefer_not_to_say')),
+            gender: (isCorporateGuest(g) ? 'prefer_not_to_say' : (g.gender || 'prefer_not_to_say')),
             dateOfBirth: g.dateOfBirth || '',
             idExpiry: '',
             idIssuingAuthority: '',

@@ -642,6 +642,7 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '4200', name: 'Food and Beverage Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
   { code: '4300', name: 'Other Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
   { code: '4400', name: 'Service Charges', type: 'Revenue', category: 'Revenue', level: 2 },
+  { code: '4900', name: 'Rounding Adjustment', type: 'Revenue', category: 'Revenue', level: 2, description: 'Cash-rounding gap between exact tax lines and the rounded folio/invoice total' },
 
   // Expenses (5000-5999)
   { code: '5000', name: 'Operating Expenses', type: 'Expense', category: 'Expenses', level: 1 },

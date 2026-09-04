@@ -33,8 +33,10 @@ import {
   AccordionItem
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
+import { resolveGuestAddress } from '../../lib/frontoffice/helpers/guests';
 import { openPrintPreview } from '../../lib/print/engine';
 import { listTemplates } from '../../lib/print/templates';
+import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 import { useSettingsStore } from '../../lib/settings/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { salesTaxBreakdown } from '../../lib/tax/engine';
@@ -158,6 +160,7 @@ export default function CheckOutsPage() {
     const totals = getFolioDisplayTotals(folio);
     return {
       totalCharges: totals.totalCharges,
+      roundingAdjustment: totals.roundingAdjustment,
       totalPayments: totals.totalPayments,
       outstandingBalance: totals.outstandingBalance,
       balance: totals.balance,
@@ -198,7 +201,7 @@ export default function CheckOutsPage() {
         id: reservation.id,
         uniqueCheckOutId: `checkout-${Date.now()}`,
         folioId: reservation.id,
-        guestProfileId: undefined,
+        guestProfileId: reservation.guestId,
         guestName: reservation.guestName,
         roomNumber: reservation.roomId || 'TBD',
         roomType: roomType?.name || 'Standard',
@@ -408,12 +411,12 @@ export default function CheckOutsPage() {
 
   // Ghanaian hotel-specific checkout processes
   const handlePrintReceipt = (checkOut: CheckOutData) => {
-    const data = buildPrintData(checkOut);
+    const data = buildPrintData(checkOut, 'receipt');
     openPrintPreview('receipt', receiptTpl, data);
   };
 
   const handlePrintInvoice = (checkOut: CheckOutData) => {
-    const data = buildPrintData(checkOut);
+    const data = buildPrintData(checkOut, 'invoice');
     openPrintPreview('invoice', invoiceTpl, data);
   };
 
@@ -498,16 +501,9 @@ export default function CheckOutsPage() {
   });
 
   // Build printable data from store folio/reservation
-  const buildPrintData = (checkOut: CheckOutData) => {
-    const settings = useSettingsStore.getState?.() as any;
-    const org = {
-      name: settings?.organization?.name || 'Hotel',
-      address: settings?.organization?.address || '',
-      phone: settings?.organization?.phone || '',
-      email: settings?.organization?.email || '',
-      taxId: settings?.organization?.taxId || '',
-      logoUrl: settings?.branding?.logoUrl || ''
-    };
+  const buildPrintData = (checkOut: CheckOutData, docType: 'receipt' | 'invoice' = 'invoice') => {
+    const settings = useSettingsStore.getState();
+    const org = buildOrgProfile(settings);
     const folio = frontOfficeStore.getOrCreateFolio(checkOut.id);
     const items = (folio.charges || []).map((c) => ({ description: c.description || 'Charge', amount: (c.amount || 0) + (c.tax || 0), unitPrice: c.amount, qty: 1 }));
     const baseSum = (folio.charges || []).reduce((s, c) => s + (c.amount || 0), 0);
@@ -523,13 +519,15 @@ export default function CheckOutsPage() {
       guest: {
         name: checkOut.guestName,
         company: checkOut.billingPerson,
+        address: resolveGuestAddress(frontOfficeStore.guests, checkOut.guestProfileId),
         roomNumber: checkOut.roomNumber,
         roomType: checkOut.roomType,
+        roomRate: checkOut.roomRate,
         arrivalDate: new Date(checkOut.checkInDate).toLocaleDateString(),
         departureDate: new Date(checkOut.checkOutDate).toLocaleDateString(),
         nights: checkOut.nightsStayed
       },
-      docNumber: checkOut.id,
+      docNumber: docType === 'receipt' ? settings.getNextReceiptNumber() : settings.getNextInvoiceNumber(),
       docDate: new Date().toISOString(),
       items,
       totals: { subTotal, taxes, payments, balance, grandTotal },
@@ -790,45 +788,12 @@ export default function CheckOutsPage() {
                         variant="solid"
                         className="bg-gray-600 text-white font-semibold px-3 py-1"
                         onClick={() => {
-                        const inv = {
-                          id: checkOut.id,
-                          invoiceNumber: `INV-${checkOut.id}`,
-                          guestName: checkOut.guestName,
-                          guestEmail: (checkOut as any).guestEmail || '',
-                          guestPhone: (checkOut as any).guestPhone || '',
-                          roomNumber: String(checkOut.roomNumber || ''),
-                          roomType: String(checkOut.roomType || ''),
-                          checkInDate: checkOut.checkInDate,
-                          checkOutDate: checkOut.checkOutDate,
-                          nights: checkOut.nightsStayed,
-                          subtotal: (checkOut.totalCharges || 0) - ((frontOfficeStore.getOrCreateFolio(checkOut.id).charges || []).reduce((s,c)=> s + (c.tax || 0),0)),
-                          taxAmount: (frontOfficeStore.getOrCreateFolio(checkOut.id).charges || []).reduce((s,c)=> s + (c.tax || 0),0),
-                          discountAmount: 0,
-                          totalAmount: checkOut.totalCharges || 0,
-                          status: (checkOut.outstandingBalance || 0) === 0 ? 'paid' : 'pending',
-                          dueDate: checkOut.checkOutDate,
-                          createdAt: new Date().toISOString(),
-                          updatedAt: new Date().toISOString(),
-                          notes: '',
-                          items: [],
-                          payments: [],
-                          balance: checkOut.outstandingBalance || 0,
-                        } as any;
-                        // Reuse invoice print from payments page
+                        // Single source of truth for checkout print data — see buildPrintData
+                        // above, which already includes billing company, guest address, and
+                        // room rate (this used to be a separate, drifted rebuild of the same data).
                         try {
                           const settings = useSettingsStore.getState();
-                          const data = {
-                            org: { name: 'Hotel', address: '', phone: '', email: '' },
-                            guest: { name: inv.guestName, roomNumber: inv.roomNumber, roomType: inv.roomType, arrivalDate: inv.checkInDate, departureDate: inv.checkOutDate, nights: inv.nights },
-                            docNumber: inv.invoiceNumber,
-                            docDate: inv.createdAt,
-                            title: 'Invoice',
-                            items: (frontOfficeStore.getOrCreateFolio(checkOut.id).charges || []).map(c => ({ description: c.description, amount: c.amount + (c.tax || 0), date: c.date })),
-                            totals: { subTotal: inv.subtotal, taxes: (() => { const b = salesTaxBreakdown(inv.subtotal); return { vat: b.vat, nhil: b.nhil, levy: b.tourism, gefl: b.getfund }; })(), payments: (checkOut.totalPayments || 0), balance: inv.balance, grandTotal: inv.totalAmount },
-                            footerNotes: ['Thank you for staying with us.'],
-                            currency: '₵'
-                          } as any;
-                          openPrintPreview('invoice' as any, settings.printing.invoice || 'ghana-top-class-invoice', data);
+                          openPrintPreview('invoice' as any, settings.printing.invoice || 'ghana-top-class-invoice', buildPrintData(checkOut, 'invoice'));
                         } catch {}
                       }}
                       >
@@ -965,6 +930,14 @@ export default function CheckOutsPage() {
                             <span className="text-sm text-gray-600">Taxes (VAT + NHIL + GETFund + Tourism)</span>
                             <span className="font-semibold text-red-600">₵{folioTotals.taxTotal.toFixed(2)}</span>
                           </div>
+                          {Math.abs(folioTotals.roundingAdjustment || 0) >= 0.01 && (
+                            <div className="flex justify-between items-center py-2 border-b border-gray-100">
+                              <span className="text-sm text-gray-600">Rounding Adjustment</span>
+                              <span className="font-semibold text-gray-600">
+                                {folioTotals.roundingAdjustment > 0 ? '+' : ''}₵{folioTotals.roundingAdjustment.toFixed(2)}
+                              </span>
+                            </div>
+                          )}
                           <div className="flex justify-between items-center py-3 bg-gray-50 rounded-lg px-3 mt-2">
                             <span className="font-bold text-gray-800 text-sm">Total Charges (Incl. Tax)</span>
                             <span className="font-bold text-base text-gray-800">₵{folioTotals.totalCharges.toFixed(2)}</span>

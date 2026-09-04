@@ -2,6 +2,8 @@
 
 import { create } from 'zustand';
 import { getClientTenantSubdomain } from '../api/clientTenant';
+import type { BlockTemplate } from '../print/blocks';
+import type { PrintType } from '../print/templates';
 
 // Best-effort background sync of just the no-show policy fields to the server
 // (see /api/settings/room-management) so server-side jobs like the night-audit
@@ -512,6 +514,7 @@ export interface SystemSettings {
   companySettings?: {
     legalName: string;
     tradingName: string;
+    tagline?: string;
     registrationNumber?: string;
     taxId?: string; // TIN/VAT
     logoUrl?: string;
@@ -1110,9 +1113,26 @@ export interface RoomManagementSettings {
   };
 }
 
+export interface DocBuilderSettings {
+  templates: BlockTemplate[];
+}
+
 interface SettingsStore extends SystemSettings {
-  // Printing defaults (house style)
-  printing: { receipt: string; invoice: string; proforma: string };
+  // Printing defaults (house style) — value is a legacy printTemplates key, or a
+  // docBuilder custom template id (prefixed 'custom-', never collides with legacy keys).
+  printing: {
+    receipt: string; invoice: string; proforma: string; 'payment-voucher': string;
+    'accommodation-proforma': string; 'accommodation-invoice': string; 'accommodation-receipt': string;
+    'event-proforma': string; 'event-invoice': string; 'event-receipt': string;
+    'registration-card': string;
+  };
+  // No-code document template builder — tenant-created templates, all document types.
+  docBuilder: DocBuilderSettings;
+  addDocBuilderTemplate: (template: BlockTemplate) => void;
+  updateDocBuilderTemplate: (id: string, updates: Partial<BlockTemplate>) => void;
+  deleteDocBuilderTemplate: (id: string) => void;
+  getDocBuilderTemplate: (id: string) => BlockTemplate | undefined;
+  getDocBuilderTemplatesByType: (docType: PrintType) => BlockTemplate[];
   // Actions
   updateSetting: <K extends keyof SystemSettings>(key: K, value: SystemSettings[K]) => void;
   updateNestedSetting: (path: string, value: any) => void;
@@ -1206,7 +1226,7 @@ interface SettingsStore extends SystemSettings {
   publish: () => void;
 
   // Printing defaults management
-  updatePrintingTemplates: (tpl: Partial<{ receipt: string; invoice: string; proforma: string }>) => void;
+  updatePrintingTemplates: (tpl: Partial<SettingsStore['printing']>) => void;
 
   // Module Settings (SaaS)
   moduleSettings: ModuleSettings;
@@ -2136,6 +2156,7 @@ const defaultSettings: SystemSettings = {
   companySettings: {
     legalName: 'Demo Hotel Ltd',
     tradingName: 'Demo Hotel',
+    tagline: '',
     registrationNumber: '',
     taxId: '',
     logoUrl: '',
@@ -2159,11 +2180,44 @@ const defaultSettings: SystemSettings = {
   },
 };
 
+const DEFAULT_PRINTING: SettingsStore['printing'] = {
+  receipt: 'simple-receipt', invoice: 'corporate-invoice', proforma: 'conference-proforma-grid', 'payment-voucher': '',
+  'accommodation-proforma': 'builtin-accommodation-proforma-standard',
+  'accommodation-invoice': 'builtin-accommodation-invoice-standard',
+  'accommodation-receipt': 'builtin-accommodation-receipt-standard',
+  'event-proforma': 'builtin-event-proforma-daily-schedule',
+  'event-invoice': 'builtin-event-invoice-standard',
+  'event-receipt': 'builtin-event-receipt-standard',
+  'registration-card': 'builtin-registration-card-standard',
+};
+
 export const useSettingsStore = create<SettingsStore>((set, get) => ({
   ...defaultSettings,
   subscribers: new Set(),
-  printing: { receipt: 'simple-receipt', invoice: 'corporate-invoice', proforma: 'conference-proforma-grid' },
-  
+  printing: DEFAULT_PRINTING,
+  docBuilder: { templates: [] },
+  addDocBuilderTemplate: (template) => {
+    set(state => ({ docBuilder: { ...state.docBuilder, templates: [...state.docBuilder.templates, template] } }));
+    get().saveSettings();
+  },
+  updateDocBuilderTemplate: (id, updates) => {
+    set(state => ({
+      docBuilder: {
+        ...state.docBuilder,
+        templates: state.docBuilder.templates.map(t =>
+          t.id === id ? { ...t, ...updates, updatedAt: new Date().toISOString() } : t
+        ),
+      },
+    }));
+    get().saveSettings();
+  },
+  deleteDocBuilderTemplate: (id) => {
+    set(state => ({ docBuilder: { ...state.docBuilder, templates: state.docBuilder.templates.filter(t => t.id !== id) } }));
+    get().saveSettings();
+  },
+  getDocBuilderTemplate: (id) => get().docBuilder.templates.find(t => t.id === id),
+  getDocBuilderTemplatesByType: (docType) => get().docBuilder.templates.filter(t => t.docType === docType),
+
   updateSetting: (key, value) => {
     set({ [key]: value });
     get().saveSettings();
@@ -2197,8 +2251,16 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         // permanently breaking publish() until the browser's storage is cleared.
         delete (parsed as any).subscribers;
         set(parsed);
+
+        // Self-heal: `set(parsed)` above replaces `printing` wholesale (Zustand's
+        // `set` only shallow-merges at the top level), so a settings save made
+        // before the accommodation-*/event-* document types existed would resolve
+        // those keys to undefined instead of falling back to a working built-in.
+        if (parsed.printing) {
+          set(state => ({ printing: { ...DEFAULT_PRINTING, ...state.printing } }));
+        }
       }
-      
+
       // Load room management settings
       const roomManagement = localStorage.getItem('room.management');
       if (roomManagement) {
@@ -3438,7 +3500,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     noShowChargeType: 'first_night',
     noShowChargeValue: 0,
     noShowCutoffHour: 23,
-    postFirstNightAtCheckin: false,
+    postFirstNightAtCheckin: true,
     nightAuditAutoRun: true,
     cancellationPolicyEnabled: false,
     freeCancellationHours: 24,
@@ -3564,7 +3626,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   }
 }));
 
-// Initialize settings on store creation
-if (typeof window !== 'undefined') {
-  useSettingsStore.getState().loadSettings();
-}
+// Settings load from localStorage on the client only — NOT called here at
+// module-evaluation time. Doing it here used to run synchronously the moment
+// this module was imported, which happens before React's first client render.
+// Since the server has no localStorage, that first client render (the one
+// React reconciles against the server-rendered HTML) already reflected the
+// user's real persisted role/settings while the server HTML reflected only
+// defaults — a hydration mismatch on every load. Loading settings now happens
+// once, post-mount, from Navigation.tsx's own useEffect instead, so the first
+// client render matches the server before anything persisted is applied.

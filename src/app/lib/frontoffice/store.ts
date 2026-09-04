@@ -30,11 +30,13 @@ import {
   resolveNightlyNet,
   type ReservationQuote,
 } from './helpers/rates';
+import { isCorporateGuest } from './helpers/guests';
 import { postFirstNightAtCheckIn } from './roomCharges';
 import { runNightAudit, type NightAuditResult } from './nightAudit';
 import { postNoShowPenaltyToLedger } from '../accounting/simpleFlow';
 import { DEMO_BILLING_PERSONS, isDemoFixturesEnabled } from '../demo';
 import { notifyError } from '../notifications/notify';
+import { genId } from './helpers/ids';
 
 class FrontOfficeStore {
   reservations: Reservation[] = [];
@@ -62,6 +64,27 @@ class FrontOfficeStore {
   ratePlans: RatePlan[] = [];
   marketCodes: string[] = ['INTERNET', 'BOOKING.COM', 'EXPEDIA', 'DIRECTINN', 'WALK IN'];
   folios: Folio[] = [];
+  /** Bulk accommodation event bookings (headcounts only, no individual guest/
+   *  room records — see EventsConferencesMainDashboard's checkInEventGroup)
+   *  that have been checked in as a group, so the Executive dashboard's
+   *  In-House Guests KPI can include their pax alongside individually
+   *  checked-in reservations. Event bookings themselves aren't persisted
+   *  anywhere today (they live only in that component's own React state for
+   *  the session), so this is in-memory too — consistent with that, not a
+   *  regression from it. */
+  inHouseGroups: Array<{ id: string; eventId: string; eventName?: string; pax: number; checkedInAt: string }> = [];
+  addInHouseGroup(eventId: string, pax: number, eventName?: string) {
+    this.inHouseGroups = this.inHouseGroups.filter(g => g.eventId !== eventId);
+    this.inHouseGroups.push({ id: genId('IHG'), eventId, eventName, pax: pax || 0, checkedInAt: new Date().toISOString() });
+    this.notify();
+  }
+  removeInHouseGroup(eventId: string) {
+    this.inHouseGroups = this.inHouseGroups.filter(g => g.eventId !== eventId);
+    this.notify();
+  }
+  getInHouseGroupPax(): number {
+    return this.inHouseGroups.reduce((s, g) => s + (g.pax || 0), 0);
+  }
   /** Hotel business date (rolls at night audit). ISO yyyy-mm-dd */
   businessDate: string = new Date().toISOString().slice(0, 10);
   lastNightAuditAt?: string;
@@ -87,9 +110,6 @@ class FrontOfficeStore {
     return `${prefix}-${seq.toString().padStart(6,'0')}`;
   }
 
-  // Public helper for UI/other modules
-  generateId(prefix: 'RES'|'CI'|'IH'|'CO'|'INV'|'PAY'|'CHG') { return this.makeId(prefix); }
-
   constructor() {
     this.loadNightAuditState();
     // Settings are now managed centrally via useSettingsStore
@@ -103,7 +123,7 @@ class FrontOfficeStore {
         if (Array.isArray(parsed)) {
           // Normalize legacy records for corporate company phone/email display
           this.guests = parsed.map((g: any) => {
-            const isCorp = !!(g?.companyName || g?.isCorporate);
+            const isCorp = isCorporateGuest(g);
             if (isCorp) {
               const corpMeta = g.corporateMeta || {};
               const contact = corpMeta.contactPerson || {};
@@ -398,7 +418,7 @@ class FrontOfficeStore {
     const serialNumber = settings.getNextClientNumber();
     const guest: GuestProfile = { 
       ...g, 
-      id: `G-${Date.now().toString().slice(-6)}`,
+      id: genId('G'),
       serialNumber,
       // Generate self-reservation token
       selfReservationToken: this.generateSelfCheckinToken(),
@@ -477,7 +497,7 @@ class FrontOfficeStore {
     const res = this.reservations.find(r => r.id === reservationId);
     if (!res) return null;
     const call: import('./types').WakeUpCall = {
-      id: `WC-${Date.now().toString().slice(-6)}`,
+      id: genId('WC'),
       reservationId,
       guestName: res.guestName,
       roomNumber: res.roomId || 'TBD',
@@ -515,7 +535,7 @@ class FrontOfficeStore {
   createBillingPerson(bp: Omit<BillingPerson,'id'|'createdAt'|'updatedAt'>) {
     const billingPerson: BillingPerson = {
       ...bp,
-      id: `BP-${Date.now().toString().slice(-6)}`,
+      id: genId('BP'),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
@@ -607,7 +627,7 @@ class FrontOfficeStore {
     const settings = useSettingsStore.getState();
     const reservation: Reservation = {
       ...r,
-      id: `R-${Date.now().toString().slice(-6)}`,
+      id: genId('R'),
       resId: settings.getNextReservationNumber(),
       createdAt: new Date().toISOString(), 
       updatedAt: new Date().toISOString(), 
@@ -668,7 +688,7 @@ class FrontOfficeStore {
             default: penalty = 0;
           }
           if (penalty > 0) {
-            this.addFolioCharge(folio.id, { id: `C-${Date.now().toString().slice(-6)}`, description: 'Cancellation Penalty', amount: penalty });
+            this.addFolioCharge(folio.id, { id: genId('C'), description: 'Cancellation Penalty', amount: penalty });
           }
         }
       }
@@ -770,7 +790,7 @@ class FrontOfficeStore {
 
     trackEvent('FO.Reservation.CheckedIn', { id, autoAssignedRoom: !!assignedRoomId, autoAssignEnabled: shouldAutoAssign });
     try {
-      const checkInEventId = `EVT-CI-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*100)}`;
+      const checkInEventId = genId('EVT-CI');
       logAudit({
         area: 'frontdesk',
         action: 'status',
@@ -831,7 +851,7 @@ class FrontOfficeStore {
 
     trackEvent('FO.Reservation.CheckedOut', { id: reservationId, reservationId, guestName: res.guestName, checkoutNotes });
     try {
-      const checkOutEventId = `EVT-CO-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*100)}`;
+      const checkOutEventId = genId('EVT-CO');
       logAudit({
         area: 'frontdesk',
         action: 'status',
@@ -1125,9 +1145,12 @@ class FrontOfficeStore {
   updateGuest(id: string, updatedFields: Partial<Omit<GuestProfile, 'id' | 'serialNumber' | 'createdAt' | 'updatedAt'>>) {
     const index = this.guests.findIndex(g => g.id === id);
     if (index !== -1) {
+      // Enforce the signature's Omit at runtime too — a caller that bypasses the type
+      // (an `as any` cast) must not be able to clobber a guest's id/serialNumber/createdAt.
+      const { id: _id, serialNumber: _sn, createdAt: _ca, ...safeFields } = updatedFields as Partial<GuestProfile>;
       this.guests[index] = {
         ...this.guests[index],
-        ...updatedFields,
+        ...safeFields,
         updatedAt: new Date().toISOString()
       };
       this.persistGuests();
@@ -1309,7 +1332,11 @@ class FrontOfficeStore {
       const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
       const policy = settingsState?.roomManagement?.payLaterPolicy || 'both';
       const requireCorporateReference = !!settingsState?.roomManagement?.requireCorporateReference;
-      const isCorporate = !!(reservation.companyName || reservation.billingPersonName);
+      // Corporate status is primarily the guest's own designation (set on the Add/Edit
+      // Client form) — reservation.companyName/billingPersonName is an additional signal
+      // for reservations billed to a company that wasn't itself created as a corporate guest.
+      const guest = this.guests.find(g => g.id === reservation.guestId);
+      const isCorporate = isCorporateGuest(guest) || !!(reservation.companyName || reservation.billingPersonName);
       const payLaterAllowed = (policy === 'both') || (policy === 'corporate' && isCorporate) || (policy === 'individual' && !isCorporate);
       if (isCorporate && payLaterAllowed && requireCorporateReference) {
         const hasReference = Boolean((reservation as any).projectCode || (reservation as any).costCenter || (reservation as any).poNumber);
@@ -1349,7 +1376,7 @@ class FrontOfficeStore {
             } else {
               fee = Math.max(0, rm.lateCheckoutFeeValue || 0);
             }
-            if (fee > 0) this.addFolioCharge(folio.id, { id: `C-${Date.now().toString().slice(-6)}`, description: 'Late Checkout Fee', amount: fee });
+            if (fee > 0) this.addFolioCharge(folio.id, { id: genId('C'), description: 'Late Checkout Fee', amount: fee });
           }
         }
       } catch {}
@@ -1400,7 +1427,7 @@ class FrontOfficeStore {
       }
 
       const folio = this.getOrCreateFolio(reservationId);
-      const chargeId = `C-NS-${Date.now().toString().slice(-6)}`;
+      const chargeId = genId('C-NS');
       this.addFolioCharge(folio.id, {
         id: chargeId,
         description: 'No-Show Charge',

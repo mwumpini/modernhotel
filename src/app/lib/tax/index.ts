@@ -19,6 +19,7 @@ export {
   computeQuoteTax,
   salesTaxBreakdown,
   roundMoney2,
+  roundToIncrement,
   type TaxComputationResult,
   type QuoteTaxLine,
   type StackedTaxLine,

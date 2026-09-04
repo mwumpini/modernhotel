@@ -157,6 +157,17 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const currentUserName = session?.user?.name || 'User';
   const currentUserRoleLabel = ROLE_LABELS[(session?.user as any)?.role] || (session?.user as any)?.role || '';
 
+  // Settings (role/session, branding, etc.) load from localStorage here, once,
+  // after mount — not synchronously at module-import time (see the comment
+  // above settingsStore's old top-level loadSettings() call). The server has
+  // no localStorage, so loading it before the first client render ever
+  // reconciles against the server HTML causes a hydration mismatch on every
+  // page load; doing it in an effect guarantees the first client render
+  // matches the server, then updates a tick later once real settings apply.
+  React.useEffect(() => {
+    useSettingsStore.getState().loadSettings();
+  }, []);
+
   // Every revenue centre (Front Office, F&B, Events & Conferences, Room Configuration,
   // checkout) reads tax rates via getActiveTaxConfigs(), which falls back to a hardcoded
   // default table (GHANA_TAX_CODES) whenever the accounting store's taxConfigs is empty —

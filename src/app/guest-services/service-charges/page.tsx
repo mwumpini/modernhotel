@@ -30,6 +30,7 @@ import { useSettingsStore } from '../../lib/settings/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { openPrintPreview } from '../../lib/print/engine';
 import { listTemplates } from '../../lib/print/templates';
+import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 import { grossFromExclusive, computeSalesTaxTotal } from '../../lib/tax/engine';
 import { formatMoney } from '../../lib/format/currency';
 
@@ -1064,10 +1065,11 @@ export default function ServiceChargesPage() {
                       variant="flat"
                       onPress={() => {
                         if (!selectedCharge) return;
+                        const settings = useSettingsStore.getState();
                         const data = {
-                          org: { name: 'Hotel', address: '', phone: '', email: '' },
+                          org: buildOrgProfile(settings),
                           guest: { name: selectedCharge.guestName, roomNumber: selectedCharge.roomNumber },
-                          docNumber: `RCPT-${Date.now()}`,
+                          docNumber: settings.getNextReceiptNumber(),
                           docDate: new Date().toISOString(),
                           title: 'Receipt',
                           items: [ { description: `Payment for ${selectedCharge.description}`, amount: paymentData.amount, date: new Date().toISOString() } ],

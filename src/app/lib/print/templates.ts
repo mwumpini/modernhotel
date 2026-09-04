@@ -1,4 +1,25 @@
-export type PrintType = 'receipt' | 'invoice' | 'proforma';
+import { computeTotalsBreakdown } from './taxBreakdown';
+
+export type PrintType =
+  | 'receipt'
+  | 'invoice'
+  | 'proforma'
+  | 'payment-voucher'
+  // Events & Conferences — kept as their own document types (rather than reusing
+  // 'invoice'/'proforma'/'receipt' with a data filter) so a template edited for
+  // one never silently changes the other. See EventsConferencesMainDashboard's
+  // accommodation/events split.
+  | 'accommodation-proforma'
+  | 'accommodation-invoice'
+  | 'accommodation-receipt'
+  | 'event-proforma'
+  | 'event-invoice'
+  | 'event-receipt'
+  // Printed at check-in — guest/stay details + signature, no charges (nothing's
+  // been billed yet). Kept as its own type rather than reusing 'accommodation-proforma'
+  // so customizing one never silently changes the other (same reasoning as the
+  // Events & Conferences split above).
+  | 'registration-card';
 
 export interface PrintOrgInfo {
   name: string;
@@ -12,8 +33,13 @@ export interface PrintOrgInfo {
 export interface PrintGuestInfo {
   name: string;
   company?: string;
+  /** Recipient mailing address — shown by the letter-style recipient block
+   *  (ATTN + "Dear Sir/Madam,") between the company name and attention line.
+   *  Multi-line: each '\n' becomes its own line. */
+  address?: string;
   roomNumber?: string;
   roomType?: string;
+  roomRate?: number;
   arrivalDate?: string;
   departureDate?: string;
   nights?: number;
@@ -26,6 +52,12 @@ export interface PrintLineItem {
   unitPrice?: number;
   amount: number;
   date?: string;
+  /** Bold line shown above this item — groups a run of items under a category,
+   *  e.g. "ACCOMMODATION 3rd – 7th April" or "CONFERENCE PACKAGE". */
+  heading?: string;
+  /** Short inclusions/features shown as a bullet list under the heading (or the
+   *  description, if there's no heading) — e.g. "2 Coffee breaks", "Buffet Lunch". */
+  bullets?: string[];
 }
 
 export interface PrintTaxes {
@@ -47,6 +79,93 @@ export interface PrintTotals {
   grandTotal?: number;
 }
 
+export interface PrintSignature {
+  label: string;
+  role?: string;
+  name?: string;
+  signedDate?: string;
+}
+
+export interface PrintBankDetails {
+  bankName?: string;
+  accountName?: string;
+  accountNumber?: string;
+  branch?: string;
+  mobileMoneyNumber?: string;
+}
+
+export interface PrintDebitCreditLine {
+  accountName: string;
+  details?: string;
+  debit?: number;
+  credit?: number;
+}
+
+export interface PrintMatrixColumn {
+  /** Matches the keys used in each row's `cells`. */
+  key: string;
+  /** e.g. "Tue" */
+  label: string;
+  /** e.g. "8-Sep" */
+  sublabel?: string;
+}
+
+export interface PrintMatrixRow {
+  label: string;
+  rate?: number;
+  /** column key -> count for that day/column. */
+  cells: Record<string, number>;
+  totalCount: number;
+  subtotal: number;
+  /** Inclusions/features shown as a bullet list under the row label, e.g. a
+   *  "Conference Package" row listing "Pen, Pad & Folder", "Use of Projector", … */
+  bullets?: string[];
+}
+
+/** A calendar/pivot-style breakdown — categories (rows) x dates (columns), e.g. a
+ *  conference quote's "Accommodation / Dinner / Lunch" per-day headcounts. An
+ *  alternative to `items` for documents built from a day-by-day schedule; the two
+ *  are not combined — a template uses one or the other for its line-items block. */
+export interface PrintMatrixTable {
+  columns: PrintMatrixColumn[];
+  rows: PrintMatrixRow[];
+  rateLabel?: string;
+  totalCountLabel?: string;
+  subtotalLabel?: string;
+}
+
+/** One day/entry within a schedule group's date breakdown — e.g. "Day 1, 13-Jul,
+ *  79 pax, ₵630.00, ₵53,550.00" as a row under the "Conference Package" group. */
+export interface PrintScheduleEntry {
+  day: string;
+  date?: string;
+  qty?: number;
+  unitPrice?: number;
+  total: number;
+}
+
+/** One line item spanning several dates — e.g. "Lodging (breakfast included)"
+ *  with a separate rate/total per night. Rendered with the item number and
+ *  description merged (rowspan) down the left, one row per PrintScheduleEntry. */
+export interface PrintScheduleGroup {
+  description: string;
+  bullets?: string[];
+  entries: PrintScheduleEntry[];
+}
+
+/** Day-by-day breakdown with dates as ROWS grouped under each line item —
+ *  the mirror image of PrintMatrixTable (dates as columns). An alternative
+ *  to `items`/`matrixTable` for documents built this way, e.g. a workshop
+ *  invoice itemizing lodging/meals/conference package per day. */
+export interface PrintScheduleTable {
+  groups: PrintScheduleGroup[];
+  dayLabel?: string;
+  dateLabel?: string;
+  qtyLabel?: string;
+  unitPriceLabel?: string;
+  totalLabel?: string;
+}
+
 export interface PrintData {
   org: PrintOrgInfo;
   guest: PrintGuestInfo;
@@ -57,6 +176,18 @@ export interface PrintData {
   totals: PrintTotals;
   footerNotes?: string[];
   currency?: string; // e.g., GHS
+  paymentTerms?: string;
+  bankDetails?: PrintBankDetails;
+  signatures?: PrintSignature[];
+  /** Payment Voucher lines — debit/credit rather than qty/price. When present, the
+   *  line-items-table block renders these columns instead of `items`. */
+  debitCreditLines?: PrintDebitCreditLine[];
+  /** Day-by-day category matrix (see PrintMatrixTable) — when present, the
+   *  matrix-table block renders this instead of a plain items list. */
+  matrixTable?: PrintMatrixTable;
+  /** Day-by-day schedule with dates as rows (see PrintScheduleTable) — when
+   *  present, the schedule-table block renders this instead of a plain items list. */
+  scheduleTable?: PrintScheduleTable;
 }
 
 function cssBase() {
@@ -87,7 +218,7 @@ function cssBase() {
   </style>`;
 }
 
-function money(n?: number, currency: string = '₵') {
+export function money(n?: number, currency: string = '₵') {
   const v = Number(n || 0);
   return `${currency}${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
@@ -146,24 +277,9 @@ function itemsTable(items: PrintLineItem[], currency: string) {
   </table>`;
 }
 
-function totalsTable(t: PrintTotals, currency: string) {
-  const lines: Array<[string, number | undefined, string?]> = [];
-  lines.push(['Sub Total', t.subTotal]);
-  if (t.discount) lines.push(['Discount', t.discount * -1]);
-  if (t.advance) lines.push(['Advance', t.advance * -1]);
-  if (t.taxes) {
-    const { vat, nhil, levy, covid, gefl, gtal } = t.taxes;
-    if (gefl) lines.push(['GEFL (2.5%)', gefl]);
-    if (nhil) lines.push(['NHIL (2.5%)', nhil]);
-    if (covid) lines.push(['COVID Levy (legacy)', covid]);
-    if (levy) lines.push(['Tourism Levy (1%)', levy]);
-    if (vat) lines.push(['VAT', vat]);
-    if (gtal) lines.push(['GTAL (1%) of (0)', gtal]);
-  }
-  const taxesTotal = (t.taxes ? Object.values(t.taxes).reduce((s, v) => s + (v || 0), 0) : 0);
-  const grand = t.grandTotal != null ? t.grandTotal : (t.subTotal - (t.discount || 0) - (t.advance || 0) + taxesTotal);
-  const payments = t.payments || 0;
-  const balance = t.balance != null ? t.balance : (grand - payments);
+function totalsTable(data: PrintData, currency: string) {
+  const { preTaxLines, taxLines, grand, payments, balance } = computeTotalsBreakdown(data);
+  const lines = [...preTaxLines, ...taxLines];
   const rows = lines.map(([label, val]) => `<tr><td class="label">${label}</td><td class="value">${money(val, currency)}</td></tr>`).join('');
   return `
   <table class="totals">
@@ -186,28 +302,10 @@ function baseDoc(p: PrintData, title: string) {
     ${header(p.org, title, p.docNumber, p.docDate)}
     ${guestBlock(p.guest)}
     ${itemsTable(p.items, currency)}
-    ${totalsTable(p.totals, currency)}
+    ${totalsTable(p, currency)}
     ${p.footerNotes && p.footerNotes.length ? `<div class="footer">${p.footerNotes.map(n => `<div>${n}</div>`).join('')}</div>` : ''}
     <script>window.print()</script>
   </body></html>`;
-}
-
-// Variant helpers
-function variantCompact(p: PrintData, title: string) {
-  return baseDoc(p, title);
-}
-function variantGrid(p: PrintData, title: string) {
-  // Same content; grid-like look already via table
-  return baseDoc(p, title);
-}
-function variantDetailed(p: PrintData, title: string) {
-  return baseDoc(p, title);
-}
-function variantRestaurant(p: PrintData, title: string) {
-  return baseDoc(p, title);
-}
-function variantConference(p: PrintData, title: string) {
-  return baseDoc(p, title);
 }
 
 // Premium hotel invoice layout with signatures block and notes
@@ -235,7 +333,7 @@ function variantTopClassInvoice(p: PrintData) {
     </div>
     ${guestBlock(p.guest)}
     ${itemsTable(p.items, currency)}
-    ${totalsTable(p.totals, currency)}
+    ${totalsTable(p, currency)}
     ${p.footerNotes && p.footerNotes.length ? `<div class="footer">${p.footerNotes.map(n => `<div>${n}</div>`).join('')}</div>` : ''}
     <div class="signatures">
       <div class="sigbox">Guest Signature</div>
@@ -248,27 +346,38 @@ function variantTopClassInvoice(p: PrintData) {
 
 export const printTemplates: Record<PrintType, Record<string, (p: PrintData) => string>> = {
   receipt: {
-    'simple-receipt': (p) => variantCompact(p, 'Receipt'),
-    'checkout-bill-ghana': (p) => variantDetailed(p, 'Check Out Bill'),
-    'restaurant-receipt': (p) => variantRestaurant(p, 'Restaurant Receipt'),
-    'accommodation-receipt': (p) => variantDetailed(p, 'Accommodation Receipt'),
-    'conference-receipt': (p) => variantConference(p, 'Conference Receipt')
+    'simple-receipt': (p) => baseDoc(p, 'Receipt'),
+    'checkout-bill-ghana': (p) => baseDoc(p, 'Check Out Bill'),
+    'restaurant-receipt': (p) => baseDoc(p, 'Restaurant Receipt'),
+    'accommodation-receipt': (p) => baseDoc(p, 'Accommodation Receipt'),
+    'conference-receipt': (p) => baseDoc(p, 'Conference Receipt')
   },
   invoice: {
-    'corporate-invoice': (p) => variantDetailed(p, 'Invoice'),
-    'final-bill': (p) => variantGrid(p, 'Final Bill for Accommodation & Meals'),
-    'conference-invoice-grid': (p) => variantConference(p, 'Conference Invoice'),
-    'restaurant-invoice': (p) => variantRestaurant(p, 'Restaurant Invoice'),
-    'minimal-invoice': (p) => variantCompact(p, 'Invoice'),
+    'corporate-invoice': (p) => baseDoc(p, 'Invoice'),
+    'final-bill': (p) => baseDoc(p, 'Final Bill for Accommodation & Meals'),
+    'conference-invoice-grid': (p) => baseDoc(p, 'Conference Invoice'),
+    'restaurant-invoice': (p) => baseDoc(p, 'Restaurant Invoice'),
+    'minimal-invoice': (p) => baseDoc(p, 'Invoice'),
     'ghana-top-class-invoice': (p) => variantTopClassInvoice(p)
   },
   proforma: {
-    'conference-proforma-grid': (p) => variantConference(p, 'Proforma Invoice - Conference'),
-    'accommodation-proforma': (p) => variantDetailed(p, 'Proforma Invoice - Accommodation'),
-    'event-proforma': (p) => variantGrid(p, 'Proforma Invoice - Event'),
-    'restaurant-proforma': (p) => variantRestaurant(p, 'Restaurant Proforma'),
-    'quote-simple': (p) => variantCompact(p, 'Quotation')
-  }
+    'conference-proforma-grid': (p) => baseDoc(p, 'Proforma Invoice - Conference'),
+    'accommodation-proforma': (p) => baseDoc(p, 'Proforma Invoice - Accommodation'),
+    'event-proforma': (p) => baseDoc(p, 'Proforma Invoice - Event'),
+    'restaurant-proforma': (p) => baseDoc(p, 'Restaurant Proforma'),
+    'quote-simple': (p) => baseDoc(p, 'Quotation')
+  },
+  // No legacy hand-written layouts for Payment Vouchers or the Events & Conferences
+  // document types below — served entirely by the block-based engine's built-in
+  // presets (see print/blockDefaults.ts).
+  'payment-voucher': {},
+  'accommodation-proforma': {},
+  'accommodation-invoice': {},
+  'accommodation-receipt': {},
+  'event-proforma': {},
+  'event-invoice': {},
+  'event-receipt': {},
+  'registration-card': {}
 };
 
 export function listTemplates(type: PrintType): { key: string; name: string }[] {

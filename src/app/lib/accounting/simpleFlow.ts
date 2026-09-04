@@ -31,6 +31,8 @@ export function postGuestFolioCheckoutToLedger(params: {
   subtotal: number;
   taxAmount: number;
   total: number;
+  /** total minus the exact (unrounded) sum of revenue + tax lines — posted as a balancing GL line so debits still equal credits. */
+  roundingAdjustment?: number;
   payments: Array<{ amount: number; method: string; date: string; paymentId?: string }>;
 }): { salesJournalEntryId: string } | null {
   if (params.total <= 0) return null;
@@ -124,8 +126,27 @@ export function postGuestFolioCheckoutToLedger(params: {
     });
   }
 
-  const sumCredit = lines.slice(1).reduce((s, l) => s + (l.credit || 0), 0);
-  const sumDebit = lines[0].debit || 0;
+  // AR (line 0) was debited for the rounded total; revenue + tax lines above sum to
+  // the exact (unrounded) amount. Plug the gap so the entry still balances — credit
+  // Rounding Adjustment when the total rounded up, debit it when it rounded down.
+  const roundingAdjustment = params.roundingAdjustment || 0;
+  if (Math.abs(roundingAdjustment) >= 0.01) {
+    lines.push({
+      id: jl('round'),
+      journalEntryId: salesJeId,
+      accountCode: GL_ACCOUNTS.ROUNDING_ADJUSTMENT,
+      description: `Rounding adjustment — ${params.invoiceNumber}`,
+      debit: roundingAdjustment < 0 ? +Math.abs(roundingAdjustment).toFixed(2) : 0,
+      credit: roundingAdjustment > 0 ? +roundingAdjustment.toFixed(2) : 0,
+      currency: 'GHS',
+      costCenter: REVENUE_CENTERS.ROOM,
+    });
+  }
+
+  // Sums span every line (not just AR vs. "everything else") because a rounded-down
+  // total puts its balancing entry on the debit side alongside AR.
+  const sumCredit = lines.reduce((s, l) => s + (l.credit || 0), 0);
+  const sumDebit = lines.reduce((s, l) => s + (l.debit || 0), 0);
   if (Math.abs(sumDebit - sumCredit) > 0.02) {
     console.error('[simpleFlow] Sales JE not balanced — post aborted', { sumDebit, sumCredit, params });
     return null;

@@ -33,6 +33,7 @@ import {
 	type StoredReceiptPayment,
 } from '@/app/lib/accounting/receiptPrint';
 import { useSettingsStore } from '@/app/lib/settings/store';
+import { buildOrgProfile } from '@/app/lib/print/buildOrgProfile';
 import {
 	invoiceSyncStatus,
 	paymentSyncStatus,
@@ -182,16 +183,7 @@ export default function AccountsReceivable() {
     } = useAccountingStore();
 	const settings = useSettingsStore();
 	const receiptTemplateKey = settings.printing?.receipt || 'simple-receipt';
-	const printOrg = useMemo(() => {
-		const biz = settings.countryCompliance?.[settings.defaultCountry]?.businessInfo;
-		return {
-			name: biz?.name || settings.systemName || 'Hotel',
-			address: biz?.address,
-			phone: biz?.phone,
-			email: biz?.email,
-			taxId: biz?.taxId,
-		};
-	}, [settings]);
+	const printOrg = useMemo(() => buildOrgProfile(settings), [settings]);
 	const printCurrency =
 		settings.countryCompliance?.[settings.defaultCountry]?.currencySymbol || '₵';
 
