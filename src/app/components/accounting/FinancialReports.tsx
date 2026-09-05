@@ -222,9 +222,17 @@ export default function FinancialReportsPage() {
     return toRollupCoa(raw);
   }, [chartOfAccounts]);
 
-  const expandAll = () =>
+  // Expand = Detailed (full account-by-account breakdown), Collapse = Summary
+  // (top-level category totals only) — the two controls drive the same
+  // underlying expandedSections state, so each stays in sync with the other.
+  const expandAll = () => {
     setExpandedSections(new Set(['all', ...rollupCoa.map((a) => a.code)]));
-  const collapseAll = () => setExpandedSections(new Set());
+    setReportFormat('detailed');
+  };
+  const collapseAll = () => {
+    setExpandedSections(new Set());
+    setReportFormat('summary');
+  };
 
   const accountTreePeriod = useMemo(
     () => buildFinancialAccountTree(rollupCoa, journalEntries, { kind: 'period', startDate, endDate }),
@@ -648,7 +656,13 @@ export default function FinancialReportsPage() {
   // ==================== REPORT OPTIONS ====================
   const ReportOptions = () => (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3 py-2 px-3 bg-slate-50 rounded-md border border-slate-100 text-sm">
-      <RadioGroup orientation="horizontal" value={reportFormat} onValueChange={(v) => setReportFormat(v as ReportFormat)} size="sm" classNames={{ label: 'text-gray-600 text-xs' }}>
+      <RadioGroup
+        orientation="horizontal"
+        value={reportFormat}
+        onValueChange={(v) => (v === 'summary' ? collapseAll() : expandAll())}
+        size="sm"
+        classNames={{ label: 'text-gray-600 text-xs' }}
+      >
         <Radio value="summary" classNames={{ label: 'text-xs' }}>Summary</Radio>
         <Radio value="detailed" classNames={{ label: 'text-xs' }}>Detailed</Radio>
       </RadioGroup>
@@ -954,13 +968,15 @@ export default function FinancialReportsPage() {
                     {/* Revenue Section */}
                     <div className="border-b">
                       <div className="bg-slate-100 px-4 py-2 font-semibold text-gray-700 text-sm uppercase tracking-wide">Revenue</div>
-                      <Table removeWrapper aria-label="Revenue" classNames={{ th: "bg-slate-50 text-gray-600" }}>
-                        <TableHeader>
-                          <TableColumn>Account</TableColumn>
-                          <TableColumn width={150} className="text-right">Amount</TableColumn>
-                        </TableHeader>
-                        <TableBody emptyContent="No revenue accounts.">{renderAccountRows(revenueAccounts)}</TableBody>
-                      </Table>
+                      <div className="overflow-x-auto">
+                        <Table removeWrapper aria-label="Revenue" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[420px]" }}>
+                          <TableHeader>
+                            <TableColumn>Account</TableColumn>
+                            <TableColumn width={150} className="text-right">Amount</TableColumn>
+                          </TableHeader>
+                          <TableBody emptyContent="No revenue accounts.">{renderAccountRows(revenueAccounts)}</TableBody>
+                        </Table>
+                      </div>
                       <div className="bg-slate-100 px-4 py-2 flex justify-between font-semibold border-t">
                         <span>Total Revenue</span>
                         <span className="font-mono">{formatCurrency(totals.totalRevenue, true)}</span>
@@ -970,13 +986,15 @@ export default function FinancialReportsPage() {
                     {/* Expenses Section */}
                     <div className="border-b">
                       <div className="bg-slate-100 px-4 py-2 font-semibold text-gray-700 text-sm uppercase tracking-wide">Less: Expenses</div>
-                      <Table removeWrapper aria-label="Expenses" classNames={{ th: "bg-slate-50 text-gray-600" }}>
-                        <TableHeader>
-                          <TableColumn>Account</TableColumn>
-                          <TableColumn width={150} className="text-right">Amount</TableColumn>
-                        </TableHeader>
-                        <TableBody emptyContent="No expense accounts.">{renderAccountRows(expenseAccounts)}</TableBody>
-                      </Table>
+                      <div className="overflow-x-auto">
+                        <Table removeWrapper aria-label="Expenses" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[420px]" }}>
+                          <TableHeader>
+                            <TableColumn>Account</TableColumn>
+                            <TableColumn width={150} className="text-right">Amount</TableColumn>
+                          </TableHeader>
+                          <TableBody emptyContent="No expense accounts.">{renderAccountRows(expenseAccounts)}</TableBody>
+                        </Table>
+                      </div>
                       <div className="bg-slate-100 px-4 py-2 flex justify-between font-semibold border-t">
                         <span>Total Expenses</span>
                         <span className="font-mono">({formatCurrency(totals.totalExpenses, true)})</span>
@@ -1020,13 +1038,15 @@ export default function FinancialReportsPage() {
                   <Card className="shadow-none border overflow-hidden">
                     <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Assets</h4></CardHeader>
                     <CardBody className="p-0">
-                      <Table removeWrapper aria-label="Assets" classNames={{ th: "bg-slate-50 text-gray-600" }}>
-                        <TableHeader>
-                          <TableColumn>Account</TableColumn>
-                          <TableColumn width={120} className="text-right">Amount</TableColumn>
-                        </TableHeader>
-                        <TableBody emptyContent="No asset accounts.">{renderAccountRows(assetAccounts)}</TableBody>
-                      </Table>
+                      <div className="overflow-x-auto">
+                        <Table removeWrapper aria-label="Assets" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[320px]" }}>
+                          <TableHeader>
+                            <TableColumn>Account</TableColumn>
+                            <TableColumn width={120} className="text-right">Amount</TableColumn>
+                          </TableHeader>
+                          <TableBody emptyContent="No asset accounts.">{renderAccountRows(assetAccounts)}</TableBody>
+                        </Table>
+                      </div>
                       <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300">
                         <span>TOTAL ASSETS</span>
                         <span className="font-mono">{formatCurrencyWithSign(totals.totalAssets, true)}</span>
@@ -1041,13 +1061,15 @@ export default function FinancialReportsPage() {
                       {/* Liabilities */}
                       <div className="border-b">
                         <div className="bg-slate-50 px-4 py-1 font-medium text-gray-600 text-xs uppercase">Liabilities</div>
-                        <Table removeWrapper aria-label="Liabilities" classNames={{ th: "bg-white text-gray-500" }}>
-                          <TableHeader>
-                            <TableColumn>Account</TableColumn>
-                            <TableColumn width={120} className="text-right">Amount</TableColumn>
-                          </TableHeader>
-                          <TableBody emptyContent="No liabilities.">{renderAccountRows(liabilityAccounts)}</TableBody>
-                        </Table>
+                        <div className="overflow-x-auto">
+                          <Table removeWrapper aria-label="Liabilities" classNames={{ th: "bg-white text-gray-500", table: "min-w-[320px]" }}>
+                            <TableHeader>
+                              <TableColumn>Account</TableColumn>
+                              <TableColumn width={120} className="text-right">Amount</TableColumn>
+                            </TableHeader>
+                            <TableBody emptyContent="No liabilities.">{renderAccountRows(liabilityAccounts)}</TableBody>
+                          </Table>
+                        </div>
                         <div className="bg-slate-100 px-4 py-1 flex justify-between font-semibold text-sm">
                           <span>Total Liabilities</span>
                           <span className="font-mono">{formatCurrencyWithSign(totals.totalLiabilities, true)}</span>
@@ -1056,29 +1078,31 @@ export default function FinancialReportsPage() {
                       {/* Equity */}
                       <div className="border-b">
                         <div className="bg-slate-50 px-4 py-1 font-medium text-gray-600 text-xs uppercase">Equity</div>
-                        <Table removeWrapper aria-label="Equity" classNames={{ th: "bg-white text-gray-500" }}>
-                          <TableHeader>
-                            <TableColumn>Account</TableColumn>
-                            <TableColumn width={120} className="text-right">Amount</TableColumn>
-                          </TableHeader>
-                          <TableBody>
-                            {[
-                              ...renderAccountRows(equityAccounts),
-                              ...(Math.abs(totals.accumulatedUnclosedPlug) >= 0.01
-                                ? [
-                                    <TableRow key="accumulated-plug">
-                                      <TableCell className="pl-6 italic text-gray-600">
-                                        Accumulated results (unclosed P&amp;L to equity GL)
-                                      </TableCell>
-                                      <TableCell className="text-right font-mono text-sm">
-                                        {formatCurrencyWithSign(totals.accumulatedUnclosedPlug)}
-                                      </TableCell>
-                                    </TableRow>,
-                                  ]
-                                : []),
-                            ]}
-                          </TableBody>
-                        </Table>
+                        <div className="overflow-x-auto">
+                          <Table removeWrapper aria-label="Equity" classNames={{ th: "bg-white text-gray-500", table: "min-w-[320px]" }}>
+                            <TableHeader>
+                              <TableColumn>Account</TableColumn>
+                              <TableColumn width={120} className="text-right">Amount</TableColumn>
+                            </TableHeader>
+                            <TableBody>
+                              {[
+                                ...renderAccountRows(equityAccounts),
+                                ...(Math.abs(totals.accumulatedUnclosedPlug) >= 0.01
+                                  ? [
+                                      <TableRow key="accumulated-plug">
+                                        <TableCell className="pl-6 italic text-gray-600">
+                                          Accumulated results (unclosed P&amp;L to equity GL)
+                                        </TableCell>
+                                        <TableCell className="text-right font-mono text-sm">
+                                          {formatCurrencyWithSign(totals.accumulatedUnclosedPlug)}
+                                        </TableCell>
+                                      </TableRow>,
+                                    ]
+                                  : []),
+                              ]}
+                            </TableBody>
+                          </Table>
+                        </div>
                         <p className="text-xs text-gray-500 px-4 py-2 border-b border-slate-100">
                           Profit / (loss) for the selected period (SoPL):{' '}
                           <span className="font-mono">{formatCurrencyWithSign(totals.netIncome)}</span> — informational; total equity
@@ -1333,19 +1357,21 @@ export default function FinancialReportsPage() {
 
                 <Card className="shadow-none border overflow-hidden">
                   <CardBody className="p-0">
-                    <Table removeWrapper aria-label="Trial Balance" classNames={{ th: "bg-slate-100 text-gray-600 font-semibold" }}>
-                      <TableHeader>
-                        <TableColumn>Account</TableColumn>
-                        <TableColumn width={150} className="text-right">Debit</TableColumn>
-                        <TableColumn width={150} className="text-right">Credit</TableColumn>
-                      </TableHeader>
-                      <TableBody emptyContent="No posted journal activity through the reporting date.">
-                        {renderAccountRows(accountTreeCumulative, true)}
-                      </TableBody>
-                    </Table>
-                    
+                    <div className="overflow-x-auto">
+                      <Table removeWrapper aria-label="Trial Balance" classNames={{ th: "bg-slate-100 text-gray-600 font-semibold", table: "min-w-[560px]" }}>
+                        <TableHeader>
+                          <TableColumn>Account</TableColumn>
+                          <TableColumn width={150} className="text-right">Debit</TableColumn>
+                          <TableColumn width={150} className="text-right">Credit</TableColumn>
+                        </TableHeader>
+                        <TableBody emptyContent="No posted journal activity through the reporting date.">
+                          {renderAccountRows(accountTreeCumulative, true)}
+                        </TableBody>
+                      </Table>
+                    </div>
+
                     {/* Totals */}
-                    <div className="bg-slate-200 px-4 py-3 flex justify-end gap-8 font-bold border-t-2 border-slate-300">
+                    <div className="bg-slate-200 px-4 py-3 flex flex-wrap justify-end gap-x-8 gap-y-1 font-bold border-t-2 border-slate-300">
                       <div className="text-sm">
                         <span className="text-gray-600 mr-2">Total Debit:</span>
                         <span className="font-mono">{formatCurrency(trialBalanceTotals.debit, true)}</span>
