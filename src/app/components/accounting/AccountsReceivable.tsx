@@ -52,6 +52,7 @@ import { computeSalesTax } from '@/app/lib/tax/engine';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
+import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
 
 // Shared by the New Invoice form's "new customer" payment-terms select and the due-date
 // auto-calc below it — keeps both in sync with the one mapping instead of two copies.
@@ -2790,7 +2791,13 @@ export default function AccountsReceivable() {
 											<h4 className="font-semibold text-gray-700 mb-2">Attachments</h4>
 											<ul className="text-sm text-gray-700 space-y-1">
 												{selectedWHTCert.attachments.map((a: string, i: number) => (
-													<li key={i} className="font-mono text-xs">{a}</li>
+													<li key={i} className="font-mono text-xs">
+														{/^https?:\/\//.test(a) ? (
+															<a href={a} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+																{decodeURIComponent(a.split('/').pop() || a)}
+															</a>
+														) : a}
+													</li>
 												))}
 											</ul>
 										</CardBody>
@@ -2818,16 +2825,10 @@ export default function AccountsReceivable() {
 													value={receiveCertForm.withholdingAgentTIN}
 													onValueChange={(v) => setReceiveCertForm((f) => ({ ...f, withholdingAgentTIN: v }))}
 												/>
-												<Input
-													label="Attachments (optional)"
-													placeholder="Scanned certificate — filenames, comma-separated"
-													value={receiveCertForm.attachments.join(', ')}
-													onValueChange={(v) =>
-														setReceiveCertForm((f) => ({
-															...f,
-															attachments: v.split(',').map((s) => s.trim()).filter(Boolean),
-														}))
-													}
+												<AttachmentUpload
+													label="Attachments — scanned certificate (optional)"
+													attachments={receiveCertForm.attachments}
+													onChange={(next) => setReceiveCertForm((f) => ({ ...f, attachments: next }))}
 													className="col-span-2"
 												/>
 											</div>
@@ -3355,16 +3356,10 @@ export default function AccountsReceivable() {
 										onValueChange={(v) => setReceiptForm((f: any) => ({ ...f, notes: v }))}
 										className="col-span-2"
 									/>
-									<Input
-										label="Attachments (optional)"
-										placeholder="Bank slip, cheque photo, MoMo screenshot — filenames, comma-separated"
-										value={(receiptForm.attachments || []).join(', ')}
-										onValueChange={(v) =>
-											setReceiptForm((f: any) => ({
-												...f,
-												attachments: v.split(',').map((s: string) => s.trim()).filter(Boolean),
-											}))
-										}
+									<AttachmentUpload
+										label="Attachments — bank slip, cheque photo, MoMo screenshot (optional)"
+										attachments={receiptForm.attachments || []}
+										onChange={(next) => setReceiptForm((f: any) => ({ ...f, attachments: next }))}
 										className="col-span-2"
 									/>
 								</div>
@@ -3908,7 +3903,13 @@ export default function AccountsReceivable() {
 												<h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Attachments</h4>
 												<ul className="text-sm text-gray-700 bg-gray-50 p-4 rounded space-y-1">
 													{selectedReceipt.attachments.map((a: string, i: number) => (
-														<li key={i} className="font-mono text-xs">{a}</li>
+														<li key={i} className="font-mono text-xs">
+														{/^https?:\/\//.test(a) ? (
+															<a href={a} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">
+																{decodeURIComponent(a.split('/').pop() || a)}
+															</a>
+														) : a}
+													</li>
 													))}
 												</ul>
 											</div>

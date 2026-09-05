@@ -1,6 +1,6 @@
 /**
- * Withholding Tax on purchases (e.g. GRA resident WHT on services) — reads the real,
- * user-editable compliance rule (domain: 'purchases', tag: 'SERVICE', e.g. `gh-wht-services`)
+ * Withholding Tax on purchases — reads the real, user-editable compliance rules
+ * (domain: 'purchases', e.g. `gh-wht-services`/`gh-wht-goods`/`gh-wht-works`/`gh-wht-rent`)
  * via the compliance tax-rule engine. Never a hardcoded rate.
  */
 
@@ -14,10 +14,19 @@ export interface PurchaseWhtLine {
   glCode: string;
 }
 
-/** Computes WHT on a service-type purchase invoice's subtotal, or null if no active WHT rule applies. */
-export function computeServiceWht(subtotal: number): PurchaseWhtLine | null {
+export type PurchaseWhtCategory = 'SERVICE' | 'GOODS' | 'WORKS' | 'RENT';
+
+export const PURCHASE_WHT_CATEGORIES: { key: PurchaseWhtCategory; label: string }[] = [
+  { key: 'SERVICE', label: 'Services' },
+  { key: 'GOODS', label: 'Goods' },
+  { key: 'WORKS', label: 'Works' },
+  { key: 'RENT', label: 'Rent' },
+];
+
+/** Computes WHT on a purchase invoice's subtotal for the given supplier-transaction category, or null if no active WHT rule applies. */
+export function computePurchaseWht(subtotal: number, category: PurchaseWhtCategory): PurchaseWhtLine | null {
   if (!(subtotal > 0)) return null;
-  const { taxes } = useComplianceStore.getState().calculateTax(subtotal, 'SERVICE', {
+  const { taxes } = useComplianceStore.getState().calculateTax(subtotal, category, {
     domain: 'purchases',
     operation: 'internal',
   });

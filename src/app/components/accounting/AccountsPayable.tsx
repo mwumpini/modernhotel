@@ -13,11 +13,12 @@ import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useSupplierStore } from '@/app/lib/inventory/supplierStore';
 import { useStockStore } from '@/app/lib/inventory/stockStore';
 import { computePurchaseTax } from '@/app/lib/tax/engine';
-import { computeServiceWht } from '@/app/lib/accounting/purchaseWht';
+import { computePurchaseWht, PURCHASE_WHT_CATEGORIES, type PurchaseWhtCategory } from '@/app/lib/accounting/purchaseWht';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
-import { filterFinanceApInvoices } from '@/app/lib/accounting/apSubledger';
+import { filterFinanceApInvoices, computeSupplierAgingFromInvoices } from '@/app/lib/accounting/apSubledger';
 import { GL_ACCOUNTS } from '@/app/lib/accounting/integration';
 import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
+import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
 
 export default function AccountsPayablePage() {
   const {
@@ -163,54 +164,12 @@ export default function AccountsPayablePage() {
     });
   }, [supplierPayments, suppliers, searchTerm]);
 
-  // Supplier Aging Analysis — buckets are each invoice's own remaining balance (total minus
-  // what's actually been paid on it), not the gross invoice total, so a partially- or
-  // fully-paid overdue invoice doesn't keep showing as fully owed. outstandingBalance is the
-  // sum of the same per-invoice balances, so it always reconciles exactly with the buckets.
-  const supplierAging = useMemo(() => {
-    const now = new Date();
-    return suppliers.map(supplier => {
-      const supplierInvoices = purchaseInvoices.filter(inv => inv.businessPartnerId === supplier.id);
-      const supplierPaymentsFiltered = supplierPayments.filter(pay => pay.businessPartnerId === supplier.id);
-
-      const totalInvoiced = supplierInvoices.reduce((sum, inv) => sum + inv.total, 0);
-      const totalPaid = supplierPaymentsFiltered.reduce((sum, pay) => sum + pay.amount, 0);
-
-      let current = 0, overdue30 = 0, overdue60 = 0, overdue90 = 0, overdue90Plus = 0;
-      supplierInvoices.forEach(inv => {
-        const paidForInvoice = inv.paidAmount != null
-          ? inv.paidAmount
-          : supplierPaymentsFiltered.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
-        const balance = Math.max(0, (inv.total || 0) - paidForInvoice);
-        if (balance <= 0) return;
-        const dueDate = new Date(inv.dueDate || inv.date);
-        const daysOverdue = Math.floor((now.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24));
-        if (daysOverdue <= 0) current += balance;
-        else if (daysOverdue <= 30) overdue30 += balance;
-        else if (daysOverdue <= 60) overdue60 += balance;
-        else if (daysOverdue <= 90) overdue90 += balance;
-        else overdue90Plus += balance;
-      });
-
-      const outstandingBalance = current + overdue30 + overdue60 + overdue90 + overdue90Plus;
-
-      return {
-        ...supplier,
-        totalInvoiced,
-        totalPaid,
-        outstandingBalance,
-        current,
-        overdue30,
-        overdue60,
-        overdue90,
-        overdue90Plus,
-        lastInvoiceDate: supplierInvoices.length > 0 ?
-          new Date(Math.max(...supplierInvoices.map(inv => new Date(inv.date).getTime()))).toISOString().slice(0,10) : null,
-        lastPaymentDate: supplierPaymentsFiltered.length > 0 ?
-          new Date(Math.max(...supplierPaymentsFiltered.map(pay => new Date(pay.date).getTime()))).toISOString().slice(0,10) : null
-      };
-    });
-  }, [suppliers, purchaseInvoices, supplierPayments]);
+  // Supplier Aging Analysis — shared with any future report/audit-assist consumer via
+  // apSubledger.ts, mirroring how arSubledger.ts centralizes AR's aging for the same reason.
+  const supplierAging = useMemo(
+    () => computeSupplierAgingFromInvoices(suppliers, invoices, payments),
+    [suppliers, invoices, payments],
+  );
 
   // Filtered invoices
   const filteredInvoices = useMemo(() => {
@@ -586,15 +545,11 @@ export default function AccountsPayablePage() {
                         email: '',
                         phone: '',
                         address: '',
-                        city: '',
                         country: 'Ghana',
-                        postalCode: '',
                         taxNumber: '',
                         paymentTerms: 'net30',
                         creditLimit: 0,
                         currentBalance: 0,
-                        rating: 0,
-                        categories: [],
                         isActive: true
                       }); 
                       setIsOpen(true); 
@@ -686,15 +641,11 @@ export default function AccountsPayablePage() {
                         email: '',
                         phone: '',
                         address: '',
-                        city: '',
                         country: 'Ghana',
-                        postalCode: '',
                         taxNumber: '',
                         paymentTerms: 'net30',
                         creditLimit: 0,
                         currentBalance: 0,
-                        rating: 0,
-                        categories: [],
                         isActive: true
                       });
                       setIsOpen(true);
@@ -806,17 +757,13 @@ export default function AccountsPayablePage() {
                                   taxNumber: supplier.taxNumber || '',
                                   taxId: supplier.taxNumber || '', // Also map taxId for compatibility
                                   address: supplier.address || '',
-                                  city: '', // BusinessPartner doesn't have city
                                   country: supplier.countryCode === 'GH' ? 'Ghana' : supplier.countryCode || 'Ghana',
-                                  postalCode: '', // BusinessPartner doesn't have postalCode
                                   paymentTerms: supplier.paymentTerms === 0 ? 'immediate' :
                                                 supplier.paymentTerms === 30 ? 'net30' :
                                                 supplier.paymentTerms === 60 ? 'net60' :
                                                 supplier.paymentTerms === 90 ? 'net90' : 'net30',
                                   creditLimit: supplier.creditLimit || 0,
                                   currentBalance: outstandingBalance,
-                                  rating: 0, // BusinessPartner doesn't have rating
-                                  categories: [], // BusinessPartner doesn't have categories
                                   isActive: supplier.isActive !== undefined ? supplier.isActive : true
                                 }); 
                                 setIsOpen(true); 
@@ -1200,11 +1147,16 @@ export default function AccountsPayablePage() {
       </Card>
 
       {/* Create/Edit Dialog */}
-      <ModalContainer
-        open={isOpen}
-        onClose={() => setIsOpen(false)}
-        title={dialogType === 'supplier' ? (editing ? 'Edit Supplier' : 'Add Supplier') : dialogType === 'invoice' ? (editing ? 'Edit Purchase Invoice' : 'Add Purchase Invoice') : (editing ? 'Edit Payment' : 'Record Payment')}
-        onSave={() => {
+      <Modal
+        isOpen={isOpen}
+        onOpenChange={setIsOpen}
+        size={dialogType === 'invoice' ? '5xl' : dialogType === 'payment' ? '3xl' : '2xl'}
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          {(onClose) => {
+          const dialogTitle = dialogType === 'supplier' ? (editing ? 'Edit Supplier' : 'Add Supplier') : dialogType === 'invoice' ? (editing ? 'Edit Purchase Invoice' : 'Add Purchase Invoice') : (editing ? 'Edit Payment' : 'Record Payment');
+          const handleSave = () => {
           if (!validate()) return;
           if (dialogType === 'supplier') {
             // Convert payment terms string to number if needed
@@ -1351,8 +1303,11 @@ export default function AccountsPayablePage() {
           setIsOpen(false);
           setEditing(null);
           setForm({});
-        }}
-      >
+          };
+          return (
+            <>
+              <ModalHeader>{dialogTitle}</ModalHeader>
+              <ModalBody>
         {dialogType === 'supplier' && (
           <div className="grid grid-cols-2 gap-4">
             <Input
@@ -1379,7 +1334,6 @@ export default function AccountsPayablePage() {
               value={form.contactPerson || ''}
               onChange={(e) => setForm({ ...form, contactPerson: e.target.value })}
               placeholder="Contact person name"
-              isRequired
             />
             <div>
               <Input
@@ -1388,7 +1342,6 @@ export default function AccountsPayablePage() {
                 value={form.email || ''}
                 onChange={(e) => setForm({ ...form, email: e.target.value })}
                 placeholder="supplier@email.com"
-                isRequired
               />
               {errors.email && <div className="text-red-600 text-xs mt-1">{errors.email}</div>}
             </div>
@@ -1398,7 +1351,6 @@ export default function AccountsPayablePage() {
                 value={form.phone || ''}
                 onChange={(e) => setForm({ ...form, phone: e.target.value })}
                 placeholder="+233 XX XXX XXXX"
-                isRequired
               />
               {errors.phone && <div className="text-red-600 text-xs mt-1">{errors.phone}</div>}
             </div>
@@ -1414,26 +1366,12 @@ export default function AccountsPayablePage() {
               onChange={(e) => setForm({ ...form, address: e.target.value })}
               placeholder="Street address"
               className="col-span-2"
-              isRequired
-            />
-            <Input
-              label="City"
-              value={form.city || ''}
-              onChange={(e) => setForm({ ...form, city: e.target.value })}
-              placeholder="City"
-              isRequired
             />
             <Input
               label="Country"
               value={form.country || 'Ghana'}
               onChange={(e) => setForm({ ...form, country: e.target.value })}
               placeholder="Country"
-            />
-            <Input
-              label="Postal Code"
-              value={form.postalCode || ''}
-              onChange={(e) => setForm({ ...form, postalCode: e.target.value })}
-              placeholder="Postal code"
             />
             <Select
               label="Payment Terms"
@@ -1469,29 +1407,10 @@ export default function AccountsPayablePage() {
               {errors.creditLimit && <div className="text-red-600 text-xs mt-1">{errors.creditLimit}</div>}
             </div>
             <Input
-              label="Rating (1-5)"
-              type="number"
-              min={0}
-              max={5}
-              step={0.1}
-              value={form.rating?.toString() || '0'}
-              onChange={(e) => setForm({ ...form, rating: parseFloat(e.target.value) || 0 })}
-            />
-            <Input
               label="Current Balance (₵)"
               type="number"
               value={form.currentBalance?.toString() || (editing?.balance?.toString() || '0')}
               onChange={(e) => setForm({ ...form, currentBalance: parseFloat(e.target.value) || 0 })}
-            />
-            <Input
-              label="Categories (comma separated)"
-              value={form.categories?.join(', ') || ''}
-              onChange={(e) => setForm({ 
-                ...form, 
-                categories: e.target.value.split(',').map(c => c.trim()).filter(c => c) 
-              })}
-              placeholder="e.g., food, beverage, cleaning"
-              className="col-span-2"
             />
             <div className="col-span-2">
               <Chip
@@ -1622,7 +1541,7 @@ export default function AccountsPayablePage() {
               <Input size="sm" type="number" label="Subtotal" value={form.subtotal ?? 0} onChange={(e) => {
                 const subtotal = parseFloat(e.target.value) || 0;
                 const taxAmount = computePurchaseTax(subtotal).totalTax;
-                const whtAmount = form.whtApplicable ? (computeServiceWht(subtotal)?.amount || 0) : form.taxBreakdown?.withholding;
+                const whtAmount = form.whtApplicable ? (computePurchaseWht(subtotal, form.whtCategory || 'SERVICE')?.amount || 0) : form.taxBreakdown?.withholding;
                 setForm({ ...form, subtotal, taxAmount, total: +(subtotal + taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholding: whtAmount } });
               }} />
               <Input size="sm" type="number" label="Tax Amount" value={form.taxAmount ?? 0} onChange={(e) => {
@@ -1641,71 +1560,87 @@ export default function AccountsPayablePage() {
             <Input size="sm" label="Description" value={form.description || ''} onChange={(e) => setForm({ ...form, description: e.target.value })} />
             {errors.businessPartnerId && <div className="text-red-600 text-xs">{errors.businessPartnerId}</div>}
 
-            {/* Tax Options - simplified */}
-            <div className="grid grid-cols-4 gap-4 p-3 border rounded">
-              <Select size="sm" label="Tax Type" selectedKeys={[form.taxType || 'STANDARD']} onSelectionChange={(keys)=> {
-                const v = Array.from(keys)[0] as string;
-                if (v === 'NONE') {
-                  const subtotal = Number(form.subtotal||0);
-                  setForm({ ...form, taxType: 'NONE', taxAmount: 0, total: +(subtotal).toFixed(2) });
-                } else {
-                  setForm({ ...form, taxType: v });
-                }
-              }}>
-                <SelectItem key="STANDARD">Standard (Purchase stack)</SelectItem>
-                <SelectItem key="CUSTOM">Custom Rate</SelectItem>
-                <SelectItem key="NONE">No Tax</SelectItem>
-              </Select>
-              {form.taxType === 'CUSTOM' && (
-                <Input size="sm" type="number" label="Custom Rate %" value={form.customTaxPercent ?? 0} onChange={(e)=> setForm({ ...form, customTaxPercent: parseFloat(e.target.value)||0 })} />
-              )}
-              <div className="col-span-1 flex items-end">
-                <Button size="sm" variant="bordered" onClick={() => {
-                  const subtotal = Number(form.subtotal||0);
-                  if ((form.taxType||'STANDARD') === 'CUSTOM') {
-                    const rate = Number(form.customTaxPercent||0)/100;
-                    const taxAmount = +(subtotal*rate).toFixed(2);
-                    setForm({ ...form, taxAmount, total: +(subtotal+taxAmount).toFixed(2) });
-                    return;
-                  }
-                  if ((form.taxType||'STANDARD') === 'NONE') {
-                    setForm({ ...form, taxAmount: 0, total: subtotal });
-                    return;
-                  }
-                  const { totalTax } = computePurchaseTax(subtotal);
-                  const taxAmount = +totalTax.toFixed(2);
-                  setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2) });
-                }}>Apply Tax</Button>
-              </div>
-            </div>
-
-            {/* Withholding Tax (Purchases) — real rate from the compliance tax-rule engine */}
-            <div className="grid grid-cols-4 gap-4 p-3 border rounded items-end">
-              <div className="col-span-4 sm:col-span-1 flex items-center h-10">
-                <Checkbox isSelected={!!form.whtApplicable} onValueChange={(checked) => {
-                  const subtotal = Number(form.subtotal || 0);
-                  if (checked) {
-                    const wht = computeServiceWht(subtotal);
-                    setForm({ ...form, whtApplicable: true, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: wht?.amount || 0 } });
-                  } else {
-                    const tb = { ...(form.taxBreakdown || {}) };
-                    delete tb.withholding;
-                    setForm({ ...form, whtApplicable: false, taxBreakdown: tb });
-                  }
-                }}>Service invoice — withhold tax</Checkbox>
+            {/* Tax Options + Withholding Tax — combined into one row (Tax Type left, WHT right)
+                so the two no longer eat two full bordered boxes of vertical space. WHT rate is
+                never hardcoded here — computePurchaseWht reads the live rule for whichever
+                category is picked from the compliance tax-rule engine (Books & Taxes). */}
+            <div className="p-3 border rounded space-y-3">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="flex gap-2 items-end">
+                  <Select size="sm" label="Tax Type" className="flex-1" selectedKeys={[form.taxType || 'STANDARD']} onSelectionChange={(keys)=> {
+                    const v = Array.from(keys)[0] as string;
+                    if (v === 'NONE') {
+                      const subtotal = Number(form.subtotal||0);
+                      setForm({ ...form, taxType: 'NONE', taxAmount: 0, total: +(subtotal).toFixed(2) });
+                    } else {
+                      setForm({ ...form, taxType: v });
+                    }
+                  }}>
+                    <SelectItem key="STANDARD">Standard (Purchase stack)</SelectItem>
+                    <SelectItem key="CUSTOM">Custom Rate</SelectItem>
+                    <SelectItem key="NONE">No Tax</SelectItem>
+                  </Select>
+                  {form.taxType === 'CUSTOM' && (
+                    <Input size="sm" type="number" label="Custom %" className="w-24" value={form.customTaxPercent ?? 0} onChange={(e)=> setForm({ ...form, customTaxPercent: parseFloat(e.target.value)||0 })} />
+                  )}
+                  <Button size="sm" variant="bordered" onClick={() => {
+                    const subtotal = Number(form.subtotal||0);
+                    if ((form.taxType||'STANDARD') === 'CUSTOM') {
+                      const rate = Number(form.customTaxPercent||0)/100;
+                      const taxAmount = +(subtotal*rate).toFixed(2);
+                      setForm({ ...form, taxAmount, total: +(subtotal+taxAmount).toFixed(2) });
+                      return;
+                    }
+                    if ((form.taxType||'STANDARD') === 'NONE') {
+                      setForm({ ...form, taxAmount: 0, total: subtotal });
+                      return;
+                    }
+                    const { totalTax } = computePurchaseTax(subtotal);
+                    const taxAmount = +totalTax.toFixed(2);
+                    setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2) });
+                  }}>Apply Tax</Button>
+                </div>
+                <div className="flex gap-2 items-end">
+                  <Checkbox isSelected={!!form.whtApplicable} onValueChange={(checked) => {
+                    const subtotal = Number(form.subtotal || 0);
+                    const category: PurchaseWhtCategory = form.whtCategory || 'SERVICE';
+                    if (checked) {
+                      const wht = computePurchaseWht(subtotal, category);
+                      setForm({ ...form, whtApplicable: true, whtCategory: category, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: wht?.amount || 0 } });
+                    } else {
+                      const tb = { ...(form.taxBreakdown || {}) };
+                      delete tb.withholding;
+                      setForm({ ...form, whtApplicable: false, taxBreakdown: tb });
+                    }
+                  }}>Withhold tax</Checkbox>
+                  {form.whtApplicable && (
+                    <Select size="sm" label="WHT Category" className="flex-1" selectedKeys={[form.whtCategory || 'SERVICE']} onSelectionChange={(keys) => {
+                      const category = Array.from(keys)[0] as PurchaseWhtCategory;
+                      const subtotal = Number(form.subtotal || 0);
+                      const wht = computePurchaseWht(subtotal, category);
+                      setForm({ ...form, whtCategory: category, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: wht?.amount || 0 } });
+                    }}>
+                      {PURCHASE_WHT_CATEGORIES.map((c) => (
+                        <SelectItem key={c.key}>{c.label}</SelectItem>
+                      ))}
+                    </Select>
+                  )}
+                </div>
               </div>
               {form.whtApplicable && (() => {
-                const wht = computeServiceWht(Number(form.subtotal || 0));
+                const category: PurchaseWhtCategory = form.whtCategory || 'SERVICE';
+                const wht = computePurchaseWht(Number(form.subtotal || 0), category);
                 if (!wht) {
-                  return <div className="col-span-3 text-xs text-amber-600">No active WHT rule for services — configure one in Books &amp; Taxes → Tax Rate Builder (Purchases).</div>;
+                  const label = PURCHASE_WHT_CATEGORIES.find((c) => c.key === category)?.label || category;
+                  return <div className="text-xs text-amber-600">No active WHT rule for {label} — configure one in Books &amp; Taxes → Tax Rate Builder (Purchases).</div>;
                 }
                 return (
-                  <>
+                  <div className="grid grid-cols-3 gap-4">
                     <Input size="sm" isReadOnly label="WHT Rate" value={`${wht.rate}%`} />
                     <Input size="sm" type="number" label="WHT Amount" value={form.taxBreakdown?.withholding ?? wht.amount}
                       onChange={(e) => setForm({ ...form, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: parseFloat(e.target.value) || 0 } })} />
-                    <div className="text-xs text-gray-500">Retained from payment to supplier; remitted to GRA. Net payable: {formatAccountingCurrency((Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0)))}</div>
-                  </>
+                    <div className="text-xs text-gray-500 flex items-center">Net payable: {formatAccountingCurrency((Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0)))}</div>
+                  </div>
                 );
               })()}
             </div>
@@ -1825,7 +1760,7 @@ export default function AccountsPayablePage() {
                   <Input size="sm" label="Approved By" value={form.approvedBy || ''} onChange={(e)=> setForm({ ...form, approvedBy: e.target.value })} />
                   <Input size="sm" label="Authorized By" value={form.authorizedBy || ''} onChange={(e)=> setForm({ ...form, authorizedBy: e.target.value })} />
                   <Input size="sm" label="Payment Approved By" value={form.paymentApprovedBy || ''} onChange={(e)=> setForm({ ...form, paymentApprovedBy: e.target.value })} />
-                  <Input size="sm" label="Attachments (filenames)" value={(form.attachments||[]).join(', ')} onChange={(e)=> setForm({ ...form, attachments: e.target.value.split(',').map((s:string)=>s.trim()).filter(Boolean) })} />
+                  <AttachmentUpload attachments={form.attachments || []} onChange={(next) => setForm({ ...form, attachments: next })} />
                 </div>
               </div>
             </div>
@@ -1968,7 +1903,7 @@ export default function AccountsPayablePage() {
             <div className="space-y-2">
               <div className="font-semibold text-sm">Files</div>
               <div className="grid grid-cols-3 gap-4">
-                <Input size="sm" label="Attachments (filenames)" value={(form.attachments||[]).join(', ')} onChange={(e)=> setForm({ ...form, attachments: e.target.value.split(',').map((s:string)=>s.trim()).filter(Boolean) })} />
+                <AttachmentUpload attachments={form.attachments || []} onChange={(next) => setForm({ ...form, attachments: next })} />
                 <Input size="sm" label="PDF URL" value={form.pdfUrl || ''} onChange={(e)=> setForm({ ...form, pdfUrl: e.target.value })} />
                 <Input size="sm" label="PDF File Name" value={form.pdfFileName || ''} onChange={(e)=> setForm({ ...form, pdfFileName: e.target.value })} />
               </div>
@@ -1978,7 +1913,16 @@ export default function AccountsPayablePage() {
             </div>
           </div>
         )}
-      </ModalContainer>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="light" onPress={onClose}>Cancel</Button>
+                <Button color="primary" onPress={handleSave}>Save</Button>
+              </ModalFooter>
+            </>
+          );
+          }}
+        </ModalContent>
+      </Modal>
 
       {/* View Totals Modal */}
       <Modal isOpen={isTotalsOpen} onClose={() => setIsTotalsOpen(false)} size="md">
@@ -2000,35 +1944,6 @@ export default function AccountsPayablePage() {
           </ModalFooter>
         </ModalContent>
       </Modal>
-    </div>
-  );
-}
-
-// Modal at end to create/edit supplier, invoice, payment
-// Lightweight custom modal to keep dependencies minimal
-function ModalContainer({ open, onClose, title, children, onSave }: { open: boolean; onClose: () => void; title: string; children: React.ReactNode; onSave: () => void; }) {
-  if (!open) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-      <div className="bg-white w-full max-w-[70vw] max-h-[90vh] rounded-lg shadow-xl">
-        <div className="px-4 py-3 border-b flex justify-between items-center">
-          <h3 className="font-semibold">{title}</h3>
-          <div className="flex items-center gap-2">
-            <button className="px-3 py-1 text-sm border rounded" onClick={onSave}>Save</button>
-            <button className="px-3 py-1 text-sm border rounded" onClick={() => { onSave(); onClose(); }}>Save & Close</button>
-            <button className="px-3 py-1 text-sm border rounded" onClick={() => { try { window.print(); } catch {} }}>Print</button>
-            <button className="px-3 py-1 text-sm border rounded" onClick={() => { alert('PDF export coming soon'); }}>PDF</button>
-            <button onClick={onClose} className="px-3 py-1 text-sm border rounded">✖</button>
-          </div>
-        </div>
-        <div className="p-4 overflow-y-auto max-h-[80vh]">
-          {children}
-        </div>
-        <div className="px-4 py-3 border-t flex justify-end gap-2">
-          <button className="px-3 py-2 text-sm border rounded" onClick={onClose}>Cancel</button>
-          <button className="px-3 py-2 text-sm bg-ghana-green text-white rounded" onClick={onSave}>Save</button>
-        </div>
-      </div>
     </div>
   );
 }

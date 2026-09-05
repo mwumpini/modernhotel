@@ -146,6 +146,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const router = useRouter();
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
+  const [hasMounted, setHasMounted] = React.useState(false);
+  React.useEffect(() => { setHasMounted(true); }, []);
   const leanMode = isLeanAccountingUI();
   // Re-render the menu (and re-evaluate hasModuleAccess) whenever the real session role
   // or the editable role/permission list changes.
@@ -200,6 +202,12 @@ export default function Navigation({ onLogout }: NavigationProps) {
 
 
   const getUnreadCount = (dept: string) => {
+    // The server has no localStorage, so this must return the same thing (0, no
+    // unread badge) on the first client render too — otherwise a genuinely unread
+    // announcement makes a section title (and its aria-label) differ from what the
+    // server sent, which is exactly the kind of mismatch that blows away this whole
+    // accordion subtree on hydration. Real counts kick in a tick later, after mount.
+    if (!hasMounted) return 0;
     try {
       const { announcementStore } = require('../lib/analytics/announcementStore');
       const items = announcementStore.getForDepartment(dept as any, 50);

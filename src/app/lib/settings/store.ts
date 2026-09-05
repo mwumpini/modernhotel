@@ -2308,9 +2308,17 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       const roles = localStorage.getItem('system.roles') ? JSON.parse(localStorage.getItem('system.roles')!) : defaultRoles;
       set({ users, roles });
       
-      // Load current user
-      const currentUser = localStorage.getItem('system.currentUser') ? JSON.parse(localStorage.getItem('system.currentUser')!) : undefined;
-      set({ currentUser });
+      // Load current user — unlike users/roles above, deliberately don't fall back to
+      // `undefined` when nothing's stored yet (every fresh browser, before this tenant
+      // ever saves one). hasModuleAccess() treats a missing currentUser.roleId as "no
+      // access to anything," so overwriting the safe hardcoded admin default here blanks
+      // out the entire nav sidebar for every first-time visitor until a real session
+      // role loads. Leaving the existing value alone when there's nothing to restore
+      // keeps that default intact.
+      const storedCurrentUser = localStorage.getItem('system.currentUser');
+      if (storedCurrentUser) {
+        set({ currentUser: JSON.parse(storedCurrentUser) });
+      }
 
       // Pull the server's no-show policy (the one slice of roomManagement that's
       // also read server-side, by the night-audit cron) so it's authoritative
