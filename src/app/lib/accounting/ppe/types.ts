@@ -16,6 +16,9 @@ export type GraClass = 'Class 1' | 'Class 2' | 'Class 3' | 'Class 4';
 export interface PpeCategory {
   id: string;
   name: string;
+  /** Asset-code prefix for this category (e.g. "FFE" → FFE-001) — user-editable in the
+   *  Categories tab; falls back to a default per FS presentation group when unset. */
+  codePrefix?: string;
   graClass: GraClass;
   graRate: number;
   graMethod: GraMethod;
@@ -45,6 +48,12 @@ export interface PpeAsset {
   /** Cumulative IAS book dep posted to GL 1520 for this asset */
   ledgerAccumDepPosted?: number;
   lastDepreciationJournalEntryId?: string;
+  /** Link to GL disposal journal (cost/accum-dep write-off + gain/loss) once posted */
+  disposalJournalEntryId?: string;
+  /** Bank & Cash account the disposal proceeds were received into */
+  disposalProceedsBankAccountId?: string;
+  /** Uploaded invoice / source-document URLs (see AttachmentUpload) */
+  attachments?: string[];
   createdAt: string;
   updatedAt: string;
 }

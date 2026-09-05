@@ -32,7 +32,6 @@ import AccountsReceivable from './accounting/AccountsReceivable';
 import InventoryFixedAssets from './accounting/InventoryFixedAssets';
 import FinancialReports from './accounting/FinancialReports';
 import AuditControls from './accounting/AuditControls';
-import BankReconciliation from './accounting/BankReconciliation';
 import CostRevenueCenters from './accounting/CostRevenueCenters';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
@@ -560,7 +559,9 @@ export default function AccountingMainDashboard() {
                                   } else if (item.title.includes('Trial Balance')) {
                                     goToTab('reports');
                                   } else if (item.title.includes('Bank Reconciliation')) {
-                                    goToTab('reconciliation');
+                                    // Reconciliation lives under Bank & Cash's own tab now, not a top-level tab.
+                                    try { localStorage.setItem('accounting.banking.subtab', 'reconciliation'); } catch {}
+                                    goToTab('banking');
                                   } else if (
                                     item.title.includes('Tax Compliance') ||
                                     item.title.includes('Filings Submitted') ||
@@ -660,10 +661,6 @@ export default function AccountingMainDashboard() {
                   <AuditControls />
                 </Tab>
                 )}
-
-                <Tab key="reconciliation" title="⚖️ Bank Recon">
-                  <BankReconciliation />
-                </Tab>
               </Tabs>
 
       {/* Recent Activities & Notices */}

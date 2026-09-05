@@ -12,6 +12,18 @@ export const PRESENTATION_GROUPS: PresentationGroup[] = [
 
 export const GRA_CLASSES = ['Class 1', 'Class 2', 'Class 3', 'Class 4'] as const;
 
+/** Asset-code prefix per FS presentation group — e.g. "FFE-001" for a Furniture & Fixtures
+ *  asset. Used to auto-suggest a code when adding an asset; the field stays editable. */
+export const PRESENTATION_GROUP_PREFIX: Record<PresentationGroup, string> = {
+  'Land': 'LND',
+  'Building': 'BLD',
+  'Motor Vehicle & Machinery': 'MV',
+  'Furniture & Fixtures': 'FFE',
+  'Computer & Accessories': 'CE',
+  'Kitchen Equipment & Utensils': 'KE',
+  'Intangible Assets': 'IA',
+};
+
 export const DEFAULT_ORG_ID = 'default-org';
 
 const cat = (
@@ -28,6 +40,7 @@ const cat = (
 /** Default hotel PPE categories — IAS 16 + GRA Act 896 aligned */
 export const DEFAULT_PPE_CATEGORIES: PpeCategory[] = [
   cat('cat-land', 'Land', {
+    codePrefix: 'LND',
     graClass: 'Class 4',
     graRate: 0,
     graMethod: 'SL',
@@ -38,6 +51,7 @@ export const DEFAULT_PPE_CATEGORIES: PpeCategory[] = [
     presentationGroup: 'Land',
   }),
   cat('cat-building', 'Building', {
+    codePrefix: 'BLD',
     graClass: 'Class 4',
     graRate: 0.1,
     graMethod: 'SL',
@@ -48,6 +62,7 @@ export const DEFAULT_PPE_CATEGORIES: PpeCategory[] = [
     presentationGroup: 'Building',
   }),
   cat('cat-motor', 'Motor Vehicle', {
+    codePrefix: 'MV',
     graClass: 'Class 2',
     graRate: 0.3,
     graMethod: 'RB',
@@ -58,6 +73,7 @@ export const DEFAULT_PPE_CATEGORIES: PpeCategory[] = [
     presentationGroup: 'Motor Vehicle & Machinery',
   }),
   cat('cat-plant', 'Plant & Machinery', {
+    codePrefix: 'PM',
     graClass: 'Class 3',
     graRate: 0.2,
     graMethod: 'RB',
@@ -68,6 +84,7 @@ export const DEFAULT_PPE_CATEGORIES: PpeCategory[] = [
     presentationGroup: 'Motor Vehicle & Machinery',
   }),
   cat('cat-ffe', 'Furniture, Fixtures & Equipment', {
+    codePrefix: 'FFE',
     graClass: 'Class 3',
     graRate: 0.2,
     graMethod: 'RB',
@@ -78,6 +95,7 @@ export const DEFAULT_PPE_CATEGORIES: PpeCategory[] = [
     presentationGroup: 'Furniture & Fixtures',
   }),
   cat('cat-computer', 'Computer & Accessories', {
+    codePrefix: 'CE',
     graClass: 'Class 1',
     graRate: 0.4,
     graMethod: 'RB',
@@ -88,6 +106,7 @@ export const DEFAULT_PPE_CATEGORIES: PpeCategory[] = [
     presentationGroup: 'Computer & Accessories',
   }),
   cat('cat-kitchen', 'Kitchen Equipment & Utensils', {
+    codePrefix: 'KE',
     graClass: 'Class 3',
     graRate: 0.2,
     graMethod: 'RB',
@@ -98,6 +117,7 @@ export const DEFAULT_PPE_CATEGORIES: PpeCategory[] = [
     presentationGroup: 'Kitchen Equipment & Utensils',
   }),
   cat('cat-intangible', 'Intangible Assets', {
+    codePrefix: 'IA',
     graClass: 'Class 3',
     graRate: 0.2,
     graMethod: 'RB',

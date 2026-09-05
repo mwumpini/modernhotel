@@ -1,6 +1,6 @@
 import {
   computeReconciliation,
-  priorPeriodEnd,
+  findPriorReconciliation,
   outstandingChequesCarryForward,
 } from '../src/app/lib/accounting/bankRecon/calculations';
 import type { ReconcilingItem } from '../src/app/lib/accounting/bankRecon/types';
@@ -70,9 +70,17 @@ function item(partial: Partial<ReconcilingItem> & Pick<ReconcilingItem, 'itemTyp
   assert(r.isBalanced, 'classic recon scenario should balance');
 }
 
-// priorPeriodEnd local date
+// findPriorReconciliation picks the most recent period before the current one,
+// regardless of the gap between reconciliation dates (e.g. monthly cadence).
 {
-  assert(priorPeriodEnd('2026-06-01') === '2026-05-31', `prior ${priorPeriodEnd('2026-06-01')}`);
+  const reconList = [
+    { bankAccountId: 'b1', periodEndDate: '2026-04-30' },
+    { bankAccountId: 'b1', periodEndDate: '2026-05-31' },
+    { bankAccountId: 'b2', periodEndDate: '2026-05-31' },
+  ];
+  const prior = findPriorReconciliation(reconList, 'b1', '2026-06-30');
+  assert(!!prior && prior.periodEndDate === '2026-05-31', `prior ${prior?.periodEndDate}`);
+  assert(!findPriorReconciliation(reconList, 'b1', '2026-04-30'), 'no prior before earliest');
 }
 
 // carry forward uncleared only

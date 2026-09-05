@@ -7,7 +7,7 @@ import {
   computeReconciliation,
   depositsInTransitCarryForward,
   outstandingChequesCarryForward,
-  priorPeriodEnd,
+  findPriorReconciliation,
   bookSideItemsNeedingJournal,
 } from './bankRecon/calculations';
 import { validateReconciliation, validateItem } from './bankRecon/validation';
@@ -135,8 +135,7 @@ export const useBankReconStore = create<BankReconState>()(
           periodEndDate
         );
 
-        const priorEnd = priorPeriodEnd(periodEndDate);
-        const priorRecon = get().getReconciliation(bankAccountId, priorEnd);
+        const priorRecon = findPriorReconciliation(get().reconciliations, bankAccountId, periodEndDate);
         const carryItems: ReconcilingItem[] = [];
         const now = new Date().toISOString();
         const reconId = `brecon-${Date.now()}`;

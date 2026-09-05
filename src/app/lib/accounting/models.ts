@@ -587,6 +587,7 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '4100', name: 'Room Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
   { code: '4200', name: 'Food and Beverage Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
   { code: '4300', name: 'Other Revenue', type: 'Revenue', category: 'Revenue', level: 2 },
+  { code: '4310', name: 'Gain on Disposal of Assets', type: 'Revenue', category: 'Revenue', level: 3 },
   { code: '4400', name: 'Service Charges', type: 'Revenue', category: 'Revenue', level: 2 },
   { code: '4900', name: 'Rounding Adjustment', type: 'Revenue', category: 'Revenue', level: 2, description: 'Cash-rounding gap between exact tax lines and the rounded folio/invoice total' },
 
@@ -624,6 +625,7 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '5670', name: 'Cleaning and Sanitation', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5675', name: 'Audit Fees', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5680', name: 'Miscellaneous Expenses', type: 'Expense', category: 'Expenses', level: 3, description: 'Catch-all for purchase/expense lines with no more specific category — the expense-side mirror of Other Revenue (4300)' },
+  { code: '5690', name: 'Loss on Disposal of Assets', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5700', name: 'Depreciation Expense', type: 'Expense', category: 'Expenses', level: 2 },
   { code: '5710', name: 'Depreciation - Property & Equipment', type: 'Expense', category: 'Expenses', level: 3 },
   { code: '5800', name: 'Tax Expenses', type: 'Expense', category: 'Expenses', level: 2 },

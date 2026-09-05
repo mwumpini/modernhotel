@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { 
+import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, useDisclosure,
   Tabs, Tab, Spinner, Alert, Progress, Pagination,
   Autocomplete, AutocompleteItem, Checkbox, Tooltip,
+  Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import {
@@ -18,6 +19,7 @@ import BankReconciliation from './BankReconciliation';
 import type { BankTransaction } from '@/app/lib/accounting/models';
 import { BANK_MANUAL_SOURCE } from '@/app/lib/accounting/bankTransactionLedger';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 
 // formatAccountingCurrency always shows a magnitude (and the ₵ symbol), so the sign is
 // reattached in front of it here (balances/net cash flow can be negative).
@@ -143,6 +145,8 @@ export default function BankCashManagementPage() {
   } = useAccountingStore();
   const [selectedTab, setSelectedTab] = useState("bank-accounts");
   const [searchTerm, setSearchTerm] = useState('');
+  const [accountSearchTerm, setAccountSearchTerm] = useState('');
+  const [errors, setErrors] = useState<Record<string, string>>({});
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [filterType, setFilterType] = useState<string>('all');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
@@ -165,6 +169,7 @@ export default function BankCashManagementPage() {
   const openNewBankAccount = useCallback(() => {
     setModalMode('account');
     setIsEditMode(false);
+    setErrors({});
     setEditingItem({
       accountKind: 'bank',
       createDedicatedGl: true,
@@ -178,6 +183,7 @@ export default function BankCashManagementPage() {
   const openEditBankAccount = useCallback((acc: typeof bankAccounts[0]) => {
     setModalMode('account');
     setIsEditMode(true);
+    setErrors({});
     setEditingItem({
       ...acc,
       accountKind: isPettyCashAccount(acc.accountName, acc.bankName) ? 'petty_cash' : 'bank',
@@ -189,6 +195,7 @@ export default function BankCashManagementPage() {
   const openNewTransaction = useCallback(() => {
     setModalMode('transaction');
     setIsEditMode(false);
+    setErrors({});
     setTxnForm({
       type: 'Deposit',
       amount: 0,
@@ -207,6 +214,7 @@ export default function BankCashManagementPage() {
     const isInLeg = txn.type === 'Transfer' && txn.id.endsWith('-IN');
     setModalMode('transaction');
     setIsEditMode(true);
+    setErrors({});
     setTxnForm({
       id: txn.id,
       bankAccountId: isInLeg ? txn.transferToAccountId : txn.bankAccountId,
@@ -226,7 +234,30 @@ export default function BankCashManagementPage() {
     onClose();
     setEditingItem(null);
     setTxnForm(null);
+    setErrors({});
   }, [onClose]);
+
+  const validateAccountForm = (item: BankAccountForm): boolean => {
+    const e: Record<string, string> = {};
+    if (!item.accountName || item.accountName.trim().length < 2) e.accountName = 'Account name is required';
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
+
+  const validateTxnForm = (form: BankTransactionForm): boolean => {
+    const e: Record<string, string> = {};
+    if (!form.reference || !form.reference.trim()) e.reference = 'Reference is required';
+    if (!(Number(form.amount) > 0)) e.amount = 'Amount must be greater than 0';
+    if (form.type === 'Transfer') {
+      if (!form.bankAccountId || !form.transferToAccountId) {
+        e.transferToAccountId = 'Select both a from and to account';
+      } else if (form.bankAccountId === form.transferToAccountId) {
+        e.transferToAccountId = 'From and to accounts must be different';
+      }
+    }
+    setErrors(e);
+    return Object.keys(e).length === 0;
+  };
 
   const patchBankForm = useCallback((patch: Partial<BankAccountForm>) => {
     setEditingItem((prev) => {
@@ -290,12 +321,22 @@ export default function BankCashManagementPage() {
       .reduce((sum, account) => sum + (account.currentBalance ?? 0), 0);
   }, [bankAccounts]);
 
+  const filteredBankAccounts = useMemo(() => {
+    if (!accountSearchTerm) return bankAccounts;
+    const q = accountSearchTerm.toLowerCase();
+    return bankAccounts.filter((acc) =>
+      acc.accountName.toLowerCase().includes(q) ||
+      (acc.bankName || '').toLowerCase().includes(q) ||
+      (acc.accountNumber || '').toLowerCase().includes(q)
+    );
+  }, [bankAccounts, accountSearchTerm]);
+
   // Pagination logic for different tabs
   const accountsToShow = useMemo(() => {
     const start = (accountsPage - 1) * rowsPerPage;
     const end = start + rowsPerPage;
-    return bankAccounts.slice(start, end);
-  }, [bankAccounts, accountsPage]);
+    return filteredBankAccounts.slice(start, end);
+  }, [filteredBankAccounts, accountsPage]);
 
   const filteredTransactions = useMemo(() => {
     return bankTransactions.filter(txn => {
@@ -322,8 +363,108 @@ export default function BankCashManagementPage() {
     return filteredTransactions.slice(start, end);
   }, [filteredTransactions, transactionsPage]);
 
-  const accountsPages = Math.ceil(bankAccounts.length / rowsPerPage);
+  const accountsPages = Math.ceil(filteredBankAccounts.length / rowsPerPage);
   const transactionsPages = Math.ceil(filteredTransactions.length / rowsPerPage);
+
+  // Export Bank Accounts to CSV
+  const exportBankAccountsCSV = useCallback(() => {
+    const columns = [
+      { key: 'accountName', label: 'Account' },
+      { key: 'accountNumber', label: 'Account #' },
+      { key: 'bankName', label: 'Bank' },
+      { key: 'glAccountCode', label: 'GL Account' },
+      { key: 'currency', label: 'Currency' },
+      { key: 'openingBalance', label: 'Opening Balance' },
+      { key: 'currentBalance', label: 'Balance' },
+      { key: 'isActive', label: 'Status' },
+    ];
+    const data = filteredBankAccounts.map((acc) => ({ ...acc, isActive: acc.isActive ? 'Active' : 'Inactive' }));
+    downloadCSV(data, 'bank_accounts', columns);
+  }, [filteredBankAccounts]);
+
+  // Print Bank Accounts Table as PDF
+  const printBankAccountsTablePDF = useCallback(() => {
+    const rows = filteredBankAccounts.map((acc) => `<tr>
+      <td>${acc.accountName}</td>
+      <td>${acc.bankName || '-'}</td>
+      <td>${acc.glAccountCode} — ${chartOfAccounts.find((c) => c.code === acc.glAccountCode)?.name || '—'}</td>
+      <td>${acc.currency}</td>
+      <td class="amount">${formatAmount(acc.openingBalance)}</td>
+      <td class="amount">${formatAmount(acc.currentBalance)}</td>
+      <td><span class="badge ${acc.isActive ? 'badge-success' : 'badge-danger'}">${acc.isActive ? 'Active' : 'Inactive'}</span></td>
+    </tr>`).join('');
+    const totalBalance = filteredBankAccounts.reduce((s, a) => s + (a.currentBalance ?? 0), 0);
+    const html = generatePdfHtml('Bank & Cash Accounts Report', `
+      <div class="header">
+        <h1>🏦 Bank &amp; Cash Accounts Report</h1>
+        <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
+      </div>
+      <div class="meta">
+        <div class="meta-item"><div class="meta-label">Total Accounts</div><div class="meta-value">${filteredBankAccounts.length}</div></div>
+        <div class="meta-item"><div class="meta-label">Total Balance</div><div class="meta-value">${formatAmount(totalBalance)}</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Account</th><th>Bank</th><th>GL Account</th><th>Currency</th><th>Opening</th><th>Balance</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `, 'Bank & Cash Management');
+    openPrintPreview(html);
+  }, [filteredBankAccounts, chartOfAccounts]);
+
+  // Export Bank Transactions to CSV
+  const exportBankTransactionsCSV = useCallback(() => {
+    const columns = [
+      { key: 'transactionDate', label: 'Date' },
+      { key: 'account', label: 'Account' },
+      { key: 'reference', label: 'Reference' },
+      { key: 'description', label: 'Description' },
+      { key: 'type', label: 'Type' },
+      { key: 'amount', label: 'Amount' },
+      { key: 'status', label: 'Status' },
+    ];
+    const data = filteredTransactions.map((txn) => ({
+      ...txn,
+      transactionDate: new Date(txn.transactionDate).toLocaleDateString(),
+      account: bankAccounts.find((b) => b.id === txn.bankAccountId)?.accountName || txn.bankAccountId,
+      amount: txnDirectionLabel(txn) === 'in' ? txn.amount : -Math.abs(txn.amount ?? 0),
+    }));
+    downloadCSV(data, 'bank_transactions', columns);
+  }, [filteredTransactions, bankAccounts]);
+
+  // Print Bank Transactions Table as PDF
+  const printBankTransactionsTablePDF = useCallback(() => {
+    const rows = filteredTransactions.map((txn) => {
+      const dir = txnDirectionLabel(txn);
+      const account = bankAccounts.find((b) => b.id === txn.bankAccountId)?.accountName || txn.bankAccountId;
+      return `<tr>
+        <td>${new Date(txn.transactionDate).toLocaleDateString()}</td>
+        <td>${account}</td>
+        <td>${txn.reference}</td>
+        <td>${txn.description}</td>
+        <td>${txn.type}</td>
+        <td class="amount">${dir === 'in' ? '+' : '−'}${formatAmount(Math.abs(txn.amount ?? 0))}</td>
+        <td><span class="badge ${txn.status === 'Reconciled' ? 'badge-success' : txn.status === 'Cleared' ? 'badge-info' : 'badge-warning'}">${txn.status}</span></td>
+      </tr>`;
+    }).join('');
+    const totalIn = filteredTransactions.filter((t) => txnDirectionLabel(t) === 'in').reduce((s, t) => s + Math.abs(t.amount ?? 0), 0);
+    const totalOut = filteredTransactions.filter((t) => txnDirectionLabel(t) === 'out').reduce((s, t) => s + Math.abs(t.amount ?? 0), 0);
+    const html = generatePdfHtml('Bank Transactions Report', `
+      <div class="header">
+        <h1>🔁 Bank Transactions Report</h1>
+        <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
+      </div>
+      <div class="meta">
+        <div class="meta-item"><div class="meta-label">Total Transactions</div><div class="meta-value">${filteredTransactions.length}</div></div>
+        <div class="meta-item"><div class="meta-label">Total In</div><div class="meta-value">${formatAmount(totalIn)}</div></div>
+        <div class="meta-item"><div class="meta-label">Total Out</div><div class="meta-value">${formatAmount(totalOut)}</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Date</th><th>Account</th><th>Reference</th><th>Description</th><th>Type</th><th>Amount</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `, 'Bank & Cash Management');
+    openPrintPreview(html);
+  }, [filteredTransactions, bankAccounts]);
 
   if (isLoading && bankAccounts.length === 0 && bankTransactions.length === 0) {
     return (
@@ -384,13 +525,30 @@ export default function BankCashManagementPage() {
             onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
           >
-            <Tab key="bank-accounts" title="🏦 Bank Accounts">
+            <Tab key="bank-accounts" title={`🏦 Bank Accounts (${filteredBankAccounts.length})`}>
               <div className="p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">Bank & Cash Accounts</h3>
-                  <Button color="primary" startContent={<span>➕</span>} onPress={openNewBankAccount}>
-                    Add Account
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Chip color="primary" variant="flat">{filteredBankAccounts.length} accounts</Chip>
+                    <Chip color="success" variant="flat">{formatAmount(filteredBankAccounts.reduce((s, a) => s + (a.currentBalance ?? 0), 0))}</Chip>
+                    <Dropdown>
+                      <DropdownTrigger>
+                        <Button variant="flat" size="sm">📥 Export</Button>
+                      </DropdownTrigger>
+                      <DropdownMenu>
+                        <DropdownItem key="csv" onPress={exportBankAccountsCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="pdf" onPress={printBankAccountsTablePDF}>📑 Print PDF</DropdownItem>
+                      </DropdownMenu>
+                    </Dropdown>
+                    <Button color="primary" size="sm" startContent={<span>➕</span>} onPress={openNewBankAccount}>
+                      Add Account
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-end gap-3 mb-4">
+                  <Input label="Search" placeholder="Account name, bank, account #..." value={accountSearchTerm} onValueChange={setAccountSearchTerm} className="w-64" size="sm" />
                 </div>
 
                 <Table aria-label="Bank Accounts">
@@ -448,13 +606,25 @@ export default function BankCashManagementPage() {
               </div>
             </Tab>
 
-            <Tab key="transactions" title="🔁 Transactions">
+            <Tab key="transactions" title={`🔁 Transactions (${filteredTransactions.length})`}>
               <div className="p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">Bank Transactions</h3>
-                  <Button color="primary" startContent={<span>➕</span>} onPress={openNewTransaction}>
-                    Add Transaction
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Chip color="primary" variant="flat">{filteredTransactions.length} transactions</Chip>
+                    <Dropdown>
+                      <DropdownTrigger>
+                        <Button variant="flat" size="sm">📥 Export</Button>
+                      </DropdownTrigger>
+                      <DropdownMenu>
+                        <DropdownItem key="csv" onPress={exportBankTransactionsCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="pdf" onPress={printBankTransactionsTablePDF}>📑 Print PDF</DropdownItem>
+                      </DropdownMenu>
+                    </Dropdown>
+                    <Button color="primary" size="sm" startContent={<span>➕</span>} onPress={openNewTransaction}>
+                      Add Transaction
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
@@ -576,7 +746,10 @@ export default function BankCashManagementPage() {
                   <SelectItem key="bank">Bank account</SelectItem>
                   <SelectItem key="petty_cash">Petty cash / cash drawer</SelectItem>
                 </Select>
-                <Input label="Account Name" value={editingItem?.accountName || ''} onChange={(e) => patchBankForm({ accountName: e.target.value })} />
+                <div>
+                  <Input label="Account Name" isRequired value={editingItem?.accountName || ''} onChange={(e) => patchBankForm({ accountName: e.target.value })} />
+                  {errors.accountName && <div className="text-red-600 text-xs mt-1">{errors.accountName}</div>}
+                </div>
                 <Input label="Account Number" value={editingItem?.accountNumber || ''} onChange={(e) => patchBankForm({ accountNumber: e.target.value })} />
                 <Input label="Bank Name" value={editingItem?.bankName || ''} onChange={(e) => patchBankForm({ bankName: e.target.value })} />
                 <Select label="Currency" selectedKeys={[editingItem?.currency || 'GHS']} onSelectionChange={(keys) => patchBankForm({ currency: Array.from(keys)[0] as string })}>
@@ -648,7 +821,15 @@ export default function BankCashManagementPage() {
                       : 'Starting balance for this period — updates the cashbook only; GL comes from transactions'
                   }
                 />
-                <Input type="number" label="Current Balance" value={String(editingItem?.currentBalance ?? 0)} onChange={(e) => patchBankForm({ currentBalance: parseFloat(e.target.value) || 0 })} />
+                {isEditMode && (
+                  <Input
+                    type="number"
+                    isReadOnly
+                    label="Current Balance (₵)"
+                    value={String(editingItem?.currentBalance ?? 0)}
+                    description="Automatically maintained from Opening Balance + transactions — record a transaction to change it"
+                  />
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-4">
@@ -678,15 +859,18 @@ export default function BankCashManagementPage() {
                     >
                       {bankAccounts.map((acc) => (<SelectItem key={acc.id}>{acc.accountName}</SelectItem>))}
                     </Select>
-                    <Select
-                      label="To account"
-                      selectedKeys={txnForm?.transferToAccountId ? [txnForm.transferToAccountId] : []}
-                      onSelectionChange={(keys) => setTxnForm({ ...(txnForm || {}), transferToAccountId: Array.from(keys)[0] as string })}
-                    >
-                      {bankAccounts
-                        .filter((acc) => acc.id !== txnForm?.bankAccountId)
-                        .map((acc) => (<SelectItem key={acc.id}>{acc.accountName}</SelectItem>))}
-                    </Select>
+                    <div>
+                      <Select
+                        label="To account"
+                        selectedKeys={txnForm?.transferToAccountId ? [txnForm.transferToAccountId] : []}
+                        onSelectionChange={(keys) => setTxnForm({ ...(txnForm || {}), transferToAccountId: Array.from(keys)[0] as string })}
+                      >
+                        {bankAccounts
+                          .filter((acc) => acc.id !== txnForm?.bankAccountId)
+                          .map((acc) => (<SelectItem key={acc.id}>{acc.accountName}</SelectItem>))}
+                      </Select>
+                      {errors.transferToAccountId && <div className="text-red-600 text-xs mt-1">{errors.transferToAccountId}</div>}
+                    </div>
                   </>
                 ) : (
                   <Select
@@ -698,16 +882,22 @@ export default function BankCashManagementPage() {
                     {bankAccounts.map((acc) => (<SelectItem key={acc.id}>{acc.accountName}</SelectItem>))}
                   </Select>
                 )}
-                <Input label="Reference" isRequired value={txnForm?.reference || ''} onChange={(e) => setTxnForm({ ...(txnForm || {}), reference: e.target.value })} />
+                <div>
+                  <Input label="Reference" isRequired value={txnForm?.reference || ''} onChange={(e) => setTxnForm({ ...(txnForm || {}), reference: e.target.value })} />
+                  {errors.reference && <div className="text-red-600 text-xs mt-1">{errors.reference}</div>}
+                </div>
                 <Input label="Description" value={txnForm?.description || ''} onChange={(e) => setTxnForm({ ...(txnForm || {}), description: e.target.value })} />
-                <Input
-                  type="number"
-                  label="Amount"
-                  isRequired
-                  min={0}
-                  value={String(txnForm?.amount ?? 0)}
-                  onChange={(e) => setTxnForm({ ...(txnForm || {}), amount: parseFloat(e.target.value) || 0 })}
-                />
+                <div>
+                  <Input
+                    type="number"
+                    label="Amount"
+                    isRequired
+                    min={0}
+                    value={String(txnForm?.amount ?? 0)}
+                    onChange={(e) => setTxnForm({ ...(txnForm || {}), amount: parseFloat(e.target.value) || 0 })}
+                  />
+                  {errors.amount && <div className="text-red-600 text-xs mt-1">{errors.amount}</div>}
+                </div>
                 <Input
                   type="date"
                   label="Date"
@@ -743,6 +933,7 @@ export default function BankCashManagementPage() {
             <Button color="primary" onPress={() => {
               if (modalMode === 'account') {
                 const item = editingItem || {};
+                if (!validateAccountForm(item)) return;
                 const accountKind = item.accountKind || (isPettyCashAccount(item.accountName, item.bankName) ? 'petty_cash' : 'bank');
                 const glAccountCode = ensureBankGlAccount({
                   accountName: item.accountName || 'Bank Account',
@@ -786,6 +977,7 @@ export default function BankCashManagementPage() {
               }
 
               const form = txnForm || {};
+              if (!validateTxnForm(form)) return;
               const payload = {
                 bankAccountId: form.bankAccountId || bankAccounts[0]?.id || '',
                 transferToAccountId: form.transferToAccountId,
@@ -798,14 +990,19 @@ export default function BankCashManagementPage() {
                 postToGl: form.postToGl !== false,
               };
 
+              // Create the replacement BEFORE touching the original being edited. Deleting
+              // first (the old order) meant a failed create — wrong account, a transfer
+              // rejected for matching from/to, a since-reconciled account — silently erased
+              // the original transaction with nothing to show for it. Creating first means a
+              // failed save leaves the original untouched; the only remaining failure mode is
+              // a visible duplicate (safe/fixable) instead of silent data loss.
+              const result = createManualBankTransaction(payload);
+              if (!result.ok) return;
+
               if (isEditMode && form.id) {
                 deleteManualBankTransaction(form.id);
               }
-
-              const result = createManualBankTransaction(payload);
-              if (result.ok) {
-                closeModal();
-              }
+              closeModal();
             }}>{isEditMode ? 'Update' : 'Create'}</Button>
           </ModalFooter>
         </ModalContent>

@@ -46,6 +46,7 @@ import {
 import type { ReconcilingItem, ReconcilingItemType, ReconSide } from '@/app/lib/accounting/bankRecon/types';
 import type { BankTransaction } from '@/app/lib/accounting/models';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 
 // formatAccountingCurrency always shows a magnitude, so the sign is reattached in front
 // of it here (reconciling items can be negative adjustments).
@@ -138,7 +139,6 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
   } = useAccountingStore();
   const {
     getReconciliation,
-    getItems,
     updateReconciliation,
     syncCashbookFromLedger,
     addItem,
@@ -159,6 +159,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
   const [statementInput, setStatementInput] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [itemForm, setItemForm] = useState(defaultItemForm);
+  const [itemFormErrors, setItemFormErrors] = useState<Record<string, string>>({});
   const [addSide, setAddSide] = useState<ReconSide>('bank');
   const { isOpen, onOpen, onClose } = useDisclosure();
 
@@ -182,6 +183,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
   }, []);
 
   const reconciliations = useBankReconStore((s) => s.reconciliations);
+  const allItems = useBankReconStore((s) => s.items);
 
   useEffect(() => {
     if (!accountId && activeAccounts[0]?.id) {
@@ -200,7 +202,12 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
     return getReconciliation(accountId, periodEndDate);
   }, [accountId, periodEndDate, getReconciliation, reconciliations]);
 
-  const items = useMemo(() => (recon ? getItems(recon.id) : []), [recon, getItems]);
+  // Keyed on the store's raw `items` array (not just `recon`) so adding/deleting/clearing an
+  // item re-renders immediately — `recon` itself doesn't change when only items are mutated.
+  const items = useMemo(
+    () => (recon ? allItems.filter((i) => i.reconciliationId === recon.id) : []),
+    [recon, allItems]
+  );
 
   const bankAccount = useMemo(
     () => activeAccounts.find((b) => b.id === accountId),
@@ -256,11 +263,22 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
       offsetGlCode: defaultOffsetGlForType(types[0].type),
       transactionDate: periodEndDate,
     });
+    setItemFormErrors({});
     onOpen();
+  };
+
+  const validateItemForm = (form: typeof itemForm) => {
+    const errs: Record<string, string> = {};
+    if (!form.description.trim()) errs.description = 'Description is required';
+    const amt = parseFloat(form.amount);
+    if (!form.amount || Number.isNaN(amt) || amt <= 0) errs.amount = 'Amount must be greater than zero';
+    setItemFormErrors(errs);
+    return Object.keys(errs).length === 0;
   };
 
   const handleSaveItem = () => {
     if (!recon) return;
+    if (!validateItemForm(itemForm)) return;
     const created = addItem({
       reconciliationId: recon.id,
       itemType: itemForm.itemType,
@@ -340,6 +358,49 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
     link.download = `bank_recon_${bankAccount.accountNumber}_${periodEndDate}.csv`;
     link.click();
     URL.revokeObjectURL(url);
+  }, [recon, computed, bankAccount, periodEndDate]);
+
+  const printReconciliationPDF = useCallback(() => {
+    if (!recon || !computed || !bankAccount) return;
+    const row = (label: string, amount: number, opts?: { emphasis?: boolean; deduct?: boolean }) => `
+      <tr class="${opts?.emphasis ? 'total-row' : ''}">
+        <td>${label}</td>
+        <td class="amount">${opts?.deduct ? '(' : ''}${fmt(amount)}${opts?.deduct ? ')' : ''}</td>
+      </tr>`;
+    const content = `
+      <div class="header">
+        <h1>🏦 Bank Reconciliation Statement</h1>
+        <div class="subtitle">${bankAccount.accountName} · ${bankAccount.accountNumber} — Period end ${periodEndDate}</div>
+      </div>
+      <div class="meta">
+        <div class="meta-item"><div class="meta-label">Status</div><div class="meta-value">${recon.status}</div></div>
+        <div class="meta-item"><div class="meta-label">Result</div><div class="meta-value">${computed.isBalanced ? 'Balanced' : `Unbalanced (${fmt(Math.abs(computed.difference))})`}</div></div>
+      </div>
+      <div class="section">
+        <div class="section-title">Bank side</div>
+        <table><tbody>
+          ${row('Balance per bank statement', computed.statementBalance, { emphasis: true })}
+          ${row('Add: Deposits in transit', computed.depositsInTransit)}
+          ${row('Less: Outstanding cheques', computed.outstandingCheques, { deduct: true })}
+          ${row('Add: Bank errors', computed.bankErrorsAdd)}
+          ${row('Less: Bank errors', computed.bankErrorsDeduct, { deduct: true })}
+          ${row('Adjusted bank balance', computed.adjustedBankBalance, { emphasis: true })}
+        </tbody></table>
+      </div>
+      <div class="section">
+        <div class="section-title">Cashbook side</div>
+        <table><tbody>
+          ${row('Balance per cashbook (GL)', computed.cashbookBalance, { emphasis: true })}
+          ${row('Add: Bank credits not in cashbook', computed.bankCreditsNotInBook)}
+          ${row('Less: Bank charges not in cashbook', computed.bankChargesNotInBook, { deduct: true })}
+          ${row('Add: Cashbook errors', computed.bookErrorsAdd)}
+          ${row('Less: Cashbook errors', computed.bookErrorsDeduct, { deduct: true })}
+          ${row('Adjusted cashbook balance', computed.adjustedCashbookBalance, { emphasis: true })}
+        </tbody></table>
+      </div>
+    `;
+    const html = generatePdfHtml('Bank Reconciliation Statement', content, 'Bank & Cash Management');
+    openPrintPreview(html);
   }, [recon, computed, bankAccount, periodEndDate]);
 
   const bankLines: Line[] = computed
@@ -517,7 +578,7 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
                 Post {pendingBookPosts} book-side item{pendingBookPosts > 1 ? 's' : ''} to GL
               </Button>
             )}
-            {recon?.status === 'Draft' && computed?.isBalanced && (
+            {recon?.status === 'Draft' && computed?.isBalanced && pendingBookPosts === 0 && (
               <Button size="sm" color="primary" onPress={handleComplete}>
                 Mark complete
               </Button>
@@ -536,6 +597,9 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
               <DropdownMenu>
                 <DropdownItem key="csv" onPress={downloadCsv}>
                   CSV
+                </DropdownItem>
+                <DropdownItem key="pdf" onPress={printReconciliationPDF}>
+                  📑 Print PDF
                 </DropdownItem>
               </DropdownMenu>
             </Dropdown>
@@ -635,11 +699,18 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
             <p className="text-xs text-gray-500">
               {RECON_ITEM_TYPES.find((t) => t.type === itemForm.itemType)?.hint}
             </p>
-            <Input
-              label="Description"
-              value={itemForm.description}
-              onValueChange={(v) => setItemForm({ ...itemForm, description: v })}
-            />
+            <div>
+              <Input
+                label="Description"
+                isRequired
+                isInvalid={!!itemFormErrors.description}
+                value={itemForm.description}
+                onValueChange={(v) => setItemForm({ ...itemForm, description: v })}
+              />
+              {itemFormErrors.description && (
+                <div className="text-xs text-danger mt-1">{itemFormErrors.description}</div>
+              )}
+            </div>
             <Input
               label="Reference"
               value={itemForm.reference}
@@ -651,13 +722,22 @@ export default function BankReconciliation({ embedded, initialAccountId }: Props
               value={itemForm.transactionDate}
               onValueChange={(v) => setItemForm({ ...itemForm, transactionDate: v })}
             />
-            <Input
-              type="number"
-              label="Amount (always positive)"
-              value={itemForm.amount}
-              onValueChange={(v) => setItemForm({ ...itemForm, amount: v })}
-              startContent={<span className="text-gray-400 text-sm">₵</span>}
-            />
+            <div>
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                label="Amount (always positive)"
+                isRequired
+                isInvalid={!!itemFormErrors.amount}
+                value={itemForm.amount}
+                onValueChange={(v) => setItemForm({ ...itemForm, amount: v })}
+                startContent={<span className="text-gray-400 text-sm">₵</span>}
+              />
+              {itemFormErrors.amount && (
+                <div className="text-xs text-danger mt-1">{itemFormErrors.amount}</div>
+              )}
+            </div>
             {addSide === 'book' && (
               <Input
                 label="Offset GL code"
@@ -708,6 +788,7 @@ function ItemsPanel({
         <div className="flex items-center justify-between px-4 py-2 border-b border-slate-100 bg-slate-50">
           <span className="inline-flex items-center gap-1.5 text-sm font-semibold text-gray-800">
             {title}
+            <Chip size="sm" variant="flat">{items.length}</Chip>
             {infoTip && (
               <InfoTip label={title}>{infoTip}</InfoTip>
             )}

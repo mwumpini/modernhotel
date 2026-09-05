@@ -14,15 +14,6 @@ const BOOK_TYPES: ReconcilingItemType[] = [
   'BOOK_ERROR_DEDUCT',
 ];
 
-function parseDate(dateStr: string): Date {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  return new Date(y, (m || 1) - 1, d || 1);
-}
-
-function formatDate(d: Date): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-
 function sumType(
   items: ReconcilingItem[],
   type: ReconcilingItemType,
@@ -120,8 +111,13 @@ export function depositsInTransitCarryForward(items: ReconcilingItem[]): Omit<Re
     }));
 }
 
-export function priorPeriodEnd(currentPeriodEnd: string): string {
-  const d = parseDate(currentPeriodEnd);
-  d.setDate(d.getDate() - 1);
-  return formatDate(d);
+/** Most recent reconciliation for this bank account whose period ends strictly before `currentPeriodEnd` — the true "prior period," regardless of the gap between reconciliation dates (e.g. monthly cadence). */
+export function findPriorReconciliation<T extends { bankAccountId: string; periodEndDate: string }>(
+  reconciliations: T[],
+  bankAccountId: string,
+  currentPeriodEnd: string
+): T | undefined {
+  return reconciliations
+    .filter((r) => r.bankAccountId === bankAccountId && r.periodEndDate < currentPeriodEnd)
+    .sort((a, b) => (a.periodEndDate < b.periodEndDate ? 1 : -1))[0];
 }

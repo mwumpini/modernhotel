@@ -7,7 +7,7 @@ import { DEFAULT_PPE_CATEGORIES, SAMPLE_PPE_ASSETS } from './ppe/categories';
 import { defaultReportDateStr, assetTotalCost } from './ppe/calculations';
 import { validateAsset, validateCategory } from './ppe/validation';
 import { DEFAULT_ORG_ID } from './ppe/categories';
-import { syncPpeRegisterToLedger, capturePpeCostAdjustment } from './ppe/ledgerSync';
+import { syncPpeRegisterToLedger, capturePpeCostAdjustment, postPpeDisposalIfNeeded } from './ppe/ledgerSync';
 
 const STORAGE_KEY = 'ppe.register.v1';
 
@@ -27,6 +27,7 @@ interface PpeRegisterState {
   deleteAsset: (id: string) => boolean;
   setCapitalizationJournalId: (assetId: string, journalEntryId: string) => void;
   setLedgerAccumDepPosted: (assetId: string, amount: number, journalEntryId?: string) => void;
+  setDisposalJournalId: (assetId: string, journalEntryId: string) => void;
   syncToLedger: () => import('./ppe/ledgerSync').PpeSyncResult;
 
   initializePpeRegister: () => void;
@@ -118,7 +119,7 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
         // correcting journal entry for the delta so the GL cost account catches up to the
         // register's new cost instead of silently drifting from it. The original
         // capitalization JE is left untouched (never rewrite posted history).
-        if (existing.capitalizationJournalEntryId) {
+        if (existing.capExp !== 'Disposed' && existing.capitalizationJournalEntryId) {
           const oldCost = assetTotalCost(existing);
           const newCost = assetTotalCost(merged);
           const delta = +(newCost - oldCost).toFixed(2);
@@ -133,11 +134,25 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
           }
         }
 
+        // Newly marked Disposed (and not already posted) — write off cost/accum dep and book
+        // the gain/loss immediately, same moment the cost-adjustment above fires for a plain
+        // cost edit. syncToLedger below is only the retry path for anything this misses.
+        let disposalResult: ReturnType<typeof postPpeDisposalIfNeeded> = null;
+        if (merged.capExp === 'Disposed' && !existing.disposalJournalEntryId) {
+          const category = get().categories.find((c) => c.id === merged.categoryId);
+          if (category) {
+            disposalResult = postPpeDisposalIfNeeded(merged, category, {
+              setLedgerAccumDepPosted: (assetId, amount, je) => get().setLedgerAccumDepPosted(assetId, amount, je),
+              setDisposalJournalId: (assetId, je) => get().setDisposalJournalId(assetId, je),
+            });
+          }
+        }
+
         set((state) => ({
           assets: state.assets.map((a) =>
             a.id === id ? { ...a, ...updates, updatedAt: new Date().toISOString() } : a
           ),
-          error: null,
+          error: disposalResult && !disposalResult.ok ? disposalResult.error || null : null,
         }));
         return true;
       },
@@ -178,11 +193,19 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
           ),
         })),
 
+      setDisposalJournalId: (assetId, journalEntryId) =>
+        set((state) => ({
+          assets: state.assets.map((a) =>
+            a.id === assetId ? { ...a, disposalJournalEntryId: journalEntryId } : a
+          ),
+        })),
+
       syncToLedger: () => {
         const state = get();
         return syncPpeRegisterToLedger(state.assets, state.categories, state.reportDate, {
           setCapitalizationJournalId: (id, je) => get().setCapitalizationJournalId(id, je),
           setLedgerAccumDepPosted: (id, amt, je) => get().setLedgerAccumDepPosted(id, amt, je),
+          setDisposalJournalId: (id, je) => get().setDisposalJournalId(id, je),
         });
       },
 
