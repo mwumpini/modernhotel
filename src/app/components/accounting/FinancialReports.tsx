@@ -638,6 +638,23 @@ export default function FinancialReportsPage() {
     openPrintPreview(generateReportHTML('STATEMENT OF FINANCIAL POSITION', periodLabel, content));
   }, [balanceSheetRows, totals, periodLabel]);
 
+  const exportCashFlowCSV = useCallback(() => {
+    const cf = cashFlow;
+    const rows = [
+      { line: 'Opening cash and cash equivalents', amount: cf.openingCash },
+      { line: 'Net cash from operating activities', amount: cf.operating },
+      { line: 'Net cash from investing activities', amount: cf.investing },
+      { line: 'Net cash from financing activities', amount: cf.financing },
+      { line: 'Net increase / (decrease) in cash', amount: cf.operating + cf.investing + cf.financing },
+      { line: 'Closing cash and cash equivalents', amount: cf.closingCash },
+      { line: 'Classification residual (closing - opening vs. sum of activities)', amount: cf.reconciliationDiff },
+    ];
+    downloadCSV(rows, 'cash_flow', [
+      { key: 'line', label: 'Line' },
+      { key: 'amount', label: 'Amount' },
+    ]);
+  }, [cashFlow]);
+
   const printCashFlow = useCallback(() => {
     const cf = cashFlow;
     const content = `
@@ -1389,7 +1406,8 @@ export default function FinancialReportsPage() {
 
                 <Card className="shadow-none border overflow-hidden">
                   <CardBody className="p-0">
-                    <Table removeWrapper aria-label="Statement of changes in equity" classNames={{ th: 'bg-slate-50 text-gray-600' }}>
+                    <div className="overflow-x-auto">
+                    <Table removeWrapper aria-label="Statement of changes in equity" classNames={{ th: 'bg-slate-50 text-gray-600', table: 'min-w-[600px]' }}>
                       <TableHeader>
                         <TableColumn>Description</TableColumn>
                         <TableColumn width={140} className="text-right">
@@ -1416,6 +1434,7 @@ export default function FinancialReportsPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    </div>
                   </CardBody>
                 </Card>
               </div>
@@ -1434,6 +1453,9 @@ export default function FinancialReportsPage() {
                   <Dropdown>
                     <DropdownTrigger><Button variant="bordered" size="sm">📥 Export</Button></DropdownTrigger>
                     <DropdownMenu>
+                      <DropdownItem key="csv" onPress={exportCashFlowCSV}>
+                        📄 Download CSV
+                      </DropdownItem>
                       <DropdownItem key="print" onPress={printCashFlow}>
                         🖨️ Print PDF
                       </DropdownItem>
