@@ -269,6 +269,28 @@ export default function FinancialReportsPage() {
   const revenueAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Revenue'), [accountTreePeriod, getAccountsByType]);
   const expenseAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Expense'), [accountTreePeriod, getAccountsByType]);
 
+  // Income Statement flat list (revenue then expense), same shape/purpose as
+  // trialBalanceRows: one source feeds the CSV export and the print preview, so
+  // neither one can show a different set of rows — or silently stop at a
+  // shallower depth — than what renderAccountRows draws on screen. (Revenue and
+  // Expense accounts run 3 levels deep in this chart, e.g. 5000 -> 5200 -> 5210 —
+  // a hand-rolled 2-level-only renderer here previously dropped that 3rd level.)
+  const incomeStatementRows = useMemo(() => {
+    const flattenSection = (nodes: AccountNode[], section: 'Revenue' | 'Expense', level = 0, rows: Array<{ section: string; code: string; name: string; level: number; amount: number }> = []) => {
+      nodes.forEach((node) => {
+        const hasBalance = Math.abs(node.balance) > 0.01;
+        if (showZeroBalances || hasBalance || node.children.length > 0) {
+          rows.push({ section, code: node.code, name: node.name, level, amount: node.balance });
+        }
+        if (node.children.length > 0 && (expandedSections.has('all') || expandedSections.has(node.code))) {
+          flattenSection(node.children, section, level + 1, rows);
+        }
+      });
+      return rows;
+    };
+    return [...flattenSection(revenueAccounts, 'Revenue'), ...flattenSection(expenseAccounts, 'Expense')];
+  }, [revenueAccounts, expenseAccounts, showZeroBalances, expandedSections]);
+
   const cashFlow = useMemo(
     () => computeCashFlowFromJournals(journalEntries, startDate, endDate),
     [journalEntries, startDate, endDate]
@@ -482,28 +504,43 @@ export default function FinancialReportsPage() {
     openPrintPreview(generateReportHTML('TRIAL BALANCE', periodLabel, content));
   }, [trialBalanceRows, trialBalanceTotals, periodLabel]);
 
+  const exportIncomeStatementCSV = useCallback(() => {
+    const columns = [
+      { key: 'section', label: 'Section' },
+      { key: 'code', label: 'Account Code' },
+      { key: 'name', label: 'Account Name' },
+      { key: 'amount', label: 'Amount' },
+    ];
+    downloadCSV(incomeStatementRows, 'income_statement', columns);
+  }, [incomeStatementRows]);
+
   const printIncomeStatement = useCallback(() => {
-    const renderSection = (nodes: AccountNode[], isExpense = false): string => {
-      return nodes.map(node => {
-        const amount = isExpense ? node.balance : node.balance;
-        const mainRow = `<tr class="level-1"><td>${node.code} ${node.name}</td><td class="text-right font-mono">${formatCurrency(amount)}</td></tr>`;
-        const childRows = node.children.map(child => 
-          `<tr class="level-2"><td>${child.code} ${child.name}</td><td class="text-right font-mono">${formatCurrency(child.balance)}</td></tr>`
-        ).join('');
-        return mainRow + childRows;
-      }).join('');
+    // Print exactly the rows currently on screen (same source, `incomeStatementRows`,
+    // already respecting showZeroBalances/expandedSections) instead of a separate
+    // hand-rolled 2-level walk — the previous version silently dropped a 3rd level
+    // of account detail (e.g. 5210/5220 under 5200) that the on-screen Detailed view
+    // does show, so print and screen could disagree without any indication why.
+    const renderRows = (section: 'Revenue' | 'Expense'): string => {
+      return incomeStatementRows
+        .filter((row) => row.section === section)
+        .map((row) => {
+          const levelClass = row.level === 0 ? 'level-1' : row.level === 1 ? 'level-2' : 'level-3';
+          const indent = '&nbsp;'.repeat(row.level * 6);
+          return `<tr class="${levelClass}"><td>${indent}${row.code} ${row.name}</td><td class="text-right font-mono">${formatCurrency(row.amount)}</td></tr>`;
+        })
+        .join('');
     };
-    
+
     const content = `
       <div class="section">
         <div class="section-title">Revenue</div>
-        <table><tbody>${renderSection(revenueAccounts)}
+        <table><tbody>${renderRows('Revenue')}
           <tr class="subtotal-row"><td class="font-bold">Total Revenue</td><td class="text-right font-mono font-bold underline">${formatCurrency(totals.totalRevenue)}</td></tr>
         </tbody></table>
       </div>
       <div class="section">
         <div class="section-title">Less: Expenses</div>
-        <table><tbody>${renderSection(expenseAccounts, true)}
+        <table><tbody>${renderRows('Expense')}
           <tr class="subtotal-row"><td class="font-bold">Total Expenses</td><td class="text-right font-mono font-bold underline">(${formatCurrency(totals.totalExpenses)})</td></tr>
         </tbody></table>
       </div>
@@ -514,7 +551,7 @@ export default function FinancialReportsPage() {
       </div>
     `;
     openPrintPreview(generateReportHTML('STATEMENT OF PROFIT OR LOSS', periodLabel, content));
-  }, [revenueAccounts, expenseAccounts, totals, periodLabel]);
+  }, [incomeStatementRows, totals, periodLabel]);
 
   const printBalanceSheet = useCallback(() => {
     const renderSection = (nodes: AccountNode[]): string => {
@@ -1019,6 +1056,7 @@ export default function FinancialReportsPage() {
                   <Dropdown>
                     <DropdownTrigger><Button variant="bordered" size="sm">📥 Export</Button></DropdownTrigger>
                     <DropdownMenu>
+                      <DropdownItem key="csv" onPress={exportIncomeStatementCSV}>📄 Download CSV</DropdownItem>
                       <DropdownItem key="print" onPress={printIncomeStatement}>🖨️ Print PDF</DropdownItem>
                     </DropdownMenu>
                   </Dropdown>
