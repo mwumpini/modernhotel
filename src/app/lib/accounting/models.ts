@@ -570,6 +570,7 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '2150', name: 'Tourism Levy Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
   { code: '2160', name: 'Withholding Tax Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
   { code: '2200', name: 'Accounts Payable', type: 'Liability', category: 'Current Liabilities', level: 2 },
+  { code: '2205', name: 'Trade Accounts Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Supplier invoices and payments — the postable leaf under 2200; 2210/2220 are payroll withholdings, not trade payables' },
   { code: '2210', name: 'PAYE Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Employee income tax withheld' },
   { code: '2220', name: 'SSNIT & Tier-1 Contributions Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Social security remittances due' },
   { code: '2300', name: 'Accrued Expenses', type: 'Liability', category: 'Current Liabilities', level: 2 },

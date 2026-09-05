@@ -36,6 +36,10 @@ const GL_ACCOUNTS = {
   ACCOUNTS_RECEIVABLE: '1210',
 
   // Liabilities
+  // 2200 is the "Accounts Payable" category HEADER (see GHANA_CHART_OF_ACCOUNTS in
+  // models.ts) -- its only declared children are 2210/2220 (payroll withholdings),
+  // not trade payables. 2205 is the actual postable leaf for supplier invoices/payments.
+  ACCOUNTS_PAYABLE: '2205',
   DEFERRED_REVENUE: '2400',
 
   // Revenue

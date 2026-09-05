@@ -15,6 +15,7 @@ import { computePurchaseTax } from '@/app/lib/tax/engine';
 import { computeServiceWht } from '@/app/lib/accounting/purchaseWht';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { filterFinanceApInvoices } from '@/app/lib/accounting/apSubledger';
+import { GL_ACCOUNTS } from '@/app/lib/accounting/integration';
 
 export default function AccountsPayablePage() {
   const {
@@ -976,7 +977,7 @@ export default function AccountsPayablePage() {
               contactPerson: form.contactPerson || '',
               creditLimit: Number(form.creditLimit || 0),
               paymentTerms: paymentTermsDays,
-              glAccountCode: '2200',
+              glAccountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE,
               currency: form.currency || 'GHS',
               balance: Number(form.currentBalance || editing?.balance || 0),
               isActive: form.isActive !== undefined ? form.isActive !== false : true,

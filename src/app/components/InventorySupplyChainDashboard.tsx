@@ -13,6 +13,7 @@ import { useSupplierStore } from '../lib/inventory/supplierStore';
 import { useAccountingStore } from '../lib/accounting/store';
 import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
 import { BusinessPartner } from '../lib/accounting/models';
+import { GL_ACCOUNTS } from '../lib/accounting/integration';
 
 // Supplier interface removed - using imported Supplier from models.ts
 // PurchaseOrder interface removed - using imported PurchaseOrder from models.ts
@@ -134,7 +135,7 @@ export default function InventorySupplyChainDashboard() {
       isActive: supplier.isActive,
       countryCode: supplier.country === 'Ghana' ? 'GH' : 'US',
       currency: 'GHS',
-      glAccountCode: '2100', // Accounts Payable default account
+      glAccountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE, // '2100' is Tax Payables, not AP -- was wrong
       createdAt: supplier.createdAt.toISOString(),
       updatedAt: supplier.updatedAt.toISOString()
     };

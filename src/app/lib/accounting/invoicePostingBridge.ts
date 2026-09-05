@@ -16,13 +16,13 @@ import { GHANA_TAX_CODES } from './models';
 import { GL_ACCOUNTS, PAYMENT_GL_MAP } from './integration';
 import { assertPeriodNotClosed } from './periodClose';
 
-// AR/CASH/BANK share the one canonical GL_ACCOUNTS table (integration.ts) so every
-// posting path lands guest/departmental transactions in the same leaf accounts.
-// The rest here (AP, VAT, WHT, EXPENSE) are specific to manual/legacy AR-AP
-// documents and have no equivalent in GL_ACCOUNTS.
+// AR/AP/CASH/BANK share the one canonical GL_ACCOUNTS table (integration.ts) so every
+// posting path lands guest/departmental/supplier transactions in the same leaf accounts.
+// The rest here (VAT, WHT, EXPENSE) are specific to manual/legacy AR-AP documents and
+// have no equivalent in GL_ACCOUNTS.
 const GL = {
   AR: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
-  AP: '2200',
+  AP: GL_ACCOUNTS.ACCOUNTS_PAYABLE,
   CASH: GL_ACCOUNTS.CASH,
   BANK: GL_ACCOUNTS.BANK,
   VAT: '2110',

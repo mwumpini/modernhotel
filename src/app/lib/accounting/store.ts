@@ -2838,7 +2838,10 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       // edits/deletions), so a brand-new default leaf would silently never reach them.
       // Backfill by code only; never overwrites a code the tenant already has (incl. if they
       // deliberately deleted it).
-      const BACKFILL_COA_CODES = ['5680']; // Miscellaneous Expenses — catch-all posting target
+      const BACKFILL_COA_CODES = [
+        '5680', // Miscellaneous Expenses — catch-all posting target
+        '2205', // Trade Accounts Payable — the postable leaf under 2200 (was missing; postings had nowhere to go but the header)
+      ];
 
       /** First visit: load prebuilt COA. After that: keep user edits (incl. deletions), backfilling only newly-added default codes. */
       const resolveChartOfAccounts = (seed: ChartOfAccounts[], existing: ChartOfAccounts[]) => {

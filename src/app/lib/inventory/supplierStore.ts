@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, GoodsReceiptNote, SupplierInvoice, QualityCheck } from './models';
 import type { BusinessPartner } from '../accounting/models';
+import { GL_ACCOUNTS } from '../accounting/integration';
 import { useStockStore } from './stockStore';
 import { computePurchaseTax } from '../tax/engine';
 import { getClientTenantSubdomain } from '../api/clientTenant';
@@ -651,7 +652,7 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
                           newSupplier.paymentTerms === 'net30' ? 30 :
                           newSupplier.paymentTerms === 'net60' ? 60 :
                           newSupplier.paymentTerms === 'net90' ? 90 : 30,
-            glAccountCode: '2100', // Accounts Payable
+            glAccountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE, // '2100' is Tax Payables, not AP -- was wrong
             currency: 'GHS',
             balance: newSupplier.currentBalance,
             isActive: newSupplier.isActive,
@@ -727,7 +728,7 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
                             updatedSupplier.paymentTerms === 'net30' ? 30 :
                             updatedSupplier.paymentTerms === 'net60' ? 60 :
                             updatedSupplier.paymentTerms === 'net90' ? 90 : 30,
-              glAccountCode: '2100',
+              glAccountCode: GL_ACCOUNTS.ACCOUNTS_PAYABLE,
               currency: 'GHS',
               balance: updatedSupplier.currentBalance,
               isActive: updatedSupplier.isActive,

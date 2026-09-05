@@ -1066,7 +1066,7 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
           contactPerson: 'Sales',
           creditLimit: 0,
           paymentTerms: 14,
-          glAccountCode: '2200',
+          glAccountCode: '2205',
           currency: 'GHS',
           balance: 0,
           isActive: true,
