@@ -1,12 +1,13 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
-import { 
+import React, { useState, useMemo, useCallback } from 'react';
+import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip, Checkbox, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   Tabs, Tab, Textarea, Divider, Spinner, Alert, Progress, Pagination,
-  Autocomplete, AutocompleteItem
+  Autocomplete, AutocompleteItem,
+  Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useSupplierStore } from '@/app/lib/inventory/supplierStore';
@@ -16,6 +17,7 @@ import { computeServiceWht } from '@/app/lib/accounting/purchaseWht';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { filterFinanceApInvoices } from '@/app/lib/accounting/apSubledger';
 import { GL_ACCOUNTS } from '@/app/lib/accounting/integration';
+import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 
 export default function AccountsPayablePage() {
   const {
@@ -56,6 +58,7 @@ export default function AccountsPayablePage() {
   const [supplierFilter, setSupplierFilter] = useState('all');
   const [dateFromFilter, setDateFromFilter] = useState('');
   const [dateToFilter, setDateToFilter] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   const validate = (): boolean => {
     const e: Record<string, string> = {};
@@ -136,10 +139,29 @@ export default function AccountsPayablePage() {
     );
   }, [businessPartners]);
 
+  // Suppliers matching the shared search box (name, code, email, phone, tax ID)
+  const filteredSuppliers = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return suppliers;
+    return suppliers.filter(s =>
+      [s.name, s.code, s.email, s.phone, s.taxNumber].some(v => (v || '').toLowerCase().includes(q))
+    );
+  }, [suppliers, searchTerm]);
+
   // Filter payments
   const supplierPayments = useMemo(() => {
     return payments.filter(payment => payment.type === 'Payment');
   }, [payments]);
+
+  // Payments matching the shared search box (payment #, supplier name, reference)
+  const filteredPayments = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    if (!q) return supplierPayments;
+    return supplierPayments.filter((p: any) => {
+      const supplierName = suppliers.find(s => s.id === p.businessPartnerId)?.name || '';
+      return [p.paymentNumber, supplierName, p.businessPartnerId, p.reference].some((v: any) => (v || '').toLowerCase().includes(q));
+    });
+  }, [supplierPayments, suppliers, searchTerm]);
 
   // Supplier Aging Analysis — buckets are each invoice's own remaining balance (total minus
   // what's actually been paid on it), not the gross invoice total, so a partially- or
@@ -210,20 +232,28 @@ export default function AccountsPayablePage() {
       
       // Supplier filter
       if (supplierFilter !== 'all' && invoice.businessPartnerId !== supplierFilter) return false;
-      
+
       // Date filters
       if (dateFromFilter && invoice.date < dateFromFilter) return false;
       if (dateToFilter && invoice.date > dateToFilter) return false;
-      
+
+      // Free-text search — invoice #, PO #, description, supplier name
+      const q = searchTerm.trim().toLowerCase();
+      if (q) {
+        const supplierName = suppliers.find(s => s.id === invoice.businessPartnerId)?.name || '';
+        const haystack = [invoice.invoiceNumber, invoice.poNumber, invoice.description, supplierName].map(v => (v || '').toLowerCase());
+        if (!haystack.some(v => v.includes(q))) return false;
+      }
+
       return true;
     });
-  }, [purchaseInvoices, supplierPayments, statusFilter, supplierFilter, dateFromFilter, dateToFilter]);
+  }, [purchaseInvoices, supplierPayments, suppliers, statusFilter, supplierFilter, dateFromFilter, dateToFilter, searchTerm]);
 
   // Pagination
   const paginatedSuppliers = useMemo(() => {
     const start = (page - 1) * rowsPerPage;
-    return suppliers.slice(start, start + rowsPerPage);
-  }, [suppliers, page]);
+    return filteredSuppliers.slice(start, start + rowsPerPage);
+  }, [filteredSuppliers, page]);
 
   const paginatedInvoices = useMemo(() => {
     const start = (page - 1) * rowsPerPage;
@@ -232,12 +262,12 @@ export default function AccountsPayablePage() {
 
   const paginatedPayments = useMemo(() => {
     const start = (page - 1) * rowsPerPage;
-    return supplierPayments.slice(start, start + rowsPerPage);
-  }, [supplierPayments, page]);
+    return filteredPayments.slice(start, start + rowsPerPage);
+  }, [filteredPayments, page]);
 
-  const suppliersPages = Math.ceil(suppliers.length / rowsPerPage);
+  const suppliersPages = Math.ceil(filteredSuppliers.length / rowsPerPage);
   const invoicesPages = Math.ceil(filteredInvoices.length / rowsPerPage);
-  const paymentsPages = Math.ceil(supplierPayments.length / rowsPerPage);
+  const paymentsPages = Math.ceil(filteredPayments.length / rowsPerPage);
 
   // Opens the "new invoice" dialog pre-filled for a given supplier — used by every quick-action
   // "Invoice" button so they all create a real invoice instead of misusing `editing` (which
@@ -301,6 +331,178 @@ export default function AccountsPayablePage() {
     });
     setIsOpen(true);
   };
+
+  // Export Suppliers to CSV
+  const exportSuppliersCSV = useCallback(() => {
+    const columns = [
+      { key: 'code', label: 'Code' },
+      { key: 'name', label: 'Supplier' },
+      { key: 'contactPerson', label: 'Contact' },
+      { key: 'email', label: 'Email' },
+      { key: 'phone', label: 'Phone' },
+      { key: 'address', label: 'Address' },
+      { key: 'taxNumber', label: 'Tax ID' },
+      { key: 'creditLimit', label: 'Credit Limit' },
+      { key: 'outstandingBalance', label: 'Outstanding Balance' },
+      { key: 'paymentTerms', label: 'Payment Terms (days)' },
+      { key: 'isActive', label: 'Active' },
+    ];
+    const data = filteredSuppliers.map(s => ({
+      ...s,
+      outstandingBalance: supplierAging.find(a => a.id === s.id)?.outstandingBalance ?? 0,
+      isActive: s.isActive !== false ? 'Yes' : 'No',
+    }));
+    downloadCSV(data, 'suppliers', columns);
+  }, [filteredSuppliers, supplierAging]);
+
+  // Print Suppliers Table as PDF
+  const printSuppliers = useCallback(() => {
+    const rows = filteredSuppliers.map(s => {
+      const outstandingBalance = supplierAging.find(a => a.id === s.id)?.outstandingBalance ?? 0;
+      const overLimit = outstandingBalance > (s.creditLimit || 0);
+      return `<tr>
+        <td>${s.code}</td>
+        <td>${s.name}</td>
+        <td>${s.contactPerson || '-'}</td>
+        <td>${s.email || '-'}</td>
+        <td>${s.phone || '-'}</td>
+        <td class="amount">${formatAccountingCurrency(s.creditLimit || 0)}</td>
+        <td class="amount">${formatAccountingCurrency(outstandingBalance)}</td>
+        <td><span class="badge ${overLimit ? 'badge-danger' : outstandingBalance > 0 ? 'badge-warning' : 'badge-success'}">${overLimit ? 'Over Limit' : outstandingBalance > 0 ? 'Outstanding' : 'Current'}</span></td>
+      </tr>`;
+    }).join('');
+    const totalCreditLimit = filteredSuppliers.reduce((s, sup) => s + (sup.creditLimit || 0), 0);
+    const totalOutstanding = filteredSuppliers.reduce((s, sup) => s + (supplierAging.find(a => a.id === sup.id)?.outstandingBalance ?? 0), 0);
+    const html = generatePdfHtml('Suppliers Report', `
+      <div class="header">
+        <h1>🏢 Suppliers Report</h1>
+        <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
+      </div>
+      <div class="meta">
+        <div class="meta-item"><div class="meta-label">Total Suppliers</div><div class="meta-value">${filteredSuppliers.length}</div></div>
+        <div class="meta-item"><div class="meta-label">Total Credit Limit</div><div class="meta-value">${formatAccountingCurrency(totalCreditLimit)}</div></div>
+        <div class="meta-item"><div class="meta-label">Total Outstanding</div><div class="meta-value">${formatAccountingCurrency(totalOutstanding)}</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Code</th><th>Supplier</th><th>Contact</th><th>Email</th><th>Phone</th><th>Credit Limit</th><th>Outstanding</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `, 'Accounts Payable • Suppliers');
+    openPrintPreview(html);
+  }, [filteredSuppliers, supplierAging]);
+
+  // Export Bills to CSV
+  const exportBillsCSV = useCallback(() => {
+    const columns = [
+      { key: 'invoiceNumber', label: 'Invoice #' },
+      { key: 'supplierName', label: 'Supplier' },
+      { key: 'date', label: 'Date' },
+      { key: 'dueDate', label: 'Due Date' },
+      { key: 'subtotal', label: 'Subtotal' },
+      { key: 'taxAmount', label: 'Tax' },
+      { key: 'total', label: 'Total' },
+      { key: 'paidAmount', label: 'Paid' },
+      { key: 'status', label: 'Status' },
+    ];
+    const data = filteredInvoices.map(inv => ({
+      ...inv,
+      supplierName: suppliers.find(s => s.id === inv.businessPartnerId)?.name || 'Unknown Supplier',
+      date: new Date(inv.date).toLocaleDateString(),
+      dueDate: new Date(inv.dueDate).toLocaleDateString(),
+      paidAmount: (inv.paidAmount != null) ? inv.paidAmount : supplierPayments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0),
+    }));
+    downloadCSV(data, 'bills', columns);
+  }, [filteredInvoices, suppliers, supplierPayments]);
+
+  // Print Bills Table as PDF
+  const printBills = useCallback(() => {
+    const rows = filteredInvoices.map(invoice => {
+      const supplier = suppliers.find(s => s.id === invoice.businessPartnerId);
+      const paidAmount = (invoice.paidAmount != null) ? invoice.paidAmount : supplierPayments.filter(p => p.invoiceId === invoice.id).reduce((sum, p) => sum + p.amount, 0);
+      const balance = invoice.total - paidAmount;
+      const status = balance <= 0 ? 'Paid' : new Date(invoice.dueDate) < new Date() ? 'Overdue' : 'Outstanding';
+      return `<tr>
+        <td>${invoice.invoiceNumber}</td>
+        <td>${supplier?.name || 'Unknown Supplier'}</td>
+        <td>${new Date(invoice.date).toLocaleDateString()}</td>
+        <td class="amount">${formatAccountingCurrency(invoice.total)}</td>
+        <td class="amount">${formatAccountingCurrency(paidAmount)}</td>
+        <td class="amount">${formatAccountingCurrency(balance)}</td>
+        <td><span class="badge ${status === 'Paid' ? 'badge-success' : status === 'Overdue' ? 'badge-danger' : 'badge-warning'}">${status}</span></td>
+      </tr>`;
+    }).join('');
+    const totalAmount = filteredInvoices.reduce((s, i) => s + (i.total || 0), 0);
+    const totalPaid = filteredInvoices.reduce((s, i) => {
+      const paidAmount = (i.paidAmount != null) ? i.paidAmount : supplierPayments.filter(p => p.invoiceId === i.id).reduce((sum, p) => sum + p.amount, 0);
+      return s + paidAmount;
+    }, 0);
+    const html = generatePdfHtml('Bills (Purchases) Report', `
+      <div class="header">
+        <h1>📄 Bills (Purchases) Report</h1>
+        <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
+      </div>
+      <div class="meta">
+        <div class="meta-item"><div class="meta-label">Total Bills</div><div class="meta-value">${filteredInvoices.length}</div></div>
+        <div class="meta-item"><div class="meta-label">Total Amount</div><div class="meta-value">${formatAccountingCurrency(totalAmount)}</div></div>
+        <div class="meta-item"><div class="meta-label">Total Paid</div><div class="meta-value">${formatAccountingCurrency(totalPaid)}</div></div>
+        <div class="meta-item"><div class="meta-label">Outstanding</div><div class="meta-value">${formatAccountingCurrency(totalAmount - totalPaid)}</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Invoice #</th><th>Supplier</th><th>Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `, 'Accounts Payable • Bills (Purchases)');
+    openPrintPreview(html);
+  }, [filteredInvoices, suppliers, supplierPayments]);
+
+  // Export Payments to CSV
+  const exportPaymentsCSV = useCallback(() => {
+    const columns = [
+      { key: 'paymentNumber', label: 'Payment #' },
+      { key: 'supplierName', label: 'Supplier' },
+      { key: 'date', label: 'Date' },
+      { key: 'amount', label: 'Amount' },
+      { key: 'paymentMethod', label: 'Method' },
+      { key: 'status', label: 'Status' },
+    ];
+    const data = filteredPayments.map((p: any) => ({
+      ...p,
+      supplierName: suppliers.find(s => s.id === p.businessPartnerId)?.name || p.businessPartnerId,
+      date: new Date(p.date).toLocaleDateString(),
+    }));
+    downloadCSV(data, 'supplier_payments', columns);
+  }, [filteredPayments, suppliers]);
+
+  // Print Payments Table as PDF
+  const printPayments = useCallback(() => {
+    const rows = filteredPayments.map((payment: any) => {
+      const supplierName = suppliers.find(s => s.id === payment.businessPartnerId)?.name || payment.businessPartnerId;
+      return `<tr>
+        <td>${payment.paymentNumber}</td>
+        <td>${supplierName}</td>
+        <td>${new Date(payment.date).toLocaleDateString()}</td>
+        <td class="amount">${formatAccountingCurrency(payment.amount)}</td>
+        <td>${payment.paymentMethod}</td>
+        <td><span class="badge ${payment.status === 'Posted' ? 'badge-success' : payment.status === 'Draft' ? 'badge-warning' : 'badge-danger'}">${payment.status}</span></td>
+      </tr>`;
+    }).join('');
+    const totalAmount = filteredPayments.reduce((s: number, p: any) => s + (p.amount || 0), 0);
+    const html = generatePdfHtml('Supplier Payments Report', `
+      <div class="header">
+        <h1>💸 Supplier Payments Report</h1>
+        <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
+      </div>
+      <div class="meta">
+        <div class="meta-item"><div class="meta-label">Total Payments</div><div class="meta-value">${filteredPayments.length}</div></div>
+        <div class="meta-item"><div class="meta-label">Total Amount</div><div class="meta-value">${formatAccountingCurrency(totalAmount)}</div></div>
+      </div>
+      <table>
+        <thead><tr><th>Payment #</th><th>Supplier</th><th>Date</th><th>Amount</th><th>Method</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `, 'Accounts Payable • Payments');
+    openPrintPreview(html);
+  }, [filteredPayments, suppliers]);
 
   if (isLoading) {
     return (
@@ -458,35 +660,52 @@ export default function AccountsPayablePage() {
               </div>
             </Tab>
 
-            <Tab key="suppliers" title="🏢 Suppliers">
+            <Tab key="suppliers" title={`🏢 Suppliers (${suppliers.length})`}>
               <div className="p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">Supplier Accounts</h3>
-                  <Button color="primary" startContent={<span>➕</span>} onClick={() => { 
-                    setDialogType('supplier'); 
-                    setEditing(null); 
-                    setForm({
-                      code: generateNextSupplierCode(),
-                      name: '',
-                      contactPerson: '',
-                      email: '',
-                      phone: '',
-                      address: '',
-                      city: '',
-                      country: 'Ghana',
-                      postalCode: '',
-                      taxNumber: '',
-                      paymentTerms: 'net30',
-                      creditLimit: 0,
-                      currentBalance: 0,
-                      rating: 0,
-                      categories: [],
-                      isActive: true
-                    }); 
-                    setIsOpen(true); 
-                  }}>
-                    Add Supplier
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Chip color="primary" variant="flat">{filteredSuppliers.length} suppliers</Chip>
+                    <Chip color="danger" variant="flat">{formatAccountingCurrency(filteredSuppliers.reduce((s, sup) => s + (supplierAging.find(a => a.id === sup.id)?.outstandingBalance ?? 0), 0))}</Chip>
+                    <Dropdown>
+                      <DropdownTrigger>
+                        <Button variant="flat" size="sm">📥 Export</Button>
+                      </DropdownTrigger>
+                      <DropdownMenu>
+                        <DropdownItem key="csv" onPress={exportSuppliersCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="pdf" onPress={printSuppliers}>📑 Print PDF</DropdownItem>
+                      </DropdownMenu>
+                    </Dropdown>
+                    <Button color="primary" size="sm" startContent={<span>➕</span>} onClick={() => {
+                      setDialogType('supplier');
+                      setEditing(null);
+                      setForm({
+                        code: generateNextSupplierCode(),
+                        name: '',
+                        contactPerson: '',
+                        email: '',
+                        phone: '',
+                        address: '',
+                        city: '',
+                        country: 'Ghana',
+                        postalCode: '',
+                        taxNumber: '',
+                        paymentTerms: 'net30',
+                        creditLimit: 0,
+                        currentBalance: 0,
+                        rating: 0,
+                        categories: [],
+                        isActive: true
+                      });
+                      setIsOpen(true);
+                    }}>
+                      Add Supplier
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-end gap-3 mb-4">
+                  <Input label="Search" placeholder="Name, code, email, phone, tax ID..." value={searchTerm} onValueChange={setSearchTerm} className="w-64" size="sm" />
                 </div>
 
                 <Table aria-label="Supplier Accounts">
@@ -626,36 +845,56 @@ export default function AccountsPayablePage() {
               </div>
             </Tab>
 
-            <Tab key="invoices" title="📄 Bills (Purchases)">
+            <Tab key="invoices" title={`📄 Bills (${filteredInvoices.length})`}>
               <div className="p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">Bills (Purchases)</h3>
-                  <Button color="primary" startContent={<span>➕</span>} onClick={() => {
-                    setDialogType('invoice');
-                    setEditing(null);
-                    const today = new Date().toISOString().slice(0,10);
-                    setForm({
-                      businessPartnerId: (suppliers[0]?.id) || '',
-                      invoiceNumber: '',
-                      date: today,
-                      dueDate: today,
-                      subtotal: 0,
-                      taxAmount: 0,
-                      total: 0,
-                      description: '',
-                      lines: [{ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 20, glAccountCode: '5100' }]
-                    });
-                    setIsOpen(true);
-                  }}>
-                  Add Bill
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Chip color="primary" variant="flat">{filteredInvoices.length} bills</Chip>
+                    <Chip color="danger" variant="flat">{formatAccountingCurrency(filteredInvoices.reduce((s, i) => s + (i.total || 0), 0))}</Chip>
+                    <Dropdown>
+                      <DropdownTrigger>
+                        <Button variant="flat" size="sm">📥 Export</Button>
+                      </DropdownTrigger>
+                      <DropdownMenu>
+                        <DropdownItem key="csv" onPress={exportBillsCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="pdf" onPress={printBills}>📑 Print PDF</DropdownItem>
+                      </DropdownMenu>
+                    </Dropdown>
+                    <Button color="primary" size="sm" startContent={<span>➕</span>} onClick={() => {
+                      setDialogType('invoice');
+                      setEditing(null);
+                      const today = new Date().toISOString().slice(0,10);
+                      setForm({
+                        businessPartnerId: (suppliers[0]?.id) || '',
+                        invoiceNumber: '',
+                        date: today,
+                        dueDate: today,
+                        subtotal: 0,
+                        taxAmount: 0,
+                        total: 0,
+                        description: '',
+                        lines: [{ id: `INL-${Date.now()}`, description: '', quantity: 1, unitPrice: 0, taxPercent: 20, glAccountCode: '5100' }]
+                      });
+                      setIsOpen(true);
+                    }}>
+                    Add Bill
+                    </Button>
+                  </div>
                 </div>
 
-
                 {/* Invoice Filters */}
-                <div className="flex gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
-                  <Select 
-                    placeholder="Filter by Status" 
+                <div className="flex flex-wrap gap-4 mb-4 p-4 bg-gray-50 rounded-lg">
+                  <Input
+                    label="Search"
+                    placeholder="Invoice #, PO #, supplier..."
+                    className="w-56"
+                    size="sm"
+                    value={searchTerm}
+                    onValueChange={setSearchTerm}
+                  />
+                  <Select
+                    placeholder="Filter by Status"
                     className="w-48"
                     selectedKeys={[statusFilter]}
                     onSelectionChange={(keys) => setStatusFilter(Array.from(keys)[0] as string)}
@@ -665,8 +904,8 @@ export default function AccountsPayablePage() {
                     <SelectItem key="overdue">Overdue</SelectItem>
                     <SelectItem key="paid">Paid</SelectItem>
                   </Select>
-                  <Select 
-                    placeholder="Filter by Supplier" 
+                  <Select
+                    placeholder="Filter by Supplier"
                     className="w-48"
                     selectedKeys={[supplierFilter]}
                     onSelectionChange={(keys) => setSupplierFilter(Array.from(keys)[0] as string)}
@@ -678,16 +917,16 @@ export default function AccountsPayablePage() {
                       ))}
                     </>
                   </Select>
-                  <Input 
-                    type="date" 
-                    placeholder="From Date" 
+                  <Input
+                    type="date"
+                    placeholder="From Date"
                     className="w-40"
                     value={dateFromFilter}
                     onChange={(e) => setDateFromFilter(e.target.value)}
                   />
-                  <Input 
-                    type="date" 
-                    placeholder="To Date" 
+                  <Input
+                    type="date"
+                    placeholder="To Date"
                     className="w-40"
                     value={dateToFilter}
                     onChange={(e) => setDateToFilter(e.target.value)}
@@ -843,13 +1082,30 @@ export default function AccountsPayablePage() {
               </div>
             </Tab>
 
-            <Tab key="payments" title="💸 Payments">
+            <Tab key="payments" title={`💸 Payments (${filteredPayments.length})`}>
               <div className="p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">Supplier Payments</h3>
-                  <Button color="primary" startContent={<span>➕</span>} onClick={() => { setDialogType('payment'); setEditing(null); setForm({ businessPartnerId: suppliers[0]?.id || '', date: new Date().toISOString().slice(0,10), amount: 0, paymentMethod: 'Bank', reference: '' }); setIsOpen(true); }}>
-                    Record Payment
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Chip color="success" variant="flat">{filteredPayments.length} payments</Chip>
+                    <Chip color="primary" variant="flat">{formatAccountingCurrency(filteredPayments.reduce((s: number, p: any) => s + (p.amount || 0), 0))}</Chip>
+                    <Dropdown>
+                      <DropdownTrigger>
+                        <Button variant="flat" size="sm">📥 Export</Button>
+                      </DropdownTrigger>
+                      <DropdownMenu>
+                        <DropdownItem key="csv" onPress={exportPaymentsCSV}>📄 Download CSV</DropdownItem>
+                        <DropdownItem key="pdf" onPress={printPayments}>📑 Print PDF</DropdownItem>
+                      </DropdownMenu>
+                    </Dropdown>
+                    <Button color="primary" size="sm" startContent={<span>➕</span>} onClick={() => { setDialogType('payment'); setEditing(null); setForm({ businessPartnerId: suppliers[0]?.id || '', date: new Date().toISOString().slice(0,10), amount: 0, paymentMethod: 'Bank', reference: '' }); setIsOpen(true); }}>
+                      Record Payment
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-end gap-3 mb-4">
+                  <Input label="Search" placeholder="Payment #, supplier, reference..." value={searchTerm} onValueChange={setSearchTerm} className="w-64" size="sm" />
                 </div>
 
                 <Table aria-label="Supplier Payments">

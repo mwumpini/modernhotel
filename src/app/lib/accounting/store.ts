@@ -2879,6 +2879,27 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const mergeTx = <T extends { id: string }>(seed: T[], existing: T[]) =>
         demoMode ? mergeById(seed, existing) : existing;
 
+      // persistInvoicePatch/persistPayment/persistJournalEntryStatus are fire-and-forget
+      // (queued, not awaited by their callers — see helpers/api.ts), so a refresh fired right
+      // after a local write (e.g. saveReceipt's handleRefresh) can race ahead of that write
+      // landing on the server. Letting the server row win unconditionally then silently
+      // reverts the just-applied local change (this is exactly how a receipt's invoice-paidAmount
+      // bump was observed disappearing). Keep whichever copy — local or server — was touched
+      // more recently instead of always trusting the server.
+      const mergeServerRecordsByRecency = <T extends { id: string; updatedAt?: string }>(
+        localRecords: T[],
+        serverRecords: T[],
+      ): T[] => {
+        const byId = new Map(localRecords.map((r) => [r.id, r]));
+        for (const server of serverRecords) {
+          const local = byId.get(server.id);
+          const serverTime = new Date(server.updatedAt || 0).getTime();
+          const localTime = local ? new Date(local.updatedAt || 0).getTime() : -Infinity;
+          if (!local || serverTime >= localTime) byId.set(server.id, server);
+        }
+        return Array.from(byId.values());
+      };
+
       set({
         chartOfAccounts: resolveChartOfAccounts(accounts, prev.chartOfAccounts),
         taxConfigs: mergeTaxConfigs(taxConfigs, prev.taxConfigs),
@@ -2905,17 +2926,11 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         fetchPayments(),
       ]);
       if (serverJEs && serverJEs.length > 0) {
-        set((s) => {
-          const byId = new Map(s.journalEntries.map(e => [e.id, e]));
-          serverJEs.forEach(e => byId.set(e.id, e));
-          return { journalEntries: Array.from(byId.values()) };
-        });
+        set((s) => ({ journalEntries: mergeServerRecordsByRecency(s.journalEntries, serverJEs) }));
       }
       if (serverInvoices && serverInvoices.length > 0) {
         set((s) => {
-          const byId = new Map(s.invoices.map(i => [i.id, i]));
-          serverInvoices.forEach(i => byId.set(i.id, i));
-          const invoices = Array.from(byId.values());
+          const invoices = mergeServerRecordsByRecency(s.invoices, serverInvoices);
           // invoiceSettings.nextNumber only lives in this browser's localStorage —
           // raise it past every invoiceNumber the server already has, so a fresh or
           // reset browser can't hand out a number a previous session already used.
@@ -2930,9 +2945,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       }
       if (serverPayments && serverPayments.length > 0) {
         set((s) => {
-          const byId = new Map(s.payments.map(p => [p.id, p]));
-          serverPayments.forEach(p => byId.set(p.id, p));
-          const payments = Array.from(byId.values());
+          const payments = mergeServerRecordsByRecency(s.payments, serverPayments);
           return {
             payments,
             whtCertificates: mergeWhtCertificateLists(
