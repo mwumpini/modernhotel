@@ -47,7 +47,7 @@ import {
 import { computeInvoiceWhtSettlement, getWhtCertificateRates, whtFormLabels } from '@/app/lib/accounting/whtRates';
 import { isManualArApSource } from '@/app/lib/accounting/journalReversal';
 import { roundMoney2 } from '@/app/lib/accounting/taxFromConfig';
-import { convertProformaToInvoice } from '@/app/lib/accounting/integration';
+import { convertProformaToInvoice, GL_ACCOUNTS } from '@/app/lib/accounting/integration';
 import { computeSalesTax } from '@/app/lib/tax/engine';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter } from '@heroui/react';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
@@ -888,7 +888,7 @@ export default function AccountsReceivable() {
 				code: `CUST-${String(businessPartners.length + 1).padStart(4, '0')}`,
 				name: invoiceForm.customerName.trim(),
 				type: 'Customer',
-				glAccountCode: '1200',
+				glAccountCode: GL_ACCOUNTS.ACCOUNTS_RECEIVABLE,
 				currency: 'GHS',
 				balance: 0,
 				isActive: true,

@@ -14,6 +14,7 @@ import {
   buildFinancialAccountTree,
   computeCashFlowFromJournals,
   findUnmappedGlCodes,
+  findNonLeafPostings,
   type AccountNode,
   type RollupCoa,
 } from '@/app/lib/accounting/financialReportRollup';
@@ -251,6 +252,14 @@ export default function FinancialReportsPage() {
   // Balance Check below shows a difference with no obvious cause.
   const unmappedGlCodes = useMemo(
     () => findUnmappedGlCodes(rollupCoa, journalEntries),
+    [rollupCoa, journalEntries]
+  );
+
+  // Posted lines that hit a category header account directly instead of one of its postable
+  // leaves — the other common, previously-silent cause of a Balance Check gap alongside an
+  // unmapped code (see findNonLeafPostings for why this breaks the parent/child hierarchy).
+  const nonLeafPostings = useMemo(
+    () => findNonLeafPostings(rollupCoa, journalEntries),
     [rollupCoa, journalEntries]
   );
 
@@ -926,17 +935,71 @@ export default function FinancialReportsPage() {
                       </p>
                       <p className="text-rose-700 text-xs mt-1">
                         These amounts are real (posted) but excluded from every total above — add the code(s) below to
-                        the Chart of Accounts to bring them into your reports and likely resolve the balance
-                        difference.
+                        the Chart of Accounts, or fix the entries listed under each, to bring them into your reports and
+                        resolve the balance difference.
                       </p>
-                      <ul className="mt-2 space-y-0.5 font-mono text-xs text-rose-800">
+                      <div className="mt-2 space-y-2.5">
                         {unmappedGlCodes.map((u) => (
-                          <li key={u.code} className="flex justify-between max-w-xs">
-                            <span>{u.code}</span>
-                            <span>{u.debit > 0 ? `Dr ${formatCurrency(u.debit, true)}` : `Cr ${formatCurrency(u.credit, true)}`}</span>
-                          </li>
+                          <div key={u.code}>
+                            <div className="flex justify-between font-mono text-xs font-semibold text-rose-800">
+                              <span>{u.code}</span>
+                              <span>{u.debit > 0 ? `Dr ${formatCurrency(u.debit, true)}` : `Cr ${formatCurrency(u.credit, true)}`}</span>
+                            </div>
+                            <ul className="mt-1 ml-2 space-y-0.5 border-l-2 border-rose-200 pl-2">
+                              {u.entries.map((e) => (
+                                <li key={e.journalEntryId} className="flex justify-between gap-3 text-[11px] text-rose-700">
+                                  <span className="truncate">
+                                    {e.entryNumber || e.journalEntryId} · {new Date(e.date).toLocaleDateString()}
+                                    {e.sourceModule ? ` · ${e.sourceModule}` : ''}{e.reference ? ` · ${e.reference}` : ''}
+                                  </span>
+                                  <span className="font-mono shrink-0">
+                                    {e.debit > 0 ? `Dr ${formatCurrency(e.debit, true)}` : `Cr ${formatCurrency(e.credit, true)}`}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
+                    </CardBody>
+                  </Card>
+                )}
+
+                {nonLeafPostings.length > 0 && (
+                  <Card className="mt-3 shadow-none border bg-amber-50 border-amber-200">
+                    <CardBody className="py-3 text-sm">
+                      <p className="font-medium text-amber-800">
+                        ⚠ Posted entries reference {nonLeafPostings.length} category header account{nonLeafPostings.length > 1 ? 's' : ''} directly
+                      </p>
+                      <p className="text-amber-700 text-xs mt-1">
+                        These amounts are counted in every total above — not invisible like an unmapped code — but a
+                        header account summarizes its child accounts and isn't meant to be posted to directly, which is
+                        why a specific child below can show a smaller balance than its own parent. Repost the entries
+                        listed below to the correct child account.
+                      </p>
+                      <div className="mt-2 space-y-2.5">
+                        {nonLeafPostings.map((u) => (
+                          <div key={u.code}>
+                            <div className="flex justify-between font-mono text-xs font-semibold text-amber-800">
+                              <span>{u.code} — {u.name}</span>
+                              <span>{u.debit > 0 ? `Dr ${formatCurrency(u.debit, true)}` : `Cr ${formatCurrency(u.credit, true)}`}</span>
+                            </div>
+                            <ul className="mt-1 ml-2 space-y-0.5 border-l-2 border-amber-200 pl-2">
+                              {u.entries.map((e) => (
+                                <li key={e.journalEntryId} className="flex justify-between gap-3 text-[11px] text-amber-700">
+                                  <span className="truncate">
+                                    {e.entryNumber || e.journalEntryId} · {new Date(e.date).toLocaleDateString()}
+                                    {e.sourceModule ? ` · ${e.sourceModule}` : ''}{e.reference ? ` · ${e.reference}` : ''}
+                                  </span>
+                                  <span className="font-mono shrink-0">
+                                    {e.debit > 0 ? `Dr ${formatCurrency(e.debit, true)}` : `Cr ${formatCurrency(e.credit, true)}`}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
                     </CardBody>
                   </Card>
                 )}

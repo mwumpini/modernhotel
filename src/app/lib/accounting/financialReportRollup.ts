@@ -160,7 +160,54 @@ export function computeCashFlowFromJournals(
   };
 }
 
-export type UnmappedGlCode = { code: string; debit: number; credit: number };
+/** One posted line contributing to a flagged code — enough to find and fix the actual entry. */
+export type PostingRef = {
+  journalEntryId: string;
+  entryNumber?: string;
+  date: string;
+  reference?: string;
+  sourceModule?: string;
+  description?: string;
+  debit: number;
+  credit: number;
+};
+
+export type UnmappedGlCode = { code: string; debit: number; credit: number; entries: PostingRef[] };
+
+/** Groups posted lines matching a predicate by accountCode, with per-entry drill-down. */
+function groupPostingsByCode(
+  journalEntries: JournalEntry[],
+  matches: (code: string) => boolean
+): Record<string, { debit: number; credit: number; entries: PostingRef[] }> {
+  const totals: Record<string, { debit: number; credit: number; entries: PostingRef[] }> = {};
+
+  journalEntries
+    .filter((je) => je.status === 'Posted')
+    .forEach((je) => {
+      je.lines.forEach((line) => {
+        const code = line.accountCode;
+        if (!matches(code)) return;
+        const debit = Number(line.debit) || 0;
+        const credit = Number(line.credit) || 0;
+        if (Math.abs(debit) < 0.005 && Math.abs(credit) < 0.005) return;
+        if (!totals[code]) totals[code] = { debit: 0, credit: 0, entries: [] };
+        totals[code].debit += debit;
+        totals[code].credit += credit;
+        totals[code].entries.push({
+          journalEntryId: je.id,
+          entryNumber: je.entryNumber,
+          date: je.date,
+          reference: je.reference,
+          sourceModule: je.sourceModule,
+          description: je.description,
+          debit,
+          credit,
+        });
+      });
+    });
+
+  return totals;
+}
 
 /**
  * Posted journal lines whose accountCode has no matching entry in the current Chart of
@@ -169,26 +216,47 @@ export type UnmappedGlCode = { code: string; debit: number; credit: number };
  * silently excluded from every rollup built from it — Balance Sheet, Income Statement, Trial
  * Balance totals all just... don't include it, with no error. That money isn't lost from the
  * ledger, just invisible in every report, and it's exactly the kind of thing that makes a
- * debit=credit balance check fail for no apparent reason. Surface it explicitly instead.
+ * debit=credit balance check fail for no apparent reason. Surface it explicitly, down to the
+ * specific entries, instead of leaving the search to a manual scan of Journal Entries.
  */
 export function findUnmappedGlCodes(allAccounts: RollupCoa[], journalEntries: JournalEntry[]): UnmappedGlCode[] {
   const known = new Set(allAccounts.map((a) => a.code));
-  const totals: Record<string, { debit: number; credit: number }> = {};
-
-  journalEntries
-    .filter((je) => je.status === 'Posted')
-    .forEach((je) => {
-      je.lines.forEach((line) => {
-        const code = line.accountCode;
-        if (known.has(code)) return;
-        if (!totals[code]) totals[code] = { debit: 0, credit: 0 };
-        totals[code].debit += Number(line.debit) || 0;
-        totals[code].credit += Number(line.credit) || 0;
-      });
-    });
+  const totals = groupPostingsByCode(journalEntries, (code) => !known.has(code));
 
   return Object.entries(totals)
-    .map(([code, t]) => ({ code, debit: t.debit, credit: t.credit }))
+    .map(([code, t]) => ({ code, debit: t.debit, credit: t.credit, entries: t.entries }))
+    .filter((u) => Math.abs(u.debit) > 0.005 || Math.abs(u.credit) > 0.005);
+}
+
+export type NonLeafPosting = { code: string; name: string; debit: number; credit: number; entries: PostingRef[] };
+
+/**
+ * Posted journal lines whose accountCode IS in the Chart of Accounts but names a category
+ * header (an account with children) rather than a postable leaf. Unlike an unmapped code this
+ * money isn't invisible — buildFinancialAccountTree() rolls a header's own direct postings into
+ * its parent-level total alongside its children's rolled-up totals, so it's still counted in
+ * every summary. What it breaks is the *hierarchy*: a specific child leaf's own row can show a
+ * much smaller balance than its parent, with nothing on screen explaining the gap. Surface it
+ * the same way as an unmapped code, down to the specific entries.
+ */
+export function findNonLeafPostings(allAccounts: RollupCoa[], journalEntries: JournalEntry[]): NonLeafPosting[] {
+  const enriched = enrichRollupCoaParents(allAccounts);
+  const idToCode = new Map(enriched.filter((a) => a.id).map((a) => [a.id as string, a.code]));
+  const nameByCode = new Map(enriched.map((a) => [a.code, a.name]));
+
+  const parentCodes = new Set<string>();
+  enriched.forEach((a) => {
+    if (a.parentId && idToCode.has(a.parentId)) {
+      parentCodes.add(idToCode.get(a.parentId) as string);
+    } else if (a.parentAccount) {
+      parentCodes.add(a.parentAccount);
+    }
+  });
+
+  const totals = groupPostingsByCode(journalEntries, (code) => parentCodes.has(code));
+
+  return Object.entries(totals)
+    .map(([code, t]) => ({ code, name: nameByCode.get(code) || code, debit: t.debit, credit: t.credit, entries: t.entries }))
     .filter((u) => Math.abs(u.debit) > 0.005 || Math.abs(u.credit) > 0.005);
 }
 
