@@ -163,6 +163,10 @@ export default function FinancialReportsPage() {
   // Report Options
   const [reportFormat, setReportFormat] = useState<ReportFormat>('detailed');
   const [showZeroBalances, setShowZeroBalances] = useState(false);
+  // Balance Sheet presentation: 'report' (Assets, then Liabilities, then Equity, stacked in
+  // one column — the modern default) vs 'account' (Assets left, Liabilities & Equity right,
+  // side by side — the classic "T" ledger form).
+  const [balanceSheetForm, setBalanceSheetForm] = useState<'report' | 'account'>('report');
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['all']));
 
   // Initialize
@@ -329,6 +333,34 @@ export default function FinancialReportsPage() {
       totalLiabAndEquity,
     };
   }, [assetAccounts, liabilityAccounts, equityAccounts, revenueAccounts, expenseAccounts]);
+
+  // Balance Sheet flat list (assets, then liabilities, then equity) — same shape/purpose
+  // as trialBalanceRows and incomeStatementRows: one source feeds the CSV export and the
+  // print preview so neither can silently stop at a shallower depth than the on-screen
+  // Detailed view, or disagree on the "accumulated results" plug row.
+  const balanceSheetRows = useMemo(() => {
+    const flattenSection = (nodes: AccountNode[], section: 'Asset' | 'Liability' | 'Equity', level = 0, rows: Array<{ section: string; code: string; name: string; level: number; amount: number }> = []) => {
+      nodes.forEach((node) => {
+        const hasBalance = Math.abs(node.balance) > 0.01;
+        if (showZeroBalances || hasBalance || node.children.length > 0) {
+          rows.push({ section, code: node.code, name: node.name, level, amount: node.balance });
+        }
+        if (node.children.length > 0 && (expandedSections.has('all') || expandedSections.has(node.code))) {
+          flattenSection(node.children, section, level + 1, rows);
+        }
+      });
+      return rows;
+    };
+    const rows = [
+      ...flattenSection(assetAccounts, 'Asset'),
+      ...flattenSection(liabilityAccounts, 'Liability'),
+      ...flattenSection(equityAccounts, 'Equity'),
+    ];
+    if (Math.abs(totals.accumulatedUnclosedPlug) >= 0.01) {
+      rows.push({ section: 'Equity', code: '', name: 'Accumulated results (unclosed P&L to equity GL)', level: 1, amount: totals.accumulatedUnclosedPlug });
+    }
+    return rows;
+  }, [assetAccounts, liabilityAccounts, equityAccounts, showZeroBalances, expandedSections, totals.accumulatedUnclosedPlug]);
 
   useEffect(() => {
     setCloseAsOfDate(endDate.toISOString().slice(0, 10));
@@ -553,34 +585,50 @@ export default function FinancialReportsPage() {
     openPrintPreview(generateReportHTML('STATEMENT OF PROFIT OR LOSS', periodLabel, content));
   }, [incomeStatementRows, totals, periodLabel]);
 
+  const exportBalanceSheetCSV = useCallback(() => {
+    const columns = [
+      { key: 'section', label: 'Section' },
+      { key: 'code', label: 'Account Code' },
+      { key: 'name', label: 'Account Name' },
+      { key: 'amount', label: 'Amount' },
+    ];
+    downloadCSV(balanceSheetRows, 'balance_sheet', columns);
+  }, [balanceSheetRows]);
+
   const printBalanceSheet = useCallback(() => {
-    const renderSection = (nodes: AccountNode[]): string => {
-      return nodes.map(node => {
-        const mainRow = `<tr class="level-1"><td>${node.code} ${node.name}</td><td class="text-right font-mono">${formatCurrencyWithSign(node.balance)}</td></tr>`;
-        const childRows = node.children.map(child =>
-          `<tr class="level-2"><td>${child.code} ${child.name}</td><td class="text-right font-mono">${formatCurrencyWithSign(child.balance)}</td></tr>`
-        ).join('');
-        return mainRow + childRows;
-      }).join('');
+    // Print exactly the rows currently on screen (same source, `balanceSheetRows`,
+    // already respecting showZeroBalances/expandedSections) instead of a separate
+    // hand-rolled 2-level walk — the previous version silently dropped any 3rd level
+    // of account detail the on-screen Detailed view does show, the same gap fixed
+    // for the Income Statement print above.
+    const renderRows = (section: 'Asset' | 'Liability' | 'Equity'): string => {
+      return balanceSheetRows
+        .filter((row) => row.section === section)
+        .map((row) => {
+          const levelClass = row.level === 0 ? 'level-1' : row.level === 1 ? 'level-2' : 'level-3';
+          const indent = '&nbsp;'.repeat(row.level * 6);
+          const label = row.code ? `${row.code} ${row.name}` : `<em>${row.name}</em>`;
+          return `<tr class="${levelClass}"><td>${indent}${label}</td><td class="text-right font-mono">${formatCurrencyWithSign(row.amount)}</td></tr>`;
+        })
+        .join('');
     };
 
     const content = `
       <div class="section">
         <div class="section-title">Assets</div>
-        <table><tbody>${renderSection(assetAccounts)}
+        <table><tbody>${renderRows('Asset')}
           <tr class="total-row"><td class="font-bold">TOTAL ASSETS</td><td class="text-right font-mono font-bold double-underline">${formatCurrencyWithSign(totals.totalAssets)}</td></tr>
         </tbody></table>
       </div>
       <div class="section">
         <div class="section-title">Liabilities</div>
-        <table><tbody>${renderSection(liabilityAccounts)}
+        <table><tbody>${renderRows('Liability')}
           <tr class="subtotal-row"><td class="font-bold">Total Liabilities</td><td class="text-right font-mono font-bold underline">${formatCurrencyWithSign(totals.totalLiabilities)}</td></tr>
         </tbody></table>
       </div>
       <div class="section">
         <div class="section-title">Equity</div>
-        <table><tbody>${renderSection(equityAccounts)}
-          ${Math.abs(totals.accumulatedUnclosedPlug) >= 0.01 ? `<tr class="level-2"><td><em>Accumulated results (unclosed P&amp;L)</em></td><td class="text-right font-mono">${formatCurrencyWithSign(totals.accumulatedUnclosedPlug)}</td></tr>` : ''}
+        <table><tbody>${renderRows('Equity')}
           <tr class="level-2"><td colspan="2" style="font-size:9px;color:#666">Profit/(loss) for period (SoPL): ${formatCurrencyWithSign(totals.netIncome)} — reference only.</td></tr>
           <tr class="subtotal-row"><td class="font-bold">Total Equity</td><td class="text-right font-mono font-bold underline">${formatCurrencyWithSign(totals.totalEquity)}</td></tr>
           <tr class="total-row"><td class="font-bold">TOTAL LIABILITIES AND EQUITY</td><td class="text-right font-mono font-bold double-underline">${formatCurrencyWithSign(totals.totalLiabAndEquity)}</td></tr>
@@ -588,7 +636,7 @@ export default function FinancialReportsPage() {
       </div>
     `;
     openPrintPreview(generateReportHTML('STATEMENT OF FINANCIAL POSITION', periodLabel, content));
-  }, [assetAccounts, liabilityAccounts, equityAccounts, totals, periodLabel]);
+  }, [balanceSheetRows, totals, periodLabel]);
 
   const printCashFlow = useCallback(() => {
     const cf = cashFlow;
@@ -1127,14 +1175,35 @@ export default function FinancialReportsPage() {
                   <Dropdown>
                     <DropdownTrigger><Button variant="bordered" size="sm">📥 Export</Button></DropdownTrigger>
                     <DropdownMenu>
+                      <DropdownItem key="csv" onPress={exportBalanceSheetCSV}>📄 Download CSV</DropdownItem>
                       <DropdownItem key="print" onPress={printBalanceSheet}>🖨️ Print PDF</DropdownItem>
                     </DropdownMenu>
                   </Dropdown>
                 </div>
-                
+
                 <ReportOptions />
 
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="flex items-center gap-3 mb-3 -mt-1 text-sm">
+                  <span className="text-gray-600 text-xs">Presentation</span>
+                  <div className="flex rounded-lg border border-gray-200 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setBalanceSheetForm('report')}
+                      className={`px-3 py-1 text-xs rounded-md transition-colors ${balanceSheetForm === 'report' ? 'bg-primary text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      Report Form
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setBalanceSheetForm('account')}
+                      className={`px-3 py-1 text-xs rounded-md transition-colors ${balanceSheetForm === 'account' ? 'bg-primary text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+                    >
+                      Account Form (T)
+                    </button>
+                  </div>
+                </div>
+
+                <div className={balanceSheetForm === 'account' ? 'grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-0 lg:divide-x lg:divide-gray-300' : 'space-y-4'}>
                   {/* Assets */}
                   <Card className="shadow-none border overflow-hidden">
                     <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Assets</h4></CardHeader>
