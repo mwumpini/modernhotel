@@ -1205,9 +1205,9 @@ export default function FinancialReportsPage() {
 
                 <div className={balanceSheetForm === 'account' ? 'grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-0 lg:divide-x lg:divide-gray-300' : 'space-y-4'}>
                   {/* Assets */}
-                  <Card className="shadow-none border overflow-hidden">
+                  <Card className={`shadow-none border overflow-hidden ${balanceSheetForm === 'account' ? 'h-full flex flex-col' : ''}`}>
                     <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Assets</h4></CardHeader>
-                    <CardBody className="p-0">
+                    <CardBody className={`p-0 ${balanceSheetForm === 'account' ? 'flex-1 flex flex-col' : ''}`}>
                       <div className="overflow-x-auto">
                         <Table removeWrapper aria-label="Assets" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[320px]" }}>
                           <TableHeader>
@@ -1217,7 +1217,11 @@ export default function FinancialReportsPage() {
                           <TableBody emptyContent="No asset accounts.">{renderAccountRows(assetAccounts)}</TableBody>
                         </Table>
                       </div>
-                      <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300">
+                      {/* mt-auto only does anything in Account Form's flex column (h-full/flex-1
+                          above), where it pins this to the bottom of whichever card is taller —
+                          keeping TOTAL ASSETS level with TOTAL LIABILITIES & EQUITY, the whole
+                          point of the T layout. In Report Form these classes are inert. */}
+                      <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300 mt-auto">
                         <span>TOTAL ASSETS</span>
                         <span className="font-mono">{formatCurrencyWithSign(totals.totalAssets, true)}</span>
                       </div>
@@ -1225,9 +1229,9 @@ export default function FinancialReportsPage() {
                   </Card>
 
                   {/* Liabilities & Equity */}
-                  <Card className="shadow-none border overflow-hidden">
+                  <Card className={`shadow-none border overflow-hidden ${balanceSheetForm === 'account' ? 'h-full flex flex-col' : ''}`}>
                     <CardHeader className="bg-slate-100 py-2 border-b"><h4 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">Liabilities & Equity</h4></CardHeader>
-                    <CardBody className="p-0">
+                    <CardBody className={`p-0 ${balanceSheetForm === 'account' ? 'flex-1 flex flex-col' : ''}`}>
                       {/* Liabilities */}
                       <div className="border-b">
                         <div className="bg-slate-50 px-4 py-1 font-medium text-gray-600 text-xs uppercase">Liabilities</div>
@@ -1283,7 +1287,7 @@ export default function FinancialReportsPage() {
                           <span className="font-mono">{formatCurrencyWithSign(totals.totalEquity, true)}</span>
                         </div>
                       </div>
-                      <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300">
+                      <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300 mt-auto">
                         <span>TOTAL LIABILITIES & EQUITY</span>
                         <span className="font-mono">{formatCurrencyWithSign(totals.totalLiabAndEquity, true)}</span>
                       </div>
