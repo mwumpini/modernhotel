@@ -127,6 +127,10 @@ export default function AccountsReceivable() {
 	const [dateFrom, setDateFrom] = useState('');
 	const [dateTo, setDateTo] = useState('');
 	const [searchQuery, setSearchQuery] = useState('');
+	// Sales Invoices and Proforma Invoices are the same underlying document set
+	// (allSalesInvoices, split by isProforma) — one merged tab toggles which
+	// subset is shown instead of forcing two separate top-level tabs.
+	const [invoiceDocType, setInvoiceDocType] = useState<'sales' | 'proforma'>('sales');
 
 	// Live data from store
     const {
@@ -2143,53 +2147,74 @@ export default function AccountsReceivable() {
 							</div>
 						</Tab>
 
-						{/* Sales Invoices Tab */}
-						<Tab key="invoices" title={`🧾 Sales Invoices (${salesInvoices.length})`}>
+						{/* Invoices Tab — Sales and Proforma are the same document set (allSalesInvoices),
+						    split by isProforma; toggle below switches which subset renders instead of
+						    forcing two separate top-level tabs for what is one invoice ledger. */}
+						<Tab key="invoices" title={`🧾 Invoices (${allSalesInvoices.length})`}>
 							<div className="p-6">
 								<div className="flex justify-between items-center mb-4">
-									<h3 className="text-lg font-semibold">Sales Invoices</h3>
-									<div className="flex items-center gap-2">
-										<Chip color="primary" variant="flat">{filteredSalesInvoices.length} invoices</Chip>
-										<Chip color="success" variant="flat">{formatAccountingCurrency(filteredSalesInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0))}</Chip>
-										<Dropdown>
-											<DropdownTrigger>
-												<Button variant="flat" size="sm">📥 Export</Button>
-											</DropdownTrigger>
-											<DropdownMenu>
-												<DropdownItem key="csv" onPress={exportInvoicesCSV}>📄 Download CSV</DropdownItem>
-												<DropdownItem key="pdf" onPress={printInvoicesTablePDF}>📑 Print PDF</DropdownItem>
-											</DropdownMenu>
-										</Dropdown>
-										<Button color="primary" size="sm" onClick={() => openNewInvoice(false)}>➕ New Invoice</Button>
+									<div className="flex items-center gap-3">
+										<h3 className="text-lg font-semibold">{invoiceDocType === 'sales' ? 'Sales Invoices' : 'Proforma Invoices'}</h3>
+										<div className="flex rounded-lg border border-gray-200 p-0.5">
+											<button
+												type="button"
+												onClick={() => setInvoiceDocType('sales')}
+												className={`px-3 py-1 text-sm rounded-md transition-colors ${invoiceDocType === 'sales' ? 'bg-primary text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+											>
+												Sales ({salesInvoices.length})
+											</button>
+											<button
+												type="button"
+												onClick={() => setInvoiceDocType('proforma')}
+												className={`px-3 py-1 text-sm rounded-md transition-colors ${invoiceDocType === 'proforma' ? 'bg-secondary text-white' : 'text-gray-600 hover:bg-gray-100'}`}
+											>
+												Proforma ({proformaInvoices.length})
+											</button>
+										</div>
 									</div>
+									{invoiceDocType === 'sales' ? (
+										<div className="flex items-center gap-2">
+											<Chip color="primary" variant="flat">{filteredSalesInvoices.length} invoices</Chip>
+											<Chip color="success" variant="flat">{formatAccountingCurrency(filteredSalesInvoices.reduce((s: number, i: any) => s + (i.total || 0), 0))}</Chip>
+											<Dropdown>
+												<DropdownTrigger>
+													<Button variant="flat" size="sm">📥 Export</Button>
+												</DropdownTrigger>
+												<DropdownMenu>
+													<DropdownItem key="csv" onPress={exportInvoicesCSV}>📄 Download CSV</DropdownItem>
+													<DropdownItem key="pdf" onPress={printInvoicesTablePDF}>📑 Print PDF</DropdownItem>
+												</DropdownMenu>
+											</Dropdown>
+											<Button color="primary" size="sm" onClick={() => openNewInvoice(false)}>➕ New Invoice</Button>
+										</div>
+									) : (
+										<div className="flex items-center gap-2">
+											<Chip color="secondary" variant="flat">{filteredProformas.length} proformas</Chip>
+											<Chip color="warning" variant="flat">{formatAccountingCurrency(filteredProformas.reduce((s: number, i: any) => s + (i.total || 0), 0))}</Chip>
+											<Dropdown>
+												<DropdownTrigger>
+													<Button variant="flat" size="sm">📥 Export</Button>
+												</DropdownTrigger>
+												<DropdownMenu>
+													<DropdownItem key="csv" onPress={exportProformasCSV}>📄 Download CSV</DropdownItem>
+													<DropdownItem key="pdf" onPress={printProformasTablePDF}>📑 Print PDF</DropdownItem>
+												</DropdownMenu>
+											</Dropdown>
+											<Button color="secondary" size="sm" onClick={() => openNewInvoice(true)}>➕ New Proforma</Button>
+										</div>
+									)}
 								</div>
-								{renderFilters(true)}
-								{renderSalesInvoiceTable(filteredSalesInvoices)}
-							</div>
-						</Tab>
-
-						{/* Proforma Invoices Tab */}
-						<Tab key="proformas" title={`📋 Proforma Invoices (${proformaInvoices.length})`}>
-							<div className="p-6">
-								<div className="flex justify-between items-center mb-4">
-									<h3 className="text-lg font-semibold">Proforma Invoices</h3>
-									<div className="flex items-center gap-2">
-										<Chip color="secondary" variant="flat">{filteredProformas.length} proformas</Chip>
-										<Chip color="warning" variant="flat">{formatAccountingCurrency(filteredProformas.reduce((s: number, i: any) => s + (i.total || 0), 0))}</Chip>
-										<Dropdown>
-											<DropdownTrigger>
-												<Button variant="flat" size="sm">📥 Export</Button>
-											</DropdownTrigger>
-											<DropdownMenu>
-												<DropdownItem key="csv" onPress={exportProformasCSV}>📄 Download CSV</DropdownItem>
-												<DropdownItem key="pdf" onPress={printProformasTablePDF}>📑 Print PDF</DropdownItem>
-											</DropdownMenu>
-										</Dropdown>
-										<Button color="secondary" size="sm" onClick={() => openNewInvoice(true)}>➕ New Proforma</Button>
-									</div>
-								</div>
-								{renderFilters(false)}
-								{renderProformaTable(filteredProformas)}
+								{invoiceDocType === 'sales' ? (
+									<>
+										{renderFilters(true)}
+										{renderSalesInvoiceTable(filteredSalesInvoices)}
+									</>
+								) : (
+									<>
+										{renderFilters(false)}
+										{renderProformaTable(filteredProformas)}
+									</>
+								)}
 							</div>
 						</Tab>
 
