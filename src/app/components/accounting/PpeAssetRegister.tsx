@@ -65,8 +65,7 @@ import {
   type IasMethod,
 } from '@/app/lib/accounting/ppe';
 import { DEFAULT_ORG_ID, PRESENTATION_GROUP_PREFIX } from '@/app/lib/accounting/ppe/categories';
-import { GL_CASH_IN_HAND } from '@/app/lib/accounting/bankCoaLink';
-import type { BankAccount } from '@/app/lib/accounting/models';
+import BankAccountOptionLabel from '@/app/components/shared/BankAccountOptionLabel';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 
 // formatAccountingCurrency always shows a magnitude, so the sign (disposal gain/loss
@@ -75,17 +74,6 @@ const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
 // Table cells: the ₵ sign is in the column header once, not repeated on every row.
 const fmtNum = (n: number) => (n < 0 ? '-' : '') + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-// Bank-vs-cash isn't a stored flag on BankAccount — it's implied by which GL account the
-// account posts to (1110 Cash in Hand vs 1120 Bank Accounts / a dedicated 112x code).
-function BankAccountOptionLabel({ account }: { account: BankAccount }) {
-  const isCash = account.glAccountCode === GL_CASH_IN_HAND;
-  return (
-    <>
-      {isCash ? '💵' : '🏦'} {account.accountName}{account.bankName && !isCash ? ` · ${account.bankName}` : ''}{' '}
-      <span className="text-xs text-gray-400">({isCash ? 'Cash' : 'Bank'})</span>
-    </>
-  );
-}
 
 const CAP_EXP_OPTIONS: CapExpStatus[] = ['Capitalise', 'Expense', 'Disposed'];
 const GRA_METHOD_OPTIONS: GraMethod[] = ['SL', 'RB'];
