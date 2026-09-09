@@ -1,5 +1,5 @@
 import type { ChartOfAccounts } from './models';
-import { collectDescendantIds, generateCoaCode } from './coaTree';
+import { collectDescendantIds, generateCoaCode, mapCoaTypeToRollup } from './coaTree';
 
 export const GL_CASH_IN_HAND = '1110';
 export const GL_BANK_ACCOUNTS = '1120';
@@ -42,10 +42,15 @@ export function listBankGlAccounts(chart: ChartOfAccounts[]): ChartOfAccounts[] 
     for (const id of collectDescendantIds(cashRoot.id, chart)) ids.add(id);
   }
 
+  // mapCoaTypeToRollup, not a raw `a.type === 'Asset'` check — `type` can hold a granular
+  // CoaAccountType (e.g. "Contra") rather than the coarse 5-value rollup once an account has
+  // round-tripped through the database, the same mismatch that made Expenses read ₵0.00 on the
+  // Accounting Overview page. Coincidentally safe today only because every seeded Asset
+  // account's category happens to equal "Asset" verbatim.
   const fallback = chart.filter(
     (a) =>
       a.isActive &&
-      (a.type === 'Asset' || a.type === 'Contra') &&
+      mapCoaTypeToRollup(a.type) === 'Asset' &&
       (a.code === GL_CASH_IN_HAND || a.code === GL_BANK_ACCOUNTS || isBankOrCashGlCode(a.code))
   );
 
@@ -55,7 +60,7 @@ export function listBankGlAccounts(chart: ChartOfAccounts[]): ChartOfAccounts[] 
           (a) =>
             ids.has(a.id) &&
             a.isActive &&
-            (a.type === 'Asset' || a.type === 'Contra') &&
+            mapCoaTypeToRollup(a.type) === 'Asset' &&
             !CASH_BANK_HEADER_CODES.has(a.code)
         )
       : fallback;
