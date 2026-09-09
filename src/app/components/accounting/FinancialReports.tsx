@@ -430,9 +430,16 @@ export default function FinancialReportsPage() {
       // Skip if no balance and not showing zeros (unless it has children with balances)
       if (!showZeroBalances && !hasBalance && !hasChildren) return;
       
+      // Depth (indentation) and "is this a rollup" (has children — its figure sums the rows
+      // below it, not a directly-posted balance) are two different things a reader needs to
+      // tell apart, and depth alone doesn't show it: a subtotal like "4300 Other Revenue" sat
+      // at the same indent, weight, and background as leaf siblings like "4100 Room Revenue"
+      // right next to it, with only the expand/collapse triangle hinting it's a rollup. Anchor
+      // the weight/tint on hasChildren instead of indent so every subtotal — at any depth —
+      // reads as one, and every leaf reads as a directly-posted figure.
       const paddingClass = indent === 0 ? '' : indent === 1 ? 'pl-6' : 'pl-12';
-      const fontClass = indent === 0 ? 'font-semibold' : indent === 1 ? 'font-medium' : '';
-      const bgClass = indent === 0 ? 'bg-gray-50' : '';
+      const fontClass = hasChildren ? 'font-semibold' : indent === 1 ? 'font-medium' : '';
+      const bgClass = hasChildren ? (indent === 0 ? 'bg-gray-50' : 'bg-slate-50/60') : '';
       
       const accountCell = (
         <TableCell className={paddingClass}>
