@@ -22,6 +22,7 @@ import {
 } from '../lib/accounting/tenantAccountingConfig';
 import { buildAccountingComplianceOverview } from '../lib/accounting/accountingComplianceOverview';
 import { totalFinanceReceivables } from '../lib/accounting/arSubledger';
+import { mapCoaTypeToRollup } from '../lib/accounting/coaTree';
 
 // Import specialized accounting components
 import ChartOfAccounts from './accounting/ChartOfAccounts';
@@ -176,11 +177,16 @@ export default function AccountingMainDashboard() {
     [purchaseInvoices]
   );
 
-  // Expenses = sum of journal entry debit lines on accounts typed 'Expense' in the Chart of
-  // Accounts, not a hardcoded '5xxx' code prefix — matches FinancialReports' classification
-  // and stays correct if a non-Ghana chart template numbers expenses differently.
+  // Expenses = sum of journal entry debit lines on accounts that roll up to 'Expense' in the
+  // Chart of Accounts, not a hardcoded '5xxx' code prefix — matches FinancialReports'
+  // classification and stays correct if a non-Ghana chart template numbers expenses
+  // differently. Uses mapCoaTypeToRollup (not a raw `a.type === 'Expense'` check) because
+  // `type` can hold a granular CoaAccountType like "Operating Expense" or "Cost of Sales"
+  // rather than the coarse 5-value rollup — a direct string comparison silently matched zero
+  // accounts and made this card's Expenses read ₵0.00 while Financial Reports, which already
+  // goes through this same rollup, showed the real total.
   const expenseAccountCodes = useMemo(
-    () => new Set(chartOfAccounts.filter(a => a.type === 'Expense').map(a => a.code)),
+    () => new Set(chartOfAccounts.filter(a => mapCoaTypeToRollup(a.type) === 'Expense').map(a => a.code)),
     [chartOfAccounts]
   );
   const currentExpenses = useMemo(() => {
