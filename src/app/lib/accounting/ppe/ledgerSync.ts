@@ -6,6 +6,8 @@ import { useAccountingStore } from '../store';
 import type { PpeAsset, PpeCategory } from './types';
 import { assetTotalCost, reportDateFromInput, accumDep } from './calculations';
 import { computeAllAssets } from './aggregations';
+import { assertPeriodNotClosed } from '../periodClose';
+import { logAccountingProcessWarn } from '../accountingProcessLog';
 
 const GL_COST = '1510';
 const GL_ACCUM_DEP = '1520';
@@ -170,6 +172,14 @@ export function capturePpeCapitalization(input: {
 }): { journalEntryId: string } | null {
   const store = useAccountingStore.getState();
   const now = new Date().toISOString();
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, input.purchaseDate);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('PpeCapitalization', 'PPE capitalization GL post blocked — closed period', {
+      ppeAssetId: input.ppeAssetId,
+      error: periodCheck.error,
+    });
+    return null;
+  }
   const jeId = `JE-PPE-CAP-${Date.now()}`;
   const bank = input.paymentBankAccountId
     ? store.bankAccounts.find((b) => b.id === input.paymentBankAccountId)
@@ -269,6 +279,14 @@ export function capturePpeBookDepreciation(input: {
   if (Math.abs(input.amount) < 0.01) return null;
   const store = useAccountingStore.getState();
   const now = new Date().toISOString();
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, input.date);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('PpeBookDepreciation', 'PPE depreciation GL post blocked — closed period', {
+      ppeAssetId: input.ppeAssetId,
+      error: periodCheck.error,
+    });
+    return null;
+  }
   const jeId = `JE-PPE-DEP-${Date.now()}`;
   const isReversal = input.amount < 0;
   const amount = Math.abs(input.amount);
@@ -343,6 +361,14 @@ export function capturePpeCostAdjustment(input: {
   if (Math.abs(input.delta) < 0.01) return null;
   const store = useAccountingStore.getState();
   const now = new Date().toISOString();
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, input.date);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('PpeCostAdjustment', 'PPE cost adjustment GL post blocked — closed period', {
+      ppeAssetId: input.ppeAssetId,
+      error: periodCheck.error,
+    });
+    return null;
+  }
   const jeId = `JE-PPE-ADJ-${Date.now()}`;
   const amount = Math.abs(input.delta);
   const isIncrease = input.delta > 0;
@@ -418,6 +444,14 @@ export function capturePpeDisposal(input: {
 }): { journalEntryId: string; gainLoss: number } | null {
   const store = useAccountingStore.getState();
   const now = new Date().toISOString();
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, input.disposalDate);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('PpeDisposal', 'PPE disposal GL post blocked — closed period', {
+      ppeAssetId: input.ppeAssetId,
+      error: periodCheck.error,
+    });
+    return null;
+  }
   const jeId = `JE-PPE-DISP-${Date.now()}`;
   const nbv = +(input.cost - input.accumDepAtDisposal).toFixed(2);
   const gainLoss = +(input.proceeds - nbv).toFixed(2);

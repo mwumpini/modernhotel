@@ -1,4 +1,6 @@
 import type { BankAccount, JournalEntry, JournalEntryLine } from './models';
+import { assertPeriodNotClosed } from './periodClose';
+import { logAccountingProcessWarn } from './accountingProcessLog';
 
 /** Offset for bank opening balances — Retained Earnings (3200) in the Ghana hotel COA. */
 export const GL_OPENING_BALANCE_EQUITY = '3200';
@@ -67,7 +69,7 @@ export function syncBankOpeningBalanceToLedger(
   bankAccount: BankAccount,
   store: GlStore,
   equityGlCode = GL_OPENING_BALANCE_EQUITY
-): { posted: boolean; delta: number; skipped?: boolean } {
+): { posted: boolean; delta: number; skipped?: boolean; error?: string } {
   if (!shouldPostOpeningToGl(bankAccount, store.journalEntries)) {
     return { posted: false, delta: 0, skipped: true };
   }
@@ -81,6 +83,14 @@ export function syncBankOpeningBalanceToLedger(
   if (Math.abs(delta) < 0.005) return { posted: false, delta: 0 };
 
   const now = new Date().toISOString();
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, now);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('BankOpeningBalance', 'Bank opening balance GL post blocked — closed period', {
+      bankAccountId: bankAccount.id,
+      error: periodCheck.error,
+    });
+    return { posted: false, delta: 0, error: periodCheck.error };
+  }
   const jeId = `JE-BOB-${bankAccount.id}-${Date.now()}`;
   const absDelta = Math.abs(delta);
   const isFirst = Math.abs(posted) < 0.005;

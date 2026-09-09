@@ -8,7 +8,16 @@ export type AccountingLogChannel =
   | 'AccountingInvoicePost'
   | 'AccountingPaymentPost'
   | 'PeriodClose'
-  | 'AccountingSync';
+  | 'AccountingSync'
+  | 'BankOpeningBalance'
+  | 'BankReconciliation'
+  | 'PpeCapitalization'
+  | 'PpeBookDepreciation'
+  | 'PpeCostAdjustment'
+  | 'PpeDisposal'
+  | 'FrontOfficeCheckout'
+  | 'FrontOfficeNoShow'
+  | 'TaxRemittance';
 
 function stamp(): string {
   return new Date().toISOString();

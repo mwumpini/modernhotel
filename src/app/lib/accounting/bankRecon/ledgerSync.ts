@@ -6,6 +6,8 @@ import { useAccountingStore } from '../store';
 import type { BankAccount } from '../models';
 import type { ReconcilingItem, ReconcilingItemType } from './types';
 import { bookSideItemsNeedingJournal } from './calculations';
+import { assertPeriodNotClosed } from '../periodClose';
+import { logAccountingProcessWarn } from '../accountingProcessLog';
 
 // Must match bankTransactionLedger.ts's GL_INTEREST_INCOME — both post the same concept.
 // '4900' doesn't exist in GHANA_CHART_OF_ACCOUNTS (only '4300' Other Revenue does), so any
@@ -154,6 +156,16 @@ export function captureBookSideItem(
   const jeId = `JE-BRECON-${Date.now()}-${Math.random().toString(36).slice(2, 5)}`;
   const { debit, credit } = offsetForType(item, bankGlCode);
   const date = item.transactionDate?.slice(0, 10) || periodEndDate;
+
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, date);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('BankReconciliation', 'Bank recon GL post blocked — closed period', {
+      reconId,
+      itemId: item.id,
+      error: periodCheck.error,
+    });
+    return null;
+  }
 
   const je: JournalEntry = {
     id: jeId,

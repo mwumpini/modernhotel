@@ -16,6 +16,8 @@ import { useAccountingStore } from './store';
 import { GL_ACCOUNTS, REVENUE_CENTERS, PAYMENT_GL_MAP } from './integration';
 import { computeSalesTax } from '../tax/engine';
 import { applyJournalEntryToGlBalances } from './invoicePostingBridge';
+import { assertPeriodNotClosed } from './periodClose';
+import { logAccountingProcessWarn } from './accountingProcessLog';
 
 function nowIso() {
   return new Date().toISOString();
@@ -39,6 +41,15 @@ export function postGuestFolioCheckoutToLedger(params: {
 
   const store = useAccountingStore.getState();
   const ts = nowIso();
+
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, ts);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('FrontOfficeCheckout', 'Folio checkout GL post blocked — closed period', {
+      invoiceId: params.invoiceId,
+      error: periodCheck.error,
+    });
+    return null;
+  }
 
   // recordRevenue() needs a center with code RM. If the user has not opened a module
   // that runs initializeAccounting() yet, revenue centers can be empty.
@@ -200,6 +211,16 @@ export function postGuestFolioCheckoutToLedger(params: {
     const payJeId = `JE-FO-${isRefund ? 'REF' : 'PAY'}-${params.invoiceId}-${i}`;
     if (store.journalEntries.some((je) => je.id === payJeId)) return;
 
+    const payPeriodCheck = assertPeriodNotClosed(store.journalEntries, p.date || ts);
+    if (!payPeriodCheck.ok) {
+      logAccountingProcessWarn('FrontOfficeCheckout', 'Folio payment GL post blocked — closed period', {
+        invoiceId: params.invoiceId,
+        paymentId: p.paymentId,
+        error: payPeriodCheck.error,
+      });
+      return;
+    }
+
     const payLines = isRefund
       ? [
           {
@@ -323,6 +344,15 @@ export function postNoShowPenaltyToLedger(params: {
     return { salesJournalEntryId: salesJeId };
   }
 
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, ts);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('FrontOfficeNoShow', 'No-show penalty GL post blocked — closed period', {
+      reservationId: params.reservationId,
+      error: periodCheck.error,
+    });
+    return null;
+  }
+
   const jl = (suffix: string) => `JL-${salesJeId}-${suffix}`;
 
   const lines: Array<{
@@ -398,7 +428,14 @@ export function postNoShowPenaltyToLedger(params: {
   if (params.cardCollected && params.cardCollected.amount > 0) {
     const abs = params.cardCollected.amount;
     const payJeId = `JE-FO-NS-PAY-${params.reservationId}`;
-    if (!store.journalEntries.some((je) => je.id === payJeId)) {
+    const cardPeriodCheck = assertPeriodNotClosed(store.journalEntries, params.cardCollected.date || ts);
+    if (!cardPeriodCheck.ok) {
+      logAccountingProcessWarn('FrontOfficeNoShow', 'No-show card charge GL post blocked — closed period', {
+        reservationId: params.reservationId,
+        error: cardPeriodCheck.error,
+      });
+    }
+    if (!store.journalEntries.some((je) => je.id === payJeId) && cardPeriodCheck.ok) {
     const cashGl = PAYMENT_GL_MAP['Card'] || GL_ACCOUNTS.BANK;
     store.addJournalEntry({
       id: payJeId,

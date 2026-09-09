@@ -1,4 +1,5 @@
 import type { BankAccount, BankTransaction, JournalEntry, JournalEntryLine } from './models';
+import { assertPeriodNotClosed } from './periodClose';
 
 export const BANK_MANUAL_SOURCE = 'bank_manual_transaction';
 export const BANK_MANUAL_REVERSAL_SOURCE = 'bank_manual_reversal';
@@ -231,6 +232,11 @@ export function createManualBankTransaction(
   const status = input.status || 'Cleared';
   const now = new Date().toISOString();
 
+  if (postToGl) {
+    const periodCheck = assertPeriodNotClosed(store.journalEntries, input.transactionDate);
+    if (!periodCheck.ok) return { ok: false, error: periodCheck.error };
+  }
+
   if (input.type === 'Transfer') {
     if (!input.transferToAccountId) {
       return { ok: false, error: 'Select the destination account for a transfer.' };
@@ -332,6 +338,11 @@ export function reverseManualBankTransaction(
 
   const bank = store.bankAccounts.find((b) => b.id === transaction.bankAccountId);
   if (!bank) return { ok: false, error: 'Bank account not found.' };
+
+  if (transaction.journalEntryId) {
+    const periodCheck = assertPeriodNotClosed(store.journalEntries, new Date().toISOString());
+    if (!periodCheck.ok) return { ok: false, error: periodCheck.error };
+  }
 
   const amount = Math.abs(transaction.amount ?? 0);
 

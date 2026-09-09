@@ -1,5 +1,7 @@
 import type { JournalEntry } from '../accounting/models';
 import { useAccountingStore } from '../accounting/store';
+import { assertPeriodNotClosed } from '../accounting/periodClose';
+import { logAccountingProcessWarn } from '../accounting/accountingProcessLog';
 
 function lineId() {
   return `JEL-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -33,6 +35,16 @@ export function captureTaxRemittance(input: CaptureTaxRemittanceInput): { journa
   const store = useAccountingStore.getState();
   const bank = store.bankAccounts.find((b) => b.id === input.bankAccountId);
   if (!bank) return null;
+
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, input.date);
+  if (!periodCheck.ok) {
+    logAccountingProcessWarn('TaxRemittance', 'Tax remittance GL post blocked — closed period', {
+      taxGlCode: input.taxGlCode,
+      period: input.period,
+      error: periodCheck.error,
+    });
+    return null;
+  }
 
   const now = new Date().toISOString();
   const jeId = `JE-TAX-REMIT-${Date.now()}`;

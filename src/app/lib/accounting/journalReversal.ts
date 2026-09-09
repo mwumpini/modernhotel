@@ -3,6 +3,7 @@
  */
 
 import type { JournalEntry, JournalEntryLine } from './models';
+import { assertPeriodNotClosed } from './periodClose';
 
 export const AR_AP_REVERSAL_SOURCE = 'manual_ar_ap_reversal';
 
@@ -87,6 +88,11 @@ export function postJournalEntryReversal(
   if (original.status !== 'Posted') return { ok: false, error: 'Only posted entries can be reversed' };
   if (hasReversalForEntry(store.journalEntries, originalEntryId)) {
     return { ok: false, error: 'Entry already has a reversal' };
+  }
+
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, new Date().toISOString());
+  if (!periodCheck.ok) {
+    return { ok: false, error: periodCheck.error };
   }
 
   const reversal = buildReversalJournalEntry(original, {
