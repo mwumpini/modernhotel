@@ -188,6 +188,11 @@ export default function PpeAssetRegisterPage() {
     [assets, categories, reportDateObj]
   );
 
+  const disposalsGainLossTotal = useMemo(
+    () => disposals.reduce((s, d) => s + (d.gainLoss ?? 0), 0),
+    [disposals]
+  );
+
   const totals = useMemo(() => {
     const capitalised = computedRows.filter((r) => r.asset.capExp === 'Capitalise');
     return {
@@ -793,44 +798,82 @@ export default function PpeAssetRegisterPage() {
             </Tab>
 
             <Tab key="disposals" title="Disposals">
-              <div className="p-4 overflow-x-auto">
-                <div className="flex justify-end mb-3">
-                  <Dropdown>
-                    <DropdownTrigger>
-                      <Button size="sm" variant="bordered">📥 Export</Button>
-                    </DropdownTrigger>
-                    <DropdownMenu>
-                      <DropdownItem key="csv" onPress={exportDisposalsCSV}>CSV spreadsheet</DropdownItem>
-                      <DropdownItem key="pdf" onPress={printDisposalsPDF}>📑 Print PDF</DropdownItem>
-                    </DropdownMenu>
-                  </Dropdown>
+              <div className="p-4">
+                <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="text-sm font-semibold text-gray-900">Disposals</h3>
+                      <Chip size="sm" variant="flat" color="default" className="text-xs">
+                        {reportDateObj.getFullYear()}
+                      </Chip>
+                      <Chip size="sm" variant="flat" color="primary" className="text-xs">
+                        {disposals.length} {disposals.length === 1 ? 'disposal' : 'disposals'}
+                      </Chip>
+                      {disposals.length > 0 && (
+                        <Chip
+                          size="sm"
+                          variant="flat"
+                          color={disposalsGainLossTotal >= 0 ? 'success' : 'danger'}
+                          className="text-xs font-mono"
+                        >
+                          Net {disposalsGainLossTotal >= 0 ? 'gain' : 'loss'}: {fmtNum(Math.abs(disposalsGainLossTotal))}
+                        </Chip>
+                      )}
+                    </div>
+                    <Dropdown>
+                      <DropdownTrigger>
+                        <Button size="sm" variant="bordered" className="min-w-[100px]">Download</Button>
+                      </DropdownTrigger>
+                      <DropdownMenu aria-label="Export options">
+                        <DropdownItem key="csv" onPress={exportDisposalsCSV}>CSV spreadsheet</DropdownItem>
+                        <DropdownItem key="pdf" onPress={printDisposalsPDF}>Print / PDF</DropdownItem>
+                      </DropdownMenu>
+                    </Dropdown>
+                  </div>
+
+                  {disposals.length === 0 ? (
+                    <div className="py-12 text-center text-sm text-slate-400">
+                      No disposals in {reportDateObj.getFullYear()}.
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[640px] text-sm border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="text-left py-3 px-4 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Date</th>
+                            <th className="text-left py-3 px-4 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Asset</th>
+                            <th className="text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Cost (₵)</th>
+                            <th className="text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Accum dep (₵)</th>
+                            <th className="text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">NBV (₵)</th>
+                            <th className="text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Proceeds (₵)</th>
+                            <th className="text-right py-3 px-4 font-semibold text-[11px] uppercase tracking-wider text-slate-500 bg-slate-100/90 border-b border-slate-200">Gain / (loss) (₵)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {disposals.map((d, i) => (
+                            <tr
+                              key={`${d.assetCode}-${i}`}
+                              className={`border-t border-slate-100 hover:bg-blue-50/40 transition-colors ${i % 2 === 1 ? 'bg-slate-50/40' : 'bg-white'}`}
+                            >
+                              <td className="py-2.5 px-4 text-gray-700 text-xs whitespace-nowrap">{d.disposalDate.slice(0, 10)}</td>
+                              <td className="py-2.5 px-4">
+                                <div className="text-gray-800 text-xs sm:text-sm">{d.assetName}</div>
+                                <div className="text-[11px] font-mono text-slate-400">{d.assetCode}</div>
+                              </td>
+                              <td className="text-right py-2.5 px-3 font-mono text-xs tabular-nums text-gray-700">{fmtNum(d.cost)}</td>
+                              <td className="text-right py-2.5 px-3 font-mono text-xs tabular-nums text-gray-700">{fmtNum(d.accumDep)}</td>
+                              <td className="text-right py-2.5 px-3 font-mono text-xs tabular-nums text-gray-700">{fmtNum(d.nbvAtDisposal)}</td>
+                              <td className="text-right py-2.5 px-3 font-mono text-xs tabular-nums text-gray-700">{fmtNum(d.proceeds)}</td>
+                              <td className={`text-right py-2.5 px-4 font-mono text-xs tabular-nums font-semibold ${(d.gainLoss ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                {d.gainLoss != null ? fmtNum(d.gainLoss) : '—'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-                <Table aria-label="Disposals" removeWrapper>
-                  <TableHeader>
-                    <TableColumn>DATE</TableColumn>
-                    <TableColumn>ASSET</TableColumn>
-                    <TableColumn className="text-right">COST (₵)</TableColumn>
-                    <TableColumn className="text-right">ACCUM DEP (₵)</TableColumn>
-                    <TableColumn className="text-right">NBV (₵)</TableColumn>
-                    <TableColumn className="text-right">PROCEEDS (₵)</TableColumn>
-                    <TableColumn className="text-right">GAIN / (LOSS) (₵)</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent={`No disposals in ${reportDateObj.getFullYear()}.`}>
-                    {disposals.map((d, i) => (
-                      <TableRow key={`${d.assetCode}-${i}`}>
-                        <TableCell>{d.disposalDate.slice(0, 10)}</TableCell>
-                        <TableCell><div>{d.assetName}</div><div className="text-xs font-mono">{d.assetCode}</div></TableCell>
-                        <TableCell className="text-right font-mono">{fmtNum(d.cost)}</TableCell>
-                        <TableCell className="text-right font-mono">{fmtNum(d.accumDep)}</TableCell>
-                        <TableCell className="text-right font-mono">{fmtNum(d.nbvAtDisposal)}</TableCell>
-                        <TableCell className="text-right font-mono">{fmtNum(d.proceeds)}</TableCell>
-                        <TableCell className={`text-right font-mono ${(d.gainLoss ?? 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                          {d.gainLoss != null ? fmtNum(d.gainLoss) : '—'}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
               </div>
             </Tab>
 

@@ -267,10 +267,10 @@ export default function PpeSummaryPivotTable({
               return (
                 <tr
                   key={row.key}
-                  className={`${row.dividerBefore ? 'border-t-2 border-slate-300' : 'border-t border-slate-100'} ${rowBg}`}
+                  className={`group ${row.dividerBefore ? 'border-t-2 border-slate-300' : 'border-t border-slate-100'} ${rowBg} hover:bg-blue-50/40 transition-colors`}
                 >
                   <td
-                    className={`sticky left-0 z-10 py-2.5 px-4 border-r border-slate-100 border-l-4 ${borderClass} ${rowBg} ${
+                    className={`sticky left-0 z-10 py-2.5 px-4 border-r border-slate-100 border-l-4 ${borderClass} ${rowBg} group-hover:bg-blue-50/40 transition-colors ${
                       row.emphasis ? 'font-semibold text-gray-900' : 'text-gray-700'
                     }`}
                   >
@@ -300,7 +300,7 @@ export default function PpeSummaryPivotTable({
                         key={col}
                         className={`text-right py-2.5 px-3 font-mono text-xs tabular-nums ${
                           isTotal
-                            ? `sticky right-0 z-10 border-l border-slate-200 ${rowBg} ${
+                            ? `sticky right-0 z-10 border-l border-slate-200 ${rowBg} group-hover:bg-blue-50/40 transition-colors ${
                                 row.emphasis ? 'font-bold text-gray-900' : 'font-semibold text-gray-800'
                               }`
                             : row.emphasis
