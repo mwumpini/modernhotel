@@ -169,6 +169,10 @@ export default function FinancialReportsPage() {
   // side by side — the classic "T" ledger form).
   const [balanceSheetForm, setBalanceSheetForm] = useState<'report' | 'account'>('report');
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set(['all']));
+  // Comparative statements (Income Statement / Balance Sheet only) — same period one year
+  // earlier, side by side with the current column. Off by default: most day-to-day report
+  // pulls don't need it, and a second tree walk is wasted work when nobody's looking at it.
+  const [compareWithPriorYear, setCompareWithPriorYear] = useState(false);
 
   // Initialize
   useEffect(() => {
@@ -195,10 +199,24 @@ export default function FinancialReportsPage() {
   };
 
   // ==================== PERIOD CALCULATIONS ====================
-  const { startDate, endDate } = useMemo(() => 
+  const { startDate, endDate } = useMemo(() =>
     getPeriodDates(periodType, selectedMonth, selectedQuarter, selectedYear, customDateFrom, customDateTo),
     [periodType, selectedMonth, selectedQuarter, selectedYear, customDateFrom, customDateTo]
   );
+
+  // Prior-year comparison: same period/as-at date, shifted back exactly one year — the
+  // conventional "vs last year" comparative column.
+  const priorStartDate = useMemo(() => {
+    const d = new Date(startDate);
+    d.setFullYear(d.getFullYear() - 1);
+    return d;
+  }, [startDate]);
+
+  const priorEndDate = useMemo(() => {
+    const d = new Date(endDate);
+    d.setFullYear(d.getFullYear() - 1);
+    return d;
+  }, [endDate]);
 
   const periodRangeLabel = useMemo(() => {
     const options: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short', year: 'numeric' };
@@ -220,6 +238,19 @@ export default function FinancialReportsPage() {
     }
     return periodRangeLabel;
   }, [periodType, startDate, endDate, selectedQuarter, selectedYear, periodRangeLabel]);
+
+  // Short year labels for comparison column headers — "2026" vs "2025", or "2025–2026" for a
+  // range that itself spans a year boundary (e.g. a custom period).
+  const yearSpanLabel = (from: Date, to: Date) =>
+    from.getFullYear() === to.getFullYear() ? `${to.getFullYear()}` : `${from.getFullYear()}–${to.getFullYear()}`;
+  const incomeStatementColumnLabels = useMemo(
+    () => ({ current: yearSpanLabel(startDate, endDate), prior: yearSpanLabel(priorStartDate, priorEndDate) }),
+    [startDate, endDate, priorStartDate, priorEndDate]
+  );
+  const balanceSheetColumnLabels = useMemo(
+    () => ({ current: `${endDate.getFullYear()}`, prior: `${priorEndDate.getFullYear()}` }),
+    [endDate, priorEndDate]
+  );
 
   // ==================== COA + ROLL-UPS (IFRS-style) ====================
   /** Profit or loss: movement in selected period. Statement of financial position: cumulative through reporting date. */
@@ -250,6 +281,18 @@ export default function FinancialReportsPage() {
     [rollupCoa, journalEntries, endDate]
   );
 
+  // Only built when the toggle is on; an idle second tree walk on every render would be
+  // wasted cost for the common case.
+  const accountTreePeriodPrior = useMemo(
+    () => compareWithPriorYear ? buildFinancialAccountTree(rollupCoa, journalEntries, { kind: 'period', startDate: priorStartDate, endDate: priorEndDate }) : [],
+    [compareWithPriorYear, rollupCoa, journalEntries, priorStartDate, priorEndDate]
+  );
+
+  const accountTreeCumulativePrior = useMemo(
+    () => compareWithPriorYear ? buildFinancialAccountTree(rollupCoa, journalEntries, { kind: 'cumulative', endDate: priorEndDate }) : [],
+    [compareWithPriorYear, rollupCoa, journalEntries, priorEndDate]
+  );
+
   const getAccountsByType = useCallback((tree: AccountNode[], type: string) => tree.filter((node) => node.type === type), []);
 
   // Posted journal lines pointing at a GL code that isn't in the current Chart of
@@ -273,6 +316,12 @@ export default function FinancialReportsPage() {
   const equityAccounts = useMemo(() => getAccountsByType(accountTreeCumulative, 'Equity'), [accountTreeCumulative, getAccountsByType]);
   const revenueAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Revenue'), [accountTreePeriod, getAccountsByType]);
   const expenseAccounts = useMemo(() => getAccountsByType(accountTreePeriod, 'Expense'), [accountTreePeriod, getAccountsByType]);
+
+  const assetAccountsPrior = useMemo(() => getAccountsByType(accountTreeCumulativePrior, 'Asset'), [accountTreeCumulativePrior, getAccountsByType]);
+  const liabilityAccountsPrior = useMemo(() => getAccountsByType(accountTreeCumulativePrior, 'Liability'), [accountTreeCumulativePrior, getAccountsByType]);
+  const equityAccountsPrior = useMemo(() => getAccountsByType(accountTreeCumulativePrior, 'Equity'), [accountTreeCumulativePrior, getAccountsByType]);
+  const revenueAccountsPrior = useMemo(() => getAccountsByType(accountTreePeriodPrior, 'Revenue'), [accountTreePeriodPrior, getAccountsByType]);
+  const expenseAccountsPrior = useMemo(() => getAccountsByType(accountTreePeriodPrior, 'Expense'), [accountTreePeriodPrior, getAccountsByType]);
 
   // Income Statement flat list (revenue then expense), same shape/purpose as
   // trialBalanceRows: one source feeds the CSV export and the print preview, so
@@ -334,6 +383,26 @@ export default function FinancialReportsPage() {
       totalLiabAndEquity,
     };
   }, [assetAccounts, liabilityAccounts, equityAccounts, revenueAccounts, expenseAccounts]);
+
+  // Same shape as `totals`, computed from the prior-year trees — feeds the comparison
+  // column's section totals so they're never separately re-derived from the main figures.
+  const totalsPrior = useMemo(() => {
+    const sumBalance = (nodes: AccountNode[]): number => nodes.reduce((s, n) => s + n.balance, 0);
+    const totalAssets = sumBalance(assetAccountsPrior);
+    const totalLiabilities = sumBalance(liabilityAccountsPrior);
+    const totalEquity = totalAssets - totalLiabilities;
+    const totalRevenue = sumBalance(revenueAccountsPrior);
+    const totalExpenses = sumBalance(expenseAccountsPrior);
+    return {
+      totalAssets,
+      totalLiabilities,
+      totalEquity,
+      totalRevenue,
+      totalExpenses,
+      netIncome: totalRevenue - totalExpenses,
+      totalLiabAndEquity: totalLiabilities + totalEquity,
+    };
+  }, [assetAccountsPrior, liabilityAccountsPrior, revenueAccountsPrior, expenseAccountsPrior]);
 
   // Balance Sheet flat list (assets, then liabilities, then equity) — same shape/purpose
   // as trialBalanceRows and incomeStatementRows: one source feeds the CSV export and the
@@ -419,9 +488,19 @@ export default function FinancialReportsPage() {
   );
 
   // ==================== RENDER ACCOUNT ROWS ====================
-  const renderAccountRows = useCallback((nodes: AccountNode[], showDebitCredit = false): JSX.Element[] => {
+  // `priorNodes` is the same-shaped tree for the comparison column (Income Statement / Balance
+  // Sheet only — Trial Balance never passes it). Flattened once into a code lookup up front
+  // rather than re-searched per node, since both trees are built from the same rollupCoa and
+  // every code in `nodes` is either present once in `priorNodes` or didn't exist that year.
+  const renderAccountRows = useCallback((nodes: AccountNode[], showDebitCredit = false, priorNodes?: AccountNode[]): JSX.Element[] => {
     const rows: JSX.Element[] = [];
-    
+
+    const priorByCode = new Map<string, AccountNode>();
+    if (priorNodes) {
+      const flatten = (list: AccountNode[]) => list.forEach((n) => { priorByCode.set(n.code, n); flatten(n.children); });
+      flatten(priorNodes);
+    }
+
     const renderNode = (node: AccountNode, indent: number = 0) => {
       const hasBalance = Math.abs(node.balance) > 0.01;
       const isExpanded = expandedSections.has('all') || expandedSections.has(node.code);
@@ -459,6 +538,8 @@ export default function FinancialReportsPage() {
         </TableCell>
       );
 
+      const priorBalance = priorNodes ? (priorByCode.get(node.code)?.balance ?? 0) : null;
+
       rows.push(
         showDebitCredit ? (
           <TableRow key={node.code} className={`hover:bg-slate-50 ${bgClass}`}>
@@ -475,6 +556,9 @@ export default function FinancialReportsPage() {
             {accountCell}
             <TableCell className={`text-right font-mono text-sm ${node.balance < 0 ? 'text-rose-600' : ''}`}>
               {formatCurrencyWithSign(node.balance)}
+            </TableCell>
+            <TableCell className={`text-right font-mono text-sm text-gray-500 ${!priorNodes ? 'hidden' : ''} ${(priorBalance ?? 0) < 0 ? 'text-rose-500' : ''}`}>
+              {priorNodes ? formatCurrencyWithSign(priorBalance ?? 0) : ''}
             </TableCell>
           </TableRow>
         )
@@ -766,7 +850,9 @@ export default function FinancialReportsPage() {
   }, [closeAsOfDate, journalEntries, rollupCoa, addJournalEntry, addAuditTrail, handleRefresh]);
 
   // ==================== REPORT OPTIONS ====================
-  const ReportOptions = () => (
+  // `showComparisonToggle` is only passed true from Income Statement / Balance Sheet — Trial
+  // Balance has no prior-year column to switch on, so it keeps the default (hidden) toggle.
+  const ReportOptions = ({ showComparisonToggle = false }: { showComparisonToggle?: boolean } = {}) => (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3 py-2 px-3 bg-slate-50 rounded-md border border-slate-100 text-sm">
       <RadioGroup
         orientation="horizontal"
@@ -782,6 +868,14 @@ export default function FinancialReportsPage() {
       <Checkbox size="sm" isSelected={showZeroBalances} onValueChange={setShowZeroBalances} classNames={{ label: 'text-xs text-gray-600' }}>
         Zero balances
       </Checkbox>
+      {showComparisonToggle && (
+        <>
+          <Divider orientation="vertical" className="h-4 hidden sm:block" />
+          <Checkbox size="sm" isSelected={compareWithPriorYear} onValueChange={setCompareWithPriorYear} classNames={{ label: 'text-xs text-gray-600' }}>
+            Compare to prior year
+          </Checkbox>
+        </>
+      )}
       <div className="flex gap-1 ml-auto">
         <Button size="sm" variant="light" onPress={expandAll} className="text-gray-600 min-w-0 px-2 h-7 text-xs">Expand</Button>
         <Button size="sm" variant="light" onPress={collapseAll} className="text-gray-600 min-w-0 px-2 h-7 text-xs">Collapse</Button>
@@ -1128,7 +1222,7 @@ export default function FinancialReportsPage() {
                   </Dropdown>
                 </div>
                 
-                <ReportOptions />
+                <ReportOptions showComparisonToggle />
 
                 <Card className="shadow-none border overflow-hidden">
                   <CardBody className="p-0">
@@ -1139,14 +1233,18 @@ export default function FinancialReportsPage() {
                         <Table removeWrapper aria-label="Revenue" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[420px]" }}>
                           <TableHeader>
                             <TableColumn>Account</TableColumn>
-                            <TableColumn width={150} className="text-right">Amount</TableColumn>
+                            <TableColumn width={150} className="text-right">{compareWithPriorYear ? incomeStatementColumnLabels.current : 'Amount'}</TableColumn>
+                            <TableColumn width={150} className={compareWithPriorYear ? "text-right" : "hidden"}>{incomeStatementColumnLabels.prior}</TableColumn>
                           </TableHeader>
-                          <TableBody emptyContent="No revenue accounts.">{renderAccountRows(revenueAccounts)}</TableBody>
+                          <TableBody emptyContent="No revenue accounts.">{renderAccountRows(revenueAccounts, false, compareWithPriorYear ? revenueAccountsPrior : undefined)}</TableBody>
                         </Table>
                       </div>
                       <div className="bg-slate-100 px-4 py-2 flex justify-between font-semibold border-t">
                         <span>Total Revenue</span>
-                        <span className="font-mono">{formatCurrency(totals.totalRevenue, true)}</span>
+                        <span className="flex gap-6">
+                          <span className="font-mono w-[150px] text-right">{formatCurrency(totals.totalRevenue, true)}</span>
+                          {compareWithPriorYear && <span className="font-mono w-[150px] text-right text-gray-500">{formatCurrency(totalsPrior.totalRevenue, true)}</span>}
+                        </span>
                       </div>
                     </div>
 
@@ -1157,22 +1255,33 @@ export default function FinancialReportsPage() {
                         <Table removeWrapper aria-label="Expenses" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[420px]" }}>
                           <TableHeader>
                             <TableColumn>Account</TableColumn>
-                            <TableColumn width={150} className="text-right">Amount</TableColumn>
+                            <TableColumn width={150} className="text-right">{compareWithPriorYear ? incomeStatementColumnLabels.current : 'Amount'}</TableColumn>
+                            <TableColumn width={150} className={compareWithPriorYear ? "text-right" : "hidden"}>{incomeStatementColumnLabels.prior}</TableColumn>
                           </TableHeader>
-                          <TableBody emptyContent="No expense accounts.">{renderAccountRows(expenseAccounts)}</TableBody>
+                          <TableBody emptyContent="No expense accounts.">{renderAccountRows(expenseAccounts, false, compareWithPriorYear ? expenseAccountsPrior : undefined)}</TableBody>
                         </Table>
                       </div>
                       <div className="bg-slate-100 px-4 py-2 flex justify-between font-semibold border-t">
                         <span>Total Expenses</span>
-                        <span className="font-mono">({formatCurrency(totals.totalExpenses, true)})</span>
+                        <span className="flex gap-6">
+                          <span className="font-mono w-[150px] text-right">({formatCurrency(totals.totalExpenses, true)})</span>
+                          {compareWithPriorYear && <span className="font-mono w-[150px] text-right text-gray-500">({formatCurrency(totalsPrior.totalExpenses, true)})</span>}
+                        </span>
                       </div>
                     </div>
 
                     {/* Net Income */}
                     <div className={`px-4 py-4 flex justify-between font-bold text-lg ${totals.netIncome >= 0 ? 'bg-emerald-50' : 'bg-rose-50'}`}>
                       <span>NET {totals.netIncome >= 0 ? 'PROFIT' : 'LOSS'} FOR THE PERIOD</span>
-                      <span className={`font-mono ${totals.netIncome >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
-                        {totals.netIncome < 0 && '('}{formatCurrency(Math.abs(totals.netIncome), true)}{totals.netIncome < 0 && ')'}
+                      <span className="flex gap-6">
+                        <span className={`font-mono w-[150px] text-right ${totals.netIncome >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                          {totals.netIncome < 0 && '('}{formatCurrency(Math.abs(totals.netIncome), true)}{totals.netIncome < 0 && ')'}
+                        </span>
+                        {compareWithPriorYear && (
+                          <span className={`font-mono w-[150px] text-right text-sm font-normal ${totalsPrior.netIncome >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                            {totalsPrior.netIncome < 0 && '('}{formatCurrency(Math.abs(totalsPrior.netIncome), true)}{totalsPrior.netIncome < 0 && ')'}
+                          </span>
+                        )}
                       </span>
                     </div>
                   </CardBody>
@@ -1199,7 +1308,7 @@ export default function FinancialReportsPage() {
                   </Dropdown>
                 </div>
 
-                <ReportOptions />
+                <ReportOptions showComparisonToggle />
 
                 <div className="flex items-center gap-3 mb-3 -mt-1 text-sm">
                   <span className="text-gray-600 text-xs">Presentation</span>
@@ -1230,9 +1339,10 @@ export default function FinancialReportsPage() {
                         <Table removeWrapper aria-label="Assets" classNames={{ th: "bg-slate-50 text-gray-600", table: "min-w-[320px]" }}>
                           <TableHeader>
                             <TableColumn>Account</TableColumn>
-                            <TableColumn width={120} className="text-right">Amount</TableColumn>
+                            <TableColumn width={120} className="text-right">{compareWithPriorYear ? balanceSheetColumnLabels.current : 'Amount'}</TableColumn>
+                            <TableColumn width={120} className={compareWithPriorYear ? "text-right" : "hidden"}>{balanceSheetColumnLabels.prior}</TableColumn>
                           </TableHeader>
-                          <TableBody emptyContent="No asset accounts.">{renderAccountRows(assetAccounts)}</TableBody>
+                          <TableBody emptyContent="No asset accounts.">{renderAccountRows(assetAccounts, false, compareWithPriorYear ? assetAccountsPrior : undefined)}</TableBody>
                         </Table>
                       </div>
                       {/* mt-auto only does anything in Account Form's flex column (h-full/flex-1
@@ -1241,7 +1351,10 @@ export default function FinancialReportsPage() {
                           point of the T layout. In Report Form these classes are inert. */}
                       <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300 mt-auto">
                         <span>TOTAL ASSETS</span>
-                        <span className="font-mono">{formatCurrencyWithSign(totals.totalAssets, true)}</span>
+                        <span className="flex gap-6">
+                          <span className="font-mono w-[120px] text-right">{formatCurrencyWithSign(totals.totalAssets, true)}</span>
+                          {compareWithPriorYear && <span className="font-mono w-[120px] text-right text-gray-500 font-normal">{formatCurrencyWithSign(totalsPrior.totalAssets, true)}</span>}
+                        </span>
                       </div>
                     </CardBody>
                   </Card>
@@ -1257,14 +1370,18 @@ export default function FinancialReportsPage() {
                           <Table removeWrapper aria-label="Liabilities" classNames={{ th: "bg-white text-gray-500", table: "min-w-[320px]" }}>
                             <TableHeader>
                               <TableColumn>Account</TableColumn>
-                              <TableColumn width={120} className="text-right">Amount</TableColumn>
+                              <TableColumn width={120} className="text-right">{compareWithPriorYear ? balanceSheetColumnLabels.current : 'Amount'}</TableColumn>
+                              <TableColumn width={120} className={compareWithPriorYear ? "text-right" : "hidden"}>{balanceSheetColumnLabels.prior}</TableColumn>
                             </TableHeader>
-                            <TableBody emptyContent="No liabilities.">{renderAccountRows(liabilityAccounts)}</TableBody>
+                            <TableBody emptyContent="No liabilities.">{renderAccountRows(liabilityAccounts, false, compareWithPriorYear ? liabilityAccountsPrior : undefined)}</TableBody>
                           </Table>
                         </div>
                         <div className="bg-slate-100 px-4 py-1 flex justify-between font-semibold text-sm">
                           <span>Total Liabilities</span>
-                          <span className="font-mono">{formatCurrencyWithSign(totals.totalLiabilities, true)}</span>
+                          <span className="flex gap-6">
+                            <span className="font-mono w-[120px] text-right">{formatCurrencyWithSign(totals.totalLiabilities, true)}</span>
+                            {compareWithPriorYear && <span className="font-mono w-[120px] text-right text-gray-500 font-normal">{formatCurrencyWithSign(totalsPrior.totalLiabilities, true)}</span>}
+                          </span>
                         </div>
                       </div>
                       {/* Equity */}
@@ -1274,11 +1391,12 @@ export default function FinancialReportsPage() {
                           <Table removeWrapper aria-label="Equity" classNames={{ th: "bg-white text-gray-500", table: "min-w-[320px]" }}>
                             <TableHeader>
                               <TableColumn>Account</TableColumn>
-                              <TableColumn width={120} className="text-right">Amount</TableColumn>
+                              <TableColumn width={120} className="text-right">{compareWithPriorYear ? balanceSheetColumnLabels.current : 'Amount'}</TableColumn>
+                              <TableColumn width={120} className={compareWithPriorYear ? "text-right" : "hidden"}>{balanceSheetColumnLabels.prior}</TableColumn>
                             </TableHeader>
                             <TableBody>
                               {[
-                                ...renderAccountRows(equityAccounts),
+                                ...renderAccountRows(equityAccounts, false, compareWithPriorYear ? equityAccountsPrior : undefined),
                                 ...(Math.abs(totals.accumulatedUnclosedPlug) >= 0.01
                                   ? [
                                       <TableRow key="accumulated-plug">
@@ -1288,6 +1406,7 @@ export default function FinancialReportsPage() {
                                         <TableCell className="text-right font-mono text-sm">
                                           {formatCurrencyWithSign(totals.accumulatedUnclosedPlug)}
                                         </TableCell>
+                                        <TableCell className={`text-right font-mono text-sm text-gray-400 ${!compareWithPriorYear ? 'hidden' : ''}`}>—</TableCell>
                                       </TableRow>,
                                     ]
                                   : []),
@@ -1302,12 +1421,18 @@ export default function FinancialReportsPage() {
                         </p>
                         <div className="bg-slate-100 px-4 py-1 flex justify-between font-semibold text-sm">
                           <span>Total Equity</span>
-                          <span className="font-mono">{formatCurrencyWithSign(totals.totalEquity, true)}</span>
+                          <span className="flex gap-6">
+                            <span className="font-mono w-[120px] text-right">{formatCurrencyWithSign(totals.totalEquity, true)}</span>
+                            {compareWithPriorYear && <span className="font-mono w-[120px] text-right text-gray-500 font-normal">{formatCurrencyWithSign(totalsPrior.totalEquity, true)}</span>}
+                          </span>
                         </div>
                       </div>
                       <div className="bg-slate-200 px-4 py-2 flex justify-between font-bold border-t-2 border-slate-300 mt-auto">
                         <span>TOTAL LIABILITIES & EQUITY</span>
-                        <span className="font-mono">{formatCurrencyWithSign(totals.totalLiabAndEquity, true)}</span>
+                        <span className="flex gap-6">
+                          <span className="font-mono w-[120px] text-right">{formatCurrencyWithSign(totals.totalLiabAndEquity, true)}</span>
+                          {compareWithPriorYear && <span className="font-mono w-[120px] text-right text-gray-500 font-normal">{formatCurrencyWithSign(totalsPrior.totalLiabAndEquity, true)}</span>}
+                        </span>
                       </div>
                     </CardBody>
                   </Card>
