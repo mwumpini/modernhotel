@@ -13,6 +13,7 @@ import { GHANA_CHART_OF_ACCOUNTS } from '@/app/lib/accounting/models';
 import {
   buildFinancialAccountTree,
   computeCashFlowFromJournals,
+  computeTrialBalanceCheckTotals,
   findUnmappedGlCodes,
   findNonLeafPostings,
   type AccountNode,
@@ -401,28 +402,21 @@ export default function FinancialReportsPage() {
     return flattenTree(accountTreeCumulative);
   }, [accountTreeCumulative, showZeroBalances, expandedSections]);
 
-  // Trial Balance footer totals — summed over LEAF accounts only (accounts with no children).
-  // A parent/header node's debit/credit is already a cumulative roll-up of its descendants
-  // (see financialReportRollup.ts), so summing every row in the displayed tree — which is what
-  // `trialBalanceRows` does for on-screen hierarchy display — would count each real posting
-  // once per ancestor level. Independent of `showZeroBalances`/`expandedSections` so the total
-  // can't shift just because the user expanded or collapsed a section.
-  const trialBalanceTotals = useMemo(() => {
-    let debit = 0;
-    let credit = 0;
-    const walk = (nodes: AccountNode[]) => {
-      for (const node of nodes) {
-        if (node.children.length > 0) {
-          walk(node.children);
-        } else {
-          debit += node.debit > node.credit ? node.debit - node.credit : 0;
-          credit += node.credit > node.debit ? node.credit - node.debit : 0;
-        }
-      }
-    };
-    walk(accountTreeCumulative);
-    return { debit, credit };
-  }, [accountTreeCumulative]);
+  // Trial Balance / Balance Check totals — the raw debit=credit invariant across every posted
+  // entry through the report date, independent of the Chart of Accounts hierarchy. A walk over
+  // the displayed account tree (leaf-only, to avoid double-counting a parent's rolled-up total)
+  // previously backed this figure, but that missed two real cases: a line posted to a GL code
+  // not in the COA at all (see unmappedGlCodes below), and the portion of a header account's
+  // balance posted directly to the header rather than rolled up from a child (see
+  // nonLeafPostings below) — a header's own direct-posting delta isn't exposed separately from
+  // its rolled-up total, so a leaf-only walk silently dropped it. Both blind spots made this
+  // report a false "difference" even when the underlying ledger was perfectly balanced. Any gap
+  // between this total and what the visible Trial Balance rows add up to is exactly what those
+  // two warning cards already explain.
+  const trialBalanceTotals = useMemo(
+    () => computeTrialBalanceCheckTotals(journalEntries, endDate),
+    [journalEntries, endDate]
+  );
 
   // ==================== RENDER ACCOUNT ROWS ====================
   const renderAccountRows = useCallback((nodes: AccountNode[], showDebitCredit = false): JSX.Element[] => {

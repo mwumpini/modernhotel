@@ -260,6 +260,38 @@ export function findNonLeafPostings(allAccounts: RollupCoa[], journalEntries: Jo
     .filter((u) => Math.abs(u.debit) > 0.005 || Math.abs(u.credit) > 0.005);
 }
 
+export type TrialBalanceCheckTotals = { debit: number; credit: number };
+
+/**
+ * Raw debit/credit sum across every posted journal entry line through end date — the
+ * fundamental double-entry invariant (every entry balances, so the ledger-wide sum must too),
+ * checked independently of the Chart of Accounts hierarchy used to build the account tree.
+ *
+ * Deliberately NOT derived from buildFinancialAccountTree()'s output: that tree only walks
+ * accounts that exist in the COA, and its own per-account debit/credit already rolls children
+ * up into parents — so a leaf-only walk over the tree would (a) miss any line posted to a code
+ * that isn't in the COA at all (findUnmappedGlCodes' concern) and (b) miss the portion of a
+ * header account's balance that was posted directly to the header itself rather than rolled up
+ * from a child (findNonLeafPostings' concern), since a header's own direct-posting delta isn't
+ * exposed separately from its rolled-up total. Both blind spots previously made this balance
+ * check report a "difference" even when every individual entry — and the raw ledger — was
+ * perfectly balanced.
+ */
+export function computeTrialBalanceCheckTotals(journalEntries: JournalEntry[], endDate: Date): TrialBalanceCheckTotals {
+  const endTs = dayEnd(endDate).getTime();
+  let debit = 0;
+  let credit = 0;
+  for (const je of journalEntries) {
+    if (je.status !== 'Posted') continue;
+    if (jeTime(je) > endTs) continue;
+    for (const line of je.lines) {
+      debit += line.debit || 0;
+      credit += line.credit || 0;
+    }
+  }
+  return { debit: Math.round(debit * 100) / 100, credit: Math.round(credit * 100) / 100 };
+}
+
 type BuildMode = { kind: 'period'; startDate: Date; endDate: Date } | { kind: 'cumulative'; endDate: Date };
 
 /**
