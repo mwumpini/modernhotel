@@ -40,6 +40,13 @@ export type PivotRow = {
   dividerBefore?: boolean;
 };
 
+export type SummaryChip = {
+  label: string;
+  value: number;
+  /** 'auto' picks success/danger by sign — use for a movement that can go either way (e.g. net gain/loss). */
+  color?: 'success' | 'danger' | 'primary' | 'default' | 'auto';
+};
+
 type Props = {
   title: string;
   reportDate: string;
@@ -51,6 +58,8 @@ type Props = {
   totalKey: string;
   values: Record<string, Record<string, number>>;
   hideZeroColumns?: boolean;
+  /** Optional at-a-glance figures shown as chips next to the report-date chip — e.g. "Additions: ₵500". */
+  summaryChips?: SummaryChip[];
 };
 
 function downloadPivotCsv(
@@ -141,6 +150,7 @@ export default function PpeSummaryPivotTable({
   totalKey,
   values,
   hideZeroColumns = true,
+  summaryChips = [],
 }: Props) {
   const [showAllColumns, setShowAllColumns] = useState(false);
 
@@ -196,6 +206,19 @@ export default function PpeSummaryPivotTable({
               {visibleColumns.length - 1} active groups
             </Chip>
           )}
+          {summaryChips.map((chip) => {
+            const color =
+              chip.color === 'auto'
+                ? chip.value >= 0
+                  ? 'success'
+                  : 'danger'
+                : chip.color ?? 'default';
+            return (
+              <Chip key={chip.label} size="sm" variant="flat" color={color} className="text-xs font-mono">
+                {chip.label}: {fmt(Math.abs(chip.value))}
+              </Chip>
+            );
+          })}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {hideZeroColumns && (

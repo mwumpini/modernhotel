@@ -777,6 +777,10 @@ export default function PpeAssetRegisterPage() {
                   columnLabels={FS_COLUMN_LABELS}
                   totalKey="TOTAL"
                   values={fsPivotValues}
+                  summaryChips={[
+                    { label: 'Additions', value: fsPivotValues.TOTAL?.additions ?? 0, color: 'primary' },
+                    { label: 'Depreciation charge', value: fsPivotValues.TOTAL?.chargeForYear ?? 0, color: 'default' },
+                  ]}
                 />
               </div>
             </Tab>
@@ -793,6 +797,10 @@ export default function PpeAssetRegisterPage() {
                   columnLabels={GRA_COLUMN_LABELS}
                   totalKey="TOTAL"
                   values={graPivotValues}
+                  summaryChips={[
+                    { label: 'Additions', value: graPivotValues.TOTAL?.additions ?? 0, color: 'primary' },
+                    { label: 'Allowance claimed', value: graPivotValues.TOTAL?.caClaimed ?? 0, color: 'default' },
+                  ]}
                 />
               </div>
             </Tab>
