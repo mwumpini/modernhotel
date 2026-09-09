@@ -60,6 +60,8 @@ type Props = {
   hideZeroColumns?: boolean;
   /** Optional at-a-glance figures shown as chips next to the report-date chip — e.g. "Additions: ₵500". */
   summaryChips?: SummaryChip[];
+  /** When provided, renders ◀ ▶ buttons next to the report-date chip to step the report date a year at a time. */
+  onNavigateYear?: (direction: 1 | -1) => void;
 };
 
 function downloadPivotCsv(
@@ -151,6 +153,7 @@ export default function PpeSummaryPivotTable({
   values,
   hideZeroColumns = true,
   summaryChips = [],
+  onNavigateYear,
 }: Props) {
   const [showAllColumns, setShowAllColumns] = useState(false);
 
@@ -198,9 +201,35 @@ export default function PpeSummaryPivotTable({
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200">
         <div className="flex flex-wrap items-center gap-2">
           <h3 className="text-sm font-semibold text-gray-900">{title}</h3>
+          {onNavigateYear && (
+            <Button
+              isIconOnly
+              size="sm"
+              variant="flat"
+              aria-label="Previous year"
+              title="Previous year"
+              className="min-w-6 w-6 h-6"
+              onPress={() => onNavigateYear(-1)}
+            >
+              ◀
+            </Button>
+          )}
           <Chip size="sm" variant="flat" color="default" className="text-xs">
             {reportDate}
           </Chip>
+          {onNavigateYear && (
+            <Button
+              isIconOnly
+              size="sm"
+              variant="flat"
+              aria-label="Next year"
+              title="Next year"
+              className="min-w-6 w-6 h-6"
+              onPress={() => onNavigateYear(1)}
+            >
+              ▶
+            </Button>
+          )}
           {hiddenColumnCount > 0 && !showAllColumns && (
             <Chip size="sm" variant="flat" color="primary" className="text-xs">
               {visibleColumns.length - 1} active groups

@@ -74,6 +74,18 @@ const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
 // Table cells: the ₵ sign is in the column header once, not repeated on every row.
 const fmtNum = (n: number) => (n < 0 ? '-' : '') + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// Shifts only the year of a YYYY-MM-DD report date, keeping month/day — so jumping to a prior
+// year for a rollforward comparison doesn't clobber a specific day the user picked. Falls back
+// a day for Feb 29 landing on a non-leap year.
+function shiftReportDateYear(dateStr: string, delta: number): string {
+  const [y, m, d] = dateStr.split('-').map(Number);
+  if (!y || !m || !d) return dateStr;
+  const targetYear = y + delta;
+  const daysInMonth = new Date(targetYear, m, 0).getDate();
+  const day = Math.min(d, daysInMonth);
+  return `${targetYear}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
 
 const CAP_EXP_OPTIONS: CapExpStatus[] = ['Capitalise', 'Expense', 'Disposed'];
 const GRA_METHOD_OPTIONS: GraMethod[] = ['SL', 'RB'];
@@ -631,15 +643,37 @@ export default function PpeAssetRegisterPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-3">
-          <Input
-            type="date"
-            label="Report date"
-            size="sm"
-            className="w-44"
-            value={reportDate}
-            onValueChange={setReportDate}
-            description={`Year ${reportDateObj.getFullYear()} — drives all tabs`}
-          />
+          <div className="flex items-end gap-1">
+            <Button
+              isIconOnly
+              size="sm"
+              variant="flat"
+              aria-label="Previous year"
+              title="Previous year"
+              onPress={() => setReportDate(shiftReportDateYear(reportDate, -1))}
+            >
+              ◀
+            </Button>
+            <Input
+              type="date"
+              label="Report date"
+              size="sm"
+              className="w-44"
+              value={reportDate}
+              onValueChange={setReportDate}
+              description={`Year ${reportDateObj.getFullYear()} — drives all tabs`}
+            />
+            <Button
+              isIconOnly
+              size="sm"
+              variant="flat"
+              aria-label="Next year"
+              title="Next year"
+              onPress={() => setReportDate(shiftReportDateYear(reportDate, 1))}
+            >
+              ▶
+            </Button>
+          </div>
           <Button color="primary" size="sm" onPress={openAdd}>
             Add asset
           </Button>
@@ -781,6 +815,7 @@ export default function PpeAssetRegisterPage() {
                     { label: 'Additions', value: fsPivotValues.TOTAL?.additions ?? 0, color: 'primary' },
                     { label: 'Depreciation charge', value: fsPivotValues.TOTAL?.chargeForYear ?? 0, color: 'default' },
                   ]}
+                  onNavigateYear={(dir) => setReportDate(shiftReportDateYear(reportDate, dir))}
                 />
               </div>
             </Tab>
@@ -801,6 +836,7 @@ export default function PpeAssetRegisterPage() {
                     { label: 'Additions', value: graPivotValues.TOTAL?.additions ?? 0, color: 'primary' },
                     { label: 'Allowance claimed', value: graPivotValues.TOTAL?.caClaimed ?? 0, color: 'default' },
                   ]}
+                  onNavigateYear={(dir) => setReportDate(shiftReportDateYear(reportDate, dir))}
                 />
               </div>
             </Tab>
@@ -811,9 +847,31 @@ export default function PpeAssetRegisterPage() {
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 px-4 py-3 bg-gradient-to-r from-slate-50 to-white border-b border-slate-200">
                     <div className="flex flex-wrap items-center gap-2">
                       <h3 className="text-sm font-semibold text-gray-900">Disposals</h3>
+                      <Button
+                        isIconOnly
+                        size="sm"
+                        variant="flat"
+                        aria-label="Previous year"
+                        title="Previous year"
+                        className="min-w-6 w-6 h-6"
+                        onPress={() => setReportDate(shiftReportDateYear(reportDate, -1))}
+                      >
+                        ◀
+                      </Button>
                       <Chip size="sm" variant="flat" color="default" className="text-xs">
                         {reportDateObj.getFullYear()}
                       </Chip>
+                      <Button
+                        isIconOnly
+                        size="sm"
+                        variant="flat"
+                        aria-label="Next year"
+                        title="Next year"
+                        className="min-w-6 w-6 h-6"
+                        onPress={() => setReportDate(shiftReportDateYear(reportDate, 1))}
+                      >
+                        ▶
+                      </Button>
                       <Chip size="sm" variant="flat" color="primary" className="text-xs">
                         {disposals.length} {disposals.length === 1 ? 'disposal' : 'disposals'}
                       </Chip>
