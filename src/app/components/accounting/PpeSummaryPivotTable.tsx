@@ -2,12 +2,12 @@
 
 import React, { useMemo, useState, useCallback } from 'react';
 import { Button, Chip, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Checkbox } from '@heroui/react';
-import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { openPrintPreview } from '@/app/lib/accounting/helpers/exportHelpers';
 
-// formatAccountingCurrency always shows a magnitude, so the sign (disposals/negative
-// movements can occur in these pivot columns) is reattached in front of it here.
-const fmt = (n: number) => (n < 0 ? '-' : '') + formatAccountingCurrency(n);
+// Plain number, no currency sign — the section label already carries "(₵)", matching how
+// Asset register / Disposals put the currency mark once in the column header instead of
+// repeating it in every cell.
+const fmt = (n: number) => (n < 0 ? '-' : '') + Math.abs(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 const fmtRaw = (n: number) => n.toFixed(2);
 
@@ -19,10 +19,10 @@ const fmtCell = (n: number) => {
 };
 
 const SECTION_LABELS: Record<string, string> = {
-  cost: 'Cost',
-  dep: 'Depreciation',
-  nbv: 'Net book value',
-  gra: 'Capital allowance',
+  cost: 'Cost (₵)',
+  dep: 'Depreciation (₵)',
+  nbv: 'Net book value (₵)',
+  gra: 'Capital allowance (₵)',
 };
 
 const SECTION_BORDER: Record<string, string> = {
