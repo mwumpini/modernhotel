@@ -13,7 +13,7 @@ const REVENUE_GL_BY_COUNTRY: Record<string, Record<string, string>> = {
   GH: {
     rooms: '4100',
     fb: '4200',
-    conference: '4300',
+    conference: '4320',
     service: '4400',
   },
 };

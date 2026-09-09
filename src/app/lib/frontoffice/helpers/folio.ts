@@ -52,9 +52,9 @@ export function folioChargeGlCode(charge: { description?: string; category?: str
 	// to Room Revenue (4100) instead of Food & Beverage (4200).
 	if (cat === 'f&b' || cat === 'fb' || matchesKeyword(charge.description, FB_KEYWORDS)) return '4200';
 	if (isRoomCharge(charge.description) || cat === 'room') return '4100';
-	if (cat === 'conference' || (charge.description || '').toLowerCase().includes('conference')) return '4300';
+	if (cat === 'conference' || (charge.description || '').toLowerCase().includes('conference')) return '4320';
 	if (matchesKeyword(charge.description, OTHER_SERVICE_KEYWORDS)) return '4400';
-	return '4300';
+	return '4330';
 }
 
 function matchesKeyword(description: string | undefined, keywords: string[]) {

@@ -4,13 +4,13 @@ import { assertPeriodNotClosed } from './periodClose';
 export const BANK_MANUAL_SOURCE = 'bank_manual_transaction';
 export const BANK_MANUAL_REVERSAL_SOURCE = 'bank_manual_reversal';
 
-const GL_OTHER_REVENUE = '4300';
-// '5000' ("Operating Expenses") is the top-level header for the whole Expense
-// type, not a postable leaf — posting here still doesn't land in any specific
-// report line. '5680' ("Miscellaneous Expenses") is the real catch-all leaf
-// for an uncategorized manual bank withdrawal, mirroring GL_OTHER_REVENUE.
+// 4300 ("Other Revenue") is a category header with 4310/4320/4330 as children, not a postable
+// leaf — 4330 (Miscellaneous Revenue) is the real catch-all leaf, mirroring how '5000'
+// ("Operating Expenses") is the top-level Expense header and '5680' ("Miscellaneous Expenses")
+// is the real catch-all leaf for an uncategorized manual bank withdrawal.
+const GL_OTHER_REVENUE = '4330';
 const GL_OPERATING_EXPENSE = '5680';
-const GL_INTEREST_INCOME = '4300';
+const GL_INTEREST_INCOME = '4330';
 const GL_BANK_CHARGES = '5625';
 
 export type ManualBankTransactionInput = {

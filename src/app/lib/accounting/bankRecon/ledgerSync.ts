@@ -10,9 +10,10 @@ import { assertPeriodNotClosed } from '../periodClose';
 import { logAccountingProcessWarn } from '../accountingProcessLog';
 
 // Must match bankTransactionLedger.ts's GL_INTEREST_INCOME — both post the same concept.
-// '4900' doesn't exist in GHANA_CHART_OF_ACCOUNTS (only '4300' Other Revenue does), so any
-// item posted through this path previously credited a phantom account invisible to reports.
-const GL_INTEREST_INCOME = '4300';
+// '4900' doesn't exist in GHANA_CHART_OF_ACCOUNTS. 4330 (Miscellaneous Revenue) is the
+// postable leaf under 4300 (Other Revenue) — 4300 itself is a category header with 4310/4320/
+// 4330 as children, not meant to be posted to directly.
+const GL_INTEREST_INCOME = '4330';
 const GL_BANK_CHARGES = '5625';
 // '1220' (Other Receivables) is used as a holding account for unclassified book-side
 // reconciling adjustments pending investigation — must NOT share a code with a revenue

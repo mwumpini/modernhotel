@@ -162,7 +162,7 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
              { description: 'Catering (50 pax)', quantity: 50, unitPrice: 60.00 },
            ],
            lines: [
-             { id: 'IL-EVT-001', invoiceId: 'INV-EVT-001', description: 'Training Package', quantity: 1, unitPrice: 5000.00, amount: 5000.00, taxAmount: 1050.00, glAccountCode: '4300' }
+             { id: 'IL-EVT-001', invoiceId: 'INV-EVT-001', description: 'Training Package', quantity: 1, unitPrice: 5000.00, amount: 5000.00, taxAmount: 1050.00, glAccountCode: '4320' }
            ]
          } as any,
          
@@ -244,7 +244,7 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
              { description: 'Wedding Catering (200 pax)', quantity: 200, unitPrice: 50.00 },
            ],
            lines: [
-             { id: 'IL-EVT-002', invoiceId: 'INV-EVT-002', description: 'Wedding Package', quantity: 1, unitPrice: 15000.00, amount: 15000.00, taxAmount: 3150.00, glAccountCode: '4300' }
+             { id: 'IL-EVT-002', invoiceId: 'INV-EVT-002', description: 'Wedding Package', quantity: 1, unitPrice: 15000.00, amount: 15000.00, taxAmount: 3150.00, glAccountCode: '4320' }
            ]
          } as any,
          
@@ -328,7 +328,7 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
              { description: 'Catering (80 pax)', quantity: 80, unitPrice: 50.00 },
            ],
            lines: [
-             { id: 'IL-EVT-003', invoiceId: 'INV-EVT-003', description: 'Seminar Package', quantity: 1, unitPrice: 8000.00, amount: 8000.00, taxAmount: 1680.00, glAccountCode: '4300' }
+             { id: 'IL-EVT-003', invoiceId: 'INV-EVT-003', description: 'Seminar Package', quantity: 1, unitPrice: 8000.00, amount: 8000.00, taxAmount: 1680.00, glAccountCode: '4320' }
            ]
          } as any,
          
@@ -410,7 +410,7 @@ export function buildDemoTransactionSeed(): DemoTransactionSeed {
              { description: 'Party Catering (40 pax)', quantity: 40, unitPrice: 50.00 },
            ],
            lines: [
-             { id: 'IL-EVT-004', invoiceId: 'INV-EVT-004', description: 'Birthday Party', quantity: 1, unitPrice: 3500.00, amount: 3500.00, taxAmount: 735.00, glAccountCode: '4300' }
+             { id: 'IL-EVT-004', invoiceId: 'INV-EVT-004', description: 'Birthday Party', quantity: 1, unitPrice: 3500.00, amount: 3500.00, taxAmount: 735.00, glAccountCode: '4320' }
            ]
          } as any,
          

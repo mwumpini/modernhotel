@@ -120,7 +120,7 @@ const defaultItemForm = {
   reference: '',
   transactionDate: '',
   amount: '',
-  offsetGlCode: '4300',
+  offsetGlCode: '4330',
 };
 
 type Props = {

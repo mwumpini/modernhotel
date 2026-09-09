@@ -961,7 +961,7 @@ export default function AccountsReceivable() {
 					unitPrice: subtotal,
 					amount: subtotal,
 					taxAmount: Number(invoiceForm.taxAmount || 0),
-					glAccountCode: '4300',
+					glAccountCode: GL_ACCOUNTS.OTHER_REVENUE,
 				}],
 		};
 		addInvoice(payload as any);
@@ -1614,7 +1614,7 @@ export default function AccountsReceivable() {
 							unitPrice: subtotal,
 							amount: subtotal,
 							taxAmount: Number(inv.taxAmount || 0),
-							glAccountCode: '4300',
+							glAccountCode: GL_ACCOUNTS.OTHER_REVENUE,
 						}],
 					}),
 			});

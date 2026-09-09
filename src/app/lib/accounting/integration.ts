@@ -45,11 +45,13 @@ const GL_ACCOUNTS = {
   // Revenue
   ROOM_REVENUE: '4100',
   FB_REVENUE: '4200',
-  CONFERENCE_REVENUE: '4300',
+  // 4300 is the "Other Revenue" category HEADER (see GHANA_CHART_OF_ACCOUNTS in models.ts) —
+  // its children 4320/4330 are the actual postable leaves. Posting straight to 4300 (its only
+  // child used to be 4310 Gain on Disposal, which doesn't fit conference/misc revenue at all)
+  // is exactly the "category header accounts posted directly" issue Financial Reports flags.
+  CONFERENCE_REVENUE: '4320',
   SERVICE_CHARGES: '4400',
-  // No dedicated GL line exists for spa/misc department revenue — it shares
-  // the chart's one general "Other Revenue" bucket with conference revenue.
-  OTHER_REVENUE: '4300',
+  OTHER_REVENUE: '4330',
   ROUNDING_ADJUSTMENT: '4900',
 };
 
