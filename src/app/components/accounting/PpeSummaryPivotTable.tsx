@@ -260,15 +260,15 @@ export default function PpeSummaryPivotTable({
                 <th
                   key={col}
                   title={columnLabels[col]?.full ?? col}
-                  className={`text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wide border-b border-slate-200 whitespace-nowrap ${
+                  className={`text-right py-3 px-3 font-semibold text-[11px] uppercase tracking-wide border-b border-slate-200 align-top whitespace-nowrap ${
                     col === totalKey
                       ? 'bg-slate-800 text-white sticky right-0 z-20 min-w-[96px]'
-                      : 'bg-slate-100/90 text-slate-600 min-w-[80px]'
+                      : 'bg-slate-100/90 text-slate-600 min-w-[112px]'
                   }`}
                 >
                   <span className="block">{columnLabels[col]?.short ?? col}</span>
                   {col !== totalKey && (
-                    <span className="block font-normal normal-case text-[10px] text-slate-400 mt-0.5 truncate max-w-[88px]">
+                    <span className="block font-normal normal-case text-[10px] text-slate-400 mt-0.5 leading-tight whitespace-normal text-right">
                       {columnLabels[col]?.full ?? col}
                     </span>
                   )}
