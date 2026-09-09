@@ -91,7 +91,7 @@ const defaultForm = {
   disposalProceeds: '',
   disposalProceedsBankAccountId: '',
   postToLedger: true,
-  paymentGlCode: '2200',
+  paymentGlCode: '2205',
   attachments: [] as string[],
 };
 
@@ -222,7 +222,7 @@ export default function PpeAssetRegisterPage() {
       disposalProceeds: asset.disposalProceeds != null ? String(asset.disposalProceeds) : '',
       disposalProceedsBankAccountId: asset.disposalProceedsBankAccountId || activeBankAccounts[0]?.id || '',
       postToLedger: false,
-      paymentGlCode: '2200',
+      paymentGlCode: '2205',
       attachments: asset.attachments || [],
     });
     setAssetCodeTouched(true);
@@ -295,14 +295,14 @@ export default function PpeAssetRegisterPage() {
 
     if (form.capExp === 'Capitalise' && form.postToLedger) {
       const cost = assetTotalCost(created);
-      const isApPayment = form.paymentGlCode === '2200';
+      const isApPayment = form.paymentGlCode === '2205';
       const result = capturePpeCapitalization({
         ppeAssetId: created.id,
         assetCode: created.assetCode,
         name: created.assetName,
         purchaseDate: created.purchaseDate,
         cost,
-        paymentGlCode: isApPayment ? '2200' : undefined,
+        paymentGlCode: isApPayment ? '2205' : undefined,
         paymentBankAccountId: isApPayment ? undefined : form.paymentGlCode,
       });
       if (result) {
@@ -991,7 +991,7 @@ export default function PpeAssetRegisterPage() {
                     description="Which account settles this purchase — posts the withdrawal there too, or leaves it on account payable"
                   >
                     {[
-                      <SelectItem key="2200">📋 On account (2200 — Accounts Payable)</SelectItem>,
+                      <SelectItem key="2205">📋 On account (2205 — Trade Accounts Payable)</SelectItem>,
                       ...activeBankAccounts.map((b) => (
                         <SelectItem key={b.id} textValue={b.accountName}>
                           <BankAccountOptionLabel account={b} />

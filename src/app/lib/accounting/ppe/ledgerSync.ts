@@ -12,10 +12,15 @@ import { logAccountingProcessWarn } from '../accountingProcessLog';
 const GL_COST = '1510';
 const GL_ACCUM_DEP = '1520';
 const GL_DEP_EXP = '5710';
-const GL_AP = '2200';
+// 2200 is the "Accounts Payable" category HEADER (see GHANA_CHART_OF_ACCOUNTS in models.ts) —
+// its only declared children are 2210/2220 (payroll withholdings), not trade payables. 2205 is
+// the actual postable leaf, matching GL_ACCOUNTS.ACCOUNTS_PAYABLE in integration.ts.
+const GL_AP = '2205';
 const GL_GAIN_ON_DISPOSAL = '4310';
 const GL_LOSS_ON_DISPOSAL = '5690';
-const GL_DEFAULT_PROCEEDS = '1100';
+// 1100 is the "Cash and Cash Equivalents" category HEADER — 1110 (Cash in Hand) is the leaf,
+// matching GL_ACCOUNTS.CASH in integration.ts.
+const GL_DEFAULT_PROCEEDS = '1110';
 
 export interface PpeLedgerBalances {
   cost1510: number;
