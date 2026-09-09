@@ -8,7 +8,7 @@
  * so an entry's POST always lands before any status PATCH that follows.
  */
 import { getClientTenantSubdomain } from '../../api/clientTenant';
-import { JournalEntry, Invoice, Payment, ChartOfAccounts, BankAccount } from '../models';
+import { JournalEntry, Invoice, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter } from '../models';
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -269,6 +269,91 @@ export async function fetchBankAccounts(): Promise<BankAccount[] | null> {
     return Array.isArray(data.bankAccounts) ? data.bankAccounts : null;
   } catch (e) {
     console.warn('Accounting: bank account hydration failed', e);
+    return null;
+  }
+}
+
+// --- Cost & revenue centers ---------------------------------------------------
+// Same previously-in-memory-only gap as chart of accounts / bank accounts.
+
+export function persistCostCenter(center: CostCenter) {
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  enqueue(async () => {
+    const res = await fetch('/api/accounting/cost-centers', {
+      method: 'POST',
+      headers: headers(t),
+      body: JSON.stringify(center),
+    });
+    if (!res.ok) throw new Error('POST cost center failed');
+  });
+}
+
+export function persistCostCenterDelete(id: string) {
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  enqueue(async () => {
+    const res = await fetch(`/api/accounting/cost-centers?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: headers(t),
+    });
+    if (!res.ok && res.status !== 404) throw new Error('DELETE cost center failed');
+  });
+}
+
+export async function fetchCostCenters(): Promise<CostCenter[] | null> {
+  const t = getClientTenantSubdomain();
+  if (typeof window === 'undefined' || !t) return null;
+  try {
+    const res = await fetch('/api/accounting/cost-centers', {
+      headers: { 'x-tenant-subdomain': t },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.costCenters) ? data.costCenters : null;
+  } catch (e) {
+    console.warn('Accounting: cost center hydration failed', e);
+    return null;
+  }
+}
+
+export function persistRevenueCenter(center: RevenueCenter) {
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  enqueue(async () => {
+    const res = await fetch('/api/accounting/revenue-centers', {
+      method: 'POST',
+      headers: headers(t),
+      body: JSON.stringify(center),
+    });
+    if (!res.ok) throw new Error('POST revenue center failed');
+  });
+}
+
+export function persistRevenueCenterDelete(id: string) {
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  enqueue(async () => {
+    const res = await fetch(`/api/accounting/revenue-centers?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: headers(t),
+    });
+    if (!res.ok && res.status !== 404) throw new Error('DELETE revenue center failed');
+  });
+}
+
+export async function fetchRevenueCenters(): Promise<RevenueCenter[] | null> {
+  const t = getClientTenantSubdomain();
+  if (typeof window === 'undefined' || !t) return null;
+  try {
+    const res = await fetch('/api/accounting/revenue-centers', {
+      headers: { 'x-tenant-subdomain': t },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.revenueCenters) ? data.revenueCenters : null;
+  } catch (e) {
+    console.warn('Accounting: revenue center hydration failed', e);
     return null;
   }
 }

@@ -445,6 +445,10 @@ export interface CostCenter {
   description?: string;
   type: 'department' | 'operation' | 'project' | 'support';
   department: 'front_office' | 'housekeeping' | 'food_beverage' | 'kitchen' | 'maintenance' | 'sales_marketing' | 'accounting' | 'hr' | 'security' | 'general' | 'other';
+  /** Expense GL account this cost centre rolls up from (mirrors RevenueCenter.glAccountCode).
+   *  Optional — when unset, `actualExpenses` falls back to the legacy manually-recorded
+   *  counter (see recordExpense) instead of a GL rollup. */
+  glAccountCode?: string;
   parentCenter?: string;
   manager?: string;
   budget?: number;

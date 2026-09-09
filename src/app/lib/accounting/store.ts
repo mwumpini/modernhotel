@@ -45,8 +45,9 @@ import {
 import type { CoaAccountType } from './models';
 import { buildChartOfAccountsFromTemplate, resolveAccountingCountryCode, getChartTemplate } from './chartOfAccountsTemplates';
 import { buildOperationalAccountingSeed, EMPTY_TRANSACTION_SEED } from './operationalSeed';
+import { computeCostCenterActual, computeRevenueCenterActual } from './costRevenueRollup';
 import { isAccountingDemoMode } from './tenantAccountingConfig';
-import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts } from './helpers/api';
+import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts, persistCostCenter, persistCostCenterDelete, fetchCostCenters, persistRevenueCenter, persistRevenueCenterDelete, fetchRevenueCenters } from './helpers/api';
 import { useSettingsStore } from '../settings/store';
 import {
   syncInvoiceToLedger,
@@ -2562,81 +2563,111 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // Cost Centers Actions
   setCostCenters: (centers) => set({ costCenters: centers }),
   
-  addCostCenter: (center) => set((state) => {
-    if (state.costCenters.some((c) => c.code.trim().toLowerCase() === center.code.trim().toLowerCase())) {
-      return { error: `Cost centre code "${center.code}" is already in use.` };
+  addCostCenter: (center) => {
+    if (get().costCenters.some((c) => c.code.trim().toLowerCase() === center.code.trim().toLowerCase())) {
+      set({ error: `Cost centre code "${center.code}" is already in use.` });
+      return;
     }
-    return { costCenters: [...state.costCenters, center], error: null };
-  }),
+    set((state) => ({ costCenters: [...state.costCenters, center], error: null }));
+    persistCostCenter(center);
+  },
 
-  updateCostCenter: (id, updates) => set((state) => {
+  updateCostCenter: (id, updates) => {
     if (updates.code) {
-      const clash = state.costCenters.some(
+      const clash = get().costCenters.some(
         (c) => c.id !== id && c.code.trim().toLowerCase() === updates.code!.trim().toLowerCase()
       );
-      if (clash) return { error: `Cost centre code "${updates.code}" is already in use.` };
+      if (clash) {
+        set({ error: `Cost centre code "${updates.code}" is already in use.` });
+        return;
+      }
     }
-    return {
-      costCenters: state.costCenters.map(center =>
-        center.id === id ? { ...center, ...updates } : center
-      ),
-      error: null,
-    };
-  }),
-
-  deleteCostCenter: (id) => set((state) => {
-    const center = state.costCenters.find((c) => c.id === id);
-    if (center && Math.abs(center.actualExpenses || 0) > 0.01) {
+    let merged: CostCenter | undefined;
+    set((state) => {
+      merged = state.costCenters.find((c) => c.id === id);
+      if (merged) merged = { ...merged, ...updates };
       return {
-        error: `Cannot delete "${center.name}": it has ₵${center.actualExpenses.toLocaleString()} of recorded actual expenses. Reassign or clear those first.`,
+        costCenters: state.costCenters.map(center =>
+          center.id === id ? { ...center, ...updates } : center
+        ),
+        error: null,
       };
+    });
+    if (merged) persistCostCenter(merged);
+  },
+
+  deleteCostCenter: (id) => {
+    const state = get();
+    const center = state.costCenters.find((c) => c.id === id);
+    const actual = center ? computeCostCenterActual(center, state.journalEntries) : 0;
+    if (center && Math.abs(actual) > 0.01) {
+      set({ error: `Cannot delete "${center.name}": it has ₵${actual.toLocaleString()} of recorded actual expenses. Reassign or clear those first.` });
+      return;
     }
-    return {
-      costCenters: state.costCenters.filter(center => center.id !== id),
+    set((s) => ({
+      costCenters: s.costCenters.filter(c => c.id !== id),
       error: null,
-    };
-  }),
+    }));
+    persistCostCenterDelete(id);
+  },
 
   // Revenue Centers Actions
   setRevenueCenters: (centers) => set({ revenueCenters: centers }),
 
-  addRevenueCenter: (center) => set((state) => {
-    if (state.revenueCenters.some((c) => c.code.trim().toLowerCase() === center.code.trim().toLowerCase())) {
-      return { error: `Revenue centre code "${center.code}" is already in use.` };
+  addRevenueCenter: (center) => {
+    if (get().revenueCenters.some((c) => c.code.trim().toLowerCase() === center.code.trim().toLowerCase())) {
+      set({ error: `Revenue centre code "${center.code}" is already in use.` });
+      return;
     }
-    return { revenueCenters: [...state.revenueCenters, center], error: null };
-  }),
+    set((state) => ({ revenueCenters: [...state.revenueCenters, center], error: null }));
+    persistRevenueCenter(center);
+  },
 
-  updateRevenueCenter: (id, updates) => set((state) => {
+  updateRevenueCenter: (id, updates) => {
     if (updates.code) {
-      const clash = state.revenueCenters.some(
+      const clash = get().revenueCenters.some(
         (c) => c.id !== id && c.code.trim().toLowerCase() === updates.code!.trim().toLowerCase()
       );
-      if (clash) return { error: `Revenue centre code "${updates.code}" is already in use.` };
+      if (clash) {
+        set({ error: `Revenue centre code "${updates.code}" is already in use.` });
+        return;
+      }
     }
-    return {
-      revenueCenters: state.revenueCenters.map(center =>
-        center.id === id ? { ...center, ...updates } : center
-      ),
-      error: null,
-    };
-  }),
-
-  deleteRevenueCenter: (id) => set((state) => {
-    const center = state.revenueCenters.find((c) => c.id === id);
-    if (center && Math.abs(center.actualRevenue || 0) > 0.01) {
+    let merged: RevenueCenter | undefined;
+    set((state) => {
+      merged = state.revenueCenters.find((c) => c.id === id);
+      if (merged) merged = { ...merged, ...updates };
       return {
-        error: `Cannot delete "${center.name}": it has ₵${center.actualRevenue.toLocaleString()} of recorded actual revenue. Reassign or clear those first.`,
+        revenueCenters: state.revenueCenters.map(center =>
+          center.id === id ? { ...center, ...updates } : center
+        ),
+        error: null,
       };
-    }
-    return {
-      revenueCenters: state.revenueCenters.filter(center => center.id !== id),
-      error: null,
-    };
-  }),
+    });
+    if (merged) persistRevenueCenter(merged);
+  },
 
-  // Helper functions to track costs and revenue with detailed logging
-  recordExpense: (costCenterCode, amount) => set((state) => {
+  deleteRevenueCenter: (id) => {
+    const state = get();
+    const center = state.revenueCenters.find((c) => c.id === id);
+    const actual = center ? computeRevenueCenterActual(center, state.journalEntries) : 0;
+    if (center && Math.abs(actual) > 0.01) {
+      set({ error: `Cannot delete "${center.name}": it has ₵${actual.toLocaleString()} of recorded actual revenue. Reassign or clear those first.` });
+      return;
+    }
+    set((s) => ({
+      revenueCenters: s.revenueCenters.filter(c => c.id !== id),
+      error: null,
+    }));
+    persistRevenueCenterDelete(id);
+  },
+
+  // Helper functions to track costs and revenue with detailed logging.
+  // Only meaningful for centers without a glAccountCode — see computeCostCenterActual/
+  // computeRevenueCenterActual's fallback in costRevenueRollup.ts; a center that has a
+  // glAccountCode gets its actual from the GL rollup instead, so this counter is unused for it.
+  recordExpense: (costCenterCode, amount) => {
+    const state = get();
     const center = state.costCenters.find(cc => cc.code === costCenterCode);
     if (center) {
       const previousAmount = center.actualExpenses || 0;
@@ -2644,7 +2675,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const budget = center.budget || 0;
       const variance = budget - newAmount;
       const utilizationPercent = budget > 0 ? ((newAmount / budget) * 100).toFixed(1) : 'N/A';
-      
+
       console.log(`[Accounting] 📊 Expense Recorded:`, {
         costCenter: `${center.name} (${costCenterCode})`,
         amount: `GHS ${amount.toLocaleString()}`,
@@ -2655,20 +2686,19 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         utilization: `${utilizationPercent}%`,
         timestamp: new Date().toISOString()
       });
-      
-      return {
-        costCenters: state.costCenters.map(cc =>
-          cc.id === center.id
-            ? { ...cc, actualExpenses: newAmount, variance: budget - newAmount, updatedAt: new Date().toISOString() }
-            : cc
-        )
-      };
+
+      const updated = { ...center, actualExpenses: newAmount, variance: budget - newAmount, updatedAt: new Date().toISOString() };
+      set({
+        costCenters: state.costCenters.map(cc => cc.id === center.id ? updated : cc)
+      });
+      persistCostCenter(updated);
+      return;
     }
     console.warn(`[Accounting] ⚠️ Cost center not found: ${costCenterCode}`);
-    return state;
-  }),
+  },
 
-  recordRevenue: (revenueCenterCode, amount) => set((state) => {
+  recordRevenue: (revenueCenterCode, amount) => {
+    const state = get();
     const center = state.revenueCenters.find(rc => rc.code === revenueCenterCode);
     if (center) {
       const previousAmount = center.actualRevenue || 0;
@@ -2676,7 +2706,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const target = center.budget || 0;
       const variance = newAmount - target;
       const achievementPercent = target > 0 ? ((newAmount / target) * 100).toFixed(1) : 'N/A';
-      
+
       console.log(`[Accounting] 💰 Revenue Recorded:`, {
         revenueCenter: `${center.name} (${revenueCenterCode})`,
         amount: `GHS ${amount.toLocaleString()}`,
@@ -2688,17 +2718,15 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         timestamp: new Date().toISOString()
       });
       
-      return {
-        revenueCenters: state.revenueCenters.map(rc =>
-          rc.id === center.id
-            ? { ...rc, actualRevenue: newAmount, variance: newAmount - (rc.budget || 0), updatedAt: new Date().toISOString() }
-            : rc
-        )
-      };
+      const updated = { ...center, actualRevenue: newAmount, variance: newAmount - (center.budget || 0), updatedAt: new Date().toISOString() };
+      set({
+        revenueCenters: state.revenueCenters.map(rc => rc.id === center.id ? updated : rc)
+      });
+      persistRevenueCenter(updated);
+      return;
     }
     console.warn(`[Accounting] ⚠️ Revenue center not found: ${revenueCenterCode}`);
-    return state;
-  }),
+  },
 
   // Projects Actions
   setProjects: (projects) => set({ projects: projects }),
@@ -2955,12 +2983,14 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
       // Hydrate persisted records from the database (server authoritative when tenant is set).
       // Demo transaction seed loads only when NEXT_PUBLIC_DEMO_MODE=true.
-      const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts] = await Promise.all([
+      const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts, serverCostCenters, serverRevenueCenters] = await Promise.all([
         fetchJournalEntries(),
         fetchInvoices(),
         fetchPayments(),
         fetchChartOfAccounts(),
         fetchBankAccounts(),
+        fetchCostCenters(),
+        fetchRevenueCenters(),
       ]);
       // Chart of accounts and bank accounts are only ever edited one action at a time through
       // their own screens (no concurrent-write race like invoices/payments can have), and the
@@ -2975,8 +3005,28 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         const seeded = get().chartOfAccounts;
         if (seeded.length > 0) persistChartOfAccountsBulk(seeded);
       }
+      // Same server-wins-outright-or-seed rule as chart of accounts above. Bulk-persisting
+      // the untouched seed on first-ever load (server empty) matters here specifically: without
+      // it, editing just one seeded row (e.g. one bank account) would persist only that row, and
+      // this same-length-check would then replace the in-memory list with that lone server row,
+      // silently deleting every other still-unpersisted seed row on the next reload.
       if (serverBankAccounts && serverBankAccounts.length > 0) {
         set({ bankAccounts: serverBankAccounts });
+      } else {
+        const seeded = get().bankAccounts;
+        seeded.forEach((a) => persistBankAccount(a));
+      }
+      if (serverCostCenters && serverCostCenters.length > 0) {
+        set({ costCenters: serverCostCenters });
+      } else {
+        const seeded = get().costCenters;
+        seeded.forEach((c) => persistCostCenter(c));
+      }
+      if (serverRevenueCenters && serverRevenueCenters.length > 0) {
+        set({ revenueCenters: serverRevenueCenters });
+      } else {
+        const seeded = get().revenueCenters;
+        seeded.forEach((c) => persistRevenueCenter(c));
       }
       if (serverJEs && serverJEs.length > 0) {
         set((s) => ({ journalEntries: mergeServerRecordsByRecency(s.journalEntries, serverJEs) }));

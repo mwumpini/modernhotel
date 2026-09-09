@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { useAccountingStore } from '../../lib/accounting/store';
 import type { CostCenter, RevenueCenter } from '../../lib/accounting/models';
 import { formatAccountingCurrency } from '../../lib/accounting/tenantAccountingConfig';
+import { computeCostCenterActual, computeRevenueCenterActual } from '../../lib/accounting/costRevenueRollup';
+import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 
 // formatAccountingCurrency always shows a magnitude, so the sign is reattached in front
 // of it here (budget variance can be negative).
@@ -15,6 +17,7 @@ export default function CostRevenueCenters() {
   const {
     costCenters,
     revenueCenters,
+    journalEntries,
     addCostCenter,
     updateCostCenter,
     deleteCostCenter,
@@ -84,6 +87,89 @@ export default function CostRevenueCenters() {
     deleteRevenueCenter(center.id);
   };
 
+  const exportCSV = () => {
+    if (activeTab === 'cost') {
+      downloadCSV(
+        costCenters.map((c) => {
+          const actual = computeCostCenterActual(c, journalEntries);
+          return {
+            code: c.code,
+            name: c.name,
+            department: c.department,
+            budget: (c.budget || 0).toFixed(2),
+            actual: actual.toFixed(2),
+            variance: ((c.budget || 0) - actual).toFixed(2),
+            status: c.isActive ? 'Active' : 'Inactive',
+          };
+        }),
+        'cost_centers',
+        [
+          { key: 'code', label: 'Code' },
+          { key: 'name', label: 'Name' },
+          { key: 'department', label: 'Department' },
+          { key: 'budget', label: 'Budget' },
+          { key: 'actual', label: 'Actual' },
+          { key: 'variance', label: 'Variance' },
+          { key: 'status', label: 'Status' },
+        ]
+      );
+    } else {
+      downloadCSV(
+        revenueCenters.map((c) => {
+          const actual = computeRevenueCenterActual(c, journalEntries);
+          return {
+            code: c.code,
+            name: c.name,
+            department: c.department,
+            budget: (c.budget || 0).toFixed(2),
+            actual: actual.toFixed(2),
+            variance: (actual - (c.budget || 0)).toFixed(2),
+            status: c.isActive ? 'Active' : 'Inactive',
+          };
+        }),
+        'revenue_centers',
+        [
+          { key: 'code', label: 'Code' },
+          { key: 'name', label: 'Name' },
+          { key: 'department', label: 'Department' },
+          { key: 'budget', label: 'Budget' },
+          { key: 'actual', label: 'Actual' },
+          { key: 'variance', label: 'Variance' },
+          { key: 'status', label: 'Status' },
+        ]
+      );
+    }
+  };
+
+  const printPDF = () => {
+    const isCost = activeTab === 'cost';
+    const rows = (isCost ? costCenters : revenueCenters).map((c: any) => {
+      const actual = isCost ? computeCostCenterActual(c, journalEntries) : computeRevenueCenterActual(c, journalEntries);
+      const variance = isCost ? (c.budget || 0) - actual : actual - (c.budget || 0);
+      return `<tr>
+        <td>${c.code}</td>
+        <td>${c.name}</td>
+        <td>${c.department}</td>
+        <td class="amount">${fmt(c.budget || 0)}</td>
+        <td class="amount">${fmt(actual)}</td>
+        <td class="amount">${fmt(variance)}</td>
+        <td>${c.isActive ? 'Active' : 'Inactive'}</td>
+      </tr>`;
+    }).join('');
+    const title = isCost ? 'Cost Centers' : 'Revenue Centers';
+    const html = generatePdfHtml(title, `
+      <div class="header">
+        <h1>${title}</h1>
+        <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
+      </div>
+      <table>
+        <thead><tr><th>Code</th><th>Name</th><th>Department</th><th>Budget</th><th>Actual</th><th>Variance</th><th>Status</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `, title);
+    openPrintPreview(html);
+  };
+
   return (
     <div className="p-6">
       <div className="mb-6">
@@ -123,8 +209,20 @@ export default function CostRevenueCenters() {
         </nav>
       </div>
 
-      {/* Add Button */}
-      <div className="mb-4 flex justify-end">
+      {/* Add / Export Buttons */}
+      <div className="mb-4 flex justify-end gap-2">
+        <button
+          onClick={exportCSV}
+          className="px-3 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+        >
+          CSV
+        </button>
+        <button
+          onClick={printPDF}
+          className="px-3 py-2 text-sm border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+        >
+          📑 PDF
+        </button>
         <button
           onClick={() => {
             setEditingCostCenter(null);
@@ -155,7 +253,8 @@ export default function CostRevenueCenters() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {costCenters.map((center) => {
-                const variance = (center.budget || 0) - center.actualExpenses;
+                const actual = computeCostCenterActual(center, journalEntries);
+                const variance = (center.budget || 0) - actual;
                 const variancePercent = center.budget ? (variance / center.budget * 100).toFixed(1) : '0';
                 return (
                   <tr key={center.id}>
@@ -163,7 +262,7 @@ export default function CostRevenueCenters() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{center.name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{center.department}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.budget || 0)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.actualExpenses)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(actual)}</td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {variance >= 0 ? '+' : ''}{fmt(variance)} ({variancePercent}%)
                     </td>
@@ -215,7 +314,8 @@ export default function CostRevenueCenters() {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {revenueCenters.map((center) => {
-                const variance = center.actualRevenue - (center.budget || 0);
+                const actual = computeRevenueCenterActual(center, journalEntries);
+                const variance = actual - (center.budget || 0);
                 const variancePercent = center.budget ? (variance / center.budget * 100).toFixed(1) : '0';
                 return (
                   <tr key={center.id}>
@@ -223,7 +323,7 @@ export default function CostRevenueCenters() {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{center.name}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{center.department}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.budget || 0)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(center.actualRevenue)}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{fmt(actual)}</td>
                     <td className={`px-6 py-4 whitespace-nowrap text-sm ${variance >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                       {variance >= 0 ? '+' : ''}{fmt(variance)} ({variancePercent}%)
                     </td>
@@ -312,13 +412,14 @@ function CostCenterForm({ center, onSave, onCancel, departments, types }: any) {
     description: center?.description || '',
     type: center?.type || 'department',
     department: center?.department || 'front_office',
+    glAccountCode: center?.glAccountCode || '',
     budget: center?.budget || 0,
     isActive: center?.isActive !== false
   });
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(formData);
+    onSave({ ...formData, glAccountCode: formData.glAccountCode.trim() || undefined });
   };
 
   return (
@@ -369,7 +470,7 @@ function CostCenterForm({ center, onSave, onCancel, departments, types }: any) {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
           <select
@@ -381,6 +482,19 @@ function CostCenterForm({ center, onSave, onCancel, departments, types }: any) {
               <option key={dept} value={dept}>{dept.replace(/_/g, ' ')}</option>
             ))}
           </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            GL Account Code <span className="text-gray-400 font-normal">(optional)</span>
+          </label>
+          <input
+            type="text"
+            value={formData.glAccountCode}
+            onChange={(e) => setFormData({ ...formData, glAccountCode: e.target.value })}
+            placeholder="e.g. 5100"
+            className="w-full px-3 py-2 border border-gray-300 rounded-md"
+          />
+          <p className="mt-1 text-xs text-gray-500">When set, Actual is the live total posted to this GL account instead of a manual figure.</p>
         </div>
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">Budget (GHS)</label>

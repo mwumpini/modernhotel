@@ -68,6 +68,8 @@ model Tenant {
   bankReconciliations    BankReconciliation[]
   reconcilingItems       ReconcilingItem[]
   bankAccounts           BankAccount[]
+  costCenters            CostCenter[]
+  revenueCenters         RevenueCenter[]
   hrEmployees            HrEmployee[]
   hrDepartments          HrDepartment[]
   hrPositions            HrPosition[]
@@ -734,6 +736,54 @@ model BankAccount {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@map("bank_accounts")
+}
+
+model CostCenter {
+  id             String   @id @default(cuid())
+  tenantId       String
+  code           String
+  name           String
+  description    String?
+  type           String
+  department     String
+  /** Expense GL account this cost centre rolls up from — optional; unset means the legacy
+   *  `actualExpenses` counter (recordExpense) is the only source of that figure. */
+  glAccountCode  String?
+  parentCenter   String?
+  manager        String?
+  budget         Float    @default(0)
+  actualExpenses Float    @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@map("cost_centers")
+}
+
+model RevenueCenter {
+  id             String   @id @default(cuid())
+  tenantId       String
+  code           String
+  name           String
+  description    String?
+  type           String
+  department     String
+  glAccountCode  String
+  parentCenter   String?
+  manager        String?
+  budget         Float    @default(0)
+  actualRevenue  Float    @default(0)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@map("revenue_centers")
 }
 
 model Tax {

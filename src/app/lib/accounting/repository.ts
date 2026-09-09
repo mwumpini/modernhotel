@@ -1,5 +1,5 @@
 import { prisma } from '../database/client'
-import { JournalEntry, JournalEntryLine, Invoice, InvoiceLine, Payment, ChartOfAccounts, BankAccount } from './models'
+import { JournalEntry, JournalEntryLine, Invoice, InvoiceLine, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter } from './models'
 import { mapCoaTypeToCategory, mapCoaTypeToRollup } from './coaTree'
 
 const toISO = (v: any): string =>
@@ -771,5 +771,148 @@ export async function deleteBankAccountRow(tenantId: string, id: string) {
   const existing = await prisma.bankAccount.findFirst({ where: { id, tenantId } })
   if (!existing) return false
   await prisma.bankAccount.delete({ where: { id } })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// Cost & revenue centers — same previously-in-memory-only gap as chart of
+// accounts / bank accounts. Unlike chart of accounts there's no pre-existing
+// seed script writing to these tables, so client ids can be trusted directly
+// (no code-based id resolution needed here).
+// ---------------------------------------------------------------------------
+
+function toStoreCostCenter(row: any): CostCenter {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    description: row.description || undefined,
+    type: row.type,
+    department: row.department,
+    glAccountCode: row.glAccountCode || undefined,
+    parentCenter: row.parentCenter || undefined,
+    manager: row.manager || undefined,
+    budget: row.budget ?? 0,
+    actualExpenses: row.actualExpenses ?? 0,
+    isActive: row.isActive,
+    createdAt: toISO(row.createdAt),
+    updatedAt: toISO(row.updatedAt),
+  }
+}
+
+export async function listCostCenters(tenantId: string): Promise<CostCenter[]> {
+  const rows = await prisma.costCenter.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })
+  return rows.map(toStoreCostCenter)
+}
+
+export async function upsertCostCenterRow(tenantId: string, center: {
+  id: string
+  code: string
+  name: string
+  description?: string
+  type: string
+  department: string
+  glAccountCode?: string
+  parentCenter?: string
+  manager?: string
+  budget: number
+  actualExpenses: number
+  isActive: boolean
+}) {
+  const data = {
+    code: center.code,
+    name: center.name,
+    description: center.description,
+    type: center.type,
+    department: center.department,
+    glAccountCode: center.glAccountCode,
+    parentCenter: center.parentCenter,
+    manager: center.manager,
+    budget: center.budget,
+    actualExpenses: center.actualExpenses,
+    isActive: center.isActive,
+  }
+  const existing = await prisma.costCenter.findUnique({ where: { id: center.id } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('Cost centre belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.costCenter.update({ where: { id: center.id }, data })
+    : await prisma.costCenter.create({ data: { id: center.id, tenantId, ...data } })
+  return toStoreCostCenter(row)
+}
+
+export async function deleteCostCenterRow(tenantId: string, id: string) {
+  const existing = await prisma.costCenter.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.costCenter.delete({ where: { id } })
+  return true
+}
+
+function toStoreRevenueCenter(row: any): RevenueCenter {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    description: row.description || undefined,
+    type: row.type,
+    department: row.department,
+    glAccountCode: row.glAccountCode,
+    parentCenter: row.parentCenter || undefined,
+    manager: row.manager || undefined,
+    budget: row.budget ?? 0,
+    actualRevenue: row.actualRevenue ?? 0,
+    isActive: row.isActive,
+    createdAt: toISO(row.createdAt),
+    updatedAt: toISO(row.updatedAt),
+  }
+}
+
+export async function listRevenueCenters(tenantId: string): Promise<RevenueCenter[]> {
+  const rows = await prisma.revenueCenter.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })
+  return rows.map(toStoreRevenueCenter)
+}
+
+export async function upsertRevenueCenterRow(tenantId: string, center: {
+  id: string
+  code: string
+  name: string
+  description?: string
+  type: string
+  department: string
+  glAccountCode: string
+  parentCenter?: string
+  manager?: string
+  budget: number
+  actualRevenue: number
+  isActive: boolean
+}) {
+  const data = {
+    code: center.code,
+    name: center.name,
+    description: center.description,
+    type: center.type,
+    department: center.department,
+    glAccountCode: center.glAccountCode,
+    parentCenter: center.parentCenter,
+    manager: center.manager,
+    budget: center.budget,
+    actualRevenue: center.actualRevenue,
+    isActive: center.isActive,
+  }
+  const existing = await prisma.revenueCenter.findUnique({ where: { id: center.id } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('Revenue centre belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.revenueCenter.update({ where: { id: center.id }, data })
+    : await prisma.revenueCenter.create({ data: { id: center.id, tenantId, ...data } })
+  return toStoreRevenueCenter(row)
+}
+
+export async function deleteRevenueCenterRow(tenantId: string, id: string) {
+  const existing = await prisma.revenueCenter.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.revenueCenter.delete({ where: { id } })
   return true
 }
