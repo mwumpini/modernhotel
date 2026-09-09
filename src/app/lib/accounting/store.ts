@@ -43,10 +43,10 @@ import {
   validateCoaTreeAccount,
 } from './coaTree';
 import type { CoaAccountType } from './models';
-import { buildChartOfAccountsFromTemplate, resolveAccountingCountryCode } from './chartOfAccountsTemplates';
+import { buildChartOfAccountsFromTemplate, resolveAccountingCountryCode, getChartTemplate } from './chartOfAccountsTemplates';
 import { buildOperationalAccountingSeed, EMPTY_TRANSACTION_SEED } from './operationalSeed';
 import { isAccountingDemoMode } from './tenantAccountingConfig';
-import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments } from './helpers/api';
+import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts } from './helpers/api';
 import { useSettingsStore } from '../settings/store';
 import {
   syncInvoiceToLedger,
@@ -387,7 +387,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     return { chartOfAccounts: draft, error: null };
   }),
 
-  addCoaChild: (parentId, params) => set((state) => {
+  addCoaChild: (parentId, params) => {
+    const state = get();
     try {
       const siblings = getCoaSiblings(parentId, state.chartOfAccounts);
       const created = createCoaAccount({
@@ -399,19 +400,25 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         code: params.code,
       });
       const errors = validateCoaTreeAccount(created, [...state.chartOfAccounts, created]);
-      if (errors.length > 0) return { error: errors.join('. ') };
-      return {
+      if (errors.length > 0) {
+        set({ error: errors.join('. ') });
+        return;
+      }
+      set({
         chartOfAccounts: normalizeCoaList([...state.chartOfAccounts, created]),
         error: null,
-      };
+      });
+      const parentCode = parentId ? state.chartOfAccounts.find((a) => a.id === parentId)?.code ?? null : null;
+      persistChartOfAccount(created, parentCode);
     } catch (e) {
-      return { error: e instanceof Error ? e.message : 'Could not add account' };
+      set({ error: e instanceof Error ? e.message : 'Could not add account' });
     }
-  }),
+  },
 
-  updateChartOfAccount: (id, updates) => set((state) => {
+  updateChartOfAccount: (id, updates) => {
+    const state = get();
     const existing = state.chartOfAccounts.find((account) => account.id === id);
-    if (!existing) return state;
+    if (!existing) return;
     const merged: ChartOfAccounts = {
       ...existing,
       ...updates,
@@ -419,30 +426,53 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     };
     const draft = state.chartOfAccounts.map((account) => (account.id === id ? merged : account));
     const errors = validateCoaTreeAccount(merged, draft);
-    if (errors.length > 0) return { error: errors.join('. ') };
-    return { chartOfAccounts: normalizeCoaList(draft), error: null };
-  }),
+    if (errors.length > 0) {
+      set({ error: errors.join('. ') });
+      return;
+    }
+    set({ chartOfAccounts: normalizeCoaList(draft), error: null });
+    const parentCode = merged.parentId ? draft.find((a) => a.id === merged.parentId)?.code ?? null : null;
+    persistChartOfAccount(merged, parentCode);
+  },
 
-  deleteChartOfAccount: (id) => set((state) => {
+  deleteChartOfAccount: (id) => {
+    const state = get();
     const target = state.chartOfAccounts.find((account) => account.id === id);
-    if (!target) return state;
+    if (!target) return;
     const removeIds = new Set([id, ...collectDescendantIds(id, state.chartOfAccounts)]);
     const removeCodes = new Set(
       state.chartOfAccounts.filter((account) => removeIds.has(account.id)).map((account) => account.code),
     );
+
+    // Many modules (PPE capitalization/disposal, Bank Reconciliation, Tax remittance, ...)
+    // hardcode specific GL codes from the seeded chart and assume they always exist —
+    // deleting one before it's ever been posted to would sail through the posted-activity
+    // check below and silently break those postings the first time they run. Only accounts
+    // added on top of the seeded template (this screen's own "+ Add") are deletable.
+    const protectedCodes = new Set(getChartTemplate().rows.map((r) => r.code));
+    const removingProtected = [...removeCodes].some((code) => protectedCodes.has(code));
+    if (removingProtected) {
+      set({
+        error: 'Cannot delete: this is part of the standard chart of accounts that other modules (PPE, Bank Reconciliation, Tax, ...) rely on by code, even before it has any activity. Only accounts you added yourself can be deleted.',
+      });
+      return;
+    }
+
     const hasPostedActivity = state.journalEntries.some(
       (entry) => entry.status === 'Posted' && entry.lines.some((line) => removeCodes.has(line.accountCode)),
     );
     if (hasPostedActivity) {
-      return {
+      set({
         error: 'Cannot delete: this account (or one of its sub-accounts) has posted journal entries. Reassign or void those entries first.',
-      };
+      });
+      return;
     }
-    return {
+    set({
       chartOfAccounts: state.chartOfAccounts.filter((account) => !removeIds.has(account.id)),
       error: null,
-    };
-  }),
+    });
+    removeIds.forEach((removedId) => persistChartOfAccountDelete(removedId));
+  },
   
   setSelectedAccount: (account) => set({ selectedAccount: account }),
 
@@ -683,6 +713,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     set((state) => ({
       bankAccounts: [...state.bankAccounts, normalized],
     }));
+    persistBankAccount(normalized);
     syncBankOpeningBalanceToLedger(normalized, get());
   },
 
@@ -692,19 +723,23 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         account.id === id ? { ...account, ...updates } : account
       ),
     }));
+    const account = get().bankAccounts.find((a) => a.id === id);
+    if (account) persistBankAccount(account);
     if (
       updates.openingBalance !== undefined ||
       updates.glAccountCode !== undefined ||
       updates.openingBalanceType !== undefined
     ) {
-      const account = get().bankAccounts.find((a) => a.id === id);
       if (account) syncBankOpeningBalanceToLedger(account, get());
     }
   },
-  
-  deleteBankAccount: (id) => set((state) => ({
-    bankAccounts: state.bankAccounts.filter(account => account.id !== id)
-  })),
+
+  deleteBankAccount: (id) => {
+    set((state) => ({
+      bankAccounts: state.bankAccounts.filter(account => account.id !== id)
+    }));
+    persistBankAccountDelete(id);
+  },
 
   ensureBankGlAccount: (params) => {
     const state = get();
@@ -2920,11 +2955,29 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
       // Hydrate persisted records from the database (server authoritative when tenant is set).
       // Demo transaction seed loads only when NEXT_PUBLIC_DEMO_MODE=true.
-      const [serverJEs, serverInvoices, serverPayments] = await Promise.all([
+      const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts] = await Promise.all([
         fetchJournalEntries(),
         fetchInvoices(),
         fetchPayments(),
+        fetchChartOfAccounts(),
+        fetchBankAccounts(),
       ]);
+      // Chart of accounts and bank accounts are only ever edited one action at a time through
+      // their own screens (no concurrent-write race like invoices/payments can have), and the
+      // client always re-seeds a fresh in-memory copy with a brand-new `updatedAt` on every
+      // load — a recency merge would let that fresh reseed always "win" over a real rename
+      // sitting on the server. Server wins outright whenever it has anything.
+      if (serverCoa && serverCoa.length > 0) {
+        set({ chartOfAccounts: normalizeCoaList(serverCoa) });
+      } else {
+        // First visit ever (for this tenant): nothing on the server yet — persist the seed
+        // already shown above so it's there next time, and for any other device/tab.
+        const seeded = get().chartOfAccounts;
+        if (seeded.length > 0) persistChartOfAccountsBulk(seeded);
+      }
+      if (serverBankAccounts && serverBankAccounts.length > 0) {
+        set({ bankAccounts: serverBankAccounts });
+      }
       if (serverJEs && serverJEs.length > 0) {
         set((s) => ({ journalEntries: mergeServerRecordsByRecency(s.journalEntries, serverJEs) }));
       }

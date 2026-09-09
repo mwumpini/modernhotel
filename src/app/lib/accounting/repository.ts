@@ -1,5 +1,6 @@
 import { prisma } from '../database/client'
-import { JournalEntry, JournalEntryLine, Invoice, InvoiceLine, Payment } from './models'
+import { JournalEntry, JournalEntryLine, Invoice, InvoiceLine, Payment, ChartOfAccounts, BankAccount } from './models'
+import { mapCoaTypeToCategory, mapCoaTypeToRollup } from './coaTree'
 
 const toISO = (v: any): string =>
   v instanceof Date ? v.toISOString() : (v ?? new Date().toISOString())
@@ -568,5 +569,207 @@ export async function deleteReconcilingItem(tenantId: string, id: string) {
   const existing = await prisma.reconcilingItem.findFirst({ where: { id, tenantId } })
   if (!existing) return false
   await prisma.reconcilingItem.delete({ where: { id } })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// Chart of accounts — was previously in-memory only (rebuilt from the seed on
+// every page load; any account you added, renamed, or deleted was gone on
+// refresh). The `accounts` table already existed but nothing wrote to it.
+// `type` is the coarse 5-value DB enum used by other tables (folio/expense
+// lines); `category` carries the exact client-side CoaAccountType (e.g. "Cost
+// of Sales", "Contra") so it round-trips losslessly instead of collapsing to
+// the coarse type on every reload.
+// ---------------------------------------------------------------------------
+
+function toDbAccountType(type: string): 'ASSET' | 'LIABILITY' | 'EQUITY' | 'REVENUE' | 'EXPENSE' {
+  return mapCoaTypeToRollup(type as any).toUpperCase() as any
+}
+
+function toStoreAccount(row: any): ChartOfAccounts {
+  const fallbackType = row.type.charAt(0) + row.type.slice(1).toLowerCase()
+  const type = (row.category || fallbackType) as ChartOfAccounts['type']
+  return {
+    id: row.id,
+    name: row.name,
+    type,
+    parentId: row.parentId || null,
+    position: row.position ?? 0,
+    code: row.code,
+    level: 1, // recomputed client-side from parentId via syncCoaLegacyFields
+    category: mapCoaTypeToCategory(type),
+    isActive: row.isActive,
+    currency: 'GHS',
+    createdAt: toISO(row.createdAt),
+    updatedAt: toISO(row.updatedAt),
+  }
+}
+
+export async function listChartOfAccounts(tenantId: string): Promise<ChartOfAccounts[]> {
+  const rows = await prisma.account.findMany({ where: { tenantId }, orderBy: { position: 'asc' } })
+  return rows.map(toStoreAccount)
+}
+
+/** `code` (unique per tenant) is the only identifier guaranteed to match between the
+ *  client's copy and the DB row — a code seeded through a different path (e.g. the
+ *  standalone `prisma/seed.ts` script, which assigns its own DB-generated ids) ends up
+ *  with a different `id` than whatever the client currently holds in memory. Every write
+ *  below resolves the row (and any parent reference) by code, never by trusting the
+ *  caller's id to already match a DB row. */
+export async function upsertChartOfAccount(tenantId: string, account: {
+  id: string
+  code: string
+  name: string
+  type: string
+  /** Parent's `code`, not its id — see the note above. Null for a top-level account. */
+  parentCode: string | null
+  position: number
+  isActive: boolean
+}) {
+  const parentRow = account.parentCode
+    ? await prisma.account.findUnique({ where: { tenantId_code: { tenantId, code: account.parentCode } } })
+    : null
+
+  const data = {
+    code: account.code,
+    name: account.name,
+    type: toDbAccountType(account.type),
+    category: account.type,
+    parentId: parentRow?.id ?? null,
+    position: account.position,
+    isActive: account.isActive,
+  }
+  const existing = await prisma.account.findUnique({ where: { tenantId_code: { tenantId, code: account.code } } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('Account belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.account.update({ where: { id: existing.id }, data })
+    : await prisma.account.create({ data: { id: account.id, tenantId, ...data } })
+  return toStoreAccount(row)
+}
+
+/** First-visit seed only: persists the prebuilt chart the client already showed so it's
+ *  there on the next load / another device. Two passes avoid FK ordering issues — parentId
+ *  must reference an existing row, and the seed's flat array order doesn't strictly
+ *  guarantee every parent precedes its children. Parent links are resolved by code after
+ *  the fact (see the function-group comment above for why). */
+export async function bulkUpsertChartOfAccounts(tenantId: string, accounts: ChartOfAccounts[]) {
+  await prisma.$transaction(
+    accounts.map((a) =>
+      prisma.account.upsert({
+        where: { tenantId_code: { tenantId, code: a.code } },
+        update: { name: a.name, type: toDbAccountType(a.type), category: a.type, position: a.position, isActive: a.isActive },
+        create: {
+          tenantId,
+          code: a.code,
+          name: a.name,
+          type: toDbAccountType(a.type),
+          category: a.type,
+          position: a.position,
+          isActive: a.isActive,
+        },
+      })
+    )
+  )
+
+  const rows = await prisma.account.findMany({ where: { tenantId }, select: { id: true, code: true } })
+  const dbIdByCode = new Map(rows.map((r) => [r.code, r.id]))
+  const clientIdToCode = new Map(accounts.map((a) => [a.id, a.code]))
+
+  const parentUpdates = accounts
+    .map((a) => {
+      if (!a.parentId) return null
+      const parentCode = clientIdToCode.get(a.parentId)
+      const parentDbId = parentCode ? dbIdByCode.get(parentCode) : undefined
+      const ownDbId = dbIdByCode.get(a.code)
+      if (!parentDbId || !ownDbId || parentDbId === ownDbId) return null
+      return prisma.account.update({ where: { id: ownDbId }, data: { parentId: parentDbId } })
+    })
+    .filter((op): op is NonNullable<typeof op> => op !== null)
+
+  if (parentUpdates.length) await prisma.$transaction(parentUpdates)
+}
+
+export async function deleteChartOfAccountRow(tenantId: string, id: string) {
+  const existing = await prisma.account.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.account.delete({ where: { id } })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// Bank accounts — same previously-in-memory-only gap as chart of accounts:
+// added/edited/deleted accounts didn't survive a reload.
+// ---------------------------------------------------------------------------
+
+function toStoreBankAccount(row: any): BankAccount {
+  return {
+    id: row.id,
+    accountNumber: row.accountNumber,
+    accountName: row.accountName,
+    bankName: row.bankName,
+    branch: row.branch || undefined,
+    swiftCode: row.swiftCode || undefined,
+    iban: row.iban || undefined,
+    currency: row.currency || 'GHS',
+    glAccountCode: row.glAccountCode,
+    openingBalanceType: (row.openingBalanceType || undefined) as BankAccount['openingBalanceType'],
+    openingBalance: row.openingBalance ?? 0,
+    currentBalance: row.currentBalance ?? 0,
+    isActive: row.isActive,
+    createdAt: toISO(row.createdAt),
+    updatedAt: toISO(row.updatedAt),
+  }
+}
+
+export async function listBankAccounts(tenantId: string): Promise<BankAccount[]> {
+  const rows = await prisma.bankAccount.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })
+  return rows.map(toStoreBankAccount)
+}
+
+export async function upsertBankAccountRow(tenantId: string, account: {
+  id: string
+  accountNumber: string
+  accountName: string
+  bankName: string
+  branch?: string
+  swiftCode?: string
+  iban?: string
+  currency: string
+  glAccountCode: string
+  openingBalanceType?: string
+  openingBalance: number
+  currentBalance: number
+  isActive: boolean
+}) {
+  const data = {
+    accountNumber: account.accountNumber,
+    accountName: account.accountName,
+    bankName: account.bankName,
+    branch: account.branch,
+    swiftCode: account.swiftCode,
+    iban: account.iban,
+    currency: account.currency,
+    glAccountCode: account.glAccountCode,
+    openingBalanceType: account.openingBalanceType,
+    openingBalance: account.openingBalance,
+    currentBalance: account.currentBalance,
+    isActive: account.isActive,
+  }
+  const existing = await prisma.bankAccount.findUnique({ where: { id: account.id } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('Bank account belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.bankAccount.update({ where: { id: account.id }, data })
+    : await prisma.bankAccount.create({ data: { id: account.id, tenantId, ...data } })
+  return toStoreBankAccount(row)
+}
+
+export async function deleteBankAccountRow(tenantId: string, id: string) {
+  const existing = await prisma.bankAccount.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.bankAccount.delete({ where: { id } })
   return true
 }

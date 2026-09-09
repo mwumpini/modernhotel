@@ -67,6 +67,7 @@ model Tenant {
   purchaseOrderItems     PurchaseOrderItem[]
   bankReconciliations    BankReconciliation[]
   reconcilingItems       ReconcilingItem[]
+  bankAccounts           BankAccount[]
   hrEmployees            HrEmployee[]
   hrDepartments          HrDepartment[]
   hrPositions            HrPosition[]
@@ -689,6 +690,12 @@ model Account {
   code      String
   name      String
   type      AccountType
+  /** Full client-side CoaAccountType (e.g. "Cost of Sales", "Operating Expense", "Contra") —
+   *  `type` above is the coarser 5-value rollup used elsewhere; this preserves the exact
+   *  tree-editor type so it round-trips losslessly. Falls back to `type` when unset. */
+  category  String?
+  /** Sibling display order within the same parent. */
+  position  Int         @default(0)
   parentId  String?
   isActive  Boolean     @default(true)
   createdAt DateTime    @default(now())
@@ -703,6 +710,30 @@ model Account {
 
   @@unique([tenantId, code])
   @@map("accounts")
+}
+
+model BankAccount {
+  id                 String   @id @default(cuid())
+  tenantId           String
+  accountNumber      String
+  accountName        String
+  bankName           String
+  branch             String?
+  swiftCode          String?
+  iban               String?
+  currency           String   @default("GHS")
+  glAccountCode      String
+  /** "go_live" posts opening balance to GL (Dr bank / Cr equity); "period" is register/reconciliation only. */
+  openingBalanceType String?
+  openingBalance     Float    @default(0)
+  currentBalance     Float    @default(0)
+  isActive           Boolean  @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("bank_accounts")
 }
 
 model Tax {

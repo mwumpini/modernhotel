@@ -3,6 +3,7 @@
 import React, { useState, useMemo, useCallback } from 'react';
 import {
   Card, CardBody, Input, Select, SelectItem, Button, Spinner, Alert,
+  Dropdown, DropdownTrigger, DropdownMenu, DropdownItem,
 } from '@heroui/react';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { buildCoaTree, subtreeMatchesFilter } from '@/app/lib/accounting/coaTree';
@@ -14,6 +15,7 @@ import {
 } from '@/app/lib/accounting/financialReportRollup';
 import { COA_ACCOUNT_TYPES, type CoaAccountType, type CoaTreeNode } from '@/app/lib/accounting/models';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { downloadCSV, openPrintPreview, generatePdfHtml } from '@/app/lib/accounting/helpers/exportHelpers';
 
 function flattenBalances(nodes: AccountNode[], out = new Map<string, number>()): Map<string, number> {
   for (const n of nodes) {
@@ -129,6 +131,45 @@ function InlineAddForm({
   );
 }
 
+/** Inline rename — name only. Code and type are deliberately not editable here: a code
+ *  change would orphan any journal lines already posted under the old code (they store
+ *  accountCode as a plain string, not a foreign key), and a type change could break the
+ *  parent-rollup assumption that a subtree shares one normal-balance side. */
+function RenameForm({
+  initialName,
+  onCommit,
+  onCancel,
+}: {
+  initialName: string;
+  onCommit: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(initialName);
+
+  const commit = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    onCommit(trimmed);
+  };
+
+  return (
+    <Input
+      autoFocus
+      size="sm"
+      value={name}
+      onChange={(e) => setName(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') commit();
+        if (e.key === 'Escape') onCancel();
+      }}
+      onBlur={commit}
+      classNames={{ input: 'text-[13px]', inputWrapper: 'h-7 min-h-7' }}
+      className="flex-1 min-w-[140px]"
+    />
+  );
+}
+
 function CoaTreeNodeRow({
   node,
   depth,
@@ -136,11 +177,15 @@ function CoaTreeNodeRow({
   typeFilter,
   expandedIds,
   addingAt,
+  editingId,
   onToggle,
   onStartAdd,
   onCommitAdd,
   onCancelAdd,
   onDelete,
+  onStartEdit,
+  onCommitEdit,
+  onCancelEdit,
   balanceByCode,
 }: {
   node: CoaTreeNode;
@@ -149,17 +194,22 @@ function CoaTreeNodeRow({
   typeFilter: string;
   expandedIds: Set<string>;
   addingAt: AddingAt | null;
+  editingId: string | null;
   onToggle: (id: string) => void;
   onStartAdd: (parentId: string, inheritType: CoaAccountType) => void;
   onCommitAdd: (parentId: string | null, name: string, type: CoaAccountType, code?: string) => void;
   onCancelAdd: () => void;
   onDelete: (id: string, name: string) => void;
+  onStartEdit: (id: string) => void;
+  onCommitEdit: (id: string, name: string) => void;
+  onCancelEdit: () => void;
   balanceByCode: Map<string, number>;
 }) {
   if (!subtreeMatchesFilter(node, searchTerm, typeFilter)) return null;
 
   const searching = !!searchTerm.trim() || (typeFilter && typeFilter !== 'all');
   const isAddingHere = addingAt?.parentId === node.id;
+  const isEditingHere = editingId === node.id;
   const hasChildren = node.children.length > 0;
   const isOpen = searching || expandedIds.has(node.id) || isAddingHere;
   const nameClass = depth === 0 ? 'text-sm font-medium' : depth === 1 ? 'text-[13px] font-medium' : 'text-[13px]';
@@ -169,7 +219,7 @@ function CoaTreeNodeRow({
     <div className="mb-0.5">
       <div
         className="group flex items-center gap-2 py-1.5 px-2.5 rounded-md cursor-pointer hover:bg-default-100"
-        onClick={() => onToggle(node.id)}
+        onClick={() => (isEditingHere ? undefined : onToggle(node.id))}
       >
         <span style={{ width: depth * 16 }} className="shrink-0" />
         <span
@@ -179,7 +229,15 @@ function CoaTreeNodeRow({
           ›
         </span>
         <span className="font-mono text-[11px] text-default-400 shrink-0 w-10">{node.code}</span>
-        <span className={`flex-1 min-w-0 truncate text-foreground ${nameClass}`}>{node.name}</span>
+        {isEditingHere ? (
+          <RenameForm
+            initialName={node.name}
+            onCommit={(name) => onCommitEdit(node.id, name)}
+            onCancel={onCancelEdit}
+          />
+        ) : (
+          <span className={`flex-1 min-w-0 truncate text-foreground ${nameClass}`}>{node.name}</span>
+        )}
         <span className="text-[10px] text-default-400 shrink-0 hidden sm:inline">{coaLevelLabel(node.level)}</span>
         <TypePill type={node.type} />
         <span
@@ -190,27 +248,42 @@ function CoaTreeNodeRow({
         >
           {formatCoaBalance(balance, node.currency)}
         </span>
-        <button
-          type="button"
-          className="text-[11px] px-2 py-0.5 rounded-full border border-dashed border-default-400 text-foreground/80 bg-default-100/60 hover:bg-default-200 hover:text-foreground dark:border-default-500 dark:bg-default-100/10 dark:text-default-300 dark:hover:bg-default-100/20 shrink-0"
-          onClick={(e) => {
-            e.stopPropagation();
-            onStartAdd(node.id, node.type);
-          }}
-        >
-          + add child
-        </button>
-        <button
-          type="button"
-          className="opacity-0 group-hover:opacity-100 text-default-400 hover:text-danger text-sm px-1 rounded shrink-0 transition-opacity"
-          title="Delete account and all children"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(node.id, node.name);
-          }}
-        >
-          🗑
-        </button>
+        {!isEditingHere && (
+          <>
+            <button
+              type="button"
+              className="opacity-0 group-hover:opacity-100 text-default-400 hover:text-foreground text-sm px-1 rounded shrink-0 transition-opacity"
+              title="Rename account"
+              onClick={(e) => {
+                e.stopPropagation();
+                onStartEdit(node.id);
+              }}
+            >
+              ✏️
+            </button>
+            <button
+              type="button"
+              className="text-[11px] px-2 py-0.5 rounded-full border border-dashed border-default-400 text-foreground/80 bg-default-100/60 hover:bg-default-200 hover:text-foreground dark:border-default-500 dark:bg-default-100/10 dark:text-default-300 dark:hover:bg-default-100/20 shrink-0"
+              onClick={(e) => {
+                e.stopPropagation();
+                onStartAdd(node.id, node.type);
+              }}
+            >
+              + add child
+            </button>
+            <button
+              type="button"
+              className="opacity-0 group-hover:opacity-100 text-default-400 hover:text-danger text-sm px-1 rounded shrink-0 transition-opacity"
+              title="Delete account and all children"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete(node.id, node.name);
+              }}
+            >
+              🗑
+            </button>
+          </>
+        )}
       </div>
 
       {isOpen && (hasChildren || isAddingHere) && (
@@ -224,11 +297,15 @@ function CoaTreeNodeRow({
               typeFilter={typeFilter}
               expandedIds={expandedIds}
               addingAt={addingAt}
+              editingId={editingId}
               onToggle={onToggle}
               onStartAdd={onStartAdd}
               onCommitAdd={onCommitAdd}
               onCancelAdd={onCancelAdd}
               onDelete={onDelete}
+              onStartEdit={onStartEdit}
+              onCommitEdit={onCommitEdit}
+              onCancelEdit={onCancelEdit}
               balanceByCode={balanceByCode}
             />
           ))}
@@ -253,6 +330,7 @@ export default function ChartOfAccountsPage() {
     isLoading,
     error,
     addCoaChild,
+    updateChartOfAccount,
     deleteChartOfAccount,
   } = useAccountingStore();
 
@@ -261,8 +339,19 @@ export default function ChartOfAccountsPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [addingAt, setAddingAt] = useState<AddingAt | null>(null);
   const [rootAdding, setRootAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const tree = useMemo(() => buildCoaTree(chartOfAccounts), [chartOfAccounts]);
+
+  // Every account id that has at least one child — i.e. every row with an expand arrow.
+  const parentIds = useMemo(
+    () => new Set(chartOfAccounts.filter((a) => a.parentId).map((a) => a.parentId as string)),
+    [chartOfAccounts]
+  );
+  const isDetailedView = parentIds.size > 0 && [...parentIds].every((id) => expandedIds.has(id));
+
+  const showSummaryView = useCallback(() => setExpandedIds(new Set()), []);
+  const showDetailedView = useCallback(() => setExpandedIds(new Set(parentIds)), [parentIds]);
 
   const balanceByCode = useMemo(() => {
     const rollup = toRollupCoa(chartOfAccounts);
@@ -272,6 +361,63 @@ export default function ChartOfAccountsPage() {
     });
     return flattenBalances(accountTree);
   }, [chartOfAccounts, journalEntries]);
+
+  const flatRows = useMemo(() => {
+    const out: { code: string; name: string; type: string; level: number; balance: number }[] = [];
+    const walk = (nodes: CoaTreeNode[]) => {
+      for (const n of nodes) {
+        out.push({ code: n.code, name: n.name, type: n.type, level: n.level, balance: balanceByCode.get(n.code) ?? 0 });
+        walk(n.children);
+      }
+    };
+    walk(tree);
+    return out;
+  }, [tree, balanceByCode]);
+
+  // Export mirrors whatever the tree is currently showing on screen: top-level accounts only
+  // (with their already-rolled-up balances) in Summary view, every level in Detailed view.
+  const exportRows = useMemo(
+    () => (isDetailedView ? flatRows : flatRows.filter((r) => r.level === 1)),
+    [flatRows, isDetailedView]
+  );
+
+  const exportCSV = useCallback(() => {
+    downloadCSV(
+      exportRows.map((r) => ({
+        code: r.code,
+        name: `${'  '.repeat(Math.max(0, r.level - 1))}${r.name}`,
+        type: r.type,
+        balance: r.balance.toFixed(2),
+      })),
+      'chart_of_accounts',
+      [
+        { key: 'code', label: 'Code' },
+        { key: 'name', label: 'Account' },
+        { key: 'type', label: 'Type' },
+        { key: 'balance', label: 'Balance' },
+      ]
+    );
+  }, [exportRows]);
+
+  const printPDF = useCallback(() => {
+    const rows = exportRows.map((r) => `<tr>
+      <td>${r.code}</td>
+      <td style="padding-left:${(r.level - 1) * 16}px">${r.name}</td>
+      <td><span class="badge badge-info">${r.type}</span></td>
+      <td class="amount">${formatCoaBalance(r.balance)}</td>
+    </tr>`).join('');
+    const html = generatePdfHtml('Chart of Accounts', `
+      <div class="header">
+        <h1>📊 Chart of Accounts — ${isDetailedView ? 'Detailed' : 'Summary'}</h1>
+        <div class="subtitle">Generated on ${new Date().toLocaleString()}</div>
+      </div>
+      <table>
+        <thead><tr><th>Code</th><th>Account</th><th>Type</th><th>Balance</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `, 'Chart of Accounts');
+    openPrintPreview(html);
+  }, [exportRows, isDetailedView]);
 
   const coaTypeFilterItems = useMemo(
     () => [
@@ -316,6 +462,22 @@ export default function ChartOfAccountsPage() {
     [deleteChartOfAccount]
   );
 
+  const handleStartEdit = useCallback((id: string) => {
+    setAddingAt(null);
+    setRootAdding(false);
+    setEditingId(id);
+  }, []);
+
+  const handleCommitEdit = useCallback(
+    (id: string, name: string) => {
+      updateChartOfAccount(id, { name });
+      setEditingId(null);
+    },
+    [updateChartOfAccount]
+  );
+
+  const handleCancelEdit = useCallback(() => setEditingId(null), []);
+
   if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -359,16 +521,50 @@ export default function ChartOfAccountsPage() {
               {(item) => <SelectItem key={item.key}>{item.label}</SelectItem>}
             </Select>
           </div>
-          <Button
-            size="sm"
-            variant="bordered"
-            onPress={() => {
-              setAddingAt(null);
-              setRootAdding(true);
-            }}
-          >
-            + Add top-level account
-          </Button>
+          <div className="flex gap-2 items-center flex-wrap">
+            <Button
+              size="sm"
+              variant="bordered"
+              onPress={() => {
+                setAddingAt(null);
+                setRootAdding(true);
+              }}
+            >
+              + Add top-level account
+            </Button>
+            <div className="flex-1" />
+            <div className="inline-flex rounded-md border border-default-200 overflow-hidden" role="group" aria-label="Tree detail level">
+              <button
+                type="button"
+                onClick={showSummaryView}
+                title="Collapse to top-level accounts — click an arrow to expand one at a time"
+                className={`text-xs px-2.5 py-1.5 transition-colors ${
+                  !isDetailedView ? 'bg-primary text-white' : 'bg-content1 text-default-600 hover:bg-default-100'
+                }`}
+              >
+                Summary
+              </button>
+              <button
+                type="button"
+                onClick={showDetailedView}
+                title="Expand every account's sub-accounts at once"
+                className={`text-xs px-2.5 py-1.5 border-l border-default-200 transition-colors ${
+                  isDetailedView ? 'bg-primary text-white' : 'bg-content1 text-default-600 hover:bg-default-100'
+                }`}
+              >
+                Detailed
+              </button>
+            </div>
+            <Dropdown>
+              <DropdownTrigger>
+                <Button size="sm" variant="bordered">📥 Export</Button>
+              </DropdownTrigger>
+              <DropdownMenu>
+                <DropdownItem key="csv" onPress={exportCSV}>CSV spreadsheet</DropdownItem>
+                <DropdownItem key="pdf" onPress={printPDF}>📑 Print PDF</DropdownItem>
+              </DropdownMenu>
+            </Dropdown>
+          </div>
         </CardBody>
       </Card>
 
@@ -400,11 +596,15 @@ export default function ChartOfAccountsPage() {
                   typeFilter={filterType}
                   expandedIds={expandedIds}
                   addingAt={addingAt}
+                  editingId={editingId}
                   onToggle={toggleNode}
                   onStartAdd={handleStartAdd}
                   onCommitAdd={handleCommitAdd}
                   onCancelAdd={() => setAddingAt(null)}
                   onDelete={handleDelete}
+                  onStartEdit={handleStartEdit}
+                  onCommitEdit={handleCommitEdit}
+                  onCancelEdit={handleCancelEdit}
                   balanceByCode={balanceByCode}
                 />
               ))}
