@@ -4,6 +4,8 @@ import React from 'react';
 import { Card, CardHeader, CardBody, Chip, Tooltip } from '@heroui/react';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useTrainingStore } from '@/app/lib/hr/trainingStore';
+import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
+import { computeLaborCompliance } from '@/app/lib/hr/laborCompliance';
 
 type SectionKey = 'tax' | 'training' | 'labor' | 'reports';
 
@@ -13,6 +15,14 @@ export default function ComplianceDashboard({ onSelect }: { onSelect?: (k: Secti
     (s) => s.reports.filter((report) => report.countryCode === s.country).length
   );
   const programs = useTrainingStore((s) => s.programs);
+  const enrollments = useTrainingStore((s) => s.enrollments);
+  const employees = useEmployeeStore((s) => s.employees);
+  // Same computeLaborCompliance() LaborCompliancePanel.tsx uses -- this tile and that panel
+  // must never disagree on the score, so there's exactly one implementation of it.
+  const laborScore = React.useMemo(
+    () => computeLaborCompliance(employees, programs, enrollments).score,
+    [employees, programs, enrollments]
+  );
 
   const go = (k: SectionKey) => onSelect?.(k);
 
@@ -46,7 +56,7 @@ export default function ComplianceDashboard({ onSelect }: { onSelect?: (k: Secti
           <Chip color="success" variant="flat">active</Chip>
         </CardHeader>
         <CardBody>
-          <div className="text-3xl font-semibold">89</div>
+          <div className="text-3xl font-semibold">{laborScore}</div>
           <div className="text-xs text-gray-500">Score</div>
         </CardBody>
       </Card>

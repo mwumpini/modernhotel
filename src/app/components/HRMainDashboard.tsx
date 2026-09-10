@@ -609,13 +609,17 @@ export default function HRMainDashboard() {
                     </CardHeader>
                     <CardBody>
                       <div className="space-y-3">
-                        <Button color="primary" variant="flat" className="w-full">
+                        {/* Performance Reviews is the only real performance screen in HR --
+                            there's no separate goal-setting or reporting UI, so all three
+                            actions open it (goals live on each review record; the review
+                            table itself is the report). */}
+                        <Button color="primary" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('reviews'); }}>
                           📊 New Performance Review
                         </Button>
-                        <Button color="secondary" variant="flat" className="w-full">
+                        <Button color="secondary" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('reviews'); }}>
                           🎯 Set Goals
                         </Button>
-                        <Button color="success" variant="flat" className="w-full">
+                        <Button color="success" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('reviews'); }}>
                           📈 Performance Reports
                         </Button>
                       </div>

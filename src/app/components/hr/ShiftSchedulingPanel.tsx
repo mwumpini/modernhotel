@@ -13,11 +13,24 @@ export default function ShiftSchedulingPanel() {
   const employees = useEmployeeStore((s) => s.employees);
 
   const [form, setForm] = React.useState<any>({ employeeId: employees[0]?.id || '', date: new Date().toISOString().slice(0,10), startTime: '08:00', endTime: '16:00', location: '' });
+  const [editingShiftId, setEditingShiftId] = React.useState<string | null>(null);
+  const [editTimes, setEditTimes] = React.useState<{ startTime: string; endTime: string }>({ startTime: '', endTime: '' });
 
   const create = () => {
     if (!form.employeeId || !form.date || !form.startTime || !form.endTime) return;
     if (form.endTime <= form.startTime) return;
     scheduleShift({ employeeId: form.employeeId, date: form.date, startTime: form.startTime, endTime: form.endTime, location: form.location });
+  };
+
+  const startEdit = (s: any) => {
+    setEditingShiftId(s.id);
+    setEditTimes({ startTime: s.startTime, endTime: s.endTime });
+  };
+
+  const saveEdit = (shiftId: string) => {
+    if (!editTimes.startTime || !editTimes.endTime || editTimes.endTime <= editTimes.startTime) return;
+    updateShift(shiftId, { startTime: editTimes.startTime, endTime: editTimes.endTime });
+    setEditingShiftId(null);
   };
 
   return (
@@ -55,13 +68,30 @@ export default function ShiftSchedulingPanel() {
                   <TableRow key={s.id}>
                     <TableCell>{name}</TableCell>
                     <TableCell>{s.date}</TableCell>
-                    <TableCell>{s.startTime}</TableCell>
-                    <TableCell>{s.endTime}</TableCell>
+                    <TableCell>
+                      {editingShiftId === s.id
+                        ? <Input type="time" size="sm" value={editTimes.startTime} onChange={(e) => setEditTimes({ ...editTimes, startTime: e.target.value })} variant="bordered" />
+                        : s.startTime}
+                    </TableCell>
+                    <TableCell>
+                      {editingShiftId === s.id
+                        ? <Input type="time" size="sm" value={editTimes.endTime} onChange={(e) => setEditTimes({ ...editTimes, endTime: e.target.value })} variant="bordered" />
+                        : s.endTime}
+                    </TableCell>
                     <TableCell>{s.location || '-'}</TableCell>
                     <TableCell>
                       <div className="flex gap-2">
-                        <Button size="sm" variant="flat" onPress={() => updateShift(s.id, { startTime: '09:00' })}>Move</Button>
-                        <Button size="sm" variant="flat" color="danger" onPress={() => deleteShift(s.id)}>Delete</Button>
+                        {editingShiftId === s.id ? (
+                          <>
+                            <Button size="sm" color="primary" variant="flat" onPress={() => saveEdit(s.id)} isDisabled={!editTimes.startTime || !editTimes.endTime || editTimes.endTime <= editTimes.startTime}>Save</Button>
+                            <Button size="sm" variant="flat" onPress={() => setEditingShiftId(null)}>Cancel</Button>
+                          </>
+                        ) : (
+                          <>
+                            <Button size="sm" variant="flat" onPress={() => startEdit(s)}>Move</Button>
+                            <Button size="sm" variant="flat" color="danger" onPress={() => deleteShift(s.id)}>Delete</Button>
+                          </>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

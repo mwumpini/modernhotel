@@ -250,6 +250,7 @@ export default function EmployeeRecordsPanel() {
       notes: e.notes || '',
       documents: (e as any).documents || [],
 			qualifications: (e as any).qualifications || [],
+			qualificationsText: ((e as any).qualifications || []).map((q: any) => q.title).filter(Boolean).join('\n'),
 			otherBenefits: (e as any).otherBenefits || [],
 			vehicleBenefit: (e as any).vehicleBenefit ?? 0,
 			housingBenefit: (e as any).housingBenefit ?? 0,
@@ -325,6 +326,17 @@ export default function EmployeeRecordsPanel() {
     }
     
     console.log('[HR][Records] validation passed, saving employee', { form });
+    // The qualifications free-text box is the only UI for this field; convert non-empty
+    // lines into the structured shape the data model expects. If the box is empty, keep
+    // whatever was already loaded into form.qualifications (untouched on create/edit-open)
+    // so leaving it blank never wipes out existing structured data.
+    const qualificationsTextLines = String((form as any).qualificationsText || '')
+      .split('\n')
+      .map((line: string) => line.trim())
+      .filter(Boolean);
+    const resolvedQualifications = qualificationsTextLines.length > 0
+      ? qualificationsTextLines.map((title: string) => ({ type: 'education' as const, title }))
+      : form.qualifications;
     if (isEditing && editingId) {
       const before = employees.find((x) => x.id === editingId);
       console.log('[HR][Records] updateEmployee', { id: editingId, form });
@@ -388,7 +400,7 @@ export default function EmployeeRecordsPanel() {
         },
         notes: form.notes || undefined,
         documents: form.documents,
-        qualifications: form.qualifications,
+        qualifications: resolvedQualifications,
         photo: form.photo || undefined,
         vehicleBenefit: Number(form.vehicleBenefit || 0),
         housingBenefit: Number(form.housingBenefit || 0),
@@ -467,7 +479,7 @@ export default function EmployeeRecordsPanel() {
         emergencyContact: { name: form.emergencyContact.name, relationship: form.emergencyContact.relationship, phone: form.emergencyContact.phone, email: form.emergencyContact.email || undefined },
         address: { street: form.address.street, city: form.address.city, state: form.address.state, postalCode: form.address.postalCode, country: form.address.country },
         documents: form.documents,
-        qualifications: form.qualifications,
+        qualifications: resolvedQualifications,
         photo: form.photo || undefined,
         vehicleBenefit: Number(form.vehicleBenefit || 0),
         housingBenefit: Number(form.housingBenefit || 0),
@@ -833,21 +845,31 @@ export default function EmployeeRecordsPanel() {
                 
                 // Calculate or fetch deduction amounts
                 const fmtCurrency = (n: number) => new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS', minimumFractionDigits: 2 }).format(n || 0);
-                
-                // Income Tax (PAYE) - numeric amount only
-                const incomeTaxEnrolled = (e as any).payeEnrolled !== false;
-                const incomeTaxAmount = latestPayrollRecord?.deductions?.tax || 0;
-                const incomeTaxDisplayAmount = incomeTaxEnrolled 
-                  ? (incomeTaxAmount > 0 ? incomeTaxAmount : (grossPay * 0.1)) // Default 10% fallback
-                  : 0;
-                
+
                 // Tier 1's base is basic salary only (allowances/bonus/overtime excluded),
                 // so the pre-run estimate uses basicSalary and the live employee rate from
-                // Settings → Tax Rate Builder rather than a hardcoded percentage.
+                // Settings → Tax Rate Builder rather than a hardcoded percentage. Computed
+                // before the income tax estimate below, which needs it (Tier 1 is pre-tax).
                 const ssnitEnrolled = (e as any).ssnitEnrolled === true;
                 const ssnitAmount = latestPayrollRecord?.deductions?.socialSecurity || 0;
                 const ssnitDisplayAmount = ssnitEnrolled
                   ? (ssnitAmount > 0 ? ssnitAmount : (basicSalary * ((tier1Rule?.rate ?? 5.5) / 100)))
+                  : 0;
+
+                // Income tax (PAYE) estimate: same "use the real live rule, not a guessed flat
+                // rate" standard as the SSNIT/Tier2 estimates -- previously a flat 10% of gross
+                // regardless of income level. Runs the same live PAYE rule through the same
+                // compliance engine used everywhere else, on taxable pay net of the pre-tax
+                // Tier 1 contribution.
+                const incomeTaxEnrolled = (e as any).payeEnrolled !== false;
+                const incomeTaxAmount = latestPayrollRecord?.deductions?.tax || 0;
+                const payeTaxableEstimate = Math.max(0, grossPay - ssnitDisplayAmount);
+                const payeEstimate = useComplianceStore
+                  .getState()
+                  .calculateTax(payeTaxableEstimate, 'PAYE', { domain: 'payroll', operation: 'internal' })
+                  .taxes.reduce((s, t) => s + t.amount, 0);
+                const incomeTaxDisplayAmount = incomeTaxEnrolled
+                  ? (incomeTaxAmount > 0 ? incomeTaxAmount : payeEstimate)
                   : 0;
 
                 // Tier 2 is its own separate, fully-employer-funded rule (0% employee rate
