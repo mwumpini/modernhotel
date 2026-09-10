@@ -112,7 +112,7 @@ function printPivotTable(
         .map((col) => {
           const v = values[col]?.[row.key] ?? 0;
           const text = Math.abs(v) < 0.01 ? '—' : fmt(v);
-          return `<td style="text-align:right;font-family:monospace">${text}</td>`;
+          return `<td style="text-align:center;font-family:monospace">${text}</td>`;
         })
         .join('');
       const weight = row.emphasis ? 'font-weight:600;background:#f8fafc' : '';
@@ -127,7 +127,7 @@ function printPivotTable(
   p{font-size:12px;color:#64748b;margin:0 0 16px}
   table{width:100%;border-collapse:collapse;font-size:12px}
   th,td{border:1px solid #e2e8f0;padding:6px 8px}
-  th{background:#1e293b;color:#fff;text-align:right}
+  th{background:#1e293b;color:#fff;text-align:center}
   th:first-child{text-align:left}
 </style></head><body>
 <h1>${title}</h1>
@@ -350,7 +350,7 @@ export default function PpeSummaryPivotTable({
                     return (
                       <td
                         key={col}
-                        className={`text-right py-2.5 px-3 font-mono text-xs tabular-nums ${
+                        className={`text-center py-2.5 px-3 font-mono text-xs tabular-nums ${
                           isTotal
                             ? `sticky right-0 z-10 border-l border-slate-200 ${rowBg} group-hover:bg-blue-50/40 transition-colors ${
                                 row.emphasis ? 'font-bold text-gray-900' : 'font-semibold text-gray-800'
