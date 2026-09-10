@@ -448,6 +448,122 @@ function payslipLogoRightBlocks(): BlockConfig[] {
   ];
 }
 
+/** Payee / line items / totals / approval-chain signatures / notes — the part
+ *  every Payment Voucher layout shares, only ever differing in how the header
+ *  above it is arranged. `order` is the starting order for this block run. */
+function paymentVoucherApprovalTail(order: number, opts?: { signatureDisplay?: 'box' | 'line'; showAmountInWords?: boolean; extra?: BlockConfig[] }): BlockConfig[] {
+  const extra = opts?.extra || [];
+  return [
+    block({ id: 'guest-details', type: 'guest-details', order, heading: 'Payee' }),
+    ...extra,
+    // Payment Vouchers render as a Debit/Credit table, which only the combined
+    // totals-summary block knows how to detect and switch to — see its
+    // `debitCreditLines` branch in blockRenderer.ts.
+    block({ id: 'line-items-table', type: 'line-items-table', order: order + 1 + extra.length }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: order + 2 + extra.length, showAmountInWords: opts?.showAmountInWords }),
+    block({
+      id: 'signature-block', type: 'signature-block', order: order + 3 + extra.length, signatureDisplay: opts?.signatureDisplay,
+      signatures: [
+        { label: 'Prepared By' }, { label: 'Approved By' }, { label: 'Recorded By' }, { label: 'Received By', role: 'Payee' },
+      ],
+    }),
+    block({ id: 'notes-text', type: 'notes-text', order: order + 4 + extra.length }),
+  ];
+}
+
+function paymentVoucherStandardBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0 }),
+    block({ id: 'company-address', type: 'company-address', order: 1 }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2 }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3 }),
+    block({ id: 'doc-number', type: 'doc-number', order: 4 }),
+    block({ id: 'doc-date', type: 'doc-date', order: 5 }),
+    ...paymentVoucherApprovalTail(6),
+  ];
+}
+
+/**
+ * Lean, ink-saving voucher — no boxes, small type, doc number/date sharing a
+ * row, plain-line approval signatures instead of boxed ones.
+ */
+function paymentVoucherCompactBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, style: { bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, dividerBelow: true, spacing: 'none' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 2, spacing: 'small', style: { fontSize: 'sm' } }),
+    block({ id: 'doc-number', type: 'doc-number', order: 3, columnSpan: 'half' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 4, columnSpan: 'half' }),
+    ...paymentVoucherApprovalTail(5, { signatureDisplay: 'line' }),
+  ];
+}
+
+/**
+ * Classic corporate letterhead — logo left, company info stacked beside it
+ * (same header row invoices' Checkout Bill / payslip's Letterhead reuse),
+ * doc number/date sharing a row underneath.
+ */
+function paymentVoucherLetterheadBlocks(): BlockConfig[] {
+  return [
+    letterheadHeaderRow(0),
+    block({ id: 'doc-title', type: 'doc-title', order: 1, align: 'center', spacing: 'medium' }),
+    block({
+      id: 'meta-row', type: 'container', order: 2, direction: 'row', gap: 'medium',
+      children: [
+        block({ id: 'doc-number', type: 'doc-number', order: 0, flexWeight: 1 }),
+        block({ id: 'doc-date', type: 'doc-date', order: 1, flexWeight: 1, align: 'right' }),
+      ],
+    }),
+    ...paymentVoucherApprovalTail(3),
+  ];
+}
+
+/**
+ * Formal, document-style voucher — centered header, underlined title, a
+ * thick-bordered Payee card — reads like a signed formal authorization
+ * letter rather than a quick internal form.
+ */
+function paymentVoucherFormalBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', dividerBelow: true, spacing: 'small' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', underline: true, spacing: 'medium' }),
+    block({ id: 'doc-number', type: 'doc-number', order: 4, align: 'center' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 5, align: 'center' }),
+    block({ id: 'guest-details', type: 'guest-details', order: 6, heading: 'Payee', border: 'thick' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 7 }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 8, showAmountInWords: true }),
+    block({
+      id: 'signature-block', type: 'signature-block', order: 9,
+      signatures: [
+        { label: 'Prepared By' }, { label: 'Approved By' }, { label: 'Recorded By' }, { label: 'Received By', role: 'Payee' },
+      ],
+    }),
+    block({ id: 'notes-text', type: 'notes-text', order: 10 }),
+  ];
+}
+
+/**
+ * Logo + watermark like Premium, plus a "Pay From" bank-details block naming
+ * the account the payment is drawn from — for hotels that pay vendors by
+ * bank/mobile-money transfer and want that reference on the voucher itself.
+ */
+function paymentVoucherBankTransferBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'logo', type: 'logo', order: 0 }),
+    block({ id: 'company-name', type: 'company-name', order: 1 }),
+    block({ id: 'company-address', type: 'company-address', order: 2 }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3 }),
+    block({ id: 'doc-number', type: 'doc-number', order: 4 }),
+    block({ id: 'doc-date', type: 'doc-date', order: 5 }),
+    ...paymentVoucherApprovalTail(6, {
+      showAmountInWords: true,
+      extra: [block({ id: 'bank-details', type: 'bank-details', order: 7, heading: 'Pay From (Bank Account)' })],
+    }),
+  ];
+}
+
 function template(id: string, docType: PrintType, name: string, blocks: BlockConfig[], styleOverrides?: Partial<TemplateStyle>): BlockTemplate {
   return {
     id,
@@ -533,27 +649,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     ]), { showWatermark: true, watermarkText: 'RECEIPT' }),
   ],
   'payment-voucher': [
-    template('builtin-payment-voucher-standard', 'payment-voucher', 'Standard', [
-      block({ id: 'company-name', type: 'company-name', order: 0 }),
-      block({ id: 'company-address', type: 'company-address', order: 1 }),
-      block({ id: 'company-contact', type: 'company-contact', order: 2 }),
-      block({ id: 'doc-title', type: 'doc-title', order: 3 }),
-      block({ id: 'doc-number', type: 'doc-number', order: 4 }),
-      block({ id: 'doc-date', type: 'doc-date', order: 5 }),
-      block({ id: 'guest-details', type: 'guest-details', order: 6, heading: 'Payee' }),
-      block({ id: 'line-items-table', type: 'line-items-table', order: 7 }),
-      // Payment Vouchers render as a Debit/Credit table, which only the combined
-      // totals-summary block knows how to detect and switch to — see its
-      // `debitCreditLines` branch in blockRenderer.ts.
-      block({ id: 'totals-summary', type: 'totals-summary', order: 8 }),
-      block({
-        id: 'signature-block', type: 'signature-block', order: 9,
-        signatures: [
-          { label: 'Prepared By' }, { label: 'Approved By' }, { label: 'Recorded By' }, { label: 'Received By', role: 'Payee' },
-        ],
-      }),
-      block({ id: 'notes-text', type: 'notes-text', order: 10 }),
-    ]),
+    template('builtin-payment-voucher-standard', 'payment-voucher', 'Standard', paymentVoucherStandardBlocks()),
     template('builtin-payment-voucher-premium', 'payment-voucher', 'Premium', [
       block({ id: 'logo', type: 'logo', order: 0 }),
       block({ id: 'company-name', type: 'company-name', order: 1 }),
@@ -573,6 +669,12 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
       }),
       block({ id: 'notes-text', type: 'notes-text', order: 11 }),
     ], { showWatermark: true, watermarkText: 'PAYMENT VOUCHER' }),
+    template('builtin-payment-voucher-compact', 'payment-voucher', 'Compact (lean, ink-saving)', paymentVoucherCompactBlocks(), { bodyFontSize: 'sm', pageMargin: 'compact' }),
+    template('builtin-payment-voucher-letterhead', 'payment-voucher', 'Letterhead (logo-left header)', paymentVoucherLetterheadBlocks()),
+    template('builtin-payment-voucher-formal', 'payment-voucher', 'Formal (serif, itemized)', paymentVoucherFormalBlocks(), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-payment-voucher-bank-transfer', 'payment-voucher', 'Bank Transfer (pay-from account)', paymentVoucherBankTransferBlocks(), { showWatermark: true, watermarkText: 'PAYMENT VOUCHER' }),
+    template('builtin-payment-voucher-ghana-colors', 'payment-voucher', 'Ghana Colors', paymentVoucherStandardBlocks(), { primaryColor: '#006B3F', borderColor: '#CE1126' }),
+    template('builtin-payment-voucher-register', 'payment-voucher', 'Register (monospace)', paymentVoucherStandardBlocks(), { fontFamily: 'mono', borderWidth: 'thick' }),
   ],
   'registration-card': [
     template('builtin-registration-card-standard', 'registration-card', 'Standard', registrationCardBlocks()),
