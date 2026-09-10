@@ -367,13 +367,22 @@ export default function BlockEditor({ template, onChange }: BlockEditorProps) {
                   </select>
                 </div>
               </div>
-              <div>
-                <label className="text-xs text-gray-600">Page Margin</label>
-                <select className="mt-1 w-full border rounded-md p-2 text-sm" value={template.style.pageMargin} onChange={(e) => updateStyle({ pageMargin: e.target.value as TemplateStyle['pageMargin'] })}>
-                  <option value="compact">Compact</option>
-                  <option value="normal">Normal</option>
-                  <option value="spacious">Spacious</option>
-                </select>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs text-gray-600">Page Margin</label>
+                  <select className="mt-1 w-full border rounded-md p-2 text-sm" value={template.style.pageMargin} onChange={(e) => updateStyle({ pageMargin: e.target.value as TemplateStyle['pageMargin'] })}>
+                    <option value="compact">Compact</option>
+                    <option value="normal">Normal</option>
+                    <option value="spacious">Spacious</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-gray-600">Page Width</label>
+                  <select className="mt-1 w-full border rounded-md p-2 text-sm" value={template.style.pageWidth || 'full'} onChange={(e) => updateStyle({ pageWidth: e.target.value as TemplateStyle['pageWidth'] })}>
+                    <option value="full">Full (normal page)</option>
+                    <option value="narrow">Narrow (80mm receipt printer)</option>
+                  </select>
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-gray-700">Watermark</span>
@@ -740,6 +749,21 @@ function BlockSettings({ block, onChange, hasLegacyHeaderBlock, parentDirection 
                   <span className="text-sm text-gray-700">Bold</span>
                   <Switch isSelected={!!block.style?.bold} onValueChange={(v) => onChange({ style: { ...block.style, bold: v } })} />
                 </div>
+                <div className="flex items-center justify-between pb-2">
+                  <span className="text-sm text-gray-700">Background Color</span>
+                  <div className="flex items-center gap-1">
+                    {block.background && (
+                      <button className="text-xs text-red-500" onClick={() => onChange({ background: undefined, backgroundTextColor: undefined })}>Clear</button>
+                    )}
+                    <input type="color" className="w-9 h-9 border rounded-md" value={block.background || '#ffffff'} onChange={(e) => onChange({ background: e.target.value })} />
+                  </div>
+                </div>
+                {block.background && (
+                  <div>
+                    <label className="text-xs text-gray-600">Text Color (on background)</label>
+                    <input type="color" className="mt-1 w-full h-9 border rounded-md" value={block.backgroundTextColor || '#ffffff'} onChange={(e) => onChange({ backgroundTextColor: e.target.value })} />
+                  </div>
+                )}
               </div>
             );
           })()}

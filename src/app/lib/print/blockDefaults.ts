@@ -564,6 +564,226 @@ function paymentVoucherBankTransferBlocks(): BlockConfig[] {
   ];
 }
 
+/**
+ * A dark colored banner behind the logo/company name (using the new
+ * block-level `background` — see blocks.ts) instead of a plain header row,
+ * doc-title/number/date underneath on the normal page background so its own
+ * brand-colored text never fights the banner's contrast. A modern, SaaS-
+ * invoice-style look distinct from every bordered/letterhead variant above.
+ */
+function modernBannerBlocks(recipientHeading: string): BlockConfig[] {
+  return [
+    block({
+      id: 'banner', type: 'container', order: 0, direction: 'row', gap: 'medium', spacing: 'none',
+      background: '#0F172A', backgroundTextColor: '#ffffff',
+      children: [
+        block({ id: 'logo', type: 'logo', order: 0, flexWeight: 0 }),
+        block({ id: 'company-name', type: 'company-name', order: 1, flexWeight: 1, style: { fontSize: 'lg', bold: true } }),
+      ],
+    }),
+    block({ id: 'company-address', type: 'company-address', order: 1, spacing: 'small' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2 }),
+    block({
+      id: 'title-row', type: 'container', order: 3, direction: 'row', gap: 'medium', spacing: 'medium',
+      children: [
+        block({ id: 'doc-title', type: 'doc-title', order: 0, flexWeight: 1 }),
+        block({
+          id: 'meta-col', type: 'container', order: 1, direction: 'column', gap: 'none', flexWeight: 1,
+          children: [
+            block({ id: 'doc-number', type: 'doc-number', order: 0, align: 'right' }),
+            block({ id: 'doc-date', type: 'doc-date', order: 1, align: 'right' }),
+          ],
+        }),
+      ],
+    }),
+    block({ id: 'guest-details', type: 'guest-details', order: 4, heading: recipientHeading }),
+    block({ id: 'stay-details', type: 'stay-details', order: 5 }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6, columns: ['qty', 'unit', 'unitPrice', 'date'] }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 7, showAmountInWords: true }),
+    block({ id: 'notes-text', type: 'notes-text', order: 8 }),
+  ];
+}
+
+/**
+ * Consolidated account-statement look — centered letterhead, itemized dotted-
+ * leader list instead of a bordered grid, compact 3-line tax summary. For
+ * billing a corporate client one running account rather than a single stay.
+ */
+function statementBlocks(recipientHeading: string): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', dividerBelow: true, spacing: 'small' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', spacing: 'medium' }),
+    block({
+      id: 'meta-row', type: 'container', order: 4, direction: 'row', gap: 'medium',
+      children: [
+        block({ id: 'doc-number', type: 'doc-number', order: 0, flexWeight: 1 }),
+        block({ id: 'doc-date', type: 'doc-date', order: 1, flexWeight: 1, align: 'right' }),
+      ],
+    }),
+    block({ id: 'guest-details', type: 'guest-details', order: 5, heading: recipientHeading, border: 'none' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6, lineItemsDisplay: 'list' }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 7, totalsDisplay: 'compact-taxes', showAmountInWords: true }),
+    block({ id: 'notes-text', type: 'notes-text', order: 8 }),
+  ];
+}
+
+/**
+ * GRA-facing tax invoice — centered underlined "TAX INVOICE" title, a thick-
+ * bordered Client card and thick-bordered tax breakdown so the statutory
+ * numbers (TIN, VAT/NHIL/GETFund) read as the document's real focus.
+ */
+function taxInvoiceBlocks(recipientHeading: string): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', dividerBelow: true, spacing: 'small' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', underline: true, spacing: 'medium' }),
+    block({
+      id: 'meta-row', type: 'container', order: 4, direction: 'row', gap: 'medium',
+      children: [
+        block({ id: 'doc-number', type: 'doc-number', order: 0, flexWeight: 1, docNumberLabel: 'Invoice No.' }),
+        block({ id: 'doc-date', type: 'doc-date', order: 1, flexWeight: 1, align: 'right' }),
+      ],
+    }),
+    block({ id: 'guest-details', type: 'guest-details', order: 5, heading: recipientHeading, border: 'thick' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6, columns: ['qty', 'unit', 'unitPrice', 'date'] }),
+    block({ id: 'totals-subtotal', type: 'totals-subtotal', order: 7 }),
+    block({ id: 'totals-taxes', type: 'totals-taxes', order: 8, border: 'thick' }),
+    block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 9, showAmountInWords: true }),
+    block({ id: 'totals-payments', type: 'totals-payments', order: 10 }),
+    block({ id: 'totals-balance', type: 'totals-balance', order: 11 }),
+    block({ id: 'notes-text', type: 'notes-text', order: 12 }),
+  ];
+}
+
+/**
+ * 80mm thermal/POS-printer format (see TemplateStyle.pageWidth) — narrow,
+ * monospace, minimal, no logo — matches a front-desk receipt printer instead
+ * of a full A4 page.
+ */
+function thermalReceiptBlocks(recipientHeading: string): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', style: { fontSize: 'sm' } }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', style: { fontSize: 'sm' }, dividerBelow: true }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', spacing: 'small' }),
+    block({ id: 'doc-number', type: 'doc-number', order: 4, align: 'center' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 5, align: 'center', dividerBelow: true, spacing: 'small' }),
+    block({ id: 'guest-details', type: 'guest-details', order: 6, heading: recipientHeading, border: 'none' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 7, lineItemsDisplay: 'simple' }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 8, totalsDisplay: 'compact-taxes' }),
+    block({ id: 'notes-text', type: 'notes-text', order: 9, align: 'center' }),
+  ];
+}
+
+/**
+ * Warm sign-off receipt — green accent, a big faint "PAID" watermark instead
+ * of the document-type text, and a personal thank-you line. For the guest's
+ * last touchpoint at checkout rather than a plain accounting record.
+ */
+function thankYouReceiptBlocks(recipientHeading: string): BlockConfig[] {
+  return [
+    block({ id: 'logo', type: 'logo', order: 0, align: 'center' }),
+    block({ id: 'company-name', type: 'company-name', order: 1, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 2, align: 'center' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', spacing: 'medium' }),
+    block({ id: 'doc-number', type: 'doc-number', order: 4, align: 'center' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 5, align: 'center' }),
+    block({ id: 'guest-details', type: 'guest-details', order: 6, heading: recipientHeading }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 7 }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 8, showAmountInWords: true }),
+    block({
+      id: 'thank-you-note', type: 'custom-text', order: 9, align: 'center', spacing: 'medium', style: { bold: true },
+      text: 'Thank you for staying with us — we hope to welcome you again soon!',
+    }),
+    block({ id: 'notes-text', type: 'notes-text', order: 10, align: 'center' }),
+  ];
+}
+
+/**
+ * Formal receipt for a guest who needs it for their own company's expense
+ * report — serif type, thick borders, TIN/contact prominent.
+ */
+function corporateReceiptBlocks(recipientHeading: string): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', dividerBelow: true, spacing: 'small' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', underline: true, spacing: 'medium' }),
+    block({
+      id: 'meta-row', type: 'container', order: 4, direction: 'row', gap: 'medium',
+      children: [
+        block({ id: 'doc-number', type: 'doc-number', order: 0, flexWeight: 1 }),
+        block({ id: 'doc-date', type: 'doc-date', order: 1, flexWeight: 1, align: 'right' }),
+      ],
+    }),
+    block({ id: 'guest-details', type: 'guest-details', order: 5, heading: recipientHeading, border: 'thick' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6 }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 7, showAmountInWords: true }),
+    block({ id: 'notes-text', type: 'notes-text', order: 8 }),
+  ];
+}
+
+/**
+ * Sales-oriented quotation — the same dark banner header as Modern Banner,
+ * plus a highlighted "offer" callout box (background color on a plain text
+ * block) stressing the quote's validity window, styled to read as a pitch
+ * rather than an accounting document.
+ */
+function salesQuoteBlocks(recipientHeading: string, signatures: Array<{ label: string; role?: string }>): BlockConfig[] {
+  return [
+    block({
+      id: 'banner', type: 'container', order: 0, direction: 'row', gap: 'medium', spacing: 'none',
+      background: '#0F172A', backgroundTextColor: '#ffffff',
+      children: [
+        block({ id: 'logo', type: 'logo', order: 0, flexWeight: 0 }),
+        block({ id: 'company-name', type: 'company-name', order: 1, flexWeight: 1, style: { fontSize: 'lg', bold: true } }),
+      ],
+    }),
+    block({ id: 'company-address', type: 'company-address', order: 1, spacing: 'small' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 2, spacing: 'medium', style: { fontSize: 'lg' } }),
+    block({ id: 'doc-number', type: 'doc-number', order: 3, columnSpan: 'half' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 4, columnSpan: 'half' }),
+    block({ id: 'guest-details', type: 'guest-details', order: 5, heading: recipientHeading }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6, columns: ['qty', 'unit', 'unitPrice', 'date'] }),
+    block({
+      id: 'validity-callout', type: 'custom-text', order: 7, align: 'center', spacing: 'medium', style: { bold: true },
+      background: '#FFF3B0',
+      text: 'This quotation is valid for 14 days from the date above. Contact us to confirm your booking.',
+    }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 8, showAmountInWords: true }),
+    block({ id: 'signature-block', type: 'signature-block', order: 9, signatures }),
+    block({ id: 'notes-text', type: 'notes-text', order: 10 }),
+  ];
+}
+
+/**
+ * Formal request-for-quote response — centered underlined title, thick-
+ * bordered Client card, serif type (paired with the styleOverrides below).
+ */
+function corporateRfqBlocks(recipientHeading: string, signatures: Array<{ label: string; role?: string }>): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', dividerBelow: true, spacing: 'small' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', underline: true, spacing: 'medium' }),
+    block({
+      id: 'meta-row', type: 'container', order: 4, direction: 'row', gap: 'medium',
+      children: [
+        block({ id: 'doc-number', type: 'doc-number', order: 0, flexWeight: 1, docNumberLabel: 'Quote No.' }),
+        block({ id: 'doc-date', type: 'doc-date', order: 1, flexWeight: 1, align: 'right' }),
+      ],
+    }),
+    block({ id: 'guest-details', type: 'guest-details', order: 5, heading: recipientHeading, border: 'thick' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6, columns: ['qty', 'unit', 'unitPrice', 'date'] }),
+    block({ id: 'totals-summary', type: 'totals-summary', order: 7, showAmountInWords: true }),
+    block({ id: 'signature-block', type: 'signature-block', order: 8, signatures }),
+    block({ id: 'notes-text', type: 'notes-text', order: 9 }),
+  ];
+}
+
 function template(id: string, docType: PrintType, name: string, blocks: BlockConfig[], styleOverrides?: Partial<TemplateStyle>): BlockTemplate {
   return {
     id,
@@ -584,6 +804,9 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'INVOICE' }),
     template('builtin-invoice-checkout-bill', 'invoice', 'Checkout Bill', checkoutBillBlocks()),
+    template('builtin-invoice-modern-banner', 'invoice', 'Modern Banner', modernBannerBlocks('Guest / Client')),
+    template('builtin-invoice-statement', 'invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
+    template('builtin-invoice-tax-invoice', 'invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   receipt: [
     template('builtin-receipt-standard', 'receipt', 'Standard', standardBlocks('Guest / Client')),
@@ -591,12 +814,24 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'RECEIPT' }),
     template('builtin-receipt-checkout-bill', 'receipt', 'Checkout Bill', checkoutBillBlocks()),
+    template('builtin-receipt-thermal', 'receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest / Client'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
+    template('builtin-receipt-thank-you', 'receipt', 'Thank You', thankYouReceiptBlocks('Guest / Client'), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
+    template('builtin-receipt-corporate', 'receipt', 'Corporate (for expense reports)', corporateReceiptBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   proforma: [
     template('builtin-proforma-standard', 'proforma', 'Standard', standardBlocks('Client')),
     template('builtin-proforma-premium', 'proforma', 'Premium', premiumBlocks('Client', [
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ]), { showWatermark: true, watermarkText: 'PROFORMA' }),
+    template('builtin-proforma-itemized-letter', 'proforma', 'Itemized List (Letter Style)', itemizedLetterBlocks([
+      { label: 'Prepared By' }, { label: 'Client Acceptance' },
+    ])),
+    template('builtin-proforma-sales-quote', 'proforma', 'Sales Quote', salesQuoteBlocks('Client', [
+      { label: 'Prepared By' }, { label: 'Client Acceptance' },
+    ])),
+    template('builtin-proforma-corporate-rfq', 'proforma', 'Corporate RFQ Response', corporateRfqBlocks('Client', [
+      { label: 'Prepared By' }, { label: 'Client Acceptance' },
+    ]), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   // Events & Conferences — Accommodation leg. Kept as its own document type
   // (rather than the generic invoice/receipt/proforma above) so editing this

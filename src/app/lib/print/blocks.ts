@@ -115,6 +115,11 @@ export interface BlockConfig {
    *  'thin'/'thick' draws one. recipient-info/bank-details use this for their own
    *  built-in box instead (see wrapBlock in blockRenderer.ts). */
   border?: 'none' | 'thin' | 'thick';
+  /** Solid background color band behind this block, e.g. a colored header
+   *  banner — any valid CSS color. Paired with `backgroundTextColor` for
+   *  contrast (falls back to the template's normal text color otherwise). */
+  background?: string;
+  backgroundTextColor?: string;
   /** Underline this block's content — the "format a single line" control, independent of border. */
   underline?: boolean;
   /** Draw a horizontal rule below this block — e.g. separating a header group
@@ -155,6 +160,9 @@ export interface TemplateStyle {
   borderWidth: 'thin' | 'thick';
   showWatermark?: boolean;
   watermarkText?: string;
+  /** 'full' (default, unset) — normal full-width printable page. 'narrow' —
+   *  a slim, centered column matching an 80mm thermal/POS receipt printer. */
+  pageWidth?: 'full' | 'narrow';
 }
 
 export interface BlockTemplate {

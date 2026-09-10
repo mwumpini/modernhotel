@@ -74,23 +74,24 @@ function headerFlexDirection(pos: TemplateStyle['logoPosition']): string {
 
 function styleBlock(style: TemplateStyle): string {
   const bw = borderWidthPx(style.borderWidth);
+  const narrow = style.pageWidth === 'narrow';
   return `
   <style>
     :root { --fg:${style.textColor}; --muted:#555; --border:${style.borderColor}; --brand:${style.primaryColor}; --bw:${bw}; }
     * { box-sizing:border-box; }
-    body { font-family: ${fontStack(style.fontFamily)}; font-size:${bodyFontSizePx(style.bodyFontSize)}; color:var(--fg); margin:0; padding:${marginPx(style.pageMargin)}; }
+    body { font-family: ${fontStack(style.fontFamily)}; font-size:${bodyFontSizePx(style.bodyFontSize)}; color:var(--fg); margin:0; padding:${marginPx(style.pageMargin)}; ${narrow ? 'max-width:320px; margin-left:auto; margin-right:auto;' : ''} }
     h1,h2,h3,h4 { margin:0; }
-    .header { display:flex; flex-direction:${headerFlexDirection(style.logoPosition)}; align-items:center; ${style.logoPosition === 'center' ? 'text-align:center;' : ''} gap:16px; border-bottom:calc(var(--bw) + 1px) solid var(--brand); padding-bottom:12px; }
+    .header { display:flex; flex-direction:${narrow ? 'column' : headerFlexDirection(style.logoPosition)}; align-items:center; ${style.logoPosition === 'center' || narrow ? 'text-align:center;' : ''} gap:16px; border-bottom:calc(var(--bw) + 1px) solid var(--brand); padding-bottom:12px; }
     .logo { width:${logoSizePx(style.logoSize)}; height:${logoSizePx(style.logoSize)}; object-fit:contain; }
-    .meta { ${style.logoPosition === 'center' ? '' : 'margin-left:auto;'} text-align:right; font-size:0.9em; color:var(--muted); }
+    .meta { ${style.logoPosition === 'center' || narrow ? '' : 'margin-left:auto;'} text-align:${narrow ? 'center' : 'right'}; font-size:0.9em; color:var(--muted); }
     .doc-title { margin:12px 0 8px; font-size:1.55em; font-weight:700; color:var(--brand); }
-    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+    .grid { display:grid; grid-template-columns: ${narrow ? '1fr' : '1fr 1fr'}; gap:12px; }
     .box { border:var(--bw) solid var(--border); padding:8px; border-radius:6px; }
-    table { width:100%; border-collapse:collapse; margin-top:12px; }
-    th, td { border:var(--bw) solid var(--border); padding:8px; }
+    table { width:100%; border-collapse:collapse; margin-top:12px; ${narrow ? 'font-size:0.9em;' : ''} }
+    th, td { border:var(--bw) solid var(--border); padding:${narrow ? '4px' : '8px'}; }
     th { background:#f7f7f7; text-align:left; }
     .right { text-align:right; }
-    .totals { width:50%; margin-left:auto; }
+    .totals { width:${narrow ? '100%' : '50%'}; margin-left:auto; }
     .totals td { border:none; }
     .totals .label { color:var(--muted); }
     .totals .value { text-align:right; font-weight:600; }
@@ -98,7 +99,7 @@ function styleBlock(style: TemplateStyle): string {
     .footer { margin-top:16px; font-size:0.85em; color:var(--muted); }
     .badge { padding:2px 6px; border:var(--bw) solid var(--border); border-radius:4px; font-size:0.85em; }
     .watermark { position:fixed; inset:0; pointer-events:none; opacity:.05; font-size:96px; font-weight:800; display:flex; align-items:center; justify-content:center; color:var(--brand); }
-    .signatures { display:flex; flex-wrap:wrap; gap:24px; margin-top:24px; }
+    .signatures { display:flex; flex-wrap:${narrow ? 'nowrap' : 'wrap'}; flex-direction:${narrow ? 'column' : 'row'}; gap:24px; margin-top:24px; }
     .sigbox { flex:1; min-width:140px; border-top:var(--bw) solid var(--border); padding-top:6px; text-align:center; }
     .custom-text { margin:12px 0; }
     .avoid-break { page-break-inside:avoid; break-inside:avoid; }
@@ -763,6 +764,10 @@ function wrapBlock(html: string, block: BlockConfig): string {
     styles.push(`border:${bw} solid var(--border)`, 'padding:8px', 'border-radius:6px');
   }
   if (block.dividerBelow) styles.push('border-bottom:1px solid var(--border)', 'padding-bottom:12px');
+  if (block.background) {
+    styles.push(`background:${block.background}`, 'padding:16px', 'border-radius:6px');
+    if (block.backgroundTextColor) styles.push(`color:${block.backgroundTextColor}`);
+  }
   const mt = gapPx(block.spacing);
   if (mt !== undefined) styles.push(`margin-top:${mt}`);
   const ml = gapPx(block.indent);
