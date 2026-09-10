@@ -792,8 +792,11 @@ export default function FinancialReportsPage() {
     const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const body = socie.rows
       .map(
+        // Opening and closing balances are both totals (a point-in-time equity figure), not
+        // movement lines — match the on-screen table, which styles both the same way rather
+        // than only the closing row.
         (r) =>
-          `<tr class="${r.key === 'close' ? 'total-row' : ''}"><td>${esc(r.label)}</td><td class="text-right font-mono">${formatCurrency(r.shareCapital)}</td><td class="text-right font-mono">${formatCurrencyWithSign(r.retainedAndOther)}</td><td class="text-right font-mono">${formatCurrencyWithSign(r.total)}</td></tr>`
+          `<tr class="${r.key === 'open' || r.key === 'close' ? 'total-row' : ''}"><td>${esc(r.label)}</td><td class="text-right font-mono">${formatCurrency(r.shareCapital)}</td><td class="text-right font-mono">${formatCurrencyWithSign(r.retainedAndOther)}</td><td class="text-right font-mono">${formatCurrencyWithSign(r.total)}</td></tr>`
       )
       .join('');
     const content = `
