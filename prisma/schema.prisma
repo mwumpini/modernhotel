@@ -71,6 +71,8 @@ model Tenant {
   grnItems               GRNItem[]
   qualityChecks          QualityCheck[]
   qualityCheckItems      QualityCheckItem[]
+  supplierInvoices       SupplierInvoice[]
+  supplierInvoiceItems   SupplierInvoiceItem[]
   inventoryAlertAcks     InventoryAlertAcknowledgment[]
   complianceReports      ComplianceReport[]
   complianceTaxRules     ComplianceTaxRule[]
@@ -1522,6 +1524,72 @@ model QualityCheckItem {
 
   @@index([tenantId, checkId])
   @@map("quality_check_items")
+}
+
+model SupplierInvoice {
+  id               String    @id @default(cuid())
+  tenantId         String
+  invoiceNumber    String
+  supplierId       String
+  supplierName     String
+  poId             String
+  poNumber         String
+  grnId            String?
+  grnNumber        String?
+  invoiceDate      DateTime  @default(now())
+  dueDate          DateTime
+  subtotal         Decimal   @default(0)
+  taxAmount        Decimal   @default(0)
+  shippingAmount   Decimal   @default(0)
+  discountAmount   Decimal   @default(0)
+  totalAmount      Decimal   @default(0)
+  currency         String    @default("GHS")
+  status           String    @default("pending") // pending|matched|approved|rejected|paid|cancelled
+  // {isQuantityMatched, isPriceMatched, isTermsMatched, discrepancies[], matchedBy?, matchedAt?}
+  // -- see performThreeWayMatch in supplierStore.ts. A JSON blob (like ComplianceTaxRule.data
+  // elsewhere) rather than normalized columns since it's a single optional nested record.
+  matchingStatus   Json?
+  approvedBy       String?
+  approvedAt       DateTime?
+  rejectedBy       String?
+  rejectedAt       DateTime?
+  rejectionReason  String?
+  paidBy           String?
+  paidAt           DateTime?
+  paymentMethod    String?
+  paymentReference String?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  SupplierInvoiceItem[]
+
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId, poId])
+  @@index([tenantId, status])
+  @@map("supplier_invoices")
+}
+
+model SupplierInvoiceItem {
+  id         String  @id @default(cuid())
+  tenantId   String
+  invoiceId  String
+  poItemId   String
+  grnItemId  String?
+  itemId     String
+  itemCode   String
+  itemName   String
+  quantity   Decimal
+  unitPrice  Decimal
+  totalPrice Decimal
+  notes      String?
+
+  tenant  Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  invoice SupplierInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, invoiceId])
+  @@map("supplier_invoice_items")
 }
 
 // Deterministic alertId (e.g. "low_<itemId>") lets an acknowledgment survive alerts

@@ -399,6 +399,106 @@ function mapApiQualityCheckToStore(raw: any): QualityCheck {
   };
 }
 
+function syncSupplierInvoiceToApi(invoice: SupplierInvoice) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/inventory/supplier-invoices', {
+    method: 'PUT',
+    headers: poTenantHeaders(),
+    body: JSON.stringify({
+      id: invoice.id,
+      invoiceNumber: invoice.invoiceNumber,
+      supplierId: invoice.supplierId,
+      supplierName: invoice.supplierName,
+      poId: invoice.poId,
+      poNumber: invoice.poNumber,
+      grnId: invoice.grnId,
+      grnNumber: invoice.grnNumber,
+      invoiceDate: invoice.invoiceDate,
+      dueDate: invoice.dueDate,
+      subtotal: invoice.subtotal,
+      taxAmount: invoice.taxAmount,
+      shippingAmount: invoice.shippingAmount,
+      discountAmount: invoice.discountAmount,
+      totalAmount: invoice.totalAmount,
+      currency: invoice.currency,
+      status: invoice.status,
+      matchingStatus: invoice.matchingStatus,
+      approvedBy: invoice.approvedBy,
+      approvedAt: invoice.approvedAt,
+      rejectedBy: invoice.rejectedBy,
+      rejectedAt: invoice.rejectedAt,
+      rejectionReason: invoice.rejectionReason,
+      paidBy: invoice.paidBy,
+      paidAt: invoice.paidAt,
+      paymentMethod: invoice.paymentMethod,
+      paymentReference: invoice.paymentReference,
+      notes: invoice.notes,
+      items: invoice.items.map((i) => ({
+        poItemId: i.poItemId,
+        grnItemId: i.grnItemId,
+        itemId: i.itemId,
+        itemCode: i.itemCode,
+        itemName: i.itemName,
+        quantity: i.quantity,
+        unitPrice: i.unitPrice,
+        notes: i.notes,
+      })),
+    }),
+  }).catch((e) => console.warn('[Inventory] Failed to sync supplier invoice to server:', e));
+}
+
+function mapApiSupplierInvoiceToStore(raw: any): SupplierInvoice {
+  return {
+    id: raw.id,
+    invoiceNumber: raw.invoiceNumber,
+    supplierId: raw.supplierId,
+    supplierName: raw.supplierName,
+    poId: raw.poId,
+    poNumber: raw.poNumber,
+    grnId: raw.grnId ?? undefined,
+    grnNumber: raw.grnNumber ?? undefined,
+    invoiceDate: new Date(raw.invoiceDate),
+    dueDate: new Date(raw.dueDate),
+    items: (raw.items || []).map((i: any) => ({
+      id: i.id,
+      poItemId: i.poItemId,
+      grnItemId: i.grnItemId ?? undefined,
+      itemId: i.itemId,
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      quantity: Number(i.quantity),
+      unitPrice: Number(i.unitPrice),
+      totalPrice: Number(i.totalPrice),
+      notes: i.notes ?? undefined,
+    })),
+    subtotal: Number(raw.subtotal),
+    taxAmount: Number(raw.taxAmount),
+    shippingAmount: Number(raw.shippingAmount),
+    discountAmount: Number(raw.discountAmount),
+    totalAmount: Number(raw.totalAmount),
+    currency: raw.currency,
+    status: raw.status,
+    matchingStatus: raw.matchingStatus || {
+      isQuantityMatched: false,
+      isPriceMatched: false,
+      isTermsMatched: false,
+      discrepancies: [],
+    },
+    approvedBy: raw.approvedBy ?? undefined,
+    approvedAt: raw.approvedAt ? new Date(raw.approvedAt) : undefined,
+    rejectedBy: raw.rejectedBy ?? undefined,
+    rejectedAt: raw.rejectedAt ? new Date(raw.rejectedAt) : undefined,
+    rejectionReason: raw.rejectionReason ?? undefined,
+    paidBy: raw.paidBy ?? undefined,
+    paidAt: raw.paidAt ? new Date(raw.paidAt) : undefined,
+    paymentMethod: raw.paymentMethod ?? undefined,
+    paymentReference: raw.paymentReference ?? undefined,
+    notes: raw.notes ?? undefined,
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
 interface SupplierStore {
   suppliers: Supplier[];
   purchaseOrders: PurchaseOrder[];
@@ -508,6 +608,7 @@ interface SupplierStore {
   generateNextInvoiceNumber: () => string;
   createSupplierInvoice: (invoice: Omit<SupplierInvoice, 'id' | 'invoiceNumber' | 'createdAt' | 'updatedAt'>) => SupplierInvoice;
   updateSupplierInvoice: (id: string, updates: Partial<SupplierInvoice>) => void;
+  hydrateInvoicesFromApi: () => Promise<void>;
   getSupplierInvoice: (id: string) => SupplierInvoice | undefined;
   getInvoicesByPO: (poId: string) => SupplierInvoice[];
   getInvoicesByStatus: (status: SupplierInvoice['status']) => SupplierInvoice[];
@@ -1672,15 +1773,33 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       updatedAt: new Date()
     };
     set(state => ({ supplierInvoices: [...state.supplierInvoices, newInvoice] }));
+    syncSupplierInvoiceToApi(newInvoice);
     return newInvoice;
   },
 
   updateSupplierInvoice: (id, updates) => {
+    let updated: SupplierInvoice | undefined;
     set(state => ({
-      supplierInvoices: state.supplierInvoices.map(inv =>
-        inv.id === id ? { ...inv, ...updates, updatedAt: new Date() } : inv
-      )
+      supplierInvoices: state.supplierInvoices.map(inv => {
+        if (inv.id !== id) return inv;
+        updated = { ...inv, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncSupplierInvoiceToApi(updated);
+  },
+
+  hydrateInvoicesFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/inventory/supplier-invoices', { headers: poTenantHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const invoices = Array.isArray(data.invoices) ? data.invoices.map(mapApiSupplierInvoiceToStore) : [];
+      set({ supplierInvoices: invoices });
+    } catch (e) {
+      console.warn('[Inventory] Failed to hydrate supplier invoices from server:', e);
+    }
   },
 
   getSupplierInvoice: (id) => get().supplierInvoices.find(inv => inv.id === id),
@@ -1760,43 +1879,48 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
   },
 
   approveInvoice: (invoiceId, approvedBy) => {
+    let updated: SupplierInvoice | undefined;
     set(state => ({
       supplierInvoices: state.supplierInvoices.map(inv =>
         inv.id === invoiceId
-          ? {
+          ? (updated = {
               ...inv,
               status: 'approved' as const,
               approvedBy,
               approvedAt: new Date(),
               updatedAt: new Date()
-            }
+            })
           : inv
       )
     }));
+    if (updated) syncSupplierInvoiceToApi(updated);
   },
 
   rejectInvoice: (invoiceId, rejectedBy, reason) => {
+    let updated: SupplierInvoice | undefined;
     set(state => ({
       supplierInvoices: state.supplierInvoices.map(inv =>
         inv.id === invoiceId
-          ? {
+          ? (updated = {
               ...inv,
               status: 'rejected' as const,
               rejectedBy,
               rejectedAt: new Date(),
               rejectionReason: reason,
               updatedAt: new Date()
-            }
+            })
           : inv
       )
     }));
+    if (updated) syncSupplierInvoiceToApi(updated);
   },
 
   markInvoicePaid: (invoiceId, paidBy, paymentMethod, paymentReference) => {
+    let updated: SupplierInvoice | undefined;
     set(state => ({
       supplierInvoices: state.supplierInvoices.map(inv =>
         inv.id === invoiceId
-          ? {
+          ? (updated = {
               ...inv,
               status: 'paid' as const,
               paidBy,
@@ -1804,10 +1928,11 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
               paymentMethod,
               paymentReference,
               updatedAt: new Date()
-            }
+            })
           : inv
       )
     }));
+    if (updated) syncSupplierInvoiceToApi(updated);
   },
 
   selectInvoice: (invoice) => set({ selectedInvoice: invoice }),

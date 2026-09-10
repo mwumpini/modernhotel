@@ -746,6 +746,154 @@ export async function upsertQualityCheck(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Supplier Invoices — field names/status vocabulary match models.ts's
+// SupplierInvoice/InvoiceItem. `matchingStatus` (three-way-match result) is
+// stored as-is in the Json column since it's one optional nested record, not
+// a real relation.
+// ---------------------------------------------------------------------------
+
+export interface SupplierInvoiceItemInput {
+	poItemId: string;
+	grnItemId?: string;
+	itemId: string;
+	itemCode: string;
+	itemName: string;
+	quantity: number;
+	unitPrice: number;
+	notes?: string;
+}
+
+export async function listSupplierInvoices(tenantId: string, filters?: { poId?: string; status?: string }) {
+	return prisma.supplierInvoice.findMany({
+		where: { tenantId, poId: filters?.poId || undefined, status: filters?.status || undefined },
+		include: { items: true },
+		orderBy: { createdAt: 'desc' },
+	});
+}
+
+export async function upsertSupplierInvoice(params: {
+	id?: string;
+	tenantId: string;
+	invoiceNumber?: string;
+	supplierId: string;
+	supplierName: string;
+	poId: string;
+	poNumber: string;
+	grnId?: string;
+	grnNumber?: string;
+	invoiceDate?: Date | string;
+	dueDate: Date | string;
+	subtotal?: number;
+	taxAmount?: number;
+	shippingAmount?: number;
+	discountAmount?: number;
+	totalAmount?: number;
+	currency?: string;
+	status?: string;
+	matchingStatus?: Record<string, unknown>;
+	approvedBy?: string;
+	approvedAt?: Date | string;
+	rejectedBy?: string;
+	rejectedAt?: Date | string;
+	rejectionReason?: string;
+	paidBy?: string;
+	paidAt?: Date | string;
+	paymentMethod?: string;
+	paymentReference?: string;
+	notes?: string;
+	items: SupplierInvoiceItemInput[];
+}) {
+	const data = {
+		supplierId: params.supplierId,
+		supplierName: params.supplierName,
+		poId: params.poId,
+		poNumber: params.poNumber,
+		grnId: params.grnId,
+		grnNumber: params.grnNumber,
+		invoiceDate: params.invoiceDate ? new Date(params.invoiceDate) : undefined,
+		dueDate: new Date(params.dueDate),
+		subtotal: params.subtotal,
+		taxAmount: params.taxAmount,
+		shippingAmount: params.shippingAmount,
+		discountAmount: params.discountAmount,
+		totalAmount: params.totalAmount,
+		currency: params.currency,
+		status: params.status,
+		matchingStatus: params.matchingStatus as any,
+		approvedBy: params.approvedBy,
+		approvedAt: params.approvedAt ? new Date(params.approvedAt) : undefined,
+		rejectedBy: params.rejectedBy,
+		rejectedAt: params.rejectedAt ? new Date(params.rejectedAt) : undefined,
+		rejectionReason: params.rejectionReason,
+		paidBy: params.paidBy,
+		paidAt: params.paidAt ? new Date(params.paidAt) : undefined,
+		paymentMethod: params.paymentMethod,
+		paymentReference: params.paymentReference,
+		notes: params.notes,
+	};
+
+	if (params.id) {
+		const existing = await prisma.supplierInvoice.findFirst({ where: { id: params.id, tenantId: params.tenantId } });
+		if (existing) {
+			if (params.items.length) await prisma.supplierInvoiceItem.deleteMany({ where: { invoiceId: params.id } });
+			return prisma.supplierInvoice.update({
+				where: { id: params.id },
+				data: {
+					...data,
+					...(params.items.length
+						? {
+								items: {
+									create: params.items.map((i) => ({
+										tenantId: params.tenantId,
+										poItemId: i.poItemId,
+										grnItemId: i.grnItemId,
+										itemId: i.itemId,
+										itemCode: i.itemCode,
+										itemName: i.itemName,
+										quantity: i.quantity,
+										unitPrice: i.unitPrice,
+										totalPrice: i.quantity * i.unitPrice,
+										notes: i.notes,
+									})),
+								},
+							}
+						: {}),
+				},
+				include: { items: true },
+			});
+		}
+	}
+
+	const invoiceCount = await prisma.supplierInvoice.count({ where: { tenantId: params.tenantId } });
+	const invoiceNumber = params.invoiceNumber || `INV-${new Date().getFullYear()}-${String(invoiceCount + 1).padStart(4, '0')}`;
+
+	return prisma.supplierInvoice.create({
+		data: {
+			...(params.id ? { id: params.id } : {}),
+			tenantId: params.tenantId,
+			invoiceNumber,
+			...data,
+			status: data.status || 'pending',
+			items: {
+				create: params.items.map((i) => ({
+					tenantId: params.tenantId,
+					poItemId: i.poItemId,
+					grnItemId: i.grnItemId,
+					itemId: i.itemId,
+					itemCode: i.itemCode,
+					itemName: i.itemName,
+					quantity: i.quantity,
+					unitPrice: i.unitPrice,
+					totalPrice: i.quantity * i.unitPrice,
+					notes: i.notes,
+				})),
+			},
+		},
+		include: { items: true },
+	});
+}
+
+// ---------------------------------------------------------------------------
 // Inventory alert acknowledgments — see InventoryAlertAcknowledgment's comment
 // in schema.prisma for why only the acknowledgment itself needs a durable row.
 // ---------------------------------------------------------------------------

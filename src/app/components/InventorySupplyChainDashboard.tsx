@@ -90,6 +90,7 @@ export default function InventorySupplyChainDashboard() {
     hydrateGRNsFromApi,
     createSupplierInvoice,
     updateSupplierInvoice,
+    hydrateInvoicesFromApi,
     getSupplierInvoice,
     getInvoicesByPO,
     getInvoicesByStatus,
@@ -848,6 +849,7 @@ export default function InventorySupplyChainDashboard() {
     hydrateRequisitionsFromApi();
     hydrateGRNsFromApi();
     hydrateQualityChecksFromApi();
+    hydrateInvoicesFromApi();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3372,6 +3374,7 @@ export default function InventorySupplyChainDashboard() {
         >
           <Tab key="goods-receipt" title="📥 Goods Receipt" />
           <Tab key="grn-management" title="📋 GRN & Quality Check" />
+          <Tab key="supplier-invoices" title="🧾 Supplier Invoices" />
           <Tab key="goods-issue" title="📤 Goods Issue" />
           <Tab key="stock-transfers" title="🔄 Stock Transfers" />
           <Tab key="stock-counts" title="🔍 Stock Counts" />
@@ -3381,6 +3384,11 @@ export default function InventorySupplyChainDashboard() {
             into a GRN below -- kept as its own sub-tab since a GRN can sit in
             'pending' status (awaiting QC) for a while before being approved. */}
         {stockOpSubTab === 'grn-management' && renderGRNManagement()}
+
+        {/* Supplier invoice three-way-match / approve / reject / pay workflow --
+            fully built (see approveInvoice/rejectInvoice/markInvoicePaid/
+            performThreeWayMatch above) but never mounted anywhere. */}
+        {stockOpSubTab === 'supplier-invoices' && renderInvoiceManagement()}
 
         {/* Goods Receipt Tab */}
         {stockOpSubTab === 'goods-receipt' && (
