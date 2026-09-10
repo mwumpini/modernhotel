@@ -473,6 +473,7 @@ export default function TaskManagementPanel() {
           <h3 className="text-lg font-semibold text-ghana-black">Housekeeping Tasks</h3>
         </CardHeader>
         <CardBody className="p-0">
+          <div className="max-h-[560px] overflow-y-auto">
           <Table aria-label="Tasks table">
             <TableHeader>
               <TableColumn>Task ID</TableColumn>
@@ -584,6 +585,7 @@ export default function TaskManagementPanel() {
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardBody>
       </Card>
 

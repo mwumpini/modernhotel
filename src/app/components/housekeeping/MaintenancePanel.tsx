@@ -357,6 +357,7 @@ export default function MaintenancePanel() {
           <h3 className="text-lg font-semibold text-ghana-black">Maintenance Requests</h3>
         </CardHeader>
         <CardBody className="p-0">
+          <div className="max-h-[560px] overflow-y-auto">
           <Table aria-label="Maintenance requests table">
             <TableHeader>
               <TableColumn>Request ID</TableColumn>
@@ -493,6 +494,7 @@ export default function MaintenancePanel() {
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardBody>
       </Card>
 

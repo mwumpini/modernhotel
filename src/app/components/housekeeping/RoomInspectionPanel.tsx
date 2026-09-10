@@ -337,6 +337,7 @@ export default function RoomInspectionPanel() {
           <h3 className="text-lg font-semibold text-ghana-black">Room Inspections</h3>
         </CardHeader>
         <CardBody className="p-0">
+          <div className="max-h-[560px] overflow-y-auto">
           <Table aria-label="Inspections table">
             <TableHeader>
               <TableColumn>Inspection ID</TableColumn>
@@ -455,6 +456,7 @@ export default function RoomInspectionPanel() {
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardBody>
       </Card>
 

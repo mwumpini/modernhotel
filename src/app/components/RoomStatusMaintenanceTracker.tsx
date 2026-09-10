@@ -559,6 +559,7 @@ export default function RoomStatusMaintenanceTracker() {
                 <h3 className="text-xl font-semibold text-ghana-black">Housekeeping Tasks</h3>
               </CardHeader>
               <CardBody className="p-0">
+                <div className="max-h-[560px] overflow-y-auto">
                 <Table aria-label="Tasks table">
                   <TableHeader>
                     <TableColumn>Task ID</TableColumn>
@@ -647,6 +648,7 @@ export default function RoomStatusMaintenanceTracker() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </CardBody>
             </Card>
           </div>
@@ -660,6 +662,7 @@ export default function RoomStatusMaintenanceTracker() {
                 <h3 className="text-xl font-semibold text-ghana-black">Maintenance Requests</h3>
               </CardHeader>
               <CardBody className="p-0">
+                <div className="max-h-[560px] overflow-y-auto">
                 <Table aria-label="Maintenance requests table">
                   <TableHeader>
                     <TableColumn>Request ID</TableColumn>
@@ -734,6 +737,7 @@ export default function RoomStatusMaintenanceTracker() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </CardBody>
             </Card>
           </div>

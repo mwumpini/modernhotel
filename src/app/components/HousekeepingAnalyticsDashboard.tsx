@@ -236,32 +236,34 @@ export default function HousekeepingAnalyticsDashboard() {
                 <h3 className="text-lg font-semibold">Staff Performance</h3>
               </CardHeader>
               <CardBody>
-                <Table aria-label="Staff Performance Table">
-                  <TableHeader>
-                    <TableColumn>Staff ID</TableColumn>
-                    <TableColumn>Name</TableColumn>
-                    <TableColumn>Role</TableColumn>
-                    <TableColumn>Completed Today</TableColumn>
-                    <TableColumn>Daily Target</TableColumn>
-                    <TableColumn>Efficiency</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="No staff on file yet.">
-                    {staffPerformance.map((s) => (
-                      <TableRow key={s.staffId}>
-                        <TableCell>{s.staffId}</TableCell>
-                        <TableCell>{s.name}</TableCell>
-                        <TableCell className="capitalize">{s.role}</TableCell>
-                        <TableCell>{s.tasksCompleted}</TableCell>
-                        <TableCell>{s.dailyTarget}</TableCell>
-                        <TableCell>
-                          <Chip color={s.efficiency >= 90 ? 'success' : s.efficiency >= 75 ? 'warning' : 'danger'}>
-                            {formatPercentage(s.efficiency)}
-                          </Chip>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className="max-h-[480px] overflow-y-auto">
+                  <Table aria-label="Staff Performance Table">
+                    <TableHeader>
+                      <TableColumn>Staff ID</TableColumn>
+                      <TableColumn>Name</TableColumn>
+                      <TableColumn>Role</TableColumn>
+                      <TableColumn>Completed Today</TableColumn>
+                      <TableColumn>Daily Target</TableColumn>
+                      <TableColumn>Efficiency</TableColumn>
+                    </TableHeader>
+                    <TableBody emptyContent="No staff on file yet.">
+                      {staffPerformance.map((s) => (
+                        <TableRow key={s.staffId}>
+                          <TableCell>{s.staffId}</TableCell>
+                          <TableCell>{s.name}</TableCell>
+                          <TableCell className="capitalize">{s.role}</TableCell>
+                          <TableCell>{s.tasksCompleted}</TableCell>
+                          <TableCell>{s.dailyTarget}</TableCell>
+                          <TableCell>
+                            <Chip color={s.efficiency >= 90 ? 'success' : s.efficiency >= 75 ? 'warning' : 'danger'}>
+                              {formatPercentage(s.efficiency)}
+                            </Chip>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </CardBody>
             </Card>
 
