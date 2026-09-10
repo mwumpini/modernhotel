@@ -1058,7 +1058,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-payment-voucher-letterhead', 'payment-voucher', 'Letterhead (logo-left header)', paymentVoucherLetterheadBlocks()),
     template('builtin-payment-voucher-formal', 'payment-voucher', 'Formal (serif, itemized)', paymentVoucherFormalBlocks(), { fontFamily: 'serif', borderWidth: 'thick' }),
     template('builtin-payment-voucher-bank-transfer', 'payment-voucher', 'Bank Transfer (pay-from account)', paymentVoucherBankTransferBlocks(), { showWatermark: true, watermarkText: 'PAYMENT VOUCHER' }),
-    template('builtin-payment-voucher-ghana-colors', 'payment-voucher', 'Ghana Colors', paymentVoucherStandardBlocks(), { primaryColor: '#006B3F', borderColor: '#CE1126' }),
+    template('builtin-payment-voucher-ghana-colors', 'payment-voucher', 'Wumpini', paymentVoucherStandardBlocks(), { primaryColor: '#006B3F', borderColor: '#CE1126' }),
     template('builtin-payment-voucher-register', 'payment-voucher', 'Register (monospace)', paymentVoucherStandardBlocks(), { fontFamily: 'mono', borderWidth: 'thick' }),
   ],
   'registration-card': [
