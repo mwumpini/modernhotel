@@ -4,7 +4,6 @@
  * After a payroll run, upsert in-memory compliance filing hints (PAYE / SSNIT).
  */
 
-import type { ComplianceReport } from '../models';
 import { useComplianceStore } from './store';
 
 export function syncPayrollRunToComplianceFiling(input: {
@@ -22,13 +21,7 @@ export function syncPayrollRunToComplianceFiling(input: {
   const dueIso = dueDate.toISOString().slice(0, 10);
 
   const upsert = (reportType: string, amount: number, notes: string) => {
-    const existing = store.reports.find(
-      (r) =>
-        r.countryCode === input.countryCode &&
-        r.reportType === reportType &&
-        r.period === input.period
-    );
-    const patch: Partial<ComplianceReport> = {
+    store.upsertReport({
       countryCode: input.countryCode,
       reportType,
       period: input.period,
@@ -37,24 +30,7 @@ export function syncPayrollRunToComplianceFiling(input: {
       amount,
       currency: 'GHS',
       notes,
-    };
-    if (existing) {
-      store.updateReport(existing.id, patch);
-    } else {
-      const id = `CR-${reportType}-${input.period}-${Date.now()}`;
-      useComplianceStore.setState((s) => ({
-        reports: [
-          ...s.reports,
-          {
-            id,
-            ...patch,
-            status: 'pending' as const,
-            amount: amount ?? 0,
-            currency: 'GHS',
-          } as ComplianceReport,
-        ],
-      }));
-    }
+    });
   };
 
   if (input.payeTotal > 0) {

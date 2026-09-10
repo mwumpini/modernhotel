@@ -47,3 +47,16 @@ export function taxCodeForGl(gl: string): string | undefined {
   const entry = Object.entries(TAX_LIABILITY_GL).find(([, v]) => v.code === gl);
   return entry?.[0];
 }
+
+/** TAX_LIABILITY_GL keys that have their own statutory filing schedule (see
+ * compliance/config/seed-reports.json's `reportType`) — used to auto-mark a filing as
+ * submitted when its remittance posts. GETFUND and COVID19 are administratively bundled
+ * into the VAT return and have no schedule of their own, so they're deliberately absent. */
+export const TAX_CODE_TO_REPORT_TYPE: Record<string, string> = {
+  VAT: 'VAT',
+  NHIL: 'NHIL',
+  TOURISM: 'Tourism',
+  WHT: 'WHT',
+  PAYE: 'PAYE',
+  SSNIT: 'SSNIT',
+};

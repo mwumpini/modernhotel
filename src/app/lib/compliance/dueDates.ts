@@ -3,6 +3,8 @@
  * Rules come from seed-reports.json `dueRule`; legacy rules use `dueDay` only.
  */
 
+import type { ReportingRule } from '../models';
+
 export type DueRule =
   | { type: 'dayOfFollowingMonth'; day: number }
   | { type: 'lastWorkingDayOfNextMonth' }
@@ -16,6 +18,16 @@ export type FilingScheduleInput = {
   dueDay?: number;
   dueRule?: DueRule;
 };
+
+/** A ReportingRule's `dueRule` is loosely typed (shared across mismatched shapes coming from
+ * seed data); this is the one cast site every caller should share rather than re-deriving it. */
+export function scheduleInputFromRule(rule: ReportingRule): FilingScheduleInput {
+  return {
+    frequency: rule.frequency,
+    dueDay: rule.dueDay,
+    dueRule: rule.dueRule as DueRule | undefined,
+  };
+}
 
 function isWeekend(d: Date): boolean {
   const day = d.getDay();
@@ -133,6 +145,18 @@ export function getDaysUntilDueForSchedule(input: FilingScheduleInput, from: Dat
 
 export function formatDueDateForSchedule(input: FilingScheduleInput, from: Date = new Date()): string {
   return getNextDueDateForSchedule(input, from).toLocaleDateString();
+}
+
+/** `date.toISOString().slice(0, 10)` reads the date back in UTC, which silently steps a
+ * local midnight back a calendar day in any timezone ahead of UTC (e.g. a "last working day
+ * of July" computed as local midnight becomes "...T22:00:00Z the 30th" at UTC+2) — exactly
+ * the kind of off-by-one a due date must never have. Read the same y/m/d fields the Date was
+ * constructed with instead of round-tripping through UTC. */
+export function toIsoDateLocal(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 export function dueDateLabel(input: FilingScheduleInput): string {

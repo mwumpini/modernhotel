@@ -26,17 +26,9 @@ import {
   dueDateLabel,
   formatDueDateForSchedule,
   getDaysUntilDueForSchedule,
+  scheduleInputFromRule as scheduleInput,
 } from '@/app/lib/compliance/dueDates';
-import type { ReportingRule } from '@/app/lib/models';
 import ComplianceHospitalityReference from './ComplianceHospitalityReference';
-
-function scheduleInput(rule: ReportingRule) {
-  return {
-    frequency: rule.frequency,
-    dueDay: rule.dueDay,
-    dueRule: rule.dueRule as Parameters<typeof getDaysUntilDueForSchedule>[0]['dueRule'],
-  };
-}
 
 export default function ComplianceReports() {
   const country = useComplianceStore((s) => s.country);

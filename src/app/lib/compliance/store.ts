@@ -98,6 +98,7 @@ interface ComplianceState {
   getActiveReports: () => ReportingRule[];
   addTransaction: (transaction: Omit<ComplianceTransaction, 'id'>) => void;
   updateReport: (id: string, updates: Partial<ComplianceReport>) => void;
+  upsertReport: (report: Omit<ComplianceReport, 'id'>) => void;
   calculateTax: (
     amount: number,
     category?: string,
@@ -243,10 +244,31 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
 
   updateReport: (id, updates) => {
     set(state => ({
-      reports: state.reports.map(report => 
+      reports: state.reports.map(report =>
         report.id === id ? { ...report, ...updates } : report
       )
     }));
+  },
+
+  // Find-by-(country, reportType, period) then update-or-create — the one place this pattern
+  // lives, shared by payroll's PAYE/SSNIT sync and tax remittance's filing sync, instead of
+  // each duplicating its own find/patch/push logic.
+  upsertReport: (report) => {
+    set((state) => {
+      const idx = state.reports.findIndex(
+        (r) =>
+          r.countryCode === report.countryCode &&
+          r.reportType === report.reportType &&
+          r.period === report.period
+      );
+      if (idx >= 0) {
+        const next = [...state.reports];
+        next[idx] = { ...next[idx], ...report };
+        return { reports: next };
+      }
+      const id = `CR-${report.reportType}-${report.period}-${Date.now()}`;
+      return { reports: [...state.reports, { id, ...report }] };
+    });
   },
 
   calculateTax: (amount, category = 'ALL', context = {}) => {
