@@ -78,6 +78,10 @@ export interface BlockConfig {
    *  'line' — plain "Label: __________" underline blank, left-aligned, laid out side by
    *  side (no box) — matches a hand-signed paper form. */
   signatureDisplay?: 'box' | 'line';
+  /** payslip-earnings-table / payslip-deductions-table: 'table' (default) — bordered
+   *  grid. 'list' — each line as a plain "Description .... Amount" row with a dotted
+   *  leader, no table borders — for a minimal, memo-style payslip. */
+  payslipItemsDisplay?: 'table' | 'list';
   /** totals-summary: 'table' (default), 'numbered-list' — "(i) Tax Exclusive Value",
    *  "(ii) VAT", … — or 'compact-taxes' — just 3 lines: Taxes Exclusive, all taxes
    *  combined into one "Sales Taxes Incl." line, Total Taxes Inclusive. Matches how

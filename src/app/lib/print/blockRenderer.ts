@@ -341,12 +341,24 @@ function renderEmployeeDetails(block: BlockConfig, data: PrintData): string {
 }
 
 function payslipTable(block: BlockConfig, items: PrintLineItem[] | undefined, currency: string, totalLabel: string): string {
+  const total = (items || []).reduce((s, it) => s + (it.amount || 0), 0);
+  const sectionHeading = block.heading || (totalLabel === 'Total Earnings' ? 'Earnings' : 'Deductions');
+
+  if (block.payslipItemsDisplay === 'list') {
+    const lines = (items || []).map(it => leaderLine(it.description, money(it.amount, currency))).join('');
+    return `
+    <div>
+      <div style="font-weight:700; text-decoration:underline;">${sectionHeading}</div>
+      ${lines}
+      ${leaderLine(totalLabel, money(total, currency), { bold: true })}
+    </div>`;
+  }
+
   const rows = (items || []).map(it => `
     <tr><td>${it.description}</td><td class="right">${money(it.amount, currency)}</td></tr>`).join('');
-  const total = (items || []).reduce((s, it) => s + (it.amount || 0), 0);
   return `
   <table>
-    <thead><tr><th>${block.heading || (totalLabel === 'Total Earnings' ? 'Earnings' : 'Deductions')}</th><th class="right">Amount</th></tr></thead>
+    <thead><tr><th>${sectionHeading}</th><th class="right">Amount</th></tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr><td style="font-weight:700;">${totalLabel}</td><td class="right" style="font-weight:700;">${money(total, currency)}</td></tr></tfoot>
   </table>`;

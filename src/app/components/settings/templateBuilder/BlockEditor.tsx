@@ -513,6 +513,16 @@ function BlockSettings({ block, onChange, hasLegacyHeaderBlock, parentDirection 
         </div>
       )}
 
+      {(block.type === 'payslip-earnings-table' || block.type === 'payslip-deductions-table') && (
+        <div>
+          <label className="text-xs text-gray-600">Display As</label>
+          <select className="mt-1 w-full border rounded-md p-2 text-sm" value={block.payslipItemsDisplay || 'table'} onChange={(e) => onChange({ payslipItemsDisplay: e.target.value as BlockConfig['payslipItemsDisplay'] })}>
+            <option value="table">Table (bordered grid)</option>
+            <option value="list">Itemized List (line + dotted leader + amount)</option>
+          </select>
+        </div>
+      )}
+
       {block.type === 'signature-block' && (
         <div>
           <label className="text-xs text-gray-600">Signature Boxes</label>
