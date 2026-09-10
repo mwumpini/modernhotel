@@ -6,6 +6,26 @@ import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { amountToWordsGhana, generatePaymentAdvicePDF } from '@/app/lib/hr/payrollPdf';
+import type { PayrollRecord } from '@/app/lib/hr/models';
+
+// Shared by both the on-screen Payment Advice summary and the downloadable PDF/XLS — one
+// implementation so a payment channel is never classified differently between what the
+// preparer sees on screen and what actually prints on the bank instruction.
+function resolvePaymentChannel(emp: any, rec: PayrollRecord | undefined): string {
+  const bankNameRaw = emp?.bankAccount?.bankName || '';
+  // Cast to string, not narrowed to PayrollRecord['paymentMethod'] -- the 'momo' check below
+  // is defensive against data that predates/falls outside that type's current 3 values.
+  const payMethod = String(rec?.paymentMethod || '');
+  const lowerIncludes = (s: string | undefined, term: string) => (s || '').toLowerCase().includes(term);
+  if (payMethod === 'cash') return 'Cash';
+  if (
+    lowerIncludes(bankNameRaw, 'momo') || lowerIncludes(bankNameRaw, 'mobile') ||
+    lowerIncludes(bankNameRaw, 'mtn') || lowerIncludes(bankNameRaw, 'vodafone') ||
+    lowerIncludes(bankNameRaw, 'airtel') || payMethod === 'momo'
+  ) return 'MoMo';
+  if (bankNameRaw) return bankNameRaw;
+  return 'Cash';
+}
 
 export default function PayrollProcessingPanel() {
   const employees = useEmployeeStore((s) => s.employees);
@@ -55,36 +75,42 @@ export default function PayrollProcessingPanel() {
   const [signerName, setSignerName] = React.useState<string>('');
   const [signerPosition, setSignerPosition] = React.useState<string>('');
 
+  // Employee payroll detail modal state (Staff Payroll table's "View" action)
+  const [detailEmployee, setDetailEmployee] = React.useState<any | null>(null);
+
   const handleOpenAdvice = (label: string) => {
     setAdviceLabel(label);
     setAdviceOpen(true);
   };
 
-  const buildAdviceForLabel = (label: string) => {
-    const latestByEmp: Record<string, any> = {};
+  // One lookup, reused everywhere "the most recent thing we actually paid this employee"
+  // is needed — the Payment Advice below (both the on-screen summary and the PDF/XLS) must
+  // never disagree with each other about which record is "latest" for a given employee.
+  const latestPaidRecordByEmployee = React.useMemo(() => {
+    const map: Record<string, PayrollRecord> = {};
     payrollRecords
-      .filter(r => r.status === 'paid')
+      .filter((r) => r.status === 'paid')
       .sort((a, b) => (b.paidAt?.getTime() || 0) - (a.paidAt?.getTime() || 0))
-      .forEach((r) => { if (!latestByEmp[r.employeeId]) latestByEmp[r.employeeId] = r; });
+      .forEach((r) => { if (!map[r.employeeId]) map[r.employeeId] = r; });
+    return map;
+  }, [payrollRecords]);
 
-    const lowerIncludes = (s: string | undefined, term: string) => (s || '').toLowerCase().includes(term);
+  const buildAdviceForLabel = (label: string) => {
+    const latestByEmp = latestPaidRecordByEmployee;
     type Row = { employeeName: string; accountNumber: string; net: number; paidAt?: Date };
     const rows: Row[] = [];
     (employees || []).forEach((emp: any) => {
       const rec = latestByEmp[emp.id];
-      const bankNameRaw = emp?.bankAccount?.bankName || '';
-      const payMethod = rec?.paymentMethod || '';
-      let channel = '';
-      if (payMethod === 'cash') channel = 'Cash';
-      else if (lowerIncludes(bankNameRaw, 'momo') || lowerIncludes(bankNameRaw, 'mobile') || lowerIncludes(bankNameRaw, 'mtn') || lowerIncludes(bankNameRaw, 'vodafone') || lowerIncludes(bankNameRaw, 'airtel') || payMethod === 'momo') channel = 'MoMo';
-      else if (bankNameRaw) channel = bankNameRaw;
-      else channel = 'Cash';
+      // No real paid payroll record for this employee -- there is no accurate net pay to
+      // instruct a bank/MoMo payment with, so they're left off the advice entirely rather
+      // than filled in with a guessed figure (previously a flat 15.5%-of-gross estimate).
+      if (!rec) return;
+      const channel = resolvePaymentChannel(emp, rec);
       if (channel !== label) return;
 
-      const gross = (emp.basicSalary ?? emp.salary ?? 0) + (emp.allowances ?? 0);
-      const net = typeof rec?.netPay === 'number' ? rec.netPay : Math.max(gross - (gross * 0.155), 0);
+      const net = rec.netPay;
       const accountNumber = label === 'MoMo' ? (emp.phone || emp?.bankAccount?.accountNumber || '') : (label === 'Cash' ? '-' : (emp?.bankAccount?.accountNumber || ''));
-      rows.push({ employeeName: `${emp.firstName} ${emp.lastName}`, accountNumber, net, paidAt: rec?.paidAt });
+      rows.push({ employeeName: `${emp.firstName} ${emp.lastName}`, accountNumber, net, paidAt: rec.paidAt });
     });
     const total = rows.reduce((s, r) => s + (r.net || 0), 0);
     const paidDates = rows.map(r => r.paidAt?.getTime() || 0).filter(Boolean).sort((a, b) => b - a);
@@ -274,21 +300,30 @@ export default function PayrollProcessingPanel() {
                 const allowances = (e as any).allowances ?? 0;
                 const grossPay = basicSalary + allowances;
 
-                const latestPayrollRecord = payrollRecords
-                  .filter(r => r.employeeId === e.id && r.status === 'paid')
-                  .sort((a, b) => (b.paidAt?.getTime() || 0) - (a.paidAt?.getTime() || 0))[0];
-
-                const incomeTaxEnrolled = (e as any).payeEnrolled !== false;
-                const incomeTaxAmount = latestPayrollRecord?.deductions?.tax || 0;
-                const incomeTaxDisplayAmount = incomeTaxEnrolled ? (incomeTaxAmount > 0 ? incomeTaxAmount : (grossPay * 0.1)) : 0;
+                const latestPayrollRecord = latestPaidRecordByEmployee[e.id];
 
                 // Tier 1's base is basic salary only (allowances/bonus/overtime excluded per
                 // its insurable-earnings definition) — the pre-run estimate below uses
                 // basicSalary, not grossPay, and the live employee rate from Settings →
-                // Tax Rate Builder rather than a hardcoded percentage.
+                // Tax Rate Builder rather than a hardcoded percentage. Computed before the
+                // income tax estimate below, which needs it (Tier 1 is a pre-tax deduction).
                 const ssnitEnrolled = (e as any).ssnitEnrolled === true;
                 const ssnitAmount = latestPayrollRecord?.deductions?.socialSecurity || 0;
                 const ssnitDisplayAmount = ssnitEnrolled ? (ssnitAmount > 0 ? ssnitAmount : (basicSalary * ((tier1Rule?.rate ?? 5.5) / 100))) : 0;
+
+                // Income tax estimate: same "use the real rule, not a guessed flat rate"
+                // standard as the SSNIT/Tier2 estimates above -- previously a flat 10% of
+                // gross regardless of income level, inconsistent with those. Runs the same
+                // live PAYE rule through the same compliance engine invoices/folios use,
+                // on taxable pay (gross less the pre-tax Tier 1 contribution).
+                const incomeTaxEnrolled = (e as any).payeEnrolled !== false;
+                const incomeTaxAmount = latestPayrollRecord?.deductions?.tax || 0;
+                const payeTaxableEstimate = Math.max(0, grossPay - ssnitDisplayAmount);
+                const payeEstimate = useComplianceStore
+                  .getState()
+                  .calculateTax(payeTaxableEstimate, 'PAYE', { domain: 'payroll', operation: 'internal' })
+                  .taxes.reduce((s, t) => s + t.amount, 0);
+                const incomeTaxDisplayAmount = incomeTaxEnrolled ? (incomeTaxAmount > 0 ? incomeTaxAmount : payeEstimate) : 0;
 
                 // Tier 2 is its own separate, fully-employer-funded rule (0% employee rate
                 // by default) — deductions.pension carries the real amount from the payroll
@@ -323,7 +358,27 @@ export default function PayrollProcessingPanel() {
                     <TableCell className={visibleColumns.has('tier2') ? '' : 'hidden'}>{fmtCurrency(tier2DisplayAmount)}</TableCell>
                     <TableCell className={visibleColumns.has('tier3') ? '' : 'hidden'}>{fmtCurrency(tier3DisplayAmount)}</TableCell>
                     <TableCell className={visibleColumns.has('actions') ? '' : 'hidden'}>
-                      <Button size="sm" variant="flat" isDisabled>View</Button>
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        onPress={() => setDetailEmployee({
+                          employee: e,
+                          deptName: dept?.name,
+                          posTitle: pos?.title,
+                          latestPayrollRecord,
+                          grossPay,
+                          incomeTaxEnrolled,
+                          incomeTaxDisplayAmount,
+                          ssnitEnrolled,
+                          ssnitDisplayAmount,
+                          tier2Enrolled,
+                          tier2DisplayAmount,
+                          tier3Enrolled,
+                          tier3DisplayAmount,
+                        })}
+                      >
+                        View
+                      </Button>
                     </TableCell>
                   </TableRow>
                 );
@@ -339,28 +394,17 @@ export default function PayrollProcessingPanel() {
         </CardHeader>
         <CardBody>
           {(() => {
-            const latestByEmp: Record<string, any> = {};
-            payrollRecords
-              .filter(r => r.status === 'paid')
-              .sort((a, b) => (b.paidAt?.getTime() || 0) - (a.paidAt?.getTime() || 0))
-              .forEach((r) => { if (!latestByEmp[r.employeeId]) latestByEmp[r.employeeId] = r; });
             type GroupRow = { label: string; count: number; total: number };
             const groups: Record<string, GroupRow> = {};
             const ensure = (key: string, label?: string) => { if (!groups[key]) groups[key] = { label: label || key, count: 0, total: 0 }; return groups[key]; };
-            const lowerIncludes = (s: string | undefined, term: string) => (s || '').toLowerCase().includes(term);
             (employees || []).forEach((emp: any) => {
-              const rec = latestByEmp[emp.id];
-              const bankNameRaw = emp?.bankAccount?.bankName || '';
-              const payMethod = rec?.paymentMethod || '';
-              let channel = '';
-              if (payMethod === 'cash') channel = 'Cash';
-              else if (lowerIncludes(bankNameRaw, 'momo') || lowerIncludes(bankNameRaw, 'mobile') || lowerIncludes(bankNameRaw, 'mtn') || lowerIncludes(bankNameRaw, 'vodafone') || lowerIncludes(bankNameRaw, 'airtel') || payMethod === 'momo') channel = 'MoMo';
-              else if (bankNameRaw) channel = bankNameRaw;
-              else channel = 'Cash';
-              const gross = (emp.basicSalary ?? emp.salary ?? 0) + (emp.allowances ?? 0);
-              const net = typeof rec?.netPay === 'number' ? rec.netPay : Math.max(gross - (gross * 0.155), 0);
+              const rec = latestPaidRecordByEmployee[emp.id];
+              // Same "no real record, no fabricated figure" rule as buildAdviceForLabel --
+              // this summary must match what the actual advice document shows.
+              if (!rec) return;
+              const channel = resolvePaymentChannel(emp, rec);
               const g = ensure(channel);
-              g.count += 1; g.total += net;
+              g.count += 1; g.total += rec.netPay;
             });
             const rows = Object.values(groups).sort((a, b) => a.label.localeCompare(b.label));
             const grand = rows.reduce((s, r) => s + r.total, 0);
@@ -501,6 +545,59 @@ export default function PayrollProcessingPanel() {
               </>
             );
           }}
+        </ModalContent>
+      </Modal>
+
+      {/* Employee payroll detail modal (Staff Payroll table's "View" action) */}
+      <Modal isOpen={!!detailEmployee} onOpenChange={(open) => { if (!open) setDetailEmployee(null); }} size="2xl">
+        <ModalContent>
+          {detailEmployee && (() => {
+            const { employee: e, deptName, posTitle, latestPayrollRecord: rec } = detailEmployee;
+            return (
+              <>
+                <ModalHeader>{e.firstName} {e.lastName} — Payroll</ModalHeader>
+                <ModalBody>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div><p className="text-gray-500">Staff No.</p><p className="font-medium">{e.employeeNumber}</p></div>
+                    <div><p className="text-gray-500">Department / Position</p><p className="font-medium">{deptName || '-'} / {posTitle || '-'}</p></div>
+                    <div><p className="text-gray-500">Basic salary</p><p className="font-medium">{fmtCurrency((e as any).basicSalary ?? (e as any).salary ?? 0)}</p></div>
+                    <div><p className="text-gray-500">Allowances</p><p className="font-medium">{fmtCurrency((e as any).allowances ?? 0)}</p></div>
+                  </div>
+
+                  {rec ? (
+                    <div className="mt-4">
+                      <p className="text-xs font-medium text-gray-500 uppercase mb-2">
+                        Last paid run{rec.paidAt ? ` — ${new Date(rec.paidAt).toLocaleDateString()}` : ''}
+                      </p>
+                      <Table removeWrapper aria-label="Latest payroll record" className="text-sm">
+                        <TableHeader>
+                          <TableColumn>Item</TableColumn>
+                          <TableColumn className="text-right">Amount (GHS)</TableColumn>
+                        </TableHeader>
+                        <TableBody>
+                          <TableRow><TableCell>Gross pay</TableCell><TableCell className="text-right">{fmtCurrency(rec.grossPay)}</TableCell></TableRow>
+                          <TableRow><TableCell>Income tax</TableCell><TableCell className="text-right">{fmtCurrency(rec.deductions?.tax || 0)}</TableCell></TableRow>
+                          <TableRow><TableCell>{tier1Label}</TableCell><TableCell className="text-right">{fmtCurrency(rec.deductions?.socialSecurity || 0)}</TableCell></TableRow>
+                          <TableRow><TableCell>{tier2Label}</TableCell><TableCell className="text-right">{fmtCurrency(rec.deductions?.pension || 0)}</TableCell></TableRow>
+                          <TableRow><TableCell>{tier3Label}</TableCell><TableCell className="text-right">{fmtCurrency(rec.deductions?.tier3 || 0)}</TableCell></TableRow>
+                          <TableRow><TableCell>Other deductions</TableCell><TableCell className="text-right">{fmtCurrency(rec.deductions?.other || 0)}</TableCell></TableRow>
+                          <TableRow className="font-semibold"><TableCell>Net pay</TableCell><TableCell className="text-right">{fmtCurrency(rec.netPay)}</TableCell></TableRow>
+                        </TableBody>
+                      </Table>
+                    </div>
+                  ) : (
+                    <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
+                      No paid payroll run recorded yet for this employee. The Income Tax / {tier1Label} / {tier2Label} figures shown in the
+                      Staff Payroll table are pre-run estimates from live rates, not an actual calculated result.
+                    </div>
+                  )}
+                </ModalBody>
+                <ModalFooter>
+                  <Button variant="flat" onPress={() => setDetailEmployee(null)}>Close</Button>
+                </ModalFooter>
+              </>
+            );
+          })()}
         </ModalContent>
       </Modal>
     </div>
