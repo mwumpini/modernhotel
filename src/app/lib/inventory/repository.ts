@@ -619,6 +619,133 @@ export async function upsertGoodsReceiptNote(params: {
 }
 
 // ---------------------------------------------------------------------------
+// Quality Checks — field names/status vocabulary match models.ts's
+// QualityCheck/QualityCheckItem, same 1:1 mapping approach as GRNs above.
+// ---------------------------------------------------------------------------
+
+export interface QualityCheckItemInput {
+	grnItemId: string;
+	itemId: string;
+	itemCode: string;
+	itemName: string;
+	receivedQuantity: number;
+	checkedQuantity: number;
+	passedQuantity: number;
+	failedQuantity: number;
+	qualityStatus?: string;
+	failureReason?: string;
+	notes?: string;
+}
+
+export async function listQualityChecks(tenantId: string, filters?: { grnId?: string }) {
+	return prisma.qualityCheck.findMany({
+		where: { tenantId, grnId: filters?.grnId || undefined },
+		include: { items: true },
+		orderBy: { createdAt: 'desc' },
+	});
+}
+
+export async function upsertQualityCheck(params: {
+	id?: string;
+	tenantId: string;
+	checkNumber?: string;
+	grnId: string;
+	grnNumber: string;
+	poId: string;
+	poNumber: string;
+	supplierId: string;
+	supplierName: string;
+	checkedBy: string;
+	checkedDate?: Date | string;
+	overallStatus?: string;
+	notes?: string;
+	approvedBy?: string;
+	approvedAt?: Date | string;
+	items: QualityCheckItemInput[];
+}) {
+	const totalItems = params.items.length;
+	const passedItems = params.items.filter((i) => i.qualityStatus === 'passed').length;
+	const failedItems = params.items.filter((i) => i.qualityStatus === 'failed').length;
+	const data = {
+		grnId: params.grnId,
+		grnNumber: params.grnNumber,
+		poId: params.poId,
+		poNumber: params.poNumber,
+		supplierId: params.supplierId,
+		supplierName: params.supplierName,
+		checkedBy: params.checkedBy,
+		checkedDate: params.checkedDate ? new Date(params.checkedDate) : undefined,
+		totalItems,
+		passedItems,
+		failedItems,
+		overallStatus: params.overallStatus,
+		notes: params.notes,
+		approvedBy: params.approvedBy,
+		approvedAt: params.approvedAt ? new Date(params.approvedAt) : undefined,
+	};
+
+	if (params.id) {
+		const existing = await prisma.qualityCheck.findFirst({ where: { id: params.id, tenantId: params.tenantId } });
+		if (existing) {
+			await prisma.qualityCheckItem.deleteMany({ where: { checkId: params.id } });
+			return prisma.qualityCheck.update({
+				where: { id: params.id },
+				data: {
+					...data,
+					items: {
+						create: params.items.map((i) => ({
+							tenantId: params.tenantId,
+							grnItemId: i.grnItemId,
+							itemId: i.itemId,
+							itemCode: i.itemCode,
+							itemName: i.itemName,
+							receivedQuantity: i.receivedQuantity,
+							checkedQuantity: i.checkedQuantity,
+							passedQuantity: i.passedQuantity,
+							failedQuantity: i.failedQuantity,
+							qualityStatus: i.qualityStatus || 'pending',
+							failureReason: i.failureReason,
+							notes: i.notes,
+						})),
+					},
+				},
+				include: { items: true },
+			});
+		}
+	}
+
+	const checkCount = await prisma.qualityCheck.count({ where: { tenantId: params.tenantId } });
+	const checkNumber = params.checkNumber || `QC-${new Date().getFullYear()}-${String(checkCount + 1).padStart(3, '0')}`;
+
+	return prisma.qualityCheck.create({
+		data: {
+			...(params.id ? { id: params.id } : {}),
+			tenantId: params.tenantId,
+			checkNumber,
+			...data,
+			overallStatus: data.overallStatus || 'pending',
+			items: {
+				create: params.items.map((i) => ({
+					tenantId: params.tenantId,
+					grnItemId: i.grnItemId,
+					itemId: i.itemId,
+					itemCode: i.itemCode,
+					itemName: i.itemName,
+					receivedQuantity: i.receivedQuantity,
+					checkedQuantity: i.checkedQuantity,
+					passedQuantity: i.passedQuantity,
+					failedQuantity: i.failedQuantity,
+					qualityStatus: i.qualityStatus || 'pending',
+					failureReason: i.failureReason,
+					notes: i.notes,
+				})),
+			},
+		},
+		include: { items: true },
+	});
+}
+
+// ---------------------------------------------------------------------------
 // Inventory alert acknowledgments — see InventoryAlertAcknowledgment's comment
 // in schema.prisma for why only the acknowledgment itself needs a durable row.
 // ---------------------------------------------------------------------------

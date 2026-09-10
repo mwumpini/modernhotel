@@ -324,6 +324,81 @@ function mapApiGRNToStore(raw: any): GoodsReceiptNote {
   };
 }
 
+function syncQualityCheckToApi(check: QualityCheck) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/inventory/quality-checks', {
+    method: 'PUT',
+    headers: poTenantHeaders(),
+    body: JSON.stringify({
+      id: check.id,
+      checkNumber: check.checkNumber,
+      grnId: check.grnId,
+      grnNumber: check.grnNumber,
+      poId: check.poId,
+      poNumber: check.poNumber,
+      supplierId: check.supplierId,
+      supplierName: check.supplierName,
+      checkedBy: check.checkedBy,
+      checkedDate: check.checkedDate,
+      overallStatus: check.overallStatus,
+      notes: check.notes,
+      approvedBy: check.approvedBy,
+      approvedAt: check.approvedAt,
+      items: check.items.map((i) => ({
+        grnItemId: i.grnItemId,
+        itemId: i.itemId,
+        itemCode: i.itemCode,
+        itemName: i.itemName,
+        receivedQuantity: i.receivedQuantity,
+        checkedQuantity: i.checkedQuantity,
+        passedQuantity: i.passedQuantity,
+        failedQuantity: i.failedQuantity,
+        qualityStatus: i.qualityStatus,
+        failureReason: i.failureReason,
+        notes: i.notes,
+      })),
+    }),
+  }).catch((e) => console.warn('[Inventory] Failed to sync quality check to server:', e));
+}
+
+function mapApiQualityCheckToStore(raw: any): QualityCheck {
+  return {
+    id: raw.id,
+    checkNumber: raw.checkNumber,
+    grnId: raw.grnId,
+    grnNumber: raw.grnNumber,
+    poId: raw.poId,
+    poNumber: raw.poNumber,
+    supplierId: raw.supplierId,
+    supplierName: raw.supplierName,
+    checkedBy: raw.checkedBy,
+    checkedDate: new Date(raw.checkedDate),
+    items: (raw.items || []).map((i: any) => ({
+      id: i.id,
+      grnItemId: i.grnItemId,
+      itemId: i.itemId,
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      receivedQuantity: Number(i.receivedQuantity),
+      checkedQuantity: Number(i.checkedQuantity),
+      passedQuantity: Number(i.passedQuantity),
+      failedQuantity: Number(i.failedQuantity),
+      qualityStatus: i.qualityStatus,
+      failureReason: i.failureReason ?? undefined,
+      notes: i.notes ?? undefined,
+    })),
+    overallStatus: raw.overallStatus,
+    passedItems: raw.passedItems,
+    failedItems: raw.failedItems,
+    totalItems: raw.totalItems,
+    notes: raw.notes ?? undefined,
+    approvedBy: raw.approvedBy ?? undefined,
+    approvedAt: raw.approvedAt ? new Date(raw.approvedAt) : undefined,
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
 interface SupplierStore {
   suppliers: Supplier[];
   purchaseOrders: PurchaseOrder[];
@@ -446,6 +521,7 @@ interface SupplierStore {
   generateNextQualityCheckNumber: () => string;
   createQualityCheck: (check: Omit<QualityCheck, 'id' | 'checkNumber' | 'createdAt' | 'updatedAt'>) => QualityCheck;
   updateQualityCheck: (id: string, updates: Partial<QualityCheck>) => void;
+  hydrateQualityChecksFromApi: () => Promise<void>;
   getQualityCheck: (id: string) => QualityCheck | undefined;
   getQualityChecksByGRN: (grnId: string) => QualityCheck[];
   completeQualityCheck: (checkId: string, approvedBy: string) => void;
@@ -1757,15 +1833,33 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       updatedAt: new Date()
     };
     set(state => ({ qualityChecks: [...state.qualityChecks, newCheck] }));
+    syncQualityCheckToApi(newCheck);
     return newCheck;
   },
 
   updateQualityCheck: (id, updates) => {
+    let updated: QualityCheck | undefined;
     set(state => ({
-      qualityChecks: state.qualityChecks.map(qc =>
-        qc.id === id ? { ...qc, ...updates, updatedAt: new Date() } : qc
-      )
+      qualityChecks: state.qualityChecks.map(qc => {
+        if (qc.id !== id) return qc;
+        updated = { ...qc, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncQualityCheckToApi(updated);
+  },
+
+  hydrateQualityChecksFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/inventory/quality-checks', { headers: poTenantHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const checks = Array.isArray(data.checks) ? data.checks.map(mapApiQualityCheckToStore) : [];
+      set({ qualityChecks: checks });
+    } catch (e) {
+      console.warn('[Inventory] Failed to hydrate quality checks from server:', e);
+    }
   },
 
   getQualityCheck: (id) => get().qualityChecks.find(qc => qc.id === id),
@@ -1780,10 +1874,11 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
     const failedCount = check.items.filter(i => i.qualityStatus === 'failed').length;
     const overallStatus = failedCount === 0 ? 'passed' : passedCount === 0 ? 'failed' : 'partial';
 
+    let updatedCheck: QualityCheck | undefined;
     set(state => ({
       qualityChecks: state.qualityChecks.map(qc =>
         qc.id === checkId
-          ? {
+          ? (updatedCheck = {
               ...qc,
               overallStatus: overallStatus as 'passed' | 'failed' | 'partial',
               passedItems: passedCount,
@@ -1791,10 +1886,11 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
               approvedBy,
               approvedAt: new Date(),
               updatedAt: new Date()
-            }
+            })
           : qc
       )
     }));
+    if (updatedCheck) syncQualityCheckToApi(updatedCheck);
 
     // Update GRN quality status
     get().updateGRN(check.grnId, {

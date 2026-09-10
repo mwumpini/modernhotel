@@ -99,6 +99,7 @@ export default function InventorySupplyChainDashboard() {
     markInvoicePaid,
     createQualityCheck,
     updateQualityCheck,
+    hydrateQualityChecksFromApi,
     getQualityCheck,
     getQualityChecksByGRN,
     completeQualityCheck
@@ -846,6 +847,7 @@ export default function InventorySupplyChainDashboard() {
     hydrateSuppliersFromApi();
     hydrateRequisitionsFromApi();
     hydrateGRNsFromApi();
+    hydrateQualityChecksFromApi();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3369,10 +3371,16 @@ export default function InventorySupplyChainDashboard() {
           onSelectionChange={(key) => setStockOpSubTab(key as string)}
         >
           <Tab key="goods-receipt" title="📥 Goods Receipt" />
+          <Tab key="grn-management" title="📋 GRN & Quality Check" />
           <Tab key="goods-issue" title="📤 Goods Issue" />
           <Tab key="stock-transfers" title="🔄 Stock Transfers" />
           <Tab key="stock-counts" title="🔍 Stock Counts" />
         </Tabs>
+
+        {/* GRN list / detail / quality-check flow, once a PO has been received
+            into a GRN below -- kept as its own sub-tab since a GRN can sit in
+            'pending' status (awaiting QC) for a while before being approved. */}
+        {stockOpSubTab === 'grn-management' && renderGRNManagement()}
 
         {/* Goods Receipt Tab */}
         {stockOpSubTab === 'goods-receipt' && (

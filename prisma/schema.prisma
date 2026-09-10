@@ -69,6 +69,8 @@ model Tenant {
   requisitionItems       RequisitionItem[]
   goodsReceiptNotes      GoodsReceiptNote[]
   grnItems               GRNItem[]
+  qualityChecks          QualityCheck[]
+  qualityCheckItems      QualityCheckItem[]
   inventoryAlertAcks     InventoryAlertAcknowledgment[]
   complianceReports      ComplianceReport[]
   complianceTaxRules     ComplianceTaxRule[]
@@ -1467,6 +1469,59 @@ model GRNItem {
 
   @@index([tenantId, grnId])
   @@map("grn_items")
+}
+
+model QualityCheck {
+  id             String    @id @default(cuid())
+  tenantId       String
+  checkNumber    String
+  grnId          String
+  grnNumber      String
+  poId           String
+  poNumber       String
+  supplierId     String
+  supplierName   String
+  checkedBy      String
+  checkedDate    DateTime  @default(now())
+  overallStatus  String    @default("pending") // pending|passed|failed|partial
+  passedItems    Int       @default(0)
+  failedItems    Int       @default(0)
+  totalItems     Int       @default(0)
+  notes          String?
+  approvedBy     String?
+  approvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  QualityCheckItem[]
+
+  @@unique([tenantId, checkNumber])
+  @@index([tenantId, grnId])
+  @@map("quality_checks")
+}
+
+model QualityCheckItem {
+  id               String  @id @default(cuid())
+  tenantId         String
+  checkId          String
+  grnItemId        String
+  itemId           String
+  itemCode         String
+  itemName         String
+  receivedQuantity Decimal
+  checkedQuantity  Decimal
+  passedQuantity   Decimal
+  failedQuantity   Decimal
+  qualityStatus    String  @default("pending") // pending|passed|failed
+  failureReason    String?
+  notes            String?
+
+  tenant Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  check  QualityCheck @relation(fields: [checkId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, checkId])
+  @@map("quality_check_items")
 }
 
 // Deterministic alertId (e.g. "low_<itemId>") lets an acknowledgment survive alerts
