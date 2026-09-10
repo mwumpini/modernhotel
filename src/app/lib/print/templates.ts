@@ -273,7 +273,7 @@ function guestBlock(guest: PrintGuestInfo) {
     <div class="box">
       <div style="font-weight:600; margin-bottom:6px;">Stay Details</div>
       <div>Room: ${guest.roomNumber || ''} • ${guest.roomType || ''}</div>
-      <div>Arrival: ${guest.arrivalDate || ''} • Departure: ${guest.departureDate || ''} • Nights: ${guest.nights ?? ''}</div>
+      <div>Arrival: ${guest.arrivalDate ? new Date(guest.arrivalDate).toLocaleDateString() : ''} • Departure: ${guest.departureDate ? new Date(guest.departureDate).toLocaleDateString() : ''} • Nights: ${guest.nights ?? ''}</div>
     </div>
   </div>`;
 }

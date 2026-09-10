@@ -277,6 +277,129 @@ function registrationCardBlocks(): BlockConfig[] {
   ];
 }
 
+/** Same content as Standard, but a dark color banner (see blocks.ts's block-level
+ *  `background`) behind the logo/company name instead of a plain letterhead row. */
+function registrationCardBannerBlocks(): BlockConfig[] {
+  return [
+    block({
+      id: 'banner', type: 'container', order: 0, direction: 'row', gap: 'medium', spacing: 'none',
+      background: '#0F172A', backgroundTextColor: '#ffffff',
+      children: [
+        block({ id: 'logo', type: 'logo', order: 0, flexWeight: 0 }),
+        block({ id: 'company-name', type: 'company-name', order: 1, flexWeight: 1, style: { fontSize: 'lg', bold: true } }),
+      ],
+    }),
+    block({ id: 'company-address', type: 'company-address', order: 1, spacing: 'small' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 2, align: 'center', spacing: 'medium' }),
+    block({
+      id: 'header-row', type: 'container', order: 3, direction: 'row', gap: 'large',
+      children: [
+        block({ id: 'guest-details', type: 'guest-details', order: 0, flexWeight: 2, border: 'none' }),
+        block({ id: 'doc-number', type: 'doc-number', order: 1, flexWeight: 1, align: 'right', docNumberLabel: 'Reservation No.', style: { bold: true } }),
+      ],
+    }),
+    block({ id: 'doc-date', type: 'doc-date', order: 4, align: 'right' }),
+    block({ id: 'stay-details', type: 'stay-details', order: 5, border: 'thin', spacing: 'small', stayDetailsDisplay: 'grid' }),
+    block({
+      id: 'acknowledgement', type: 'custom-text', order: 6, spacing: 'medium',
+      text: 'I confirm the above booking details are correct and agree to settle all charges upon checkout.',
+    }),
+    block({ id: 'signature-block', type: 'signature-block', order: 7, spacing: 'medium', signatureDisplay: 'line', signatures: [{ label: 'Guest Signature' }, { label: 'Front Desk Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 8 }),
+  ];
+}
+
+/**
+ * Guest-experience-first framing rather than a legal form — a highlighted
+ * welcome banner (background callout, interpolated {{org.name}}) up top and
+ * a practical amenities note (Wi-Fi, breakfast hours, front desk) alongside
+ * the usual stay details/acknowledgement/signature.
+ */
+function welcomeCardBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'logo', type: 'logo', order: 0, align: 'center' }),
+    block({ id: 'company-name', type: 'company-name', order: 1, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({
+      id: 'welcome-banner', type: 'custom-text', order: 2, align: 'center', spacing: 'medium', style: { fontSize: 'lg', bold: true },
+      background: '#FFF3B0',
+      text: "Welcome to {{org.name}}! We're delighted to have you with us.",
+    }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', spacing: 'small' }),
+    block({
+      id: 'header-row', type: 'container', order: 4, direction: 'row', gap: 'large',
+      children: [
+        block({ id: 'guest-details', type: 'guest-details', order: 0, flexWeight: 2, border: 'none' }),
+        block({ id: 'doc-number', type: 'doc-number', order: 1, flexWeight: 1, align: 'right', docNumberLabel: 'Reservation No.' }),
+      ],
+    }),
+    block({ id: 'stay-details', type: 'stay-details', order: 5, border: 'thin', spacing: 'small', stayDetailsDisplay: 'grid' }),
+    block({
+      id: 'amenities-note', type: 'custom-text', order: 6, spacing: 'medium',
+      text: 'Wi-Fi Network: HotelGuest — password available at the front desk\nBreakfast: 6:30am – 10:00am  •  Front Desk: available 24 hours',
+    }),
+    block({
+      id: 'acknowledgement', type: 'custom-text', order: 7, spacing: 'small',
+      text: 'I confirm the above booking details are correct and agree to settle all charges upon checkout.',
+    }),
+    block({ id: 'signature-block', type: 'signature-block', order: 8, spacing: 'medium', signatureDisplay: 'line', signatures: [{ label: 'Guest Signature' }, { label: 'Front Desk Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 9, align: 'center' }),
+  ];
+}
+
+/** Lean single-column card for a small front-desk printout — no boxes, small
+ *  type, narrow page width (see TemplateStyle.pageWidth) instead of a full page. */
+function compactRegistrationCardBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', style: { fontSize: 'sm' }, dividerBelow: true }),
+    block({ id: 'doc-title', type: 'doc-title', order: 2, align: 'center', spacing: 'small' }),
+    block({ id: 'doc-number', type: 'doc-number', order: 3, align: 'center' }),
+    block({ id: 'doc-date', type: 'doc-date', order: 4, align: 'center', dividerBelow: true, spacing: 'small' }),
+    block({ id: 'guest-details', type: 'guest-details', order: 5, border: 'none' }),
+    block({ id: 'stay-details', type: 'stay-details', order: 6, border: 'none', spacing: 'small' }),
+    block({
+      id: 'acknowledgement', type: 'custom-text', order: 7, spacing: 'small', style: { fontSize: 'sm' },
+      text: 'I confirm the above booking details are correct.',
+    }),
+    block({ id: 'signature-block', type: 'signature-block', order: 8, spacing: 'medium', signatureDisplay: 'line', signatures: [{ label: 'Guest' }, { label: 'Front Desk' }] }),
+  ];
+}
+
+/**
+ * Formal legal-form framing — thick-bordered Guest/Stay cards and a Terms &
+ * Conditions section covering ID verification, check-in/out times, liability,
+ * and settlement of charges — the policy fine print many hotels have a guest
+ * sign at check-in, instead of the one-line acknowledgement the others use.
+ */
+function formalRegistrationCardBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', dividerBelow: true, spacing: 'small' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', underline: true, spacing: 'medium' }),
+    block({
+      id: 'meta-row', type: 'container', order: 4, direction: 'row', gap: 'medium',
+      children: [
+        block({ id: 'doc-number', type: 'doc-number', order: 0, flexWeight: 1, docNumberLabel: 'Reservation No.' }),
+        block({ id: 'doc-date', type: 'doc-date', order: 1, flexWeight: 1, align: 'right' }),
+      ],
+    }),
+    block({ id: 'guest-details', type: 'guest-details', order: 5, border: 'thick' }),
+    block({ id: 'stay-details', type: 'stay-details', order: 6, border: 'thick', spacing: 'small', stayDetailsDisplay: 'grid' }),
+    block({
+      id: 'terms-conditions', type: 'terms-conditions', order: 7,
+      termsSections: [
+        { heading: 'Identification', body: 'Guests are required to present a valid Ghana Card, passport, or other government-issued ID at check-in for verification purposes.' },
+        { heading: 'Check-In / Check-Out', body: 'Standard check-in time is 2:00 PM and check-out time is 12:00 PM. Early check-in or late check-out is subject to availability and may incur additional charges.' },
+        { heading: 'Liability', body: 'The hotel is not liable for loss or damage to personal property left unattended in guest rooms or public areas.' },
+        { heading: 'Settlement of Charges', body: 'The undersigned agrees to settle all charges incurred during the stay, including incidentals, prior to check-out.' },
+      ],
+    }),
+    block({ id: 'signature-block', type: 'signature-block', order: 8, spacing: 'medium', signatures: [{ label: 'Guest Signature' }, { label: 'Front Desk Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 9 }),
+  ];
+}
+
 /**
  * Classic two-column payslip — letterhead, employee info box, Earnings and
  * Deductions tables side by side (via columnSpan:'half'), Net Pay summary
@@ -913,6 +1036,10 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   ],
   'registration-card': [
     template('builtin-registration-card-standard', 'registration-card', 'Standard', registrationCardBlocks()),
+    template('builtin-registration-card-banner', 'registration-card', 'Modern Banner', registrationCardBannerBlocks()),
+    template('builtin-registration-card-welcome', 'registration-card', 'Welcome Card', welcomeCardBlocks()),
+    template('builtin-registration-card-compact', 'registration-card', 'Compact (small front-desk printout)', compactRegistrationCardBlocks(), { pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
+    template('builtin-registration-card-formal', 'registration-card', 'Formal (with policy terms)', formalRegistrationCardBlocks(), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   payslip: [
     template('builtin-payslip-grid', 'payslip', 'Grid (Earnings / Deductions side by side)', payslipGridBlocks()),
