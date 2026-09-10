@@ -152,6 +152,7 @@ export async function POST(request: NextRequest) {
         tableNumber: body.tableNumber,
         roomNumber: body.roomNumber,
         guestId: body.guestId,
+        guestName: body.guestName,
         reservationId: body.reservationId,
         serverName: body.serverName,
         notes: body.notes,

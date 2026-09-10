@@ -178,6 +178,7 @@ class OrdersStore {
           customerType,
           venue,
           priority: o.priority,
+          guestName: o.guestName || undefined,
           roomNumber: o.roomNumber || undefined,
           total: Number(o.total) || 0,
           timestamp: o.createdAt,

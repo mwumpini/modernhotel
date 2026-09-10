@@ -388,8 +388,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           bValue = b.item.name;
           break;
         case 'category':
-          aValue = menuIdToCategory[a.item.id] || '';
-          bValue = menuIdToCategory[b.item.id] || '';
+          aValue = a.item.category || menuIdToCategory[a.item.id] || '';
+          bValue = b.item.category || menuIdToCategory[b.item.id] || '';
           break;
         case 'status':
           aValue = a.item.status || a.order.status;
@@ -598,6 +598,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         tableNumber,
         roomNumber: customerType === 'In-house' ? roomNumber : undefined,
         guestId: selectedGuest?.guestId,
+        guestName: guestDisplayName,
         serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
         notes: orderNotes,
         covers: 1,
@@ -710,6 +711,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             tableNumber,
             roomNumber: customerType === 'In-house' ? roomNumber : undefined,
             guestId: selectedGuest?.guestId,
+            guestName: guestDisplayName,
             serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
             notes: orderNotes,
             covers: 1,
@@ -1579,7 +1581,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           <TableCell>{o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}</TableCell>
                           <TableCell>{(aliases[it.id]?.[0]) || it.id}</TableCell>
                           <TableCell>{it.name}</TableCell>
-                          <TableCell>{menuIdToCategory[it.id] || '-'}</TableCell>
+                          <TableCell>{it.category || menuIdToCategory[it.id] || '-'}</TableCell>
                           <TableCell>{(it.status || o.status)}</TableCell>
                           <TableCell>{o.guestName || '-'}</TableCell>
                           <TableCell>{o.roomNumber || '-'}</TableCell>
@@ -1808,6 +1810,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     tableNumber,
                     roomNumber: customerType === 'In-house' ? roomNumber : undefined,
                     guestId: selectedGuest?.guestId,
+                    guestName: guestDisplayName,
                     serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
                     notes: orderNotes,
                     covers: 1,

@@ -43,6 +43,7 @@ export function serializeFbOrder(order: any, menuRouteById?: Map<string, string>
     tableNumber: order.tableNumber,
     roomNumber: order.roomNumber,
     guestId: order.guestId,
+    guestName: order.guestName,
     reservationId: order.reservationId,
     folioId: order.folioId,
     serverName: order.serverName,

@@ -66,6 +66,8 @@ export interface FbOrderDto {
   venue: string;
   tableNumber?: string | null;
   roomNumber?: string | null;
+  guestId?: string | null;
+  guestName?: string | null;
   covers?: number;
   status: FbOrderStatus | string;
   notes?: string | null;

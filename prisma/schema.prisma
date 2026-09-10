@@ -1167,6 +1167,7 @@ model FBOrder {
   tableNumber  String?
   roomNumber   String?
   guestId      String?
+  guestName    String?     // typed walk-in name — not linked to a guest/reservation record
   reservationId String?
   folioId      String?     // set when billed to folio
   serverName   String?
