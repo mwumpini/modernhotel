@@ -41,6 +41,15 @@ export type BlockType =
   | 'bank-details'
   | 'custom-text'
   | 'terms-conditions'
+  // Payslip-only — an employee's earnings/deductions are genuinely two parallel
+  // lists (not one items list, and not debit/credit pairs), so each gets its own
+  // granular block rather than overloading line-items-table with a data-source
+  // switch. Paired side-by-side via columnSpan:'half' for the classic two-column
+  // payslip layout, or stacked full-width for a single-column one.
+  | 'employee-details'
+  | 'payslip-earnings-table'
+  | 'payslip-deductions-table'
+  | 'payslip-summary'
   // Structural — holds other blocks (including other containers, for arbitrary
   // nesting depth) laid out as a row or column, independent of the top-level
   // "Share a row" pairing. See BlockConfig.children/direction/gap.
@@ -74,7 +83,8 @@ export interface BlockConfig {
    *  combined into one "Sales Taxes Incl." line, Total Taxes Inclusive. Matches how
    *  different Ghanaian hotels format their tax breakdown at varying detail levels. */
   totalsDisplay?: 'table' | 'numbered-list' | 'compact-taxes';
-  /** totals-summary: append "Ghana Cedis Five Hundred only" under the grand total. */
+  /** totals-summary / payslip-summary: append "Ghana Cedis Five Hundred only" under
+   *  the grand total / net pay. */
   showAmountInWords?: boolean;
   /** signature-block: one box per entry. */
   signatures?: Array<{ label: string; role?: string }>;

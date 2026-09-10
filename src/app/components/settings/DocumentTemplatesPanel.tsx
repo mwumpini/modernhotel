@@ -14,7 +14,7 @@ import { DEFAULT_TEMPLATE_STYLE } from '../../lib/print/blocks';
 
 interface DocTypeOption { key: PrintType; label: string }
 interface LegOption { key: 'accommodation' | 'events'; label: string; icon: string; types: DocTypeOption[] }
-interface FamilyOption { key: 'general' | 'events' | 'payment-voucher'; label: string; icon: string; types?: DocTypeOption[]; legs?: LegOption[] }
+interface FamilyOption { key: 'general' | 'events' | 'payment-voucher' | 'payroll'; label: string; icon: string; types?: DocTypeOption[]; legs?: LegOption[] }
 
 // Three real "families" of documents, matching how the business actually thinks
 // about them: guests staying/eating at the hotel, events & conferences (itself
@@ -56,6 +56,10 @@ const FAMILIES: FamilyOption[] = [
     key: 'payment-voucher', icon: '🧾', label: 'Payment Voucher',
     types: [{ key: 'payment-voucher', label: 'Payment Voucher' }],
   },
+  {
+    key: 'payroll', icon: '💰', label: 'Payroll',
+    types: [{ key: 'payslip', label: 'Payslip' }],
+  },
 ];
 
 function locateDocType(docType: PrintType): { family: FamilyOption; leg?: LegOption } {
@@ -70,20 +74,33 @@ function locateDocType(docType: PrintType): { family: FamilyOption; leg?: LegOpt
 
 function newBlankTemplate(docType: PrintType): BlockTemplate {
   const now = new Date().toISOString();
+  const blocks: BlockTemplate['blocks'] = docType === 'payslip'
+    ? [
+        { id: 'company-name', type: 'company-name', visible: true, order: 0, align: 'center', style: { fontSize: 'lg', bold: true } },
+        { id: 'company-address', type: 'company-address', visible: true, order: 1, align: 'center' },
+        { id: 'doc-title', type: 'doc-title', visible: true, order: 2, align: 'center' },
+        { id: 'employee-details', type: 'employee-details', visible: true, order: 3 },
+        { id: 'payslip-earnings-table', type: 'payslip-earnings-table', visible: true, order: 4, columnSpan: 'half' },
+        { id: 'payslip-deductions-table', type: 'payslip-deductions-table', visible: true, order: 5, columnSpan: 'half' },
+        { id: 'payslip-summary', type: 'payslip-summary', visible: true, order: 6, showAmountInWords: true },
+        { id: 'signature-block', type: 'signature-block', visible: true, order: 7, signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] },
+        { id: 'notes-text', type: 'notes-text', visible: true, order: 8 },
+      ]
+    : [
+        { id: 'logo', type: 'logo', visible: true, order: 0 },
+        { id: 'company-info', type: 'company-info', visible: true, order: 1 },
+        { id: 'doc-meta', type: 'doc-meta', visible: true, order: 2 },
+        { id: 'recipient-info', type: 'recipient-info', visible: true, order: 3 },
+        { id: 'line-items-table', type: 'line-items-table', visible: true, order: 4, columns: ['qty', 'unit', 'unitPrice', 'date'] },
+        { id: 'totals-summary', type: 'totals-summary', visible: true, order: 5 },
+        { id: 'notes-text', type: 'notes-text', visible: true, order: 6 },
+      ];
   return {
     id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     docType,
     name: 'New Template',
     isBuiltIn: false,
-    blocks: [
-      { id: 'logo', type: 'logo', visible: true, order: 0 },
-      { id: 'company-info', type: 'company-info', visible: true, order: 1 },
-      { id: 'doc-meta', type: 'doc-meta', visible: true, order: 2 },
-      { id: 'recipient-info', type: 'recipient-info', visible: true, order: 3 },
-      { id: 'line-items-table', type: 'line-items-table', visible: true, order: 4, columns: ['qty', 'unit', 'unitPrice', 'date'] },
-      { id: 'totals-summary', type: 'totals-summary', visible: true, order: 5 },
-      { id: 'notes-text', type: 'notes-text', visible: true, order: 6 },
-    ],
+    blocks,
     style: { ...DEFAULT_TEMPLATE_STYLE },
     createdAt: now,
     updatedAt: now,

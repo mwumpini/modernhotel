@@ -1,4 +1,4 @@
-import type { PrintData } from './templates';
+import type { PrintData, PrintLineItem } from './templates';
 import { money } from './templates';
 import type { BlockConfig, BlockTemplate, BlockType, TemplateStyle } from './blocks';
 import { amountInWords } from './amountInWords';
@@ -311,6 +311,69 @@ function renderLineItemsTable(block: BlockConfig, data: PrintData, currency: str
     </thead>
     <tbody>${rows}</tbody>
   </table>`;
+}
+
+// --- Payslip-only blocks ---
+
+function renderEmployeeDetails(block: BlockConfig, data: PrintData): string {
+  const e = data.employee;
+  if (!e) return '';
+  const boxStyle = boxBorderStyle(block.border);
+  const left: Array<[string, string]> = [
+    ['Date of Joining', e.dateOfJoining ? new Date(e.dateOfJoining).toLocaleDateString() : ''],
+    ['Pay Period', e.payPeriod || ''],
+    ['Worked Days', e.workedDays != null ? String(e.workedDays) : ''],
+  ];
+  const right: Array<[string, string]> = [
+    ['Employee Name', e.name || ''],
+    ['Designation', e.position || ''],
+    ['Department', e.department || ''],
+  ];
+  const col = (rows: Array<[string, string]>) => rows.map(([label, val]) => `<div>${label} : ${val}</div>`).join('');
+  return `
+  <div class="box"${boxStyle}>
+    ${block.heading ? `<div style="font-weight:600; margin-bottom:6px;">${block.heading}</div>` : ''}
+    <div style="display:flex; gap:24px;">
+      <div style="flex:1;">${e.employeeNumber ? `<div>Employee No. : ${e.employeeNumber}</div>` : ''}${col(left)}</div>
+      <div style="flex:1;">${col(right)}</div>
+    </div>
+  </div>`;
+}
+
+function payslipTable(block: BlockConfig, items: PrintLineItem[] | undefined, currency: string, totalLabel: string): string {
+  const rows = (items || []).map(it => `
+    <tr><td>${it.description}</td><td class="right">${money(it.amount, currency)}</td></tr>`).join('');
+  const total = (items || []).reduce((s, it) => s + (it.amount || 0), 0);
+  return `
+  <table>
+    <thead><tr><th>${block.heading || (totalLabel === 'Total Earnings' ? 'Earnings' : 'Deductions')}</th><th class="right">Amount</th></tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr><td style="font-weight:700;">${totalLabel}</td><td class="right" style="font-weight:700;">${money(total, currency)}</td></tr></tfoot>
+  </table>`;
+}
+
+function renderPayslipEarningsTable(block: BlockConfig, data: PrintData, currency: string): string {
+  return payslipTable(block, data.earningsItems, currency, 'Total Earnings');
+}
+
+function renderPayslipDeductionsTable(block: BlockConfig, data: PrintData, currency: string): string {
+  return payslipTable(block, data.deductionsItems, currency, 'Total Deductions');
+}
+
+function renderPayslipSummary(block: BlockConfig, data: PrintData, currency: string): string {
+  const totalEarnings = (data.earningsItems || []).reduce((s, it) => s + (it.amount || 0), 0);
+  const totalDeductions = (data.deductionsItems || []).reduce((s, it) => s + (it.amount || 0), 0);
+  const netPay = totalEarnings - totalDeductions;
+  const wordsHtml = block.showAmountInWords
+    ? `<div style="margin-top:8px; font-style:italic;">${amountInWords(netPay)}</div>` : '';
+  return `
+  <table class="totals">
+    <tbody>
+      <tr><td class="label">Total Earnings</td><td class="value">${money(totalEarnings, currency)}</td></tr>
+      <tr><td class="label">Total Deductions</td><td class="value">${money(totalDeductions, currency)}</td></tr>
+      <tr><td class="label grand">${block.heading || 'Net Pay'}</td><td class="value grand">${money(netPay, currency)}</td></tr>
+    </tbody>
+  </table>${wordsHtml}`;
 }
 
 function totalsTable(rows: Array<[string, number | undefined]>, currency: string): string {
@@ -631,6 +694,10 @@ function renderBlock(block: BlockConfig, data: PrintData, currency: string): str
     case 'bank-details': return renderBankDetails(block, data);
     case 'custom-text': return renderCustomText(block, data);
     case 'terms-conditions': return renderTermsConditions(block);
+    case 'employee-details': return renderEmployeeDetails(block, data);
+    case 'payslip-earnings-table': return renderPayslipEarningsTable(block, data, currency);
+    case 'payslip-deductions-table': return renderPayslipDeductionsTable(block, data, currency);
+    case 'payslip-summary': return renderPayslipSummary(block, data, currency);
     default: return '';
   }
 }
@@ -645,7 +712,7 @@ const HEADER_BLOCK_TYPES: BlockType[] = ['company-info', 'doc-meta'];
 // These block types render their own internal bordered box (via boxBorderStyle),
 // so the generic per-block border wrapper below skips them to avoid a double box.
 // They still get underline/alignment from the generic wrapper like anything else.
-export const SELF_BORDERED_TYPES: BlockType[] = ['recipient-info', 'bank-details', 'guest-details', 'stay-details'];
+export const SELF_BORDERED_TYPES: BlockType[] = ['recipient-info', 'bank-details', 'guest-details', 'stay-details', 'employee-details'];
 
 // Multi-row/structural blocks that should never split across a printed page —
 // a signature box or a totals section cut in half mid-print reads as broken.
@@ -653,6 +720,7 @@ const NO_BREAK_TYPES: BlockType[] = [
   'line-items-table', 'matrix-table', 'schedule-table', 'signature-block', 'terms-conditions',
   'recipient-info', 'guest-details', 'stay-details', 'bank-details',
   'totals-summary', 'totals-subtotal', 'totals-taxes', 'totals-payments', 'totals-balance', 'totals-grandtotal',
+  'employee-details', 'payslip-earnings-table', 'payslip-deductions-table', 'payslip-summary',
 ];
 
 /** Shared None/Small/Medium/Large -> px scale for both Spacing Above (vertical)

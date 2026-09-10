@@ -37,6 +37,11 @@ const BLOCK_LABELS: Record<BlockType, string> = {
   'custom-text': 'Custom Text',
   'terms-conditions': 'Terms & Conditions',
   'container': 'Layout Container',
+  // Payslip-only.
+  'employee-details': 'Employee Details',
+  'payslip-earnings-table': 'Earnings Table',
+  'payslip-deductions-table': 'Deductions Table',
+  'payslip-summary': 'Pay Summary (Net Pay)',
 };
 
 /**
@@ -57,6 +62,7 @@ const BLOCK_ZONE: Record<BlockType, 'header' | 'body' | 'footer'> = {
   'notes-text': 'footer', 'signature-block': 'footer', 'bank-details': 'footer',
   'custom-text': 'footer', 'terms-conditions': 'footer',
   'container': 'body',
+  'employee-details': 'body', 'payslip-earnings-table': 'body', 'payslip-deductions-table': 'body', 'payslip-summary': 'body',
 };
 const ZONE_LABELS: Record<'header' | 'body' | 'footer', string> = { header: 'Header', body: 'Body', footer: 'Footer' };
 
@@ -457,7 +463,7 @@ function BlockSettings({ block, onChange, hasLegacyHeaderBlock, parentDirection 
         </div>
       )}
 
-      {(block.type === 'recipient-info' || block.type === 'bank-details' || block.type === 'guest-details' || block.type === 'stay-details') && (
+      {(block.type === 'recipient-info' || block.type === 'bank-details' || block.type === 'guest-details' || block.type === 'stay-details' || block.type === 'employee-details') && (
         <Input
           label={block.type === 'recipient-info' && block.recipientDisplay === 'letter' ? 'Attention Line Label (e.g. "ATTN")' : 'Heading'}
           value={block.heading || ''}
@@ -637,7 +643,7 @@ function BlockSettings({ block, onChange, hasLegacyHeaderBlock, parentDirection 
         </div>
       )}
 
-      {block.type === 'totals-grandtotal' && (
+      {(block.type === 'totals-grandtotal' || block.type === 'payslip-summary') && (
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-700">Show amount in words</span>
           <Switch isSelected={!!block.showAmountInWords} onValueChange={(v) => onChange({ showAmountInWords: v })} />

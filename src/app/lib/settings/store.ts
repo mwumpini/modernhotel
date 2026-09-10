@@ -1125,6 +1125,7 @@ interface SettingsStore extends SystemSettings {
     'accommodation-proforma': string; 'accommodation-invoice': string; 'accommodation-receipt': string;
     'event-proforma': string; 'event-invoice': string; 'event-receipt': string;
     'registration-card': string;
+    payslip: string;
   };
   // No-code document template builder — tenant-created templates, all document types.
   docBuilder: DocBuilderSettings;
@@ -2196,6 +2197,7 @@ const DEFAULT_PRINTING: SettingsStore['printing'] = {
   'event-invoice': 'builtin-event-invoice-standard',
   'event-receipt': 'builtin-event-receipt-standard',
   'registration-card': 'builtin-registration-card-standard',
+  payslip: 'builtin-payslip-grid',
 };
 
 export const useSettingsStore = create<SettingsStore>((set, get) => ({

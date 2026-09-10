@@ -40,40 +40,54 @@ function stripInlinePrintScript(html: string): string {
 export function openHtmlPrintWindow(html: string): boolean {
   if (typeof window === 'undefined') return false;
 
-  // A real navigation (Blob URL) rather than document.write into an
-  // about:blank popup — document.write's completion doesn't guarantee the
-  // browser has actually painted the content yet, so calling window.print()
-  // right after it (as this used to) could race a still-blank, unpainted
-  // window and leave it looking empty. Navigating to a URL makes `onload`
-  // fire only once the document has genuinely loaded.
-  const blob = new Blob([stripInlinePrintScript(html)], { type: 'text/html' });
-  const url = URL.createObjectURL(blob);
+  // A hidden same-page iframe rather than window.open('_blank') — no new
+  // window/tab is ever created, so a browser's popup blocker (or a user who
+  // hasn't granted this site popup permission) can never silently swallow it.
+  // That used to mean the print dialog — the user's only way to see or save
+  // the document — just never appeared, with nothing but a console warning
+  // to explain why "Generate"/"Print" looked like it did nothing.
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(iframe);
 
-  const w = window.open(url, '_blank', 'noopener,noreferrer,width=900,height=1000');
-  if (!w) {
-    URL.revokeObjectURL(url);
-    alert('Unable to open print preview. Please allow pop-ups and try again.');
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    iframe.remove();
+    alert('Unable to open print preview. Please try again.');
     return false;
   }
-  w.focus();
+
+  const cleanup = () => setTimeout(() => iframe.remove(), 60000);
 
   let printed = false;
   const triggerPrint = () => {
     if (printed) return;
     printed = true;
     try {
-      w.print();
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
     } catch (err) {
       console.error('Print failed', err);
     }
-    // The print dialog blocks synchronously, so the window has definitely
-    // finished reading the blob by the time we get here.
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    cleanup();
   };
 
-  w.onload = triggerPrint;
-  // Fallback in case onload never fires (some browsers/extensions suppress it
-  // for popups) — don't leave the window sitting there with no print prompt.
+  // document.write's completion doesn't guarantee the browser has actually
+  // painted the content yet, so trigger print from the iframe's own load
+  // event (fires once the written document has genuinely loaded) rather than
+  // racing a call right after write().
+  iframe.onload = triggerPrint;
+  doc.open();
+  doc.write(stripInlinePrintScript(html));
+  doc.close();
+  // Fallback in case onload never fires for some reason — don't leave the
+  // iframe sitting there with no print prompt.
   setTimeout(() => { if (!printed) triggerPrint(); }, 1000);
 
   return true;

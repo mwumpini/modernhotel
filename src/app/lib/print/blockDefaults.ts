@@ -277,6 +277,45 @@ function registrationCardBlocks(): BlockConfig[] {
   ];
 }
 
+/**
+ * Classic two-column payslip — letterhead, employee info box, Earnings and
+ * Deductions tables side by side (via columnSpan:'half'), Net Pay summary
+ * (with amount in words), Employer/Employee signatures, and a "system
+ * generated" footer note. Matches the common Ghanaian payslip layout.
+ */
+function payslipGridBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 2, align: 'center', spacing: 'small' }),
+    block({ id: 'employee-details', type: 'employee-details', order: 3, spacing: 'medium' }),
+    block({ id: 'payslip-earnings-table', type: 'payslip-earnings-table', order: 4, columnSpan: 'half', spacing: 'medium' }),
+    block({ id: 'payslip-deductions-table', type: 'payslip-deductions-table', order: 5, columnSpan: 'half', spacing: 'medium' }),
+    block({ id: 'payslip-summary', type: 'payslip-summary', order: 6, showAmountInWords: true, spacing: 'medium' }),
+    block({ id: 'signature-block', type: 'signature-block', order: 7, spacing: 'large', signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 8, align: 'center', style: { fontSize: 'sm' }, text: 'This is a system generated payslip.' }),
+  ];
+}
+
+/**
+ * Single-column payslip — same content as the Grid style, but Earnings and
+ * Deductions stack full-width one after the other instead of sitting side by
+ * side. Matches the alternate "List" layout some hotels prefer.
+ */
+function payslipListBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 2, align: 'center', spacing: 'small' }),
+    block({ id: 'employee-details', type: 'employee-details', order: 3, spacing: 'medium' }),
+    block({ id: 'payslip-earnings-table', type: 'payslip-earnings-table', order: 4, spacing: 'medium' }),
+    block({ id: 'payslip-deductions-table', type: 'payslip-deductions-table', order: 5, spacing: 'medium' }),
+    block({ id: 'payslip-summary', type: 'payslip-summary', order: 6, showAmountInWords: true, spacing: 'medium' }),
+    block({ id: 'signature-block', type: 'signature-block', order: 7, spacing: 'large', signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 8, align: 'center', style: { fontSize: 'sm' }, text: 'This is a system generated payslip.' }),
+  ];
+}
+
 function template(id: string, docType: PrintType, name: string, blocks: BlockConfig[], styleOverrides?: Partial<TemplateStyle>): BlockTemplate {
   return {
     id,
@@ -405,6 +444,10 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   ],
   'registration-card': [
     template('builtin-registration-card-standard', 'registration-card', 'Standard', registrationCardBlocks()),
+  ],
+  payslip: [
+    template('builtin-payslip-grid', 'payslip', 'Grid (Earnings / Deductions side by side)', payslipGridBlocks()),
+    template('builtin-payslip-list', 'payslip', 'List (Earnings / Deductions stacked)', payslipListBlocks()),
   ],
 };
 

@@ -3,13 +3,15 @@
 import React from 'react';
 import { Button, Card, CardBody, CardHeader, Select, SelectItem } from '@heroui/react';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
+import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useSettingsStore } from '@/app/lib/settings/store';
-import { generatePayslipsPDF, type PayslipRow } from '@/app/lib/hr/payrollPdf';
+import { openPrintPreview } from '@/app/lib/print/engine';
+import { buildOrgProfile } from '@/app/lib/print/buildOrgProfile';
+import type { PrintData } from '@/app/lib/print/templates';
 
 export default function PayslipGenerationPanel() {
   const periods = usePayrollStore((s) => s.payrollPeriods);
   const records = usePayrollStore((s) => s.payrollRecords);
-  const hotelName = useSettingsStore((s) => s.hotelSettings.hotelName) || 'Hotel';
 
   const [periodId, setPeriodId] = React.useState<string>(periods[0]?.id || '');
   const periodRecords = records.filter((r) => r.payrollPeriodId === periodId);
@@ -18,39 +20,51 @@ export default function PayslipGenerationPanel() {
   const record = records.find((r) => r.id === recordId);
   const period = periods.find((p) => p.id === periodId);
 
-  const generate = async () => {
+  const generate = () => {
     if (!record) return;
     const monthLabel = period
       ? new Date(period.startDate).toLocaleString('en-US', { month: 'long', year: 'numeric' })
       : new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
-    // Same composition as the on-screen preview below, so the PDF never shows a different
-    // total than what was just previewed.
-    const otherDeductions =
-      record.deductions.socialSecurity + record.deductions.healthInsurance + record.deductions.pension + record.deductions.other;
-    const rows: PayslipRow[] = [
-      { label: 'Basic Salary', value: record.basicSalary.toFixed(2) },
-      { label: 'Allowances', value: record.allowances.toFixed(2) },
-      { label: 'Overtime', value: record.overtimePay.toFixed(2) },
-      { label: 'Bonuses', value: record.bonuses.toFixed(2) },
-      { label: 'Gross Pay', value: record.grossPay.toFixed(2) },
-      { label: 'Tax (PAYE)', value: record.deductions.tax.toFixed(2) },
-      { label: 'Other Deductions', value: otherDeductions.toFixed(2) },
-      { label: 'Net Pay', value: record.netPay.toFixed(2) },
-      { label: 'Payment Method', value: record.paymentMethod },
-      { label: 'Bank Account', value: record.bankAccount || '-' },
-    ];
-    await generatePayslipsPDF({
-      slips: [
-        {
-          hotelName,
-          monthLabel,
-          employeeName: record.employeeName,
-          position: record.position,
-          rows,
-        },
-      ],
-      fileName: `Payslip_${record.employeeName.replace(/\s+/g, '_')}_${monthLabel.replace(/\s+/g, '_')}.pdf`,
-    });
+    const settings = useSettingsStore.getState();
+    const org = buildOrgProfile(settings);
+    const employee = useEmployeeStore.getState().getEmployee(record.employeeId);
+
+    // Same composition as the on-screen preview below, so the printed payslip
+    // never shows a different total than what was just previewed.
+    const data: PrintData = {
+      org,
+      guest: { name: record.employeeName },
+      employee: {
+        name: record.employeeName,
+        employeeNumber: record.employeeNumber,
+        position: record.position,
+        department: record.department,
+        payPeriod: monthLabel,
+        dateOfJoining: employee?.hireDate ? new Date(employee.hireDate).toISOString() : undefined,
+      },
+      docDate: new Date().toISOString(),
+      title: 'Payslip',
+      items: [],
+      totals: { subTotal: 0 },
+      earningsItems: [
+        { description: 'Basic Salary', amount: record.basicSalary },
+        { description: 'Allowances', amount: record.allowances },
+        { description: 'Overtime', amount: record.overtimePay },
+        { description: 'Bonuses', amount: record.bonuses },
+      ].filter((it) => it.amount),
+      deductionsItems: [
+        { description: 'Tax (PAYE)', amount: record.deductions.tax },
+        { description: 'Social Security (SSNIT)', amount: record.deductions.socialSecurity },
+        { description: 'Health Insurance', amount: record.deductions.healthInsurance },
+        { description: 'Pension', amount: record.deductions.pension },
+        { description: 'Provident Fund (Tier 3)', amount: record.deductions.tier3 || 0 },
+        { description: 'Other Deductions', amount: record.deductions.other },
+      ].filter((it) => it.amount),
+      bankDetails: { accountNumber: record.bankAccount },
+      footerNotes: ['This is a system generated payslip.'],
+      currency: '₵',
+    };
+    openPrintPreview('payslip', settings.printing.payslip, data);
   };
 
   React.useEffect(() => {

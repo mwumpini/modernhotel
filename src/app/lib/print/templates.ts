@@ -19,7 +19,10 @@ export type PrintType =
   // been billed yet). Kept as its own type rather than reusing 'accommodation-proforma'
   // so customizing one never silently changes the other (same reasoning as the
   // Events & Conferences split above).
-  | 'registration-card';
+  | 'registration-card'
+  // Employee payslip — its own family (employee info + earnings/deductions),
+  // kept separate from every guest-billing document type above.
+  | 'payslip';
 
 export interface PrintOrgInfo {
   name: string;
@@ -43,6 +46,17 @@ export interface PrintGuestInfo {
   arrivalDate?: string;
   departureDate?: string;
   nights?: number;
+}
+
+export interface PrintEmployeeInfo {
+  name: string;
+  employeeNumber?: string;
+  position?: string;
+  department?: string;
+  /** e.g. "August 2026" */
+  payPeriod?: string;
+  dateOfJoining?: string;
+  workedDays?: number;
 }
 
 export interface PrintLineItem {
@@ -188,6 +202,13 @@ export interface PrintData {
   /** Day-by-day schedule with dates as rows (see PrintScheduleTable) — when
    *  present, the schedule-table block renders this instead of a plain items list. */
   scheduleTable?: PrintScheduleTable;
+  /** Payslip only — employee-details block reads this instead of `guest`. */
+  employee?: PrintEmployeeInfo;
+  /** Payslip only — earnings/deductions are two independent lists (not one
+   *  items array, and not debit/credit pairs), read by payslip-earnings-table /
+   *  payslip-deductions-table / payslip-summary. */
+  earningsItems?: PrintLineItem[];
+  deductionsItems?: PrintLineItem[];
 }
 
 function cssBase() {
@@ -377,7 +398,9 @@ export const printTemplates: Record<PrintType, Record<string, (p: PrintData) => 
   'event-proforma': {},
   'event-invoice': {},
   'event-receipt': {},
-  'registration-card': {}
+  'registration-card': {},
+  // No legacy hand-written variants — payslip only ever existed in the block builder.
+  payslip: {}
 };
 
 export function listTemplates(type: PrintType): { key: string; name: string }[] {

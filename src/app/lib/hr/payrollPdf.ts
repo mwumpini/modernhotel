@@ -12,25 +12,6 @@ export interface GenerateVouchersArgs {
   fileName: string;
 }
 
-export interface PayslipRow {
-  label: string;
-  value: string;
-}
-
-export interface PayslipInput {
-  hotelName: string;
-  monthLabel: string;
-  employeeName: string;
-  ssn?: string;
-  position?: string;
-  rows: PayslipRow[]; // left label / right amount
-}
-
-export interface GeneratePayslipsArgs {
-  slips: PayslipInput[];
-  fileName: string;
-}
-
 export function amountToWordsGhana(value: number) {
   const a = ['', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen'];
   const b = ['', '', 'twenty', 'thirty', 'forty', 'fifty', 'sixty', 'seventy', 'eighty', 'ninety'];
@@ -79,26 +60,6 @@ export async function generateVouchersPDF(args: GenerateVouchersArgs) {
   });
   doc.save(args.fileName);
 }
-
-export async function generatePayslipsPDF(args: GeneratePayslipsArgs) {
-  const JSPDF: any = (await import('jspdf')).default;
-  const doc: any = new JSPDF();
-  let firstPage = true;
-  args.slips.forEach((s) => {
-    if (!firstPage) doc.addPage();
-    firstPage = false;
-    let y = 20; doc.setFontSize(14); doc.text(s.hotelName, 105, y, { align: 'center' }); y += 8;
-    doc.setFontSize(11); doc.text('Employee Salary Advice', 105, y, { align: 'center' }); y += 6;
-    doc.text(s.monthLabel, 105, y, { align: 'center' }); y += 10;
-    doc.setFontSize(10);
-    doc.text(`Name: ${s.employeeName}`, 14, y); y += 6;
-    if (s.ssn) { doc.text(`SS No.: ${s.ssn}`, 14, y); y += 6; }
-    if (s.position) { doc.text(`Position: ${s.position}`, 14, y); y += 10; }
-    s.rows.forEach((row) => { doc.text(row.label, 14, y); doc.text(row.value, 196, y, { align: 'right' }); y += 8; });
-  });
-  doc.save(args.fileName);
-}
-
 
 export interface GeneratePaymentAdviceArgs {
   hotelName: string;

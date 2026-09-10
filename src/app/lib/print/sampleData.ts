@@ -227,6 +227,36 @@ export function getSampleData(docType: PrintType, org: PrintOrgInfo = placeholde
         footerNotes: ['Welcome — please let the front desk know if you need anything during your stay.'],
         currency: '₵',
       };
+    case 'payslip':
+      return {
+        org: sampleOrg,
+        guest: { name: 'Sally Harley' },
+        employee: {
+          name: 'Sally Harley',
+          employeeNumber: 'EMP-0042',
+          position: 'Marketing Executive',
+          department: 'Marketing',
+          payPeriod: 'August 2026',
+          dateOfJoining: '2018-06-23',
+          workedDays: 26,
+        },
+        docDate: new Date().toISOString(),
+        title: 'Payslip',
+        items: [],
+        totals: { subTotal: 0 },
+        earningsItems: [
+          { description: 'Basic Salary', amount: 10000 },
+          { description: 'Incentive Pay', amount: 1000 },
+          { description: 'House Rent Allowance', amount: 400 },
+          { description: 'Meal Allowance', amount: 200 },
+        ],
+        deductionsItems: [
+          { description: 'SSNIT (Tier 1)', amount: 605 },
+          { description: 'PAYE (Income Tax)', amount: 1495 },
+          { description: 'Provident Fund (Tier 3)', amount: 400 },
+        ],
+        currency: '₵',
+      };
     case 'invoice':
     default:
       return {
