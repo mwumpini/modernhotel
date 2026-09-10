@@ -2,6 +2,35 @@ import { create } from 'zustand';
 import { TaxRule, ReportingRule, ComplianceTransaction, ComplianceReport, TaxType } from '../models';
 import { DEFAULT_COMPLIANCE_COUNTRY, getSeedReports, getSeedTaxes } from './config';
 import { resolveComplianceCountry } from './resolveCountry';
+import { getClientTenantSubdomain } from '../api/clientTenant';
+import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+
+function complianceTenantHeaders(): HeadersInit {
+  const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
+  return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
+}
+
+// Best-effort background persistence -- filing status (this tenant's real submitted/approved
+// VAT/PAYE/SSNIT returns) previously lived only in this in-memory store, so both the
+// auto-synced entries from payroll/tax-remittance sync and manual Submit/Approve clicks in
+// ComplianceReportsPanel.tsx vanished on reload.
+function syncReportUpsertToApi(report: Omit<ComplianceReport, 'id'>) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/compliance/report-filings', {
+    method: 'POST',
+    headers: complianceTenantHeaders(),
+    body: JSON.stringify(report),
+  }).catch((e) => console.warn('[Compliance] Failed to sync report filing to server:', e));
+}
+
+function syncReportUpdateToApi(id: string, updates: Partial<ComplianceReport>) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/compliance/report-filings', {
+    method: 'PATCH',
+    headers: complianceTenantHeaders(),
+    body: JSON.stringify({ id, updates }),
+  }).catch((e) => console.warn('[Compliance] Failed to sync report filing update to server:', e));
+}
 
 export interface TaxLineItem {
   // Stable identity of the rule that produced this line — use this (never `name`) to find
@@ -99,6 +128,7 @@ interface ComplianceState {
   addTransaction: (transaction: Omit<ComplianceTransaction, 'id'>) => void;
   updateReport: (id: string, updates: Partial<ComplianceReport>) => void;
   upsertReport: (report: Omit<ComplianceReport, 'id'>) => void;
+  hydrateReportFilingsFromApi: () => Promise<void>;
   calculateTax: (
     amount: number,
     category?: string,
@@ -248,6 +278,7 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
         report.id === id ? { ...report, ...updates } : report
       )
     }));
+    syncReportUpdateToApi(id, updates);
   },
 
   // Find-by-(country, reportType, period) then update-or-create — the one place this pattern
@@ -269,6 +300,21 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
       const id = `CR-${report.reportType}-${report.period}-${Date.now()}`;
       return { reports: [...state.reports, { id, ...report }] };
     });
+    syncReportUpsertToApi(report);
+  },
+
+  hydrateReportFilingsFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/compliance/report-filings', { headers: complianceTenantHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (Array.isArray(data.filings)) {
+        set({ reports: data.filings });
+      }
+    } catch (e) {
+      console.warn('[Compliance] Failed to hydrate report filings from server:', e);
+    }
   },
 
   calculateTax: (amount, category = 'ALL', context = {}) => {

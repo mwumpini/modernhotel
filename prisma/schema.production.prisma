@@ -71,6 +71,7 @@ model Tenant {
   goodsReceiptNotes GoodsReceiptNote[]
   grnItems GRNItem[]
   inventoryAlertAcks InventoryAlertAcknowledgment[]
+  complianceReports ComplianceReport[]
   bankReconciliations BankReconciliation[]
   reconcilingItems ReconcilingItem[]
   bankAccounts BankAccount[]
@@ -2071,4 +2072,27 @@ model Recipe {
 
   @@index([tenantId, category])
   @@map("recipes")
+}
+
+model ComplianceReport {
+  id            String   @id @default(cuid())
+  tenantId      String
+  countryCode   String
+  reportType    String
+  period        String
+  dueDate       String
+  status        String   @default("pending")
+  amount        Float    @default(0)
+  currency      String   @default("GHS")
+  submittedDate String?
+  notes         String?
+  attachments   Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, countryCode, reportType, period])
+  @@index([tenantId, countryCode])
+  @@map("compliance_report_filings")
 }

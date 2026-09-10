@@ -70,6 +70,7 @@ model Tenant {
   goodsReceiptNotes      GoodsReceiptNote[]
   grnItems               GRNItem[]
   inventoryAlertAcks     InventoryAlertAcknowledgment[]
+  complianceReports      ComplianceReport[]
   bankReconciliations    BankReconciliation[]
   reconcilingItems       ReconcilingItem[]
   bankAccounts           BankAccount[]
@@ -2106,4 +2107,38 @@ model Recipe {
 
   @@index([tenantId, category])
   @@map("recipes")
+}
+
+// ---------------------------------------------------------------------------
+// Compliance filing status -- tenant-scoped record of "did THIS tenant submit
+// its VAT/PAYE/SSNIT/etc return for this period", distinct from the shared
+// (non-tenant-scoped) tax-rule/reporting-schedule reference data still served
+// from prisma/compliance.*.json via ComplianceDB. Previously this lived only
+// in the compliance Zustand store's in-memory `reports` array -- populated by
+// upsertReport() from payroll/tax-remittance sync and by manual Submit/
+// Approve clicks in ComplianceReportsPanel.tsx, but never persisted, so both
+// the auto-synced entries and manual status changes vanished on reload.
+// ---------------------------------------------------------------------------
+
+model ComplianceReport {
+  id            String   @id @default(cuid())
+  tenantId      String
+  countryCode   String
+  reportType    String
+  period        String // e.g. "2026-01"
+  dueDate       String // ISO date string (YYYY-MM-DD), matches the store's ComplianceReport type
+  status        String   @default("pending") // pending|submitted|approved|rejected
+  amount        Float    @default(0)
+  currency      String   @default("GHS")
+  submittedDate String?
+  notes         String?
+  attachments   Json?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, countryCode, reportType, period])
+  @@index([tenantId, countryCode])
+  @@map("compliance_report_filings")
 }

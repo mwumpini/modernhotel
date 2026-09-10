@@ -7,6 +7,12 @@ import { useComplianceStore } from '@/app/lib/compliance/store';
 export default function ComplianceReportsPanel() {
   const reports = useComplianceStore((s) => s.reports);
   const updateReport = useComplianceStore((s) => s.updateReport);
+  const hydrateReportFilingsFromApi = useComplianceStore((s) => s.hydrateReportFilingsFromApi);
+
+  React.useEffect(() => {
+    hydrateReportFilingsFromApi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const color = (s: string) => (s === 'approved' ? 'success' : s === 'submitted' ? 'primary' : s === 'pending' ? 'warning' : 'default') as any;
 

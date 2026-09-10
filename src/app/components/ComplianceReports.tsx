@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Badge,
   Button,
@@ -40,6 +40,11 @@ export default function ComplianceReports() {
   const country = useComplianceStore((s) => s.country);
   const reportingRulesAll = useComplianceStore((s) => s.reportingRules);
   const reports = useComplianceStore((s) => s.reports);
+  const hydrateReportFilingsFromApi = useComplianceStore((s) => s.hydrateReportFilingsFromApi);
+  useEffect(() => {
+    hydrateReportFilingsFromApi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const reportingRules = useMemo(
     () => reportingRulesAll.filter((r) => r.countryCode === country && r.isActive !== false),
     [reportingRulesAll, country]
