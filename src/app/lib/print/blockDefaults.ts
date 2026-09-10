@@ -1077,7 +1077,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-payslip-formal', 'payslip', 'Formal (serif, itemized)', payslipFormalBlocks(), { fontFamily: 'serif', borderWidth: 'thick' }),
     template('builtin-payslip-branded-list', 'payslip', 'Branded List (logo, watermark, borderless)', payslipBrandedListBlocks(), { showWatermark: true, watermarkText: 'PAYSLIP' }),
     template('builtin-payslip-logo-right', 'payslip', 'Logo Right', payslipLogoRightBlocks()),
-    template('builtin-payslip-ghana-colors', 'payslip', 'Ghana Colors', payslipGridBlocks(), { primaryColor: '#006B3F', borderColor: '#CE1126' }),
+    template('builtin-payslip-ghana-colors', 'payslip', 'Mamani', payslipGridBlocks(), { primaryColor: '#006B3F', borderColor: '#CE1126' }),
     template('builtin-payslip-register', 'payslip', 'Register (monospace)', payslipGridBlocks(), { fontFamily: 'mono', borderWidth: 'thick' }),
   ],
 };
