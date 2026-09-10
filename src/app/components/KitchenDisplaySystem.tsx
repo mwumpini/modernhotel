@@ -549,6 +549,7 @@ export default function KitchenDisplaySystem({ embedded = false }: KitchenDispla
                       onAssignCook={assignCook}
                       onCancel={id => setConfirmCancel(id)}
                       nextAction={nextAction}
+                      embedded={embedded}
                     />
                   ))}
                 </div>
@@ -643,7 +644,11 @@ function FilterPills({ label, options, value, onChange, activeClass }: {
 }
 
 // ── Kanban column ─────────────────────────────────────────────────────────────
-function KanbanColumn({ status, orders, updating, staff, onTransition, onAssignCook, onCancel, nextAction }: {
+// Capped height + internal scroll — a real kitchen board stays glance-able
+// regardless of order volume; without this, a busy column (e.g. 25 orders
+// stacked) stretched the whole page to match, pushing later orders far off
+// screen instead of just scrolling within their own lane.
+function KanbanColumn({ status, orders, updating, staff, onTransition, onAssignCook, onCancel, nextAction, embedded }: {
   status: string
   orders: KDSOrder[]
   updating: string | null
@@ -652,6 +657,7 @@ function KanbanColumn({ status, orders, updating, staff, onTransition, onAssignC
   onAssignCook: (orderId: string, cookId: string, cookName: string) => void
   onCancel: (id: string) => void
   nextAction: (o: KDSOrder) => { label: string; next: string; cls: string } | null
+  embedded: boolean
 }) {
   const theme = STATUS_THEME[status]
   if (!theme) return null
@@ -667,18 +673,20 @@ function KanbanColumn({ status, orders, updating, staff, onTransition, onAssignC
         <div className="text-center text-gray-700 text-xs py-10">— clear —</div>
       )}
 
-      {orders.map(order => (
-        <OrderCard
-          key={order.id}
-          order={order}
-          isUpdating={updating === order.id}
-          staff={staff}
-          onTransition={onTransition}
-          onAssignCook={onAssignCook}
-          onCancel={onCancel}
-          nextAction={nextAction(order)}
-        />
-      ))}
+      <div className={`flex flex-col gap-3 overflow-y-auto pr-1 ${embedded ? 'max-h-[520px]' : 'max-h-[calc(100vh-190px)]'}`}>
+        {orders.map(order => (
+          <OrderCard
+            key={order.id}
+            order={order}
+            isUpdating={updating === order.id}
+            staff={staff}
+            onTransition={onTransition}
+            onAssignCook={onAssignCook}
+            onCancel={onCancel}
+            nextAction={nextAction(order)}
+          />
+        ))}
+      </div>
     </div>
   )
 }
