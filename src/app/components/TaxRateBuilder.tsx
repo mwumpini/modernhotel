@@ -53,6 +53,16 @@ import {
   getDefaultTemplatesForCountry,
   getTemplateMeta,
 } from '@/app/lib/compliance/config';
+import { getClientTenantSubdomain } from '@/app/lib/api/clientTenant';
+import { normalizeTenantSubdomain } from '@/app/lib/api/tenantSubdomain';
+
+// Every /api/compliance/* route now requires a tenant (tax rules/types/schedules are
+// tenant-scoped, not shared across every tenant on the deployment) -- these fetch calls
+// previously sent no headers at all.
+function taxTenantHeaders(): HeadersInit {
+  const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
+  return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
+}
 
 interface TaxRuleForm {
   id: string;
@@ -130,7 +140,7 @@ export default function TaxRateBuilder() {
     try {
       const res = await fetch('/api/compliance/tax-types/manage', {
         method: editingTypeId ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: taxTenantHeaders(),
         body: JSON.stringify({
           id: editingTypeId || undefined,
           countryCode: selectedCountry,
@@ -187,7 +197,7 @@ export default function TaxRateBuilder() {
           // ComplianceDB's read-modify-write (no locking, so a concurrent write from
           // elsewhere gets silently clobbered too, not just duplicated).
           try {
-            const res = await fetch(`/api/compliance/taxes?country=${code}`);
+            const res = await fetch(`/api/compliance/taxes?country=${code}`, { headers: taxTenantHeaders() });
             if (res.ok) {
               const fresh = await res.json();
               if (Array.isArray(fresh) && fresh.length > 0) {
@@ -268,7 +278,7 @@ export default function TaxRateBuilder() {
         try {
           await fetch('/api/compliance/taxes/manage', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: taxTenantHeaders(),
             body: JSON.stringify({ ...r, typeId })
           });
         } catch {}
@@ -277,7 +287,7 @@ export default function TaxRateBuilder() {
         try {
           await fetch('/api/compliance/taxes/manage', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
+            headers: taxTenantHeaders(),
             body: JSON.stringify({ ...r, typeId: '' })
           });
         } catch {}
@@ -394,14 +404,14 @@ export default function TaxRateBuilder() {
         // Update existing rule
         response = await fetch('/api/compliance/taxes/manage', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: taxTenantHeaders(),
           body: JSON.stringify(ruleData)
         });
       } else {
         // Create new rule
         response = await fetch('/api/compliance/taxes/manage', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: taxTenantHeaders(),
           body: JSON.stringify(ruleData)
         });
       }
@@ -445,7 +455,8 @@ export default function TaxRateBuilder() {
     if (confirm('Are you sure you want to delete this tax rule?')) {
       try {
         const response = await fetch(`/api/compliance/taxes/manage?id=${ruleId}`, {
-          method: 'DELETE'
+          method: 'DELETE',
+          headers: taxTenantHeaders(),
         });
 
         if (!response.ok) {
@@ -475,7 +486,7 @@ export default function TaxRateBuilder() {
       try {
         await fetch('/api/compliance/taxes/manage', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: taxTenantHeaders(),
           body: JSON.stringify({ ...rule, enabled })
         });
       } catch {}
@@ -489,7 +500,7 @@ export default function TaxRateBuilder() {
     const ids = Array.from(selectedRuleIds);
     for (const id of ids) {
       removeTaxRuleFromAccounting(id);
-      try { await fetch(`/api/compliance/taxes/manage?id=${id}`, { method: 'DELETE' }); } catch {}
+      try { await fetch(`/api/compliance/taxes/manage?id=${id}`, { method: 'DELETE', headers: taxTenantHeaders() }); } catch {}
     }
     await setCountry(selectedCountry);
     setSelectedRuleIds(new Set());
@@ -520,7 +531,7 @@ export default function TaxRateBuilder() {
         if (!base) continue;
         await fetch('/api/compliance/taxes/manage', {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: taxTenantHeaders(),
           body: JSON.stringify({ ...base, priority: u.priority })
         });
       } catch {}
@@ -555,7 +566,7 @@ export default function TaxRateBuilder() {
         } else {
           const typeRes = await fetch('/api/compliance/tax-types/manage', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: taxTenantHeaders(),
             body: JSON.stringify({ countryCode: selectedCountry, name: typeName, description: `Auto-created from template ${templateKey}`, domain: meta?.domain, operation: meta?.operation, tags: [`template:${templateKey}`] })
           });
           if (typeRes.ok) {
@@ -577,7 +588,7 @@ export default function TaxRateBuilder() {
         const payload = found ? { ...found, ...rule, id: found.id, typeId: typeIdForTemplate || (found as any).typeId } : { ...rule, typeId: typeIdForTemplate || undefined };
         await fetch('/api/compliance/taxes/manage', {
           method: found ? 'PUT' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: taxTenantHeaders(),
           body: JSON.stringify(payload)
         });
       } catch {}
@@ -673,7 +684,7 @@ export default function TaxRateBuilder() {
     try {
       const res = await fetch('/api/compliance/tax-types/dedupe', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: taxTenantHeaders(),
         body: JSON.stringify({ countryCode: selectedCountry }),
       });
       const data = await res.json().catch(() => ({}));
@@ -699,7 +710,7 @@ export default function TaxRateBuilder() {
     }
     for (const id of toDelete) {
       removeTaxRuleFromAccounting(id);
-      try { await fetch(`/api/compliance/taxes/manage?id=${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+      try { await fetch(`/api/compliance/taxes/manage?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: taxTenantHeaders() }); } catch {}
     }
     await setCountry(selectedCountry);
     flushAccountingSyncForCountry(selectedCountry, true);
@@ -977,7 +988,7 @@ export default function TaxRateBuilder() {
                               const ok = typeof window !== 'undefined' ? window.confirm(`Delete tax type "${t.name}"? Rules are kept but unassigned from this type.`) : true;
                               if (!ok) return;
                               try {
-                                await fetch(`/api/compliance/tax-types/manage?id=${encodeURIComponent(String(t.id))}`, { method: 'DELETE' });
+                                await fetch(`/api/compliance/tax-types/manage?id=${encodeURIComponent(String(t.id))}`, { method: 'DELETE', headers: taxTenantHeaders() });
                                 await setCountry(selectedCountry);
                                 if (selectedTypeId === t.id) setSelectedTypeId(null);
                               } catch {}

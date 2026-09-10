@@ -4,6 +4,8 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardHeader, CardBody, Button, Input, Tooltip } from '@heroui/react';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import type { TaxRule } from '@/app/lib/models';
+import { getClientTenantSubdomain } from '@/app/lib/api/clientTenant';
+import { normalizeTenantSubdomain } from '@/app/lib/api/tenantSubdomain';
 
 /**
  * Dedicated, simplified editor for Ghana's payroll tax rules (PAYE, Tier 1, Tier 2,
@@ -22,9 +24,10 @@ function findRule(taxRules: TaxRule[], tag: TierTag): TaxRule | undefined {
 }
 
 async function saveRule(patch: Partial<TaxRule> & { id: string }) {
+  const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
   const res = await fetch('/api/compliance/taxes/manage', {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': sub, 'x-tenant-id': sub },
     body: JSON.stringify(patch),
   });
   if (!res.ok) {

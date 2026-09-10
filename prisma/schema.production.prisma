@@ -72,6 +72,9 @@ model Tenant {
   grnItems GRNItem[]
   inventoryAlertAcks InventoryAlertAcknowledgment[]
   complianceReports ComplianceReport[]
+  complianceTaxRules ComplianceTaxRule[]
+  complianceTaxTypes ComplianceTaxType[]
+  complianceReportingRules ComplianceReportingRule[]
   bankReconciliations BankReconciliation[]
   reconcilingItems ReconcilingItem[]
   bankAccounts BankAccount[]
@@ -2095,4 +2098,52 @@ model ComplianceReport {
   @@unique([tenantId, countryCode, reportType, period])
   @@index([tenantId, countryCode])
   @@map("compliance_report_filings")
+}
+
+model ComplianceTaxRule {
+  id          String   @id @default(cuid())
+  tenantId    String
+  countryCode String
+  code        String
+  data        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, countryCode])
+  @@map("compliance_tax_rules")
+}
+
+model ComplianceTaxType {
+  id          String   @id @default(cuid())
+  tenantId    String
+  countryCode String
+  code        String
+  data        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, countryCode])
+  @@map("compliance_tax_types")
+}
+
+model ComplianceReportingRule {
+  id          String   @id @default(cuid())
+  tenantId    String
+  countryCode String
+  code        String
+  data        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, countryCode])
+  @@map("compliance_reporting_rules")
 }

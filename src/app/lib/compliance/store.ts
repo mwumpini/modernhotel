@@ -168,9 +168,9 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
 
     try {
       const [taxRes, typeRes, reportRes] = await Promise.all([
-        fetch(`/api/compliance/taxes?country=${code}`),
-        fetch(`/api/compliance/tax-types?country=${code}`),
-        fetch(`/api/compliance/reports?country=${code}`),
+        fetch(`/api/compliance/taxes?country=${code}`, { headers: complianceTenantHeaders() }),
+        fetch(`/api/compliance/tax-types?country=${code}`, { headers: complianceTenantHeaders() }),
+        fetch(`/api/compliance/reports?country=${code}`, { headers: complianceTenantHeaders() }),
       ]);
 
       const unauthorized =

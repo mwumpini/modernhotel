@@ -71,6 +71,9 @@ model Tenant {
   grnItems               GRNItem[]
   inventoryAlertAcks     InventoryAlertAcknowledgment[]
   complianceReports      ComplianceReport[]
+  complianceTaxRules     ComplianceTaxRule[]
+  complianceTaxTypes     ComplianceTaxType[]
+  complianceReportingRules ComplianceReportingRule[]
   bankReconciliations    BankReconciliation[]
   reconcilingItems       ReconcilingItem[]
   bankAccounts           BankAccount[]
@@ -2141,4 +2144,68 @@ model ComplianceReport {
   @@unique([tenantId, countryCode, reportType, period])
   @@index([tenantId, countryCode])
   @@map("compliance_report_filings")
+}
+
+// ---------------------------------------------------------------------------
+// Compliance tax configuration -- rates/rules, tax types, and filing-schedule
+// reference data. Previously all three lived in shared, non-tenant-scoped flat
+// JSON files (prisma/compliance.*.json via ComplianceDB) with no tenantId
+// anywhere: every tenant on the deployment read and wrote the SAME file, and
+// on Vercel those files live under ephemeral /tmp -- wiped on every cold start
+// and redeploy. A tenant customizing e.g. a tax rule's name or rate had that
+// change both visible to every other tenant and silently discarded on the
+// next deploy. Each row's full shape (rate, glCode, tiers, scope, condition,
+// etc.) is kept as a JSON blob under `data` rather than normalized into ~20
+// mostly-optional columns, matching the JSON long-tail convention already
+// used for HrEmployee.details/Supplier.details -- `code` is the stable
+// client-facing identity (e.g. "gh-vat") used for upsert/reference, separate
+// from the DB's own `id`.
+// ---------------------------------------------------------------------------
+
+model ComplianceTaxRule {
+  id          String   @id @default(cuid())
+  tenantId    String
+  countryCode String
+  code        String
+  data        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, countryCode])
+  @@map("compliance_tax_rules")
+}
+
+model ComplianceTaxType {
+  id          String   @id @default(cuid())
+  tenantId    String
+  countryCode String
+  code        String
+  data        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, countryCode])
+  @@map("compliance_tax_types")
+}
+
+model ComplianceReportingRule {
+  id          String   @id @default(cuid())
+  tenantId    String
+  countryCode String
+  code        String
+  data        Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@index([tenantId, countryCode])
+  @@map("compliance_reporting_rules")
 }
