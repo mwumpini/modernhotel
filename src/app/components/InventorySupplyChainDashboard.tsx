@@ -3412,47 +3412,49 @@ export default function InventorySupplyChainDashboard() {
                     startContent={<span>🔍</span>}
                   />
                   {posForReceipt.length > 0 ? (
-                    <Table>
-                      <TableHeader>
-                        <TableColumn>PO Number</TableColumn>
-                        <TableColumn>Supplier</TableColumn>
-                        <TableColumn>Order Date</TableColumn>
-                        <TableColumn>Expected Delivery</TableColumn>
-                        <TableColumn>Items</TableColumn>
-                        <TableColumn>Status</TableColumn>
-                        <TableColumn>Actions</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {posForReceipt
-                          .filter(po => 
-                            po.poNumber.toLowerCase().includes(poSearchTerm.toLowerCase()) ||
-                            po.supplierName.toLowerCase().includes(poSearchTerm.toLowerCase())
-                          )
-                          .map(po => (
-                            <TableRow key={po.id}>
-                              <TableCell className="font-mono font-semibold">{po.poNumber}</TableCell>
-                              <TableCell>{po.supplierName}</TableCell>
-                              <TableCell>{po.orderDate instanceof Date ? po.orderDate.toLocaleDateString() : new Date(po.orderDate).toLocaleDateString()}</TableCell>
-                              <TableCell>{po.expectedDeliveryDate instanceof Date ? po.expectedDeliveryDate.toLocaleDateString() : new Date(po.expectedDeliveryDate).toLocaleDateString()}</TableCell>
-                              <TableCell>{po.items.length} items</TableCell>
-                              <TableCell>
-                                <Badge color={po.status === 'confirmed' ? 'warning' : 'primary'} variant="flat">
-                                  {po.status}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>
-                                <Button
-                                  size="sm"
-                                  color="primary"
-                                  onPress={() => handleOpenGoodsReceipt(po)}
-                                >
-                                  Receive Goods
-                                </Button>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                      </TableBody>
-                    </Table>
+                    <div className="max-h-[520px] overflow-y-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableColumn>PO Number</TableColumn>
+                          <TableColumn>Supplier</TableColumn>
+                          <TableColumn>Order Date</TableColumn>
+                          <TableColumn>Expected Delivery</TableColumn>
+                          <TableColumn>Items</TableColumn>
+                          <TableColumn>Status</TableColumn>
+                          <TableColumn>Actions</TableColumn>
+                        </TableHeader>
+                        <TableBody>
+                          {posForReceipt
+                            .filter(po =>
+                              po.poNumber.toLowerCase().includes(poSearchTerm.toLowerCase()) ||
+                              po.supplierName.toLowerCase().includes(poSearchTerm.toLowerCase())
+                            )
+                            .map(po => (
+                              <TableRow key={po.id}>
+                                <TableCell className="font-mono font-semibold">{po.poNumber}</TableCell>
+                                <TableCell>{po.supplierName}</TableCell>
+                                <TableCell>{po.orderDate instanceof Date ? po.orderDate.toLocaleDateString() : new Date(po.orderDate).toLocaleDateString()}</TableCell>
+                                <TableCell>{po.expectedDeliveryDate instanceof Date ? po.expectedDeliveryDate.toLocaleDateString() : new Date(po.expectedDeliveryDate).toLocaleDateString()}</TableCell>
+                                <TableCell>{po.items.length} items</TableCell>
+                                <TableCell>
+                                  <Badge color={po.status === 'confirmed' ? 'warning' : 'primary'} variant="flat">
+                                    {po.status}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    size="sm"
+                                    color="primary"
+                                    onPress={() => handleOpenGoodsReceipt(po)}
+                                  >
+                                    Receive Goods
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                        </TableBody>
+                      </Table>
+                    </div>
                   ) : (
                     <div className="text-center py-8 text-gray-500">
                       No Purchase Orders ready for receipt
@@ -3526,74 +3528,76 @@ export default function InventorySupplyChainDashboard() {
                   </Select>
                 </div>
                 {stockTransfers.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableColumn>Transfer #</TableColumn>
-                      <TableColumn>From Location</TableColumn>
-                      <TableColumn>To Location</TableColumn>
-                      <TableColumn>Transfer Date</TableColumn>
-                      <TableColumn>Items</TableColumn>
-                      <TableColumn>Status</TableColumn>
-                      <TableColumn>Actions</TableColumn>
-                    </TableHeader>
-                    <TableBody>
-                      {stockTransfers
-                        .filter(t => 
-                          (stockTransferSearchTerm === '' || t.transferNumber.toLowerCase().includes(stockTransferSearchTerm.toLowerCase())) &&
-                          (stockTransferFilterStatus === 'all' || t.status === stockTransferFilterStatus)
-                        )
-                        .map(transfer => (
-                          <TableRow key={transfer.id}>
-                            <TableCell className="font-mono font-semibold">{transfer.transferNumber}</TableCell>
-                            <TableCell>{transfer.fromLocation}</TableCell>
-                            <TableCell>{transfer.toLocation}</TableCell>
-                            <TableCell>{transfer.transferDate instanceof Date ? transfer.transferDate.toLocaleDateString() : new Date(transfer.transferDate).toLocaleDateString()}</TableCell>
-                            <TableCell>{transfer.items.length} items</TableCell>
-                            <TableCell>
-                              <Badge 
-                                color={
-                                  transfer.status === 'delivered' ? 'success' :
-                                  transfer.status === 'in-transit' ? 'warning' :
-                                  transfer.status === 'cancelled' ? 'danger' : 'default'
-                                }
-                                variant="flat"
-                              >
-                                {transfer.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex gap-2">
-                                <Button
-                                  size="sm"
+                  <div className="max-h-[520px] overflow-y-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableColumn>Transfer #</TableColumn>
+                        <TableColumn>From Location</TableColumn>
+                        <TableColumn>To Location</TableColumn>
+                        <TableColumn>Transfer Date</TableColumn>
+                        <TableColumn>Items</TableColumn>
+                        <TableColumn>Status</TableColumn>
+                        <TableColumn>Actions</TableColumn>
+                      </TableHeader>
+                      <TableBody>
+                        {stockTransfers
+                          .filter(t =>
+                            (stockTransferSearchTerm === '' || t.transferNumber.toLowerCase().includes(stockTransferSearchTerm.toLowerCase())) &&
+                            (stockTransferFilterStatus === 'all' || t.status === stockTransferFilterStatus)
+                          )
+                          .map(transfer => (
+                            <TableRow key={transfer.id}>
+                              <TableCell className="font-mono font-semibold">{transfer.transferNumber}</TableCell>
+                              <TableCell>{transfer.fromLocation}</TableCell>
+                              <TableCell>{transfer.toLocation}</TableCell>
+                              <TableCell>{transfer.transferDate instanceof Date ? transfer.transferDate.toLocaleDateString() : new Date(transfer.transferDate).toLocaleDateString()}</TableCell>
+                              <TableCell>{transfer.items.length} items</TableCell>
+                              <TableCell>
+                                <Badge
+                                  color={
+                                    transfer.status === 'delivered' ? 'success' :
+                                    transfer.status === 'in-transit' ? 'warning' :
+                                    transfer.status === 'cancelled' ? 'danger' : 'default'
+                                  }
                                   variant="flat"
-                                  color="primary"
-                                  onPress={() => {
-                                    setViewingStockTransfer(transfer);
-                                    onStockTransferViewOpen();
-                                  }}
                                 >
-                                  View
-                                </Button>
-                                {transfer.status === 'pending' && (
+                                  {transfer.status}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex gap-2">
                                   <Button
                                     size="sm"
                                     variant="flat"
-                                    color="success"
+                                    color="primary"
                                     onPress={() => {
-                                      setEditingStockTransfer(transfer);
-                                      setStockTransferFormData({ ...transfer, items: transfer.items });
-                                      onStockTransferOpen();
+                                      setViewingStockTransfer(transfer);
+                                      onStockTransferViewOpen();
                                     }}
                                   >
-                                    Edit
+                                    View
                                   </Button>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                    </TableBody>
-                  </Table>
+                                  {transfer.status === 'pending' && (
+                                    <Button
+                                      size="sm"
+                                      variant="flat"
+                                      color="success"
+                                      onPress={() => {
+                                        setEditingStockTransfer(transfer);
+                                        setStockTransferFormData({ ...transfer, items: transfer.items });
+                                        onStockTransferOpen();
+                                      }}
+                                    >
+                                      Edit
+                                    </Button>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 ) : (
                   <div className="text-center py-8 text-gray-500">
                     No stock transfers found. Create a new transfer to get started.
@@ -3639,78 +3643,80 @@ export default function InventorySupplyChainDashboard() {
                   </Select>
                 </div>
                 {stockCounts.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableColumn>Count #</TableColumn>
-                      <TableColumn>Type</TableColumn>
-                      <TableColumn>Location</TableColumn>
-                      <TableColumn>Start Date</TableColumn>
-                      <TableColumn>Items</TableColumn>
-                      <TableColumn>Status</TableColumn>
-                      <TableColumn>Actions</TableColumn>
-                    </TableHeader>
-                    <TableBody>
-                      {stockCounts
-                        .filter(c => 
-                          (stockCountSearchTerm === '' || c.countNumber.toLowerCase().includes(stockCountSearchTerm.toLowerCase())) &&
-                          (stockCountFilterStatus === 'all' || c.status === stockCountFilterStatus)
-                        )
-                        .map(count => (
-                          <TableRow key={count.id}>
-                            <TableCell className="font-mono font-semibold">{count.countNumber}</TableCell>
-                            <TableCell>
-                              <Chip size="sm" variant="flat">
-                                {count.countType}
-                              </Chip>
-                            </TableCell>
-                            <TableCell>{count.location}</TableCell>
-                            <TableCell>{count.startDate instanceof Date ? count.startDate.toLocaleDateString() : new Date(count.startDate).toLocaleDateString()}</TableCell>
-                            <TableCell>{count.items.length} items</TableCell>
-                            <TableCell>
-                              <Badge 
-                                color={
-                                  count.status === 'completed' ? 'success' :
-                                  count.status === 'in-progress' ? 'warning' :
-                                  count.status === 'cancelled' ? 'danger' : 'default'
-                                }
-                                variant="flat"
-                              >
-                                {count.status}
-                              </Badge>
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex gap-2">
-                                <Button
-                                  size="sm"
+                  <div className="max-h-[520px] overflow-y-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableColumn>Count #</TableColumn>
+                        <TableColumn>Type</TableColumn>
+                        <TableColumn>Location</TableColumn>
+                        <TableColumn>Start Date</TableColumn>
+                        <TableColumn>Items</TableColumn>
+                        <TableColumn>Status</TableColumn>
+                        <TableColumn>Actions</TableColumn>
+                      </TableHeader>
+                      <TableBody>
+                        {stockCounts
+                          .filter(c =>
+                            (stockCountSearchTerm === '' || c.countNumber.toLowerCase().includes(stockCountSearchTerm.toLowerCase())) &&
+                            (stockCountFilterStatus === 'all' || c.status === stockCountFilterStatus)
+                          )
+                          .map(count => (
+                            <TableRow key={count.id}>
+                              <TableCell className="font-mono font-semibold">{count.countNumber}</TableCell>
+                              <TableCell>
+                                <Chip size="sm" variant="flat">
+                                  {count.countType}
+                                </Chip>
+                              </TableCell>
+                              <TableCell>{count.location}</TableCell>
+                              <TableCell>{count.startDate instanceof Date ? count.startDate.toLocaleDateString() : new Date(count.startDate).toLocaleDateString()}</TableCell>
+                              <TableCell>{count.items.length} items</TableCell>
+                              <TableCell>
+                                <Badge
+                                  color={
+                                    count.status === 'completed' ? 'success' :
+                                    count.status === 'in-progress' ? 'warning' :
+                                    count.status === 'cancelled' ? 'danger' : 'default'
+                                  }
                                   variant="flat"
-                                  color="primary"
-                                  onPress={() => {
-                                    setViewingStockCount(count);
-                                    onStockCountViewOpen();
-                                  }}
                                 >
-                                  View
-                                </Button>
-                                {count.status === 'in-progress' && (
+                                  {count.status}
+                                </Badge>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex gap-2">
                                   <Button
                                     size="sm"
                                     variant="flat"
-                                    color="success"
+                                    color="primary"
                                     onPress={() => {
-                                      if (confirm('Complete this stock count? This will apply adjustments to stock levels.')) {
-                                        handleCompleteStockCount(count);
-                                      }
+                                      setViewingStockCount(count);
+                                      onStockCountViewOpen();
                                     }}
                                   >
-                                    Complete
+                                    View
                                   </Button>
-                                )}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                    </TableBody>
-                  </Table>
+                                  {count.status === 'in-progress' && (
+                                    <Button
+                                      size="sm"
+                                      variant="flat"
+                                      color="success"
+                                      onPress={() => {
+                                        if (confirm('Complete this stock count? This will apply adjustments to stock levels.')) {
+                                          handleCompleteStockCount(count);
+                                        }
+                                      }}
+                                    >
+                                      Complete
+                                    </Button>
+                                  )}
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                      </TableBody>
+                    </Table>
+                  </div>
                 ) : (
                   <div className="text-center py-8 text-gray-500">
                     No stock counts found. Create a new count to get started.

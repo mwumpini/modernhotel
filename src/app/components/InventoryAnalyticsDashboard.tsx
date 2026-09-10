@@ -341,49 +341,51 @@ export default function InventoryAnalyticsDashboard() {
                   </Card>
                 </div>
 
-                <Table aria-label="Low stock items table">
-                  <TableHeader>
-                    <TableColumn>Item Code</TableColumn>
-                    <TableColumn>Name</TableColumn>
-                    <TableColumn>Category</TableColumn>
-                    <TableColumn>Current Stock</TableColumn>
-                    <TableColumn>Reorder Point</TableColumn>
-                    <TableColumn>Supplier</TableColumn>
-                    <TableColumn>Urgency</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {lowStockReport.items.map((item) => (
-                      <TableRow key={item.itemCode}>
-                        <TableCell>{item.itemCode}</TableCell>
-                        <TableCell>{item.name}</TableCell>
-                        <TableCell>
-                          <Chip size="sm" variant="flat" className="capitalize">
-                            {item.category}
-                          </Chip>
-                        </TableCell>
-                        <TableCell>
-                          <Badge color={item.currentStock === 0 ? "danger" : "warning"}>
-                            {item.currentStock}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{item.reorderPoint}</TableCell>
-                        <TableCell>{item.supplierName}</TableCell>
-                        <TableCell>
-                          <Chip 
-                            size="sm" 
-                            color={
-                              item.urgency === 'critical' ? 'danger' :
-                              item.urgency === 'high' ? 'warning' :
-                              item.urgency === 'medium' ? 'secondary' : 'default'
-                            }
-                          >
-                            {item.urgency.toUpperCase()}
-                          </Chip>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className="max-h-[480px] overflow-y-auto">
+                  <Table aria-label="Low stock items table">
+                    <TableHeader>
+                      <TableColumn>Item Code</TableColumn>
+                      <TableColumn>Name</TableColumn>
+                      <TableColumn>Category</TableColumn>
+                      <TableColumn>Current Stock</TableColumn>
+                      <TableColumn>Reorder Point</TableColumn>
+                      <TableColumn>Supplier</TableColumn>
+                      <TableColumn>Urgency</TableColumn>
+                    </TableHeader>
+                    <TableBody>
+                      {lowStockReport.items.map((item) => (
+                        <TableRow key={item.itemCode}>
+                          <TableCell>{item.itemCode}</TableCell>
+                          <TableCell>{item.name}</TableCell>
+                          <TableCell>
+                            <Chip size="sm" variant="flat" className="capitalize">
+                              {item.category}
+                            </Chip>
+                          </TableCell>
+                          <TableCell>
+                            <Badge color={item.currentStock === 0 ? "danger" : "warning"}>
+                              {item.currentStock}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>{item.reorderPoint}</TableCell>
+                          <TableCell>{item.supplierName}</TableCell>
+                          <TableCell>
+                            <Chip
+                              size="sm"
+                              color={
+                                item.urgency === 'critical' ? 'danger' :
+                                item.urgency === 'high' ? 'warning' :
+                                item.urgency === 'medium' ? 'secondary' : 'default'
+                              }
+                            >
+                              {item.urgency.toUpperCase()}
+                            </Chip>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             </Tab>
 
@@ -436,44 +438,46 @@ export default function InventoryAnalyticsDashboard() {
                   </Card>
                 </div>
 
-                <Table aria-label="Expiring items table">
-                  <TableHeader>
-                    <TableColumn>Item Code</TableColumn>
-                    <TableColumn>Name</TableColumn>
-                    <TableColumn>Category</TableColumn>
-                    <TableColumn>Current Stock</TableColumn>
-                    <TableColumn>Expiry Date</TableColumn>
-                    <TableColumn>Days Until Expiry</TableColumn>
-                    <TableColumn>Value</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {expiryReport.items.map((item) => (
-                      <TableRow key={item.itemCode}>
-                        <TableCell>{item.itemCode}</TableCell>
-                        <TableCell>{item.name}</TableCell>
-                        <TableCell>
-                          <Chip size="sm" variant="flat" className="capitalize">
-                            {item.category}
-                          </Chip>
-                        </TableCell>
-                        <TableCell>{item.currentStock}</TableCell>
-                        <TableCell>{item.expiryDate.toLocaleDateString()}</TableCell>
-                        <TableCell>
-                          <Badge 
-                            color={
-                              item.daysUntilExpiry === 0 ? 'danger' :
-                              item.daysUntilExpiry <= 7 ? 'warning' :
-                              item.daysUntilExpiry <= 30 ? 'secondary' : 'default'
-                            }
-                          >
-                            {item.daysUntilExpiry} days
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="font-medium">{formatCurrency(item.totalValue)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className="max-h-[480px] overflow-y-auto">
+                  <Table aria-label="Expiring items table">
+                    <TableHeader>
+                      <TableColumn>Item Code</TableColumn>
+                      <TableColumn>Name</TableColumn>
+                      <TableColumn>Category</TableColumn>
+                      <TableColumn>Current Stock</TableColumn>
+                      <TableColumn>Expiry Date</TableColumn>
+                      <TableColumn>Days Until Expiry</TableColumn>
+                      <TableColumn>Value</TableColumn>
+                    </TableHeader>
+                    <TableBody>
+                      {expiryReport.items.map((item) => (
+                        <TableRow key={item.itemCode}>
+                          <TableCell>{item.itemCode}</TableCell>
+                          <TableCell>{item.name}</TableCell>
+                          <TableCell>
+                            <Chip size="sm" variant="flat" className="capitalize">
+                              {item.category}
+                            </Chip>
+                          </TableCell>
+                          <TableCell>{item.currentStock}</TableCell>
+                          <TableCell>{item.expiryDate.toLocaleDateString()}</TableCell>
+                          <TableCell>
+                            <Badge
+                              color={
+                                item.daysUntilExpiry === 0 ? 'danger' :
+                                item.daysUntilExpiry <= 7 ? 'warning' :
+                                item.daysUntilExpiry <= 30 ? 'secondary' : 'default'
+                              }
+                            >
+                              {item.daysUntilExpiry} days
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="font-medium">{formatCurrency(item.totalValue)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             </Tab>
 
@@ -520,57 +524,59 @@ export default function InventoryAnalyticsDashboard() {
                   </Card>
                 </div>
 
-                <Table aria-label="Supplier performance table">
-                  <TableHeader>
-                    <TableColumn>Name</TableColumn>
-                    <TableColumn>Code</TableColumn>
-                    <TableColumn>Categories</TableColumn>
-                    <TableColumn>Orders</TableColumn>
-                    <TableColumn>Total Spend</TableColumn>
-                    <TableColumn>On-Time Delivery</TableColumn>
-                    <TableColumn>Quality Rating</TableColumn>
-                    <TableColumn>Performance</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {supplierReport.suppliers.map((supplier) => (
-                      <TableRow key={supplier.code}>
-                        <TableCell className="font-medium">{supplier.name}</TableCell>
-                        <TableCell>{supplier.code}</TableCell>
-                        <TableCell>
-                          <div className="flex flex-wrap gap-1">
-                            {supplier.categories.slice(0, 2).map((category) => (
-                              <Chip key={category} size="sm" variant="flat" className="capitalize">
-                                {category}
-                              </Chip>
-                            ))}
-                            {supplier.categories.length > 2 && (
-                              <Chip size="sm" variant="flat">+{supplier.categories.length - 2}</Chip>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>{supplier.totalOrders}</TableCell>
-                        <TableCell>{formatCurrency(supplier.totalSpend)}</TableCell>
-                        <TableCell>
-                          <Badge color={supplier.onTimeDelivery >= 95 ? 'success' : supplier.onTimeDelivery >= 85 ? 'warning' : 'danger'}>
-                            {supplier.onTimeDelivery}%
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Badge color={supplier.qualityRating >= 4.5 ? 'success' : supplier.qualityRating >= 4.0 ? 'warning' : 'danger'}>
-                            {supplier.qualityRating.toFixed(1)}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Progress 
-                            value={supplier.performance * 10} 
-                            color={supplier.performance >= 8 ? 'success' : supplier.performance >= 6 ? 'warning' : 'danger'}
-                            className="w-20"
-                          />
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className="max-h-[480px] overflow-y-auto">
+                  <Table aria-label="Supplier performance table">
+                    <TableHeader>
+                      <TableColumn>Name</TableColumn>
+                      <TableColumn>Code</TableColumn>
+                      <TableColumn>Categories</TableColumn>
+                      <TableColumn>Orders</TableColumn>
+                      <TableColumn>Total Spend</TableColumn>
+                      <TableColumn>On-Time Delivery</TableColumn>
+                      <TableColumn>Quality Rating</TableColumn>
+                      <TableColumn>Performance</TableColumn>
+                    </TableHeader>
+                    <TableBody>
+                      {supplierReport.suppliers.map((supplier) => (
+                        <TableRow key={supplier.code}>
+                          <TableCell className="font-medium">{supplier.name}</TableCell>
+                          <TableCell>{supplier.code}</TableCell>
+                          <TableCell>
+                            <div className="flex flex-wrap gap-1">
+                              {supplier.categories.slice(0, 2).map((category) => (
+                                <Chip key={category} size="sm" variant="flat" className="capitalize">
+                                  {category}
+                                </Chip>
+                              ))}
+                              {supplier.categories.length > 2 && (
+                                <Chip size="sm" variant="flat">+{supplier.categories.length - 2}</Chip>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell>{supplier.totalOrders}</TableCell>
+                          <TableCell>{formatCurrency(supplier.totalSpend)}</TableCell>
+                          <TableCell>
+                            <Badge color={supplier.onTimeDelivery >= 95 ? 'success' : supplier.onTimeDelivery >= 85 ? 'warning' : 'danger'}>
+                              {supplier.onTimeDelivery}%
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Badge color={supplier.qualityRating >= 4.5 ? 'success' : supplier.qualityRating >= 4.0 ? 'warning' : 'danger'}>
+                              {supplier.qualityRating.toFixed(1)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Progress
+                              value={supplier.performance * 10}
+                              color={supplier.performance >= 8 ? 'success' : supplier.performance >= 6 ? 'warning' : 'danger'}
+                              className="w-20"
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             </Tab>
 
