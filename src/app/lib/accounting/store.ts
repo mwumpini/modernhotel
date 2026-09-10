@@ -47,7 +47,7 @@ import { buildChartOfAccountsFromTemplate, resolveAccountingCountryCode, getChar
 import { buildOperationalAccountingSeed, EMPTY_TRANSACTION_SEED } from './operationalSeed';
 import { computeCostCenterActual, computeRevenueCenterActual } from './costRevenueRollup';
 import { isAccountingDemoMode } from './tenantAccountingConfig';
-import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts, persistCostCenter, persistCostCenterDelete, fetchCostCenters, persistRevenueCenter, persistRevenueCenterDelete, fetchRevenueCenters } from './helpers/api';
+import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts, persistCostCenter, persistCostCenterDelete, fetchCostCenters, persistRevenueCenter, persistRevenueCenterDelete, fetchRevenueCenters, persistBusinessPartner, persistBusinessPartnerDelete, fetchBusinessPartners, persistBankTransaction, persistBankTransactionDelete, fetchBankTransactions } from './helpers/api';
 import { useSettingsStore } from '../settings/store';
 import {
   syncInvoiceToLedger,
@@ -763,36 +763,50 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   // Bank Transactions Actions
   setBankTransactions: (transactions) => set({ bankTransactions: transactions }),
   
-  addBankTransaction: (transaction) => set((state) => ({
-    bankTransactions: [...state.bankTransactions, transaction]
-  })),
-  
-  updateBankTransaction: (id, updates) => set((state) => ({
-    bankTransactions: state.bankTransactions.map(transaction =>
-      transaction.id === id ? { ...transaction, ...updates } : transaction
-    )
-  })),
-  
-  deleteBankTransaction: (id) => set((state) => ({
-    bankTransactions: state.bankTransactions.filter(transaction => transaction.id !== id)
-  })),
-  
+  addBankTransaction: (transaction) => {
+    set((state) => ({
+      bankTransactions: [...state.bankTransactions, transaction]
+    }));
+    persistBankTransaction(transaction);
+  },
+
+  updateBankTransaction: (id, updates) => {
+    let updated: BankTransaction | undefined;
+    set((state) => ({
+      bankTransactions: state.bankTransactions.map(transaction => {
+        if (transaction.id !== id) return transaction;
+        updated = { ...transaction, ...updates };
+        return updated;
+      })
+    }));
+    if (updated) persistBankTransaction(updated);
+  },
+
+  deleteBankTransaction: (id) => {
+    set((state) => ({
+      bankTransactions: state.bankTransactions.filter(transaction => transaction.id !== id)
+    }));
+    persistBankTransactionDelete(id);
+  },
+
   reconcileBankTransaction: async (id) => {
     set({ isLoading: true, error: null });
     try {
       await new Promise(resolve => setTimeout(resolve, 300));
+      let updated: BankTransaction | undefined;
       set((state) => ({
-        bankTransactions: state.bankTransactions.map(transaction =>
-          transaction.id === id 
-            ? { 
-                ...transaction, 
-                status: 'Reconciled',
-                reconciledAt: new Date().toISOString(),
-                reconciledBy: 'current-user'
-              }
-            : transaction
-        )
+        bankTransactions: state.bankTransactions.map(transaction => {
+          if (transaction.id !== id) return transaction;
+          updated = {
+            ...transaction,
+            status: 'Reconciled',
+            reconciledAt: new Date().toISOString(),
+            reconciledBy: 'current-user'
+          };
+          return updated;
+        })
       }));
+      if (updated) persistBankTransaction(updated);
     } catch (error) {
       set({ error: error instanceof Error ? error.message : 'Failed to reconcile transaction' });
     } finally {
@@ -845,14 +859,21 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       bankTransactions: s.bankTransactions.filter((t) => !removeIds.has(t.id)),
       error: null,
     }));
+    removeIds.forEach((removeId) => persistBankTransactionDelete(removeId));
     return true;
   },
 
-  markBankTransactionCleared: (id) => set((state) => ({
-    bankTransactions: state.bankTransactions.map((t) =>
-      t.id === id && t.status === 'Pending' ? { ...t, status: 'Cleared' as const } : t
-    ),
-  })),
+  markBankTransactionCleared: (id) => {
+    let updated: BankTransaction | undefined;
+    set((state) => ({
+      bankTransactions: state.bankTransactions.map((t) => {
+        if (t.id !== id || t.status !== 'Pending') return t;
+        updated = { ...t, status: 'Cleared' as const };
+        return updated;
+      }),
+    }));
+    if (updated) persistBankTransaction(updated);
+  },
 
   markBankTransactionsReconciledForPeriod: (bankAccountId, periodEndDate) => {
     const end = new Date(periodEndDate);
@@ -872,18 +893,21 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         .map((t) => t.id)
     );
     if (!ids.size) return 0;
+    const updatedTxns: BankTransaction[] = [];
     set((state) => ({
-      bankTransactions: state.bankTransactions.map((t) =>
-        ids.has(t.id)
-          ? {
-              ...t,
-              status: 'Reconciled' as const,
-              reconciledAt: now,
-              reconciledBy: 'bank-reconciliation',
-            }
-          : t
-      ),
+      bankTransactions: state.bankTransactions.map((t) => {
+        if (!ids.has(t.id)) return t;
+        const updated: BankTransaction = {
+          ...t,
+          status: 'Reconciled' as const,
+          reconciledAt: now,
+          reconciledBy: 'bank-reconciliation',
+        };
+        updatedTxns.push(updated);
+        return updated;
+      }),
     }));
+    updatedTxns.forEach((t) => persistBankTransaction(t));
     return ids.size;
   },
 
@@ -894,7 +918,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     set((state) => ({
     businessPartners: [...state.businessPartners, partner]
     }));
-    
+    persistBusinessPartner(partner);
+
     // Sync to inventory store if type is Supplier or Both (unless we're syncing from inventory)
     if ((partner.type === 'Supplier' || partner.type === 'Both') && !get()._syncingToInventory) {
       try {
@@ -957,7 +982,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       partner.id === id ? { ...partner, ...updates } : partner
       );
       const updatedPartner = updatedPartners.find(p => p.id === id);
-      
+      if (updatedPartner) persistBusinessPartner(updatedPartner);
+
       // Sync to inventory store if type is Supplier or Both (unless we're syncing from inventory)
       if (updatedPartner && (updatedPartner.type === 'Supplier' || updatedPartner.type === 'Both') && !state._syncingToInventory) {
         try {
@@ -1038,9 +1064,10 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
   },
   
   deleteBusinessPartner: (id) => {
+    persistBusinessPartnerDelete(id);
     set((state) => {
       const partner = state.businessPartners.find(p => p.id === id);
-      
+
       // Sync to inventory store - mark as inactive instead of deleting
       if (partner && (partner.type === 'Supplier' || partner.type === 'Both')) {
         try {
@@ -2992,7 +3019,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
       // Hydrate persisted records from the database (server authoritative when tenant is set).
       // Demo transaction seed loads only when NEXT_PUBLIC_DEMO_MODE=true.
-      const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts, serverCostCenters, serverRevenueCenters] = await Promise.all([
+      const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts, serverCostCenters, serverRevenueCenters, serverPartners, serverBankTxns] = await Promise.all([
         fetchJournalEntries(),
         fetchInvoices(),
         fetchPayments(),
@@ -3000,6 +3027,8 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         fetchBankAccounts(),
         fetchCostCenters(),
         fetchRevenueCenters(),
+        fetchBusinessPartners(),
+        fetchBankTransactions(),
       ]);
       // Chart of accounts and bank accounts are only ever edited one action at a time through
       // their own screens (no concurrent-write race like invoices/payments can have), and the
@@ -3036,6 +3065,20 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       } else {
         const seeded = get().revenueCenters;
         seeded.forEach((c) => persistRevenueCenter(c));
+      }
+      // Same server-wins-outright-or-seed rule — business partners and bank ledger
+      // transactions were previously in-memory only (only merged with the demo seed).
+      if (serverPartners && serverPartners.length > 0) {
+        set({ businessPartners: serverPartners });
+      } else {
+        const seeded = get().businessPartners;
+        seeded.forEach((p) => persistBusinessPartner(p));
+      }
+      if (serverBankTxns && serverBankTxns.length > 0) {
+        set({ bankTransactions: serverBankTxns });
+      } else {
+        const seeded = get().bankTransactions;
+        seeded.forEach((t) => persistBankTransaction(t));
       }
       if (serverJEs && serverJEs.length > 0) {
         set((s) => ({ journalEntries: mergeServerRecordsByRecency(s.journalEntries, serverJEs) }));

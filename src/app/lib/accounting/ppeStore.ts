@@ -8,8 +8,41 @@ import { defaultReportDateStr, assetTotalCost } from './ppe/calculations';
 import { validateAsset, validateCategory } from './ppe/validation';
 import { DEFAULT_ORG_ID } from './ppe/categories';
 import { syncPpeRegisterToLedger, capturePpeCostAdjustment, postPpeDisposalIfNeeded } from './ppe/ledgerSync';
+import { getClientTenantSubdomain } from '../api/clientTenant';
+import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
 
 const STORAGE_KEY = 'ppe.register.v1';
+
+function ppeTenantHeaders(): HeadersInit {
+  const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
+  return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
+}
+
+// Best-effort background persistence -- localStorage (via zustand's `persist` below)
+// stays the fast local cache the UI reads/writes synchronously, but every mutation now
+// also durably syncs tenant-scoped to the database. Previously this register (fixed
+// assets + depreciation, financial-statement-relevant data) lived ONLY in one browser's
+// localStorage with no server-side record at all.
+function syncCategoryToApi(category: PpeCategory) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/accounting/ppe-categories', { method: 'POST', headers: ppeTenantHeaders(), body: JSON.stringify(category) })
+    .catch((e) => console.warn('[PPE] Failed to sync category to server:', e));
+}
+function deleteCategoryFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/accounting/ppe-categories?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: ppeTenantHeaders() })
+    .catch((e) => console.warn('[PPE] Failed to delete category on server:', e));
+}
+function syncAssetToApi(asset: PpeAsset) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/accounting/ppe-assets', { method: 'POST', headers: ppeTenantHeaders(), body: JSON.stringify(asset) })
+    .catch((e) => console.warn('[PPE] Failed to sync asset to server:', e));
+}
+function deleteAssetFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/accounting/ppe-assets?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: ppeTenantHeaders() })
+    .catch((e) => console.warn('[PPE] Failed to delete asset on server:', e));
+}
 
 interface PpeRegisterState {
   categories: PpeCategory[];
@@ -31,6 +64,7 @@ interface PpeRegisterState {
   syncToLedger: () => import('./ppe/ledgerSync').PpeSyncResult;
 
   initializePpeRegister: () => void;
+  hydrateFromApi: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -65,6 +99,7 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
             : [...state.categories, category],
           error: null,
         }));
+        syncCategoryToApi(category);
         return true;
       },
 
@@ -82,6 +117,7 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
           categories: state.categories.filter((c) => c.id !== id),
           error: null,
         });
+        deleteCategoryFromApi(id);
         return true;
       },
 
@@ -99,6 +135,7 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
           updatedAt: now,
         };
         set((state) => ({ assets: [...state.assets, asset], error: null }));
+        syncAssetToApi(asset);
         return asset;
       },
 
@@ -148,12 +185,16 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
           }
         }
 
+        let saved: PpeAsset | undefined;
         set((state) => ({
-          assets: state.assets.map((a) =>
-            a.id === id ? { ...a, ...updates, updatedAt: new Date().toISOString() } : a
-          ),
+          assets: state.assets.map((a) => {
+            if (a.id !== id) return a;
+            saved = { ...a, ...updates, updatedAt: new Date().toISOString() };
+            return saved;
+          }),
           error: disposalResult && !disposalResult.ok ? disposalResult.error || null : null,
         }));
+        if (saved) syncAssetToApi(saved);
         return true;
       },
 
@@ -170,35 +211,49 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
           assets: state.assets.filter((a) => a.id !== id),
           error: null,
         }));
+        deleteAssetFromApi(id);
         return true;
       },
 
-      setCapitalizationJournalId: (assetId, journalEntryId) =>
+      setCapitalizationJournalId: (assetId, journalEntryId) => {
+        let saved: PpeAsset | undefined;
         set((state) => ({
-          assets: state.assets.map((a) =>
-            a.id === assetId ? { ...a, capitalizationJournalEntryId: journalEntryId } : a
-          ),
-        })),
+          assets: state.assets.map((a) => {
+            if (a.id !== assetId) return a;
+            saved = { ...a, capitalizationJournalEntryId: journalEntryId };
+            return saved;
+          }),
+        }));
+        if (saved) syncAssetToApi(saved);
+      },
 
-      setLedgerAccumDepPosted: (assetId, amount, journalEntryId) =>
+      setLedgerAccumDepPosted: (assetId, amount, journalEntryId) => {
+        let saved: PpeAsset | undefined;
         set((state) => ({
-          assets: state.assets.map((a) =>
-            a.id === assetId
-              ? {
-                  ...a,
-                  ledgerAccumDepPosted: amount,
-                  ...(journalEntryId ? { lastDepreciationJournalEntryId: journalEntryId } : {}),
-                }
-              : a
-          ),
-        })),
+          assets: state.assets.map((a) => {
+            if (a.id !== assetId) return a;
+            saved = {
+              ...a,
+              ledgerAccumDepPosted: amount,
+              ...(journalEntryId ? { lastDepreciationJournalEntryId: journalEntryId } : {}),
+            };
+            return saved;
+          }),
+        }));
+        if (saved) syncAssetToApi(saved);
+      },
 
-      setDisposalJournalId: (assetId, journalEntryId) =>
+      setDisposalJournalId: (assetId, journalEntryId) => {
+        let saved: PpeAsset | undefined;
         set((state) => ({
-          assets: state.assets.map((a) =>
-            a.id === assetId ? { ...a, disposalJournalEntryId: journalEntryId } : a
-          ),
-        })),
+          assets: state.assets.map((a) => {
+            if (a.id !== assetId) return a;
+            saved = { ...a, disposalJournalEntryId: journalEntryId };
+            return saved;
+          }),
+        }));
+        if (saved) syncAssetToApi(saved);
+      },
 
       syncToLedger: () => {
         const state = get();
@@ -215,6 +270,42 @@ export const usePpeRegisterStore = create<PpeRegisterState>()(
           categories: mergeById(DEFAULT_PPE_CATEGORIES, state.categories),
           assets: mergeById(SAMPLE_PPE_ASSETS as PpeAsset[], state.assets),
         });
+      },
+
+      // Pull the tenant's real persisted register from the database. Server wins
+      // outright once it has anything (categories/assets are edited one at a time
+      // through this screen, same reasoning as chart-of-accounts/bank-accounts);
+      // on a brand-new tenant (server empty), bulk-persist the local seed so it's
+      // there next time and for any other device/tab.
+      hydrateFromApi: async () => {
+        if (typeof window === 'undefined') return;
+        const headers = ppeTenantHeaders();
+        try {
+          const res = await fetch('/api/accounting/ppe-categories', { headers, cache: 'no-store' });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.categories) && data.categories.length > 0) {
+              set({ categories: data.categories });
+            } else {
+              get().categories.forEach((c) => syncCategoryToApi(c));
+            }
+          }
+        } catch (e) {
+          console.warn('[PPE] Failed to hydrate categories from server:', e);
+        }
+        try {
+          const res = await fetch('/api/accounting/ppe-assets', { headers, cache: 'no-store' });
+          if (res.ok) {
+            const data = await res.json();
+            if (Array.isArray(data.assets) && data.assets.length > 0) {
+              set({ assets: data.assets });
+            } else {
+              get().assets.forEach((a) => syncAssetToApi(a));
+            }
+          }
+        } catch (e) {
+          console.warn('[PPE] Failed to hydrate assets from server:', e);
+        }
       },
 
       clearError: () => set({ error: null }),

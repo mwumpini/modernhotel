@@ -8,7 +8,7 @@
  * so an entry's POST always lands before any status PATCH that follows.
  */
 import { getClientTenantSubdomain } from '../../api/clientTenant';
-import { JournalEntry, Invoice, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter } from '../models';
+import { JournalEntry, Invoice, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter, BusinessPartner, BankTransaction } from '../models';
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -354,6 +354,95 @@ export async function fetchRevenueCenters(): Promise<RevenueCenter[] | null> {
     return Array.isArray(data.revenueCenters) ? data.revenueCenters : null;
   } catch (e) {
     console.warn('Accounting: revenue center hydration failed', e);
+    return null;
+  }
+}
+
+// --- Business partners (customers/suppliers) -----------------------------------
+// Same previously-in-memory-only gap as chart of accounts / bank accounts.
+
+export function persistBusinessPartner(partner: BusinessPartner) {
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  enqueue(async () => {
+    const res = await fetch('/api/accounting/business-partners', {
+      method: 'POST',
+      headers: headers(t),
+      body: JSON.stringify(partner),
+    });
+    if (!res.ok) throw new Error('POST business partner failed');
+  });
+}
+
+export function persistBusinessPartnerDelete(id: string) {
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  enqueue(async () => {
+    const res = await fetch(`/api/accounting/business-partners?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: headers(t),
+    });
+    if (!res.ok && res.status !== 404) throw new Error('DELETE business partner failed');
+  });
+}
+
+export async function fetchBusinessPartners(): Promise<BusinessPartner[] | null> {
+  const t = getClientTenantSubdomain();
+  if (typeof window === 'undefined' || !t) return null;
+  try {
+    const res = await fetch('/api/accounting/business-partners', {
+      headers: { 'x-tenant-subdomain': t },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.partners) ? data.partners : null;
+  } catch (e) {
+    console.warn('Accounting: business partner hydration failed', e);
+    return null;
+  }
+}
+
+// --- Bank ledger transactions ----------------------------------------------------
+// Base rows are re-derivable from journal entries, but manual entries and cleared/
+// reconciled status are not — same previously-in-memory-only gap as elsewhere.
+
+export function persistBankTransaction(txn: BankTransaction) {
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  enqueue(async () => {
+    const res = await fetch('/api/accounting/bank-transactions', {
+      method: 'POST',
+      headers: headers(t),
+      body: JSON.stringify(txn),
+    });
+    if (!res.ok) throw new Error('POST bank transaction failed');
+  });
+}
+
+export function persistBankTransactionDelete(id: string) {
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  enqueue(async () => {
+    const res = await fetch(`/api/accounting/bank-transactions?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: headers(t),
+    });
+    if (!res.ok && res.status !== 404) throw new Error('DELETE bank transaction failed');
+  });
+}
+
+export async function fetchBankTransactions(): Promise<BankTransaction[] | null> {
+  const t = getClientTenantSubdomain();
+  if (typeof window === 'undefined' || !t) return null;
+  try {
+    const res = await fetch('/api/accounting/bank-transactions', {
+      headers: { 'x-tenant-subdomain': t },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.transactions) ? data.transactions : null;
+  } catch (e) {
+    console.warn('Accounting: bank transaction hydration failed', e);
     return null;
   }
 }

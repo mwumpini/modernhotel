@@ -1,5 +1,6 @@
 import { prisma } from '../database/client'
-import { JournalEntry, JournalEntryLine, Invoice, InvoiceLine, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter } from './models'
+import { JournalEntry, JournalEntryLine, Invoice, InvoiceLine, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter, BusinessPartner, BankTransaction } from './models'
+import type { PpeAsset, PpeCategory } from './ppe/types'
 import { mapCoaTypeToCategory, mapCoaTypeToRollup } from './coaTree'
 
 const toISO = (v: any): string =>
@@ -914,5 +915,266 @@ export async function deleteRevenueCenterRow(tenantId: string, id: string) {
   const existing = await prisma.revenueCenter.findFirst({ where: { id, tenantId } })
   if (!existing) return false
   await prisma.revenueCenter.delete({ where: { id } })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// Business partners (customers/suppliers)
+// ---------------------------------------------------------------------------
+
+function toStoreBusinessPartner(row: any): BusinessPartner {
+  return {
+    id: row.id,
+    code: row.code,
+    name: row.name,
+    type: row.type,
+    taxNumber: row.taxNumber || undefined,
+    address: row.address || undefined,
+    phone: row.phone || undefined,
+    email: row.email || undefined,
+    contactPerson: row.contactPerson || undefined,
+    creditLimit: row.creditLimit ?? undefined,
+    paymentTerms: row.paymentTerms ?? undefined,
+    glAccountCode: row.glAccountCode,
+    currency: row.currency,
+    balance: row.balance ?? 0,
+    isActive: row.isActive,
+    countryCode: row.countryCode,
+    createdAt: toISO(row.createdAt),
+    updatedAt: toISO(row.updatedAt),
+    bankName: row.bankName || undefined,
+    bankAccountNumber: row.bankAccountNumber || undefined,
+    bankSwift: row.bankSwift || undefined,
+    bankIban: row.bankIban || undefined,
+  }
+}
+
+export async function listBusinessPartners(tenantId: string): Promise<BusinessPartner[]> {
+  const rows = await prisma.businessPartner.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })
+  return rows.map(toStoreBusinessPartner)
+}
+
+export async function upsertBusinessPartnerRow(tenantId: string, partner: BusinessPartner) {
+  const data = {
+    code: partner.code,
+    name: partner.name,
+    type: partner.type,
+    taxNumber: partner.taxNumber,
+    address: partner.address,
+    phone: partner.phone,
+    email: partner.email,
+    contactPerson: partner.contactPerson,
+    creditLimit: partner.creditLimit,
+    paymentTerms: partner.paymentTerms,
+    glAccountCode: partner.glAccountCode,
+    currency: partner.currency,
+    balance: partner.balance,
+    isActive: partner.isActive,
+    countryCode: partner.countryCode,
+    bankName: partner.bankName,
+    bankAccountNumber: partner.bankAccountNumber,
+    bankSwift: partner.bankSwift,
+    bankIban: partner.bankIban,
+  }
+  const existing = await prisma.businessPartner.findUnique({ where: { id: partner.id } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('Business partner belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.businessPartner.update({ where: { id: partner.id }, data })
+    : await prisma.businessPartner.create({ data: { id: partner.id, tenantId, ...data } })
+  return toStoreBusinessPartner(row)
+}
+
+export async function deleteBusinessPartnerRow(tenantId: string, id: string) {
+  const existing = await prisma.businessPartner.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.businessPartner.delete({ where: { id } })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// Bank ledger transactions
+// ---------------------------------------------------------------------------
+
+function toStoreBankTransaction(row: any): BankTransaction {
+  return {
+    id: row.id,
+    bankAccountId: row.bankAccountId,
+    transactionDate: toISO(row.transactionDate),
+    reference: row.reference || '',
+    description: row.description || '',
+    amount: row.amount ?? 0,
+    type: row.type,
+    currency: row.currency,
+    balance: row.balance ?? 0,
+    status: row.status,
+    reconciledAt: row.reconciledAt ? toISO(row.reconciledAt) : undefined,
+    reconciledBy: row.reconciledBy || undefined,
+    journalEntryId: row.journalEntryId || undefined,
+    transferToAccountId: row.transferToAccountId || undefined,
+    linkedTransactionId: row.linkedTransactionId || undefined,
+    createdAt: toISO(row.createdAt),
+  }
+}
+
+export async function listBankTransactions(tenantId: string): Promise<BankTransaction[]> {
+  const rows = await prisma.bankTransaction.findMany({ where: { tenantId }, orderBy: { transactionDate: 'desc' } })
+  return rows.map(toStoreBankTransaction)
+}
+
+export async function upsertBankTransactionRow(tenantId: string, txn: BankTransaction) {
+  const data = {
+    bankAccountId: txn.bankAccountId,
+    transactionDate: new Date(txn.transactionDate),
+    reference: txn.reference,
+    description: txn.description,
+    amount: txn.amount,
+    type: txn.type,
+    currency: txn.currency,
+    balance: txn.balance,
+    status: txn.status,
+    reconciledAt: txn.reconciledAt ? new Date(txn.reconciledAt) : null,
+    reconciledBy: txn.reconciledBy,
+    journalEntryId: txn.journalEntryId,
+    transferToAccountId: txn.transferToAccountId,
+    linkedTransactionId: txn.linkedTransactionId,
+  }
+  const existing = await prisma.bankTransaction.findUnique({ where: { id: txn.id } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('Bank transaction belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.bankTransaction.update({ where: { id: txn.id }, data })
+    : await prisma.bankTransaction.create({ data: { id: txn.id, tenantId, ...data } })
+  return toStoreBankTransaction(row)
+}
+
+export async function deleteBankTransactionRow(tenantId: string, id: string) {
+  const existing = await prisma.bankTransaction.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.bankTransaction.delete({ where: { id } })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// PPE (fixed assets) register
+// ---------------------------------------------------------------------------
+
+function toStorePpeCategory(row: any): PpeCategory {
+  return {
+    id: row.id,
+    name: row.name,
+    codePrefix: row.codePrefix || undefined,
+    graClass: row.graClass,
+    graRate: row.graRate,
+    graMethod: row.graMethod,
+    iasMethod: row.iasMethod,
+    iasRate: row.iasRate,
+    usefulLifeYrs: row.usefulLifeYrs,
+    residualPct: row.residualPct,
+    presentationGroup: row.presentationGroup,
+    organisationId: row.organisationId || undefined,
+  }
+}
+
+export async function listPpeCategories(tenantId: string): Promise<PpeCategory[]> {
+  const rows = await prisma.ppeCategory.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })
+  return rows.map(toStorePpeCategory)
+}
+
+export async function upsertPpeCategoryRow(tenantId: string, category: PpeCategory) {
+  const data = {
+    name: category.name,
+    codePrefix: category.codePrefix,
+    graClass: category.graClass,
+    graRate: category.graRate,
+    graMethod: category.graMethod,
+    iasMethod: category.iasMethod,
+    iasRate: category.iasRate,
+    usefulLifeYrs: category.usefulLifeYrs,
+    residualPct: category.residualPct,
+    presentationGroup: category.presentationGroup,
+    organisationId: category.organisationId,
+  }
+  const existing = await prisma.ppeCategory.findUnique({ where: { id: category.id } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('PPE category belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.ppeCategory.update({ where: { id: category.id }, data })
+    : await prisma.ppeCategory.create({ data: { id: category.id, tenantId, ...data } })
+  return toStorePpeCategory(row)
+}
+
+export async function deletePpeCategoryRow(tenantId: string, id: string) {
+  const existing = await prisma.ppeCategory.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.ppeCategory.delete({ where: { id } })
+  return true
+}
+
+function toStorePpeAsset(row: any): PpeAsset {
+  return {
+    id: row.id,
+    purchaseDate: toISO(row.purchaseDate).slice(0, 10),
+    assetCode: row.assetCode,
+    assetName: row.assetName,
+    categoryId: row.categoryId,
+    quantity: row.quantity,
+    unitPrice: row.unitPrice,
+    capExp: row.capExp,
+    disposalDate: row.disposalDate ? toISO(row.disposalDate).slice(0, 10) : undefined,
+    disposalProceeds: row.disposalProceeds ?? undefined,
+    organisationId: row.organisationId || undefined,
+    capitalizationJournalEntryId: row.capitalizationJournalEntryId || undefined,
+    ledgerAccumDepPosted: row.ledgerAccumDepPosted ?? undefined,
+    lastDepreciationJournalEntryId: row.lastDepreciationJournalEntryId || undefined,
+    disposalJournalEntryId: row.disposalJournalEntryId || undefined,
+    disposalProceedsBankAccountId: row.disposalProceedsBankAccountId || undefined,
+    attachments: row.attachments || undefined,
+    createdAt: toISO(row.createdAt),
+    updatedAt: toISO(row.updatedAt),
+  }
+}
+
+export async function listPpeAssets(tenantId: string): Promise<PpeAsset[]> {
+  const rows = await prisma.ppeAsset.findMany({ where: { tenantId }, orderBy: { createdAt: 'asc' } })
+  return rows.map(toStorePpeAsset)
+}
+
+export async function upsertPpeAssetRow(tenantId: string, asset: PpeAsset) {
+  const data = {
+    purchaseDate: new Date(asset.purchaseDate),
+    assetCode: asset.assetCode,
+    assetName: asset.assetName,
+    categoryId: asset.categoryId,
+    quantity: asset.quantity,
+    unitPrice: asset.unitPrice,
+    capExp: asset.capExp,
+    disposalDate: asset.disposalDate ? new Date(asset.disposalDate) : null,
+    disposalProceeds: asset.disposalProceeds,
+    organisationId: asset.organisationId,
+    capitalizationJournalEntryId: asset.capitalizationJournalEntryId,
+    ledgerAccumDepPosted: asset.ledgerAccumDepPosted,
+    lastDepreciationJournalEntryId: asset.lastDepreciationJournalEntryId,
+    disposalJournalEntryId: asset.disposalJournalEntryId,
+    disposalProceedsBankAccountId: asset.disposalProceedsBankAccountId,
+    attachments: asset.attachments,
+  }
+  const existing = await prisma.ppeAsset.findUnique({ where: { id: asset.id } })
+  if (existing && existing.tenantId !== tenantId) {
+    throw new Error('PPE asset belongs to a different tenant')
+  }
+  const row = existing
+    ? await prisma.ppeAsset.update({ where: { id: asset.id }, data })
+    : await prisma.ppeAsset.create({ data: { id: asset.id, tenantId, ...data } })
+  return toStorePpeAsset(row)
+}
+
+export async function deletePpeAssetRow(tenantId: string, id: string) {
+  const existing = await prisma.ppeAsset.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.ppeAsset.delete({ where: { id } })
   return true
 }

@@ -136,6 +136,7 @@ export default function PpeAssetRegisterPage() {
     upsertCategory,
     deleteCategory,
     initializePpeRegister,
+    hydrateFromApi: hydratePpeFromApi,
     clearError,
   } = usePpeRegisterStore();
   const { initializeAccounting, journalEntries, chartOfAccounts, bankAccounts } = useAccountingStore();
@@ -176,7 +177,8 @@ export default function PpeAssetRegisterPage() {
 
   useEffect(() => {
     initializePpeRegister();
-  }, [initializePpeRegister]);
+    hydratePpeFromApi();
+  }, [initializePpeRegister, hydratePpeFromApi]);
 
   const reportDateObj = useMemo(() => reportDateFromInput(reportDate), [reportDate]);
 
