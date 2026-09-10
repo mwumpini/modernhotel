@@ -1064,7 +1064,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
   'registration-card': [
     template('builtin-registration-card-standard', 'registration-card', 'Standard', registrationCardBlocks()),
     template('builtin-registration-card-banner', 'registration-card', 'Modern Banner', registrationCardBannerBlocks()),
-    template('builtin-registration-card-welcome', 'registration-card', 'Welcome Card', welcomeCardBlocks()),
+    template('builtin-registration-card-welcome', 'registration-card', 'Wumpini', welcomeCardBlocks()),
     template('builtin-registration-card-compact', 'registration-card', 'Compact (small front-desk printout)', compactRegistrationCardBlocks(), { pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
     template('builtin-registration-card-formal', 'registration-card', 'Formal (with policy terms)', formalRegistrationCardBlocks(), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
