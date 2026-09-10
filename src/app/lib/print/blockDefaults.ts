@@ -927,7 +927,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'INVOICE' }),
     template('builtin-invoice-checkout-bill', 'invoice', 'Checkout Bill', checkoutBillBlocks()),
-    template('builtin-invoice-modern-banner', 'invoice', 'Modern Banner', modernBannerBlocks('Guest / Client')),
+    template('builtin-invoice-modern-banner', 'invoice', 'Mamani', modernBannerBlocks('Guest / Client')),
     template('builtin-invoice-statement', 'invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
     template('builtin-invoice-tax-invoice', 'invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
