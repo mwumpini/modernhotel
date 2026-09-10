@@ -938,7 +938,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     ]), { showWatermark: true, watermarkText: 'RECEIPT' }),
     template('builtin-receipt-checkout-bill', 'receipt', 'Checkout Bill', checkoutBillBlocks()),
     template('builtin-receipt-thermal', 'receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest / Client'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
-    template('builtin-receipt-thank-you', 'receipt', 'Thank You', thankYouReceiptBlocks('Guest / Client'), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
+    template('builtin-receipt-thank-you', 'receipt', 'Wumpini', thankYouReceiptBlocks('Guest / Client'), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
     template('builtin-receipt-corporate', 'receipt', 'Corporate (for expense reports)', corporateReceiptBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   proforma: [
