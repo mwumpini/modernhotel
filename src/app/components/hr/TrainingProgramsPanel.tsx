@@ -28,7 +28,11 @@ export default function TrainingProgramsPanel() {
 
   const doEnroll = () => {
     if (!eForm.trainingProgramId || !eForm.employeeId) return;
-    enroll({ trainingProgramId: eForm.trainingProgramId, employeeId: eForm.employeeId, enrollmentDate: new Date(eForm.enrollmentDate), status: 'enrolled', cost: 0 } as any);
+    // Cost defaults to the program's own real cost, not a hardcoded 0 -- SalaryAnalyticsPanel
+    // sums enrollment cost for "Total Training Cost" / "Training Cost by Department", so a
+    // flat 0 here silently zeroed out those KPIs regardless of what training actually cost.
+    const program = programs.find((p) => p.id === eForm.trainingProgramId);
+    enroll({ trainingProgramId: eForm.trainingProgramId, employeeId: eForm.employeeId, enrollmentDate: new Date(eForm.enrollmentDate), status: 'enrolled', cost: program?.cost || 0 } as any);
   };
 
   return (
@@ -49,6 +53,7 @@ export default function TrainingProgramsPanel() {
               <SelectItem key="safety">Safety</SelectItem>
             </Select>
             <Input label="Duration (hrs)" type="number" value={String(pForm.duration)} onChange={(e) => setPForm({ ...pForm, duration: e.target.value })} variant="bordered" />
+            <Input label="Cost (GHS)" type="number" value={String(pForm.cost)} onChange={(e) => setPForm({ ...pForm, cost: e.target.value })} variant="bordered" />
             <Input label="Start" type="date" value={pForm.startDate} onChange={(e) => setPForm({ ...pForm, startDate: e.target.value })} variant="bordered" />
             <Input label="End" type="date" value={pForm.endDate} onChange={(e) => setPForm({ ...pForm, endDate: e.target.value })} variant="bordered" />
             <div className="md:col-span-6 flex items-center gap-4">
@@ -65,11 +70,12 @@ export default function TrainingProgramsPanel() {
               <TableColumn>CODE</TableColumn>
               <TableColumn>CATEGORY</TableColumn>
               <TableColumn>DURATION</TableColumn>
+              <TableColumn>COST</TableColumn>
               <TableColumn>DATES</TableColumn>
             </TableHeader>
             <TableBody>
               {programs.map((p) => (
-                <TableRow key={p.id}><TableCell>{p.title}</TableCell><TableCell>{p.code}</TableCell><TableCell>{p.category}</TableCell><TableCell>{p.duration}h</TableCell><TableCell>{new Date(p.startDate).toLocaleDateString()} - {new Date(p.endDate).toLocaleDateString()}</TableCell></TableRow>
+                <TableRow key={p.id}><TableCell>{p.title}</TableCell><TableCell>{p.code}</TableCell><TableCell>{p.category}</TableCell><TableCell>{p.duration}h</TableCell><TableCell>₵{(p.cost || 0).toFixed(2)}</TableCell><TableCell>{new Date(p.startDate).toLocaleDateString()} - {new Date(p.endDate).toLocaleDateString()}</TableCell></TableRow>
               ))}
             </TableBody>
           </Table>
