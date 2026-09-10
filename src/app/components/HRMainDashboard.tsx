@@ -47,6 +47,7 @@ import { useTrainingStore } from '../lib/hr/trainingStore';
 import { usePerformanceStore } from '../lib/hr/performanceStore';
 import { useEmployeeChangesStore } from '../lib/hr/employeeChangesStore';
 import { useBenefitsStore } from '../lib/hr/benefitsStore';
+import { useOnboardingStore } from '../lib/hr/onboardingStore';
 import { computeLaborCompliance } from '../lib/hr/laborCompliance';
 
 // Info Icon Component with Tooltip
@@ -127,6 +128,7 @@ export default function HRMainDashboard() {
   const hydrateTraining = useTrainingStore((s) => s.hydrateFromApi);
   const performanceReviewsList = usePerformanceStore((s) => s.reviews);
   const hydratePerformance = usePerformanceStore((s) => s.hydrateFromApi);
+  const hydrateOnboarding = useOnboardingStore((s) => s.hydrateFromApi);
 
   useEffect(() => {
     hydrateEmployees();
@@ -136,7 +138,8 @@ export default function HRMainDashboard() {
     hydrateBenefits();
     hydratePerformance();
     hydrateEmployeeChanges();
-  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining, hydrateBenefits, hydratePerformance, hydrateEmployeeChanges]);
+    hydrateOnboarding();
+  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining, hydrateBenefits, hydratePerformance, hydrateEmployeeChanges, hydrateOnboarding]);
 
   const today = new Date().toISOString().slice(0, 10);
   const isSameMonth = (d: Date | string) => {

@@ -735,3 +735,38 @@ export async function createHrEmployeeChange(tenantId: string, id: string, chang
   })
   return toStoreEmployeeChange(row)
 }
+
+// ---------------------------------------------------------------------------
+// Onboarding checklists
+// ---------------------------------------------------------------------------
+
+function toStoreOnboardingChecklist(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employeeId,
+    tasks: row.tasks || [],
+    startedAt: row.startedAt,
+    completedAt: row.completedAt ?? undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+export async function listHrOnboardingChecklists(tenantId: string) {
+  const rows = await prisma.hrOnboardingChecklist.findMany({ where: { tenantId } })
+  return rows.map(toStoreOnboardingChecklist)
+}
+
+// Keyed by (tenantId, employeeId) rather than a client-supplied id -- an employee has at
+// most one checklist, so the natural key is simpler than the id-based ownership check the
+// other HR upserts use.
+export async function upsertHrOnboardingChecklist(tenantId: string, employeeId: string, data: Record<string, any>) {
+  const tasks = data.tasks ?? []
+  const completedAt = toDate(data.completedAt) ?? null
+  const row = await prisma.hrOnboardingChecklist.upsert({
+    where: { tenantId_employeeId: { tenantId, employeeId } },
+    create: { tenantId, employeeId, tasks, completedAt },
+    update: { tasks, completedAt },
+  })
+  return toStoreOnboardingChecklist(row)
+}

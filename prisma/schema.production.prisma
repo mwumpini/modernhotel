@@ -85,6 +85,7 @@ model Tenant {
   hrEmployeeBenefits HrEmployeeBenefits[]
   hrPerformanceReviews HrPerformanceReview[]
   hrEmployeeChanges HrEmployeeChange[]
+  hrOnboardingChecklists HrOnboardingChecklist[]
   guestServices GuestService[]
   serviceRequests ServiceRequest[]
   conferenceHalls ConferenceHall[]
@@ -1652,6 +1653,22 @@ model HrEmployeeChange {
 
   @@index([tenantId, employeeId])
   @@map("hr_employee_changes")
+}
+
+model HrOnboardingChecklist {
+  id          String    @id @default(cuid())
+  tenantId    String
+  employeeId  String
+  tasks       Json
+  startedAt   DateTime  @default(now())
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, employeeId])
+  @@map("hr_onboarding_checklists")
 }
 
 // ---------------------------------------------------------------------------
