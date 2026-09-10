@@ -1557,7 +1557,12 @@ export default function FinancialReportsPage() {
                         {socie.rows.map((r) => (
                           <TableRow
                             key={r.key}
-                            className={r.key === 'close' ? 'bg-slate-100 font-semibold' : ''}
+                            // Opening and closing balances are both totals (a point-in-time
+                            // equity figure), not movement lines — only 'close' got the bold/
+                            // tint treatment before, so 'open' looked identical to the plain
+                            // 'profit'/'other' movement rows between them. Same tonal top-level
+                            // treatment as the account trees elsewhere in this module.
+                            className={r.key === 'open' || r.key === 'close' ? 'bg-slate-100 font-bold text-gray-900' : ''}
                           >
                             <TableCell className="text-sm max-w-md">{r.label}</TableCell>
                             <TableCell className="text-right font-mono text-sm">{formatCurrency(r.shareCapital)}</TableCell>
