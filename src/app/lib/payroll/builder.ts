@@ -399,6 +399,16 @@ export default class UniversalPayrollBuilder {
       }
     }
 
+    // A flat extra amount the employee/employer elected to withhold on top of the statutory
+    // calculation above (garnishment, employee-requested top-up, etc.) -- country-agnostic,
+    // so it applies regardless of which branch computed the statutory tax. Previously captured
+    // in the UI and saved onto the employee record but never read here at all.
+    const additionalWithholding = Number(employee?.taxInfo?.additionalWithholding || 0);
+    if (additionalWithholding > 0) {
+      payrollResult.taxes.items.push({ type: 'income', name: 'Additional Withholding', amount: additionalWithholding, employerAmount: 0 });
+      employeeTaxTotal += additionalWithholding;
+    }
+
     payrollResult.taxes.employee = employeeTaxTotal;
     payrollResult.taxes.employer = employerTaxTotal;
     payrollResult.taxes.total = employeeTaxTotal + employerTaxTotal;

@@ -25,8 +25,6 @@ export default function PayrollBuilderPanel() {
   const [editableConfig, setEditableConfig] = useState<any>(null);
   const [employeeForm, setEmployeeForm] = useState({
     salary: 5000,
-    filingStatus: 'single',
-    allowances: 0,
     additionalWithholding: 0,
     overtimeHours: 0,
     vehicleBenefit: 0,
@@ -124,7 +122,6 @@ export default function PayrollBuilderPanel() {
       employeeId: `EMP-${Math.floor(Math.random() * 1000)}`,
       firstName: 'Demo', lastName: 'User', email: 'demo@hotel.com',
       employment: { type: 'full-time', department: 'Frontdesk', position: 'Agent', salary: 5000, currency: 'GHS' },
-      taxInfo: { filingStatus: 'single', allowances: 1 }
     });
     setEmployeeId(emp.id);
   };
@@ -145,7 +142,7 @@ export default function PayrollBuilderPanel() {
         employeeId: `EMP-${Math.floor(Math.random() * 1000)}`,
         firstName: 'Demo', lastName: 'User', email: 'demo@hotel.com',
         employment: { type: 'full-time', department: 'Frontdesk', position: 'Agent', salary: Number(employeeForm.salary) || 0, currency: (editableConfig?.currency || 'GHS') },
-        taxInfo: { filingStatus: employeeForm.filingStatus, allowances: Number(employeeForm.allowances) || 0, additionalWithholding: Number(employeeForm.additionalWithholding) || 0 }
+        taxInfo: { additionalWithholding: Number(employeeForm.additionalWithholding) || 0 }
       });
       eid = created.id; setEmployeeId(created.id);
     }
@@ -156,8 +153,6 @@ export default function PayrollBuilderPanel() {
     if (emp) {
       emp.employment.salary = Number(employeeForm.salary) || 0;
       emp.taxInfo = emp.taxInfo || {};
-      emp.taxInfo.filingStatus = employeeForm.filingStatus;
-      emp.taxInfo.allowances = Number(employeeForm.allowances) || 0;
       emp.taxInfo.additionalWithholding = Number(employeeForm.additionalWithholding) || 0;
       (builder as any).employeeProfiles.set(eid, emp);
     }
@@ -588,13 +583,8 @@ export default function PayrollBuilderPanel() {
               <CardBody>
                 {(() => { const currency = (editableConfig?.currency || editableConfig?.countryCurrency || 'GHS'); return (
                 <>
-                <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                   <Input label={`Salary (${currency})`} type="number" value={String(employeeForm.salary)} onChange={(e) => setEmployeeForm({ ...employeeForm, salary: parseFloat(e.target.value || '0') })} variant="bordered" />
-                  <Select label="Filing Status" selectedKeys={[employeeForm.filingStatus]} onSelectionChange={(k) => setEmployeeForm({ ...employeeForm, filingStatus: Array.from(k)[0] as string })} variant="bordered">
-                    <SelectItem key="single">Single</SelectItem>
-                    <SelectItem key="married">Married</SelectItem>
-                  </Select>
-                  <Input label="Allowances" type="number" value={String(employeeForm.allowances)} onChange={(e) => setEmployeeForm({ ...employeeForm, allowances: parseInt(e.target.value || '0', 10) })} variant="bordered" />
                   <Input label={`Addl. Withholding (${currency})`} type="number" value={String(employeeForm.additionalWithholding)} onChange={(e) => setEmployeeForm({ ...employeeForm, additionalWithholding: parseFloat(e.target.value || '0') })} variant="bordered" />
                   <Input label="Overtime Hours" type="number" value={String(employeeForm.overtimeHours)} onChange={(e) => setEmployeeForm({ ...employeeForm, overtimeHours: parseFloat(e.target.value || '0') })} variant="bordered" />
                   <div className="grid grid-cols-2 gap-2">

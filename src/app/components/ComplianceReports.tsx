@@ -8,6 +8,11 @@ import {
   CardBody,
   CardHeader,
   Chip,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
   Progress,
   Tab,
   Tabs,
@@ -17,6 +22,7 @@ import {
   TableColumn,
   TableHeader,
   TableRow,
+  useDisclosure,
 } from '@heroui/react';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useComplianceSummary } from '@/app/hooks/useCalculateTax';
@@ -33,6 +39,7 @@ import ComplianceHospitalityReference from './ComplianceHospitalityReference';
 export default function ComplianceReports() {
   const country = useComplianceStore((s) => s.country);
   const reportingRulesAll = useComplianceStore((s) => s.reportingRules);
+  const reports = useComplianceStore((s) => s.reports);
   const reportingRules = useMemo(
     () => reportingRulesAll.filter((r) => r.countryCode === country && r.isActive !== false),
     [reportingRulesAll, country]
@@ -40,6 +47,32 @@ export default function ComplianceReports() {
   const summary = useComplianceSummary();
   const filingSnapshots = useFilingSnapshots();
   const [viewTab, setViewTab] = useState<'schedule' | 'reference'>('schedule');
+  const [selectedRule, setSelectedRule] = useState<(typeof reportingRulesAll)[number] | null>(null);
+  const { isOpen, onOpen, onClose } = useDisclosure();
+
+  // Jump straight to where this filing actually gets recorded -- the same "record remittance"
+  // flow (Accounting > Bank & Cash > Taxes) that syncs into the `reports` list below, rather
+  // than leaving "Prepare" as a dead button with no defined destination.
+  const goPrepareFiling = () => {
+    try {
+      localStorage.setItem('accounting.tab', 'taxes');
+      localStorage.setItem('nav.section', 'accounting');
+      window.dispatchEvent(new CustomEvent('app.navigate', { detail: { section: 'accounting' } }));
+      window.dispatchEvent(new CustomEvent('accounting-navigate'));
+    } catch {}
+  };
+
+  const openRuleDetail = (rule: (typeof reportingRulesAll)[number]) => {
+    setSelectedRule(rule);
+    onOpen();
+  };
+
+  const selectedRuleFilings = useMemo(() => {
+    if (!selectedRule) return [];
+    return reports
+      .filter((r) => r.countryCode === selectedRule.countryCode && r.reportType === selectedRule.reportType)
+      .sort((a, b) => (b.period || '').localeCompare(a.period || ''));
+  }, [reports, selectedRule]);
 
   const countryLabel = useMemo(() => getCountryDisplayName(country), [country]);
 
@@ -244,10 +277,10 @@ export default function ComplianceReports() {
                           </TableCell>
                           <TableCell>
                             <div className="flex space-x-2">
-                              <Button size="sm" color="primary" variant="flat">
+                              <Button size="sm" color="primary" variant="flat" onPress={goPrepareFiling}>
                                 Prepare
                               </Button>
-                              <Button size="sm" variant="light">
+                              <Button size="sm" variant="light" onPress={() => openRuleDetail(rule)}>
                                 View
                               </Button>
                             </div>
@@ -290,6 +323,105 @@ export default function ComplianceReports() {
           ) : null}
         </>
       )}
+
+      <Modal isOpen={isOpen} onOpenChange={onClose} size="2xl">
+        <ModalContent>
+          {selectedRule && (
+            <>
+              <ModalHeader className="flex items-center gap-2">
+                <span className="text-lg">{getReportIcon(selectedRule.reportType)}</span>
+                {selectedRule.reportType} filing schedule
+              </ModalHeader>
+              <ModalBody>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-gray-500">Frequency</p>
+                    <p className="font-medium">{selectedRule.frequency}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Due rule</p>
+                    <p className="font-medium">{dueDateLabel(scheduleInput(selectedRule))}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Next due</p>
+                    <p className="font-medium font-mono">{formatDueDateForSchedule(scheduleInput(selectedRule))}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Days left</p>
+                    <p className="font-medium">{getDaysUntilDueForSchedule(scheduleInput(selectedRule))} days</p>
+                  </div>
+                </div>
+                {selectedRule.description && (
+                  <p className="text-sm text-gray-600 mt-3">{selectedRule.description}</p>
+                )}
+
+                {(() => {
+                  const snapshot = filingSnapshots.get(selectedRule.id);
+                  if (!snapshot || snapshot.suggestedAmount <= 0) return null;
+                  return (
+                    <div className="mt-3 p-3 bg-slate-50 rounded-lg text-sm">
+                      <p className="text-gray-500">Suggested amount</p>
+                      <p className="font-mono font-semibold">
+                        GHS {snapshot.suggestedAmount.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </p>
+                      {snapshot.source && snapshot.source !== 'none' && (
+                        <p className="text-xs text-gray-400 capitalize">from {snapshot.source}{snapshot.detail ? ` — ${snapshot.detail}` : ''}</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                <div className="mt-4">
+                  <p className="text-xs font-medium text-gray-500 uppercase mb-2">Required fields</p>
+                  <div className="flex flex-wrap gap-2">
+                    {selectedRule.fieldsRequired.map((field: string) => (
+                      <Chip key={field} size="sm" variant="flat">{field}</Chip>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="mt-4">
+                  <p className="text-xs font-medium text-gray-500 uppercase mb-2">Filing history</p>
+                  {selectedRuleFilings.length === 0 ? (
+                    <p className="text-sm text-gray-500">No filings recorded yet for {selectedRule.reportType}.</p>
+                  ) : (
+                    <Table removeWrapper aria-label="Filing history" className="text-sm">
+                      <TableHeader>
+                        <TableColumn>Period</TableColumn>
+                        <TableColumn>Status</TableColumn>
+                        <TableColumn>Amount</TableColumn>
+                        <TableColumn>Submitted</TableColumn>
+                      </TableHeader>
+                      <TableBody>
+                        {selectedRuleFilings.map((f) => (
+                          <TableRow key={f.id}>
+                            <TableCell>{f.period || '—'}</TableCell>
+                            <TableCell>
+                              <Chip
+                                size="sm"
+                                variant="flat"
+                                color={f.status === 'submitted' || f.status === 'approved' ? 'success' : f.status === 'pending' ? 'warning' : 'default'}
+                              >
+                                {f.status}
+                              </Chip>
+                            </TableCell>
+                            <TableCell className="font-mono">{f.amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                            <TableCell>{f.submittedDate ? new Date(f.submittedDate).toLocaleDateString() : '—'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="light" onPress={onClose}>Close</Button>
+                <Button color="primary" onPress={() => { goPrepareFiling(); onClose(); }}>Prepare this filing</Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
     </div>
   );
 }
