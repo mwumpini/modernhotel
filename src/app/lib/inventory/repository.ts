@@ -380,4 +380,259 @@ export async function listStockTransactions(
 	});
 }
 
+// ---------------------------------------------------------------------------
+// Requisitions — field names/status vocabulary match models.ts's Requisition/
+// RequisitionItem, same 1:1 mapping approach as Purchase Orders above.
+// ---------------------------------------------------------------------------
+
+export interface RequisitionItemInput {
+	itemId: string;
+	itemCode: string;
+	itemName: string;
+	quantity: number;
+	estimatedPrice: number;
+	notes?: string;
+}
+
+export async function listRequisitions(tenantId: string, filters?: { status?: string }) {
+	return prisma.requisition.findMany({
+		where: { tenantId, status: filters?.status || undefined },
+		include: { items: true },
+		orderBy: { createdAt: 'desc' },
+	});
+}
+
+export async function upsertRequisition(params: {
+	id?: string;
+	tenantId: string;
+	requisitionNumber?: string;
+	requestedBy: string;
+	requestedDate?: Date | string;
+	status?: string;
+	approvedBy?: string;
+	approvedAt?: Date | string;
+	rejectedBy?: string;
+	rejectedAt?: Date | string;
+	rejectionReason?: string;
+	convertedToPOId?: string;
+	convertedToPONumber?: string;
+	notes?: string;
+	items: RequisitionItemInput[];
+}) {
+	const data = {
+		requestedBy: params.requestedBy,
+		requestedDate: params.requestedDate ? new Date(params.requestedDate) : undefined,
+		status: params.status,
+		approvedBy: params.approvedBy,
+		approvedAt: params.approvedAt ? new Date(params.approvedAt) : undefined,
+		rejectedBy: params.rejectedBy,
+		rejectedAt: params.rejectedAt ? new Date(params.rejectedAt) : undefined,
+		rejectionReason: params.rejectionReason,
+		convertedToPOId: params.convertedToPOId,
+		convertedToPONumber: params.convertedToPONumber,
+		notes: params.notes,
+	};
+
+	if (params.id) {
+		const existing = await prisma.requisition.findFirst({ where: { id: params.id, tenantId: params.tenantId } });
+		if (existing) {
+			await prisma.requisitionItem.deleteMany({ where: { requisitionId: params.id } });
+			return prisma.requisition.update({
+				where: { id: params.id },
+				data: {
+					...data,
+					items: {
+						create: params.items.map((i) => ({
+							tenantId: params.tenantId,
+							itemId: i.itemId,
+							itemCode: i.itemCode,
+							itemName: i.itemName,
+							quantity: i.quantity,
+							estimatedPrice: i.estimatedPrice,
+							totalCost: i.quantity * i.estimatedPrice,
+							notes: i.notes,
+						})),
+					},
+				},
+				include: { items: true },
+			});
+		}
+	}
+
+	const reqCount = await prisma.requisition.count({ where: { tenantId: params.tenantId } });
+	const requisitionNumber = params.requisitionNumber || `REQ-${new Date().getFullYear()}-${String(reqCount + 1).padStart(3, '0')}`;
+
+	return prisma.requisition.create({
+		data: {
+			...(params.id ? { id: params.id } : {}),
+			tenantId: params.tenantId,
+			requisitionNumber,
+			...data,
+			status: data.status || 'pending',
+			items: {
+				create: params.items.map((i) => ({
+					tenantId: params.tenantId,
+					itemId: i.itemId,
+					itemCode: i.itemCode,
+					itemName: i.itemName,
+					quantity: i.quantity,
+					estimatedPrice: i.estimatedPrice,
+					totalCost: i.quantity * i.estimatedPrice,
+					notes: i.notes,
+				})),
+			},
+		},
+		include: { items: true },
+	});
+}
+
+export async function deleteRequisition(tenantId: string, id: string) {
+	const existing = await prisma.requisition.findFirst({ where: { id, tenantId } });
+	if (!existing) return { error: 'not_found' as const };
+	await prisma.requisition.delete({ where: { id } });
+	return { ok: true as const };
+}
+
+// ---------------------------------------------------------------------------
+// Goods Receipt Notes — field names/status vocabulary match models.ts's
+// GoodsReceiptNote/GRNItem.
+// ---------------------------------------------------------------------------
+
+export interface GRNItemInput {
+	poItemId: string;
+	itemId: string;
+	itemCode: string;
+	itemName: string;
+	orderedQuantity: number;
+	receivedQuantity: number;
+	acceptedQuantity: number;
+	rejectedQuantity: number;
+	unitCost: number;
+}
+
+export async function listGoodsReceiptNotes(tenantId: string, filters?: { poId?: string; status?: string }) {
+	return prisma.goodsReceiptNote.findMany({
+		where: { tenantId, poId: filters?.poId || undefined, status: filters?.status || undefined },
+		include: { items: true },
+		orderBy: { createdAt: 'desc' },
+	});
+}
+
+export async function upsertGoodsReceiptNote(params: {
+	id?: string;
+	tenantId: string;
+	grnNumber?: string;
+	poId: string;
+	poNumber: string;
+	supplierId: string;
+	supplierName: string;
+	receiptDate?: Date | string;
+	receivedBy: string;
+	status?: string;
+	qualityCheckedBy?: string;
+	qualityCheckedAt?: Date | string;
+	qualityStatus?: string;
+	qualityNotes?: string;
+	approvedBy?: string;
+	approvedAt?: Date | string;
+	notes?: string;
+	items: GRNItemInput[];
+}) {
+	const totalItems = params.items.length;
+	const totalValue = params.items.reduce((sum, i) => sum + i.acceptedQuantity * i.unitCost, 0);
+	const data = {
+		poId: params.poId,
+		poNumber: params.poNumber,
+		supplierId: params.supplierId,
+		supplierName: params.supplierName,
+		receiptDate: params.receiptDate ? new Date(params.receiptDate) : undefined,
+		receivedBy: params.receivedBy,
+		totalItems,
+		totalValue,
+		status: params.status,
+		qualityCheckedBy: params.qualityCheckedBy,
+		qualityCheckedAt: params.qualityCheckedAt ? new Date(params.qualityCheckedAt) : undefined,
+		qualityStatus: params.qualityStatus,
+		qualityNotes: params.qualityNotes,
+		approvedBy: params.approvedBy,
+		approvedAt: params.approvedAt ? new Date(params.approvedAt) : undefined,
+		notes: params.notes,
+	};
+
+	if (params.id) {
+		const existing = await prisma.goodsReceiptNote.findFirst({ where: { id: params.id, tenantId: params.tenantId } });
+		if (existing) {
+			await prisma.gRNItem.deleteMany({ where: { grnId: params.id } });
+			return prisma.goodsReceiptNote.update({
+				where: { id: params.id },
+				data: {
+					...data,
+					items: {
+						create: params.items.map((i) => ({
+							tenantId: params.tenantId,
+							poItemId: i.poItemId,
+							itemId: i.itemId,
+							itemCode: i.itemCode,
+							itemName: i.itemName,
+							orderedQuantity: i.orderedQuantity,
+							receivedQuantity: i.receivedQuantity,
+							acceptedQuantity: i.acceptedQuantity,
+							rejectedQuantity: i.rejectedQuantity,
+							unitCost: i.unitCost,
+							totalValue: i.acceptedQuantity * i.unitCost,
+						})),
+					},
+				},
+				include: { items: true },
+			});
+		}
+	}
+
+	const grnCount = await prisma.goodsReceiptNote.count({ where: { tenantId: params.tenantId } });
+	const grnNumber = params.grnNumber || `GRN-${new Date().getFullYear()}-${String(grnCount + 1).padStart(3, '0')}`;
+
+	return prisma.goodsReceiptNote.create({
+		data: {
+			...(params.id ? { id: params.id } : {}),
+			tenantId: params.tenantId,
+			grnNumber,
+			...data,
+			status: data.status || 'pending',
+			items: {
+				create: params.items.map((i) => ({
+					tenantId: params.tenantId,
+					poItemId: i.poItemId,
+					itemId: i.itemId,
+					itemCode: i.itemCode,
+					itemName: i.itemName,
+					orderedQuantity: i.orderedQuantity,
+					receivedQuantity: i.receivedQuantity,
+					acceptedQuantity: i.acceptedQuantity,
+					rejectedQuantity: i.rejectedQuantity,
+					unitCost: i.unitCost,
+					totalValue: i.acceptedQuantity * i.unitCost,
+				})),
+			},
+		},
+		include: { items: true },
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Inventory alert acknowledgments — see InventoryAlertAcknowledgment's comment
+// in schema.prisma for why only the acknowledgment itself needs a durable row.
+// ---------------------------------------------------------------------------
+
+export async function listAlertAcknowledgments(tenantId: string) {
+	return prisma.inventoryAlertAcknowledgment.findMany({ where: { tenantId } });
+}
+
+export async function upsertAlertAcknowledgment(tenantId: string, alertId: string, acknowledgedBy: string) {
+	return prisma.inventoryAlertAcknowledgment.upsert({
+		where: { tenantId_alertId: { tenantId, alertId } },
+		update: { acknowledgedBy },
+		create: { tenantId, alertId, acknowledgedBy },
+	});
+}
+
 

@@ -198,7 +198,25 @@ export const useStockStore = create<StockStore>((set, get) => ({
       ]);
       const items: StockItem[] = itemsRes.ok ? ((await itemsRes.json()).items || []).map(toStockItem) : [];
       const movements: StockMovement[] = txnsRes.ok ? ((await txnsRes.json()).transactions || []).map(toStockMovement) : [];
-      set({ stockItems: items, stockMovements: movements, alerts: deriveAlerts(items) });
+      const alerts = deriveAlerts(items);
+      try {
+        const acksRes = await fetch('/api/inventory/alert-acknowledgments', { headers: invHeaders(), cache: 'no-store' });
+        if (acksRes.ok) {
+          const acks: Array<{ alertId: string; acknowledgedBy: string; acknowledgedAt: string }> = (await acksRes.json()).acknowledgments || [];
+          const byAlertId = new Map(acks.map((a) => [a.alertId, a]));
+          for (const alert of alerts) {
+            const ack = byAlertId.get(alert.id);
+            if (ack) {
+              alert.isAcknowledged = true;
+              alert.acknowledgedBy = ack.acknowledgedBy;
+              alert.acknowledgedAt = new Date(ack.acknowledgedAt);
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[Inventory] Failed to hydrate alert acknowledgments:', e);
+      }
+      set({ stockItems: items, stockMovements: movements, alerts });
     } catch (e) {
       console.warn('[Inventory] stockStore hydrateFromApi failed:', e);
     }
@@ -404,15 +422,23 @@ export const useStockStore = create<StockStore>((set, get) => ({
     );
   },
 
-  // Alert Management — alerts are a computed view (see deriveAlerts); acknowledgement
-  // is a session-local UI affordance, not persisted, since the underlying alert
-  // recomputes from real stock levels on every hydrate anyway.
+  // Alert Management — alerts are a computed view (see deriveAlerts) recomputed fresh
+  // from real stock levels on every hydrate, so only the acknowledgment itself needs a
+  // durable row (keyed by the alert's deterministic id, e.g. "low_<itemId>") — hydrateFromApi
+  // merges it back in after deriveAlerts runs, so a dismissed alert doesn't resurface.
   createAlert: (alertData) => {
     const newAlert: InventoryAlert = { ...alertData, id: Date.now().toString(), createdAt: new Date(), updatedAt: new Date() };
     set(state => ({ alerts: [...state.alerts, newAlert] }));
   },
 
   acknowledgeAlert: (alertId, acknowledgedBy) => {
+    if (typeof window !== 'undefined') {
+      fetch('/api/inventory/alert-acknowledgments', {
+        method: 'POST',
+        headers: invHeaders(),
+        body: JSON.stringify({ alertId, acknowledgedBy }),
+      }).catch((e) => console.warn('[Inventory] Failed to sync alert acknowledgment:', e));
+    }
     set(state => ({
       alerts: state.alerts.map(alert =>
         alert.id === alertId

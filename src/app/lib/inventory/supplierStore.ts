@@ -177,6 +177,153 @@ function deleteSupplierFromApi(id: string) {
   }).catch((e) => console.warn('[Inventory] Failed to delete supplier on server:', e));
 }
 
+// Same previously-in-memory-only gap as purchase orders/suppliers — requisitions and
+// goods receipt notes are real, live workflows (InventorySupplyChainDashboard.tsx) that
+// had no Prisma model or API route at all.
+function syncRequisitionToApi(req: Requisition) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/inventory/requisitions', {
+    method: 'PUT',
+    headers: poTenantHeaders(),
+    body: JSON.stringify({
+      id: req.id,
+      requisitionNumber: req.requisitionNumber,
+      requestedBy: req.requestedBy,
+      requestedDate: req.requestedDate,
+      status: req.status,
+      approvedBy: req.approvedBy,
+      approvedAt: req.approvedAt,
+      rejectedBy: req.rejectedBy,
+      rejectedAt: req.rejectedAt,
+      rejectionReason: req.rejectionReason,
+      convertedToPOId: req.convertedToPOId,
+      convertedToPONumber: req.convertedToPONumber,
+      notes: req.notes,
+      items: req.requestedItems.map((i) => ({
+        itemId: i.itemId,
+        itemCode: i.itemCode,
+        itemName: i.itemName,
+        quantity: i.quantity,
+        estimatedPrice: i.estimatedPrice,
+        notes: i.notes,
+      })),
+    }),
+  }).catch((e) => console.warn('[Inventory] Failed to sync requisition to server:', e));
+}
+
+function deleteRequisitionFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/inventory/requisitions?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: poTenantHeaders(),
+  }).catch((e) => console.warn('[Inventory] Failed to delete requisition on server:', e));
+}
+
+function mapApiRequisitionToStore(raw: any): Requisition {
+  return {
+    id: raw.id,
+    requisitionNumber: raw.requisitionNumber,
+    requestedBy: raw.requestedBy,
+    requestedDate: new Date(raw.requestedDate),
+    requestedItems: (raw.items || []).map((i: any) => ({
+      id: i.id,
+      itemId: i.itemId,
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      quantity: Number(i.quantity),
+      estimatedPrice: Number(i.estimatedPrice),
+      totalCost: Number(i.totalCost),
+      notes: i.notes ?? undefined,
+    })),
+    status: raw.status,
+    approvedBy: raw.approvedBy ?? undefined,
+    approvedAt: raw.approvedAt ? new Date(raw.approvedAt) : undefined,
+    rejectedBy: raw.rejectedBy ?? undefined,
+    rejectedAt: raw.rejectedAt ? new Date(raw.rejectedAt) : undefined,
+    rejectionReason: raw.rejectionReason ?? undefined,
+    convertedToPOId: raw.convertedToPOId ?? undefined,
+    convertedToPONumber: raw.convertedToPONumber ?? undefined,
+    notes: raw.notes ?? undefined,
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
+function syncGRNToApi(grn: GoodsReceiptNote) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/inventory/goods-receipt-notes', {
+    method: 'PUT',
+    headers: poTenantHeaders(),
+    body: JSON.stringify({
+      id: grn.id,
+      grnNumber: grn.grnNumber,
+      poId: grn.poId,
+      poNumber: grn.poNumber,
+      supplierId: grn.supplierId,
+      supplierName: grn.supplierName,
+      receiptDate: grn.receiptDate,
+      receivedBy: grn.receivedBy,
+      status: grn.status,
+      qualityCheckedBy: grn.qualityCheckedBy,
+      qualityCheckedAt: grn.qualityCheckedAt,
+      qualityStatus: grn.qualityStatus,
+      qualityNotes: grn.qualityNotes,
+      approvedBy: grn.approvedBy,
+      approvedAt: grn.approvedAt,
+      notes: grn.notes,
+      items: grn.items.map((i) => ({
+        poItemId: i.poItemId,
+        itemId: i.itemId,
+        itemCode: i.itemCode,
+        itemName: i.itemName,
+        orderedQuantity: i.orderedQuantity,
+        receivedQuantity: i.receivedQuantity,
+        acceptedQuantity: i.acceptedQuantity,
+        rejectedQuantity: i.rejectedQuantity,
+        unitCost: i.unitCost,
+      })),
+    }),
+  }).catch((e) => console.warn('[Inventory] Failed to sync goods receipt note to server:', e));
+}
+
+function mapApiGRNToStore(raw: any): GoodsReceiptNote {
+  return {
+    id: raw.id,
+    grnNumber: raw.grnNumber,
+    poId: raw.poId,
+    poNumber: raw.poNumber,
+    supplierId: raw.supplierId,
+    supplierName: raw.supplierName,
+    receiptDate: new Date(raw.receiptDate),
+    receivedBy: raw.receivedBy,
+    items: (raw.items || []).map((i: any) => ({
+      id: i.id,
+      poItemId: i.poItemId,
+      itemId: i.itemId,
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      orderedQuantity: Number(i.orderedQuantity),
+      receivedQuantity: Number(i.receivedQuantity),
+      acceptedQuantity: Number(i.acceptedQuantity),
+      rejectedQuantity: Number(i.rejectedQuantity),
+      unitCost: Number(i.unitCost),
+      totalValue: Number(i.totalValue),
+    })),
+    totalItems: raw.totalItems,
+    totalValue: Number(raw.totalValue),
+    status: raw.status,
+    qualityCheckedBy: raw.qualityCheckedBy ?? undefined,
+    qualityCheckedAt: raw.qualityCheckedAt ? new Date(raw.qualityCheckedAt) : undefined,
+    qualityStatus: raw.qualityStatus ?? undefined,
+    qualityNotes: raw.qualityNotes ?? undefined,
+    approvedBy: raw.approvedBy ?? undefined,
+    approvedAt: raw.approvedAt ? new Date(raw.approvedAt) : undefined,
+    notes: raw.notes ?? undefined,
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
 interface SupplierStore {
   suppliers: Supplier[];
   purchaseOrders: PurchaseOrder[];
@@ -229,6 +376,7 @@ interface SupplierStore {
   createRequisition: (requisition: Omit<Requisition, 'id' | 'createdAt' | 'updatedAt'>) => void;
   updateRequisition: (id: string, updates: Partial<Requisition>) => void;
   deleteRequisition: (id: string) => void;
+  hydrateRequisitionsFromApi: () => Promise<void>;
   approveRequisition: (id: string, approvedBy: string) => void;
   rejectRequisition: (id: string, rejectedBy: string, reason?: string) => void;
   convertRequisitionToPO: (requisitionId: string, supplierId: string) => PurchaseOrder | null;
@@ -273,6 +421,7 @@ interface SupplierStore {
   generateNextGRNNumber: () => string;
   createGRN: (grn: Omit<GoodsReceiptNote, 'id' | 'grnNumber' | 'createdAt' | 'updatedAt'>) => GoodsReceiptNote;
   updateGRN: (id: string, updates: Partial<GoodsReceiptNote>) => void;
+  hydrateGRNsFromApi: () => Promise<void>;
   getGRN: (id: string) => GoodsReceiptNote | undefined;
   getGRNsByPO: (poId: string) => GoodsReceiptNote[];
   getGRNsByStatus: (status: GoodsReceiptNote['status']) => GoodsReceiptNote[];
@@ -973,20 +1122,37 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       updatedAt: new Date()
     };
     set(state => ({ requisitions: [...state.requisitions, newRequisition] }));
+    syncRequisitionToApi(newRequisition);
   },
 
   updateRequisition: (id, updates) => {
+    let updated: Requisition | undefined;
     set(state => ({
-      requisitions: state.requisitions.map(req => 
-        req.id === id 
-          ? { ...req, ...updates, updatedAt: new Date() }
-          : req
-      )
+      requisitions: state.requisitions.map(req => {
+        if (req.id !== id) return req;
+        updated = { ...req, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncRequisitionToApi(updated);
   },
 
   deleteRequisition: (id) => {
     set(state => ({ requisitions: state.requisitions.filter(req => req.id !== id) }));
+    deleteRequisitionFromApi(id);
+  },
+
+  hydrateRequisitionsFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/inventory/requisitions', { headers: poTenantHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const requisitions = Array.isArray(data.requisitions) ? data.requisitions.map(mapApiRequisitionToStore) : [];
+      set({ requisitions });
+    } catch (e) {
+      console.warn('[Inventory] Failed to hydrate requisitions from server:', e);
+    }
   },
 
   approveRequisition: (id, approvedBy) => {
@@ -1233,15 +1399,33 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       updatedAt: new Date()
     };
     set(state => ({ goodsReceiptNotes: [...state.goodsReceiptNotes, newGRN] }));
+    syncGRNToApi(newGRN);
     return newGRN;
   },
 
   updateGRN: (id, updates) => {
+    let updated: GoodsReceiptNote | undefined;
     set(state => ({
-      goodsReceiptNotes: state.goodsReceiptNotes.map(grn =>
-        grn.id === id ? { ...grn, ...updates, updatedAt: new Date() } : grn
-      )
+      goodsReceiptNotes: state.goodsReceiptNotes.map(grn => {
+        if (grn.id !== id) return grn;
+        updated = { ...grn, ...updates, updatedAt: new Date() };
+        return updated;
+      })
     }));
+    if (updated) syncGRNToApi(updated);
+  },
+
+  hydrateGRNsFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/inventory/goods-receipt-notes', { headers: poTenantHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const grns = Array.isArray(data.grns) ? data.grns.map(mapApiGRNToStore) : [];
+      set({ goodsReceiptNotes: grns });
+    } catch (e) {
+      console.warn('[Inventory] Failed to hydrate goods receipt notes from server:', e);
+    }
   },
 
   getGRN: (id) => get().goodsReceiptNotes.find(grn => grn.id === id),
@@ -1347,36 +1531,40 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       }
     }
 
+    let updatedGrn: GoodsReceiptNote | undefined;
     set(state => ({
-      goodsReceiptNotes: state.goodsReceiptNotes.map(grn =>
-        grn.id === grnId
-          ? {
-              ...grn,
-              status: 'approved' as const,
-              approvedBy,
-              approvedAt: new Date(),
-              updatedAt: new Date()
-            }
-          : grn
-      )
+      goodsReceiptNotes: state.goodsReceiptNotes.map(grn => {
+        if (grn.id !== grnId) return grn;
+        updatedGrn = {
+          ...grn,
+          status: 'approved' as const,
+          approvedBy,
+          approvedAt: new Date(),
+          updatedAt: new Date()
+        };
+        return updatedGrn;
+      })
     }));
+    if (updatedGrn) syncGRNToApi(updatedGrn);
   },
 
   rejectGRN: (grnId, rejectedBy, reason) => {
+    let updatedGrn: GoodsReceiptNote | undefined;
     set(state => ({
-      goodsReceiptNotes: state.goodsReceiptNotes.map(grn =>
-        grn.id === grnId
-          ? {
-              ...grn,
-              status: 'rejected' as const,
-              approvedBy: rejectedBy,
-              approvedAt: new Date(),
-              notes: reason,
-              updatedAt: new Date()
-            }
-          : grn
-      )
+      goodsReceiptNotes: state.goodsReceiptNotes.map(grn => {
+        if (grn.id !== grnId) return grn;
+        updatedGrn = {
+          ...grn,
+          status: 'rejected' as const,
+          approvedBy: rejectedBy,
+          approvedAt: new Date(),
+          notes: reason,
+          updatedAt: new Date()
+        };
+        return updatedGrn;
+      })
     }));
+    if (updatedGrn) syncGRNToApi(updatedGrn);
   },
 
   selectGRN: (grn) => set({ selectedGRN: grn }),

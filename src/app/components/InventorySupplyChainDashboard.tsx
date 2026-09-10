@@ -72,6 +72,7 @@ export default function InventorySupplyChainDashboard() {
     convertRequisitionToPO,
     getRequisitionsByStatus,
     selectRequisition,
+    hydrateRequisitionsFromApi,
     goodsReceiptNotes,
     supplierInvoices,
     qualityChecks,
@@ -82,6 +83,7 @@ export default function InventorySupplyChainDashboard() {
     getGRNsByStatus,
     approveGRN,
     rejectGRN,
+    hydrateGRNsFromApi,
     createSupplierInvoice,
     updateSupplierInvoice,
     getSupplierInvoice,
@@ -838,6 +840,8 @@ export default function InventorySupplyChainDashboard() {
     hydratePurchaseOrdersFromApi();
     hydrateStockFromApi();
     hydrateSuppliersFromApi();
+    hydrateRequisitionsFromApi();
+    hydrateGRNsFromApi();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -3800,6 +3804,7 @@ export default function InventorySupplyChainDashboard() {
         <Tab key="overview" title="📊 Overview" />
         <Tab key="inventory" title="📦 Inventory Management" />
         <Tab key="suppliers" title="🏢 Supplier Management" />
+        <Tab key="requisitions" title="📝 Requisitions" />
         <Tab key="purchase-orders" title="📋 Purchase Orders" />
         <Tab key="stock-operations" title="🔄 Stock Operations" />
         <Tab key="reports" title="📊 Reports & Analytics" />
@@ -3809,6 +3814,7 @@ export default function InventorySupplyChainDashboard() {
         {selectedTab === 'overview' && renderOverview()}
         {selectedTab === 'inventory' && renderInventoryManagement()}
         {selectedTab === 'suppliers' && renderSupplierManagement()}
+        {selectedTab === 'requisitions' && renderRequisitions()}
         {selectedTab === 'purchase-orders' && renderPurchaseOrders()}
         {selectedTab === 'stock-operations' && renderStockOperations()}
         {selectedTab === 'reports' && renderReportsAndAnalytics()}

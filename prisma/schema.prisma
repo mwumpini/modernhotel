@@ -65,6 +65,11 @@ model Tenant {
   housekeepingStaff      HousekeepingStaff[]
   purchaseOrders         PurchaseOrder[]
   purchaseOrderItems     PurchaseOrderItem[]
+  requisitions           Requisition[]
+  requisitionItems       RequisitionItem[]
+  goodsReceiptNotes      GoodsReceiptNote[]
+  grnItems               GRNItem[]
+  inventoryAlertAcks     InventoryAlertAcknowledgment[]
   bankReconciliations    BankReconciliation[]
   reconcilingItems       ReconcilingItem[]
   bankAccounts           BankAccount[]
@@ -1359,6 +1364,121 @@ model PurchaseOrderItem {
 
   @@index([tenantId, purchaseOrderId])
   @@map("purchase_order_items")
+}
+
+model Requisition {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  requisitionNumber   String
+  requestedBy         String
+  requestedDate       DateTime  @default(now())
+  status              String    @default("pending") // pending|approved|rejected|converted-to-po|cancelled
+  approvedBy          String?
+  approvedAt          DateTime?
+  rejectedBy          String?
+  rejectedAt          DateTime?
+  rejectionReason     String?
+  convertedToPOId     String?
+  convertedToPONumber String?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  RequisitionItem[]
+
+  @@unique([tenantId, requisitionNumber])
+  @@index([tenantId, status])
+  @@map("requisitions")
+}
+
+model RequisitionItem {
+  id             String  @id @default(cuid())
+  tenantId       String
+  requisitionId  String
+  itemId         String
+  itemCode       String
+  itemName       String
+  quantity       Decimal
+  estimatedPrice Decimal
+  totalCost      Decimal
+  notes          String?
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, requisitionId])
+  @@map("requisition_items")
+}
+
+model GoodsReceiptNote {
+  id               String    @id @default(cuid())
+  tenantId         String
+  grnNumber        String
+  poId             String
+  poNumber         String
+  supplierId       String
+  supplierName     String
+  receiptDate      DateTime  @default(now())
+  receivedBy       String
+  totalItems       Int       @default(0)
+  totalValue       Decimal   @default(0)
+  status           String    @default("pending") // pending|quality-check|approved|rejected|completed
+  qualityCheckedBy String?
+  qualityCheckedAt DateTime?
+  qualityStatus    String?
+  qualityNotes     String?
+  approvedBy       String?
+  approvedAt       DateTime?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  GRNItem[]
+
+  @@unique([tenantId, grnNumber])
+  @@index([tenantId, poId])
+  @@index([tenantId, status])
+  @@map("goods_receipt_notes")
+}
+
+model GRNItem {
+  id               String  @id @default(cuid())
+  tenantId         String
+  grnId            String
+  poItemId         String
+  itemId           String
+  itemCode         String
+  itemName         String
+  orderedQuantity  Decimal
+  receivedQuantity Decimal
+  acceptedQuantity Decimal
+  rejectedQuantity Decimal
+  unitCost         Decimal
+  totalValue       Decimal
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  grn    GoodsReceiptNote @relation(fields: [grnId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, grnId])
+  @@map("grn_items")
+}
+
+// Deterministic alertId (e.g. "low_<itemId>") lets an acknowledgment survive alerts
+// being recomputed fresh from stock levels on every load (see stockStore.ts's
+// deriveAlerts) -- only the acknowledgment itself needs a durable row, not the alert.
+model InventoryAlertAcknowledgment {
+  id             String   @id @default(cuid())
+  tenantId       String
+  alertId        String
+  acknowledgedBy String
+  acknowledgedAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, alertId])
+  @@map("inventory_alert_acknowledgments")
 }
 
 model BankReconciliation {

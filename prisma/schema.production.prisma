@@ -66,6 +66,11 @@ model Tenant {
   housekeepingStaff HousekeepingStaff[]
   purchaseOrders PurchaseOrder[]
   purchaseOrderItems PurchaseOrderItem[]
+  requisitions Requisition[]
+  requisitionItems RequisitionItem[]
+  goodsReceiptNotes GoodsReceiptNote[]
+  grnItems GRNItem[]
+  inventoryAlertAcks InventoryAlertAcknowledgment[]
   bankReconciliations BankReconciliation[]
   reconcilingItems ReconcilingItem[]
   bankAccounts BankAccount[]
@@ -1339,6 +1344,118 @@ model PurchaseOrderItem {
 
   @@index([tenantId, purchaseOrderId])
   @@map("purchase_order_items")
+}
+
+model Requisition {
+  id                  String    @id @default(cuid())
+  tenantId            String
+  requisitionNumber   String
+  requestedBy         String
+  requestedDate       DateTime  @default(now())
+  status              String    @default("pending")
+  approvedBy          String?
+  approvedAt          DateTime?
+  rejectedBy          String?
+  rejectedAt          DateTime?
+  rejectionReason     String?
+  convertedToPOId     String?
+  convertedToPONumber String?
+  notes               String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  tenant Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  RequisitionItem[]
+
+  @@unique([tenantId, requisitionNumber])
+  @@index([tenantId, status])
+  @@map("requisitions")
+}
+
+model RequisitionItem {
+  id             String  @id @default(cuid())
+  tenantId       String
+  requisitionId  String
+  itemId         String
+  itemCode       String
+  itemName       String
+  quantity       Decimal @db.Decimal(12, 2)
+  estimatedPrice Decimal @db.Decimal(10, 2)
+  totalCost      Decimal @db.Decimal(12, 2)
+  notes          String?
+
+  tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, requisitionId])
+  @@map("requisition_items")
+}
+
+model GoodsReceiptNote {
+  id               String    @id @default(cuid())
+  tenantId         String
+  grnNumber        String
+  poId             String
+  poNumber         String
+  supplierId       String
+  supplierName     String
+  receiptDate      DateTime  @default(now())
+  receivedBy       String
+  totalItems       Int       @default(0)
+  totalValue       Decimal   @default(0) @db.Decimal(12, 2)
+  status           String    @default("pending")
+  qualityCheckedBy String?
+  qualityCheckedAt DateTime?
+  qualityStatus    String?
+  qualityNotes     String?
+  approvedBy       String?
+  approvedAt       DateTime?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  GRNItem[]
+
+  @@unique([tenantId, grnNumber])
+  @@index([tenantId, poId])
+  @@index([tenantId, status])
+  @@map("goods_receipt_notes")
+}
+
+model GRNItem {
+  id               String  @id @default(cuid())
+  tenantId         String
+  grnId            String
+  poItemId         String
+  itemId           String
+  itemCode         String
+  itemName         String
+  orderedQuantity  Decimal @db.Decimal(12, 2)
+  receivedQuantity Decimal @db.Decimal(12, 2)
+  acceptedQuantity Decimal @db.Decimal(12, 2)
+  rejectedQuantity Decimal @db.Decimal(12, 2)
+  unitCost         Decimal @db.Decimal(10, 2)
+  totalValue       Decimal @db.Decimal(12, 2)
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  grn    GoodsReceiptNote @relation(fields: [grnId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, grnId])
+  @@map("grn_items")
+}
+
+model InventoryAlertAcknowledgment {
+  id             String   @id @default(cuid())
+  tenantId       String
+  alertId        String
+  acknowledgedBy String
+  acknowledgedAt DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, alertId])
+  @@map("inventory_alert_acknowledgments")
 }
 
 model BankReconciliation {
