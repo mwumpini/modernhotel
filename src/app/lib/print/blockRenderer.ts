@@ -782,7 +782,11 @@ function composeBodyHtml(blocks: BlockConfig[], data: PrintData, currency: strin
       if (run.length > 1) {
         const cells = run.map(rb => wrapBlock(renderBlock(rb, data, currency), rb));
         if (cells.some(Boolean)) {
-          out.push(`<div style="display:flex; gap:16px; align-items:center;">${cells.map(c => `<div style="flex:1; min-width:0;">${c}</div>`).join('')}</div>`);
+          // Top-align, not center — two side-by-side blocks of different heights
+          // (e.g. a Payslip's Earnings/Deductions tables with different row
+          // counts) should start flush at the same top edge, not have the
+          // shorter one pushed down to stay vertically centered against the taller one.
+          out.push(`<div style="display:flex; gap:16px; align-items:flex-start;">${cells.map(c => `<div style="flex:1; min-width:0;">${c}</div>`).join('')}</div>`);
         }
         i = j;
         continue;
