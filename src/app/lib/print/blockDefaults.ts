@@ -964,18 +964,33 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-accommodation-proforma-premium', 'accommodation-proforma', 'Premium', premiumBlocks('Client', [
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ]), { showWatermark: true, watermarkText: 'PROFORMA' }),
+    template('builtin-accommodation-proforma-sales-quote', 'accommodation-proforma', 'Sales Quote', salesQuoteBlocks('Client', [
+      { label: 'Prepared By' }, { label: 'Client Acceptance' },
+    ])),
+    template('builtin-accommodation-proforma-itemized-letter', 'accommodation-proforma', 'Itemized List (Letter Style)', itemizedLetterBlocks([
+      { label: 'Prepared By' }, { label: 'Client Acceptance' },
+    ])),
+    template('builtin-accommodation-proforma-corporate-rfq', 'accommodation-proforma', 'Corporate RFQ Response', corporateRfqBlocks('Client', [
+      { label: 'Prepared By' }, { label: 'Client Acceptance' },
+    ]), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   'accommodation-invoice': [
     template('builtin-accommodation-invoice-standard', 'accommodation-invoice', 'Standard', standardBlocks('Guest / Client')),
     template('builtin-accommodation-invoice-premium', 'accommodation-invoice', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'INVOICE' }),
+    template('builtin-accommodation-invoice-modern-banner', 'accommodation-invoice', 'Modern Banner', modernBannerBlocks('Guest / Client')),
+    template('builtin-accommodation-invoice-statement', 'accommodation-invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
+    template('builtin-accommodation-invoice-tax-invoice', 'accommodation-invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   'accommodation-receipt': [
     template('builtin-accommodation-receipt-standard', 'accommodation-receipt', 'Standard', standardBlocks('Guest / Client')),
     template('builtin-accommodation-receipt-premium', 'accommodation-receipt', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'RECEIPT' }),
+    template('builtin-accommodation-receipt-thermal', 'accommodation-receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest / Client'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
+    template('builtin-accommodation-receipt-thank-you', 'accommodation-receipt', 'Thank You', thankYouReceiptBlocks('Guest / Client'), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
+    template('builtin-accommodation-receipt-corporate', 'accommodation-receipt', 'Corporate (for expense reports)', corporateReceiptBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   // Events & Conferences — Conference/Catering leg.
   'event-proforma': [
@@ -990,6 +1005,12 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-proforma-itemized-letter', 'event-proforma', 'Itemized List (Letter Style)', itemizedLetterBlocks([
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ])),
+    template('builtin-event-proforma-sales-quote', 'event-proforma', 'Sales Quote', salesQuoteBlocks('Client', [
+      { label: 'Prepared By' }, { label: 'Client Acceptance' },
+    ])),
+    template('builtin-event-proforma-corporate-rfq', 'event-proforma', 'Corporate RFQ Response', corporateRfqBlocks('Client', [
+      { label: 'Prepared By' }, { label: 'Client Acceptance' },
+    ]), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   'event-invoice': [
     template('builtin-event-invoice-standard', 'event-invoice', 'Standard', standardBlocks('Guest / Client')),
@@ -999,12 +1020,18 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-event-invoice-itemized-letter', 'event-invoice', 'Itemized List (Letter Style)', itemizedLetterBlocks([
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ])),
+    template('builtin-event-invoice-modern-banner', 'event-invoice', 'Modern Banner', modernBannerBlocks('Guest / Client')),
+    template('builtin-event-invoice-statement', 'event-invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
+    template('builtin-event-invoice-tax-invoice', 'event-invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   'event-receipt': [
     template('builtin-event-receipt-standard', 'event-receipt', 'Standard', standardBlocks('Guest / Client')),
     template('builtin-event-receipt-premium', 'event-receipt', 'Premium', premiumBlocks('Guest / Client', [
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'RECEIPT' }),
+    template('builtin-event-receipt-thermal', 'event-receipt', 'Thermal / POS Slip (80mm)', thermalReceiptBlocks('Guest / Client'), { fontFamily: 'mono', pageWidth: 'narrow', pageMargin: 'compact', bodyFontSize: 'sm' }),
+    template('builtin-event-receipt-thank-you', 'event-receipt', 'Thank You', thankYouReceiptBlocks('Guest / Client'), { showWatermark: true, watermarkText: 'PAID', primaryColor: '#0A7D34' }),
+    template('builtin-event-receipt-corporate', 'event-receipt', 'Corporate (for expense reports)', corporateReceiptBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
   'payment-voucher': [
     template('builtin-payment-voucher-standard', 'payment-voucher', 'Standard', paymentVoucherStandardBlocks()),
