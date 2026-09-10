@@ -2005,7 +2005,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         <ModalContent>
           <ModalHeader className="text-ghana-black">Menu Short Names (Aliases)</ModalHeader>
           <ModalBody>
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-[60vh] overflow-y-auto">
               {menu.map(m => (
                 <div key={m.id} className="p-2 rounded-lg border border-gray-200">
                   <div className="text-sm font-medium text-ghana-black">{m.name} <span className="text-xs text-gray-500">(₵{m.price})</span></div>

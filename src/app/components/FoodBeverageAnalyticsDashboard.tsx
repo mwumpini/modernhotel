@@ -512,7 +512,7 @@ export default function FoodBeverageAnalyticsDashboard() {
                 </Button>
               </CardHeader>
               <CardBody>
-                <div className="space-y-3">
+                <div className="space-y-3 max-h-[520px] overflow-y-auto">
                   {salesByEmployeeReport.employeePerformance.map((employee, index) => (
                     <div key={employee.employeeId} className="p-4 bg-gray-50 rounded-lg">
                       <div className="flex items-center justify-between mb-2">

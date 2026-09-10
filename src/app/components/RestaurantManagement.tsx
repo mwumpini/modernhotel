@@ -202,44 +202,46 @@ export default function RestaurantManagement() {
             </div>
           </CardHeader>
           <CardBody>
-            <Table aria-label="Transactions table">
-              <TableHeader>
-                <TableColumn onClick={() => onSort('code')}>code/no.</TableColumn>
-                <TableColumn onClick={() => onSort('date')}>date time</TableColumn>
-                <TableColumn onClick={() => onSort('type')}>kot/bot</TableColumn>
-                <TableColumn onClick={() => onSort('itemName')}>item name</TableColumn>
-                <TableColumn onClick={() => onSort('customerType')}>customer type</TableColumn>
-                <TableColumn onClick={() => onSort('amount')}>amount</TableColumn>
-                <TableColumn onClick={() => onSort('discount')}>discount</TableColumn>
-                <TableColumn onClick={() => onSort('price')}>price</TableColumn>
-                <TableColumn onClick={() => onSort('status')}>status</TableColumn>
-                <TableColumn>customer name</TableColumn>
-                <TableColumn>room no.</TableColumn>
-                <TableColumn onClick={() => onSort('table')}>table</TableColumn>
-                <TableColumn onClick={() => onSort('waiter')}>waiter/ess</TableColumn>
-              </TableHeader>
-              <TableBody>
-                {filteredSorted.map((r) => (
-                  <TableRow key={`${r.code}-${r.date}`}>
-                    <TableCell>{r.code}</TableCell>
-                    <TableCell>{new Date(r.date).toLocaleString()}</TableCell>
-                    <TableCell>{r.type}</TableCell>
-                    <TableCell>{r.itemName}</TableCell>
-                    <TableCell>{r.customerType}</TableCell>
-                    <TableCell>₵{r.amount.toFixed(2)}</TableCell>
-                    <TableCell>₵{r.discount.toFixed(2)}</TableCell>
-                    <TableCell>₵{r.price.toFixed(2)}</TableCell>
-                    <TableCell>
-                      <Badge size="sm" variant="flat" color={r.status === 'pending' ? 'warning' : r.status === 'invoice' ? 'primary' : 'success'}>{r.status}</Badge>
-                    </TableCell>
-                    <TableCell>{r.customerName || '-'}</TableCell>
-                    <TableCell>{r.roomNo || '-'}</TableCell>
-                    <TableCell>{r.table}</TableCell>
-                    <TableCell>{r.waiter}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <div className="max-h-[520px] overflow-y-auto">
+              <Table aria-label="Transactions table">
+                <TableHeader>
+                  <TableColumn onClick={() => onSort('code')}>code/no.</TableColumn>
+                  <TableColumn onClick={() => onSort('date')}>date time</TableColumn>
+                  <TableColumn onClick={() => onSort('type')}>kot/bot</TableColumn>
+                  <TableColumn onClick={() => onSort('itemName')}>item name</TableColumn>
+                  <TableColumn onClick={() => onSort('customerType')}>customer type</TableColumn>
+                  <TableColumn onClick={() => onSort('amount')}>amount</TableColumn>
+                  <TableColumn onClick={() => onSort('discount')}>discount</TableColumn>
+                  <TableColumn onClick={() => onSort('price')}>price</TableColumn>
+                  <TableColumn onClick={() => onSort('status')}>status</TableColumn>
+                  <TableColumn>customer name</TableColumn>
+                  <TableColumn>room no.</TableColumn>
+                  <TableColumn onClick={() => onSort('table')}>table</TableColumn>
+                  <TableColumn onClick={() => onSort('waiter')}>waiter/ess</TableColumn>
+                </TableHeader>
+                <TableBody>
+                  {filteredSorted.map((r) => (
+                    <TableRow key={`${r.code}-${r.date}`}>
+                      <TableCell>{r.code}</TableCell>
+                      <TableCell>{new Date(r.date).toLocaleString()}</TableCell>
+                      <TableCell>{r.type}</TableCell>
+                      <TableCell>{r.itemName}</TableCell>
+                      <TableCell>{r.customerType}</TableCell>
+                      <TableCell>₵{r.amount.toFixed(2)}</TableCell>
+                      <TableCell>₵{r.discount.toFixed(2)}</TableCell>
+                      <TableCell>₵{r.price.toFixed(2)}</TableCell>
+                      <TableCell>
+                        <Badge size="sm" variant="flat" color={r.status === 'pending' ? 'warning' : r.status === 'invoice' ? 'primary' : 'success'}>{r.status}</Badge>
+                      </TableCell>
+                      <TableCell>{r.customerName || '-'}</TableCell>
+                      <TableCell>{r.roomNo || '-'}</TableCell>
+                      <TableCell>{r.table}</TableCell>
+                      <TableCell>{r.waiter}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
           </CardBody>
         </Card>
 

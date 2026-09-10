@@ -571,34 +571,36 @@ function KitchenOpsLog() {
             No kitchen events yet. Assign a cook or bump an order on the Kitchen Display tab.
           </p>
         ) : (
-        <Table aria-label="Kitchen operations log">
-          <TableHeader>
-            <TableColumn>TIME</TableColumn>
-            <TableColumn>ORDER</TableColumn>
-            <TableColumn>TABLE</TableColumn>
-            <TableColumn>ITEM</TableColumn>
-            <TableColumn>ACTION</TableColumn>
-            <TableColumn>FROM → TO</TableColumn>
-            <TableColumn>ASSIGNEE</TableColumn>
-            <TableColumn>PREPARED BY</TableColumn>
-            <TableColumn>PRIORITY</TableColumn>
-          </TableHeader>
-          <TableBody>
-            {rows.map(r => (
-              <TableRow key={r.id}>
-                <TableCell>{new Date(r.at).toLocaleString()}</TableCell>
-                <TableCell>{r.orderId}</TableCell>
-                <TableCell>{r.table}</TableCell>
-                <TableCell>{r.itemName}</TableCell>
-                <TableCell>{r.action}</TableCell>
-                <TableCell>{r.fromStatus || '-'} → {r.toStatus || '-'}</TableCell>
-                <TableCell>{r.assignedToName || '-'}</TableCell>
-                <TableCell>{r.preparedByName || '-'}</TableCell>
-                <TableCell>{(r.priority || '-').toString().toUpperCase()}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="max-h-[520px] overflow-y-auto">
+          <Table aria-label="Kitchen operations log">
+            <TableHeader>
+              <TableColumn>TIME</TableColumn>
+              <TableColumn>ORDER</TableColumn>
+              <TableColumn>TABLE</TableColumn>
+              <TableColumn>ITEM</TableColumn>
+              <TableColumn>ACTION</TableColumn>
+              <TableColumn>FROM → TO</TableColumn>
+              <TableColumn>ASSIGNEE</TableColumn>
+              <TableColumn>PREPARED BY</TableColumn>
+              <TableColumn>PRIORITY</TableColumn>
+            </TableHeader>
+            <TableBody>
+              {rows.map(r => (
+                <TableRow key={r.id}>
+                  <TableCell>{new Date(r.at).toLocaleString()}</TableCell>
+                  <TableCell>{r.orderId}</TableCell>
+                  <TableCell>{r.table}</TableCell>
+                  <TableCell>{r.itemName}</TableCell>
+                  <TableCell>{r.action}</TableCell>
+                  <TableCell>{r.fromStatus || '-'} → {r.toStatus || '-'}</TableCell>
+                  <TableCell>{r.assignedToName || '-'}</TableCell>
+                  <TableCell>{r.preparedByName || '-'}</TableCell>
+                  <TableCell>{(r.priority || '-').toString().toUpperCase()}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
         )}
       </CardBody>
     </Card>

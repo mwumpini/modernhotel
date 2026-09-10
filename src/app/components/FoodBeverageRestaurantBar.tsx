@@ -447,64 +447,66 @@ export default function FoodBeverageRestaurantBar() {
 
             <Tab key="reservations" title="📅 Reservations">
               <div className="p-6">
-                <Table aria-label="Reservations table">
-                  <TableHeader>
-                    <TableColumn>CUSTOMER</TableColumn>
-                    <TableColumn>TABLE</TableColumn>
-                    <TableColumn>DATE & TIME</TableColumn>
-                    <TableColumn>GUESTS</TableColumn>
-                    <TableColumn>STATUS</TableColumn>
-                    <TableColumn>SPECIAL REQUESTS</TableColumn>
-                    <TableColumn>ACTIONS</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="No reservations yet.">
-                    {reservations.map((reservation) => (
-                      <TableRow key={reservation.id}>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium text-ghana-black">{reservation.customerName}</p>
-                            <p className="text-sm text-gray-600">{reservation.phone}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge color="primary" variant="flat">{reservation.tableNumber || '—'}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium">{new Date(reservation.reservationDate).toLocaleDateString()}</p>
-                            <p className="text-sm text-gray-600">{reservation.time}</p>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <Badge color="secondary" variant="flat">{reservation.guests} guests</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Chip color={getReservationStatusColor(reservation.status)} size="sm">
-                            {reservation.status.charAt(0).toUpperCase() + reservation.status.slice(1)}
-                          </Chip>
-                        </TableCell>
-                        <TableCell>
-                          <p className="text-sm text-gray-600 max-w-xs truncate">
-                            {reservation.specialRequests || 'None'}
-                          </p>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-2">
-                            {reservation.status === 'pending' && (
-                              <Button size="sm" color="success" variant="flat" onClick={() => setReservationStatus(reservation, 'confirmed')}>Confirm</Button>
-                            )}
-                            {(reservation.status === 'pending' || reservation.status === 'confirmed') && (
-                              <Button size="sm" color="danger" variant="flat" onClick={() => setReservationStatus(reservation, 'cancelled')}>Cancel</Button>
-                            )}
-                            {reservation.status === 'confirmed' && (
-                              <Button size="sm" color="secondary" variant="flat" onClick={() => setReservationStatus(reservation, 'completed')}>Complete</Button>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <div className="max-h-[560px] overflow-y-auto">
+                  <Table aria-label="Reservations table">
+                    <TableHeader>
+                      <TableColumn>CUSTOMER</TableColumn>
+                      <TableColumn>TABLE</TableColumn>
+                      <TableColumn>DATE & TIME</TableColumn>
+                      <TableColumn>GUESTS</TableColumn>
+                      <TableColumn>STATUS</TableColumn>
+                      <TableColumn>SPECIAL REQUESTS</TableColumn>
+                      <TableColumn>ACTIONS</TableColumn>
+                    </TableHeader>
+                    <TableBody emptyContent="No reservations yet.">
+                      {reservations.map((reservation) => (
+                        <TableRow key={reservation.id}>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium text-ghana-black">{reservation.customerName}</p>
+                              <p className="text-sm text-gray-600">{reservation.phone}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge color="primary" variant="flat">{reservation.tableNumber || '—'}</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <div>
+                              <p className="font-medium">{new Date(reservation.reservationDate).toLocaleDateString()}</p>
+                              <p className="text-sm text-gray-600">{reservation.time}</p>
+                            </div>
+                          </TableCell>
+                          <TableCell>
+                            <Badge color="secondary" variant="flat">{reservation.guests} guests</Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Chip color={getReservationStatusColor(reservation.status)} size="sm">
+                              {reservation.status.charAt(0).toUpperCase() + reservation.status.slice(1)}
+                            </Chip>
+                          </TableCell>
+                          <TableCell>
+                            <p className="text-sm text-gray-600 max-w-xs truncate">
+                              {reservation.specialRequests || 'None'}
+                            </p>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex gap-2">
+                              {reservation.status === 'pending' && (
+                                <Button size="sm" color="success" variant="flat" onClick={() => setReservationStatus(reservation, 'confirmed')}>Confirm</Button>
+                              )}
+                              {(reservation.status === 'pending' || reservation.status === 'confirmed') && (
+                                <Button size="sm" color="danger" variant="flat" onClick={() => setReservationStatus(reservation, 'cancelled')}>Cancel</Button>
+                              )}
+                              {reservation.status === 'confirmed' && (
+                                <Button size="sm" color="secondary" variant="flat" onClick={() => setReservationStatus(reservation, 'completed')}>Complete</Button>
+                              )}
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             </Tab>
 

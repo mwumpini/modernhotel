@@ -134,37 +134,39 @@ export default function DepartmentActivityLog({ area, title, showCategory, showA
 					 </Select>
 				 </div>
 
-				 <Table aria-label="Department activities table" selectionMode="none">
-					 <TableHeader columns={columns}>
-						 {column => (
-							 <TableColumn key={column.key}>{column.label}</TableColumn>
-						 )}
-					 </TableHeader>
-					 <TableBody items={sorted} emptyContent="No activities found for this department.">
-						 {item => (
-							 <TableRow key={item.id}>
-								 {columnKey => {
-									 switch (String(columnKey)) {
-										 case 'time':
-											 return <TableCell>{new Date(item.at).toLocaleString()}</TableCell>;
-										 case 'action':
-											 return <TableCell>{item.action}</TableCell>;
-										 case 'alias':
-											 return <TableCell>{String((item.meta as any)?.alias ?? (item.meta as any)?.itemCode ?? '-')}</TableCell>;
-										 case 'category':
-											 return <TableCell>{String((item.meta as any)?.category ?? '-')}</TableCell>;
-										 case 'entity':
-											 return <TableCell>{item.entity || '-'}</TableCell>;
-										 case 'details':
-											 return <TableCell className="max-w-xl truncate" title={item.details || ''}>{item.details || '-'}</TableCell>;
-										 default:
-											 return <TableCell>-</TableCell>;
-									 }
-								 }}
-							 </TableRow>
-						 )}
-					 </TableBody>
-				 </Table>
+				 <div className="max-h-[520px] overflow-y-auto">
+					 <Table aria-label="Department activities table" selectionMode="none">
+						 <TableHeader columns={columns}>
+							 {column => (
+								 <TableColumn key={column.key}>{column.label}</TableColumn>
+							 )}
+						 </TableHeader>
+						 <TableBody items={sorted} emptyContent="No activities found for this department.">
+							 {item => (
+								 <TableRow key={item.id}>
+									 {columnKey => {
+										 switch (String(columnKey)) {
+											 case 'time':
+												 return <TableCell>{new Date(item.at).toLocaleString()}</TableCell>;
+											 case 'action':
+												 return <TableCell>{item.action}</TableCell>;
+											 case 'alias':
+												 return <TableCell>{String((item.meta as any)?.alias ?? (item.meta as any)?.itemCode ?? '-')}</TableCell>;
+											 case 'category':
+												 return <TableCell>{String((item.meta as any)?.category ?? '-')}</TableCell>;
+											 case 'entity':
+												 return <TableCell>{item.entity || '-'}</TableCell>;
+											 case 'details':
+												 return <TableCell className="max-w-xl truncate" title={item.details || ''}>{item.details || '-'}</TableCell>;
+											 default:
+												 return <TableCell>-</TableCell>;
+										 }
+									 }}
+								 </TableRow>
+							 )}
+						 </TableBody>
+					 </Table>
+				 </div>
 			 </CardBody>
 		 </Card>
 	 );
