@@ -1123,6 +1123,8 @@ export default function AccountsReceivable() {
 				cashAmount: settlement.cashRemaining,
 				whtAmount: settlement.whtRemaining,
 				whtVatAmount: settlement.whtVatRemaining,
+				whtHasTax: true,
+				whtHasVat: true,
 				amount: settlement.cashRemaining,
 			}));
 		} else if (kind === 'wht_only' && settlement) {
@@ -1132,6 +1134,8 @@ export default function AccountsReceivable() {
 				cashAmount: 0,
 				whtAmount: settlement.whtRemaining,
 				whtVatAmount: settlement.whtVatRemaining,
+				whtHasTax: true,
+				whtHasVat: true,
 				amount: 0,
 			}));
 		} else {
@@ -1143,6 +1147,26 @@ export default function AccountsReceivable() {
 				whtVatAmount: '',
 			}));
 		}
+	};
+
+	// Same flag-not-just-disable pattern as toggleWhtHasTax/toggleWhtHasVat above, for the
+	// Record Receipt modal's WHT settlement mode.
+	const toggleReceiptWhtHasTax = (checked: boolean) => {
+		setReceiptForm((f: any) => {
+			if (!checked) return { ...f, whtHasTax: false, whtAmount: 0 };
+			const invoice = selectedReceiptInvoice;
+			const settlement = invoice ? computeInvoiceWhtSettlement(invoice, taxConfigs) : null;
+			return { ...f, whtHasTax: true, whtAmount: settlement?.whtRemaining ?? f.whtAmount };
+		});
+	};
+
+	const toggleReceiptWhtHasVat = (checked: boolean) => {
+		setReceiptForm((f: any) => {
+			if (!checked) return { ...f, whtHasVat: false, whtVatAmount: 0 };
+			const invoice = selectedReceiptInvoice;
+			const settlement = invoice ? computeInvoiceWhtSettlement(invoice, taxConfigs) : null;
+			return { ...f, whtHasVat: true, whtVatAmount: settlement?.whtVatRemaining ?? f.whtVatAmount };
+		});
 	};
 
 	const onReceiptPaymentKindChange = (kind: string | null) => {
@@ -1584,12 +1608,41 @@ export default function AccountsReceivable() {
 			cashAmount,
 			whtAmount,
 			whtVatAmount,
+			// Not every withholding agent withholds both — most private customers withhold tax
+			// only, while designated agents (mostly government) withhold VAT too. Both default on
+			// since the suggested amounts are usually right when a customer does withhold both,
+			// but these flags let the preparer say which actually applied to this payment instead
+			// of silently zeroing a field with no record of that being a deliberate choice.
+			whtHasTax: true,
+			whtHasVat: true,
 			paymentMethod: 'Bank',
 			certificateNumber: '',
 			withholdingAgentTIN: '',
 		});
 		setFormError('');
 		setIsWHTPaymentOpen(true);
+	};
+
+	// Flip whether this payment includes a tax/VAT withholding component. Re-checking restores
+	// the statutory-rate suggestion (recomputed fresh, since the invoice's remaining balance may
+	// have changed since the modal opened); unchecking zeroes the amount rather than just
+	// disabling the field, so an unflagged component can never sneak into the posted total.
+	const toggleWhtHasTax = (checked: boolean) => {
+		setWHTPaymentForm((f: any) => {
+			if (!checked) return { ...f, whtHasTax: false, whtAmount: 0 };
+			const invoice = invoices.find((i: any) => i.id === f.invoiceId);
+			const settlement = invoice ? computeInvoiceWhtSettlement(invoice, taxConfigs) : null;
+			return { ...f, whtHasTax: true, whtAmount: settlement?.whtRemaining ?? f.whtAmount };
+		});
+	};
+
+	const toggleWhtHasVat = (checked: boolean) => {
+		setWHTPaymentForm((f: any) => {
+			if (!checked) return { ...f, whtHasVat: false, whtVatAmount: 0 };
+			const invoice = invoices.find((i: any) => i.id === f.invoiceId);
+			const settlement = invoice ? computeInvoiceWhtSettlement(invoice, taxConfigs) : null;
+			return { ...f, whtHasVat: true, whtVatAmount: settlement?.whtVatRemaining ?? f.whtVatAmount };
+		});
 	};
 
 	// Convert proforma → sales invoice (+ GL post)
@@ -2589,26 +2642,51 @@ export default function AccountsReceivable() {
 								{/* WHT Amounts */}
 								<Card className="mb-4 bg-amber-50 border border-amber-200">
 									<CardBody>
-										<h4 className="font-semibold text-amber-800 mb-3">Withholding Tax Deducted by Customer</h4>
+										<h4 className="font-semibold text-amber-800 mb-1">Withholding Tax Deducted by Customer</h4>
+										<p className="text-xs text-amber-700 mb-3">Not every payer withholds both — flag which apply to this payment.</p>
 										<div className="grid grid-cols-2 gap-4">
-											<Input 
-												type="number"
-												label={whtLabels.whtLabel}
-												placeholder="0.00"
-												value={whtPaymentForm.whtAmount}
-												onValueChange={(v) => setWHTPaymentForm((f: any) => ({ ...f, whtAmount: Number(v) }))}
-												startContent="₵"
-												description="Withholding Tax on subtotal"
-											/>
-											<Input 
-												type="number"
-												label={whtLabels.whtVatLabel}
-												placeholder="0.00"
-												value={whtPaymentForm.whtVatAmount}
-												onValueChange={(v) => setWHTPaymentForm((f: any) => ({ ...f, whtVatAmount: Number(v) }))}
-												startContent="₵"
-												description="Withholding VAT on tax amount"
-											/>
+											<div>
+												<Checkbox
+													size="sm"
+													isSelected={whtPaymentForm.whtHasTax}
+													onValueChange={toggleWhtHasTax}
+													classNames={{ label: 'text-xs font-medium text-amber-800' }}
+												>
+													Tax withheld (WHT)
+												</Checkbox>
+												<Input
+													type="number"
+													label={whtLabels.whtLabel}
+													placeholder="0.00"
+													value={whtPaymentForm.whtAmount}
+													onValueChange={(v) => setWHTPaymentForm((f: any) => ({ ...f, whtAmount: Number(v) }))}
+													startContent="₵"
+													description="Withholding Tax on subtotal"
+													isDisabled={!whtPaymentForm.whtHasTax}
+													className="mt-1"
+												/>
+											</div>
+											<div>
+												<Checkbox
+													size="sm"
+													isSelected={whtPaymentForm.whtHasVat}
+													onValueChange={toggleWhtHasVat}
+													classNames={{ label: 'text-xs font-medium text-amber-800' }}
+												>
+													VAT withheld (WHT-VAT)
+												</Checkbox>
+												<Input
+													type="number"
+													label={whtLabels.whtVatLabel}
+													placeholder="0.00"
+													value={whtPaymentForm.whtVatAmount}
+													onValueChange={(v) => setWHTPaymentForm((f: any) => ({ ...f, whtVatAmount: Number(v) }))}
+													startContent="₵"
+													description="Withholding VAT on tax amount"
+													isDisabled={!whtPaymentForm.whtHasVat}
+													className="mt-1"
+												/>
+											</div>
 										</div>
 									</CardBody>
 								</Card>
@@ -3256,26 +3334,50 @@ export default function AccountsReceivable() {
 														: 'Net cash from customer'
 												}
 											/>
-											<Input
-												type="number"
-												label={whtLabels.whtLabel}
-												placeholder="0.00"
-												value={receiptForm.whtAmount?.toString() ?? ''}
-												onValueChange={(v) =>
-													setReceiptForm((f: any) => ({ ...f, whtAmount: v }))
-												}
-												startContent="₵"
-											/>
-											<Input
-												type="number"
-												label={whtLabels.whtVatLabel}
-												placeholder="0.00"
-												value={receiptForm.whtVatAmount?.toString() ?? ''}
-												onValueChange={(v) =>
-													setReceiptForm((f: any) => ({ ...f, whtVatAmount: v }))
-												}
-												startContent="₵"
-											/>
+											<div>
+												<Checkbox
+													size="sm"
+													isSelected={receiptForm.whtHasTax !== false}
+													onValueChange={toggleReceiptWhtHasTax}
+													classNames={{ label: 'text-xs font-medium text-gray-600' }}
+												>
+													Tax withheld (WHT)
+												</Checkbox>
+												<Input
+													type="number"
+													label={whtLabels.whtLabel}
+													placeholder="0.00"
+													value={receiptForm.whtAmount?.toString() ?? ''}
+													onValueChange={(v) =>
+														setReceiptForm((f: any) => ({ ...f, whtAmount: v }))
+													}
+													startContent="₵"
+													isDisabled={receiptForm.whtHasTax === false}
+													className="mt-1"
+												/>
+											</div>
+											<div>
+												<Checkbox
+													size="sm"
+													isSelected={receiptForm.whtHasVat !== false}
+													onValueChange={toggleReceiptWhtHasVat}
+													classNames={{ label: 'text-xs font-medium text-gray-600' }}
+												>
+													VAT withheld (WHT-VAT)
+												</Checkbox>
+												<Input
+													type="number"
+													label={whtLabels.whtVatLabel}
+													placeholder="0.00"
+													value={receiptForm.whtVatAmount?.toString() ?? ''}
+													onValueChange={(v) =>
+														setReceiptForm((f: any) => ({ ...f, whtVatAmount: v }))
+													}
+													startContent="₵"
+													isDisabled={receiptForm.whtHasVat === false}
+													className="mt-1"
+												/>
+											</div>
 											<Input
 												label="WHT certificate # (optional)"
 												placeholder="GRA cert number when received"
