@@ -949,7 +949,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-proforma-itemized-letter', 'proforma', 'Itemized List (Letter Style)', itemizedLetterBlocks([
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ])),
-    template('builtin-proforma-sales-quote', 'proforma', 'Sales Quote', salesQuoteBlocks('Client', [
+    template('builtin-proforma-sales-quote', 'proforma', 'Mamani', salesQuoteBlocks('Client', [
       { label: 'Prepared By' }, { label: 'Client Acceptance' },
     ])),
     template('builtin-proforma-corporate-rfq', 'proforma', 'Corporate RFQ Response', corporateRfqBlocks('Client', [
