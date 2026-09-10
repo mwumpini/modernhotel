@@ -90,7 +90,16 @@ export function paymentMethodLabel(method?: string): string {
 export function buildCustomerReceiptPrintData(args: {
   payment: Pick<
     StoredReceiptPayment,
-    'paymentNumber' | 'id' | 'date' | 'amount' | 'paymentMethod' | 'reference' | 'description'
+    | 'paymentNumber'
+    | 'id'
+    | 'date'
+    | 'amount'
+    | 'paymentMethod'
+    | 'reference'
+    | 'description'
+    | 'isWHTCertificate'
+    | 'whtAmount'
+    | 'whtVatAmount'
   >;
   customerName: string;
   target?: ReceiptTarget | null;
@@ -123,6 +132,42 @@ export function buildCustomerReceiptPrintData(args: {
       : undefined,
   ].filter(Boolean) as string[];
 
+  // A WHT-type payment is a certificate, not cash — break it into its own withheld
+  // components (only whichever were actually flagged, per computeWhtAmounts) instead of
+  // one opaque "Payment received (WHT Certificate)" line for the combined total, so the
+  // printed receipt itself shows what was tax vs VAT the same way the certificate does.
+  const whtAmount = Number(args.payment.whtAmount || 0);
+  const whtVatAmount = Number(args.payment.whtVatAmount || 0);
+  const items =
+    args.payment.isWHTCertificate && (whtAmount > 0 || whtVatAmount > 0)
+      ? [
+          ...(whtAmount > 0
+            ? [
+                {
+                  description: `Tax withheld (WHT)${args.payment.reference ? ` · ${args.payment.reference}` : ''}`,
+                  amount: whtAmount,
+                  date: args.payment.date,
+                },
+              ]
+            : []),
+          ...(whtVatAmount > 0
+            ? [
+                {
+                  description: `VAT withheld (WHT-VAT)${args.payment.reference ? ` · ${args.payment.reference}` : ''}`,
+                  amount: whtVatAmount,
+                  date: args.payment.date,
+                },
+              ]
+            : []),
+        ]
+      : [
+          {
+            description: `Payment received (${method})${args.payment.reference ? ` · ${args.payment.reference}` : ''}`,
+            amount,
+            date: args.payment.date,
+          },
+        ];
+
   return {
     org: args.org,
     guest: {
@@ -133,14 +178,8 @@ export function buildCustomerReceiptPrintData(args: {
     },
     docNumber: args.docNumber || args.payment.paymentNumber || args.payment.id,
     docDate: args.payment.date,
-    title: 'Payment Receipt',
-    items: [
-      {
-        description: `Payment received (${method})${args.payment.reference ? ` · ${args.payment.reference}` : ''}`,
-        amount,
-        date: args.payment.date,
-      },
-    ],
+    title: args.payment.isWHTCertificate ? 'Withholding Certificate Receipt' : 'Payment Receipt',
+    items,
     totals: {
       subTotal: amount,
       payments: amount,
