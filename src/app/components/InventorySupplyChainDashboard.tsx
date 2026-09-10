@@ -6,12 +6,14 @@ import {
   Tabs, Tab, Chip, Input, Select, SelectItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   useDisclosure, Pagination, Progress, Tooltip, Textarea, Divider, Autocomplete, AutocompleteItem
 } from '@heroui/react';
+import { useSession } from 'next-auth/react';
 import { useSettingsStore } from '../lib/settings/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useStockStore } from '../lib/inventory/stockStore';
 import { useSupplierStore } from '../lib/inventory/supplierStore';
 import { useAccountingStore } from '../lib/accounting/store';
 import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
+import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
 import { BusinessPartner } from '../lib/accounting/models';
 import { GL_ACCOUNTS } from '../lib/accounting/integration';
 
@@ -21,6 +23,8 @@ import { GL_ACCOUNTS } from '../lib/accounting/integration';
 export default function InventorySupplyChainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const settings = useSettingsStore();
+  const { data: session } = useSession();
+  const currentUserName = session?.user?.name || 'User';
 
   // Inventory Management Hooks - moved to top level to comply with Rules of Hooks
   const {
@@ -434,7 +438,7 @@ export default function InventorySupplyChainDashboard() {
     status: 'pending',
     requestedItems: [],
     requestedDate: new Date(),
-    requestedBy: 'Current User' // TODO: Get from auth context
+    requestedBy: currentUserName
   });
   const [requisitionSearchTerm, setRequisitionSearchTerm] = useState('');
   const [requisitionFilterStatus, setRequisitionFilterStatus] = useState<string>('all');
@@ -1083,7 +1087,7 @@ export default function InventorySupplyChainDashboard() {
       paymentTerms: '[N/30]',
       notes: '',
       items: [],
-      createdBy: 'Current User', // TODO: Get from auth context
+      createdBy: currentUserName,
       taxType: 'none',
       taxRate: 0
     });
@@ -1155,7 +1159,7 @@ export default function InventorySupplyChainDashboard() {
       paymentTerms: poFormData.paymentTerms || 'net30',
       notes: poFormData.notes,
       items: poFormData.items,
-      createdBy: poFormData.createdBy || 'Current User',
+      createdBy: poFormData.createdBy || currentUserName,
     };
 
     if (editingPO) {
@@ -1415,7 +1419,7 @@ export default function InventorySupplyChainDashboard() {
     const reqNumber = generateRequisitionNumber();
     setRequisitionFormData({
       requisitionNumber: reqNumber,
-      requestedBy: 'Current User', // TODO: Get from auth context
+      requestedBy: currentUserName,
       requestedDate: new Date(),
       status: 'pending',
       requestedItems: [],
@@ -1448,7 +1452,7 @@ export default function InventorySupplyChainDashboard() {
 
     const reqData: Omit<Requisition, 'id' | 'createdAt' | 'updatedAt'> = {
       requisitionNumber: requisitionFormData.requisitionNumber || generateRequisitionNumber(),
-      requestedBy: requisitionFormData.requestedBy || 'Current User',
+      requestedBy: requisitionFormData.requestedBy || currentUserName,
       requestedDate: requisitionFormData.requestedDate || new Date(),
       requestedItems: requisitionFormData.requestedItems || [],
       status: requisitionFormData.status || 'pending',
@@ -1468,7 +1472,7 @@ export default function InventorySupplyChainDashboard() {
       status: 'pending',
       requestedItems: [],
       requestedDate: new Date(),
-      requestedBy: 'Current User'
+      requestedBy: currentUserName
     });
     setEditingRequisition(null);
   };
@@ -2323,7 +2327,7 @@ export default function InventorySupplyChainDashboard() {
                                 color="success"
                                 onPress={() => {
                                   if (confirm('Approve this requisition?')) {
-                                    approveRequisition(req.id, 'Director/GM'); // TODO: Get from auth context
+                                    approveRequisition(req.id, currentUserName);
                                     trackEvent('Stores.Issued', { action: 'approve_requisition', requisitionNumber: req.requisitionNumber });
                                   }
                                 }}
@@ -2338,7 +2342,7 @@ export default function InventorySupplyChainDashboard() {
                                 color="danger"
                                 onPress={() => {
                                   const reason = prompt('Enter rejection reason (optional):');
-                                  rejectRequisition(req.id, 'Director/GM', reason || undefined); // TODO: Get from auth context
+                                  rejectRequisition(req.id, currentUserName, reason || undefined);
                                   trackEvent('Stores.Issued', { action: 'reject_requisition', requisitionNumber: req.requisitionNumber });
                                 }}
                               >
@@ -2456,7 +2460,7 @@ export default function InventorySupplyChainDashboard() {
     status: 'pending',
     priority: 'medium',
       items: [],
-      createdBy: 'Current User'
+      createdBy: currentUserName
     });
 
   // Stock Count State
@@ -2470,7 +2474,7 @@ export default function InventorySupplyChainDashboard() {
       startDate: new Date(),
       status: 'planned',
     items: [],
-    createdBy: 'Current User'
+    createdBy: currentUserName
   });
 
   // Temporary storage for transfers and counts (until we add to store)
@@ -2539,7 +2543,7 @@ export default function InventorySupplyChainDashboard() {
       supplierId: selectedPOForReceipt.supplierId,
       supplierName: selectedPOForReceipt.supplierName,
       receiptDate: new Date(),
-      receivedBy: 'Current User',
+      receivedBy: currentUserName,
       items: grnItems,
       totalItems: grnItems.length,
       totalValue: grnItems.reduce((sum, item) => sum + item.totalValue, 0),
@@ -2574,7 +2578,7 @@ export default function InventorySupplyChainDashboard() {
             referenceNumber: grn.grnNumber,
             batchNumber: receiptItem.batchNumber,
             expiryDate: receiptItem.expiryDate,
-            performedBy: 'Current User',
+            performedBy: currentUserName,
             notes: receiptItem.notes || `Received from ${selectedPOForReceipt.poNumber} - GRN ${grn.grnNumber}`
           });
         }
@@ -2644,7 +2648,7 @@ export default function InventorySupplyChainDashboard() {
           referenceId: Date.now().toString(),
           referenceNumber: `ISSUE-${Date.now()}`,
           reason: item.reason || `Issued to ${issueFormData.department}`,
-          performedBy: 'Current User',
+          performedBy: currentUserName,
           notes: `Issued to ${issueFormData.issuedTo} - ${issueFormData.department}. ${issueFormData.notes || ''}`
         });
       }
@@ -2677,7 +2681,7 @@ export default function InventorySupplyChainDashboard() {
       totalItems: 0,
       totalValue: 0,
       items: [],
-      createdBy: 'Current User'
+      createdBy: currentUserName
     });
     onStockTransferOpen();
   };
@@ -2701,7 +2705,7 @@ export default function InventorySupplyChainDashboard() {
       totalValue: stockTransferFormData.items.reduce((sum, item) => sum + item.totalValue, 0),
       items: stockTransferFormData.items,
       notes: stockTransferFormData.notes,
-      createdBy: stockTransferFormData.createdBy || 'Current User',
+      createdBy: stockTransferFormData.createdBy || currentUserName,
       createdAt: editingStockTransfer?.createdAt || new Date(),
       updatedAt: new Date()
     };
@@ -2783,7 +2787,7 @@ export default function InventorySupplyChainDashboard() {
       totalValue: 0,
       varianceValue: 0,
       items: [],
-      createdBy: 'Current User'
+      createdBy: currentUserName
     });
     onStockCountOpen();
   };
@@ -2818,7 +2822,7 @@ export default function InventorySupplyChainDashboard() {
             referenceId: count.id,
             referenceNumber: count.countNumber,
             reason: countItem.variance > 0 ? 'Overcount' : 'Undercount',
-            performedBy: count.performedBy || 'Current User',
+            performedBy: count.performedBy || currentUserName,
             notes: `Stock count adjustment. ${countItem.notes || ''}`
           });
         }
@@ -2974,7 +2978,7 @@ export default function InventorySupplyChainDashboard() {
                                   poNumber: grn.poNumber,
                                   supplierId: grn.supplierId,
                                   supplierName: grn.supplierName,
-                                  checkedBy: 'Current User',
+                                  checkedBy: currentUserName,
                                   checkedDate: new Date(),
                                   items: grn.items.map((item: GRNItem) => ({
                                     id: Date.now().toString() + Math.random(),
@@ -3005,7 +3009,7 @@ export default function InventorySupplyChainDashboard() {
                                 color="success"
                                 onPress={() => {
                                   if (confirm('Approve this GRN?')) {
-                                    approveGRN(grn.id, 'Current User');
+                                    approveGRN(grn.id, currentUserName);
                                     trackEvent('Stores.Issued', { action: 'approve_grn', grnNumber: grn.grnNumber });
                                   }
                                 }}
@@ -3021,7 +3025,7 @@ export default function InventorySupplyChainDashboard() {
                                 onPress={() => {
                                   const reason = prompt('Enter rejection reason:');
                                   if (reason) {
-                                    rejectGRN(grn.id, 'Current User', reason);
+                                    rejectGRN(grn.id, currentUserName, reason);
                                     trackEvent('Stores.Issued', { action: 'reject_grn', grnNumber: grn.grnNumber });
                                   }
                                 }}
@@ -3199,7 +3203,7 @@ export default function InventorySupplyChainDashboard() {
                                 color="success"
                                 onPress={() => {
                                   if (confirm('Approve this invoice for payment?')) {
-                                    approveInvoice(inv.id, 'Current User');
+                                    approveInvoice(inv.id, currentUserName);
                                     trackEvent('Stores.Issued', { action: 'approve_invoice', invoiceNumber: inv.invoiceNumber });
                                   }
                                 }}
@@ -3215,7 +3219,7 @@ export default function InventorySupplyChainDashboard() {
                                 onPress={() => {
                                   const reason = prompt('Enter rejection reason:');
                                   if (reason) {
-                                    rejectInvoice(inv.id, 'Current User', reason);
+                                    rejectInvoice(inv.id, currentUserName, reason);
                                     trackEvent('Stores.Issued', { action: 'reject_invoice', invoiceNumber: inv.invoiceNumber });
                                   }
                                 }}
@@ -3235,7 +3239,7 @@ export default function InventorySupplyChainDashboard() {
                                 const method = prompt('Enter payment method (e.g., Bank Transfer, Check, Cash):');
                                 const ref = prompt('Enter payment reference:');
                                 if (method && ref) {
-                                  markInvoicePaid(inv.id, 'Current User', method, ref);
+                                  markInvoicePaid(inv.id, currentUserName, method, ref);
                                   trackEvent('Stores.Issued', { action: 'mark_invoice_paid', invoiceNumber: inv.invoiceNumber });
                                 }
                               }}
@@ -3328,89 +3332,10 @@ export default function InventorySupplyChainDashboard() {
           </Card>
         </div>
 
-        {/* Reports */}
-        <Card className="border-0 shadow-lg">
-          <CardHeader>
-            <h3 className="text-xl font-semibold text-ghana-black">📊 Reports & Analytics</h3>
-          </CardHeader>
-          <CardBody>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <Card className="border-0 shadow-md hover:shadow-lg transition-shadow cursor-pointer" isPressable>
-                <CardBody className="p-6">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2">📈</div>
-                    <h4 className="font-semibold mb-2">Inventory Valuation Report</h4>
-                    <p className="text-sm text-gray-500">Total inventory value by category</p>
-                  </div>
-                </CardBody>
-              </Card>
-              
-              <Card className="border-0 shadow-md hover:shadow-lg transition-shadow cursor-pointer" isPressable>
-                <CardBody className="p-6">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2">📊</div>
-                    <h4 className="font-semibold mb-2">Stock Movement Report</h4>
-                    <p className="text-sm text-gray-500">Inbound and outbound movements</p>
-                  </div>
-                </CardBody>
-              </Card>
-              
-              <Card className="border-0 shadow-md hover:shadow-lg transition-shadow cursor-pointer" isPressable>
-                <CardBody className="p-6">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2">📋</div>
-                    <h4 className="font-semibold mb-2">Purchase Order Report</h4>
-                    <p className="text-sm text-gray-500">PO status and tracking</p>
-                  </div>
-                </CardBody>
-              </Card>
-              
-              <Card className="border-0 shadow-md hover:shadow-lg transition-shadow cursor-pointer" isPressable>
-                <CardBody className="p-6">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2">⚠️</div>
-                    <h4 className="font-semibold mb-2">Low Stock Report</h4>
-                    <p className="text-sm text-gray-500">Items below reorder point</p>
-                  </div>
-                </CardBody>
-              </Card>
-              
-              <Card className="border-0 shadow-md hover:shadow-lg transition-shadow cursor-pointer" isPressable>
-                <CardBody className="p-6">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2">🤝</div>
-                    <h4 className="font-semibold mb-2">Supplier Performance</h4>
-                    <p className="text-sm text-gray-500">Supplier ratings and metrics</p>
-                  </div>
-                </CardBody>
-              </Card>
-              
-              <Card className="border-0 shadow-md hover:shadow-lg transition-shadow cursor-pointer" isPressable>
-                <CardBody className="p-6">
-                  <div className="text-center">
-                    <div className="text-4xl mb-2">💾</div>
-                    <h4 className="font-semibold mb-2">Export Report</h4>
-                    <p className="text-sm text-gray-500">Download reports in various formats</p>
-                  </div>
-                </CardBody>
-              </Card>
-            </div>
-          </CardBody>
-        </Card>
-
-        {/* Analytics Dashboard */}
-        <Card className="border-0 shadow-lg">
-          <CardHeader>
-            <h3 className="text-xl font-semibold text-ghana-black">📈 Inventory Analytics</h3>
-          </CardHeader>
-          <CardBody>
-            <div className="text-center py-12 text-gray-500">
-              <div className="text-6xl mb-4">📊</div>
-              <p className="text-lg">Analytics dashboard coming soon</p>
-              <p className="text-sm">Charts and visualizations will be displayed here</p>
-            </div>
-          </CardBody>
-        </Card>
+        {/* Reports & Analytics — the real dashboard (valuation/movement/low-stock/
+            supplier/financial reports, each with working CSV/PDF export), not a
+            grid of cards with no click handler in front of a "coming soon" stub. */}
+        <InventoryAnalyticsDashboard />
       </div>
     );
   };
@@ -5214,7 +5139,7 @@ export default function InventorySupplyChainDashboard() {
                   color="success" 
                   onPress={() => {
                     if (confirm('Approve this requisition?')) {
-                      approveRequisition(viewingRequisition.id, 'Director/GM');
+                      approveRequisition(viewingRequisition.id, currentUserName);
                       onRequisitionViewClose();
                       trackEvent('Stores.Issued', { action: 'approve_requisition', requisitionNumber: viewingRequisition.requisitionNumber });
                     }
@@ -5227,7 +5152,7 @@ export default function InventorySupplyChainDashboard() {
                   variant="flat"
                   onPress={() => {
                     const reason = prompt('Enter rejection reason (optional):');
-                    rejectRequisition(viewingRequisition.id, 'Director/GM', reason || undefined);
+                    rejectRequisition(viewingRequisition.id, currentUserName, reason || undefined);
                     onRequisitionViewClose();
                     trackEvent('Stores.Issued', { action: 'reject_requisition', requisitionNumber: viewingRequisition.requisitionNumber });
                   }}
@@ -5949,7 +5874,7 @@ export default function InventorySupplyChainDashboard() {
                 varianceValue: stockCountFormData.items.reduce((sum, i) => sum + Math.abs(i.varianceValue), 0),
                 items: stockCountFormData.items,
                 notes: stockCountFormData.notes,
-                createdBy: stockCountFormData.createdBy || 'Current User',
+                createdBy: stockCountFormData.createdBy || currentUserName,
                 createdAt: editingStockCount?.createdAt || new Date(),
                 updatedAt: new Date()
               };

@@ -2,6 +2,104 @@ import { create } from 'zustand';
 import { useStockStore } from './stockStore';
 import { useSupplierStore } from './supplierStore';
 import { InventoryReport, InventoryAnalytics, CostAnalysis } from './models';
+import { openHtmlPrintWindow } from '../print/engine';
+
+// ---------------------------------------------------------------------------
+// Report export helpers — every generate*Report() above returns either
+// {mainArray, summary} (items/movements/suppliers/locations/categories) or a
+// flatter summary/breakdown object (financial/inventory/analytics reports).
+// These turn either shape into a real CSV download or a printable HTML page,
+// instead of the old "console.log and pretend" stub.
+// ---------------------------------------------------------------------------
+
+const REPORT_ARRAY_KEYS = ['items', 'movements', 'suppliers', 'locations', 'categories', 'trends'];
+
+function findMainArray(report: any): { rows: any[] } | null {
+  if (!report || typeof report !== 'object') return null;
+  for (const key of REPORT_ARRAY_KEYS) {
+    if (Array.isArray(report[key]) && report[key].length) return { rows: report[key] };
+  }
+  for (const key of Object.keys(report)) {
+    if (Array.isArray(report[key]) && report[key].length) return { rows: report[key] };
+  }
+  return null;
+}
+
+function cellText(v: any): string {
+  if (v == null) return '';
+  if (v instanceof Date) return v.toLocaleDateString();
+  if (Array.isArray(v)) return v.join('; ');
+  return String(v);
+}
+
+/** Flattens a (possibly nested) summary object into label/value pairs, e.g.
+ *  {byCategory: {food: {count: 3}}} -> [["byCategory food count", "3"]]. */
+function flattenToPairs(obj: any, prefix = ''): Array<[string, string]> {
+  const pairs: Array<[string, string]> = [];
+  for (const [key, val] of Object.entries(obj || {})) {
+    const label = prefix ? `${prefix} ${key}` : key;
+    if (val && typeof val === 'object' && !(val instanceof Date) && !Array.isArray(val)) {
+      pairs.push(...flattenToPairs(val, label));
+    } else {
+      pairs.push([label, cellText(val)]);
+    }
+  }
+  return pairs;
+}
+
+function csvCell(v: string): string {
+  return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+function buildReportCsv(report: any): string {
+  const lines: string[] = [];
+  const main = findMainArray(report);
+  if (main) {
+    const cols = Object.keys(main.rows[0]);
+    lines.push(cols.map(csvCell).join(','));
+    for (const row of main.rows) lines.push(cols.map((c) => csvCell(cellText(row[c]))).join(','));
+  }
+  const summarySource = report?.summary || (!main ? report : null);
+  if (summarySource) {
+    if (lines.length) lines.push('');
+    lines.push('Summary');
+    for (const [label, value] of flattenToPairs(summarySource)) lines.push(`${csvCell(label)},${csvCell(value)}`);
+  }
+  return lines.join('\n');
+}
+
+function downloadReportCsv(report: any, title: string) {
+  const csv = buildReportCsv(report);
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `${title.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function buildReportHtml(report: any, title: string): string {
+  const main = findMainArray(report);
+  let body = `<h1>${title}</h1><p style="color:#666;">${new Date().toLocaleString()}</p>`;
+  if (main) {
+    const cols = Object.keys(main.rows[0]);
+    body += `<table><thead><tr>${cols.map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${main.rows
+      .map((row) => `<tr>${cols.map((c) => `<td>${cellText(row[c])}</td>`).join('')}</tr>`)
+      .join('')}</tbody></table>`;
+  }
+  const summarySource = report?.summary || (!main ? report : null);
+  if (summarySource) {
+    body += `<h2>Summary</h2><table>${flattenToPairs(summarySource)
+      .map(([l, v]) => `<tr><td><strong>${l}</strong></td><td>${v}</td></tr>`)
+      .join('')}</table>`;
+  }
+  return `<!doctype html><html><head><meta charset="utf-8" /><title>${title}</title>
+  <style>body{font-family:Arial,system-ui,sans-serif;padding:24px;color:#222;} table{border-collapse:collapse;width:100%;margin-top:12px;} th,td{border:1px solid #ddd;padding:8px;text-align:left;font-size:13px;} th{background:#f5f5f5;}</style>
+  </head><body>${body}<script>window.print()</script></body></html>`;
+}
 
 interface InventoryReportingStore {
   // Report Generation
@@ -160,7 +258,7 @@ interface InventoryReportingStore {
   };
   
   // Export Functions
-  exportReport: (report: any, format: 'csv' | 'pdf' | 'excel') => void;
+  exportReport: (report: any, format: 'csv' | 'pdf' | 'excel', title?: string) => void;
   exportInventoryReport: (type: InventoryReport['type'], startDate: Date, endDate: Date, format: 'csv' | 'pdf' | 'excel') => void;
   exportLowStockReport: (format: 'csv' | 'pdf' | 'excel') => void;
   exportExpiryReport: (daysThreshold: number, format: 'csv' | 'pdf' | 'excel') => void;
@@ -731,49 +829,56 @@ export const useInventoryReportingStore = create<InventoryReportingStore>((set, 
     };
   },
 
-  // Export Functions (simplified for demo)
-  exportReport: (report, format) => {
-    console.log(`Exporting ${format} report:`, report);
-    // In a real implementation, this would generate and download the file
+  // Export Functions — real CSV download (also used for 'excel', which every
+  // spreadsheet app opens natively) or a printable HTML page for 'pdf' (via
+  // the same hidden-iframe print mechanism every other document in the app
+  // uses — see print/engine.ts's openHtmlPrintWindow).
+  exportReport: (report, format, title = 'Inventory Report') => {
+    if (typeof window === 'undefined') return;
+    if (format === 'pdf') {
+      openHtmlPrintWindow(buildReportHtml(report, title));
+    } else {
+      downloadReportCsv(report, title);
+    }
   },
 
   exportInventoryReport: (type, startDate, endDate, format) => {
     const report = get().generateInventoryReport(type, startDate, endDate);
-    get().exportReport(report, format);
+    get().exportReport(report, format, `Inventory Report (${type})`);
   },
 
   exportLowStockReport: (format) => {
     const report = get().generateLowStockReport();
-    get().exportReport(report, format);
+    get().exportReport(report, format, 'Low Stock Report');
   },
 
   exportExpiryReport: (daysThreshold, format) => {
     const report = get().generateExpiryReport(daysThreshold);
-    get().exportReport(report, format);
+    get().exportReport(report, format, 'Expiry Report');
   },
 
   exportMovementReport: (startDate, endDate, format) => {
     const report = get().generateMovementReport(startDate, endDate);
-    get().exportReport(report, format);
+    get().exportReport(report, format, 'Stock Movement Report');
   },
 
   exportSupplierReport: (format) => {
     const report = get().generateSupplierReport();
-    get().exportReport(report, format);
+    get().exportReport(report, format, 'Supplier Performance Report');
   },
 
   exportLocationReport: (format) => {
     const report = get().generateLocationReport();
-    get().exportReport(report, format);
+    get().exportReport(report, format, 'Location Report');
   },
 
   exportCategoryReport: (format) => {
     const report = get().generateCategoryReport();
-    get().exportReport(report, format);
+    get().exportReport(report, format, 'Category Report');
   },
 
   exportFinancialReport: (format) => {
     const report = get().generateFinancialReport();
-    get().exportReport(report, format);
+    get().exportReport(report, format, 'Financial Report');
   }
 }));
