@@ -243,6 +243,7 @@ interface AccountingState {
     invoiceId: string;
     cashAmount: number;
     whtAmount: number;
+    whtVatAmount?: number;
     paymentMethod: Payment['paymentMethod'];
     bankAccountId?: string;
     reference?: string;
@@ -1946,7 +1947,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
     const cashAmount = roundMoney2(params.cashAmount || 0);
     const whtAmount = roundMoney2(params.whtAmount || 0);
-    const totalSettled = roundMoney2(cashAmount + whtAmount);
+    const whtVatAmount = roundMoney2(params.whtVatAmount || 0);
+    const totalWithheld = roundMoney2(whtAmount + whtVatAmount);
+    const totalSettled = roundMoney2(cashAmount + totalWithheld);
     const balanceDue = roundMoney2(invoice.total - (invoice.paidAmount || 0));
 
     if (totalSettled <= 0) {
@@ -1984,7 +1987,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         : null;
 
     const whtPayment: Payment | null =
-      whtAmount > 0
+      totalWithheld > 0
         ? {
             id: `PAYWHT-${Date.now()}`,
             paymentNumber: `WHT-${paymentNumber}`,
@@ -1993,12 +1996,13 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
             businessPartnerId: invoice.businessPartnerId,
             invoiceId: invoice.id,
             reference: reference || invoice.invoiceNumber,
-            description: `WHT withheld — to remit to GRA for ${invoice.invoiceNumber}`,
-            amount: whtAmount,
+            description: `WHT/VAT withheld — to remit to GRA for ${invoice.invoiceNumber}`,
+            amount: totalWithheld,
             currency: invoice.currency || 'GHS',
             paymentMethod: 'WHT Certificate',
             isWHTCertificate: true,
             whtAmount,
+            whtVatAmount,
             status: 'Posted',
             sourceModule: MANUAL_AR_AP_SOURCE,
             createdAt: now,
@@ -2049,12 +2053,13 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       syncPaymentToLedger(cashPayment, partner, glStore);
     }
 
-    if (whtPayment && whtAmount > 0) {
+    if (whtPayment && totalWithheld > 0) {
       const whtResult = buildAPWHTPayableJournalEntry(
         {
           paymentId: whtPayment.id,
           invoiceNumber: invoice.invoiceNumber,
           whtAmount,
+          whtVatAmount,
           date: now,
           currency: whtPayment.currency || invoice.currency || 'GHS',
         },

@@ -251,6 +251,7 @@ export interface Invoice {
     covid?: number;
     tourism?: number;
     withholding?: number;
+    withholdingVat?: number;
     other?: number;
     taxableAmount?: number;
     nonTaxableAmount?: number;
@@ -535,6 +536,10 @@ export const GHANA_TAX_CODES = {
   COVID19:     { code: 'COVID19',     name: 'COVID-19 Recovery Levy (legacy)', rate: 0,   glCode: '2140' },
   TOURISM:     { code: 'TOURISM',     name: 'Tourism Development Levy',       rate: 1.0,  glCode: '2150' },
   WITHHOLDING: { code: 'WITHHOLDING', name: 'Withholding Tax (Services)',     rate: 7.5,  glCode: '2160' },
+  /** Purchases: VAT withheld from a supplier by a GRA-designated VAT-withholding agent --
+   * the AP-side mirror of WHT_VAT_CERT below (same 7% statutory rate, opposite direction:
+   * owed to GRA, not a credit from a customer). */
+  WITHHOLDING_VAT: { code: 'WITHHOLDING_VAT', name: 'Withholding VAT (Purchases)', rate: 7.0, glCode: '2170' },
   /** AR certificate: withheld on invoice subtotal (configurable; not in VAT stack) */
   WHT_CERT:    { code: 'WHT_CERT',    name: 'WHT Certificate (on subtotal)', rate: 5.0,  glCode: '1230' },
   /** AR certificate: withheld on VAT portion */
@@ -573,6 +578,7 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '2140', name: 'COVID-19 Levy Payable (legacy)', type: 'Liability', category: 'Current Liabilities', level: 3 },
   { code: '2150', name: 'Tourism Levy Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
   { code: '2160', name: 'Withholding Tax Payable', type: 'Liability', category: 'Current Liabilities', level: 3 },
+  { code: '2170', name: 'Withholding VAT Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'VAT withheld from suppliers, owed to GRA' },
   { code: '2200', name: 'Accounts Payable', type: 'Liability', category: 'Current Liabilities', level: 2 },
   { code: '2205', name: 'Trade Accounts Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Supplier invoices and payments — the postable leaf under 2200; 2210/2220 are payroll withholdings, not trade payables' },
   { code: '2210', name: 'PAYE Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Employee income tax withheld' },

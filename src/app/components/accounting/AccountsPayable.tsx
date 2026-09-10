@@ -13,7 +13,7 @@ import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useSupplierStore } from '@/app/lib/inventory/supplierStore';
 import { useStockStore } from '@/app/lib/inventory/stockStore';
 import { computePurchaseTax } from '@/app/lib/tax/engine';
-import { computePurchaseWht, PURCHASE_WHT_CATEGORIES, type PurchaseWhtCategory } from '@/app/lib/accounting/purchaseWht';
+import { computePurchaseWht, computePurchaseWhtVat, PURCHASE_WHT_CATEGORIES, type PurchaseWhtCategory } from '@/app/lib/accounting/purchaseWht';
 import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
 import { filterFinanceApInvoices, computeSupplierAgingFromInvoices } from '@/app/lib/accounting/apSubledger';
 import { GL_ACCOUNTS } from '@/app/lib/accounting/integration';
@@ -270,12 +270,17 @@ export default function AccountsPayablePage() {
     const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
     const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
     const whtConfigured = Number(inv.taxBreakdown?.withholding || 0);
+    const whtVatConfigured = Number(inv.taxBreakdown?.withholdingVat || 0);
     const whtAlreadyWithheld = payments
       .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
-      .reduce((s: number, p: any) => s + Number(p.whtAmount || p.amount || 0), 0);
+      .reduce((s: number, p: any) => s + Number(p.whtAmount || 0), 0);
+    const whtVatAlreadyWithheld = payments
+      .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
+      .reduce((s: number, p: any) => s + Number(p.whtVatAmount || 0), 0);
     const whtRemaining = Math.min(outstanding, Math.max(0, whtConfigured - whtAlreadyWithheld));
-    const applyWht = whtRemaining > 0;
-    const amount = Math.max(0, outstanding - (applyWht ? whtRemaining : 0));
+    const whtVatRemaining = Math.min(Math.max(0, outstanding - whtRemaining), Math.max(0, whtVatConfigured - whtVatAlreadyWithheld));
+    const applyWht = whtRemaining > 0 || whtVatRemaining > 0;
+    const amount = Math.max(0, outstanding - whtRemaining - whtVatRemaining);
     setDialogType('payment');
     setEditing(null);
     setForm({
@@ -285,6 +290,7 @@ export default function AccountsPayablePage() {
       amount,
       applyWht,
       whtAmount: whtRemaining,
+      whtVatAmount: whtVatRemaining,
       paymentMethod: 'Bank',
       reference: `Payment for invoice ${inv.invoiceNumber}`,
     });
@@ -1242,17 +1248,18 @@ export default function AccountsPayablePage() {
               discountAmount: Number(form.discountAmount || 0),
               shippingCharges: Number(form.shippingCharges || 0),
               otherCharges: Number(form.otherCharges || 0),
-              amountDue: +(((Number(form.subtotal ?? subtotalFromLines)) + (Number(form.taxAmount ?? taxFromLines)) + Number(form.shippingCharges || 0) + Number(form.otherCharges || 0) - Number(form.discountAmount || 0) - Number(form.taxBreakdown?.withholding || 0)) - Number(form.paidAmount || 0)).toFixed(2),
+              amountDue: +(((Number(form.subtotal ?? subtotalFromLines)) + (Number(form.taxAmount ?? taxFromLines)) + Number(form.shippingCharges || 0) + Number(form.otherCharges || 0) - Number(form.discountAmount || 0) - Number(form.taxBreakdown?.withholding || 0) - Number(form.taxBreakdown?.withholdingVat || 0)) - Number(form.paidAmount || 0)).toFixed(2),
               workflowStatus: form.workflowStatus || 'Posted',
               taxBreakdown: form.taxBreakdown || undefined,
               lines
             } as any;
             if (editing) updateInvoice(editing.id, payload); else addInvoice(payload);
-          } else if (dialogType === 'payment' && !editing && form.applyWht && form.invoiceId && Number(form.whtAmount || 0) > 0) {
+          } else if (dialogType === 'payment' && !editing && form.applyWht && form.invoiceId && (Number(form.whtAmount || 0) > 0 || Number(form.whtVatAmount || 0) > 0)) {
             const result = recordSupplierWHTPayment({
               invoiceId: form.invoiceId,
               cashAmount: Number(form.amount || 0),
               whtAmount: Number(form.whtAmount || 0),
+              whtVatAmount: Number(form.whtVatAmount || 0),
               paymentMethod: form.paymentMethod || 'Bank',
               bankAccountId: form.bankAccountId || undefined,
               reference: form.reference || undefined,
@@ -1542,12 +1549,14 @@ export default function AccountsPayablePage() {
                 const subtotal = parseFloat(e.target.value) || 0;
                 const taxAmount = computePurchaseTax(subtotal).totalTax;
                 const whtAmount = form.whtApplicable ? (computePurchaseWht(subtotal, form.whtCategory || 'SERVICE')?.amount || 0) : form.taxBreakdown?.withholding;
-                setForm({ ...form, subtotal, taxAmount, total: +(subtotal + taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholding: whtAmount } });
+                const whtVatAmount = form.whtVatApplicable ? (computePurchaseWhtVat(taxAmount)?.amount || 0) : form.taxBreakdown?.withholdingVat;
+                setForm({ ...form, subtotal, taxAmount, total: +(subtotal + taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholding: whtAmount, withholdingVat: whtVatAmount } });
               }} />
               <Input size="sm" type="number" label="Tax Amount" value={form.taxAmount ?? 0} onChange={(e) => {
                 const taxAmount = parseFloat(e.target.value) || 0;
                 const subtotal = Number(form.subtotal || 0);
-                setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2) });
+                const whtVatAmount = form.whtVatApplicable ? (computePurchaseWhtVat(taxAmount)?.amount || 0) : form.taxBreakdown?.withholdingVat;
+                setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: whtVatAmount } });
               }} />
                 </div>
             {/* Totals quick view */}
@@ -1585,19 +1594,21 @@ export default function AccountsPayablePage() {
                   )}
                   <Button size="sm" variant="bordered" onClick={() => {
                     const subtotal = Number(form.subtotal||0);
+                    const recomputeWhtVat = (taxAmount: number) =>
+                      form.whtVatApplicable ? (computePurchaseWhtVat(taxAmount)?.amount || 0) : form.taxBreakdown?.withholdingVat;
                     if ((form.taxType||'STANDARD') === 'CUSTOM') {
                       const rate = Number(form.customTaxPercent||0)/100;
                       const taxAmount = +(subtotal*rate).toFixed(2);
-                      setForm({ ...form, taxAmount, total: +(subtotal+taxAmount).toFixed(2) });
+                      setForm({ ...form, taxAmount, total: +(subtotal+taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: recomputeWhtVat(taxAmount) } });
                       return;
                     }
                     if ((form.taxType||'STANDARD') === 'NONE') {
-                      setForm({ ...form, taxAmount: 0, total: subtotal });
+                      setForm({ ...form, taxAmount: 0, total: subtotal, taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: recomputeWhtVat(0) } });
                       return;
                     }
                     const { totalTax } = computePurchaseTax(subtotal);
                     const taxAmount = +totalTax.toFixed(2);
-                    setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2) });
+                    setForm({ ...form, taxAmount, total: +(subtotal + taxAmount).toFixed(2), taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: recomputeWhtVat(taxAmount) } });
                   }}>Apply Tax</Button>
                 </div>
                 <div className="flex gap-2 items-end">
@@ -1627,6 +1638,22 @@ export default function AccountsPayablePage() {
                   )}
                 </div>
               </div>
+              {/* VAT withholding is a separate, less-common mechanism from the category-based WHT
+                  above -- only a GRA-designated VAT-withholding agent does this, and it's
+                  independent of tax withholding (a purchase can have either, both, or neither). */}
+              <div className="flex gap-2 items-end">
+                <Checkbox isSelected={!!form.whtVatApplicable} onValueChange={(checked) => {
+                  const taxAmount = Number(form.taxAmount || 0);
+                  if (checked) {
+                    const whtVat = computePurchaseWhtVat(taxAmount);
+                    setForm({ ...form, whtVatApplicable: true, taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: whtVat?.amount || 0 } });
+                  } else {
+                    const tb = { ...(form.taxBreakdown || {}) };
+                    delete tb.withholdingVat;
+                    setForm({ ...form, whtVatApplicable: false, taxBreakdown: tb });
+                  }
+                }}>Withhold VAT (designated agent only)</Checkbox>
+              </div>
               {form.whtApplicable && (() => {
                 const category: PurchaseWhtCategory = form.whtCategory || 'SERVICE';
                 const wht = computePurchaseWht(Number(form.subtotal || 0), category);
@@ -1639,7 +1666,23 @@ export default function AccountsPayablePage() {
                     <Input size="sm" isReadOnly label="WHT Rate" value={`${wht.rate}%`} />
                     <Input size="sm" type="number" label="WHT Amount" value={form.taxBreakdown?.withholding ?? wht.amount}
                       onChange={(e) => setForm({ ...form, taxBreakdown: { ...(form.taxBreakdown || {}), withholding: parseFloat(e.target.value) || 0 } })} />
-                    <div className="text-xs text-gray-500 flex items-center">Net payable: {formatAccountingCurrency((Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0)))}</div>
+                    <div className="text-xs text-gray-500 flex items-center">Net payable: {formatAccountingCurrency((Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0) - Number(form.taxBreakdown?.withholdingVat || 0)))}</div>
+                  </div>
+                );
+              })()}
+              {form.whtVatApplicable && (() => {
+                const whtVat = computePurchaseWhtVat(Number(form.taxAmount || 0));
+                if (!whtVat) {
+                  return <div className="text-xs text-amber-600">Tax Amount is ₵0 — nothing to withhold VAT on.</div>;
+                }
+                return (
+                  <div className="grid grid-cols-3 gap-4">
+                    <Input size="sm" isReadOnly label="WHT-VAT Rate" value={`${whtVat.rate}%`} />
+                    <Input size="sm" type="number" label="WHT-VAT Amount" value={form.taxBreakdown?.withholdingVat ?? whtVat.amount}
+                      onChange={(e) => setForm({ ...form, taxBreakdown: { ...(form.taxBreakdown || {}), withholdingVat: parseFloat(e.target.value) || 0 } })} />
+                    {!form.whtApplicable && (
+                      <div className="text-xs text-gray-500 flex items-center">Net payable: {formatAccountingCurrency((Number(form.subtotal || 0) + Number(form.taxAmount || 0) - Number(form.taxBreakdown?.withholding || 0) - Number(form.taxBreakdown?.withholdingVat || 0)))}</div>
+                    )}
                   </div>
                 );
               })()}
@@ -1790,13 +1833,18 @@ export default function AccountsPayablePage() {
                     const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
                     const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
                     const whtConfigured = Number(inv.taxBreakdown?.withholding || 0);
+                    const whtVatConfigured = Number(inv.taxBreakdown?.withholdingVat || 0);
                     const whtAlreadyWithheld = payments
                       .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
-                      .reduce((s: number, p: any) => s + Number(p.whtAmount || p.amount || 0), 0);
+                      .reduce((s: number, p: any) => s + Number(p.whtAmount || 0), 0);
+                    const whtVatAlreadyWithheld = payments
+                      .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
+                      .reduce((s: number, p: any) => s + Number(p.whtVatAmount || 0), 0);
                     const whtRemaining = Math.min(outstanding, Math.max(0, whtConfigured - whtAlreadyWithheld));
-                    const applyWht = whtRemaining > 0;
-                    const nextAmount = Math.max(0, outstanding - (applyWht ? whtRemaining : 0));
-                    setForm({ ...form, invoiceId: inv.id, amount: nextAmount, applyWht, whtAmount: whtRemaining, reference: form.reference || `Payment for invoice ${inv.invoiceNumber}` });
+                    const whtVatRemaining = Math.min(Math.max(0, outstanding - whtRemaining), Math.max(0, whtVatConfigured - whtVatAlreadyWithheld));
+                    const applyWht = whtRemaining > 0 || whtVatRemaining > 0;
+                    const nextAmount = Math.max(0, outstanding - whtRemaining - whtVatRemaining);
+                    setForm({ ...form, invoiceId: inv.id, amount: nextAmount, applyWht, whtAmount: whtRemaining, whtVatAmount: whtVatRemaining, reference: form.reference || `Payment for invoice ${inv.invoiceNumber}` });
                   }}
                   placeholder={form.businessPartnerId ? 'Select purchase invoice' : 'Select supplier first'}
                   isDisabled={!form.businessPartnerId}
@@ -1821,7 +1869,7 @@ export default function AccountsPayablePage() {
                   if (!inv) return null;
                   const paid = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
                   const bal = Math.max(0, (inv.total || 0) - paid);
-                  const settling = Number(form.amount || 0) + (form.applyWht ? Number(form.whtAmount || 0) : 0);
+                  const settling = Number(form.amount || 0) + (form.applyWht ? Number(form.whtAmount || 0) + Number(form.whtVatAmount || 0) : 0);
                   const newBal = Math.max(0, bal - settling);
                   return (
                     <div className="mt-1 text-xs text-gray-600">
@@ -1831,24 +1879,44 @@ export default function AccountsPayablePage() {
                 })()}
                 {form.invoiceId && (() => {
                   const inv = purchaseInvoices.find(i => i.id === form.invoiceId);
-                  const whtConfigured = Number(inv?.taxBreakdown?.withholding || 0);
-                  if (!inv || whtConfigured <= 0) return null;
+                  if (!inv) return null;
+                  const whtConfigured = Number(inv.taxBreakdown?.withholding || 0);
+                  const whtVatConfigured = Number(inv.taxBreakdown?.withholdingVat || 0);
+                  if (whtConfigured <= 0 && whtVatConfigured <= 0) return null;
                   const whtAlreadyWithheld = payments
                     .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
-                    .reduce((s: number, p: any) => s + Number(p.whtAmount || p.amount || 0), 0);
+                    .reduce((s: number, p: any) => s + Number(p.whtAmount || 0), 0);
+                  const whtVatAlreadyWithheld = payments
+                    .filter((p: any) => p.invoiceId === inv.id && p.isWHTCertificate)
+                    .reduce((s: number, p: any) => s + Number(p.whtVatAmount || 0), 0);
                   const whtRemaining = Math.max(0, whtConfigured - whtAlreadyWithheld);
-                  if (whtRemaining <= 0) return null;
+                  const whtVatRemaining = Math.max(0, whtVatConfigured - whtVatAlreadyWithheld);
+                  if (whtRemaining <= 0 && whtVatRemaining <= 0) return null;
+
+                  // Not every withholding agent withholds both -- flag which apply to this
+                  // payment, same pattern as the AR side. Each checkbox toggles its own amount
+                  // in/out of the cash split independently.
+                  const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
+                  const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
+                  const currentWht = Number(form.whtAmount || 0);
+                  const currentWhtVat = Number(form.whtVatAmount || 0);
+
                   return (
-                    <div className="mt-2 flex items-center gap-3">
-                      <Checkbox isSelected={!!form.applyWht} onValueChange={(checked) => {
-                        const paidForInvoice = payments.filter(p => p.invoiceId === inv.id).reduce((s, p) => s + p.amount, 0);
-                        const outstanding = Math.max(0, (inv.total || 0) - paidForInvoice);
-                        if (checked) {
-                          setForm({ ...form, applyWht: true, whtAmount: whtRemaining, amount: Math.max(0, outstanding - whtRemaining) });
-                        } else {
-                          setForm({ ...form, applyWht: false, whtAmount: 0, amount: outstanding });
-                        }
-                      }}>Withhold tax on this payment ({formatAccountingCurrency(whtRemaining)})</Checkbox>
+                    <div className="mt-2 flex flex-col gap-2">
+                      {whtRemaining > 0 && (
+                        <Checkbox isSelected={currentWht > 0} onValueChange={(checked) => {
+                          const nextWht = checked ? whtRemaining : 0;
+                          const nextAmount = Math.max(0, outstanding - nextWht - currentWhtVat);
+                          setForm({ ...form, applyWht: nextWht > 0 || currentWhtVat > 0, whtAmount: nextWht, amount: nextAmount });
+                        }}>Tax withheld (WHT) ({formatAccountingCurrency(whtRemaining)})</Checkbox>
+                      )}
+                      {whtVatRemaining > 0 && (
+                        <Checkbox isSelected={currentWhtVat > 0} onValueChange={(checked) => {
+                          const nextWhtVat = checked ? whtVatRemaining : 0;
+                          const nextAmount = Math.max(0, outstanding - currentWht - nextWhtVat);
+                          setForm({ ...form, applyWht: currentWht > 0 || nextWhtVat > 0, whtVatAmount: nextWhtVat, amount: nextAmount });
+                        }}>VAT withheld (WHT-VAT) ({formatAccountingCurrency(whtVatRemaining)})</Checkbox>
+                      )}
                     </div>
                   );
                 })()}
@@ -1856,7 +1924,8 @@ export default function AccountsPayablePage() {
             <div>
               <Input type="number" label="Amount (cash to supplier)" value={form.amount ?? 0} onChange={(e) => setForm({ ...form, amount: parseFloat(e.target.value) || 0 })} />
               {errors.amount && <div className="text-red-600 text-xs mt-1">{errors.amount}</div>}
-              {form.applyWht && <div className="text-xs text-gray-500 mt-1">+ {formatAccountingCurrency(Number(form.whtAmount || 0))} withheld (WHT payable to GRA)</div>}
+              {form.applyWht && Number(form.whtAmount || 0) > 0 && <div className="text-xs text-gray-500 mt-1">+ {formatAccountingCurrency(Number(form.whtAmount || 0))} withheld (WHT payable to GRA)</div>}
+              {form.applyWht && Number(form.whtVatAmount || 0) > 0 && <div className="text-xs text-gray-500 mt-1">+ {formatAccountingCurrency(Number(form.whtVatAmount || 0))} withheld (WHT-VAT payable to GRA)</div>}
             </div>
             <Select label="Method" selectedKeys={[form.paymentMethod || 'Bank']} onSelectionChange={(keys) => setForm({ ...form, paymentMethod: Array.from(keys)[0] })}>
               <SelectItem key="Cash">Cash</SelectItem>

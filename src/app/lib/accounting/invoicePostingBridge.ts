@@ -30,6 +30,7 @@ const GL = {
   WHT_RECEIVABLE: '1230',
   WHT_VAT_RECEIVABLE: '1240',
   WHT_PAYABLE: GHANA_TAX_CODES.WITHHOLDING.glCode,
+  WHT_VAT_PAYABLE: GHANA_TAX_CODES.WITHHOLDING_VAT.glCode,
   // Catch-all leaf for a purchase invoice line with no glAccountCode of its
   // own — the expense-side mirror of SALES_REVENUE/4300 on the revenue side.
   EXPENSE: '5680',
@@ -484,6 +485,7 @@ export function buildAPWHTPayableJournalEntry(
     paymentId: string;
     invoiceNumber: string;
     whtAmount: number;
+    whtVatAmount?: number;
     date: string;
     currency?: string;
   },
@@ -491,7 +493,9 @@ export function buildAPWHTPayableJournalEntry(
   opts: { journalSeq: number; postedBy?: string },
 ): PostResult {
   const whtAmount = +(params.whtAmount || 0).toFixed(2);
-  if (whtAmount <= 0) return { ok: false, error: 'WHT amount must be greater than zero.' };
+  const whtVatAmount = +(params.whtVatAmount || 0).toFixed(2);
+  const total = +(whtAmount + whtVatAmount).toFixed(2);
+  if (total <= 0) return { ok: false, error: 'WHT amount must be greater than zero.' };
   const currency = params.currency || 'GHS';
 
   const entryId = `JE-APWHT-${params.paymentId}`;
@@ -502,13 +506,15 @@ export function buildAPWHTPayableJournalEntry(
       journalEntryId: entryId,
       accountCode: partnerApCode(partner),
       description: `Clear AP for WHT withheld — ${params.invoiceNumber}`,
-      debit: whtAmount,
+      debit: total,
       credit: 0,
       currency,
       reference: params.invoiceNumber,
     },
-    {
-      id: `JL-${entryId}-cr`,
+  ];
+  if (whtAmount > 0) {
+    lines.push({
+      id: `JL-${entryId}-cr-wht`,
       journalEntryId: entryId,
       accountCode: GL.WHT_PAYABLE,
       description: `WHT payable (to remit to GRA) — ${params.invoiceNumber}`,
@@ -516,8 +522,20 @@ export function buildAPWHTPayableJournalEntry(
       credit: whtAmount,
       currency,
       reference: params.invoiceNumber,
-    },
-  ];
+    });
+  }
+  if (whtVatAmount > 0) {
+    lines.push({
+      id: `JL-${entryId}-cr-vat`,
+      journalEntryId: entryId,
+      accountCode: GL.WHT_VAT_PAYABLE,
+      description: `WHT-VAT payable (to remit to GRA) — ${params.invoiceNumber}`,
+      debit: 0,
+      credit: whtVatAmount,
+      currency,
+      reference: params.invoiceNumber,
+    });
+  }
 
   const entry: JournalEntry = {
     id: entryId,
@@ -525,8 +543,8 @@ export function buildAPWHTPayableJournalEntry(
     date: params.date,
     reference: params.invoiceNumber,
     description: `WHT withheld on supplier payment — ${params.invoiceNumber}`,
-    totalDebit: whtAmount,
-    totalCredit: whtAmount,
+    totalDebit: total,
+    totalCredit: total,
     currency,
     status: 'Posted',
     postedBy: opts.postedBy || 'system',
