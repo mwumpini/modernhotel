@@ -6,6 +6,7 @@ import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { amountToWordsGhana, generatePaymentAdvicePDF } from '@/app/lib/hr/payrollPdf';
+import { useSettingsStore } from '@/app/lib/settings/store';
 import type { PayrollRecord } from '@/app/lib/hr/models';
 
 // Shared by both the on-screen Payment Advice summary and the downloadable PDF/XLS — one
@@ -35,6 +36,7 @@ export default function PayrollProcessingPanel() {
   const getPosition = useEmployeeStore((s) => s.getPosition);
   const payrollRecords = usePayrollStore((s) => s.payrollRecords);
   const taxRules = useComplianceStore((s) => s.taxRules);
+  const hotelName = useSettingsStore((s) => s.hotelSettings.hotelName) || 'Hotel';
 
   // Tier 1/2/3 are separate, independently-renameable rules (different institutions) — the
   // column labels and pre-run estimate rates below read the live rule so a rename in
@@ -137,7 +139,7 @@ export default function PayrollProcessingPanel() {
       return undefined;
     })();
     await generatePaymentAdvicePDF({
-      hotelName: 'Noda Hotel Ltd.',
+      hotelName,
       monthLabel,
       bankOrChannel: label,
       rows,
@@ -189,13 +191,13 @@ export default function PayrollProcessingPanel() {
     <img src="${companyLogoUrl}" alt="Company" onerror="this.style.display='none'" />
     <img src="${bankLogoUrl}" alt="Bank" onerror="this.style.display='none'" />
   </div>
-  <div class="title">Noda Hotel Ltd.</div>
+  <div class="title">${hotelName}</div>
   <div class="subtitle">Salary Payment Advice - ${label}</div>
   <div class="subtitle">${monthLabel}</div>
   <div class="meta"><b>Signer Name:</b> ${signerName || 'Authorized Signatory'}</div>
   <div class="meta"><b>Signer Position:</b> ${signerPosition || 'Finance Manager'}</div>
   <div class="meta"><b>Date Printed:</b> ${printed}</div>
-  <div class="intro">Please pay the underlisted staff of Noda Hotel Ltd. their net salaries via ${label} for ${monthLabel}. The total amount is GHS ${total.toFixed(2)} (${words}).</div>
+  <div class="intro">Please pay the underlisted staff of ${hotelName} their net salaries via ${label} for ${monthLabel}. The total amount is GHS ${total.toFixed(2)} (${words}).</div>
   <table>
     <colgroup>
       <col style="width: 12%" />
@@ -499,7 +501,7 @@ export default function PayrollProcessingPanel() {
                     <Input label="Signer Position" size="sm" value={signerPosition} onChange={(e) => setSignerPosition(e.target.value)} variant="bordered" />
                   </div>
                   <div className="text-sm text-gray-700 mt-3">
-                    Please pay the underlisted staff of Noda Hotel Ltd. their net salaries via {label} for {monthLabel}.
+                    Please pay the underlisted staff of {hotelName} their net salaries via {label} for {monthLabel}.
                   </div>
                   <div className="mt-3 max-h-[75vh] overflow-y-auto">
                     <Table aria-label="payment-advice-detail">

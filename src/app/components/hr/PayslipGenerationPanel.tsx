@@ -3,27 +3,54 @@
 import React from 'react';
 import { Button, Card, CardBody, CardHeader, Select, SelectItem } from '@heroui/react';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
+import { useSettingsStore } from '@/app/lib/settings/store';
+import { generatePayslipsPDF, type PayslipRow } from '@/app/lib/hr/payrollPdf';
 
 export default function PayslipGenerationPanel() {
   const periods = usePayrollStore((s) => s.payrollPeriods);
   const records = usePayrollStore((s) => s.payrollRecords);
+  const hotelName = useSettingsStore((s) => s.hotelSettings.hotelName) || 'Hotel';
 
   const [periodId, setPeriodId] = React.useState<string>(periods[0]?.id || '');
   const periodRecords = records.filter((r) => r.payrollPeriodId === periodId);
   const [recordId, setRecordId] = React.useState<string>(periodRecords[0]?.id || '');
 
   const record = records.find((r) => r.id === recordId);
+  const period = periods.find((p) => p.id === periodId);
 
-  const generate = () => {
+  const generate = async () => {
     if (!record) return;
-    console.log('[HR][Payslip] generate', {
-      employee: record.employeeName,
-      periodId: record.payrollPeriodId,
-      gross: record.grossPay,
-      net: record.netPay
+    const monthLabel = period
+      ? new Date(period.startDate).toLocaleString('en-US', { month: 'long', year: 'numeric' })
+      : new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    // Same composition as the on-screen preview below, so the PDF never shows a different
+    // total than what was just previewed.
+    const otherDeductions =
+      record.deductions.socialSecurity + record.deductions.healthInsurance + record.deductions.pension + record.deductions.other;
+    const rows: PayslipRow[] = [
+      { label: 'Basic Salary', value: record.basicSalary.toFixed(2) },
+      { label: 'Allowances', value: record.allowances.toFixed(2) },
+      { label: 'Overtime', value: record.overtimePay.toFixed(2) },
+      { label: 'Bonuses', value: record.bonuses.toFixed(2) },
+      { label: 'Gross Pay', value: record.grossPay.toFixed(2) },
+      { label: 'Tax (PAYE)', value: record.deductions.tax.toFixed(2) },
+      { label: 'Other Deductions', value: otherDeductions.toFixed(2) },
+      { label: 'Net Pay', value: record.netPay.toFixed(2) },
+      { label: 'Payment Method', value: record.paymentMethod },
+      { label: 'Bank Account', value: record.bankAccount || '-' },
+    ];
+    await generatePayslipsPDF({
+      slips: [
+        {
+          hotelName,
+          monthLabel,
+          employeeName: record.employeeName,
+          position: record.position,
+          rows,
+        },
+      ],
+      fileName: `Payslip_${record.employeeName.replace(/\s+/g, '_')}_${monthLabel.replace(/\s+/g, '_')}.pdf`,
     });
-    // Placeholder: integrate printer/export; for now, open print dialog for browser-native export
-    try { window.print(); } catch {}
   };
 
   React.useEffect(() => {
