@@ -515,10 +515,17 @@ export default function FinancialReportsPage() {
       // at the same indent, weight, and background as leaf siblings like "4100 Room Revenue"
       // right next to it, with only the expand/collapse triangle hinting it's a rollup. Anchor
       // the weight/tint on hasChildren instead of indent so every subtotal — at any depth —
-      // reads as one, and every leaf reads as a directly-posted figure.
+      // reads as one, and every leaf reads as a directly-posted figure. Among rollups
+      // themselves, grade the tint/weight by depth (darkest+boldest at the top-level category,
+      // lightest at the deepest nested subtotal) so a 3-level chart like 5000 -> 5200 -> 5210
+      // visually steps down as you drill in, rather than every rollup looking equally "total".
       const paddingClass = indent === 0 ? '' : indent === 1 ? 'pl-6' : 'pl-12';
-      const fontClass = hasChildren ? 'font-semibold' : indent === 1 ? 'font-medium' : '';
-      const bgClass = hasChildren ? (indent === 0 ? 'bg-gray-50' : 'bg-slate-50/60') : '';
+      const fontClass = hasChildren
+        ? (indent === 0 ? 'font-bold text-gray-900' : indent === 1 ? 'font-semibold text-gray-800' : 'font-medium text-gray-700')
+        : indent === 1 ? 'font-medium' : '';
+      const bgClass = hasChildren
+        ? (indent === 0 ? 'bg-slate-100' : indent === 1 ? 'bg-slate-50' : 'bg-slate-50/40')
+        : '';
       
       const accountCell = (
         <TableCell className={paddingClass}>
