@@ -1,4 +1,6 @@
 import { NextRequest } from 'next/server'
+import { getServerSession } from 'next-auth/next'
+import { authOptions } from '../auth/auth'
 import { prisma } from '../database/client'
 import { normalizeTenantSubdomain } from './tenantSubdomain'
 
@@ -56,6 +58,22 @@ export async function getTenantContext(subdomain: string): Promise<TenantContext
 
     if (!tenant) {
       console.warn(`[tenant] not found: raw="${subdomain}" normalized="${normalized}"`)
+      return null
+    }
+
+    // Ownership check: if the caller has an authenticated session, it must belong to THIS
+    // tenant -- a logged-in user must never be able to read/write another tenant's data just
+    // by sending a different x-tenant-subdomain/x-tenant-id header. Deliberately scoped to
+    // *only* run this check when a session exists: routes that don't require auth at all (no
+    // session present) are completely unaffected by this change -- it adds an ownership check
+    // wherever auth already exists, it does not newly require auth anywhere. (validateTenantAccess
+    // below was written to do this same check but was never actually called from anywhere.)
+    const session = await getServerSession(authOptions).catch(() => null)
+    const sessionTenantId = (session as any)?.user?.tenantId
+    if (sessionTenantId && sessionTenantId !== tenant.id) {
+      console.warn(
+        `[tenant] cross-tenant access blocked: session tenant="${sessionTenantId}" requested tenant="${tenant.id}" (${normalized})`
+      )
       return null
     }
 
