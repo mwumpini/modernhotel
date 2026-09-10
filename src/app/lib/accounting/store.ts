@@ -1762,7 +1762,11 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
         grossAmount: invoice.total,
-        whtRate: whtRates.onSubtotalPct,
+        // Rate is 0 (not the statutory rate) whenever its amount is 0 -- otherwise a certificate
+        // for a payment flagged "tax only" would show a real WHT-VAT rate like 7% next to a
+        // ₵0.00 amount, reading as "VAT withholding applied but happened to round to zero"
+        // instead of "not withheld at all". whtVatRate already did this; whtRate didn't.
+        whtRate: whtAmount > 0 ? whtRates.onSubtotalPct : 0,
         whtAmount: whtAmount,
         whtVatRate: whtVatAmount > 0 ? whtRates.onVatPct : 0,
         whtVatAmount: whtVatAmount,

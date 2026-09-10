@@ -2824,12 +2824,14 @@ export default function AccountsReceivable() {
 											<TableBody>
 												<TableRow>
 													<TableCell>Withholding Tax (WHT)</TableCell>
-													<TableCell>{selectedWHTCert.whtRate || 5}%</TableCell>
+													{/* ?? not || : a real 0% (this preparer flagged "not withheld") must not fall back to
+													    the statutory default -- only a genuinely missing rate (older certs) should. */}
+													<TableCell>{selectedWHTCert.whtRate ?? 5}%</TableCell>
 													<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(selectedWHTCert.whtAmount || 0))}</TableCell>
                                                     </TableRow>
 												<TableRow>
 													<TableCell>Withholding VAT (WHT-VAT)</TableCell>
-													<TableCell>{selectedWHTCert.whtVatRate || 7}%</TableCell>
+													<TableCell>{selectedWHTCert.whtVatRate ?? 7}%</TableCell>
 													<TableCell className="text-right font-medium">{formatAccountingCurrency(Number(selectedWHTCert.whtVatAmount || 0))}</TableCell>
 												</TableRow>
 												<TableRow className="bg-amber-50">
