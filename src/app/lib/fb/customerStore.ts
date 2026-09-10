@@ -1,98 +1,15 @@
 'use client';
 
 import { Customer } from './models';
+import { fbTenantHeaders } from './api';
 
 class CustomerStore {
   private customers: Customer[] = [];
   private listeners: Array<() => void> = [];
 
-  constructor() {
-    this.initializeSampleData();
-  }
-
-  private initializeSampleData() {
-    this.customers = [
-      {
-        id: 'CUST001',
-        firstName: 'Kwame',
-        lastName: 'Mensah',
-        email: 'kwame.mensah@email.com',
-        phone: '+233 24 123 4567',
-        address: {
-          street: '123 High Street',
-          city: 'Accra',
-          state: 'Greater Accra',
-          zipCode: '00233',
-          country: 'Ghana'
-        },
-        loyaltyPoints: 1250,
-        totalSpent: 2850.75,
-        visitCount: 18,
-        lastVisit: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
-        preferences: {
-          dietaryRestrictions: ['vegetarian'],
-          favoriteItems: ['M1', 'M3'], // Jollof Rice, Waakye Pack
-          allergies: ['nuts']
-        },
-        isActive: true,
-        createdAt: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
-      },
-      {
-        id: 'CUST002',
-        firstName: 'Ama',
-        lastName: 'Osei',
-        email: 'ama.osei@email.com',
-        phone: '+233 26 987 6543',
-        address: {
-          street: '456 Beach Road',
-          city: 'Tema',
-          state: 'Greater Accra',
-          zipCode: '00233',
-          country: 'Ghana'
-        },
-        loyaltyPoints: 890,
-        totalSpent: 1567.50,
-        visitCount: 12,
-        lastVisit: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
-        preferences: {
-          dietaryRestrictions: [],
-          favoriteItems: ['M2', 'D1'], // Banku & Tilapia, Club Beer
-          allergies: []
-        },
-        isActive: true,
-        createdAt: new Date(Date.now() - 120 * 24 * 60 * 60 * 1000).toISOString()
-      },
-      {
-        id: 'CUST003',
-        firstName: 'Efua',
-        lastName: 'Addo',
-        email: 'efua.addo@email.com',
-        phone: '+233 20 555 1234',
-        address: {
-          street: '789 University Avenue',
-          city: 'Kumasi',
-          state: 'Ashanti',
-          zipCode: '00233',
-          country: 'Ghana'
-        },
-        loyaltyPoints: 2100,
-        totalSpent: 4230.25,
-        visitCount: 25,
-        lastVisit: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(),
-        preferences: {
-          dietaryRestrictions: ['vegan'],
-          favoriteItems: ['M5', 'D2'], // Garden Salad, Fresh Juice
-          allergies: ['dairy', 'gluten']
-        },
-        isActive: true,
-        createdAt: new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString()
-      }
-    ];
-  }
-
   // Customer CRUD operations
   addCustomer(customer: Omit<Customer, 'id' | 'loyaltyPoints' | 'totalSpent' | 'visitCount' | 'createdAt'>): Customer {
-    const id = `CUST${String(this.customers.length + 1).padStart(3, '0')}`;
+    const id = `tmp_${Date.now()}`;
     const newCustomer: Customer = {
       ...customer,
       id,
@@ -101,19 +18,53 @@ class CustomerStore {
       visitCount: 0,
       createdAt: new Date().toISOString()
     };
-    
+
     this.customers.push(newCustomer);
     this.notifyListeners();
+
+    if (typeof window !== 'undefined') {
+      fetch('/api/fb/customers', {
+        method: 'POST',
+        headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ id, ...customer }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!data?.customer) return;
+          // Reconcile the temp id with the server's real id.
+          this.customers = this.customers.map((c) => (c.id === id ? data.customer : c));
+          this.notifyListeners();
+        })
+        .catch((e) => console.warn('[FB] Failed to sync new customer:', e));
+    }
+
     return newCustomer;
   }
 
   updateCustomer(id: string, updates: Partial<Customer>): Customer | null {
     const index = this.customers.findIndex(c => c.id === id);
     if (index === -1) return null;
-    
+
     this.customers[index] = { ...this.customers[index], ...updates };
     this.notifyListeners();
+    this.syncCustomer(this.customers[index]);
     return this.customers[index];
+  }
+
+  /** Replace in-memory customers with the real, Prisma-persisted list from
+   *  /api/fb/customers. Without this, this store only ever showed whatever
+   *  had been added in the current browser tab since the last reload. */
+  async hydrateFromApi(): Promise<void> {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/fb/customers', { headers: fbTenantHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      this.customers = data.customers || [];
+      this.notifyListeners();
+    } catch (e) {
+      console.warn('[FB] customerStore hydrateFromApi failed:', e);
+    }
   }
 
   getCustomer(id: string): Customer | undefined {
@@ -159,18 +110,20 @@ class CustomerStore {
   addLoyaltyPoints(customerId: string, points: number): boolean {
     const customer = this.getCustomer(customerId);
     if (!customer) return false;
-    
+
     customer.loyaltyPoints += points;
     this.notifyListeners();
+    this.syncCustomer(customer);
     return true;
   }
 
   deductLoyaltyPoints(customerId: string, points: number): boolean {
     const customer = this.getCustomer(customerId);
     if (!customer || customer.loyaltyPoints < points) return false;
-    
+
     customer.loyaltyPoints -= points;
     this.notifyListeners();
+    this.syncCustomer(customer);
     return true;
   }
 
@@ -182,20 +135,34 @@ class CustomerStore {
     return 'New';
   }
 
-  // Customer activity tracking
+  // Customer activity tracking — the visit/spend/points tally is incremented
+  // atomically server-side (see recordFBCustomerVisit) rather than a client
+  // read-modify-write, so two concurrent orders for the same customer can't
+  // clobber each other's tally.
   recordVisit(customerId: string, orderAmount: number): boolean {
     const customer = this.getCustomer(customerId);
     if (!customer) return false;
-    
+
     customer.visitCount += 1;
     customer.totalSpent += orderAmount;
     customer.lastVisit = new Date().toISOString();
-    
-    // Award loyalty points (1 point per 1 cedi spent)
-    const pointsEarned = Math.floor(orderAmount);
-    customer.loyaltyPoints += pointsEarned;
-    
+    customer.loyaltyPoints += Math.floor(orderAmount);
     this.notifyListeners();
+
+    if (typeof window !== 'undefined' && !customerId.startsWith('tmp_')) {
+      fetch('/api/fb/customers', {
+        method: 'PATCH',
+        headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ id: customerId, orderAmount }),
+      })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!data?.customer) return;
+          this.customers = this.customers.map((c) => (c.id === customerId ? data.customer : c));
+          this.notifyListeners();
+        })
+        .catch((e) => console.warn('[FB] Failed to sync customer visit:', e));
+    }
     return true;
   }
 
@@ -208,10 +175,20 @@ class CustomerStore {
   updateCustomerPreferences(customerId: string, preferences: Partial<Customer['preferences']>): boolean {
     const customer = this.getCustomer(customerId);
     if (!customer) return false;
-    
+
     customer.preferences = { ...customer.preferences, ...preferences } as Customer['preferences'];
     this.notifyListeners();
+    this.syncCustomer(customer);
     return true;
+  }
+
+  private syncCustomer(customer: Customer) {
+    if (typeof window === 'undefined' || customer.id.startsWith('tmp_')) return;
+    fetch('/api/fb/customers', {
+      method: 'POST',
+      headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(customer),
+    }).catch((e) => console.warn('[FB] Failed to sync customer:', e));
   }
 
   getCustomersByDietaryRestriction(restriction: string): Customer[] {

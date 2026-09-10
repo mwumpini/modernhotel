@@ -88,7 +88,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [roomNumber, setRoomNumber] = useState('');
   const [guestName, setGuestName] = useState('Walk-in Guest');
   const [roomSearchTerm, setRoomSearchTerm] = useState('');
-  const [guestSearchTerm, setGuestSearchTerm] = useState('');
   const [selectedGuest, setSelectedGuest] = useState<any>(null);
   const [walkInSearchTerm, setWalkInSearchTerm] = useState('');
   const [selectedWalkIn, setSelectedWalkIn] = useState<any>(null);
@@ -160,13 +159,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     })));
   }, [applyRoomServiceCharge, roomServiceChargePerUnit]);
 
-  // Safe display name for guests (Front Office clients)
-  const getGuestDisplayName = (g: any) => {
-    if (!g) return '';
-    const name = g.name || [g.firstName, g.middleName, g.lastName].filter(Boolean).join(' ');
-    return (name || '').trim();
-  };
-
   // POS Activity row modal state
   const [activitySelected, setActivitySelected] = useState<{ order: FBOrder; item: any } | null>(null);
   const [activityQty, setActivityQty] = useState<number>(0);
@@ -200,24 +192,15 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     );
   }, [availableRooms, roomSearchTerm]);
 
-  // Get filtered guests based on search
-  const filteredGuests = useMemo(() => {
-    const list = frontOfficeStore.guests || [];
-    if (!guestSearchTerm) return list.slice(0, 20);
-    const q = (guestSearchTerm || '').toLowerCase();
-    return list.filter(guest => {
-      const name = getGuestDisplayName(guest).toLowerCase();
-      const phone = guest?.phone || '';
-      const email = (guest?.email || '').toLowerCase();
-      return name.includes(q) || phone.includes(guestSearchTerm) || email.includes(q);
-    }).slice(0, 20);
-  }, [guestSearchTerm]);
-
-  // Walk-in customers search
+  // Walk-in customers search — re-run whenever customerStore's data actually
+  // changes (e.g. once hydrateFromApi resolves), not just when the search
+  // text changes, so the dropdown doesn't stay stuck on stale/empty data.
+  const [customersTick, setCustomersTick] = React.useState(0);
+  React.useEffect(() => customerStore.subscribe(() => setCustomersTick((t) => t + 1)), []);
   const filteredWalkIns = useMemo(() => {
     if (!walkInSearchTerm) return customerStore.getAllCustomers().slice(0, 20);
     return customerStore.searchCustomers(walkInSearchTerm).slice(0, 20);
-  }, [walkInSearchTerm]);
+  }, [walkInSearchTerm, customersTick]);
 
   // Handle room selection
   const handleRoomSelect = (room: any) => {
@@ -225,13 +208,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setGuestName(room.guestName);
     setSelectedGuest(room);
     setRoomSearchTerm('');
-  };
-
-  // Handle guest selection
-  const handleGuestSelect = (guest: any) => {
-    setGuestName(getGuestDisplayName(guest));
-    setSelectedGuest(guest);
-    setGuestSearchTerm('');
   };
 
   const handleWalkInSelect = (cust: any) => {
@@ -249,7 +225,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       setGuestName('Walk-in Guest');
       setSelectedGuest(null);
       setRoomSearchTerm('');
-      setGuestSearchTerm('');
     }
     if (newType !== 'Walk-in') {
       setSelectedWalkIn(null);
@@ -270,6 +245,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     const sync = () => setOrders(ordersStore.all());
     sync();
     return ordersStore.subscribe(sync);
+  }, []);
+
+  // Load real, persisted walk-in customers (was permanently a hardcoded
+  // 3-person demo list otherwise — see customerStore.hydrateFromApi).
+  React.useEffect(() => {
+    customerStore.hydrateFromApi();
   }, []);
 
   const [selectedOrder, setSelectedOrder] = useState<PendingOrder | null>(null);
@@ -602,9 +583,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setIsSending(true);
 
     const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
+    // A walk-in not matching a saved customer profile still typed a real name —
+    // that's not "no guest", it's just not-yet-a-saved-profile. Falling back to
+    // undefined here silently dropped the name from the order entirely.
     const guestDisplayName = customerType === 'In-house'
       ? guestName
-      : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : undefined);
+      : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : (walkInSearchTerm.trim() || 'Walk-in Customer'));
 
     // ── POST to database API (source of truth for KDS) ─────────────────────
     let apiId: string | null = null;
@@ -702,7 +686,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
       const guestDisplayName = customerType === 'In-house'
         ? guestName
-        : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : 'Walk-in Customer');
+        : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : (walkInSearchTerm.trim() || 'Walk-in Customer'));
 
       // ── Resolve DB order ─────────────────────────────────────────────────────
       // If waiter already clicked "Send to Kitchen", reuse that order (no duplicate POST).
@@ -1808,7 +1792,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
               const guestDisplayName = customerType === 'In-house'
                 ? guestName
-                : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : 'Walk-in Customer');
+                : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}`.trim() : (walkInSearchTerm.trim() || 'Walk-in Customer'));
 
               // Resolve or create DB order
               let orderId = sentOrderData?.id ?? null;

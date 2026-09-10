@@ -59,6 +59,7 @@ model Tenant {
   fbMenuItems            FBMenuItem[]
   fbOrders               FBOrder[]
   fbOrderItems           FBOrderItem[]
+  fbCustomers            FBCustomer[]
   housekeepingTasks      HousekeepingTask[]
   roomStatusLogs         RoomStatusLog[]
   maintenanceRequests    MaintenanceRequest[]
@@ -1217,6 +1218,32 @@ model FBOrderItem {
 
   @@index([tenantId, orderId])
   @@map("fb_order_items")
+}
+
+// Walk-in restaurant/bar customer profile — loyalty points, spend, and
+// dietary/allergy preferences for repeat patrons who aren't hotel in-house
+// guests (those are tracked as Guest/Reservation, not here).
+model FBCustomer {
+  id             String    @id @default(cuid())
+  tenantId       String
+  firstName      String
+  lastName       String
+  email          String?
+  phone          String?
+  address        Json?
+  loyaltyPoints  Int       @default(0)
+  totalSpent     Decimal   @default(0)
+  visitCount     Int       @default(0)
+  lastVisit      DateTime?
+  preferences    Json? // {dietaryRestrictions[], favoriteItems[], allergies[]}
+  isActive       Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isActive])
+  @@map("fb_customers")
 }
 
 // ─── Housekeeping ─────────────────────────────────────────────────────────────

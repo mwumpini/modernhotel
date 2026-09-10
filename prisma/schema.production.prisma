@@ -60,6 +60,7 @@ model Tenant {
   fbMenuItems FBMenuItem[]
   fbOrders FBOrder[]
   fbOrderItems FBOrderItem[]
+  fbCustomers FBCustomer[]
   housekeepingTasks HousekeepingTask[]
   maintenanceRequests MaintenanceRequest[]
   roomStatusLogs RoomStatusLog[]
@@ -1205,6 +1206,29 @@ model FBOrderItem {
 
   @@index([tenantId, orderId])
   @@map("fb_order_items")
+}
+
+model FBCustomer {
+  id            String    @id @default(cuid())
+  tenantId      String
+  firstName     String
+  lastName      String
+  email         String?
+  phone         String?
+  address       Json?
+  loyaltyPoints Int       @default(0)
+  totalSpent    Decimal   @default(0) @db.Decimal(12, 2)
+  visitCount    Int       @default(0)
+  lastVisit     DateTime?
+  preferences   Json?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isActive])
+  @@map("fb_customers")
 }
 
 model HousekeepingTask {

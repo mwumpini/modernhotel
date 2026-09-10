@@ -27,6 +27,14 @@ export default function FoodBeverageAnalyticsDashboard() {
     return unsub;
   }, []);
 
+  // customerStore is likewise hydrated async from real, persisted customer
+  // records — the customerData/customerAnalytics state below is already
+  // subscribed to customerStore's change notifications (see below), so this
+  // just needs to kick the initial fetch off.
+  React.useEffect(() => {
+    customerStore.hydrateFromApi();
+  }, []);
+
   // Generate reports
   const dailySalesReport = useMemo(() =>
     reportingStore.generateDailySalesReport(selectedDate), [selectedDate, ordersTick]);
@@ -49,17 +57,20 @@ export default function FoodBeverageAnalyticsDashboard() {
   const financialSummary = useMemo(() =>
     reportingStore.generateFinancialSummary(startDate, endDate), [startDate, endDate, ordersTick]);
   
-  const customerAnalytics = useMemo(() => 
-    reportingStore.generateCustomerAnalyticsReport(), []);
-  
-  const supplierAnalytics = useMemo(() => 
-    reportingStore.generateSupplierAnalyticsReport(), []);
-
   // Real-time data
   const [inventoryData, setInventoryData] = React.useState(inventoryStore.getAllIngredients());
   const [customerData, setCustomerData] = React.useState(customerStore.getAllCustomers());
   const [supplierData, setSupplierData] = React.useState(supplierStore.getAllSuppliers());
   const [employeeData, setEmployeeData] = React.useState(employeeStore.getAllEmployees());
+
+  // Depend on customerData (already kept live via the subscription below) so
+  // this recomputes once real customers actually arrive from hydrateFromApi,
+  // instead of permanently reflecting the empty/pre-hydration snapshot.
+  const customerAnalytics = useMemo(() =>
+    reportingStore.generateCustomerAnalyticsReport(), [customerData]);
+
+  const supplierAnalytics = useMemo(() =>
+    reportingStore.generateSupplierAnalyticsReport(), [supplierData]);
 
   React.useEffect(() => {
     const unsubscribeInventory = inventoryStore.subscribe(() => 
