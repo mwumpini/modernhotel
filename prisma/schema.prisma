@@ -78,6 +78,12 @@ model Tenant {
   hrLeaveRequests        HrLeaveRequest[]
   hrTrainingPrograms     HrTrainingProgram[]
   hrTrainingRecords      HrTrainingRecord[]
+  hrAttendances          HrAttendance[]
+  hrShifts               HrShift[]
+  hrBenefitsPackages     HrBenefitsPackage[]
+  hrEmployeeBenefits     HrEmployeeBenefits[]
+  hrPerformanceReviews   HrPerformanceReview[]
+  hrEmployeeChanges      HrEmployeeChange[]
   guestServices          GuestService[]
   serviceRequests        ServiceRequest[]
   conferenceHalls        ConferenceHall[]
@@ -1531,6 +1537,144 @@ model HrTrainingRecord {
   @@index([tenantId, employeeId])
   @@index([tenantId, trainingProgramId])
   @@map("hr_training_records")
+}
+
+model HrAttendance {
+  id            String    @id @default(cuid())
+  tenantId      String
+  employeeId    String
+  date          DateTime
+  checkInTime   DateTime?
+  checkOutTime  DateTime?
+  totalHours    Decimal   @default(0)
+  overtimeHours Decimal   @default(0)
+  breakTime     Decimal   @default(0)
+  status        String    @default("present") // present|absent|late|half_day|on_leave|holiday
+  shift         String    @default("flexible") // morning|afternoon|night|flexible
+  location      String?
+  notes         String?
+  approvedBy    String?
+  approvedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId])
+  @@map("hr_attendances")
+}
+
+model HrShift {
+  id         String   @id @default(cuid())
+  tenantId   String
+  employeeId String
+  date       String // YYYY-MM-DD
+  startTime  String // HH:mm
+  endTime    String // HH:mm
+  location   String?
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId])
+  @@map("hr_shifts")
+}
+
+model HrBenefitsPackage {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  name                 String
+  description          String?
+  type                 String    @default("other") // health|dental|vision|life|disability|retirement|other
+  coverage             String?
+  cost                 Decimal   @default(0)
+  employeeContribution Decimal   @default(0)
+  employerContribution Decimal   @default(0)
+  isActive             Boolean   @default(true)
+  effectiveDate        DateTime  @default(now())
+  expiryDate           DateTime?
+  notes                String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenant      Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  enrollments HrEmployeeBenefits[]
+
+  @@index([tenantId, isActive])
+  @@map("hr_benefits_packages")
+}
+
+model HrEmployeeBenefits {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  employeeId           String
+  benefitsPackageId    String
+  enrollmentDate       DateTime  @default(now())
+  effectiveDate        DateTime  @default(now())
+  endDate              DateTime?
+  status               String    @default("active") // active|inactive|terminated
+  dependents           Int       @default(0)
+  totalCost            Decimal   @default(0)
+  employeeContribution Decimal   @default(0)
+  employerContribution Decimal   @default(0)
+  notes                String?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  benefitsPackage HrBenefitsPackage @relation(fields: [benefitsPackageId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId])
+  @@index([tenantId, benefitsPackageId])
+  @@map("hr_employee_benefits")
+}
+
+model HrPerformanceReview {
+  id                String   @id @default(cuid())
+  tenantId          String
+  employeeId        String
+  reviewPeriod      String
+  reviewDate        DateTime @default(now())
+  reviewerId        String?
+  reviewerName      String?
+  overallRating     Decimal  @default(0) // 1-5 scale
+  // { jobKnowledge, qualityOfWork, quantityOfWork, teamwork, communication, initiative, attendance, reliability }
+  categories        Json?
+  strengths         Json?
+  areasForImprovement Json?
+  goals             Json?
+  comments          String?
+  employeeComments  String?
+  status            String   @default("draft") // draft|submitted|reviewed|acknowledged|completed
+  nextReviewDate    DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId])
+  @@map("hr_performance_reviews")
+}
+
+model HrEmployeeChange {
+  id            String   @id @default(cuid())
+  tenantId      String
+  employeeId    String
+  employeeName  String?
+  type          String // promotion|transfer|salary_change|status_change|department_change|position_change|profile_update
+  field         String?
+  previousValue Json?
+  newValue      Json?
+  changedBy     String?
+  notes         String?
+  timestamp     DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId])
+  @@map("hr_employee_changes")
 }
 
 // ---------------------------------------------------------------------------

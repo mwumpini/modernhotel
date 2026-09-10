@@ -465,3 +465,273 @@ export async function deleteHrTrainingRecord(tenantId: string, id: string) {
   await prisma.hrTrainingRecord.delete({ where: { id } })
   return true
 }
+
+// ---------------------------------------------------------------------------
+// Attendance (clock in/out)
+// ---------------------------------------------------------------------------
+
+function toStoreAttendance(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employeeId,
+    date: row.date,
+    checkInTime: row.checkInTime ?? undefined,
+    checkOutTime: row.checkOutTime ?? undefined,
+    totalHours: Number(row.totalHours || 0),
+    overtimeHours: Number(row.overtimeHours || 0),
+    breakTime: Number(row.breakTime || 0),
+    status: row.status,
+    shift: row.shift,
+    location: row.location ?? '',
+    notes: row.notes ?? undefined,
+    approvedBy: row.approvedBy ?? undefined,
+    approvedAt: row.approvedAt ?? undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+export async function listHrAttendances(tenantId: string) {
+  const rows = await prisma.hrAttendance.findMany({ where: { tenantId }, orderBy: { date: 'desc' } })
+  return rows.map(toStoreAttendance)
+}
+
+export async function upsertHrAttendance(tenantId: string, id: string, rec: Record<string, any>) {
+  const data = stripUndefined({
+    ...rec,
+    date: toDate(rec.date),
+    checkInTime: toDate(rec.checkInTime),
+    checkOutTime: toDate(rec.checkOutTime),
+    approvedAt: toDate(rec.approvedAt),
+  })
+  const row = await ownershipCheckedUpsert(prisma.hrAttendance, id, tenantId, data, {
+    employeeId: rec.employeeId,
+    date: toDate(rec.date) || new Date(),
+  })
+  return toStoreAttendance(row)
+}
+
+// ---------------------------------------------------------------------------
+// Shifts
+// ---------------------------------------------------------------------------
+
+function toStoreShift(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employeeId,
+    date: row.date,
+    startTime: row.startTime,
+    endTime: row.endTime,
+    location: row.location ?? undefined,
+    notes: row.notes ?? undefined,
+  }
+}
+
+export async function listHrShifts(tenantId: string) {
+  const rows = await prisma.hrShift.findMany({ where: { tenantId }, orderBy: { date: 'desc' } })
+  return rows.map(toStoreShift)
+}
+
+export async function upsertHrShift(tenantId: string, id: string, shift: Record<string, any>) {
+  const data = stripUndefined(shift)
+  const row = await ownershipCheckedUpsert(prisma.hrShift, id, tenantId, data, {
+    employeeId: shift.employeeId,
+    date: shift.date,
+    startTime: shift.startTime,
+    endTime: shift.endTime,
+  })
+  return toStoreShift(row)
+}
+
+export async function deleteHrShift(tenantId: string, id: string) {
+  const existing = await prisma.hrShift.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.hrShift.delete({ where: { id } })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// Benefits packages / enrollments
+// ---------------------------------------------------------------------------
+
+function toStoreBenefitsPackage(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description ?? '',
+    type: row.type,
+    coverage: row.coverage ?? '',
+    cost: Number(row.cost || 0),
+    employeeContribution: Number(row.employeeContribution || 0),
+    employerContribution: Number(row.employerContribution || 0),
+    isActive: row.isActive,
+    effectiveDate: row.effectiveDate,
+    expiryDate: row.expiryDate ?? undefined,
+    notes: row.notes ?? undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+export async function listHrBenefitsPackages(tenantId: string) {
+  const rows = await prisma.hrBenefitsPackage.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' } })
+  return rows.map(toStoreBenefitsPackage)
+}
+
+export async function upsertHrBenefitsPackage(tenantId: string, id: string, pkg: Record<string, any>) {
+  const data = stripUndefined({
+    ...pkg,
+    effectiveDate: toDate(pkg.effectiveDate),
+    expiryDate: toDate(pkg.expiryDate),
+  })
+  const row = await ownershipCheckedUpsert(prisma.hrBenefitsPackage, id, tenantId, data, {
+    name: pkg.name,
+  })
+  return toStoreBenefitsPackage(row)
+}
+
+export async function deleteHrBenefitsPackage(tenantId: string, id: string) {
+  const existing = await prisma.hrBenefitsPackage.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.hrBenefitsPackage.delete({ where: { id } })
+  return true
+}
+
+function toStoreEmployeeBenefits(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employeeId,
+    benefitsPackageId: row.benefitsPackageId,
+    enrollmentDate: row.enrollmentDate,
+    effectiveDate: row.effectiveDate,
+    endDate: row.endDate ?? undefined,
+    status: row.status,
+    dependents: row.dependents || 0,
+    totalCost: Number(row.totalCost || 0),
+    employeeContribution: Number(row.employeeContribution || 0),
+    employerContribution: Number(row.employerContribution || 0),
+    notes: row.notes ?? undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+export async function listHrEmployeeBenefits(tenantId: string) {
+  const rows = await prisma.hrEmployeeBenefits.findMany({ where: { tenantId }, orderBy: { createdAt: 'desc' } })
+  return rows.map(toStoreEmployeeBenefits)
+}
+
+export async function upsertHrEmployeeBenefits(tenantId: string, id: string, enrollment: Record<string, any>) {
+  const data = stripUndefined({
+    ...enrollment,
+    enrollmentDate: toDate(enrollment.enrollmentDate),
+    effectiveDate: toDate(enrollment.effectiveDate),
+    endDate: toDate(enrollment.endDate),
+  })
+  const row = await ownershipCheckedUpsert(prisma.hrEmployeeBenefits, id, tenantId, data, {
+    employeeId: enrollment.employeeId,
+    benefitsPackageId: enrollment.benefitsPackageId,
+  })
+  return toStoreEmployeeBenefits(row)
+}
+
+export async function deleteHrEmployeeBenefits(tenantId: string, id: string) {
+  const existing = await prisma.hrEmployeeBenefits.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.hrEmployeeBenefits.delete({ where: { id } })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// Performance reviews
+// ---------------------------------------------------------------------------
+
+function toStorePerformanceReview(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employeeId,
+    reviewPeriod: row.reviewPeriod,
+    reviewDate: row.reviewDate,
+    reviewerId: row.reviewerId ?? '',
+    reviewerName: row.reviewerName ?? '',
+    overallRating: Number(row.overallRating || 0),
+    categories: row.categories || {},
+    strengths: row.strengths || [],
+    areasForImprovement: row.areasForImprovement || [],
+    goals: row.goals || [],
+    comments: row.comments ?? '',
+    employeeComments: row.employeeComments ?? undefined,
+    status: row.status,
+    nextReviewDate: row.nextReviewDate,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+export async function listHrPerformanceReviews(tenantId: string) {
+  const rows = await prisma.hrPerformanceReview.findMany({ where: { tenantId }, orderBy: { reviewDate: 'desc' } })
+  return rows.map(toStorePerformanceReview)
+}
+
+export async function upsertHrPerformanceReview(tenantId: string, id: string, review: Record<string, any>) {
+  const data = stripUndefined({
+    ...review,
+    reviewDate: toDate(review.reviewDate),
+    nextReviewDate: toDate(review.nextReviewDate),
+  })
+  const row = await ownershipCheckedUpsert(prisma.hrPerformanceReview, id, tenantId, data, {
+    employeeId: review.employeeId,
+    reviewPeriod: review.reviewPeriod,
+  })
+  return toStorePerformanceReview(row)
+}
+
+export async function deleteHrPerformanceReview(tenantId: string, id: string) {
+  const existing = await prisma.hrPerformanceReview.findFirst({ where: { id, tenantId } })
+  if (!existing) return false
+  await prisma.hrPerformanceReview.delete({ where: { id } })
+  return true
+}
+
+// ---------------------------------------------------------------------------
+// Employee change log
+// ---------------------------------------------------------------------------
+
+function toStoreEmployeeChange(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employeeId,
+    employeeName: row.employeeName ?? undefined,
+    type: row.type,
+    field: row.field ?? undefined,
+    previousValue: row.previousValue ?? null,
+    newValue: row.newValue ?? null,
+    changedBy: row.changedBy ?? undefined,
+    notes: row.notes ?? undefined,
+    timestamp: row.timestamp,
+  }
+}
+
+export async function listHrEmployeeChanges(tenantId: string) {
+  const rows = await prisma.hrEmployeeChange.findMany({ where: { tenantId }, orderBy: { timestamp: 'desc' } })
+  return rows.map(toStoreEmployeeChange)
+}
+
+export async function createHrEmployeeChange(tenantId: string, id: string, change: Record<string, any>) {
+  const row = await prisma.hrEmployeeChange.create({
+    data: {
+      id,
+      tenantId,
+      employeeId: change.employeeId,
+      employeeName: change.employeeName,
+      type: change.type,
+      field: change.field,
+      previousValue: change.previousValue ?? undefined,
+      newValue: change.newValue ?? undefined,
+      changedBy: change.changedBy,
+      notes: change.notes,
+      timestamp: toDate(change.timestamp) || new Date(),
+    },
+  })
+  return toStoreEmployeeChange(row)
+}

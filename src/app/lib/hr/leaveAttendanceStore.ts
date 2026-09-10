@@ -15,6 +15,21 @@ function syncLeaveRequestToApi(leave: LeaveRequest) {
   fetch('/api/hr/leave-requests', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(leave) })
     .catch((e) => console.warn('[HR] Failed to sync leave request to server:', e));
 }
+function syncAttendanceToApi(rec: Attendance) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/hr/attendance', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(rec) })
+    .catch((e) => console.warn('[HR] Failed to sync attendance to server:', e));
+}
+function syncShiftToApi(shift: Shift) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/hr/shifts', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(shift) })
+    .catch((e) => console.warn('[HR] Failed to sync shift to server:', e));
+}
+function deleteShiftFromApi(id: string) {
+  if (typeof window === 'undefined') return;
+  fetch(`/api/hr/shifts?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: hrTenantHeaders() })
+    .catch((e) => console.warn('[HR] Failed to delete shift on server:', e));
+}
 
 /** Annual leave-day entitlement per type, used when an employee has no override
  * in Employee.leaveEntitlements. Annual is Ghana's Labour Act 2003 minimum (15
@@ -172,6 +187,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
     } as Attendance;
     console.log('[HR][Time] clockIn', { employeeId, when });
     set((state) => ({ attendances: [rec, ...state.attendances] }));
+    syncAttendanceToApi(rec);
     return rec;
   },
 
@@ -191,6 +207,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
       })
     }));
     console.log('[HR][Time] clockOut', { employeeId, when });
+    if (result) syncAttendanceToApi(result);
     return result;
   },
 
@@ -198,17 +215,27 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
     const s: Shift = { ...shift, id: `sh_${Date.now()}` };
     console.log('[HR][Shift] schedule', s);
     set((state) => ({ shifts: [s, ...state.shifts] }));
+    syncShiftToApi(s);
     return s;
   },
 
   updateShift: (id, updates) => {
     console.log('[HR][Shift] update', { id, updates });
-    set((state) => ({ shifts: state.shifts.map((s) => (s.id === id ? { ...s, ...updates } : s)) }));
+    let updated: Shift | undefined;
+    set((state) => ({
+      shifts: state.shifts.map((s) => {
+        if (s.id !== id) return s;
+        updated = { ...s, ...updates };
+        return updated;
+      })
+    }));
+    if (updated) syncShiftToApi(updated);
   },
 
   deleteShift: (id) => {
     console.log('[HR][Shift] delete', { id });
     set((state) => ({ shifts: state.shifts.filter((s) => s.id !== id) }));
+    deleteShiftFromApi(id);
   },
 
   getPendingLeaveCount: () => get().leaveRequests.filter((r) => r.status === 'pending').length,
@@ -221,21 +248,51 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
 
   hydrateFromApi: async () => {
     if (typeof window === 'undefined') return;
+    const headers = hrTenantHeaders();
     try {
-      const res = await fetch('/api/hr/leave-requests', { headers: hrTenantHeaders(), cache: 'no-store' });
-      if (!res.ok) return;
-      const data = await res.json();
-      if (Array.isArray(data.leaveRequests)) {
-        const dateFields = ['startDate', 'endDate', 'requestedAt', 'approvedAt', 'createdAt', 'updatedAt'];
-        const toDates = (row: any) => {
-          const out = { ...row };
-          for (const f of dateFields) if (out[f]) out[f] = new Date(out[f]);
-          return out;
-        };
-        set({ leaveRequests: data.leaveRequests.map(toDates) });
+      const res = await fetch('/api/hr/leave-requests', { headers, cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.leaveRequests)) {
+          const dateFields = ['startDate', 'endDate', 'requestedAt', 'approvedAt', 'createdAt', 'updatedAt'];
+          const toDates = (row: any) => {
+            const out = { ...row };
+            for (const f of dateFields) if (out[f]) out[f] = new Date(out[f]);
+            return out;
+          };
+          set({ leaveRequests: data.leaveRequests.map(toDates) });
+        }
       }
     } catch (e) {
       console.warn('[HR] Failed to hydrate leave requests from server:', e);
+    }
+    try {
+      const res = await fetch('/api/hr/attendance', { headers, cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.attendances)) {
+          const dateFields = ['date', 'checkInTime', 'checkOutTime', 'approvedAt', 'createdAt', 'updatedAt'];
+          const toDates = (row: any) => {
+            const out = { ...row };
+            for (const f of dateFields) if (out[f]) out[f] = new Date(out[f]);
+            return out;
+          };
+          set({ attendances: data.attendances.map(toDates) });
+        }
+      }
+    } catch (e) {
+      console.warn('[HR] Failed to hydrate attendance from server:', e);
+    }
+    try {
+      const res = await fetch('/api/hr/shifts', { headers, cache: 'no-store' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.shifts)) {
+          set({ shifts: data.shifts });
+        }
+      }
+    } catch (e) {
+      console.warn('[HR] Failed to hydrate shifts from server:', e);
     }
   },
 }));

@@ -119,20 +119,24 @@ export default function HRMainDashboard() {
   const attendances = useLeaveAttendanceStore((s) => s.attendances);
   const hydrateLeave = useLeaveAttendanceStore((s) => s.hydrateFromApi);
   const employeeChanges = useEmployeeChangesStore((s) => s.changes);
+  const hydrateEmployeeChanges = useEmployeeChangesStore((s) => s.hydrateFromApi);
   const benefitsEnrollments = useBenefitsStore((s) => s.enrollments);
+  const hydrateBenefits = useBenefitsStore((s) => s.hydrateFromApi);
   const trainingPrograms = useTrainingStore((s) => s.programs);
   const trainingEnrollments = useTrainingStore((s) => s.enrollments);
   const hydrateTraining = useTrainingStore((s) => s.hydrateFromApi);
-  // Performance reviews aren't Prisma-backed yet (explicitly deferred) — this store is
-  // in-memory only, so the count reflects whatever's currently loaded, not a durable total.
   const performanceReviewsList = usePerformanceStore((s) => s.reviews);
+  const hydratePerformance = usePerformanceStore((s) => s.hydrateFromApi);
 
   useEffect(() => {
     hydrateEmployees();
     hydratePayroll();
     hydrateLeave();
     hydrateTraining();
-  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining]);
+    hydrateBenefits();
+    hydratePerformance();
+    hydrateEmployeeChanges();
+  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateTraining, hydrateBenefits, hydratePerformance, hydrateEmployeeChanges]);
 
   const today = new Date().toISOString().slice(0, 10);
   const isSameMonth = (d: Date | string) => {
