@@ -337,6 +337,65 @@ function payslipPremiumBlocks(): BlockConfig[] {
   ];
 }
 
+/**
+ * Lean, ink-saving payslip for printing many at once — no boxes anywhere,
+ * small type, plain-line signatures, employee info as compact stacked lines
+ * instead of a bordered card.
+ */
+function payslipCompactBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, style: { bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, dividerBelow: true, spacing: 'none' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 2, spacing: 'small', style: { fontSize: 'sm' } }),
+    block({ id: 'employee-details', type: 'employee-details', order: 3, spacing: 'small', border: 'none' }),
+    block({ id: 'payslip-earnings-table', type: 'payslip-earnings-table', order: 4, columnSpan: 'half', spacing: 'small' }),
+    block({ id: 'payslip-deductions-table', type: 'payslip-deductions-table', order: 5, columnSpan: 'half', spacing: 'small' }),
+    block({ id: 'payslip-summary', type: 'payslip-summary', order: 6, spacing: 'small' }),
+    block({ id: 'signature-block', type: 'signature-block', order: 7, spacing: 'medium', signatureDisplay: 'line', signatures: [{ label: 'Employer' }, { label: 'Employee' }] }),
+  ];
+}
+
+/**
+ * Classic corporate letterhead — logo on the left, company name/address/
+ * contact stacked beside it (reusing the same header row invoices' Checkout
+ * Bill / Registration Card use), a divider under it, then the usual Grid
+ * earnings/deductions body. For hotels whose branding is built around a
+ * fixed letterhead rather than a centered title block.
+ */
+function payslipLetterheadBlocks(): BlockConfig[] {
+  return [
+    letterheadHeaderRow(0),
+    block({ id: 'doc-title', type: 'doc-title', order: 1, align: 'center', spacing: 'medium' }),
+    block({ id: 'employee-details', type: 'employee-details', order: 2, spacing: 'medium' }),
+    block({ id: 'payslip-earnings-table', type: 'payslip-earnings-table', order: 3, columnSpan: 'half', spacing: 'medium' }),
+    block({ id: 'payslip-deductions-table', type: 'payslip-deductions-table', order: 4, columnSpan: 'half', spacing: 'medium' }),
+    block({ id: 'payslip-summary', type: 'payslip-summary', order: 5, showAmountInWords: true, spacing: 'medium' }),
+    block({ id: 'signature-block', type: 'signature-block', order: 6, spacing: 'large', signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 7, align: 'center', style: { fontSize: 'sm' }, text: 'This is a system generated payslip.' }),
+  ];
+}
+
+/**
+ * Formal, document-style payslip — serif type, thicker borders, itemized
+ * dotted-leader Earnings/Deductions (one after the other, not side by side)
+ * under a boxed employee card — reads more like a signed formal letter than
+ * a quick pay stub.
+ */
+function payslipFormalBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', dividerBelow: true, spacing: 'small' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', underline: true, spacing: 'medium' }),
+    block({ id: 'employee-details', type: 'employee-details', order: 4, spacing: 'medium', border: 'thick' }),
+    block({ id: 'payslip-earnings-table', type: 'payslip-earnings-table', order: 5, spacing: 'medium', payslipItemsDisplay: 'list' }),
+    block({ id: 'payslip-deductions-table', type: 'payslip-deductions-table', order: 6, spacing: 'medium', payslipItemsDisplay: 'list' }),
+    block({ id: 'payslip-summary', type: 'payslip-summary', order: 7, showAmountInWords: true, spacing: 'medium' }),
+    block({ id: 'signature-block', type: 'signature-block', order: 8, spacing: 'large', signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 9, align: 'center', style: { fontSize: 'sm' }, text: 'This is a system generated payslip.' }),
+  ];
+}
+
 function template(id: string, docType: PrintType, name: string, blocks: BlockConfig[], styleOverrides?: Partial<TemplateStyle>): BlockTemplate {
   return {
     id,
@@ -470,6 +529,9 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-payslip-grid', 'payslip', 'Grid (Earnings / Deductions side by side)', payslipGridBlocks()),
     template('builtin-payslip-list', 'payslip', 'List (borderless, stacked)', payslipListBlocks()),
     template('builtin-payslip-premium', 'payslip', 'Premium (logo, watermark, bank details)', payslipPremiumBlocks(), { showWatermark: true, watermarkText: 'PAYSLIP' }),
+    template('builtin-payslip-compact', 'payslip', 'Compact (lean, ink-saving)', payslipCompactBlocks(), { bodyFontSize: 'sm', pageMargin: 'compact' }),
+    template('builtin-payslip-letterhead', 'payslip', 'Letterhead (logo-left header)', payslipLetterheadBlocks()),
+    template('builtin-payslip-formal', 'payslip', 'Formal (serif, itemized)', payslipFormalBlocks(), { fontFamily: 'serif', borderWidth: 'thick' }),
   ],
 };
 
