@@ -8,6 +8,7 @@ import { usePayrollStore } from '@/app/lib/hr/payrollStore';
 import { useTrainingStore } from '@/app/lib/hr/trainingStore';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useSettingsStore } from '@/app/lib/settings/store';
+import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
 
 export default function EmployeeRecordsPanel() {
   const employees = useEmployeeStore((s) => s.employees);
@@ -1299,15 +1300,9 @@ export default function EmployeeRecordsPanel() {
                   <div>
                     <div className="text-sm font-medium mb-2">Documents & Qualifications</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                      <Input label="Upload Documents" type="file" multiple onChange={(e) => {
-                        const files = Array.from((e.target as HTMLInputElement).files || []).map((f) => f.name);
-                        setForm({ ...form, documents: [...(form.documents || []), ...files] });
-                      }} variant="bordered" />
+                      <AttachmentUpload label="Documents (contract, ID, certificates)" attachments={form.documents || []} onChange={(next) => setForm({ ...form, documents: next })} />
                       <Textarea label="Qualifications (free text)" value={(form.qualificationsText || '') as any} onChange={(e) => setForm({ ...form, qualificationsText: (e.target as any).value })} variant="bordered" minRows={2} />
                     </div>
-                    {(form.documents || []).length > 0 && (
-                      <div className="text-xs text-gray-600">Files: {(form.documents || []).join(', ')}</div>
-                    )}
                   </div>
                   )}
 
