@@ -396,6 +396,58 @@ function payslipFormalBlocks(): BlockConfig[] {
   ];
 }
 
+/**
+ * Premium's branding (logo, watermark, bank details) combined with List's
+ * borderless dotted-leader tables instead of Grid's bordered ones — for a
+ * hotel that wants the logo/watermark treatment without a boxed-table look.
+ */
+function payslipBrandedListBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'logo', type: 'logo', order: 0, align: 'center' }),
+    block({ id: 'company-name', type: 'company-name', order: 1, align: 'center', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 2, align: 'center' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, align: 'center', spacing: 'small' }),
+    block({ id: 'employee-details', type: 'employee-details', order: 4, spacing: 'medium', border: 'none' }),
+    block({ id: 'payslip-earnings-table', type: 'payslip-earnings-table', order: 5, spacing: 'medium', payslipItemsDisplay: 'list' }),
+    block({ id: 'payslip-deductions-table', type: 'payslip-deductions-table', order: 6, spacing: 'medium', payslipItemsDisplay: 'list' }),
+    block({ id: 'payslip-summary', type: 'payslip-summary', order: 7, showAmountInWords: true, spacing: 'medium' }),
+    block({ id: 'bank-details', type: 'bank-details', order: 8, heading: 'Payment Account', spacing: 'medium' }),
+    block({ id: 'signature-block', type: 'signature-block', order: 9, spacing: 'large', signatureDisplay: 'line', signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 10, align: 'center', style: { fontSize: 'sm' }, text: 'This is a system generated payslip.' }),
+  ];
+}
+
+/**
+ * Logo on the right instead of centered/left — a company-info column (flex 1)
+ * paired with the logo (flex 0) at the end of the same row, mirroring
+ * letterheadHeaderRow's logo-first arrangement. Otherwise the same Grid body.
+ */
+function payslipLogoRightBlocks(): BlockConfig[] {
+  return [
+    block({
+      id: 'company-header-row', type: 'container', order: 0, direction: 'row', gap: 'small', dividerBelow: true, spacing: 'none',
+      children: [
+        block({
+          id: 'company-info-col', type: 'container', order: 0, direction: 'column', gap: 'none', flexWeight: 1,
+          children: [
+            block({ id: 'company-name', type: 'company-name', order: 0, align: 'right', spacing: 'none', style: { fontSize: 'lg', bold: true } }),
+            block({ id: 'company-address', type: 'company-address', order: 1, align: 'right', spacing: 'none' }),
+            block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'right', spacing: 'none' }),
+          ],
+        }),
+        block({ id: 'logo', type: 'logo', order: 1, flexWeight: 0, align: 'right' }),
+      ],
+    }),
+    block({ id: 'doc-title', type: 'doc-title', order: 1, align: 'center', spacing: 'medium' }),
+    block({ id: 'employee-details', type: 'employee-details', order: 2, spacing: 'medium' }),
+    block({ id: 'payslip-earnings-table', type: 'payslip-earnings-table', order: 3, columnSpan: 'half', spacing: 'medium' }),
+    block({ id: 'payslip-deductions-table', type: 'payslip-deductions-table', order: 4, columnSpan: 'half', spacing: 'medium' }),
+    block({ id: 'payslip-summary', type: 'payslip-summary', order: 5, showAmountInWords: true, spacing: 'medium' }),
+    block({ id: 'signature-block', type: 'signature-block', order: 6, spacing: 'large', signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] }),
+    block({ id: 'notes-text', type: 'notes-text', order: 7, align: 'center', style: { fontSize: 'sm' }, text: 'This is a system generated payslip.' }),
+  ];
+}
+
 function template(id: string, docType: PrintType, name: string, blocks: BlockConfig[], styleOverrides?: Partial<TemplateStyle>): BlockTemplate {
   return {
     id,
@@ -532,6 +584,10 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
     template('builtin-payslip-compact', 'payslip', 'Compact (lean, ink-saving)', payslipCompactBlocks(), { bodyFontSize: 'sm', pageMargin: 'compact' }),
     template('builtin-payslip-letterhead', 'payslip', 'Letterhead (logo-left header)', payslipLetterheadBlocks()),
     template('builtin-payslip-formal', 'payslip', 'Formal (serif, itemized)', payslipFormalBlocks(), { fontFamily: 'serif', borderWidth: 'thick' }),
+    template('builtin-payslip-branded-list', 'payslip', 'Branded List (logo, watermark, borderless)', payslipBrandedListBlocks(), { showWatermark: true, watermarkText: 'PAYSLIP' }),
+    template('builtin-payslip-logo-right', 'payslip', 'Logo Right', payslipLogoRightBlocks()),
+    template('builtin-payslip-ghana-colors', 'payslip', 'Ghana Colors', payslipGridBlocks(), { primaryColor: '#006B3F', borderColor: '#CE1126' }),
+    template('builtin-payslip-register', 'payslip', 'Register (monospace)', payslipGridBlocks(), { fontFamily: 'mono', borderWidth: 'thick' }),
   ],
 };
 
