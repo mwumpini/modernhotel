@@ -225,8 +225,8 @@
     "withholding_services": {
       "meta": {
         "title": "Withholding - Services",
-        "domain": "sales",
-        "operation": "external",
+        "domain": "purchases",
+        "operation": "internal",
         "effect": "subtract"
       },
       "rules": [

@@ -51,6 +51,7 @@ import {
   getCountryDisplayName,
   getCountryQuickApply,
   getDefaultTemplatesForCountry,
+  getTemplateKeys,
   getTemplateMeta,
 } from '@/app/lib/compliance/config';
 import { getClientTenantSubdomain } from '@/app/lib/api/clientTenant';
@@ -114,6 +115,10 @@ export default function TaxRateBuilder() {
   const [selectedRuleIds, setSelectedRuleIds] = useState<Set<string>>(new Set());
   const [sim, setSim] = useState({ amount: 1000, category: 'HOTEL', domain: 'sales', numPersons: 1, numNights: 1, roomType: '', industry: '' });
   const [isApplyingTemplate, setIsApplyingTemplate] = useState(false);
+  // Which specific template is applying, purely so the "Start from a template" list (which
+  // shows several Apply buttons at once) only spins the one actually clicked instead of all
+  // of them -- isApplyingTemplate itself stays the single re-entrancy guard below.
+  const [applyingTemplateKey, setApplyingTemplateKey] = useState<string | null>(null);
   const [autoAppliedCountries, setAutoAppliedCountries] = useState<Set<string>>(new Set());
   const [workspaceTab, setWorkspaceTab] = useState<'rules' | 'types' | 'simulator'>('rules');
   const [selectedTypeId, setSelectedTypeId] = useState<string | null>(null);
@@ -543,9 +548,11 @@ export default function TaxRateBuilder() {
   const applyTemplate = async (templateKey: string, options?: { silent?: boolean; skipFilterSync?: boolean; forceTypeId?: string; skipAccountingResync?: boolean }) => {
     if (isApplyingTemplate) return;
     setIsApplyingTemplate(true);
+    setApplyingTemplateKey(templateKey);
     const rules = buildTemplateRules(templateKey, selectedCountry);
     if (rules.length === 0) {
       setIsApplyingTemplate(false);
+      setApplyingTemplateKey(null);
       return;
     }
     const meta = getTemplateMeta(templateKey);
@@ -607,6 +614,7 @@ export default function TaxRateBuilder() {
       try { alert('Tax type applied successfully.'); } catch {}
     }
     setIsApplyingTemplate(false);
+    setApplyingTemplateKey(null);
   };
 
   const getCountryFlag = (code: string) => {
@@ -793,6 +801,32 @@ export default function TaxRateBuilder() {
     ? (taxTypes || []).find((t) => t.id === selectedTypeId)?.name
     : null;
 
+  // Templates were only reachable through two narrow paths before this: the one
+  // per-country "quick apply" button, and a Type card's "Apply" button (which only
+  // works once a Type already exists with a matching name/tag). That left every other
+  // template -- including withholding_services, which no button ever pointed at --
+  // invisible. This makes the whole set for the selected country browsable directly.
+  // Template keys follow a "<country>_..." naming convention (ghana_, us_, nigeria_,
+  // south_africa_, kenya_, zimbabwe_); no template is currently shared across countries.
+  const templateCountryPrefix: Record<string, string> = {
+    GH: 'ghana_', US: 'us_', NG: 'nigeria_', ZA: 'south_africa_', KE: 'kenya_', ZW: 'zimbabwe_',
+  };
+  // A few templates don't follow the "<country>_..." key convention (they predate it, or
+  // are written generically) but are still meant for a specific country's rule set —
+  // added here by hand rather than guessed at from the key.
+  const unprefixedCountryTemplates: Record<string, string[]> = { GH: ['withholding_services'] };
+  const availableTemplates = React.useMemo(() => {
+    const prefix = templateCountryPrefix[selectedCountry];
+    if (!prefix) return [];
+    const keys = new Set([
+      ...getTemplateKeys().filter((key) => key.startsWith(prefix)),
+      ...(unprefixedCountryTemplates[selectedCountry] || []),
+    ]);
+    return Array.from(keys)
+      .map((key) => ({ key, meta: getTemplateMeta(key), ruleCount: buildTemplateRules(key, selectedCountry).length }))
+      .filter((t) => t.meta);
+  }, [selectedCountry]);
+
   return (
     <div className="space-y-4">
       {/* Compact filter toolbar — country is controlled by the page header */}
@@ -962,6 +996,43 @@ export default function TaxRateBuilder() {
               </div>
             </CardHeader>
             <CardBody>
+              {availableTemplates.length > 0 && (
+                <Accordion variant="bordered" itemClasses={{ title: 'text-sm font-medium' }} className="mb-4">
+                  <AccordionItem
+                    key="templates"
+                    aria-label="Start from a template"
+                    title={`Start from a template (${availableTemplates.length} available for ${getCountryDisplayName(selectedCountry)})`}
+                  >
+                    <p className="text-xs text-gray-500 mb-3">
+                      A template creates (or refreshes) a Tax Type and its Rules in one click — the same thing
+                      "+ Create" plus adding each Rule by hand would build. Applying an already-added template
+                      updates it to the template's current rates rather than duplicating it.
+                    </p>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {availableTemplates.map(({ key, meta, ruleCount }) => (
+                        <div key={key} className="flex items-center justify-between gap-3 p-3 rounded-lg border border-default-200">
+                          <div>
+                            <p className="text-sm font-medium">{meta!.title}</p>
+                            <p className="text-xs text-gray-500">
+                              {taxAreaLabel(meta!.domain)} · {ruleCount} rule{ruleCount === 1 ? '' : 's'}
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="flat"
+                            className="bg-ghana-green text-white shrink-0"
+                            isLoading={applyingTemplateKey === key}
+                            isDisabled={isApplyingTemplate && applyingTemplateKey !== key}
+                            onPress={() => applyTemplate(key)}
+                          >
+                            Apply
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </AccordionItem>
+                </Accordion>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                 {(taxTypes || [])
                   .filter((t) => t.countryCode === selectedCountry)
