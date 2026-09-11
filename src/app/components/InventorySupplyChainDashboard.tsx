@@ -412,7 +412,7 @@ export default function InventorySupplyChainDashboard() {
     shippingAmount: 0,
     discountAmount: 0,
     items: [],
-    paymentTerms: '[N/30]',
+    paymentTerms: 'net30',
     taxType: 'none',
     taxRate: 0
   });
@@ -1088,7 +1088,7 @@ export default function InventorySupplyChainDashboard() {
       discountAmount: 0,
       finalAmount: 0,
       currency: 'GHS',
-      paymentTerms: '[N/30]',
+      paymentTerms: 'net30',
       notes: '',
       items: [],
       createdBy: currentUserName,
@@ -1183,7 +1183,7 @@ export default function InventorySupplyChainDashboard() {
       shippingAmount: 0,
       discountAmount: 0,
       items: [],
-      paymentTerms: '[N/30]',
+      paymentTerms: 'net30',
       taxType: 'none',
       taxRate: 0
     });
@@ -1291,6 +1291,8 @@ export default function InventorySupplyChainDashboard() {
     const totalAmount = subtotal + taxAmount + shipping - discount;
     const poNumber = poFormData.poNumber || generatePONumber();
     const selectedTaxOption = taxOptions.find(opt => opt.value === poFormData.taxType);
+    const paymentTermsLabels: Record<string, string> = { immediate: 'Immediate', net30: 'Net 30', net60: 'Net 60', net90: 'Net 90' };
+    const paymentTermsLabel = paymentTermsLabels[poFormData.paymentTerms || ''] || poFormData.paymentTerms;
     
     // Create PDF HTML content
     const pdfContent = `
@@ -1332,7 +1334,7 @@ export default function InventorySupplyChainDashboard() {
                   ? new Date(poFormData.expectedDeliveryDate).toLocaleDateString()
                   : 'N/A'}</td></tr>
               <tr><td><strong>Priority:</strong></td><td>${poFormData.priority || 'Medium'}</td></tr>
-              <tr><td><strong>Payment Terms:</strong></td><td>${poFormData.paymentTerms || 'N/A'}</td></tr>
+              <tr><td><strong>Payment Terms:</strong></td><td>${paymentTermsLabel || 'N/A'}</td></tr>
             </table>
           </div>
 
@@ -4563,27 +4565,16 @@ export default function InventorySupplyChainDashboard() {
                     ))}
                   </>
                 </Select>
-                {poFormData.taxType === 'custom' ? (
+                {poFormData.taxType === 'custom' && (
                   <Input
                     label="Custom Tax Rate (%)"
                     type="number"
                     value={String(poFormData.taxRate || 0)}
-                    onChange={(e) => setPOFormData({ 
-                      ...poFormData, 
-                      taxRate: parseFloat(e.target.value) || 0 
+                    onChange={(e) => setPOFormData({
+                      ...poFormData,
+                      taxRate: parseFloat(e.target.value) || 0
                     })}
                     endContent="%"
-                  />
-                ) : (
-                  <Input
-                    label="Shipping Amount"
-                    type="number"
-                    value={String(poFormData.shippingAmount || 0)}
-                    onChange={(e) => setPOFormData({ 
-                      ...poFormData, 
-                      shippingAmount: parseFloat(e.target.value) || 0 
-                    })}
-                    startContent="₵"
                   />
                 )}
               </div>
@@ -4592,24 +4583,22 @@ export default function InventorySupplyChainDashboard() {
                   label="Discount Amount"
                   type="number"
                   value={String(poFormData.discountAmount || 0)}
-                  onChange={(e) => setPOFormData({ 
-                    ...poFormData, 
-                    discountAmount: parseFloat(e.target.value) || 0 
+                  onChange={(e) => setPOFormData({
+                    ...poFormData,
+                    discountAmount: parseFloat(e.target.value) || 0
                   })}
                   startContent="₵"
                 />
-                {poFormData.taxType !== 'custom' && (
-                  <Input
-                    label="Shipping Amount"
-                    type="number"
-                    value={String(poFormData.shippingAmount || 0)}
-                    onChange={(e) => setPOFormData({ 
-                      ...poFormData, 
-                      shippingAmount: parseFloat(e.target.value) || 0 
-                    })}
-                    startContent="₵"
-                  />
-                )}
+                <Input
+                  label="Shipping Amount"
+                  type="number"
+                  value={String(poFormData.shippingAmount || 0)}
+                  onChange={(e) => setPOFormData({
+                    ...poFormData,
+                    shippingAmount: parseFloat(e.target.value) || 0
+                  })}
+                  startContent="₵"
+                />
               </div>
 
               <div className="bg-gray-50 p-4 rounded-lg">
