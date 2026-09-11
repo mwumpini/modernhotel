@@ -4,6 +4,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   Card,
   CardBody,
+  CardHeader,
   Button,
   Input,
   Select,
@@ -28,7 +29,7 @@ import {
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { useSettingsStore } from '../../lib/settings/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
-import { openPrintPreview } from '../../lib/print/engine';
+import { openPrintPreview, openHtmlPrintWindow } from '../../lib/print/engine';
 import { listTemplates } from '../../lib/print/templates';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 import { computeChargeTax } from '../../lib/frontoffice/helpers/folio';
@@ -331,6 +332,89 @@ export default function ServiceChargesPage() {
     return unitLabels[unit as keyof typeof unitLabels] || unit;
   };
 
+  // Fixed-layout internal slip (Guest Info / Charge Details, mirroring the View modal) --
+  // built and opened directly rather than via openPrintPreview, same reasoning as
+  // handlePrintFolio in invoices-payments/page.tsx: this isn't a guest-facing invoice a
+  // tenant reformats, it always looks the same with just the org's own header on top.
+  const handlePrintServiceCharge = (charge: ServiceCharge) => {
+    const org = buildOrgProfile(useSettingsStore.getState());
+    const gross = serviceChargeGross(charge.amount, charge.description);
+    const tax = serviceChargeTax(charge.amount, charge.description);
+    const categoryInfo = getCategoryInfo(charge.category);
+    const fmt = (n: number) => `₵${formatMoney(n)}`;
+
+    const html = `
+    <!doctype html><html><head><meta charset="utf-8" />
+    <title>Service Charge — ${charge.guestName}</title>
+    <style>
+      :root { --fg:#111; --muted:#555; --border:#ddd; }
+      * { box-sizing:border-box; }
+      body { font-family: Arial, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", sans-serif; color:var(--fg); margin:0; padding:24px; }
+      h1,h2 { margin:0; }
+      .header { text-align:center; border-bottom:2px solid var(--border); padding-bottom:16px; margin-bottom:16px; }
+      .logo { max-width:120px; max-height:80px; object-fit:contain; margin-bottom:8px; }
+      .org-name { font-size:1.4em; font-weight:700; }
+      .org-detail { font-size:12px; color:var(--muted); margin-top:2px; }
+      .doc-title { text-align:center; font-size:1.2em; font-weight:700; margin:4px 0 20px; text-decoration:underline; }
+      .section { margin-bottom:20px; }
+      .section-title { font-size:1.05em; font-weight:700; margin-bottom:10px; border-bottom:1px solid var(--border); padding-bottom:4px; }
+      .grid { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
+      .field-label { font-size:11px; color:var(--muted); }
+      .field-value { font-weight:600; margin-top:2px; }
+      table { width:100%; border-collapse:collapse; margin-top:8px; font-size:13px; }
+      th, td { border:1px solid var(--border); padding:8px; text-align:left; }
+      th { background:#f7f7f7; }
+      .right { text-align:right; }
+      .total-row td { font-weight:700; font-size:1.1em; }
+      .footer { margin-top:24px; font-size:11px; color:var(--muted); text-align:center; }
+      @media print { body { padding:0; } }
+    </style>
+    </head><body>
+      <div class="header">
+        ${org.logoUrl ? `<img class="logo" src="${org.logoUrl}" />` : ''}
+        <div class="org-name">${org.name || ''}</div>
+        <div class="org-detail">${[org.address, org.phone, org.email].filter(Boolean).join(' • ')}</div>
+      </div>
+
+      <div class="doc-title">Service Charge Slip</div>
+
+      <div class="section">
+        <div class="section-title">Guest Information</div>
+        <div class="grid">
+          <div><div class="field-label">Customer</div><div class="field-value">${charge.guestName}</div></div>
+          <div><div class="field-label">Type</div><div class="field-value">${charge.roomNumber === 'External' ? 'External Customer' : 'In-House Guest'}</div></div>
+          <div><div class="field-label">Room/Reference</div><div class="field-value">${charge.roomNumber === 'External' ? 'External Service' : `Room ${charge.roomNumber}`}</div></div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Charge Details</div>
+        <table>
+          <thead><tr><th>Category</th><th>Description</th><th class="right">Qty</th><th class="right">Unit Price</th><th class="right">Amount</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>${categoryInfo.icon} ${categoryInfo.name}</td>
+              <td>${charge.description}</td>
+              <td class="right">${charge.quantity}</td>
+              <td class="right">${fmt(charge.quantity > 0 ? gross / charge.quantity : gross)}</td>
+              <td class="right">${fmt(gross)}</td>
+            </tr>
+            <tr><td colspan="4" class="right">Subtotal (excl. tax)</td><td class="right">${fmt(charge.amount)}</td></tr>
+            <tr><td colspan="4" class="right">Tax</td><td class="right">${fmt(tax)}</td></tr>
+            <tr class="total-row"><td colspan="4" class="right">Total (incl. tax)</td><td class="right">${fmt(gross)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      ${charge.notes ? `<div class="section"><div class="section-title">Notes</div><div>${charge.notes}</div></div>` : ''}
+
+      <div class="footer">Status: ${charge.status.toUpperCase()} • Created by ${charge.createdBy} on ${new Date(charge.date).toLocaleString()} • Printed ${new Date().toLocaleString()}</div>
+    </body></html>`;
+
+    openHtmlPrintWindow(html);
+    try { trackEvent('Print.ServiceCharge' as any, { chargeId: charge.id, guestName: charge.guestName }); } catch {}
+  };
+
   // Handle payment processing
   const handlePayment = (e: React.FormEvent) => {
     e.preventDefault();
@@ -506,7 +590,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-blue-600">
-              ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
+              ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description), 0))}
             </div>
             <div className="text-sm text-gray-600">Total Charges (incl. tax)</div>
           </CardBody>
@@ -514,7 +598,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-green-600">
-              ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
+              ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description), 0))}
             </div>
             <div className="text-sm text-gray-600">Paid Amount (incl. tax)</div>
           </CardBody>
@@ -522,7 +606,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-orange-600">
-              ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount), 0))}
+              ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description), 0))}
             </div>
             <div className="text-sm text-gray-600">Outstanding (incl. tax)</div>
           </CardBody>
@@ -843,105 +927,112 @@ export default function ServiceChargesPage() {
       </Modal>
 
       {/* View Service Charge Modal */}
-      <Modal isOpen={isViewModalOpen} onClose={() => setIsViewModalOpen(false)} size="lg">
+      <Modal isOpen={isViewModalOpen} onClose={() => setIsViewModalOpen(false)} size="lg" scrollBehavior="inside">
         <ModalContent>
-          <ModalHeader>Service Charge Details</ModalHeader>
-          <ModalBody>
+          <ModalHeader className="bg-gradient-to-r from-ghana-green to-emerald-700 text-white">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center text-xl">
+                {selectedCharge ? getCategoryInfo(selectedCharge.category).icon : '🧾'}
+              </div>
+              <div>
+                <h2 className="text-xl font-bold">Service Charge Details</h2>
+                <p className="text-white/80 text-sm">
+                  {selectedCharge?.guestName || 'Unknown Guest'} •{' '}
+                  {selectedCharge?.roomNumber === 'External' ? 'External Service' : `Room ${selectedCharge?.roomNumber || 'TBD'}`}
+                </p>
+              </div>
+            </div>
+          </ModalHeader>
+          <ModalBody className="py-4">
             {selectedCharge ? (
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Customer Name</label>
-                    <div className="text-lg font-semibold">{selectedCharge.guestName}</div>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Customer Type</label>
-                    <div className="text-lg font-semibold">
-                      <Badge 
-                        color={selectedCharge.roomNumber === 'External' ? 'secondary' : 'primary'} 
-                        variant="flat"
-                      >
-                        {selectedCharge.roomNumber === 'External' ? 'External Customer' : 'In-House Guest'}
-                      </Badge>
+                <Card>
+                  <CardHeader className="pb-0">
+                    <h4 className="text-sm font-semibold text-gray-700">Guest Information</h4>
+                  </CardHeader>
+                  <CardBody>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-gray-500">Customer Type</label>
+                        <div className="mt-1">
+                          <Badge color={selectedCharge.roomNumber === 'External' ? 'secondary' : 'primary'} variant="flat">
+                            {selectedCharge.roomNumber === 'External' ? 'External Customer' : 'In-House Guest'}
+                          </Badge>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500">Status</label>
+                        <div className="mt-1">
+                          <Badge color={getStatusColor(selectedCharge.status)} variant="flat">
+                            {selectedCharge.status.toUpperCase()}
+                          </Badge>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                </div>
+                  </CardBody>
+                </Card>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Room/Reference</label>
-                    <div className="text-lg font-semibold">
-                      {selectedCharge.roomNumber === 'External' ? 'External Service' : `Room ${selectedCharge.roomNumber}`}
+                <Card>
+                  <CardHeader className="pb-0">
+                    <h4 className="text-sm font-semibold text-gray-700">Charge Details</h4>
+                  </CardHeader>
+                  <CardBody className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-gray-500">Category</label>
+                        <div className="flex items-center gap-2 font-medium">
+                          <span>{getCategoryInfo(selectedCharge.category).icon}</span>
+                          <span>{getCategoryInfo(selectedCharge.category).name}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500">Description</label>
+                        <div className="font-medium">{selectedCharge.description}</div>
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Status</label>
-                    <Badge color={getStatusColor(selectedCharge.status)} variant="flat">
-                      {selectedCharge.status.toUpperCase()}
-                    </Badge>
-                  </div>
-                </div>
 
-                <Divider />
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <label className="text-xs text-gray-500">Unit Price (incl. tax)</label>
+                        <div className="font-medium">
+                          ₵{formatMoney(serviceChargeGross(
+                            selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount,
+                            selectedCharge.description
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs text-gray-500">Quantity</label>
+                        <div className="font-medium">{selectedCharge.quantity}</div>
+                      </div>
+                    </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Category</label>
-                    <div className="flex items-center gap-2">
-                      <span>{getCategoryInfo(selectedCharge.category).icon}</span>
-                      <span>{getCategoryInfo(selectedCharge.category).name}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Description</label>
-                    <div className="text-lg">{selectedCharge.description}</div>
-                  </div>
-                </div>
+                    <Divider />
 
-                <div className="grid grid-cols-3 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Unit Price (incl. tax)</label>
-                    <div className="text-lg font-semibold">
-                      ₵{formatMoney(serviceChargeGross(
-                        selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount,
-                        selectedCharge.description
-                      ))}
+                    <div className="bg-default-50 rounded-lg p-3 flex items-center justify-between">
+                      <div>
+                        <div className="text-xs text-gray-500">Total Amount (incl. tax)</div>
+                        <div className="text-xs text-gray-500">
+                          Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(serviceChargeTax(selectedCharge.amount, selectedCharge.description))} tax
+                        </div>
+                      </div>
+                      <div className="text-2xl font-bold text-ghana-gold">
+                        ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description))}
+                      </div>
                     </div>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Quantity</label>
-                    <div className="text-lg font-semibold">{selectedCharge.quantity}</div>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Total Amount (incl. tax)</label>
-                    <div className="text-lg font-semibold text-ghana-gold">
-                      ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description))}
-                    </div>
-                    <div className="text-xs text-gray-500">
-                      Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(serviceChargeTax(selectedCharge.amount, selectedCharge.description))} tax
-                    </div>
-                  </div>
-                </div>
 
-                {selectedCharge.notes && (
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Notes</label>
-                    <div className="text-lg">{selectedCharge.notes}</div>
-                  </div>
-                )}
+                    {selectedCharge.notes && (
+                      <div>
+                        <label className="text-xs text-gray-500">Notes</label>
+                        <div>{selectedCharge.notes}</div>
+                      </div>
+                    )}
+                  </CardBody>
+                </Card>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Created By</label>
-                    <div className="text-lg">{selectedCharge.createdBy}</div>
-                  </div>
-                  <div>
-                    <label className="text-sm font-medium text-gray-500">Date Created</label>
-                    <div className="text-lg">
-                      {new Date(selectedCharge.date).toLocaleDateString()} at{' '}
-                      {new Date(selectedCharge.date).toLocaleTimeString()}
-                    </div>
-                  </div>
+                <div className="text-xs text-gray-500 text-center">
+                  Created by {selectedCharge.createdBy} on {new Date(selectedCharge.date).toLocaleDateString()} at{' '}
+                  {new Date(selectedCharge.date).toLocaleTimeString()}
                 </div>
               </div>
             ) : (
@@ -953,6 +1044,14 @@ export default function ServiceChargesPage() {
           <ModalFooter>
             <Button variant="light" onPress={() => setIsViewModalOpen(false)}>
               Close
+            </Button>
+            <Button
+              variant="flat"
+              className="bg-ghana-green text-white"
+              isDisabled={!selectedCharge}
+              onPress={() => selectedCharge && handlePrintServiceCharge(selectedCharge)}
+            >
+              🖨️ Print
             </Button>
           </ModalFooter>
         </ModalContent>
