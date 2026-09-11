@@ -87,6 +87,7 @@ export default function UserManagementUnified() {
     position: '',
     employeeId: '',
     bio: '',
+    password: '',
   });
 
   const [passwordForm, setPasswordForm] = useState({
@@ -145,6 +146,7 @@ export default function UserManagementUnified() {
       position: '',
       employeeId: '',
       bio: '',
+      password: '',
     });
   };
   const resetRoleForm = () => {
@@ -176,21 +178,30 @@ export default function UserManagementUnified() {
       position: user.profile?.position || '',
       employeeId: user.profile?.employeeId || '',
       bio: user.profile?.bio || '',
+      password: '',
     });
     onOpen();
   };
 
-  const handleSaveUser = () => {
+  const handleSaveUser = async () => {
+    // Re-checked here (not just the button that opened this modal) for the same
+    // reason handleDeleteUser re-checks — the server (POST/PATCH /api/users)
+    // independently enforces this regardless, but a local check surfaces the
+    // rejection immediately instead of after a round trip.
+    if (!hasPermission(isEditing ? 'settings.edit' : 'settings.create')) {
+      window.alert(`You don't have permission to ${isEditing ? 'edit' : 'create'} users.`);
+      return;
+    }
     if (isEditing && selectedUser) {
       // Update existing user
-      console.log('🔧 [UserManagementUnified] Updating user:', { 
-        userId: selectedUser.id, 
-        username: userForm.username, 
+      console.log('🔧 [UserManagementUnified] Updating user:', {
+        userId: selectedUser.id,
+        username: userForm.username,
         role: userForm.roleId,
         department: userForm.department,
-        isActive: userForm.isActive 
+        isActive: userForm.isActive
       });
-      updateUser(selectedUser.id, {
+      const error = await updateUser(selectedUser.id, {
         username: userForm.username,
         email: userForm.email,
         firstName: userForm.firstName,
@@ -205,14 +216,20 @@ export default function UserManagementUnified() {
           employeeId: userForm.employeeId,
           bio: userForm.bio,
         }
-      });
+      }, userForm.password || undefined);
+      if (error) { window.alert(error); return; }
     } else {
-      // Create new user
-      console.log('🔧 [UserManagementUnified] Creating new user:', { 
-        username: userForm.username, 
-        email: userForm.email, 
+      // Create new user — requires a password, since this now creates a real,
+      // NextAuth-authenticated account (see /api/users), not just a local row.
+      if (!userForm.password || userForm.password.length < 6) {
+        window.alert('Password is required and must be at least 6 characters.');
+        return;
+      }
+      console.log('🔧 [UserManagementUnified] Creating new user:', {
+        username: userForm.username,
+        email: userForm.email,
         role: userForm.roleId,
-        department: userForm.department 
+        department: userForm.department
       });
       const defaultUserPreferences = {
         theme: 'light' as const,
@@ -224,7 +241,7 @@ export default function UserManagementUnified() {
         dashboard: { defaultView: 'overview', quickActions: ['new-reservation', 'check-in', 'pos-terminal'], widgets: ['recent-activity', 'quick-stats', 'calendar'] },
         accessibility: { fontSize: 'medium' as const, highContrast: false, reduceMotion: false },
       };
-      addUser({
+      const error = await addUser({
         username: userForm.username,
         email: userForm.email,
         firstName: userForm.firstName,
@@ -245,7 +262,8 @@ export default function UserManagementUnified() {
           accountLocked: false,
           twoFactorEnabled: false,
         },
-      });
+      }, userForm.password);
+      if (error) { window.alert(error); return; }
     }
     onClose();
     resetForm();
@@ -438,9 +456,11 @@ export default function UserManagementUnified() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-semibold text-ghana-black">User Management</h3>
-        <Button color="primary" onPress={handleCreateUser}>
-          + Add New User
-        </Button>
+        {hasPermission('settings.create') && (
+          <Button color="primary" onPress={handleCreateUser}>
+            + Add New User
+          </Button>
+        )}
       </div>
       
       <Card className="border-0 shadow-lg">
@@ -485,9 +505,11 @@ export default function UserManagementUnified() {
                   </TableCell>
                   <TableCell>
                     <div className="flex space-x-2">
-                      <Button size="sm" variant="flat" onPress={() => handleEditUser(user)}>
-                        Edit
-                      </Button>
+                      {hasPermission('settings.edit') && (
+                        <Button size="sm" variant="flat" onPress={() => handleEditUser(user)}>
+                          Edit
+                        </Button>
+                      )}
                       {hasPermission('settings.delete') && (
                         <Button
                           size="sm"
@@ -1000,6 +1022,14 @@ export default function UserManagementUnified() {
                 value={userForm.email}
                 onChange={(e) => setUserForm({...userForm, email: e.target.value})}
                 placeholder="Enter email"
+              />
+              <Input
+                label={isEditing ? 'New Password' : 'Password'}
+                type="password"
+                value={userForm.password}
+                onChange={(e) => setUserForm({...userForm, password: e.target.value})}
+                placeholder={isEditing ? 'Leave blank to keep unchanged' : 'At least 6 characters'}
+                description={isEditing ? undefined : 'This user will sign in with this email and password.'}
               />
               <Input
                 label="First Name"

@@ -82,6 +82,51 @@ async function deleteUserFromApi(userId: string): Promise<string | null> {
   }
 }
 
+/** Creates the real account behind a new Settings > User Management row. Returns
+ * the server-assigned id (a real Prisma cuid, not the client's placeholder) on
+ * success, or an error message (e.g. duplicate email, weak password) on failure —
+ * the caller must not add the row locally when this returns an error. */
+async function createUserViaApi(input: { email: string; name: string; password: string; role: string; isActive: boolean }): Promise<{ id: string } | { error: string }> {
+  const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
+  if (!t) return { error: 'No tenant context — reload and try again' };
+  try {
+    const res = await fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': t },
+      body: JSON.stringify(input),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) return { error: data?.error || 'Failed to create user' };
+    return { id: data.user.id };
+  } catch (e) {
+    console.warn('[Settings] Failed to create user:', e);
+    return { error: 'Failed to create user' };
+  }
+}
+
+/** Updates the real account behind a Settings > User Management row, if there is
+ * one (see deleteUserFromApi — a non-real local id just 404s harmlessly, treated
+ * as success since there's nothing server-side to reject). Returns an error
+ * message on failure (duplicate email, or the last-administrator guard), null
+ * on success/no-op. */
+async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string }): Promise<string | null> {
+  const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
+  if (!t) return null;
+  try {
+    const res = await fetch(`/api/users/${encodeURIComponent(userId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': t },
+      body: JSON.stringify(patch),
+    });
+    if (res.ok || res.status === 404) return null;
+    const data = await res.json().catch(() => null);
+    return data?.error || 'Failed to update user';
+  } catch (e) {
+    console.warn('[Settings] Failed to update user:', e);
+    return 'Failed to update user';
+  }
+}
+
 export interface CountryCompliance {
   countryCode: string;
   countryName: string;
@@ -1206,8 +1251,14 @@ interface SettingsStore extends SystemSettings {
   getCurrentCountryCompliance: () => CountryCompliance | undefined;
   
   // User Management
-  addUser: (user: Omit<User, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  updateUser: (userId: string, updates: Partial<User>) => void;
+  /** `password` creates the real account (see /api/users) — resolves to an error
+   *  message (duplicate email, weak password) on failure, in which case the row
+   *  is never added locally either. */
+  addUser: (user: Omit<User, 'id' | 'createdAt' | 'updatedAt'>, password: string) => Promise<string | null>;
+  /** `newPassword`, if given, resets the real account's password too. Resolves to
+   *  an error message (duplicate email, or the last-administrator guard) on
+   *  failure, in which case local state is left unchanged. */
+  updateUser: (userId: string, updates: Partial<User>, newPassword?: string) => Promise<string | null>;
   /** Resolves to an error message if the server refused the delete (see /api/users/[id]), null on success. */
   deleteUser: (userId: string) => Promise<string | null>;
   setCurrentUser: (user: User) => void;
@@ -3084,40 +3135,35 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
   
     // User Management
-  addUser: (user) => {
+  addUser: async (user, password) => {
+    const result = await createUserViaApi({
+      email: user.email,
+      name: `${user.firstName} ${user.lastName}`.trim() || user.username,
+      password,
+      role: user.roleId,
+      isActive: user.isActive,
+    });
+    if ('error' in result) return result.error;
+
     const state = get();
     const newUser: User = {
       ...user,
-      id: `user_${Date.now()}`,
+      id: result.id,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
-      profile: {
-        avatar: '',
-        phone: '',
-        address: '',
-        department: '',
-        position: '',
-        employeeId: '',
-        hireDate: '',
-        emergencyContact: {
-          name: '',
-          phone: '',
-          relationship: '',
-        },
-        bio: '',
-        skills: [],
-        certifications: [],
-      },
-      security: {
-        failedLoginAttempts: 0,
-        accountLocked: false,
-        twoFactorEnabled: false,
-      },
+      // `user.profile`/`user.security` are required by the Omit<User, ...> param
+      // type, so the caller (handleSaveUser) always supplies them in full —
+      // previously this block replaced whatever was passed with empty defaults,
+      // silently discarding the profile fields (phone, department, etc.) every
+      // caller actually filled in.
+      profile: user.profile,
+      security: user.security,
     };
     const newUsers = [...state.users, newUser];
     set({ users: newUsers });
     get().saveSettings();
     get().publish();
+    return null;
   },
 
   // Profile Management
@@ -3227,16 +3273,33 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     get().publish();
   },
   
-  updateUser: (userId, updates) => {
+  updateUser: async (userId, updates, newPassword) => {
+    const patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string } = {};
+    if (updates.email) patch.email = updates.email;
+    if (updates.firstName || updates.lastName) {
+      const state = get();
+      const existing = state.users.find((u) => u.id === userId);
+      const firstName = updates.firstName ?? existing?.firstName ?? '';
+      const lastName = updates.lastName ?? existing?.lastName ?? '';
+      patch.name = `${firstName} ${lastName}`.trim();
+    }
+    if (updates.roleId) patch.role = updates.roleId;
+    if (typeof updates.isActive === 'boolean') patch.isActive = updates.isActive;
+    if (newPassword) patch.password = newPassword;
+
+    const error = await updateUserViaApi(userId, patch);
+    if (error) return error;
+
     const state = get();
-    const newUsers = state.users.map(user => 
-      user.id === userId 
+    const newUsers = state.users.map(user =>
+      user.id === userId
         ? { ...user, ...updates, updatedAt: new Date().toISOString() }
         : user
     );
     set({ users: newUsers });
     get().saveSettings();
     get().publish();
+    return null;
   },
   
   deleteUser: async (userId) => {
