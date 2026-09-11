@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
-import { requireAuth } from '@/app/lib/api/auth-guard'
+import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { updatePayment } from '@/app/lib/accounting/repository'
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -14,6 +14,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const { id } = await params
     const body = await request.json()
+
+    // Client always voids via persistPaymentPatch(id, {status:'Void', ...}) —
+    // gate specifically on that transition rather than every edit.
+    if (body.status === 'Void') {
+      const perm = await requirePermission(request, 'accounting.void-transaction')
+      if (!perm.ok) return perm.response
+    }
+
     const payment = await updatePayment(ctx.tenantId, id, body)
     if (!payment) return NextResponse.json({ error: 'Payment not found' }, { status: 404 })
     await createAuditLog(ctx.tenantId, null, 'PAYMENT_UPDATED', 'Payment', id, undefined, { status: payment.status, amount: payment.amount }, request)

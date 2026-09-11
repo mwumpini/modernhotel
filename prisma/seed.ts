@@ -2,6 +2,7 @@ import { PrismaClient, AccountType } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { buildPrebuiltChartOfAccounts } from '../src/app/lib/accounting/prebuiltChartOfAccounts'
 import { seedChartOfAccountsForTenant } from '../src/app/lib/accounting/seedChartOfAccounts'
+import { ensureDefaultRolesForTenant } from '../src/app/lib/settings/roleRepository'
 
 const prisma = new PrismaClient()
 
@@ -156,6 +157,9 @@ async function main() {
   })
 
   console.log('✅ Created demo users')
+
+  await ensureDefaultRolesForTenant(demoTenant.id)
+  console.log('✅ Created default roles')
 
   // Create demo rooms
   const roomTypes = ['standard', 'deluxe', 'suite']

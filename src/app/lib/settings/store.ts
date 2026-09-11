@@ -24,6 +24,38 @@ function syncNoShowPolicyToApi(rm: { noShowPolicyEnabled?: boolean; noShowCharge
   }).catch((e) => console.warn('[Settings] Failed to sync no-show policy:', e));
 }
 
+// Background sync of a Role to the server-side mirror (see /api/settings/roles)
+// so API routes can actually enforce permissions via requirePermission() in
+// auth-guard.ts, instead of the permission catalog existing only in this
+// browser's localStorage. Fire-and-forget: the Settings UI's own state is
+// already updated synchronously by the caller before this runs.
+function syncRoleToApi(role: { id: string; name: string; description?: string; permissions: string[]; isActive: boolean }) {
+  if (typeof window === 'undefined') return;
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  fetch('/api/settings/roles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': t },
+    body: JSON.stringify({
+      code: role.id,
+      name: role.name,
+      description: role.description,
+      permissions: role.permissions,
+      isActive: role.isActive,
+    }),
+  }).catch((e) => console.warn('[Settings] Failed to sync role:', e));
+}
+
+function deleteRoleFromApi(roleId: string) {
+  if (typeof window === 'undefined') return;
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  fetch(`/api/settings/roles/${encodeURIComponent(roleId)}`, {
+    method: 'DELETE',
+    headers: { 'x-tenant-subdomain': t },
+  }).catch((e) => console.warn('[Settings] Failed to delete role:', e));
+}
+
 export interface CountryCompliance {
   countryCode: string;
   countryName: string;
@@ -2336,6 +2368,31 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
             }
           })
           .catch((e) => console.warn('[Settings] Failed to hydrate no-show policy:', e));
+
+        // Pull the server-side Role mirror (see /api/settings/roles) so API routes'
+        // requirePermission() checks and this browser's role editor stay in sync —
+        // merge by id (server `code` <-> client UserRole.id) rather than replacing
+        // wholesale, so a role created in this tab moments ago isn't dropped if the
+        // GET resolves before its own POST finishes.
+        fetch('/api/settings/roles', { headers: { 'x-tenant-subdomain': t } })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (!Array.isArray(data?.roles)) return;
+            const byId = new Map(get().roles.map((r) => [r.id, r]));
+            for (const r of data.roles) {
+              byId.set(r.code, {
+                id: r.code,
+                name: r.name,
+                description: r.description || '',
+                permissions: Array.isArray(r.permissions) ? r.permissions : [],
+                isActive: r.isActive,
+                createdAt: r.createdAt,
+                updatedAt: r.updatedAt,
+              });
+            }
+            set({ roles: Array.from(byId.values()) });
+          })
+          .catch((e) => console.warn('[Settings] Failed to hydrate roles:', e));
       }
 
     } catch (error) {
@@ -3147,26 +3204,30 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ roles: newRoles });
     get().saveSettings();
     get().publish();
+    syncRoleToApi(newRole);
   },
-  
+
   updateRole: (roleId, updates) => {
     const state = get();
-    const newRoles = state.roles.map(role => 
-      role.id === roleId 
-        ? { ...role, ...updates, updatedAt: new Date().toISOString() }
-        : role
-    );
+    let updated: UserRole | undefined;
+    const newRoles = state.roles.map(role => {
+      if (role.id !== roleId) return role;
+      updated = { ...role, ...updates, updatedAt: new Date().toISOString() };
+      return updated;
+    });
     set({ roles: newRoles });
     get().saveSettings();
     get().publish();
+    if (updated) syncRoleToApi(updated);
   },
-  
+
   deleteRole: (roleId) => {
     const state = get();
     const newRoles = state.roles.filter(role => role.id !== roleId);
     set({ roles: newRoles });
     get().saveSettings();
     get().publish();
+    deleteRoleFromApi(roleId);
   },
   
   // Authorization

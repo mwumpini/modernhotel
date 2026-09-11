@@ -1,6 +1,8 @@
 import { getServerSession } from 'next-auth/next'
 import { authOptions } from '@/app/lib/auth/auth'
 import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/app/lib/database/client'
+import { ensureDefaultRolesForTenant, permissionGrants } from '@/app/lib/settings/roleRepository'
 
 export type AuthResult =
   | { ok: true; session: NonNullable<Awaited<ReturnType<typeof getServerSession>>> }
@@ -40,5 +42,38 @@ export async function requireRole(request: NextRequest, allowedRoles: string[]):
       response: NextResponse.json({ error: 'Forbidden — insufficient permissions' }, { status: 403 }),
     }
   }
+  return auth
+}
+
+/**
+ * Verify the caller has a session AND their role grants a specific permission
+ * string from the catalog in src/app/lib/settings/permissionCatalog.ts (e.g.
+ * 'frontdesk.void-charge', 'accounting.void-transaction'). Roles live in the
+ * `Role` table, keyed by (tenantId, code) where `code` is the same slug
+ * already carried on session.user.role — self-healed via
+ * ensureDefaultRolesForTenant so a tenant that's never touched Role
+ * Management still resolves the four defaults instead of failing closed.
+ */
+export async function requirePermission(request: NextRequest, permissionId: string): Promise<AuthResult> {
+  const auth = await requireAuth(request)
+  if (!auth.ok) return auth
+
+  const user = (auth.session as any).user
+  const tenantId: string | undefined = user?.tenantId
+  const roleCode: string | undefined = user?.role
+  const forbidden = () => ({
+    ok: false as const,
+    response: NextResponse.json({ error: 'Forbidden — insufficient permissions' }, { status: 403 }),
+  })
+  if (!tenantId || !roleCode) return forbidden()
+
+  await ensureDefaultRolesForTenant(tenantId)
+  const role = await prisma.role.findUnique({ where: { tenantId_code: { tenantId, code: roleCode } } })
+  if (!role || !role.isActive) return forbidden()
+
+  const permissions = Array.isArray(role.permissions) ? (role.permissions as unknown[]).filter((p): p is string => typeof p === 'string') : []
+  const granted = permissions.some((p) => permissionGrants(p, permissionId))
+  if (!granted) return forbidden()
+
   return auth
 }

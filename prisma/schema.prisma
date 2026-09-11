@@ -26,6 +26,7 @@ model Tenant {
 
   // Relations
   users             User[]
+  roles             Role[]
   properties        Property[]
   settings          SystemSettings[]
   guests            Guest[]
@@ -924,6 +925,30 @@ model RevenueCenter {
 
   @@unique([tenantId, code])
   @@map("revenue_centers")
+}
+
+// Server-side mirror of the role/permission catalog edited in Settings ->
+// Role Management (client-side source of truth: src/app/lib/settings/store.ts's
+// `defaultRoles` and the UserRole shape). `code` is the slug NextAuth's
+// session.user.role already carries ('admin', 'manager', 'staff',
+// 'night_manager', or a custom role's generated id) -- API routes resolve a
+// caller's permissions by looking up Role by (tenantId, code) rather than by
+// a raw cuid, so the JWT never needs to change shape.
+model Role {
+  id          String   @id @default(cuid())
+  tenantId    String
+  code        String
+  name        String
+  description String?
+  permissions Json     @default("[]")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, code])
+  @@map("roles")
 }
 
 model Tax {
