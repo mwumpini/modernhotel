@@ -31,18 +31,15 @@ import {
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
 import EventRateManagement from './EventRateManagement';
-import {
-  exclusiveFromGross,
-  getCanonicalTaxRates,
-  salesTaxBreakdown,
-} from '../lib/tax/engine';
+import { reverseToSubtotalFromGross } from '../lib/frontoffice/helpers/rates';
 // Dynamic imports for PDF generation to avoid SSR issues
 // import jsPDF from 'jspdf';
 // import 'jspdf-autotable';
 
-/** Derive tax-exclusive subtotal from a stored plan price. */
+/** Derive tax-exclusive subtotal from a stored plan price — via the compliance engine
+ * (same source the live preview below uses), not the old disconnected tax/engine.ts. */
 function subtotalFromPlanPrice(basePrice: number, priceType?: string): number {
-  return priceType === 'gross_total' ? exclusiveFromGross(basePrice) : basePrice;
+  return priceType === 'gross_total' ? reverseToSubtotalFromGross(basePrice) : basePrice;
 }
 
 interface RoomType {
@@ -1033,18 +1030,11 @@ export default function RoomConfigurationDashboard() {
     return direction === 'asc' ? '↑' : '↓';
   };
 
-  // Price preview helpers via compliance engine
+  // Price preview helpers via compliance engine. reverseToSubtotalFromGross is the one
+  // shared implementation (also used by frontoffice/helpers/rates.ts for the actual
+  // check-in charge) so this preview and the real guest charge can never diverge.
   const { useCalculateTax } = require('../hooks/useCalculateTax');
   const calcTax = useCalculateTax?.() || ((a: number) => ({ taxes: [], total: a }));
-  const reverseToSubtotalFromGross = (gross: number, category?: string, context?: Record<string, any>) => {
-    let lo = 0, hi = Math.max(gross, 1) * 2;
-    for (let i = 0; i < 24; i++) {
-      const mid = (lo + hi) / 2;
-      const { total } = calcTax(mid, category, context);
-      if (total > gross) hi = mid; else lo = mid;
-    }
-    return lo;
-  };
   const computeTaxBreakdown = (base: number) => {
     const category = 'HOTEL';
     const context = { numPersons: 1, numNights: 1 };
@@ -1059,6 +1049,14 @@ export default function RoomConfigurationDashboard() {
     if (mapped.tourismlevy != null) { mapped.tourism = mapped.tourismlevy; mapped.tourismRate = mapped.tourismlevyRate; }
     if (mapped.getfundlevy != null) { mapped.getfund = mapped.getfundlevy; mapped.getfundRate = mapped.getfundlevyRate; }
     return mapped;
+  };
+
+  /** Rates snapshot (fraction of a ₵100 sample) for currency config — sourced from the
+   * compliance engine's active rules, not the old disconnected tax/engine.ts. */
+  const getCanonicalRates = () => {
+    const { taxes } = calcTax(100, 'HOTEL', { numPersons: 1, numNights: 1 });
+    const rateOf = (nameIncludes: string) => taxes.find((t: any) => t.name.toLowerCase().includes(nameIncludes))?.rate ?? 0;
+    return { vat: rateOf('vat'), nhil: rateOf('nhil'), getfund: rateOf('getfund'), tourismLevy: rateOf('tourism') };
   };
 
   const getLivePreview = () => {
@@ -1177,7 +1175,7 @@ export default function RoomConfigurationDashboard() {
         // Calculate tax breakdown for CSV export
         // Only "subtotal" and "gross_total" are valid values for priceType
         const subtotal = subtotalFromPlanPrice(transformedPlan.basePrice, transformedPlan.priceType);
-        const { nhil, getfund, vat, tourism, total: totalTax } = salesTaxBreakdown(subtotal);
+        const { nhil, getfund, vat, tourism, totalTax } = computeTaxBreakdown(subtotal);
         const finalBill = subtotal + totalTax;
         
         return [
@@ -1406,7 +1404,7 @@ export default function RoomConfigurationDashboard() {
     GBP: { symbol: '£', name: 'British Pound', taxRates: { vat: 0.20, nhil: 0, getfund: 0, tourism: 0 } },
     EUR: { symbol: '€', name: 'Euro', taxRates: { vat: 0.21, nhil: 0, getfund: 0, tourism: 0 } },
     GHS: (() => {
-      const r = getCanonicalTaxRates();
+      const r = getCanonicalRates();
       return {
         symbol: '₵',
         name: 'Ghanaian Cedi',
@@ -2305,7 +2303,7 @@ export default function RoomConfigurationDashboard() {
               <Tooltip
                 content={(() => {
                   const exampleBase = 600;
-                  const { total: exampleTax } = salesTaxBreakdown(exampleBase);
+                  const { totalTax: exampleTax } = computeTaxBreakdown(exampleBase);
                   const exampleGross = exampleBase + exampleTax;
                   return (
                     <div className="max-w-sm text-sm space-y-2 p-1">
@@ -2519,7 +2517,7 @@ export default function RoomConfigurationDashboard() {
                       <TableCell className="text-center">
                         {(() => {
                           const subtotal = subtotalFromPlanPrice(plan.basePrice, plan.priceType || 'subtotal');
-                          const { nhil, getfund, vat, tourism } = salesTaxBreakdown(subtotal);
+                          const { nhil, getfund, vat, tourism } = computeTaxBreakdown(subtotal);
                           const finalBill = subtotal + nhil + getfund + vat + tourism;
                           return `₵${finalBill.toFixed(2)}`;
                         })()}
@@ -2698,9 +2696,9 @@ export default function RoomConfigurationDashboard() {
                     // Calculate tax breakdown (Ghana taxes)
                     const transformedPlan = transformRatePlanData(plan);
                     const subtotal = subtotalFromPlanPrice(transformedPlan.basePrice, transformedPlan.priceType);
-                    const { nhil, getfund, vat, tourism, total: totalTax } = salesTaxBreakdown(subtotal);
+                    const { nhil, getfund, vat, tourism, totalTax } = computeTaxBreakdown(subtotal);
                     const grossTotal = subtotal + totalTax;
-                    const canonicalRates = getCanonicalTaxRates();
+                    const canonicalRates = getCanonicalRates();
                     const fmtRate = (r: number | undefined) => Number.isFinite(r) ? `${(r as number).toFixed(1).replace(/\.0$/, '')}%` : '—';
 
                     return (

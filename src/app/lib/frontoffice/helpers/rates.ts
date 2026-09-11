@@ -1,8 +1,45 @@
 'use client';
 
-import { grossFromExclusive, exclusiveFromGross } from '../../tax/engine';
+import { useComplianceStore } from '../../compliance/store';
 
 export type PriceType = 'subtotal' | 'gross_total';
+
+// Room-rate tax context — matches what the Room Rate Builder's live preview
+// (RoomConfigurationDashboard.tsx) already uses, so a rate plan's preview and the
+// actual charge posted at check-in can never diverge.
+const ROOM_TAX_CATEGORY = 'HOTEL';
+const ROOM_TAX_CONTEXT = { domain: 'sales' as const, operation: 'external' as const };
+
+function grossFromExclusive(exclusive: number, category = ROOM_TAX_CATEGORY, context?: Record<string, any>): number {
+  if (!(exclusive > 0)) return 0;
+  const { total } = useComplianceStore.getState().calculateTax(exclusive, category, { ...ROOM_TAX_CONTEXT, ...context });
+  return total;
+}
+
+/**
+ * Given a tax-inclusive (gross) amount, find the tax-exclusive subtotal whose
+ * compliance-computed total equals it. Needed for `gross_total`-priced rate plans,
+ * where the guest-facing price is fixed and tax must be backed out of it. Binary
+ * search rather than algebraic inversion since the compliance engine can stack
+ * multiple rules (additive + compound) with no closed-form inverse in general.
+ */
+export function reverseToSubtotalFromGross(gross: number, category = ROOM_TAX_CATEGORY, context?: Record<string, any>): number {
+  if (!(gross > 0)) return 0;
+  const ctx = { ...ROOM_TAX_CONTEXT, ...context };
+  let lo = 0;
+  let hi = gross * 2;
+  for (let i = 0; i < 24; i++) {
+    const mid = (lo + hi) / 2;
+    const { total } = useComplianceStore.getState().calculateTax(mid, category, ctx);
+    if (total > gross) hi = mid; else lo = mid;
+  }
+  return lo;
+}
+
+function exclusiveFromGross(gross: number): number {
+  if (gross <= 0) return 0;
+  return Math.round(reverseToSubtotalFromGross(gross) * 100) / 100;
+}
 
 /** Nights between arrival and departure (departure day is not charged). */
 export function calculateStayNights(arrival: string, departure: string): number {

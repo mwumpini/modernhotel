@@ -2,7 +2,7 @@
 
 import { CorporateClient, CorporateRateAgreement, EventPackage, RoomType } from './types';
 import { trackEvent } from '../analytics/trackEvent';
-import { computeSalesTaxTotal } from '../tax/engine';
+import { useComplianceStore } from '../compliance/store';
 
 export interface RateCalculationResult {
   accommodation: {
@@ -854,7 +854,9 @@ export class CorporateRateStore {
   }
 
   private calculateTaxes(subtotal: number): number {
-    return computeSalesTaxTotal(subtotal);
+    if (!(subtotal > 0)) return 0;
+    const { total } = useComplianceStore.getState().calculateTax(subtotal, 'HOTEL', { domain: 'sales', operation: 'external' });
+    return Math.round((total - subtotal) * 100) / 100;
   }
 
   private getRoomTypePercentageKey(roomTypeName: string): 'standardRoom' | 'deluxeRoom' | 'suiteRoom' | 'presidentialRoom' | null {

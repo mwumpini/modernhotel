@@ -31,11 +31,23 @@ import { trackEvent } from '../../lib/analytics/trackEvent';
 import { openPrintPreview } from '../../lib/print/engine';
 import { listTemplates } from '../../lib/print/templates';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
-import { grossFromExclusive, computeSalesTaxTotal } from '../../lib/tax/engine';
+import { computeChargeTax } from '../../lib/frontoffice/helpers/folio';
 import { formatMoney } from '../../lib/format/currency';
 
-/** Line total incl. Ghana stacked taxes (table / guest-facing amounts). */
-const serviceChargeGross = grossFromExclusive;
+/**
+ * Line total incl. tax (table / guest-facing amounts) — via the same compliance-engine
+ * computeChargeTax the store's addCharge/addFolioCharge actually save with (see
+ * frontoffice/helpers/folio.ts), so this preview can never show a different number than
+ * what actually lands on the guest's folio. `description` lets it category-match the
+ * same way (e.g. Laundry -> no Tourism Levy) when the charge is known; omit it for a
+ * mixed-category aggregate, where a single per-item category wouldn't apply anyway.
+ */
+function serviceChargeGross(amount: number, description?: string): number {
+  return Math.round((amount + computeChargeTax(amount, description)) * 100) / 100;
+}
+function serviceChargeTax(amount: number, description?: string): number {
+  return computeChargeTax(amount, description);
+}
 
 interface ServiceCharge {
   id: string;
@@ -377,7 +389,7 @@ export default function ServiceChargesPage() {
     setSelectedCharge(charge);
     setPaymentData(prev => ({
       ...prev,
-      amount: serviceChargeGross(charge.amount)
+      amount: serviceChargeGross(charge.amount, charge.description)
     }));
     setIsPaymentModalOpen(true);
   };
@@ -580,10 +592,10 @@ export default function ServiceChargesPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount))}</div>
+                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount, charge.description))}</div>
                         {charge.quantity > 1 && (
                           <div className="text-xs text-gray-500">
-                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity))} / unit
+                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity, charge.description))} / unit
                           </div>
                         )}
                       </TableCell>
@@ -891,7 +903,8 @@ export default function ServiceChargesPage() {
                     <label className="text-sm font-medium text-gray-500">Unit Price (incl. tax)</label>
                     <div className="text-lg font-semibold">
                       ₵{formatMoney(serviceChargeGross(
-                        selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount
+                        selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount,
+                        selectedCharge.description
                       ))}
                     </div>
                   </div>
@@ -902,10 +915,10 @@ export default function ServiceChargesPage() {
                   <div>
                     <label className="text-sm font-medium text-gray-500">Total Amount (incl. tax)</label>
                     <div className="text-lg font-semibold text-ghana-gold">
-                      ₵{formatMoney(serviceChargeGross(selectedCharge.amount))}
+                      ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description))}
                     </div>
                     <div className="text-xs text-gray-500">
-                      Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(computeSalesTaxTotal(selectedCharge.amount))} tax
+                      Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(serviceChargeTax(selectedCharge.amount, selectedCharge.description))} tax
                     </div>
                   </div>
                 </div>
@@ -974,7 +987,7 @@ export default function ServiceChargesPage() {
                       <div>
                         <span className="text-gray-600">Amount (incl. tax):</span>
                         <div className="font-medium text-lg text-ghana-gold">
-                          ₵{formatMoney(serviceChargeGross(selectedCharge.amount))}
+                          ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description))}
                         </div>
                       </div>
                     </div>
@@ -1041,7 +1054,7 @@ export default function ServiceChargesPage() {
                       </span>
                     </div>
                     {(() => {
-                      const due = serviceChargeGross(selectedCharge.amount);
+                      const due = serviceChargeGross(selectedCharge.amount, selectedCharge.description);
                       return (
                         <>
                           {paymentData.amount < due && (

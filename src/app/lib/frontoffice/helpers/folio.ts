@@ -17,7 +17,8 @@
 import { trackEvent } from '../../analytics/trackEvent';
 import { logAudit } from '../../analytics/auditLogStore';
 import type { Folio, FolioPayment } from '../types';
-import { computeSalesTaxTotal, getCanonicalTaxRates, roundToIncrement, roundMoney2 } from '../../tax/engine';
+import { roundToIncrement, roundMoney2 } from '../../tax/engine';
+import { useComplianceStore } from '../../compliance/store';
 import { useSettingsStore } from '../../settings/store';
 import { genId as genChargeId } from './ids';
 
@@ -65,6 +66,36 @@ function matchesKeyword(description: string | undefined, keywords: string[]) {
 /** Non-room charge (F&B or other service) — used for billing-screen subtotal grouping, not GL routing. */
 function isServiceCharge(description?: string) {
 	return matchesKeyword(description, FB_KEYWORDS) || matchesKeyword(description, OTHER_SERVICE_KEYWORDS);
+}
+
+const SALES_TAX_CONTEXT = { domain: 'sales' as const, operation: 'external' as const };
+
+/**
+ * Maps a folio charge to a compliance `appliesTo` category — reuses the same
+ * FB_KEYWORDS/OTHER_SERVICE_KEYWORDS keyword lists GL routing already uses above, so a
+ * charge lands in the same bucket for both. Room charges don't go through this (they
+ * pre-supply `tax` from rates.ts, category 'HOTEL' — see roomCharges.ts).
+ */
+function inferChargeTaxCategory(description?: string, category?: string): string {
+	const cat = (category || '').toLowerCase();
+	if (cat === 'f&b' || cat === 'fb' || matchesKeyword(description, FB_KEYWORDS)) return 'FOOD';
+	if (cat === 'conference' || (description || '').toLowerCase().includes('conference')) return 'EVENT';
+	if (matchesKeyword(description, OTHER_SERVICE_KEYWORDS)) return 'SERVICE';
+	return 'ALL';
+}
+
+/**
+ * Tax on a folio charge via the real compliance engine (Settings → Compliance & Reports
+ * → Tax Rate Builder) — replaces the old computeSalesTaxTotal(amount) from tax/engine.ts,
+ * which applied the same flat stack to every charge regardless of type (e.g. Tourism
+ * Levy, which should only apply to Room/Hotel/Food/Event, was leaking onto things like
+ * laundry). Category-aware matching fixes that as a side effect of the engine switch.
+ */
+export function computeChargeTax(amount: number, description?: string, category?: string): number {
+	if (!(amount > 0)) return 0;
+	const cat = inferChargeTaxCategory(description, category);
+	const { total } = useComplianceStore.getState().calculateTax(amount, cat, SALES_TAX_CONTEXT);
+	return roundMoney2(total - amount);
 }
 
 /** Canonical folio totals for tables, modals, and billing screens. */
@@ -267,7 +298,7 @@ export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: s
 	}
 	
 	// Layered Ghana computation sourced from Settings compliance
-	const tax = typeof charge.tax === 'number' ? charge.tax : computeSalesTaxTotal(charge.amount);
+	const tax = typeof charge.tax === 'number' ? charge.tax : computeChargeTax(charge.amount, charge.description, charge.category);
 	folio.charges.push({
 		id: charge.id,
 		date: charge.date || new Date().toISOString(),
@@ -426,16 +457,18 @@ export function postCorporateReceipt(self: StoreLike, payer: string, reservation
 }
 
 /**
- * Canonical tax rates from accounting TaxConfig (synced from compliance TaxRateBuilder).
- * Replaces the old settings.countryCompliance.taxRates path.
+ * Canonical tax rates snapshot, sourced directly from the compliance engine's active
+ * rules for GH (category 'HOTEL', so Tourism Levy — which only applies to
+ * Room/Hotel/Food/Event — is included the same way it would be on a room charge).
  */
 export function getTaxRates(_self: StoreLike) {
-    const r = getCanonicalTaxRates();
+    const { taxes } = useComplianceStore.getState().calculateTax(100, 'HOTEL', SALES_TAX_CONTEXT);
+    const rateOf = (nameIncludes: string) => taxes.find((t) => t.name.toLowerCase().includes(nameIncludes))?.rate ?? 0;
     return {
-        vat: r.vat,
-        nhil: r.nhil,
-        getfund: r.getfund,
-        levy: r.tourismLevy,
+        vat: rateOf('vat'),
+        nhil: rateOf('nhil'),
+        getfund: rateOf('getfund'),
+        levy: rateOf('tourism'),
         covid: 0,
     };
 }
@@ -445,7 +478,7 @@ export function getTaxRates(_self: StoreLike) {
  */
 export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number) {
 	const f = getOrCreateFolio(self, reservationId);
-	const tax = computeSalesTaxTotal(amount);
+	const tax = computeChargeTax(amount, description);
 	f.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description, amount, tax } as any);
 	updateFolioBalances(self, f);
 	self.notify();
