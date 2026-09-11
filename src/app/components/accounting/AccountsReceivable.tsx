@@ -2175,6 +2175,7 @@ export default function AccountsReceivable() {
 										</Dropdown>
 								</div>
 								</div>
+								<div className="max-h-[560px] overflow-y-auto">
 								<Table aria-label="Customer aging">
 									<TableHeader>
 										<TableColumn>CUSTOMER</TableColumn>
@@ -2213,7 +2214,8 @@ export default function AccountsReceivable() {
 										})}
 									</TableBody>
 								</Table>
-								
+								</div>
+
 								{/* Aging Summary */}
 								<div className="mt-6 grid grid-cols-5 gap-4">
 									<Card className="bg-green-50">

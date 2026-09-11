@@ -260,6 +260,7 @@ export default function BooksTaxes() {
 				</CardBody>
 			</Card>
 
+			<div className="max-h-[560px] overflow-y-auto">
 			<Table aria-label="Tax ledger rows">
 				<TableHeader>
 					<TableColumn>PERIOD</TableColumn>
@@ -310,6 +311,7 @@ export default function BooksTaxes() {
 					))}
 				</TableBody>
 			</Table>
+			</div>
 
 			<Modal isOpen={isOpen} onClose={onClose}>
 				<ModalContent>

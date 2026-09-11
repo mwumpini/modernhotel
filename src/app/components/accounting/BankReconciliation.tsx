@@ -899,6 +899,7 @@ function RegisterTransactionsPanel({
             </Chip>
           )}
         </div>
+        <div className="max-h-[480px] overflow-y-auto">
         <Table removeWrapper aria-label="Register transactions" classNames={{ th: 'text-xs' }}>
           <TableHeader>
             <TableColumn>DATE</TableColumn>
@@ -937,6 +938,7 @@ function RegisterTransactionsPanel({
             ))}
           </TableBody>
         </Table>
+        </div>
       </CardBody>
     </Card>
   );

@@ -565,6 +565,7 @@ export default function AccountsPayablePage() {
                   </div>
                 </div>
 
+                <div className="max-h-[560px] overflow-y-auto">
                 <Table aria-label="Supplier Aging">
                   <TableHeader>
                     <TableColumn>SUPPLIER</TableColumn>
@@ -618,6 +619,7 @@ export default function AccountsPayablePage() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </div>
             </Tab>
 

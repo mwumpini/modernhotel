@@ -751,6 +751,7 @@ export default function PpeAssetRegisterPage() {
                     </DropdownMenu>
                   </Dropdown>
                 </div>
+                <div className="max-h-[560px] overflow-y-auto">
                 <Table aria-label="PPE register" removeWrapper classNames={{ th: 'text-xs' }}>
                   <TableHeader>
                     <TableColumn>CODE</TableColumn>
@@ -798,6 +799,7 @@ export default function PpeAssetRegisterPage() {
                     ))}
                   </TableBody>
                 </Table>
+                </div>
               </div>
             </Tab>
 
