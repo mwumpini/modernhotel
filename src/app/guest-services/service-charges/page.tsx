@@ -24,7 +24,8 @@ import {
   Chip,
   Textarea,
   Divider,
-  Pagination
+  Pagination,
+  Switch
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { useSettingsStore } from '../../lib/settings/store';
@@ -43,15 +44,16 @@ import { formatMoney } from '../../lib/format/currency';
  * same way (e.g. Laundry -> no Tourism Levy) when the charge is known; omit it for a
  * mixed-category aggregate, where a single per-item category wouldn't apply anyway.
  */
-function resolveTaxExempt(guestId?: string): boolean | undefined {
+function resolveTaxExempt(guestId?: string, forceExempt?: boolean): boolean | undefined {
+  if (forceExempt) return true;
   if (!guestId) return undefined;
   return frontOfficeStore.reservations.find(r => r.guestId === guestId)?.taxExempt;
 }
-function serviceChargeGross(amount: number, description?: string, guestId?: string): number {
-  return Math.round((amount + computeChargeTax(amount, description, undefined, resolveTaxExempt(guestId))) * 100) / 100;
+function serviceChargeGross(amount: number, description?: string, guestId?: string, forceExempt?: boolean): number {
+  return Math.round((amount + computeChargeTax(amount, description, undefined, resolveTaxExempt(guestId, forceExempt))) * 100) / 100;
 }
-function serviceChargeTax(amount: number, description?: string, guestId?: string): number {
-  return computeChargeTax(amount, description, undefined, resolveTaxExempt(guestId));
+function serviceChargeTax(amount: number, description?: string, guestId?: string, forceExempt?: boolean): number {
+  return computeChargeTax(amount, description, undefined, resolveTaxExempt(guestId, forceExempt));
 }
 
 interface ServiceCharge {
@@ -67,6 +69,9 @@ interface ServiceCharge {
   status: 'pending' | 'approved' | 'billed' | 'paid';
   notes?: string;
   createdBy: string;
+  // Per-charge exemption override set from the Add Service Charge modal's Tax Exempt
+  // toggle — only ever adds exemption on top of whatever the reservation itself has.
+  taxExempt?: boolean;
 }
 
 export default function ServiceChargesPage() {
@@ -96,7 +101,8 @@ export default function ServiceChargesPage() {
     quantity: 1,
     discountAmount: 0,
     notes: '',
-    customerType: 'inhouse' // 'inhouse' or 'external'
+    customerType: 'inhouse', // 'inhouse' or 'external'
+    taxExempt: false
   });
 
   // External guest form state
@@ -217,7 +223,8 @@ export default function ServiceChargesPage() {
       date: new Date().toISOString(),
       status: 'pending',
       notes: formData.notes,
-      createdBy: 'Current User' // In real app, get from auth context
+      createdBy: 'Current User', // In real app, get from auth context
+      taxExempt: formData.taxExempt
     };
 
     setServiceCharges(prev => [newCharge, ...prev]);
@@ -231,9 +238,10 @@ export default function ServiceChargesPage() {
       if (reservation) {
         // Use the store's addCharge method which automatically calculates taxes
         frontOfficeStore.addCharge(
-          reservation.id, 
-          `${formData.description} (${formData.quantity}x)`, 
-          finalAmount
+          reservation.id,
+          `${formData.description} (${formData.quantity}x)`,
+          finalAmount,
+          formData.taxExempt
         );
       }
     }
@@ -264,7 +272,8 @@ export default function ServiceChargesPage() {
       quantity: 1,
       discountAmount: 0,
       notes: '',
-      customerType: 'inhouse'
+      customerType: 'inhouse',
+      taxExempt: false
     });
     setExternalGuestData({
       name: '',
@@ -342,8 +351,8 @@ export default function ServiceChargesPage() {
   // tenant reformats, it always looks the same with just the org's own header on top.
   const handlePrintServiceCharge = (charge: ServiceCharge) => {
     const org = buildOrgProfile(useSettingsStore.getState());
-    const gross = serviceChargeGross(charge.amount, charge.description, charge.guestId);
-    const tax = serviceChargeTax(charge.amount, charge.description, charge.guestId);
+    const gross = serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt);
+    const tax = serviceChargeTax(charge.amount, charge.description, charge.guestId, charge.taxExempt);
     const categoryInfo = getCategoryInfo(charge.category);
     const fmt = (n: number) => `₵${formatMoney(n)}`;
 
@@ -477,7 +486,7 @@ export default function ServiceChargesPage() {
     setSelectedCharge(charge);
     setPaymentData(prev => ({
       ...prev,
-      amount: serviceChargeGross(charge.amount, charge.description, charge.guestId)
+      amount: serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt)
     }));
     setIsPaymentModalOpen(true);
   };
@@ -503,7 +512,8 @@ export default function ServiceChargesPage() {
                 quantity: 1,
                 discountAmount: 0,
                 notes: '',
-                customerType: 'inhouse'
+                customerType: 'inhouse',
+                taxExempt: false
               });
               setExternalGuestData({ name: '', phone: '', email: '', company: '' });
               setIsAddModalOpen(true);
@@ -594,7 +604,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-blue-600">
-              ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId), 0))}
+              ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt), 0))}
             </div>
             <div className="text-sm text-gray-600">Total Charges (incl. tax)</div>
           </CardBody>
@@ -602,7 +612,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-green-600">
-              ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId), 0))}
+              ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt), 0))}
             </div>
             <div className="text-sm text-gray-600">Paid Amount (incl. tax)</div>
           </CardBody>
@@ -610,7 +620,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-orange-600">
-              ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId), 0))}
+              ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt), 0))}
             </div>
             <div className="text-sm text-gray-600">Outstanding (incl. tax)</div>
           </CardBody>
@@ -680,10 +690,10 @@ export default function ServiceChargesPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount, charge.description, charge.guestId))}</div>
+                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt))}</div>
                         {charge.quantity > 1 && (
                           <div className="text-xs text-gray-500">
-                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity, charge.description, charge.guestId))} / unit
+                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity, charge.description, charge.guestId, charge.taxExempt))} / unit
                           </div>
                         )}
                       </TableCell>
@@ -904,6 +914,17 @@ export default function ServiceChargesPage() {
                 placeholder="Additional notes about this charge..."
               />
 
+              <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <div>
+                  <div className="text-sm font-medium text-amber-900">Tax Exempt</div>
+                  <div className="text-xs text-amber-700">Post this charge with no tax, regardless of the guest's own status</div>
+                </div>
+                <Switch
+                  isSelected={formData.taxExempt}
+                  onValueChange={(val) => setFormData(prev => ({ ...prev, taxExempt: val }))}
+                />
+              </div>
+
               <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <div className="text-sm text-blue-800">
                   <div className="font-medium">
@@ -1002,7 +1023,8 @@ export default function ServiceChargesPage() {
                           ₵{formatMoney(serviceChargeGross(
                             selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount,
                             selectedCharge.description,
-                            selectedCharge.guestId
+                            selectedCharge.guestId,
+                            selectedCharge.taxExempt
                           ))}
                         </div>
                       </div>
@@ -1018,11 +1040,11 @@ export default function ServiceChargesPage() {
                       <div>
                         <div className="text-xs text-gray-500">Total Amount (incl. tax)</div>
                         <div className="text-xs text-gray-500">
-                          Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(serviceChargeTax(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId))} tax
+                          Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(serviceChargeTax(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt))} tax
                         </div>
                       </div>
                       <div className="text-2xl font-bold text-ghana-gold">
-                        ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId))}
+                        ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt))}
                       </div>
                     </div>
 
@@ -1091,7 +1113,7 @@ export default function ServiceChargesPage() {
                       <div>
                         <span className="text-gray-600">Amount (incl. tax):</span>
                         <div className="font-medium text-lg text-ghana-gold">
-                          ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId))}
+                          ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt))}
                         </div>
                       </div>
                     </div>
@@ -1158,7 +1180,7 @@ export default function ServiceChargesPage() {
                       </span>
                     </div>
                     {(() => {
-                      const due = serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId);
+                      const due = serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt);
                       return (
                         <>
                           {paymentData.amount < due && (

@@ -958,7 +958,7 @@ class FrontOfficeStore {
 
   private getTaxRates() { return folioHelpers.getTaxRates(this as any); }
 
-  addCharge(reservationId: string, description: string, amount: number) { folioHelpers.addCharge(this as any, reservationId, description, amount); }
+  addCharge(reservationId: string, description: string, amount: number, forceExempt?: boolean) { folioHelpers.addCharge(this as any, reservationId, description, amount, forceExempt); }
 
   addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: { invoiceId?: string; creditApplied?: number; notes?: string; processedBy?: string; ref?: string; }) {
     return folioHelpers.addPayment(this as any, reservationId, method, amount, options);

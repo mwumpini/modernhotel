@@ -476,11 +476,14 @@ export function getTaxRates(_self: StoreLike) {
 
 /**
  * Convenience: add a simple charge to a reservation’s folio and emit events.
+ * `forceExempt` lets a caller mark this one charge tax-free even when the
+ * reservation itself isn't exempt (e.g. a complimentary item) — it only ever
+ * adds exemption, never removes it from an already tax-exempt reservation.
  */
-export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number) {
+export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number, forceExempt?: boolean) {
 	const f = getOrCreateFolio(self, reservationId);
 	const reservation = self.reservations?.find((r: any) => r.id === reservationId);
-	const tax = computeChargeTax(amount, description, undefined, reservation?.taxExempt);
+	const tax = computeChargeTax(amount, description, undefined, reservation?.taxExempt || forceExempt);
 	f.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description, amount, tax } as any);
 	updateFolioBalances(self, f);
 	self.notify();
