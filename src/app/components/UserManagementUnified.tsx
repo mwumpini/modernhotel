@@ -29,7 +29,9 @@ import {
   Tabs,
   Tab,
   Badge,
-  Checkbox
+  Checkbox,
+  Accordion,
+  AccordionItem
 } from "@heroui/react";
 import { useSettingsStore } from '../lib/settings/store';
 import { applyTheme, type AppTheme } from '../lib/theme/applyTheme';
@@ -574,6 +576,11 @@ export default function UserManagementUnified() {
         : prev.permissions.filter(p => p !== actionId),
     }));
   };
+
+  const countSelectedExtras = (mod: typeof PERMISSION_MODULES[number]) =>
+    isModuleFullAccess(mod.fullAccessId)
+      ? mod.extra.length
+      : mod.extra.filter(a => isActionChecked(mod, a.id)).length;
 
   const handleDeleteRole = (roleId: string) => {
     if (window.confirm('Delete this role? Users assigned to it will remain with the role id.')) {
@@ -1140,24 +1147,43 @@ export default function UserManagementUnified() {
                 </div>
 
                 {PERMISSION_MODULES.some((m) => m.extra.length > 0) && (
-                  <div className={`mt-3 space-y-2 ${hasFullSystemAccess ? 'opacity-50 pointer-events-none' : ''}`}>
-                    <div className="text-sm font-medium text-default-600">Other permissions</div>
-                    {PERMISSION_MODULES.filter((m) => m.extra.length > 0).map((mod) => (
-                      <div key={mod.key} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm border rounded-lg px-3 py-2">
-                        <span className="text-default-500 w-40 shrink-0">{mod.icon} {mod.label}</span>
-                        {mod.extra.map((action) => (
-                          <Checkbox
-                            key={action.id}
-                            size="sm"
-                            isSelected={isActionChecked(mod, action.id)}
-                            isDisabled={isModuleFullAccess(mod.fullAccessId)}
-                            onValueChange={(v) => toggleAction(action.id, v)}
+                  <div className={`mt-3 ${hasFullSystemAccess ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <div className="text-sm font-medium text-default-600 mb-2">
+                      Specific actions <span className="text-default-400 font-normal">— granted on top of View/Create/Edit/Delete above</span>
+                    </div>
+                    <Accordion variant="bordered" itemClasses={{ title: 'text-sm' }}>
+                      {PERMISSION_MODULES.filter((m) => m.extra.length > 0).map((mod) => {
+                        const selected = countSelectedExtras(mod);
+                        return (
+                          <AccordionItem
+                            key={mod.key}
+                            title={
+                              <span>
+                                <span className="mr-1">{mod.icon}</span>
+                                {mod.label}
+                                <span className="text-default-400 ml-2 text-xs">
+                                  {selected > 0 ? `${selected}/${mod.extra.length} selected` : `${mod.extra.length} actions`}
+                                </span>
+                              </span>
+                            }
                           >
-                            {action.label}
-                          </Checkbox>
-                        ))}
-                      </div>
-                    ))}
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1 pb-2">
+                              {mod.extra.map((action) => (
+                                <Checkbox
+                                  key={action.id}
+                                  size="sm"
+                                  isSelected={isActionChecked(mod, action.id)}
+                                  isDisabled={isModuleFullAccess(mod.fullAccessId)}
+                                  onValueChange={(v) => toggleAction(action.id, v)}
+                                >
+                                  {action.label}
+                                </Checkbox>
+                              ))}
+                            </div>
+                          </AccordionItem>
+                        );
+                      })}
+                    </Accordion>
                   </div>
                 )}
               </div>
