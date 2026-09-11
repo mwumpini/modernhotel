@@ -56,6 +56,32 @@ function deleteRoleFromApi(roleId: string) {
   }).catch((e) => console.warn('[Settings] Failed to delete role:', e));
 }
 
+// Deletes the real account behind a Settings > User Management row, if there
+// is one (see /api/users — GET is what merges real accounts into `users` on
+// load in the first place; ids that don't correspond to a real account, like
+// this file's own local demo defaults, just 404 harmlessly here). The server
+// independently re-checks settings.delete and refuses to delete the caller's
+// own account or the tenant's last administrator, so this can't be bypassed
+// by a stale/hidden Delete button either.
+async function deleteUserFromApi(userId: string): Promise<string | null> {
+  if (typeof window === 'undefined') return null;
+  const t = getClientTenantSubdomain();
+  if (!t) return null;
+  try {
+    const res = await fetch(`/api/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+      headers: { 'x-tenant-subdomain': t },
+    });
+    if (res.ok) return null;
+    if (res.status === 404) return null; // not a real account — nothing to reject
+    const data = await res.json().catch(() => null);
+    return data?.error || 'Failed to delete user';
+  } catch (e) {
+    console.warn('[Settings] Failed to delete user:', e);
+    return 'Failed to delete user';
+  }
+}
+
 export interface CountryCompliance {
   countryCode: string;
   countryName: string;
@@ -1182,7 +1208,8 @@ interface SettingsStore extends SystemSettings {
   // User Management
   addUser: (user: Omit<User, 'id' | 'createdAt' | 'updatedAt'>) => void;
   updateUser: (userId: string, updates: Partial<User>) => void;
-  deleteUser: (userId: string) => void;
+  /** Resolves to an error message if the server refused the delete (see /api/users/[id]), null on success. */
+  deleteUser: (userId: string) => Promise<string | null>;
   setCurrentUser: (user: User) => void;
   
   // User Profile Management
@@ -2393,6 +2420,41 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
             set({ roles: Array.from(byId.values()) });
           })
           .catch((e) => console.warn('[Settings] Failed to hydrate roles:', e));
+
+        // Pull the real, NextAuth-authenticated accounts (see /api/users) and
+        // replace this file's local demo `users` entirely — those ids ('admin_001'
+        // etc.) never correspond to a real account, so once real ones are
+        // available they're the only list worth showing (and the only one
+        // Delete can act on for real — see deleteUserFromApi above).
+        fetch('/api/users', { headers: { 'x-tenant-subdomain': t } })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (!Array.isArray(data?.users) || data.users.length === 0) return;
+            const mapped: User[] = data.users.map((u: any) => {
+              const [firstName, ...rest] = String(u.name || u.email).split(' ');
+              return {
+                id: u.id,
+                username: u.email,
+                email: u.email,
+                firstName: firstName || u.email,
+                lastName: rest.join(' '),
+                roleId: u.role,
+                isActive: u.isActive,
+                lastLogin: u.lastLoginAt || undefined,
+                createdAt: u.createdAt,
+                updatedAt: u.updatedAt,
+                preferences: defaultSettings.users[0].preferences,
+                profile: { avatar: '', phone: '', address: '', department: '', position: '', employeeId: '' },
+                security: {
+                  failedLoginAttempts: 0,
+                  accountLocked: false,
+                  twoFactorEnabled: false,
+                },
+              };
+            });
+            set({ users: mapped });
+          })
+          .catch((e) => console.warn('[Settings] Failed to hydrate users:', e));
       }
 
     } catch (error) {
@@ -3177,12 +3239,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     get().publish();
   },
   
-  deleteUser: (userId) => {
+  deleteUser: async (userId) => {
+    const error = await deleteUserFromApi(userId);
+    if (error) return error;
     const state = get();
     const newUsers = state.users.filter(user => user.id !== userId);
     set({ users: newUsers });
     get().saveSettings();
     get().publish();
+    return null;
   },
   
   setCurrentUser: (user) => {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
-import { requireAuth } from '@/app/lib/api/auth-guard'
+import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 
 // `id` here is the role's `code` (the client-side UserRole.id, e.g. 'admin'
@@ -39,12 +39,27 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const perm = await requirePermission(request, 'settings.delete')
+    if (!perm.ok) return perm.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
     if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
 
     const { id: code } = await params
+
+    // A role in active use is load-bearing for those users' own auth checks —
+    // deleting it out from under them would leave requirePermission() unable
+    // to resolve anything for them at all, denying every action instead of
+    // just the ones they shouldn't have.
+    const usersWithRole = await prisma.user.count({ where: { tenantId: ctx.tenantId, role: code } })
+    if (usersWithRole > 0) {
+      return NextResponse.json(
+        { error: `${usersWithRole} user(s) still have this role assigned — reassign them first` },
+        { status: 400 },
+      )
+    }
+
     const role = await prisma.role.delete({
       where: { tenantId_code: { tenantId: ctx.tenantId, code } },
     }).catch(() => null)

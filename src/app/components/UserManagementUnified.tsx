@@ -251,11 +251,14 @@ export default function UserManagementUnified() {
     resetForm();
   };
 
-  const handleDeleteUser = (userId: string) => {
+  const handleDeleteUser = async (userId: string) => {
     // Deleting a user is permanent and removes their access outright, so it's
     // gated on its own permission (shared with role deletion below) rather
     // than general settings.* access — re-checked here in case the button
-    // that normally hides for this role was somehow still reachable.
+    // that normally hides for this role was somehow still reachable. The
+    // server independently re-checks this and also refuses to delete the
+    // caller's own account or the tenant's last administrator — deleteUser()
+    // surfaces that rejection here rather than optimistically removing the row.
     if (!hasPermission('settings.delete')) {
       window.alert("You don't have permission to delete users.");
       return;
@@ -263,7 +266,8 @@ export default function UserManagementUnified() {
     console.log('🔧 [UserManagementUnified] Attempting to delete user:', { userId });
     if (window.confirm('Are you sure you want to delete this user?')) {
       console.log('🔧 [UserManagementUnified] User deletion confirmed, proceeding with delete');
-      deleteUser(userId);
+      const error = await deleteUser(userId);
+      if (error) window.alert(error);
     } else {
       console.log('🔧 [UserManagementUnified] User deletion cancelled by user');
     }
