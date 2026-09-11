@@ -138,6 +138,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [activityPage, setActivityPage] = useState<number>(1);
   const [activityRowsPerPage, setActivityRowsPerPage] = useState<number>(10);
+  const [activitySearch, setActivitySearch] = useState<string>('');
+  const [activityStatusFilter, setActivityStatusFilter] = useState<string>('all');
   const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: number }>>([]);
   const [tipAmount, setTipAmount] = useState<number>(0);
   const [settleRoomSearch, setSettleRoomSearch] = useState<string>('');
@@ -445,10 +447,32 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     return sorted;
   }, [orders, aliases, menuIdToCategory, waiters, sortKey, sortDirection]);
 
-  const totalActivityPages = Math.max(1, Math.ceil((sortedOrders.length || 0) / (activityRowsPerPage || 10)));
+  const activityStatusOptions = useMemo(
+    () => Array.from(new Set(sortedOrders.map(({ order, item }) => item.status || order.status))).sort(),
+    [sortedOrders]
+  );
+
+  const filteredActivityRows = useMemo(() => {
+    const term = activitySearch.trim().toLowerCase();
+    return sortedOrders.filter(({ order, item }) => {
+      const status = item.status || order.status;
+      if (activityStatusFilter !== 'all' && status !== activityStatusFilter) return false;
+      if (!term) return true;
+      const haystack = [
+        order.orderNumber, order.id, item.name, order.guestName, order.table, order.roomNumber,
+        waiters.find(w => w.id === order.waiterId)?.name || order.waiterId,
+      ].filter(Boolean).join(' ').toLowerCase();
+      return haystack.includes(term);
+    });
+  }, [sortedOrders, activitySearch, activityStatusFilter, waiters]);
+
+  const totalActivityPages = Math.max(1, Math.ceil((filteredActivityRows.length || 0) / (activityRowsPerPage || 10)));
   React.useEffect(() => {
     if (activityPage > totalActivityPages) setActivityPage(totalActivityPages);
-  }, [activityRowsPerPage, sortedOrders.length, totalActivityPages, activityPage]);
+  }, [activityRowsPerPage, filteredActivityRows.length, totalActivityPages, activityPage]);
+  React.useEffect(() => {
+    setActivityPage(1);
+  }, [activitySearch, activityStatusFilter]);
 
   const openActivityModal = (o: FBOrder, it: any) => {
     setActivitySelected({ order: o, item: it });
@@ -1379,6 +1403,32 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 </div>
               </CardHeader>
           <CardBody>
+                  <div className="flex flex-wrap items-center gap-2 mb-3">
+                    <Input
+                      size="sm"
+                      className="w-64"
+                      placeholder="Search order #, item, customer, table, waiter..."
+                      value={activitySearch}
+                      onChange={(e) => setActivitySearch(e.target.value)}
+                      startContent={<span className="text-gray-400">🔍</span>}
+                      isClearable
+                      onClear={() => setActivitySearch('')}
+                    />
+                    <Select
+                      size="sm"
+                      label="Status"
+                      selectedKeys={[activityStatusFilter]}
+                      onSelectionChange={(k) => setActivityStatusFilter(Array.from(k as Set<string>)[0] || 'all')}
+                      className="w-40"
+                    >
+                      <SelectItem key="all">All statuses</SelectItem>
+                      <>
+                        {activityStatusOptions.map((s) => (
+                          <SelectItem key={s} className="capitalize">{s}</SelectItem>
+                        ))}
+                      </>
+                    </Select>
+                  </div>
                             <div className="w-full overflow-x-auto max-h-[50vh] overflow-y-auto">
                   <Table aria-label="POS Activity Table - item level log" className="min-w-[1200px]">
                     <TableHeader>
@@ -1579,8 +1629,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       </TableColumn>
                       <TableColumn>ACTIONS</TableColumn>
                     </TableHeader>
-                    <TableBody>
-                      {sortedOrders.slice((activityPage - 1) * activityRowsPerPage, activityPage * activityRowsPerPage).map(({ order: o, item: it }) => (
+                    <TableBody emptyContent="No matching orders.">
+                      {filteredActivityRows.slice((activityPage - 1) * activityRowsPerPage, activityPage * activityRowsPerPage).map(({ order: o, item: it }) => (
                         <TableRow key={`${o.id}-${it.id}`} onDoubleClick={() => openActivityModal(o, it)}>
                           <TableCell>{o.orderNumber || o.id}</TableCell>
                           <TableCell>{o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}</TableCell>
