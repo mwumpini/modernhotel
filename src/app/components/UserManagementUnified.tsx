@@ -39,7 +39,7 @@ import type { UserPreferences } from '../lib/settings/store';
 import { PERMISSION_MODULES, FULL_SYSTEM_ACCESS } from '../lib/settings/permissionCatalog';
 
 export default function UserManagementUnified() {
-  const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, updateUserSecurity, changePassword, addRole, updateRole, deleteRole } = useSettingsStore();
+  const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, updateUserSecurity, changePassword, addRole, updateRole, deleteRole, hasPermission } = useSettingsStore();
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [selectedUser, setSelectedUser] = useState<{ id: string; username: string; email: string; firstName: string; lastName: string; roleId: string; isActive: boolean; profile?: { phone?: string; address?: string; department?: string; position?: string; employeeId?: string; bio?: string } } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -252,6 +252,14 @@ export default function UserManagementUnified() {
   };
 
   const handleDeleteUser = (userId: string) => {
+    // Deleting a user is permanent and removes their access outright, so it's
+    // gated on its own permission (shared with role deletion below) rather
+    // than general settings.* access — re-checked here in case the button
+    // that normally hides for this role was somehow still reachable.
+    if (!hasPermission('settings.delete')) {
+      window.alert("You don't have permission to delete users.");
+      return;
+    }
     console.log('🔧 [UserManagementUnified] Attempting to delete user:', { userId });
     if (window.confirm('Are you sure you want to delete this user?')) {
       console.log('🔧 [UserManagementUnified] User deletion confirmed, proceeding with delete');
@@ -476,14 +484,16 @@ export default function UserManagementUnified() {
                       <Button size="sm" variant="flat" onPress={() => handleEditUser(user)}>
                         Edit
                       </Button>
-                      <Button 
-                        size="sm" 
-                        color="danger" 
-                        variant="flat" 
-                        onPress={() => handleDeleteUser(user.id)}
-                      >
-                        Delete
-                      </Button>
+                      {hasPermission('settings.delete') && (
+                        <Button
+                          size="sm"
+                          color="danger"
+                          variant="flat"
+                          onPress={() => handleDeleteUser(user.id)}
+                        >
+                          Delete
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
@@ -583,6 +593,10 @@ export default function UserManagementUnified() {
       : mod.extra.filter(a => isActionChecked(mod, a.id)).length;
 
   const handleDeleteRole = (roleId: string) => {
+    if (!hasPermission('settings.delete')) {
+      window.alert("You don't have permission to delete roles.");
+      return;
+    }
     if (window.confirm('Delete this role? Users assigned to it will remain with the role id.')) {
       console.log('🔧 [UserManagementUnified] Deleting role:', { roleId });
       deleteRole(roleId);
@@ -645,9 +659,11 @@ export default function UserManagementUnified() {
                         <Button size="sm" variant="flat" onPress={() => handleEditRole(role)}>
                           Edit
                         </Button>
-                        <Button size="sm" color="danger" variant="flat" onPress={() => handleDeleteRole(role.id)}>
-                          Delete
-                        </Button>
+                        {hasPermission('settings.delete') && (
+                          <Button size="sm" color="danger" variant="flat" onPress={() => handleDeleteRole(role.id)}>
+                            Delete
+                          </Button>
+                        )}
                       </div>
                     </TableCell>
                   </TableRow>

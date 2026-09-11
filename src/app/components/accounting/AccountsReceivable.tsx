@@ -1772,6 +1772,14 @@ export default function AccountsReceivable() {
 	};
 
 	const handleVoidInvoice = async (inv: any) => {
+		// Posts a reversing GL entry against a live invoice — irreversible and
+		// financially significant, so it's gated on its own permission rather
+		// than general accounting.* access, re-checked here in case the button
+		// that normally hides for this role was somehow still reachable.
+		if (!useSettingsStore.getState().hasPermission('accounting.void-transaction')) {
+			setFormError("You don't have permission to void invoices.");
+			return;
+		}
 		const activePay = payments.filter((p) => p.invoiceId === inv.id && p.status !== 'Void');
 		if (activePay.length > 0) {
 			setFormError('Void all receipts and WHT payments on this invoice first');
@@ -1789,6 +1797,10 @@ export default function AccountsReceivable() {
 	};
 
 	const handleVoidReceipt = async (receipt: StoredReceiptPayment) => {
+		if (!useSettingsStore.getState().hasPermission('accounting.void-transaction')) {
+			setFormError("You don't have permission to void receipts.");
+			return;
+		}
 		if (receipt.status === 'Void') return;
 		if (!receiptCanVoid(receipt)) {
 			setFormError('Only manual or in-house folio receipts can be voided from here');
@@ -2364,7 +2376,7 @@ export default function AccountsReceivable() {
 										{getPaginatedData(filteredReceipts, page).map((r: any) => {
 											const source = getSourceLabel(r.sourceModule);
 											const canEdit = receiptCanEdit(r);
-											const canVoid = receiptCanVoid(r);
+											const canVoid = receiptCanVoid(r) && settings.hasPermission('accounting.void-transaction');
 											return (
 												<TableRow key={r.id} className="cursor-pointer hover:bg-gray-50" onClick={() => openReceiptDetail(r)}>
 													<TableCell>
@@ -3825,7 +3837,7 @@ export default function AccountsReceivable() {
 											Convert to sales invoice
 										</Button>
 									)}
-									{!isProforma && selectedInvoice.status !== 'Void' && isManualArApSource(selectedInvoice.sourceModule) && invoiceReceipts.length === 0 && (
+									{!isProforma && selectedInvoice.status !== 'Void' && isManualArApSource(selectedInvoice.sourceModule) && invoiceReceipts.length === 0 && settings.hasPermission('accounting.void-transaction') && (
 										<Button color="danger" variant="flat" onPress={() => handleVoidInvoice(selectedInvoice)}>
 											Void invoice
 										</Button>
@@ -4035,7 +4047,7 @@ export default function AccountsReceivable() {
 											Edit
 										</Button>
 									)}
-									{selectedReceipt.status !== 'Void' && receiptCanVoid(selectedReceipt) && (
+									{selectedReceipt.status !== 'Void' && receiptCanVoid(selectedReceipt) && settings.hasPermission('accounting.void-transaction') && (
 										<Button color="danger" variant="flat" onPress={() => handleVoidReceipt(selectedReceipt)}>
 											Void receipt
 										</Button>

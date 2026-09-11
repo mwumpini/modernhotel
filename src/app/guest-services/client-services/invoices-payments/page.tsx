@@ -837,6 +837,20 @@ export default function InvoicesPaymentsPage() {
     onSplitOpen();
   };
 
+  // Voiding a folio charge is irreversible (it posts an offsetting negative
+  // line rather than deleting anything) and directly changes what the guest
+  // owes, so it's gated behind its own permission rather than the general
+  // frontdesk.* module access — re-checked here (not just at the button)
+  // so a stale render or a direct call can't bypass it.
+  const handleVoidCharge = (reservationId: string, chargeId: string) => {
+    if (!useSettingsStore.getState().hasPermission('frontdesk.void-charge')) {
+      showNotification('error', "You don't have permission to void charges.");
+      return;
+    }
+    if (!window.confirm('Void this charge? This posts a reversing entry and cannot be undone.')) return;
+    frontOfficeStore.voidCharge(reservationId, chargeId, 'User action');
+  };
+
   const handleCreateInvoice = () => {
     const { subtotal, taxAmount, totalAmount } = calculateInvoiceTotals();
     // Create or link a reservation so folio/invoice stays consistent
@@ -2200,7 +2214,9 @@ export default function InvoicesPaymentsPage() {
                                   <TableCell className="text-right">₵{formatMoney((charge.tax || 0))}</TableCell>
                                   <TableCell>
                                     <div className="flex gap-2">
-                                      <Button size="sm" variant="light" onPress={() => frontOfficeStore.voidCharge(selectedFolio.id, charge.id, 'User action')}>Void</Button>
+                                      {settings.hasPermission('frontdesk.void-charge') && (
+                                        <Button size="sm" variant="light" onPress={() => handleVoidCharge(selectedFolio.id, charge.id)}>Void</Button>
+                                      )}
                                       <Button size="sm" variant="light" color="secondary" onPress={() => openSplitModal(charge.id, charge.amount)}>Split</Button>
                                       {reservations.length > 0 && (
                                         <Button size="sm" variant="light" onPress={() => frontOfficeStore.transferCharge(selectedFolio.id, charge.id, reservations[0].id, 'User action')}>Transfer</Button>
