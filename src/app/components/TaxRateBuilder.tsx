@@ -761,6 +761,16 @@ export default function TaxRateBuilder() {
   // editable as each module gets wired onto Tax Types (only Purchase Orders so far).
   // 'sales' isn't module-specific: every sales-side screen (rooms, F&B, events) applies
   // whichever sales-domain rules match automatically, with no per-transaction picker.
+  const taxAreaLabel = (domain: string | undefined): string => {
+    switch (domain || 'sales') {
+      case 'sales': return 'Sales';
+      case 'purchases': return 'Purchases';
+      case 'payroll': return 'Payroll';
+      case 'custom': return 'Unrestricted';
+      default: return domain || 'Sales';
+    }
+  };
+
   const getTaxTypeUsage = (domain: string | undefined): string | null => {
     switch (domain || 'sales') {
       case 'purchases': return 'Purchase Orders';
@@ -794,7 +804,7 @@ export default function TaxRateBuilder() {
             </div>
           </div>
           <div>
-            <span className="text-sm font-medium text-gray-700">Domain</span>
+            <span className="text-sm font-medium text-gray-700">Tax Area</span>
             <Select
               className="mt-2"
               selectedKeys={[filterDomain]}
@@ -805,8 +815,7 @@ export default function TaxRateBuilder() {
               <SelectItem key="sales">Sales</SelectItem>
               <SelectItem key="purchases">Purchases</SelectItem>
               <SelectItem key="payroll">Payroll</SelectItem>
-              <SelectItem key="corporate">Corporate</SelectItem>
-              <SelectItem key="custom">Custom</SelectItem>
+              <SelectItem key="custom">Unrestricted</SelectItem>
             </Select>
           </div>
           <div>
@@ -983,7 +992,7 @@ export default function TaxRateBuilder() {
                             <div>
                               <p className={`font-medium ${selected ? 'text-ghana-green' : ''}`}>{t.name}</p>
                               <p className="text-xs text-gray-500 mt-0.5">
-                                {(t as any).domain || 'sales'} · {(t as any).operation || 'both'}
+                                {taxAreaLabel((t as any).domain)} · {(t as any).operation || 'both'}
                               </p>
                               {getTaxTypeUsage((t as any).domain) && (
                                 <p className="text-xs text-ghana-green mt-0.5">Used in: {getTaxTypeUsage((t as any).domain)}</p>
@@ -1031,11 +1040,11 @@ export default function TaxRateBuilder() {
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 <Input label="Amount" type="number" value={String(sim.amount)} onChange={(e) => setSim({ ...sim, amount: parseFloat(e.target.value || '0') })} variant="bordered" size="sm" />
                 <Input label="Category" value={sim.category} onChange={(e) => setSim({ ...sim, category: e.target.value })} variant="bordered" size="sm" />
-                <Select label="Domain" selectedKeys={[sim.domain]} onSelectionChange={(k) => setSim({ ...sim, domain: Array.from(k)[0] as any })} variant="bordered" size="sm">
+                <Select label="Tax Area" selectedKeys={[sim.domain]} onSelectionChange={(k) => setSim({ ...sim, domain: Array.from(k)[0] as any })} variant="bordered" size="sm">
                   <SelectItem key="sales">Sales</SelectItem>
                   <SelectItem key="purchases">Purchases</SelectItem>
                   <SelectItem key="payroll">Payroll</SelectItem>
-                  <SelectItem key="corporate">Corporate</SelectItem>
+                  <SelectItem key="custom">Unrestricted</SelectItem>
                 </Select>
                 <Select label="Centre" selectedKeys={[sim.operation]} onSelectionChange={(k) => setSim({ ...sim, operation: Array.from(k)[0] as any })} variant="bordered" size="sm">
                   <SelectItem key="external">Revenue</SelectItem>
@@ -1094,13 +1103,12 @@ export default function TaxRateBuilder() {
                   </Select>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Domain <span className="text-danger-600">*</span></label>
+                  <label className="text-sm font-medium">Tax Area <span className="text-danger-600">*</span></label>
                   <Select selectedKeys={[typeForm.domain]} onSelectionChange={(k) => setTypeForm(prev => ({ ...prev, domain: Array.from(k)[0] as any }))} isRequired variant="bordered">
                     <SelectItem key="sales">Sales</SelectItem>
                     <SelectItem key="purchases">Purchases</SelectItem>
                     <SelectItem key="payroll">Payroll</SelectItem>
-                    <SelectItem key="corporate">Corporate</SelectItem>
-                    <SelectItem key="custom">Custom</SelectItem>
+                    <SelectItem key="custom">Unrestricted</SelectItem>
                   </Select>
                 </div>
               </div>
@@ -1182,7 +1190,7 @@ export default function TaxRateBuilder() {
                           }} />
                           <div>
                             <div className="text-sm font-medium">{r.name}</div>
-                            <div className="text-xs text-gray-500">GL {r.glCode} • {(r as any).domain || 'sales'} • {(r as any).operation || 'both'} • Priority {r.priority ?? 100}</div>
+                            <div className="text-xs text-gray-500">GL {r.glCode} • {taxAreaLabel((r as any).domain)} • {(r as any).operation || 'both'} • Priority {r.priority ?? 100}</div>
                           </div>
                         </div>
                         <Chip size="sm" variant="flat">{r.rate}%</Chip>
@@ -1521,8 +1529,8 @@ export default function TaxRateBuilder() {
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-medium flex items-center gap-1">Domain
-                    <Tooltip content="Business area where the rule applies (Sales/Revenue, Purchases/Procurement, Payroll, Corporate, or Custom). Centre (Cost vs Revenue) is chosen separately.">
+                  <label className="text-sm font-medium flex items-center gap-1">Tax Area
+                    <Tooltip content="Which part of the business this rule belongs to: Sales/Revenue, Purchases/Procurement, Payroll, or Unrestricted (matches regardless of area). Centre (Cost vs Revenue) is chosen separately.">
                       <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
                     </Tooltip>
                   </label>
@@ -1538,8 +1546,7 @@ export default function TaxRateBuilder() {
                     <SelectItem key="sales">Sales</SelectItem>
                     <SelectItem key="purchases">Purchases</SelectItem>
                     <SelectItem key="payroll">Payroll</SelectItem>
-                    <SelectItem key="corporate">Corporate</SelectItem>
-                    <SelectItem key="custom">Custom</SelectItem>
+                    <SelectItem key="custom">Unrestricted</SelectItem>
                   </Select>
                   {Boolean(selectedTypeId || formData.typeId) && (
                     <div className="text-xs text-gray-500 mt-1">Inherited from selected tax type</div>
