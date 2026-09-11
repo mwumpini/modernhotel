@@ -350,7 +350,8 @@ export default function TaxRateBuilder() {
         rounding: 'none',
         roundTo: 0.01,
         domain: 'sales',
-        operation: 'both'
+        operation: 'both',
+        effect: 'add'
       });
       setIsEditMode(false);
     }
@@ -755,6 +756,20 @@ export default function TaxRateBuilder() {
     [taxRules, selectedCountry, selectedTypeId, filterOperation, filterDomain, searchTerm]
   );
 
+  // Where a Tax Type of a given domain is actually selectable/applied in the rest of the
+  // app — a small, hand-maintained registry rather than a live scan, so it's obviously
+  // editable as each module gets wired onto Tax Types (only Purchase Orders so far).
+  // 'sales' isn't module-specific: every sales-side screen (rooms, F&B, events) applies
+  // whichever sales-domain rules match automatically, with no per-transaction picker.
+  const getTaxTypeUsage = (domain: string | undefined): string | null => {
+    switch (domain || 'sales') {
+      case 'purchases': return 'Purchase Orders';
+      case 'sales': return 'Applied automatically — Rooms, F&B, Events & Conferences';
+      case 'payroll': return 'Payroll (PAYE, SSNIT, Tier 1–3)';
+      default: return null;
+    }
+  };
+
   const countryTypesCount = (taxTypes || []).filter((t) => t.countryCode === selectedCountry).length;
   const selectedTypeName = selectedTypeId
     ? (taxTypes || []).find((t) => t.id === selectedTypeId)?.name
@@ -970,6 +985,9 @@ export default function TaxRateBuilder() {
                               <p className="text-xs text-gray-500 mt-0.5">
                                 {(t as any).domain || 'sales'} · {(t as any).operation || 'both'}
                               </p>
+                              {getTaxTypeUsage((t as any).domain) && (
+                                <p className="text-xs text-ghana-green mt-0.5">Used in: {getTaxTypeUsage((t as any).domain)}</p>
+                              )}
                             </div>
                             <Chip size="sm" variant="flat">{count}</Chip>
                           </div>
@@ -1549,6 +1567,26 @@ export default function TaxRateBuilder() {
                   {Boolean(selectedTypeId || formData.typeId) && (
                     <div className="text-xs text-gray-500 mt-1">Inherited from selected tax type</div>
                   )}
+                </div>
+                <div>
+                  <label className="text-sm font-medium flex items-center gap-1">Effect
+                    <Tooltip content="Add: increases the total (most taxes — VAT, NHIL, levies). Subtract: reduces what's paid out (e.g. resident Withholding Tax). Exclude from Total: tracked for reporting but not added/subtracted (e.g. a zero-rated line). Informational: shown on the document but doesn't affect any total.">
+                      <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
+                    </Tooltip>
+                  </label>
+                  <Select
+                    selectedKeys={[formData.effect || 'add']}
+                    onSelectionChange={(keys) => {
+                      const selectedKey = Array.from(keys)[0] as any;
+                      setFormData(prev => ({ ...prev, effect: selectedKey }));
+                    }}
+                    variant="bordered"
+                  >
+                    <SelectItem key="add">Add to Total</SelectItem>
+                    <SelectItem key="subtract">Subtract (Withholding)</SelectItem>
+                    <SelectItem key="exclude_total">Exclude from Total</SelectItem>
+                    <SelectItem key="informational">Informational Only</SelectItem>
+                  </Select>
                 </div>
                 <div>
                   <label className="text-sm font-medium">Effective From</label>
