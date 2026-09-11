@@ -56,9 +56,14 @@ export function resolveNightlyNet(price: number, priceType?: string): number {
   return price;
 }
 
-/** Tax-inclusive nightly from a rate-plan price and its priceType. */
-export function resolveNightlyGross(price: number, priceType?: string): number {
+/**
+ * Tax-inclusive nightly from a rate-plan price and its priceType. `taxExempt` (from the
+ * reservation — government/diplomatic/NGO guests) makes gross collapse to net: the
+ * room's underlying value doesn't change, but no tax is added on top of it.
+ */
+export function resolveNightlyGross(price: number, priceType?: string, taxExempt?: boolean): number {
   if (!price || price <= 0) return 0;
+  if (taxExempt) return resolveNightlyNet(price, priceType);
   if (priceType === 'gross_total') return price;
   return grossFromExclusive(price);
 }
@@ -66,9 +71,13 @@ export function resolveNightlyGross(price: number, priceType?: string): number {
 /**
  * Convert a gross-derived fee/penalty into a tax-exclusive folio amount.
  * Flat fees entered by staff are already exclusive and should pass through unchanged.
+ * For an exempt reservation, `grossAmount` was already computed tax-free (equal to net)
+ * by whatever derived it, so it passes through unchanged too rather than incorrectly
+ * backing out tax a second time.
  */
-export function folioAmountFromGrossDerived(grossAmount: number): number {
+export function folioAmountFromGrossDerived(grossAmount: number, taxExempt?: boolean): number {
   if (!grossAmount || grossAmount <= 0) return 0;
+  if (taxExempt) return grossAmount;
   return exclusiveFromGross(grossAmount);
 }
 

@@ -462,6 +462,19 @@ export interface Reservation {
   
   rateBreakdown?: { date: string; base: number; extraAdult?: number; extraChild?: number; total: number }[];
   deposit?: { amount: number; method: 'Cash'|'Card'|'Mobile Money'; date: string };
+
+  // Tax exemption — government/diplomatic/NGO guests legally exempt from VAT/NHIL/
+  // GETFund/Tourism Levy. When true, room charges and folio service charges for this
+  // reservation are computed with zero tax (see frontoffice/helpers/rates.ts and
+  // helpers/folio.ts). Mirrors the same record Events & Conferences keeps for quotes.
+  taxExempt?: boolean;
+  taxExemptionType?: 'government' | 'ngo' | 'diplomatic' | 'other';
+  taxExemptionNumber?: string;
+  taxExemptionAuthority?: string;
+  taxExemptionExpiry?: string; // ISO date
+  taxExemptionDocuments?: string[]; // uploaded file URLs (AttachmentUpload)
+  taxExemptionNotes?: string;
+
   createdAt: string;
   updatedAt: string;
 }

@@ -85,6 +85,7 @@ interface CheckInGuest {
   serviceCharges?: number;
   otherCharges?: number;
   taxTotal?: number;
+  taxExempt?: boolean;
 }
 
 function formatDate(dateString: string) {
@@ -180,6 +181,7 @@ function CheckInsSection() {
           otherCharges: totals.otherCharges,
           taxTotal: totals.taxTotal,
           roomTotal,                              // gross incl. tax
+          taxExempt: reservation.taxExempt,
         } as CheckInGuest;
       });
     setGuests(data);
@@ -680,6 +682,12 @@ function CheckInsSection() {
                             {selectedFolioGuest.status}
                           </Badge>
                         </div>
+                        {selectedFolioGuest.taxExempt && (
+                          <div>
+                            <div className="text-sm text-gray-600">Tax</div>
+                            <Badge color="secondary" variant="flat">Tax Exempt</Badge>
+                          </div>
+                        )}
                         <div>
                           <div className="text-sm text-gray-600">Arrival</div>
                           <div className="font-medium">

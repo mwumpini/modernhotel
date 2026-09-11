@@ -1079,7 +1079,8 @@ class FrontOfficeStore {
       reservation.arrival,
       reservation.departure,
       plan?.basePrice,
-      (plan as { priceType?: string } | undefined)?.priceType || 'subtotal'
+      (plan as { priceType?: string } | undefined)?.priceType || 'subtotal',
+      reservation.taxExempt
     );
   }
 
@@ -1096,7 +1097,7 @@ class FrontOfficeStore {
   }
 
   // Weekday/weekend rate calculator with per-night seasonal rate-plan overrides.
-  calculateRateBreakdown(roomTypeId: string, arrival: string, departure: string, base?: number, priceType?: string) {
+  calculateRateBreakdown(roomTypeId: string, arrival: string, departure: string, base?: number, priceType?: string, taxExempt?: boolean) {
     const start = new Date(arrival);
     const end = new Date(departure);
     const nightly: { date: string; base: number; total: number }[] = [];
@@ -1142,7 +1143,7 @@ class FrontOfficeStore {
       const net = hasExplicitBase || (activePlan && typeof planBase === 'number')
         ? resolveNightlyNet(rawBase, hasExplicitBase ? resolvedPriceType : planType)
         : rawBase;
-      const gross = resolveNightlyGross(rawBase, resolvedPriceType);
+      const gross = resolveNightlyGross(rawBase, resolvedPriceType, taxExempt);
       nightly.push({
         date: dateStr,
         base: parseFloat(net.toFixed(2)),
@@ -1418,14 +1419,14 @@ class FrontOfficeStore {
 
       const breakdown = res.rateBreakdown?.length
         ? res.rateBreakdown
-        : this.calculateRateBreakdown(res.roomTypeId, res.arrival, res.departure);
+        : this.calculateRateBreakdown(res.roomTypeId, res.arrival, res.departure, undefined, undefined, res.taxExempt);
       const nightlyGross = breakdown[0]?.total ?? 0;
       let charge = 0;
       switch (rm.noShowChargeType) {
-        case 'first_night': charge = folioAmountFromGrossDerived(nightlyGross); break;
+        case 'first_night': charge = folioAmountFromGrossDerived(nightlyGross, res.taxExempt); break;
         case 'percent_reservation': {
           const totalGross = breakdown.reduce((s, d) => s + (d.total || 0), 0);
-          charge = folioAmountFromGrossDerived(Math.max(0, (rm.noShowChargeValue || 0) / 100 * totalGross));
+          charge = folioAmountFromGrossDerived(Math.max(0, (rm.noShowChargeValue || 0) / 100 * totalGross), res.taxExempt);
           break;
         }
         case 'flat': charge = Math.max(0, rm.noShowChargeValue || 0); break;
@@ -1501,7 +1502,10 @@ class FrontOfficeStore {
       reservation.rateBreakdown = this.calculateRateBreakdown(
         reservation.roomTypeId,
         reservation.arrival,
-        reservation.departure
+        reservation.departure,
+        undefined,
+        undefined,
+        reservation.taxExempt
       );
       this.notify();
       this.persistReservationPatch(reservationId, { departure: reservation.departure });

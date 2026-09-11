@@ -32,6 +32,7 @@ import {
 } from "@heroui/react";
 import { Autocomplete, AutocompleteItem } from "@heroui/react";
 import GuestSearchEmptyState from './frontoffice/GuestSearchEmptyState';
+import AttachmentUpload from './shared/AttachmentUpload';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { resolveGuestAddress } from '../lib/frontoffice/helpers/guests';
 import { useSettingsStore } from '../lib/settings/store';
@@ -87,6 +88,15 @@ interface ReservationFormData {
   companyName?: string;
   projectCode?: string;
   costCenter?: string;
+
+  // Tax exemption — government/diplomatic/NGO guests exempt from VAT/NHIL/GETFund/Tourism Levy
+  taxExempt?: boolean;
+  taxExemptionType?: 'government' | 'ngo' | 'diplomatic' | 'other';
+  taxExemptionNumber?: string;
+  taxExemptionAuthority?: string;
+  taxExemptionExpiry?: string;
+  taxExemptionDocuments?: string[];
+  taxExemptionNotes?: string;
 }
 
 interface ReservationsManagerProps {
@@ -539,7 +549,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     billingPersonId: undefined,
     companyName: '',
     projectCode: '',
-    costCenter: ''
+    costCenter: '',
+    taxExempt: false,
+    taxExemptionType: undefined,
+    taxExemptionNumber: '',
+    taxExemptionAuthority: '',
+    taxExemptionExpiry: '',
+    taxExemptionDocuments: [],
+    taxExemptionNotes: ''
   });
 
   useEffect(() => {
@@ -831,7 +848,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       billingPersonId: undefined,
       companyName: '',
       projectCode: '',
-      costCenter: ''
+      costCenter: '',
+      taxExempt: false,
+      taxExemptionType: undefined,
+      taxExemptionNumber: '',
+      taxExemptionAuthority: '',
+      taxExemptionExpiry: '',
+      taxExemptionDocuments: [],
+      taxExemptionNotes: ''
     });
     onOpen();
     // Auto-select default rate plan when room type picked later
@@ -918,7 +942,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         billingPersonId: reservation.billingPersonId || undefined,
         companyName: reservation.companyName || '',
         projectCode: reservation.projectCode || '',
-        costCenter: reservation.costCenter || ''
+        costCenter: reservation.costCenter || '',
+        taxExempt: reservation.taxExempt || false,
+        taxExemptionType: reservation.taxExemptionType || undefined,
+        taxExemptionNumber: reservation.taxExemptionNumber || '',
+        taxExemptionAuthority: reservation.taxExemptionAuthority || '',
+        taxExemptionExpiry: reservation.taxExemptionExpiry || '',
+        taxExemptionDocuments: reservation.taxExemptionDocuments || [],
+        taxExemptionNotes: reservation.taxExemptionNotes || ''
       });
     
     setTabKey('guest');
@@ -1073,6 +1104,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         companyName: formData.companyName,
         projectCode: formData.projectCode,
             costCenter: formData.costCenter,
+            taxExempt: formData.taxExempt,
+            taxExemptionType: formData.taxExemptionType,
+            taxExemptionNumber: formData.taxExemptionNumber,
+            taxExemptionAuthority: formData.taxExemptionAuthority,
+            taxExemptionExpiry: formData.taxExemptionExpiry,
+            taxExemptionDocuments: formData.taxExemptionDocuments,
+            taxExemptionNotes: formData.taxExemptionNotes,
             roomId: bulkGuest.roomId,
             rateBreakdown
           });
@@ -1137,6 +1175,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         companyName: formData.companyName,
         projectCode: formData.projectCode,
         costCenter: formData.costCenter,
+        taxExempt: formData.taxExempt,
+        taxExemptionType: formData.taxExemptionType,
+        taxExemptionNumber: formData.taxExemptionNumber,
+        taxExemptionAuthority: formData.taxExemptionAuthority,
+        taxExemptionExpiry: formData.taxExemptionExpiry,
+        taxExemptionDocuments: formData.taxExemptionDocuments,
+        taxExemptionNotes: formData.taxExemptionNotes,
         rateBreakdown
       };
 
@@ -2413,7 +2458,76 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       </div>
                     )}
                   </div>
-                  
+
+                  {/* Tax Exemption Section */}
+                  <div className="bg-amber-50 p-4 rounded-lg border">
+                    <div className="flex items-center justify-between mb-3">
+                      <h4 className="font-medium text-amber-900">Tax Exemption</h4>
+                      <div className="flex items-center space-x-2">
+                        <span className="text-sm text-gray-600">Tax Exempt</span>
+                        <Switch
+                          isSelected={!!formData.taxExempt}
+                          onValueChange={(val) => setFormData({...formData, taxExempt: val})}
+                        />
+                      </div>
+                    </div>
+                    {formData.taxExempt && (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Exemption Type</label>
+                            <Select
+                              value={formData.taxExemptionType || ''}
+                              onChange={(e) => setFormData({...formData, taxExemptionType: e.target.value as any})}
+                            >
+                              <SelectItem key="government">🏛️ Government</SelectItem>
+                              <SelectItem key="ngo">🤝 NGO</SelectItem>
+                              <SelectItem key="diplomatic">🌐 Diplomatic</SelectItem>
+                              <SelectItem key="other">📋 Other</SelectItem>
+                            </Select>
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Certificate Number</label>
+                            <Input
+                              value={formData.taxExemptionNumber || ''}
+                              onChange={(e) => setFormData({...formData, taxExemptionNumber: e.target.value})}
+                              placeholder="Exemption certificate number"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Issuing Authority</label>
+                            <Input
+                              value={formData.taxExemptionAuthority || ''}
+                              onChange={(e) => setFormData({...formData, taxExemptionAuthority: e.target.value})}
+                              placeholder="e.g. Ghana Revenue Authority"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Expiry Date</label>
+                            <Input
+                              type="date"
+                              value={formData.taxExemptionExpiry || ''}
+                              onChange={(e) => setFormData({...formData, taxExemptionExpiry: e.target.value})}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+                          <Textarea
+                            value={formData.taxExemptionNotes || ''}
+                            onChange={(e) => setFormData({...formData, taxExemptionNotes: e.target.value})}
+                            placeholder="Additional notes about this exemption"
+                          />
+                        </div>
+                        <AttachmentUpload
+                          label="Exemption Documents"
+                          attachments={formData.taxExemptionDocuments || []}
+                          onChange={(attachments) => setFormData({...formData, taxExemptionDocuments: attachments})}
+                        />
+                      </div>
+                    )}
+                  </div>
+
                   {/* Billing Person Section */}
                   <div className="bg-green-50 p-4 rounded-lg border">
                     <div className="flex items-center justify-between mb-3">

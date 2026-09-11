@@ -43,11 +43,15 @@ import { formatMoney } from '../../lib/format/currency';
  * same way (e.g. Laundry -> no Tourism Levy) when the charge is known; omit it for a
  * mixed-category aggregate, where a single per-item category wouldn't apply anyway.
  */
-function serviceChargeGross(amount: number, description?: string): number {
-  return Math.round((amount + computeChargeTax(amount, description)) * 100) / 100;
+function resolveTaxExempt(guestId?: string): boolean | undefined {
+  if (!guestId) return undefined;
+  return frontOfficeStore.reservations.find(r => r.guestId === guestId)?.taxExempt;
 }
-function serviceChargeTax(amount: number, description?: string): number {
-  return computeChargeTax(amount, description);
+function serviceChargeGross(amount: number, description?: string, guestId?: string): number {
+  return Math.round((amount + computeChargeTax(amount, description, undefined, resolveTaxExempt(guestId))) * 100) / 100;
+}
+function serviceChargeTax(amount: number, description?: string, guestId?: string): number {
+  return computeChargeTax(amount, description, undefined, resolveTaxExempt(guestId));
 }
 
 interface ServiceCharge {
@@ -338,8 +342,8 @@ export default function ServiceChargesPage() {
   // tenant reformats, it always looks the same with just the org's own header on top.
   const handlePrintServiceCharge = (charge: ServiceCharge) => {
     const org = buildOrgProfile(useSettingsStore.getState());
-    const gross = serviceChargeGross(charge.amount, charge.description);
-    const tax = serviceChargeTax(charge.amount, charge.description);
+    const gross = serviceChargeGross(charge.amount, charge.description, charge.guestId);
+    const tax = serviceChargeTax(charge.amount, charge.description, charge.guestId);
     const categoryInfo = getCategoryInfo(charge.category);
     const fmt = (n: number) => `₵${formatMoney(n)}`;
 
@@ -473,7 +477,7 @@ export default function ServiceChargesPage() {
     setSelectedCharge(charge);
     setPaymentData(prev => ({
       ...prev,
-      amount: serviceChargeGross(charge.amount, charge.description)
+      amount: serviceChargeGross(charge.amount, charge.description, charge.guestId)
     }));
     setIsPaymentModalOpen(true);
   };
@@ -590,7 +594,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-blue-600">
-              ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description), 0))}
+              ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId), 0))}
             </div>
             <div className="text-sm text-gray-600">Total Charges (incl. tax)</div>
           </CardBody>
@@ -598,7 +602,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-green-600">
-              ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description), 0))}
+              ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId), 0))}
             </div>
             <div className="text-sm text-gray-600">Paid Amount (incl. tax)</div>
           </CardBody>
@@ -606,7 +610,7 @@ export default function ServiceChargesPage() {
         <Card>
           <CardBody className="text-center">
             <div className="text-2xl font-bold text-orange-600">
-              ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description), 0))}
+              ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId), 0))}
             </div>
             <div className="text-sm text-gray-600">Outstanding (incl. tax)</div>
           </CardBody>
@@ -676,10 +680,10 @@ export default function ServiceChargesPage() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount, charge.description))}</div>
+                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount, charge.description, charge.guestId))}</div>
                         {charge.quantity > 1 && (
                           <div className="text-xs text-gray-500">
-                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity, charge.description))} / unit
+                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity, charge.description, charge.guestId))} / unit
                           </div>
                         )}
                       </TableCell>
@@ -997,7 +1001,8 @@ export default function ServiceChargesPage() {
                         <div className="font-medium">
                           ₵{formatMoney(serviceChargeGross(
                             selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount,
-                            selectedCharge.description
+                            selectedCharge.description,
+                            selectedCharge.guestId
                           ))}
                         </div>
                       </div>
@@ -1013,11 +1018,11 @@ export default function ServiceChargesPage() {
                       <div>
                         <div className="text-xs text-gray-500">Total Amount (incl. tax)</div>
                         <div className="text-xs text-gray-500">
-                          Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(serviceChargeTax(selectedCharge.amount, selectedCharge.description))} tax
+                          Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(serviceChargeTax(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId))} tax
                         </div>
                       </div>
                       <div className="text-2xl font-bold text-ghana-gold">
-                        ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description))}
+                        ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId))}
                       </div>
                     </div>
 
@@ -1086,7 +1091,7 @@ export default function ServiceChargesPage() {
                       <div>
                         <span className="text-gray-600">Amount (incl. tax):</span>
                         <div className="font-medium text-lg text-ghana-gold">
-                          ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description))}
+                          ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId))}
                         </div>
                       </div>
                     </div>
@@ -1153,7 +1158,7 @@ export default function ServiceChargesPage() {
                       </span>
                     </div>
                     {(() => {
-                      const due = serviceChargeGross(selectedCharge.amount, selectedCharge.description);
+                      const due = serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId);
                       return (
                         <>
                           {paymentData.amount < due && (

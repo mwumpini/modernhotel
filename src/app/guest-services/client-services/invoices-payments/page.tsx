@@ -2114,6 +2114,12 @@ export default function InvoicesPaymentsPage() {
                           {selectedFolio.status}
                         </Badge>
                       </div>
+                      {selectedFolio.taxExempt && (
+                        <div>
+                          <div className="text-sm text-gray-600">Tax</div>
+                          <Badge color="secondary" variant="flat">Tax Exempt</Badge>
+                        </div>
+                      )}
                       <div>
                         <div className="text-sm text-gray-600">Arrival</div>
                         <div className="font-medium">{new Date(selectedFolio.arrival).toLocaleDateString()}</div>

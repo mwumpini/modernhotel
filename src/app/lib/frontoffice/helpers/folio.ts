@@ -91,8 +91,8 @@ function inferChargeTaxCategory(description?: string, category?: string): string
  * Levy, which should only apply to Room/Hotel/Food/Event, was leaking onto things like
  * laundry). Category-aware matching fixes that as a side effect of the engine switch.
  */
-export function computeChargeTax(amount: number, description?: string, category?: string): number {
-	if (!(amount > 0)) return 0;
+export function computeChargeTax(amount: number, description?: string, category?: string, taxExempt?: boolean): number {
+	if (!(amount > 0) || taxExempt) return 0;
 	const cat = inferChargeTaxCategory(description, category);
 	const { total } = useComplianceStore.getState().calculateTax(amount, cat, SALES_TAX_CONTEXT);
 	return roundMoney2(total - amount);
@@ -298,7 +298,8 @@ export function addFolioCharge(self: StoreLike, folioId: string, charge: { id: s
 	}
 	
 	// Layered Ghana computation sourced from Settings compliance
-	const tax = typeof charge.tax === 'number' ? charge.tax : computeChargeTax(charge.amount, charge.description, charge.category);
+	const reservation = self.reservations?.find((r: any) => r.id === folio.reservationId);
+	const tax = typeof charge.tax === 'number' ? charge.tax : computeChargeTax(charge.amount, charge.description, charge.category, reservation?.taxExempt);
 	folio.charges.push({
 		id: charge.id,
 		date: charge.date || new Date().toISOString(),
@@ -478,7 +479,8 @@ export function getTaxRates(_self: StoreLike) {
  */
 export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number) {
 	const f = getOrCreateFolio(self, reservationId);
-	const tax = computeChargeTax(amount, description);
+	const reservation = self.reservations?.find((r: any) => r.id === reservationId);
+	const tax = computeChargeTax(amount, description, undefined, reservation?.taxExempt);
 	f.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description, amount, tax } as any);
 	updateFolioBalances(self, f);
 	self.notify();

@@ -60,6 +60,13 @@ export function toStoreReservation(row: any): Reservation {
     invoiceGenerated: details.invoiceGenerated,
     invoiceStatus: details.invoiceStatus,
     pendingGlPost: details.pendingGlPost,
+    taxExempt: details.taxExempt,
+    taxExemptionType: details.taxExemptionType,
+    taxExemptionNumber: details.taxExemptionNumber,
+    taxExemptionAuthority: details.taxExemptionAuthority,
+    taxExemptionExpiry: details.taxExemptionExpiry,
+    taxExemptionDocuments: details.taxExemptionDocuments || [],
+    taxExemptionNotes: details.taxExemptionNotes,
     createdAt: toISO(row.createdAt),
     updatedAt: toISO(row.updatedAt),
   } as Reservation
@@ -86,6 +93,13 @@ export function toDbReservationData(r: Partial<Reservation>) {
     selfReservationToken: r.selfReservationToken,
     invoiceGenerated: r.invoiceGenerated,
     invoiceStatus: r.invoiceStatus,
+    taxExempt: r.taxExempt,
+    taxExemptionType: r.taxExemptionType,
+    taxExemptionNumber: r.taxExemptionNumber,
+    taxExemptionAuthority: r.taxExemptionAuthority,
+    taxExemptionExpiry: r.taxExemptionExpiry,
+    taxExemptionDocuments: r.taxExemptionDocuments,
+    taxExemptionNotes: r.taxExemptionNotes,
   })
   const data: Record<string, any> = stripUndefined({
     resId: r.resId,
