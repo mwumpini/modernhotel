@@ -1,6 +1,6 @@
 {
   "countryDefaults": {
-    "GH": ["ghana_sales_standard"],
+    "GH": ["ghana_sales_standard", "ghana_purchases_standard", "ghana_purchases_flat"],
     "US": ["us_sales_generic", "us_purchases_tax", "us_payroll_income"],
     "NG": ["nigeria_vat_standard", "nigeria_purchases_vat", "nigeria_payroll_paye"],
     "ZA": ["south_africa_vat_standard", "south_africa_purchases_vat", "south_africa_payroll_paye"],
@@ -26,6 +26,30 @@
         { "name": "GETFund Levy", "rate": 2.5, "glCode": "2130", "appliesTo": ["ALL"], "description": "Ghana Education Trust Fund Levy", "enabled": true, "priority": 11, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" },
         { "name": "VAT (Standard Rate)", "rate": 15, "glCode": "2110", "appliesTo": ["ALL"], "description": "VAT 15% on (subtotal + NHIL + GETFund) — Act 1151, Jan 2026", "enabled": true, "priority": 20, "calculationBase": "subtotal_plus_applied", "method": "rate", "stacking": "compound", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" },
         { "name": "Tourism Levy", "rate": 1, "glCode": "2150", "appliesTo": ["ROOM", "HOTEL", "FOOD"], "description": "Tourism Development Levy (L.I. 2185)", "enabled": true, "priority": 30, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "sales", "operation": "external", "effect": "add" }
+      ]
+    },
+    "ghana_purchases_standard": {
+      "meta": {
+        "title": "Purchases Standard Tax",
+        "domain": "purchases",
+        "operation": "external",
+        "effect": "add"
+      },
+      "rules": [
+        { "name": "NHIL", "rate": 2.5, "glCode": "2120", "appliesTo": ["ALL"], "description": "National Health Insurance Levy on purchases", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" },
+        { "name": "GETFund Levy", "rate": 2.5, "glCode": "2130", "appliesTo": ["ALL"], "description": "Ghana Education Trust Fund Levy on purchases", "enabled": true, "priority": 11, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" },
+        { "name": "VAT (Standard Rate)", "rate": 15, "glCode": "2110", "appliesTo": ["ALL"], "description": "Input VAT 15% on (subtotal + NHIL + GETFund) — Act 1151, Jan 2026", "enabled": true, "priority": 20, "calculationBase": "subtotal_plus_applied", "method": "rate", "stacking": "compound", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" }
+      ]
+    },
+    "ghana_purchases_flat": {
+      "meta": {
+        "title": "Purchases Flat Rate",
+        "domain": "purchases",
+        "operation": "external",
+        "effect": "add"
+      },
+      "rules": [
+        { "name": "VAT Flat Rate (VFRS)", "rate": 3, "glCode": "2110", "appliesTo": ["ALL"], "description": "VAT Flat Rate Scheme — 3% on purchases from a VFRS-registered supplier", "enabled": true, "priority": 10, "calculationBase": "subtotal", "method": "rate", "stacking": "additive", "rounding": "nearest", "roundTo": 0.01, "domain": "purchases", "operation": "external", "effect": "add" }
       ]
     },
     "withholding_services": {

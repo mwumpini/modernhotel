@@ -1363,9 +1363,14 @@ model PurchaseOrder {
   status               String    @default("draft") // draft|sent|confirmed|in-transit|delivered|cancelled|closed
   priority             String    @default("medium") // low|medium|high|urgent
   totalAmount          Decimal   @default(0) // pre-tax/shipping/discount subtotal
-  taxAmount            Decimal   @default(0) // input VAT — added; recoverable
-  withholdingCategory  String?   // SERVICE | GOODS | WORKS | RENT — resident WHT deducted from the supplier payment; null = none
-  withholdingAmount    Decimal   @default(0) // subtracted from what's paid to the supplier, remitted to GRA
+  // Signed — positive when the selected tax type nets to an add (e.g. VAT), negative
+  // when it nets to a withholding. Computed by summing every rule assigned to the
+  // selected Tax Type via the shared stacking engine (computeTaxStack).
+  taxAmount            Decimal   @default(0)
+  // Which compliance Tax Type (Settings → Tax Rate Builder — a named bundle of rules,
+  // e.g. "Purchases Standard Tax" = NHIL+GETFund+VAT, "Purchases Flat Rate" = VFRS 3%)
+  // was selected; null = none. 'custom' = a manually typed override rate.
+  taxTypeId            String?
   shippingAmount       Decimal   @default(0)
   discountAmount       Decimal   @default(0)
   finalAmount          Decimal   @default(0)

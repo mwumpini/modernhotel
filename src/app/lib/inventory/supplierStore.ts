@@ -14,10 +14,10 @@ function poTenantHeaders(): HeadersInit {
 }
 
 // Persist a purchase order and return the server's authoritative record — the
-// server (not this optimistic client guess) computes taxAmount/withholdingAmount/
-// finalAmount for real (see repository.ts upsertPurchaseOrder), so callers must
-// reconcile the store with this response instead of trusting the local totals
-// past the optimistic first render.
+// server (not this optimistic client guess) computes taxAmount/finalAmount for
+// real (see repository.ts upsertPurchaseOrder), so callers must reconcile the
+// store with this response instead of trusting the local totals past the
+// optimistic first render.
 function syncPurchaseOrderToApi(order: PurchaseOrder): Promise<PurchaseOrder | null> {
   if (typeof window === 'undefined') return Promise.resolve(null);
   return fetch('/api/inventory/purchase-orders', {
@@ -39,8 +39,8 @@ function syncPurchaseOrderToApi(order: PurchaseOrder): Promise<PurchaseOrder | n
       notes: order.notes,
       approvedBy: order.approvedBy,
       approvedAt: order.approvedAt,
-      withholdingCategory: order.withholdingCategory,
-      customWithholdingRate: order.customWithholdingRate,
+      taxTypeId: order.taxTypeId,
+      customTaxRate: order.customTaxRate,
       items: order.items.map((i) => ({
         itemId: i.itemId,
         itemCode: i.itemCode,
@@ -83,8 +83,7 @@ function mapApiOrderToStore(raw: any): PurchaseOrder {
     priority: raw.priority,
     totalAmount: Number(raw.totalAmount),
     taxAmount: Number(raw.taxAmount),
-    withholdingCategory: raw.withholdingCategory ?? undefined,
-    withholdingAmount: raw.withholdingAmount != null ? Number(raw.withholdingAmount) : undefined,
+    taxTypeId: raw.taxTypeId ?? undefined,
     shippingAmount: Number(raw.shippingAmount),
     discountAmount: Number(raw.discountAmount),
     finalAmount: Number(raw.finalAmount),

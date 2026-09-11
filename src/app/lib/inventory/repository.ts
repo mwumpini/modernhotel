@@ -1,35 +1,37 @@
 import { prisma } from '../database/client'
-import { resolveTaxConfigs } from '../tax/resolveConfigs'
-import { computeStackedTaxLines } from '../accounting/taxFromConfig'
 
 /**
- * Resident Withholding Tax on a purchase — reads the same real, user-editable
- * compliance rules (domain: 'purchases', appliesTo: SERVICE/GOODS/WORKS/RENT)
- * the client-side WHT helper (accounting/purchaseWht.ts) reads via
- * useComplianceStore, but that store only exists client-side — this is the
- * server-safe equivalent used when persisting a purchase order, so the
- * server (not the client) is the source of truth for what actually gets
- * charged. Never a hardcoded rate.
+ * Tax on a purchase order — sums whichever real, tenant-editable compliance Tax Type
+ * (Settings → Tax Rate Builder, e.g. "Purchases Standard Tax" = NHIL+GETFund+VAT
+ * stacked, or "Purchases Flat Rate" = VFRS 3% — the same Tax Types a PO's Tax Type
+ * dropdown lists) the client selected, using the one shared stacking engine
+ * (computeTaxStack) so this never diverges from what the compliance simulator/store
+ * would show. The server re-resolves the rules itself rather than trusting whatever
+ * the client last saw, so a rate change in Settings takes effect immediately.
+ * 'custom' is the one exception: a manually typed override rate for a one-off case
+ * the compliance rule set doesn't cover.
  */
-function resolvePurchaseWithholding(subtotal: number, category?: string | null, customRate?: number): { rate: number; amount: number } {
-	if (!(subtotal > 0)) return { rate: 0, amount: 0 }
-	if (category === 'custom') {
+async function resolvePurchaseTax(tenantId: string, subtotal: number, taxTypeId?: string | null, customRate?: number): Promise<{ amount: number }> {
+	if (!(subtotal > 0) || !taxTypeId) return { amount: 0 }
+	if (taxTypeId === 'custom') {
 		const rate = Number(customRate) || 0
-		return { rate, amount: Math.round(subtotal * (rate / 100) * 100) / 100 }
+		return { amount: Math.round(subtotal * (rate / 100) * 100) / 100 }
 	}
-	if (!category) return { rate: 0, amount: 0 }
 	try {
-		// Dynamic import avoids bundling fs into client chunks when tree-shaken.
-		const { ComplianceDB } = require('../compliance/db') as typeof import('../compliance/db')
-		const rules = ComplianceDB.getTaxes('GH') as Array<Record<string, any>>
-		const rule = rules
-			.filter((r) => r.domain === 'purchases' && r.enabled !== false && Array.isArray(r.appliesTo) && r.appliesTo.includes(category))
-			.sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100))[0]
-		if (!rule) return { rate: 0, amount: 0 }
-		const rate = Number(rule.rate) || 0
-		return { rate, amount: Math.round(subtotal * (rate / 100) * 100) / 100 }
-	} catch {
-		return { rate: 0, amount: 0 }
+		// Dynamic imports avoid bundling this into client chunks when tree-shaken.
+		// listTaxRules is the real, tenant-scoped (Prisma-backed) store -- the same one
+		// the Tax Rate Builder UI reads/writes via /api/compliance/taxes[/manage].
+		// ComplianceDB (compliance/db.ts) is a legacy, non-tenant-scoped JSON snapshot
+		// frozen at first seed; reading from it here would silently ignore every tax
+		// rule/type a tenant creates or edits afterward.
+		const { listTaxRules } = require('../compliance/repository') as typeof import('../compliance/repository')
+		const { computeTaxStack } = require('../compliance/calcEngine') as typeof import('../compliance/calcEngine')
+		const rules = await listTaxRules(tenantId, 'GH')
+		const { total } = computeTaxStack(rules as any[], subtotal, 'ALL', { domain: 'purchases', operation: 'external', typeId: taxTypeId })
+		return { amount: Math.round((total - subtotal) * 100) / 100 }
+	} catch (e) {
+		console.error('[resolvePurchaseTax] failed:', e)
+		return { amount: 0 }
 	}
 }
 
@@ -201,29 +203,19 @@ export async function upsertPurchaseOrder(params: {
 	createdBy?: string;
 	approvedBy?: string;
 	approvedAt?: Date | string;
-	// SERVICE | GOODS | WORKS | RENT — which resident-WHT category (if any) applies to
-	// this purchase; undefined/null means no withholding. Never a client-supplied rate:
-	// the server looks up the real, currently-configured rate for the category itself.
-	withholdingCategory?: string | null;
-	// Only meaningful when withholdingCategory is the literal 'custom' — a manual
-	// override rate for a one-off scenario the compliance rule set doesn't cover yet.
-	customWithholdingRate?: number;
+	// Which compliance Tax Type (Settings → Tax Rate Builder — a named bundle of
+	// rules, e.g. "Purchases Standard Tax" or "Purchases Flat Rate") applies to
+	// this purchase, by id; undefined/null means none. 'custom' means
+	// customTaxRate below is a manually typed override instead of a real type.
+	taxTypeId?: string | null;
+	customTaxRate?: number;
 	items: PurchaseOrderItemInput[];
 }) {
 	const totalAmount = params.items.reduce((sum, i) => sum + i.quantity * i.unitCost, 0);
-	// Real configured VAT rate (Settings → Tax Rate Builder), not a hardcoded 15% — a
-	// purchase order only attracts input VAT (recoverable); NHIL/GETFund/Tourism are
-	// output-only levies and don't apply on purchases (see resolveTaxConfigs/
-	// mapPrismaTaxRowToConfig's applyOnPurchases flag).
-	const taxConfigs = resolveTaxConfigs()
-	const { totalTax: taxAmount } = computeStackedTaxLines(totalAmount, taxConfigs, 'purchase')
-	// Resident WHT is a separate, independent mechanism from input VAT above: it's
-	// deducted from what's paid to the supplier (and remitted to GRA on their behalf),
-	// not added on top — a purchase order can have VAT, WHT, both, or neither.
-	const { amount: withholdingAmount } = resolvePurchaseWithholding(totalAmount, params.withholdingCategory, params.customWithholdingRate)
+	const { amount: taxAmount } = await resolvePurchaseTax(params.tenantId, totalAmount, params.taxTypeId, params.customTaxRate)
 	const shippingAmount = params.shippingAmount ?? 0;
 	const discountAmount = params.discountAmount ?? 0;
-	const finalAmount = totalAmount + taxAmount + shippingAmount - discountAmount - withholdingAmount;
+	const finalAmount = totalAmount + taxAmount + shippingAmount - discountAmount;
 
 	const data = {
 		supplierId: params.supplierId,
@@ -234,8 +226,7 @@ export async function upsertPurchaseOrder(params: {
 		priority: params.priority,
 		totalAmount,
 		taxAmount,
-		withholdingCategory: params.withholdingCategory || null,
-		withholdingAmount,
+		taxTypeId: params.taxTypeId || null,
 		shippingAmount,
 		discountAmount,
 		finalAmount,

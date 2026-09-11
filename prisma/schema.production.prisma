@@ -1341,8 +1341,7 @@ model PurchaseOrder {
   priority             String    @default("medium")
   totalAmount          Decimal   @default(0) @db.Decimal(12, 2)
   taxAmount            Decimal   @default(0) @db.Decimal(12, 2)
-  withholdingCategory  String?
-  withholdingAmount    Decimal   @default(0) @db.Decimal(12, 2)
+  taxTypeId            String?
   shippingAmount       Decimal   @default(0) @db.Decimal(12, 2)
   discountAmount       Decimal   @default(0) @db.Decimal(12, 2)
   finalAmount          Decimal   @default(0) @db.Decimal(12, 2)
