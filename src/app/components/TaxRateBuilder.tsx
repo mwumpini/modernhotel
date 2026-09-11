@@ -814,9 +814,9 @@ export default function TaxRateBuilder() {
             >
               <SelectItem key="sales">Sales</SelectItem>
               <SelectItem key="purchases">Purchases</SelectItem>
-              <SelectItem key="payroll">Payroll</SelectItem>
               <SelectItem key="custom">Unrestricted</SelectItem>
             </Select>
+            <p className="text-xs text-gray-500 mt-1">Payroll rates (PAYE, SSNIT, Tier 2/3) live under Income Taxes, not here.</p>
           </div>
           <div>
             <span className="text-sm font-medium text-gray-700">Search rules</span>
@@ -1043,7 +1043,6 @@ export default function TaxRateBuilder() {
                 <Select label="Tax Area" selectedKeys={[sim.domain]} onSelectionChange={(k) => setSim({ ...sim, domain: Array.from(k)[0] as any })} variant="bordered" size="sm">
                   <SelectItem key="sales">Sales</SelectItem>
                   <SelectItem key="purchases">Purchases</SelectItem>
-                  <SelectItem key="payroll">Payroll</SelectItem>
                   <SelectItem key="custom">Unrestricted</SelectItem>
                 </Select>
                 <Select label="Centre" selectedKeys={[sim.operation]} onSelectionChange={(k) => setSim({ ...sim, operation: Array.from(k)[0] as any })} variant="bordered" size="sm">
@@ -1573,6 +1572,13 @@ export default function TaxRateBuilder() {
                   </Select>
                   {Boolean(selectedTypeId || formData.typeId) && (
                     <div className="text-xs text-gray-500 mt-1">Inherited from selected tax type</div>
+                  )}
+                  {formData.domain === 'payroll' && (
+                    <div className="text-xs text-amber-600 mt-1">
+                      Existing payroll rates (PAYE, SSNIT, Tier 2/3) are edited under Income Taxes, not here. Only use
+                      Payroll here to add a genuinely new statutory rule — it won't appear in this screen's list
+                      afterward, so note its name/GL code before saving.
+                    </div>
                   )}
                 </div>
                 <div>
