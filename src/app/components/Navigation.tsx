@@ -20,12 +20,12 @@ const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
 const ExecutiveManagementDashboard = lazy(() => import('./ExecutiveManagementDashboard'));
 const HousekeepingMainDashboard = lazy(() => import('./HousekeepingMainDashboard'));
 const FBPOS = lazy(() => import('./FBPOS').then(module => ({ default: module.default })));
-// RestaurantManagement kept for backward compat (legacy 'restaurant' deep link).
 // BarManagement was removed — restaurant and bar are one unified operation (same
 // staff, same POS), covered by FoodBeverageRestaurantBar.tsx with venue filtering
 // and FBPOS.tsx's venue toggle, which already auto-route revenue to the correct
-// GL account per venue.
-const RestaurantManagement = lazy(() => import('./RestaurantManagement'));
+// GL account per venue. RestaurantManagement.tsx (the older, pre-unification
+// component) is no longer routed to now that 'restaurant' is the Food &
+// Beverage split's primary section key.
 // KitchenDisplay (old in-memory) removed — use /kitchen-display page instead
 const OfflineIndicator = lazy(() => import('./OfflineIndicator'));
 const OfflineManager = lazy(() => import('./OfflineManager'));
@@ -74,7 +74,12 @@ type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'resta
 function sectionToModuleKey(section: ActiveSection): string {
   const frontdesk = new Set(['frontdesk', 'rooms-bookings', 'invoices-payments', 'clients-services', 'guest-experience-manager', 'mobile-guest-services', 'frontdesk-activities', 'check-ins', 'in-house', 'check-outs']);
   const events = new Set(['events-conferences', 'events-conferences-standalone', 'events-conferences-analytics', 'events-conferences-preferences']);
-  const fb = new Set(['f&b', 'restaurant', 'kitchen', 'pos', 'food-beverage', 'fb-analytics', 'fb-preferences', 'fb-pos', 'fb-restaurant-bar', 'fb-kitchen', 'fb-menu-inventory', 'fb-staff-reports', 'fb-activities']);
+  // Food & Beverage used to be one combined module ('f&b') -- split into Restaurant
+  // (front-of-house: POS, tables, menu, bar) and Kitchen (ticket fulfillment, KDS).
+  // Legacy aliases ('f&b', 'food-beverage') map to Restaurant since that's the module
+  // the old combined hub's main tab represented.
+  const restaurant = new Set(['f&b', 'restaurant', 'pos', 'food-beverage', 'fb-analytics', 'fb-preferences', 'fb-pos', 'fb-restaurant-bar', 'fb-menu-inventory', 'fb-staff-reports', 'fb-activities']);
+  const kitchen = new Set(['kitchen', 'fb-kitchen']);
   const housekeeping = new Set(['housekeeping', 'housekeeping-analytics', 'housekeeping-preferences', 'housekeeping-activities']);
   const inventory = new Set(['inventory', 'inventory-supply-chain', 'inventory-analytics', 'inventory-preferences', 'inventory-activities']);
   const security = new Set(['security', 'security-compliance', 'security-analytics', 'security-preferences', 'security-activities']);
@@ -85,7 +90,8 @@ function sectionToModuleKey(section: ActiveSection): string {
   if (section === 'dashboard') return 'dashboard';
   if (frontdesk.has(section)) return 'frontdesk';
   if (events.has(section)) return 'events-conferences';
-  if (fb.has(section)) return 'f&b';
+  if (restaurant.has(section)) return 'restaurant';
+  if (kitchen.has(section)) return 'kitchen';
   if (housekeeping.has(section)) return 'housekeeping';
   if (inventory.has(section)) return 'inventory';
   if (security.has(section)) return 'security';
@@ -240,11 +246,17 @@ export default function Navigation({ onLogout }: NavigationProps) {
       items: []
     },
     {
-      key: 'f&b',
-      title: '🍽️ Food & Beverage',
+      key: 'restaurant',
+      title: '🍽️ Restaurant & Bar',
       icon: '🍽️',
+      items: []
+    },
+    {
+      key: 'kitchen',
+      title: '👨‍🍳 Kitchen',
+      icon: '👨‍🍳',
       items: [
-        { title: 'Kitchen Operations', href: '#' }
+        { title: 'Kitchen Display', href: '#' }
       ]
     },
     {
@@ -356,19 +368,22 @@ export default function Navigation({ onLogout }: NavigationProps) {
       return;
     }
 
-    // Handle Food & Beverage sub-items
-    if (sectionKey === 'f&b' && itemTitle) {
-      if (itemTitle === 'R&B Operations') {
-        setActiveSection('food-beverage');
-      } else if (itemTitle === 'Kitchen Operations') {
-        window.location.assign('/kitchen-display');
-        return;
-      } else if (itemTitle === '📈 Reports & Analysis') {
+    // Handle Restaurant & Bar sub-items
+    if (sectionKey === 'restaurant' && itemTitle) {
+      if (itemTitle === '📈 Reports & Analysis') {
         setActiveSection('fb-analytics');
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('fb-preferences');
       } else {
-        setActiveSection('f&b');
+        setActiveSection('restaurant');
+      }
+    // Handle Kitchen sub-items
+    } else if (sectionKey === 'kitchen' && itemTitle) {
+      if (itemTitle === 'Kitchen Display') {
+        window.location.assign('/kitchen-display');
+        return;
+      } else {
+        setActiveSection('kitchen');
       }
     // Handle Housekeeping sub-items
     } else if (sectionKey === 'housekeeping' && itemTitle) {
@@ -534,28 +549,31 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Analytics...</div>}><HousekeepingAnalyticsDashboard /></Suspense>;
       case 'housekeeping-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Activities...</div>}><DepartmentActivityLog area="housekeeping" title="Housekeeping - View Activities" /></Suspense>;
-      // ── Food & Beverage ────────────────────────────────────────────────────
+      // ── Restaurant & Bar (front-of-house: POS, tables, menu, bar) ───────────
+      // 'f&b'/'food-beverage' kept as deep-link aliases — Restaurant is the
+      // module that combined "Food & Beverage" hub used to represent before
+      // Kitchen split out into its own top-level section below.
+      case 'restaurant':
       case 'f&b':
-      case 'food-beverage': // alias — kept for deep-link compat
-        return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Dashboard...</div>}><FoodBeverageMainDashboard /></Suspense>;
+      case 'food-beverage':
+        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar Dashboard...</div>}><FoodBeverageMainDashboard /></Suspense>;
       case 'fb-activities':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Activities...</div>}><DepartmentActivityLog area="f&b" title="Food & Beverage - View Activities" /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar Activities...</div>}><DepartmentActivityLog area="f&b" title="Restaurant & Bar - View Activities" /></Suspense>;
       case 'fb-pos':
       case 'pos': // alias
-        return <Suspense fallback={<div className="p-6 text-center">Loading POS Terminal...</div>}><FBPOS onClose={() => setActiveSection('f&b')} /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading POS Terminal...</div>}><FBPOS onClose={() => setActiveSection('restaurant')} /></Suspense>;
       case 'fb-restaurant-bar':
         return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar...</div>}><FoodBeverageRestaurantBar /></Suspense>;
-      case 'fb-kitchen':
-      case 'kitchen': // alias — both navigate to the real KDS page
-        return <KitchenRedirect />;
       case 'fb-menu-inventory':
         return <Suspense fallback={<div className="p-6 text-center">Loading Menu & Inventory...</div>}><FoodBeverageMenuInventory /></Suspense>;
       case 'fb-staff-reports':
         return <Suspense fallback={<div className="p-6 text-center">Loading Staff Reports...</div>}><FoodBeverageStaffReports /></Suspense>;
       case 'fb-analytics':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Food & Beverage Analytics...</div>}><FoodBeverageAnalyticsDashboard /></Suspense>;
-      case 'restaurant':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant Management...</div>}><RestaurantManagement /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar Analytics...</div>}><FoodBeverageAnalyticsDashboard /></Suspense>;
+      // ── Kitchen (ticket fulfillment) — always the standalone KDS page ───────
+      case 'fb-kitchen':
+      case 'kitchen':
+        return <KitchenRedirect />;
       case 'security':
         return <Suspense fallback={<div className="p-6 text-center">Loading Security Dashboard...</div>}><SecurityMainDashboard /></Suspense>;
       case 'security-analytics':

@@ -22,7 +22,8 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
       'frontdesk.*',
       'events-conferences.*',
       'housekeeping.*',
-      'f&b.*',
+      'restaurant.*',
+      'kitchen.*',
       'inventory.*',
       'security.*',
       'hr.*',
@@ -36,15 +37,43 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     code: 'staff',
     name: 'Staff Member',
     description: 'Basic operational access',
-    permissions: ['dashboard.view', 'frontdesk.checkin', 'frontdesk.checkout', 'housekeeping.view', 'f&b.pos'],
+    permissions: ['dashboard.view', 'frontdesk.checkin', 'frontdesk.checkout', 'housekeeping.view', 'restaurant.pos'],
   },
   {
     code: 'night_manager',
     name: 'Night Manager',
     description: 'Night audit and end-of-day front office operations',
-    permissions: ['dashboard.view', 'frontdesk.*', 'housekeeping.view', 'f&b.*', 'reports.view', 'settings.view'],
+    permissions: ['dashboard.view', 'frontdesk.*', 'housekeeping.view', 'restaurant.*', 'kitchen.*', 'reports.view', 'settings.view'],
   },
 ];
+
+/**
+ * Food & Beverage used to be one 'f&b' module/permission; it's since been
+ * split into separate Kitchen and Restaurant modules. Roles seeded (or
+ * customized) before that split still carry the old strings, which no
+ * longer match anything — this repairs them in place the next time the
+ * role is touched, so access isn't silently dropped for existing tenants
+ * (including production, where `ensureDefaultRolesForTenant`'s upsert
+ * intentionally leaves already-existing rows alone).
+ */
+async function repairLegacyFbPermissions(tenantId: string): Promise<void> {
+  const roles = await prisma.role.findMany({ where: { tenantId } });
+  await Promise.all(
+    roles
+      .filter((role) => {
+        const perms = Array.isArray(role.permissions) ? (role.permissions as unknown[]) : [];
+        return perms.includes('f&b.*') || perms.includes('f&b.pos');
+      })
+      .map((role) => {
+        const perms = (role.permissions as string[]).flatMap((p) => {
+          if (p === 'f&b.*') return ['kitchen.*', 'restaurant.*'];
+          if (p === 'f&b.pos') return ['restaurant.pos'];
+          return [p];
+        });
+        return prisma.role.update({ where: { id: role.id }, data: { permissions: perms } });
+      }),
+  );
+}
 
 /**
  * Idempotent, race-safe: upserts each default role individually rather than
@@ -69,6 +98,7 @@ export async function ensureDefaultRolesForTenant(tenantId: string): Promise<voi
       }),
     ),
   );
+  await repairLegacyFbPermissions(tenantId);
 }
 
 /** A granted permission string covers a requested one via exact match, '*', or a 'module.*' prefix. */

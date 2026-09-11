@@ -7,7 +7,7 @@
  * it for a role. `view`/`create`/`edit`/`delete` are the matrix columns the
  * Role editor renders; `extra` holds the handful of bespoke action strings
  * the default roles already use that don't fit that shape (frontdesk.checkin,
- * f&b.pos). None of the finer actions are enforced anywhere yet beyond the
+ * restaurant.pos). None of the finer actions are enforced anywhere yet beyond the
  * sidebar's module check — add real hasPermission() calls as they're wired up.
  */
 export interface PermissionAction {
@@ -112,23 +112,31 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     ],
   },
   {
-    key: 'f&b',
-    label: 'Food & Beverage',
+    key: 'restaurant',
+    label: 'Restaurant & Bar',
     icon: '🍽️',
-    fullAccessId: 'f&b.*',
-    ...crud('f&b', 'menu items & orders'),
+    fullAccessId: 'restaurant.*',
+    ...crud('restaurant', 'menu items & orders'),
     extra: [
-      { id: 'f&b.pos', label: 'Use POS terminal' },
-      { id: 'f&b.send-to-kitchen', label: 'Send an order to the kitchen' },
-      { id: 'f&b.update-order-status', label: "Update an order's status" },
-      { id: 'f&b.cancel-order', label: 'Cancel an order' },
-      { id: 'f&b.manager-override', label: 'Manager PIN override (delete/void order)' },
-      { id: 'f&b.post-payment', label: 'Post a payment' },
-      { id: 'f&b.apply-discount', label: 'Apply a discount' },
-      { id: 'f&b.manage-tables', label: 'Set/change a table status' },
-      { id: 'f&b.manage-reservations', label: 'Create/edit a table reservation' },
-      { id: 'f&b.toggle-availability', label: 'Toggle menu item availability' },
-      { id: 'f&b.manage-fb-inventory', label: 'Manage F&B ingredient stock, suppliers & POs' },
+      { id: 'restaurant.pos', label: 'Use POS terminal' },
+      { id: 'restaurant.apply-discount', label: 'Apply a discount' },
+      { id: 'restaurant.post-payment', label: 'Post a payment' },
+      { id: 'restaurant.manage-tables', label: 'Set/change a table status' },
+      { id: 'restaurant.manage-reservations', label: 'Create/edit a table reservation' },
+      { id: 'restaurant.toggle-availability', label: 'Toggle menu item availability' },
+    ],
+  },
+  {
+    key: 'kitchen',
+    label: 'Kitchen',
+    icon: '👨‍🍳',
+    fullAccessId: 'kitchen.*',
+    ...crud('kitchen', 'kitchen tickets', { create: false, delete: false }),
+    extra: [
+      { id: 'kitchen.send-to-kitchen', label: 'Send an order to the kitchen' },
+      { id: 'kitchen.cancel-order', label: 'Cancel an order' },
+      { id: 'kitchen.manager-override', label: 'Manager PIN override (delete/void order)' },
+      { id: 'kitchen.manage-inventory', label: 'Manage kitchen ingredient stock, suppliers & POs' },
     ],
   },
   {
