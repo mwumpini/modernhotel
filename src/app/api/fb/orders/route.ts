@@ -108,8 +108,14 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Order numbering ───────────────────────────────────────────────────────
-    const orderCount = await prisma.fBOrder.count({ where: { tenantId: ctx.tenantId } })
-    const orderNumber = `FB-${new Date().getFullYear()}-${String(orderCount + 1).padStart(4, '0')}`
+    // Prefer the client-generated number (drawn from Settings → Document Numbering,
+    // Food & Beverage → Order) so the series' prefix/format there is authoritative;
+    // fall back to a simple counter only if the client didn't supply one.
+    let orderNumber = body.orderNumber as string | undefined
+    if (!orderNumber) {
+      const orderCount = await prisma.fBOrder.count({ where: { tenantId: ctx.tenantId } })
+      orderNumber = `FB-${new Date().getFullYear()}-${String(orderCount + 1).padStart(4, '0')}`
+    }
 
     // ── Subtotal ──────────────────────────────────────────────────────────────
     const subtotal = round2(

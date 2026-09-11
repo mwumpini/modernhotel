@@ -86,9 +86,10 @@ export default function RestaurantManagement() {
       const orders = ordersStore.all();
       const out: Row[] = [];
       orders.forEach((o) => {
+        const orderRef = o.orderNumber || o.id;
         // KOT/BOT
         out.push({
-          code: `KOT-${o.id}`,
+          code: `KOT-${orderRef}`,
           date: o.createdAt || new Date().toISOString(),
           type: o.items.some(i => i.route === 'bar') ? 'BOT' : 'KOT',
           itemName: o.items.map(i => `${i.qty}x ${i.name}`).join(', '),
@@ -106,7 +107,7 @@ export default function RestaurantManagement() {
         if (o.status === 'paid') {
           const base = o.items.reduce((s,i)=>s+(i.price-((i as any).discountPerUnit||0)+((i as any).serviceChargePerUnit||0))*i.qty,0);
           out.push({
-            code: `INV-${o.id}`,
+            code: `INV-${orderRef}`,
             date: o.updatedAt || new Date().toISOString(),
             type: 'Invoice',
             itemName: '—',
@@ -119,7 +120,7 @@ export default function RestaurantManagement() {
             waiter: o.waiterId,
           });
           out.push({
-            code: `RCPT-${o.id}`,
+            code: `RCPT-${orderRef}`,
             date: o.updatedAt || new Date().toISOString(),
             type: 'Receipt',
             itemName: '—',

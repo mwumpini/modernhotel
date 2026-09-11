@@ -32,6 +32,7 @@ export interface OrderItem extends MenuItemRef {
 
 export interface FBOrder {
   id: string;
+  orderNumber?: string;
   table: string;
   waiterId: string;
   items: OrderItem[];
@@ -171,6 +172,7 @@ class OrdersStore {
 
         return {
           id: o.id,
+          orderNumber: o.orderNumber || undefined,
           table: o.tableNumber || '',
           waiterId: o.serverName || o.assignedToName || '',
           items,

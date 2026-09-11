@@ -39,6 +39,7 @@ import { frontOfficeStore } from '../lib/frontoffice/store';
 import { customerStore } from '../lib/fb/customerStore';
 import { fbTenantHeaders, normalizePosVenue, createFbOrder, patchFbOrderStatus, fetchFbOrderById, type FbOrderStatus } from '../lib/fb/api';
 import { computeSalesTaxTotal } from '../lib/tax/engine';
+import { useSettingsStore } from '../lib/settings/store';
 
 type CustomerType = 'In-house' | 'Walk-in';
 type VenueMode = 'Restaurant' | 'Bar';
@@ -372,8 +373,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       
       switch (sortKey) {
         case 'id':
-          aValue = a.order.id;
-          bValue = b.order.id;
+          aValue = a.order.orderNumber || a.order.id;
+          bValue = b.order.orderNumber || b.order.id;
           break;
         case 'time':
           aValue = a.order.createdAt || '';
@@ -592,8 +593,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
     // ── POST to database API (source of truth for KDS) ─────────────────────
     let apiId: string | null = null;
+    const orderNumber = useSettingsStore.getState().getNextModuleNumber('foodBeverage', 'order');
     try {
       const data = await createFbOrder({
+        orderNumber,
         venue: normalizePosVenue(venue),
         tableNumber,
         roomNumber: customerType === 'In-house' ? roomNumber : undefined,
@@ -639,6 +642,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setPendingOrders(prev => [newOrder, ...prev]);
     ordersStore.add({
       id,
+      orderNumber,
       table: tableNumber,
       waiterId,
       items: itemsWithOrderDiscount.map(i => ({
@@ -707,6 +711,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         // Express pay: create order now (single-step: order + pay)
         try {
           const data = await createFbOrder({
+            orderNumber: useSettingsStore.getState().getNextModuleNumber('foodBeverage', 'order'),
             venue: normalizePosVenue(venue),
             tableNumber,
             roomNumber: customerType === 'In-house' ? roomNumber : undefined,
@@ -1577,7 +1582,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <TableBody>
                       {sortedOrders.slice((activityPage - 1) * activityRowsPerPage, activityPage * activityRowsPerPage).map(({ order: o, item: it }) => (
                         <TableRow key={`${o.id}-${it.id}`} onDoubleClick={() => openActivityModal(o, it)}>
-                          <TableCell>{o.id}</TableCell>
+                          <TableCell>{o.orderNumber || o.id}</TableCell>
                           <TableCell>{o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}</TableCell>
                           <TableCell>{(aliases[it.id]?.[0]) || it.id}</TableCell>
                           <TableCell>{it.name}</TableCell>
@@ -1806,6 +1811,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 try {
                   const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
                   const data = await createFbOrder({
+                    orderNumber: useSettingsStore.getState().getNextModuleNumber('foodBeverage', 'order'),
                     venue: normalizePosVenue(venue),
                     tableNumber,
                     roomNumber: customerType === 'In-house' ? roomNumber : undefined,

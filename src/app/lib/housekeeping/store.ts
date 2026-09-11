@@ -332,7 +332,7 @@ class HousekeepingStore {
     notes?: string;
   }): HousekeepingTask {
     const task: HousekeepingTask = {
-      id: `TASK-${Date.now().toString().slice(-6)}-${Math.floor(Math.random()*1000)}`,
+      id: useSettingsStore.getState().getNextModuleNumber('frontOffice', 'housekeepingTicket'),
       ...data,
       status: 'pending',
       completedItems: [],
@@ -442,7 +442,7 @@ class HousekeepingStore {
     description: string;
   }): MaintenanceRequest {
     const request: MaintenanceRequest = {
-      id: `MR-${Date.now().toString().slice(-6)}`,
+      id: useSettingsStore.getState().getNextModuleNumber('maintenance', 'workOrder'),
       ...data,
       status: 'reported',
       reportedAt: new Date().toISOString(),
@@ -572,7 +572,7 @@ class HousekeepingStore {
     const status: RoomInspection['status'] = totalScore >= 90 ? 'passed' : totalScore >= 70 ? 'partial' : 'failed';
 
     const inspection: RoomInspection = {
-      id: `INS-${Date.now().toString().slice(-6)}`,
+      id: useSettingsStore.getState().getNextModuleNumber('maintenance', 'inspection'),
       ...data,
       inspectionDate: new Date().toISOString(),
       status,
