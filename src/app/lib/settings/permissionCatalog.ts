@@ -4,11 +4,11 @@
  * Module `key`s mirror Navigation.tsx's `navigationSections[].key` exactly —
  * that's what `hasModuleAccess(modulePrefix)` gates the sidebar with today,
  * so checking a module's "Full access" box here is what actually shows/hides
- * it for a role. Per-module `actions` beyond "Full access" reflect the finer
- * permission strings the default roles (System Administrator / Hotel Manager
- * / Staff Member / Night Manager) already use — e.g. 'frontdesk.checkin' —
- * even though nothing enforces them yet beyond the sidebar's module check.
- * Add an action here once real code starts calling hasPermission() for it.
+ * it for a role. `view`/`create`/`edit`/`delete` are the matrix columns the
+ * Role editor renders; `extra` holds the handful of bespoke action strings
+ * the default roles already use that don't fit that shape (frontdesk.checkin,
+ * f&b.pos). None of the finer actions are enforced anywhere yet beyond the
+ * sidebar's module check — add real hasPermission() calls as they're wired up.
  */
 export interface PermissionAction {
   /** Exact string stored in UserRole.permissions, matched by hasPermission()/hasModuleAccess() */
@@ -22,25 +22,37 @@ export interface PermissionModule {
   icon: string;
   /** module.* — checking this implies every action below it */
   fullAccessId: string;
-  actions: PermissionAction[];
+  /** Matrix columns. Undefined means this module has no such action (e.g. dashboard has no Delete). */
+  view?: PermissionAction;
+  create?: PermissionAction;
+  edit?: PermissionAction;
+  delete?: PermissionAction;
+  /** Bespoke actions outside the View/Create/Edit/Delete shape, shown below the matrix. */
+  extra: PermissionAction[];
+}
+
+interface CrudOptions {
+  /** Override the generated '<key>.view' id — compliance's real data uses the legacy 'reports.view'. */
+  viewId?: string;
+  create?: boolean;
+  edit?: boolean;
+  delete?: boolean;
 }
 
 /**
- * Standard View/Create/Edit/Delete action set for a module's own records
+ * Standard View/Create/Edit/Delete slots for a module's own records
  * (reservations, orders, incidents, employee records, etc). `noun` reads
- * into each label, e.g. crud('frontdesk', 'reservations') -> "Create
- * reservations". Modules that already have a bespoke '<key>.view' action
- * (housekeeping, settings) skip the generated view entry to avoid a dupe.
+ * into each label, e.g. crud('frontdesk', 'reservations').create ->
+ * { id: 'frontdesk.create', label: 'Create reservations' }.
  */
-function crud(key: string, noun: string, { view = true } = {}): PermissionAction[] {
-  const entries: PermissionAction[] = [];
-  if (view) entries.push({ id: `${key}.view`, label: `View ${noun}` });
-  entries.push(
-    { id: `${key}.create`, label: `Create ${noun}` },
-    { id: `${key}.edit`, label: `Edit ${noun}` },
-    { id: `${key}.delete`, label: `Delete ${noun}` },
-  );
-  return entries;
+function crud(key: string, noun: string, opts: CrudOptions = {}) {
+  const { viewId = `${key}.view`, create = true, edit = true, delete: del = true } = opts;
+  return {
+    view: { id: viewId, label: `View ${noun}` },
+    create: create ? { id: `${key}.create`, label: `Create ${noun}` } : undefined,
+    edit: edit ? { id: `${key}.edit`, label: `Edit ${noun}` } : undefined,
+    delete: del ? { id: `${key}.delete`, label: `Delete ${noun}` } : undefined,
+  };
 }
 
 export const PERMISSION_MODULES: PermissionModule[] = [
@@ -49,15 +61,16 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Executive Dashboard',
     icon: '📊',
     fullAccessId: 'dashboard.*',
-    actions: [{ id: 'dashboard.view', label: 'View dashboard' }],
+    view: { id: 'dashboard.view', label: 'View dashboard' },
+    extra: [],
   },
   {
     key: 'frontdesk',
     label: 'Front Office Operations',
     icon: '🏨',
     fullAccessId: 'frontdesk.*',
-    actions: [
-      ...crud('frontdesk', 'reservations'),
+    ...crud('frontdesk', 'reservations'),
+    extra: [
       { id: 'frontdesk.checkin', label: 'Check guests in' },
       { id: 'frontdesk.checkout', label: 'Check guests out' },
     ],
@@ -67,75 +80,72 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Events & Conferences',
     icon: '🎪',
     fullAccessId: 'events-conferences.*',
-    actions: crud('events-conferences', 'events & bookings'),
+    ...crud('events-conferences', 'events & bookings'),
+    extra: [],
   },
   {
     key: 'f&b',
     label: 'Food & Beverage',
     icon: '🍽️',
     fullAccessId: 'f&b.*',
-    actions: [
-      ...crud('f&b', 'menu items & orders'),
-      { id: 'f&b.pos', label: 'Use POS terminal' },
-    ],
+    ...crud('f&b', 'menu items & orders'),
+    extra: [{ id: 'f&b.pos', label: 'Use POS terminal' }],
   },
   {
     key: 'housekeeping',
     label: 'Housekeeping & Maintenance',
     icon: '🛏️',
     fullAccessId: 'housekeeping.*',
-    actions: [
-      { id: 'housekeeping.view', label: 'View room status' },
-      ...crud('housekeeping', 'tasks', { view: false }),
-    ],
+    ...crud('housekeeping', 'tasks', { viewId: 'housekeeping.view' }),
+    extra: [],
   },
   {
     key: 'inventory',
     label: 'Inventory & Stores',
     icon: '📦',
     fullAccessId: 'inventory.*',
-    actions: crud('inventory', 'stock & purchase orders'),
+    ...crud('inventory', 'stock & purchase orders'),
+    extra: [],
   },
   {
     key: 'security',
     label: 'Security Operations',
     icon: '🚨',
     fullAccessId: 'security.*',
-    actions: crud('security', 'incident logs'),
+    ...crud('security', 'incident logs'),
+    extra: [],
   },
   {
     key: 'hr',
     label: 'HR & Payroll',
     icon: '👥',
     fullAccessId: 'hr.*',
-    actions: crud('hr', 'employee records'),
+    ...crud('hr', 'employee records'),
+    extra: [],
   },
   {
     key: 'accounting',
     label: 'Accounting & Finance',
     icon: '🧾',
     fullAccessId: 'accounting.*',
-    actions: crud('accounting', 'transactions & invoices'),
+    ...crud('accounting', 'transactions & invoices'),
+    extra: [],
   },
   {
     key: 'compliance',
     label: 'Compliance & Reports',
     icon: '⚖️',
     fullAccessId: 'compliance.*',
-    actions: [
-      { id: 'reports.view', label: 'View reports' },
-      ...crud('compliance', 'filings', { view: false }),
-    ],
+    ...crud('compliance', 'filings', { viewId: 'reports.view' }),
+    extra: [],
   },
   {
     key: 'settings',
     label: 'System Settings',
     icon: '⚙️',
     fullAccessId: 'settings.*',
-    actions: [
-      { id: 'settings.view', label: 'View settings' },
-      ...crud('settings', 'users, roles & configuration', { view: false }),
-    ],
+    ...crud('settings', 'users, roles & configuration', { viewId: 'settings.view' }),
+    extra: [],
   },
 ];
 

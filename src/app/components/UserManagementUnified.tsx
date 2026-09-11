@@ -544,6 +544,11 @@ export default function UserManagementUnified() {
     setRoleForm({ ...roleForm, permissions: checked ? [FULL_SYSTEM_ACCESS] : [] });
   };
 
+  const moduleActionIds = (mod: typeof PERMISSION_MODULES[number]) =>
+    [mod.view, mod.create, mod.edit, mod.delete, ...mod.extra]
+      .filter((a): a is { id: string; label: string } => !!a)
+      .map(a => a.id);
+
   const isModuleFullAccess = (fullAccessId: string) =>
     hasFullSystemAccess || roleForm.permissions.includes(fullAccessId);
 
@@ -551,7 +556,7 @@ export default function UserManagementUnified() {
     if (hasFullSystemAccess) return;
     setRoleForm(prev => {
       const withoutModule = prev.permissions.filter(
-        p => p !== mod.fullAccessId && !mod.actions.some(a => a.id === p)
+        p => p !== mod.fullAccessId && !moduleActionIds(mod).includes(p)
       );
       return { ...prev, permissions: checked ? [...withoutModule, mod.fullAccessId] : withoutModule };
     });
@@ -1051,7 +1056,7 @@ export default function UserManagementUnified() {
       </Modal>
 
       {/* Role Modal */}
-      <Modal isOpen={isRoleModalOpen} onClose={() => setIsRoleModalOpen(false)} size="2xl" scrollBehavior="inside">
+      <Modal isOpen={isRoleModalOpen} onClose={() => setIsRoleModalOpen(false)} size="4xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
             {isEditingRole ? 'Edit Role' : 'Create New Role'}
@@ -1083,35 +1088,78 @@ export default function UserManagementUnified() {
 
               <div>
                 <div className="text-sm font-medium text-default-600 mb-2">Permissions by module</div>
-                <div className={`space-y-2 ${hasFullSystemAccess ? 'opacity-50 pointer-events-none' : ''}`}>
-                  {PERMISSION_MODULES.map((mod) => (
-                    <div key={mod.key} className="border rounded-lg p-3">
-                      <Checkbox
-                        isSelected={isModuleFullAccess(mod.fullAccessId)}
-                        onValueChange={(v) => toggleModuleFullAccess(mod, v)}
-                      >
-                        <span className="mr-1">{mod.icon}</span>
-                        <span className="font-medium">{mod.label}</span>
-                        <span className="text-default-500 text-xs ml-1">— full access</span>
-                      </Checkbox>
-                      {mod.actions.length > 0 && (
-                        <div className="ml-7 mt-1 flex flex-wrap gap-x-4 gap-y-1">
-                          {mod.actions.map((action) => (
-                            <Checkbox
-                              key={action.id}
-                              size="sm"
-                              isSelected={isActionChecked(mod, action.id)}
-                              isDisabled={isModuleFullAccess(mod.fullAccessId)}
-                              onValueChange={(v) => toggleAction(action.id, v)}
-                            >
-                              {action.label}
-                            </Checkbox>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                <div className={`overflow-x-auto border rounded-lg ${hasFullSystemAccess ? 'opacity-50 pointer-events-none' : ''}`}>
+                  <table className="w-full text-sm">
+                    <thead className="bg-default-100">
+                      <tr>
+                        <th className="text-left px-3 py-2 font-medium">Module</th>
+                        <th className="text-center px-2 py-2 font-medium">Full</th>
+                        <th className="text-center px-2 py-2 font-medium">View</th>
+                        <th className="text-center px-2 py-2 font-medium">Create</th>
+                        <th className="text-center px-2 py-2 font-medium">Edit</th>
+                        <th className="text-center px-2 py-2 font-medium">Delete</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {PERMISSION_MODULES.map((mod) => {
+                        const fullAccess = isModuleFullAccess(mod.fullAccessId);
+                        return (
+                          <tr key={mod.key} className="border-t border-default-200">
+                            <td className="px-3 py-2 whitespace-nowrap">
+                              <span className="mr-1">{mod.icon}</span>{mod.label}
+                            </td>
+                            <td className="text-center px-2 py-2">
+                              <Checkbox
+                                aria-label={`${mod.label} — full access`}
+                                isSelected={fullAccess}
+                                onValueChange={(v) => toggleModuleFullAccess(mod, v)}
+                              />
+                            </td>
+                            {(['view', 'create', 'edit', 'delete'] as const).map((col) => {
+                              const action = mod[col];
+                              return (
+                                <td key={col} className="text-center px-2 py-2">
+                                  {action ? (
+                                    <Checkbox
+                                      aria-label={action.label}
+                                      isSelected={isActionChecked(mod, action.id)}
+                                      isDisabled={fullAccess}
+                                      onValueChange={(v) => toggleAction(action.id, v)}
+                                    />
+                                  ) : (
+                                    <span className="text-default-300">—</span>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
+
+                {PERMISSION_MODULES.some((m) => m.extra.length > 0) && (
+                  <div className={`mt-3 space-y-2 ${hasFullSystemAccess ? 'opacity-50 pointer-events-none' : ''}`}>
+                    <div className="text-sm font-medium text-default-600">Other permissions</div>
+                    {PERMISSION_MODULES.filter((m) => m.extra.length > 0).map((mod) => (
+                      <div key={mod.key} className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm border rounded-lg px-3 py-2">
+                        <span className="text-default-500 w-40 shrink-0">{mod.icon} {mod.label}</span>
+                        {mod.extra.map((action) => (
+                          <Checkbox
+                            key={action.id}
+                            size="sm"
+                            isSelected={isActionChecked(mod, action.id)}
+                            isDisabled={isModuleFullAccess(mod.fullAccessId)}
+                            onValueChange={(v) => toggleAction(action.id, v)}
+                          >
+                            {action.label}
+                          </Checkbox>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>
