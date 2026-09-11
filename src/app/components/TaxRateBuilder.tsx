@@ -109,11 +109,10 @@ export default function TaxRateBuilder() {
       alert(`Some tax rules did not sync to accounting:\n${errs.join('\n')}`);
     }
   }, []);
-  const [filterOperation, setFilterOperation] = useState<'internal' | 'external' | 'both'>('both');
   const [filterDomain, setFilterDomain] = useState<'sales' | 'purchases' | 'payroll' | 'corporate' | 'custom'>('sales');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRuleIds, setSelectedRuleIds] = useState<Set<string>>(new Set());
-  const [sim, setSim] = useState({ amount: 1000, category: 'HOTEL', domain: 'sales', operation: 'external', numPersons: 1, numNights: 1, roomType: '', industry: '' });
+  const [sim, setSim] = useState({ amount: 1000, category: 'HOTEL', domain: 'sales', numPersons: 1, numNights: 1, roomType: '', industry: '' });
   const [isApplyingTemplate, setIsApplyingTemplate] = useState(false);
   const [autoAppliedCountries, setAutoAppliedCountries] = useState<Set<string>>(new Set());
   const [workspaceTab, setWorkspaceTab] = useState<'rules' | 'types' | 'simulator'>('rules');
@@ -147,7 +146,7 @@ export default function TaxRateBuilder() {
           name: name,
           description: (typeForm.description || '').trim(),
           domain: typeForm.domain,
-          operation: typeForm.operation
+          operation: deriveOperation(typeForm.domain)
         })
       });
       if (!res.ok) {
@@ -244,10 +243,9 @@ export default function TaxRateBuilder() {
     if (!selectedTypeId) return;
     const t: any = (taxTypes || []).find(x => x.id === selectedTypeId);
     if (t) {
-      setSim(prev => ({ ...prev, domain: t.domain || prev.domain, operation: t.operation || prev.operation }));
+      setSim(prev => ({ ...prev, domain: t.domain || prev.domain }));
       try {
         if (t.domain) setFilterDomain(t.domain as any);
-        if (t.operation) setFilterOperation(t.operation as any);
       } catch {}
     }
   }, [selectedTypeId, taxTypes]);
@@ -392,7 +390,7 @@ export default function TaxRateBuilder() {
         effectiveFrom: formData.effectiveFrom,
         effectiveTo: formData.effectiveTo,
         domain: formData.domain,
-        operation: formData.operation,
+        operation: deriveOperation(formData.domain),
         effect: formData.effect,
         tags: formData.tags,
         employerRate: formData.employerRate,
@@ -602,7 +600,6 @@ export default function TaxRateBuilder() {
     if (!options?.skipFilterSync) {
       if (meta) {
         setFilterDomain(meta.domain);
-        setFilterOperation(meta.operation);
       }
     }
     if (typeIdForTemplate) setSelectedTypeId(typeIdForTemplate);
@@ -635,7 +632,6 @@ export default function TaxRateBuilder() {
     return taxRules
       .filter(rule => rule.countryCode === selectedCountry)
       .filter(rule => (selectedTypeId ? String((rule as any).typeId || '') === String(selectedTypeId) : true))
-      .filter(rule => (filterOperation === 'both' ? true : ((rule as any).operation || 'both') === filterOperation))
       .filter(rule => ((rule as any).domain || 'sales') === filterDomain)
       .filter(rule => {
         if (!searchTerm?.trim()) return true;
@@ -653,7 +649,7 @@ export default function TaxRateBuilder() {
       if (seen.has(key)) dup += 1; else seen.add(key);
     }
     return dup;
-  }, [taxRules, selectedCountry, selectedTypeId, filterOperation, filterDomain, searchTerm]);
+  }, [taxRules, selectedCountry, selectedTypeId, filterDomain, searchTerm]);
 
   /** Extra tax type cards beyond one per template tag or per name (same country). */
   const duplicateTaxTypesCount = React.useMemo(() => {
@@ -740,11 +736,6 @@ export default function TaxRateBuilder() {
       taxRules
         .filter((rule) => rule.countryCode === selectedCountry)
         .filter((rule) => (selectedTypeId ? ((rule as any).typeId || '') === selectedTypeId : true))
-        .filter((rule) => {
-          if (filterOperation === 'both') return true;
-          const op = (rule as any).operation || 'both';
-          return op === filterOperation || op === 'both';
-        })
         .filter((rule) => ((rule as any).domain || 'sales') === filterDomain)
         .filter((rule) => {
           if (!searchTerm?.trim()) return true;
@@ -753,7 +744,7 @@ export default function TaxRateBuilder() {
         })
         .filter((rule, idx, arr) => arr.findIndex((r) => r.id === rule.id) === idx)
         .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100)),
-    [taxRules, selectedCountry, selectedTypeId, filterOperation, filterDomain, searchTerm]
+    [taxRules, selectedCountry, selectedTypeId, filterDomain, searchTerm]
   );
 
   // Where a Tax Type of a given domain is actually selectable/applied in the rest of the
@@ -761,6 +752,23 @@ export default function TaxRateBuilder() {
   // editable as each module gets wired onto Tax Types (only Purchase Orders so far).
   // 'sales' isn't module-specific: every sales-side screen (rooms, F&B, events) applies
   // whichever sales-domain rules match automatically, with no per-transaction picker.
+  // Centre (Cost vs Revenue) turned out to be fully determined by Tax Area in every
+  // rule that exists — sales is always Revenue, purchases and payroll are always
+  // Cost, checked across every seed/template rule. So it's derived here rather than
+  // asked as a second, independently-settable field that could silently disagree
+  // with the area it's paired with.
+  const deriveOperation = (domain: string | undefined): 'internal' | 'external' | 'both' => {
+    switch (domain || 'sales') {
+      case 'sales': return 'external';
+      case 'purchases': return 'internal';
+      case 'payroll': return 'internal';
+      default: return 'both'; // Unrestricted — matches either centre
+    }
+  };
+
+  const centreLabel = (domain: string | undefined): string =>
+    deriveOperation(domain) === 'external' ? 'Revenue Centre' : deriveOperation(domain) === 'internal' ? 'Cost Centre' : 'Both';
+
   const taxAreaLabel = (domain: string | undefined): string => {
     switch (domain || 'sales') {
       case 'sales': return 'Sales';
@@ -789,20 +797,7 @@ export default function TaxRateBuilder() {
     <div className="space-y-4">
       {/* Compact filter toolbar — country is controlled by the page header */}
       <div className="flex flex-col xl:flex-row xl:items-end xl:justify-between gap-4 p-4 rounded-lg bg-default-50 border border-default-200">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 flex-1">
-          <div>
-            <span className="text-sm font-medium text-gray-700 flex items-center gap-1">
-              Centre
-              <Tooltip content="Revenue Centre = guest invoices and sales. Cost Centre = purchases and internal spend.">
-                <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help">i</span>
-              </Tooltip>
-            </span>
-            <div className="mt-2 flex flex-wrap gap-2">
-              <Button size="sm" variant={filterOperation === 'external' ? 'solid' : 'flat'} className={filterOperation === 'external' ? 'bg-ghana-green text-white' : ''} onPress={() => setFilterOperation('external')}>Revenue</Button>
-              <Button size="sm" variant={filterOperation === 'internal' ? 'solid' : 'flat'} className={filterOperation === 'internal' ? 'bg-ghana-green text-white' : ''} onPress={() => setFilterOperation('internal')}>Cost</Button>
-              <Button size="sm" variant={filterOperation === 'both' ? 'solid' : 'flat'} className={filterOperation === 'both' ? 'bg-ghana-green text-white' : ''} onPress={() => setFilterOperation('both')}>Both</Button>
-            </div>
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 flex-1">
           <div>
             <span className="text-sm font-medium text-gray-700">Tax Area</span>
             <Select
@@ -971,12 +966,7 @@ export default function TaxRateBuilder() {
                 {(taxTypes || [])
                   .filter((t) => t.countryCode === selectedCountry)
                   .filter((t) => !typeSearch.trim() ? true : (t.name.toLowerCase().includes(typeSearch.toLowerCase()) || (t.description || '').toLowerCase().includes(typeSearch.toLowerCase())))
-                  .filter((t) => {
-                    const domainOk = filterDomain ? ((t as any).domain || 'sales') === filterDomain || (t as any).domain === 'custom' : true;
-                    const op = (t as any).operation || 'both';
-                    const opOk = filterOperation === 'both' ? true : op === filterOperation || op === 'both';
-                    return domainOk && opOk;
-                  })
+                  .filter((t) => (filterDomain ? ((t as any).domain || 'sales') === filterDomain || (t as any).domain === 'custom' : true))
                   .map((t) => {
                     const count = taxRules.filter((r) => r.countryCode === selectedCountry && (r as any).typeId === t.id).length;
                     const selected = selectedTypeId === t.id;
@@ -1045,10 +1035,10 @@ export default function TaxRateBuilder() {
                   <SelectItem key="purchases">Purchases</SelectItem>
                   <SelectItem key="custom">Unrestricted</SelectItem>
                 </Select>
-                <Select label="Centre" selectedKeys={[sim.operation]} onSelectionChange={(k) => setSim({ ...sim, operation: Array.from(k)[0] as any })} variant="bordered" size="sm">
-                  <SelectItem key="external">Revenue</SelectItem>
-                  <SelectItem key="internal">Cost</SelectItem>
-                </Select>
+                <div className="flex flex-col justify-end">
+                  <span className="text-xs text-gray-500">Centre</span>
+                  <span className="text-sm py-1.5">{centreLabel(sim.domain)}</span>
+                </div>
                 <Input label="Persons" type="number" value={String(sim.numPersons)} onChange={(e) => setSim({ ...sim, numPersons: parseInt(e.target.value || '1', 10) })} variant="bordered" size="sm" />
                 <Input label="Nights" type="number" value={String(sim.numNights)} onChange={(e) => setSim({ ...sim, numNights: parseInt(e.target.value || '1', 10) })} variant="bordered" size="sm" />
               </div>
@@ -1057,7 +1047,7 @@ export default function TaxRateBuilder() {
                   <h4 className="text-sm font-medium mb-2">Breakdown</h4>
                   <div className="space-y-1 text-sm">
                     {(() => {
-                      const ctx: any = { numPersons: sim.numPersons, numNights: sim.numNights, roomType: sim.roomType, industry: sim.industry, domain: sim.domain, operation: sim.operation, typeId: selectedTypeId };
+                      const ctx: any = { numPersons: sim.numPersons, numNights: sim.numNights, roomType: sim.roomType, industry: sim.industry, domain: sim.domain, operation: deriveOperation(sim.domain), typeId: selectedTypeId };
                       const res = calcTax(Number(sim.amount) || 0, sim.category, ctx);
                       if (!res.taxes.length) return <p className="text-gray-500 text-xs">No taxes applied for this scenario.</p>;
                       return res.taxes.map((t: any, idx: number) => (
@@ -1071,7 +1061,7 @@ export default function TaxRateBuilder() {
                 </div>
                 <div className="space-y-2 text-sm">
                   {(() => {
-                    const ctx: any = { numPersons: sim.numPersons, numNights: sim.numNights, roomType: sim.roomType, industry: sim.industry, domain: sim.domain, operation: sim.operation, typeId: selectedTypeId };
+                    const ctx: any = { numPersons: sim.numPersons, numNights: sim.numNights, roomType: sim.roomType, industry: sim.industry, domain: sim.domain, operation: deriveOperation(sim.domain), typeId: selectedTypeId };
                     const res = calcTax(Number(sim.amount) || 0, sim.category, ctx);
                     const tax = res.taxes.reduce((s: number, t: any) => s + t.amount, 0);
                     return (
@@ -1112,12 +1102,12 @@ export default function TaxRateBuilder() {
                 </div>
               </div>
               <div>
-                <label className="text-sm font-medium">Operation <span className="text-danger-600">*</span></label>
-                <div className="mt-1 flex gap-2">
-                  <Button size="sm" variant={typeForm.operation === 'internal' ? 'solid' : 'flat'} onPress={() => setTypeForm(prev => ({ ...prev, operation: 'internal' }))}>Internal</Button>
-                  <Button size="sm" variant={typeForm.operation === 'external' ? 'solid' : 'flat'} onPress={() => setTypeForm(prev => ({ ...prev, operation: 'external' }))}>External</Button>
-                  <Button size="sm" variant={typeForm.operation === 'both' ? 'solid' : 'flat'} onPress={() => setTypeForm(prev => ({ ...prev, operation: 'both' }))}>Both</Button>
-                </div>
+                <label className="text-sm font-medium flex items-center gap-1">Centre
+                  <Tooltip content="Follows Tax Area automatically — Sales is always Revenue Centre, Purchases and Payroll are always Cost Centre.">
+                    <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
+                  </Tooltip>
+                </label>
+                <p className="text-sm py-1.5 text-gray-700">{centreLabel(typeForm.domain)}</p>
               </div>
               <div>
                 <label className="text-sm font-medium">Tax Type Name <span className="text-danger-600">*</span></label>
@@ -1552,27 +1542,12 @@ export default function TaxRateBuilder() {
                   )}
                 </div>
                 <div>
-                  <label className="text-sm font-medium flex items-center gap-1">Operation
-                    <Tooltip content="Cost Centre (purchases, payroll, internal spend). Revenue Centre (sales, customer invoices, guest folios). Both applies in either context.">
+                  <label className="text-sm font-medium flex items-center gap-1">Centre
+                    <Tooltip content="Follows Tax Area automatically — Sales is always Revenue Centre, Purchases and Payroll are always Cost Centre.">
                       <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-700 text-xs cursor-help ml-1">i</span>
                     </Tooltip>
                   </label>
-                  <Select
-                    selectedKeys={[formData.operation || 'both']}
-                    onSelectionChange={(keys) => {
-                      const selectedKey = Array.from(keys)[0] as any;
-                      setFormData(prev => ({ ...prev, operation: selectedKey }));
-                    }}
-                    isDisabled={Boolean(selectedTypeId || formData.typeId)}
-                    variant="bordered"
-                   >
-                     <SelectItem key="internal">Cost Centre</SelectItem>
-                     <SelectItem key="external">Revenue Centre</SelectItem>
-                    <SelectItem key="both">Both</SelectItem>
-                  </Select>
-                  {Boolean(selectedTypeId || formData.typeId) && (
-                    <div className="text-xs text-gray-500 mt-1">Inherited from selected tax type</div>
-                  )}
+                  <p className="text-sm py-1.5 text-gray-700">{centreLabel(formData.domain)}</p>
                   {formData.domain === 'payroll' && (
                     <div className="text-xs text-amber-600 mt-1">
                       Existing payroll rates (PAYE, SSNIT, Tier 2/3) are edited under Income Taxes, not here. Only use

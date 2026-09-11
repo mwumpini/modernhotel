@@ -449,7 +449,7 @@ export default function InventorySupplyChainDashboard() {
   const computePOTax = useCallback((subtotal: number, taxTypeId: string | undefined, customRate: number): number => {
     if (!(subtotal > 0) || !taxTypeId || taxTypeId === 'none') return 0;
     if (taxTypeId === 'custom') return Math.round(subtotal * (customRate || 0) / 100 * 100) / 100;
-    const { total } = calcTax(subtotal, 'ALL', { domain: 'purchases', operation: 'external', typeId: taxTypeId });
+    const { total } = calcTax(subtotal, 'ALL', { domain: 'purchases', operation: 'internal', typeId: taxTypeId });
     return Math.round((total - subtotal) * 100) / 100;
   }, [calcTax]);
 
@@ -464,7 +464,7 @@ export default function InventorySupplyChainDashboard() {
       const amount = Math.round(subtotal * (customRate || 0) / 100 * 100) / 100;
       return amount !== 0 ? [{ name: 'Custom Rate', amount }] : [];
     }
-    const { taxes } = calcTax(subtotal, 'ALL', { domain: 'purchases', operation: 'external', typeId: taxTypeId });
+    const { taxes } = calcTax(subtotal, 'ALL', { domain: 'purchases', operation: 'internal', typeId: taxTypeId });
     return taxes
       .filter(t => t.amount !== 0)
       .map(t => {

@@ -27,7 +27,7 @@ async function resolvePurchaseTax(tenantId: string, subtotal: number, taxTypeId?
 		const { listTaxRules } = require('../compliance/repository') as typeof import('../compliance/repository')
 		const { computeTaxStack } = require('../compliance/calcEngine') as typeof import('../compliance/calcEngine')
 		const rules = await listTaxRules(tenantId, 'GH')
-		const { total } = computeTaxStack(rules as any[], subtotal, 'ALL', { domain: 'purchases', operation: 'external', typeId: taxTypeId })
+		const { total } = computeTaxStack(rules as any[], subtotal, 'ALL', { domain: 'purchases', operation: 'internal', typeId: taxTypeId })
 		return { amount: Math.round((total - subtotal) * 100) / 100 }
 	} catch (e) {
 		console.error('[resolvePurchaseTax] failed:', e)
