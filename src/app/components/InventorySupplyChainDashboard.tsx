@@ -14,6 +14,7 @@ import { useSupplierStore } from '../lib/inventory/supplierStore';
 import { useAccountingStore } from '../lib/accounting/store';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useCalculateTax } from '../hooks/useCalculateTax';
+import { openHtmlPrintWindow } from '../lib/print/engine';
 import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
 import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
 import { BusinessPartner } from '../lib/accounting/models';
@@ -1334,123 +1335,171 @@ export default function InventorySupplyChainDashboard() {
     ).slice(0, 20);
   };
 
+  // PO print layout follows the standard purchase-order template (header with
+  // issuer + vendor side by side, order details stacked top-right, itemized
+  // table, notes/terms on the left with a totals box on the right) —
+  // https://invoice-generator.com/purchase-order-template.
   const handleGeneratePOPDF = () => {
     if (!poFormData.items || poFormData.items.length === 0) {
       alert('Please add items to generate PDF');
       return;
     }
 
-    // Generate PDF content
+    const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const money = (n: number) => `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const fmtDate = (d: Date | string | undefined, fallback?: Date) => {
+      const val = d instanceof Date ? d : d ? new Date(d) : fallback;
+      return val ? val.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
+    };
+
     const subtotal = (poFormData.items || []).reduce((sum, item) => sum + item.totalCost, 0);
     const taxLines = computePOTaxLines(subtotal, poFormData.taxType, poFormData.taxRate || 0);
     const taxAmount = taxLines.reduce((sum, l) => sum + l.amount, 0);
     const shipping = poFormData.shippingAmount || 0;
     const discount = poFormData.discountAmount || 0;
     const totalAmount = subtotal + taxAmount + shipping - discount;
-    const taxLinesHtml = taxLines
-      .map(l => `<p><strong>${l.amount < 0 ? `${l.name} (withheld)` : l.name}:</strong> ${l.amount < 0 ? '-' : ''}₵${Math.abs(l.amount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>`)
-      .join('');
     const poNumber = poFormData.poNumber || generatePONumber();
     const paymentTermsLabels: Record<string, string> = { immediate: 'Immediate', net30: 'Net 30', net60: 'Net 60', net90: 'Net 90' };
-    const paymentTermsLabel = paymentTermsLabels[poFormData.paymentTerms || ''] || poFormData.paymentTerms;
-    
-    // Create PDF HTML content
+    const paymentTermsLabel = paymentTermsLabels[poFormData.paymentTerms || ''] || poFormData.paymentTerms || 'N/A';
+
+    const company = settings.companySettings;
+    const companyName = company?.tradingName || company?.legalName || settings.tenant?.name || 'Company Name';
+    const companyAddressLines = [
+      company?.address?.line1,
+      company?.address?.line2,
+      [company?.address?.city, company?.address?.state, company?.address?.postalCode].filter(Boolean).join(', '),
+      company?.address?.country,
+    ].filter(Boolean) as string[];
+    const companyContactLines = [
+      company?.contact?.phone,
+      company?.contact?.email,
+      company?.taxId ? `TIN: ${company.taxId}` : undefined,
+    ].filter(Boolean) as string[];
+
+    const supplier = supplierStoreSuppliers.find(s => s.id === poFormData.supplierId);
+    const supplierLines = [
+      poFormData.supplierName || supplier?.name || 'N/A',
+      supplier?.address,
+      [supplier?.city, supplier?.country].filter(Boolean).join(', ') || undefined,
+      supplier?.phone,
+      supplier?.email,
+    ].filter(Boolean) as string[];
+
+    const taxRowsHtml = taxLines
+      .map(l => `<tr><td>${esc(l.amount < 0 ? `${l.name} (withheld)` : l.name)}</td><td>${l.amount < 0 ? '-' : ''}${money(Math.abs(l.amount))}</td></tr>`)
+      .join('');
+
     const pdfContent = `
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Purchase Order ${poNumber}</title>
+          <title>Purchase Order ${esc(poNumber)}</title>
           <style>
-            body { font-family: Arial, sans-serif; padding: 20px; }
-            .header { border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
-            .header h1 { margin: 0; }
-            .details { margin-bottom: 20px; }
-            .details table { width: 100%; border-collapse: collapse; }
-            .details td { padding: 5px; border-bottom: 1px solid #ddd; }
-            .items-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-            .items-table th, .items-table td { padding: 8px; border: 1px solid #ddd; text-align: left; }
-            .items-table th { background-color: #f2f2f2; }
-            .total { margin-top: 20px; text-align: right; font-size: 18px; font-weight: bold; }
-            .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; }
+            * { box-sizing: border-box; }
+            body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; padding: 32px 40px; font-size: 13px; }
+            .top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 28px; }
+            .from-block .company-name { font-size: 16px; font-weight: 700; margin: 0 0 4px; }
+            .from-block p { margin: 0; line-height: 1.45; color: #444; }
+            .title-block { text-align: right; }
+            .title-block h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: 1px; color: #111; }
+            .title-block table { border-collapse: collapse; margin-left: auto; }
+            .title-block td { padding: 3px 0 3px 16px; text-align: right; white-space: nowrap; }
+            .title-block td.label { color: #666; text-align: right; padding-left: 0; }
+            .parties { display: flex; justify-content: space-between; gap: 32px; margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid #ddd; }
+            .parties .block { flex: 1; }
+            .parties h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase; color: #888; }
+            .parties p { margin: 0; line-height: 1.45; }
+            .items-table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+            .items-table th { background: #1a1a1a; color: #fff; text-align: left; padding: 8px 10px; font-size: 12px; font-weight: 600; }
+            .items-table td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+            .items-table th:last-child, .items-table td:last-child,
+            .items-table th:nth-child(3), .items-table td:nth-child(3),
+            .items-table th:nth-child(4), .items-table td:nth-child(4) { text-align: right; }
+            .bottom { display: flex; justify-content: space-between; gap: 32px; margin-top: 24px; }
+            .notes-block { flex: 1; }
+            .notes-block h3 { margin: 0 0 6px; font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase; color: #888; }
+            .notes-block p { margin: 0 0 14px; line-height: 1.5; white-space: pre-wrap; }
+            .totals { width: 280px; }
+            .totals table { width: 100%; border-collapse: collapse; }
+            .totals td { padding: 5px 0; }
+            .totals td:last-child { text-align: right; }
+            .totals tr.grand td { border-top: 2px solid #1a1a1a; padding-top: 10px; font-size: 16px; font-weight: 700; }
+            .footer-note { margin-top: 36px; padding-top: 14px; border-top: 1px solid #ddd; color: #888; font-size: 11px; }
           </style>
         </head>
         <body>
-          <div class="header">
-            <h1>PURCHASE ORDER</h1>
-            <p><strong>PO Number:</strong> ${poNumber}</p>
+          <div class="top">
+            <div class="from-block">
+              <p class="company-name">${esc(companyName)}</p>
+              ${companyAddressLines.map(l => `<p>${esc(l)}</p>`).join('')}
+              ${companyContactLines.map(l => `<p>${esc(l)}</p>`).join('')}
+            </div>
+            <div class="title-block">
+              <h1>PURCHASE ORDER</h1>
+              <table>
+                <tr><td class="label">PO #</td><td>${esc(poNumber)}</td></tr>
+                <tr><td class="label">Date</td><td>${fmtDate(poFormData.orderDate, new Date())}</td></tr>
+                <tr><td class="label">Required By</td><td>${fmtDate(poFormData.expectedDeliveryDate)}</td></tr>
+                <tr><td class="label">Payment Terms</td><td>${esc(paymentTermsLabel)}</td></tr>
+                <tr><td class="label">Priority</td><td>${esc(poFormData.priority || 'Medium')}</td></tr>
+              </table>
+            </div>
           </div>
-          
-          <div class="details">
-            <table>
-              <tr><td><strong>Supplier:</strong></td><td>${poFormData.supplierName || 'N/A'}</td></tr>
-              <tr><td><strong>Order Date:</strong></td><td>${poFormData.orderDate instanceof Date 
-                ? poFormData.orderDate.toLocaleDateString()
-                : poFormData.orderDate 
-                  ? new Date(poFormData.orderDate).toLocaleDateString()
-                  : new Date().toLocaleDateString()}</td></tr>
-              <tr><td><strong>Expected Delivery:</strong></td><td>${poFormData.expectedDeliveryDate instanceof Date 
-                ? poFormData.expectedDeliveryDate.toLocaleDateString()
-                : poFormData.expectedDeliveryDate 
-                  ? new Date(poFormData.expectedDeliveryDate).toLocaleDateString()
-                  : 'N/A'}</td></tr>
-              <tr><td><strong>Priority:</strong></td><td>${poFormData.priority || 'Medium'}</td></tr>
-              <tr><td><strong>Payment Terms:</strong></td><td>${paymentTermsLabel || 'N/A'}</td></tr>
-            </table>
+
+          <div class="parties">
+            <div class="block">
+              <h3>Vendor</h3>
+              ${supplierLines.map(l => `<p>${esc(l)}</p>`).join('')}
+            </div>
           </div>
 
           <table class="items-table">
             <thead>
               <tr>
-                <th>Item Code</th>
-                <th>Item Name</th>
-                <th>Quantity</th>
+                <th>Item</th>
+                <th>Description</th>
+                <th>Qty</th>
                 <th>Unit Cost</th>
-                <th>Total Cost</th>
+                <th>Amount</th>
               </tr>
             </thead>
             <tbody>
               ${(poFormData.items || []).map(item => `
                 <tr>
-                  <td>${item.itemCode}</td>
-                  <td>${item.itemName}</td>
-                  <td>${item.quantity}</td>
-                  <td>₵${item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                  <td>₵${item.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                  <td>${esc(item.itemCode)}</td>
+                  <td>${esc(item.itemName)}</td>
+                  <td>${esc(item.quantity)}</td>
+                  <td>${money(item.unitCost)}</td>
+                  <td>${money(item.totalCost)}</td>
                 </tr>
               `).join('')}
             </tbody>
           </table>
 
-          <div class="total">
-            <div style="text-align: right; margin-top: 20px;">
-              <p><strong>Subtotal:</strong> ₵${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              ${taxLinesHtml}
-              ${shipping > 0 ? `<p><strong>Shipping:</strong> ₵${shipping.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>` : ''}
-              ${discount > 0 ? `<p><strong>Discount:</strong> -₵${discount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>` : ''}
-              <p style="font-size: 20px; margin-top: 10px;"><strong>Total Amount:</strong> ₵${totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          <div class="bottom">
+            <div class="notes-block">
+              ${poFormData.notes ? `<h3>Notes</h3><p>${esc(poFormData.notes)}</p>` : ''}
+            </div>
+            <div class="totals">
+              <table>
+                <tr><td>Subtotal</td><td>${money(subtotal)}</td></tr>
+                ${taxRowsHtml}
+                ${shipping > 0 ? `<tr><td>Shipping</td><td>${money(shipping)}</td></tr>` : ''}
+                ${discount > 0 ? `<tr><td>Discount</td><td>-${money(discount)}</td></tr>` : ''}
+                <tr class="grand"><td>Total</td><td>${money(totalAmount)}</td></tr>
+              </table>
             </div>
           </div>
 
-          ${poFormData.notes ? `
-            <div class="footer">
-              <p><strong>Notes:</strong></p>
-              <p>${poFormData.notes}</p>
-            </div>
-          ` : ''}
+          <div class="footer-note">This purchase order is issued by ${esc(companyName)}. Please reference PO #${esc(poNumber)} on your invoice and delivery documents.</div>
         </body>
       </html>
     `;
 
-    // Open print window
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-      printWindow.document.write(pdfContent);
-      printWindow.document.close();
-      printWindow.onload = () => {
-        printWindow.print();
-      };
-    }
-    
+    // Popup-blocker-safe: prints via a hidden iframe rather than window.open,
+    // which silently does nothing when the browser (or the user) blocks popups.
+    openHtmlPrintWindow(pdfContent);
+
     trackEvent('Stores.Issued', { action: 'export_po_pdf', poNumber });
   };
 
