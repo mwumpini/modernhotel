@@ -41,7 +41,6 @@ const GuestExperienceManager = lazy(() => import('./GuestExperienceManager'));
 const MobileGuestServices = lazy(() => import('./MobileGuestServices'));
 const HRMainDashboard = lazy(() => import('./HRMainDashboard'));
 const SecurityMainDashboard = lazy(() => import('./SecurityMainDashboard'));
-const SecurityComplianceDashboard = lazy(() => import('./SecurityComplianceDashboard'));
 const StoresMainDashboard = lazy(() => import('./StoresMainDashboard'));
 const FoodBeverageMainDashboard = lazy(() => import('./FoodBeverageMainDashboard'));
 const FoodBeverageRestaurantBar = lazy(() => import('./FoodBeverageRestaurantBar'));
@@ -268,7 +267,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'security',
       title: `🚨 Security Operations${getUnreadCount('security') ? ` (${getUnreadCount('security')})` : ''}`,
       icon: '🚨',
-      items: []
+      items: [
+        { title: '📊 Operations', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '👁️ View Activities', href: '#' },
+      ]
     },
     {
       key: 'hr',
@@ -386,6 +389,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
         setActiveSection('security');
       } else if (itemTitle === '📈 Reports & Analysis') {
         setActiveSection('security-analytics');
+      } else if (itemTitle === '👁️ View Activities') {
+        setActiveSection('security-activities');
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('security-preferences');
       } else {
@@ -519,8 +524,6 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;
       case 'hr-payroll-management':
         return <Suspense fallback={<div className="p-6 text-center">Loading HR Dashboard...</div>}><HRMainDashboard /></Suspense>;
-      case 'security-compliance':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Security Dashboard...</div>}><SecurityComplianceDashboard /></Suspense>;
       case 'inventory-supply-chain':
         return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}><StoresMainDashboard /></Suspense>;
       case 'reports-analytics':

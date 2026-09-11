@@ -113,6 +113,10 @@ model Tenant {
   tableReservations TableReservation[]
   recipes Recipe[]
   inventoryTransactions InventoryTransaction[]
+  securityIncidents      SecurityIncident[]
+  securityVisitors       SecurityVisitor[]
+  securityPatrolLogs     SecurityPatrolLog[]
+  complianceRequirements SecurityComplianceRequirement[]
 
   @@map("tenants")
 }
@@ -2291,4 +2295,110 @@ model ComplianceReportingRule {
   @@unique([tenantId, code])
   @@index([tenantId, countryCode])
   @@map("compliance_reporting_rules")
+}
+
+// ── Security Operations ─────────────────────────────────────────────────────
+
+model SecurityIncident {
+  id             String    @id @default(cuid())
+  tenantId       String
+  incidentNumber String
+  type           String
+  severity       String    @default("medium")
+  status         String    @default("reported")
+  location       String
+  floor          String?
+  room           String?
+  description    String
+  reportedBy     String
+  reportedAt     DateTime  @default(now())
+  assignedTo     String?
+  assignedAt     DateTime?
+  resolvedAt     DateTime?
+  resolution     String?
+  witnesses      Json?
+  cost           Decimal?  @db.Decimal(12, 2)
+  policeReport   Boolean   @default(false)
+  insuranceClaim Boolean   @default(false)
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, incidentNumber])
+  @@index([tenantId, status])
+  @@map("security_incidents")
+}
+
+model SecurityVisitor {
+  id             String    @id @default(cuid())
+  tenantId       String
+  visitorNumber  String
+  name           String
+  phone          String?
+  idType         String?
+  idNumber       String?
+  purpose        String
+  hostName       String?
+  hostRoom       String?
+  checkInTime    DateTime  @default(now())
+  checkOutTime   DateTime?
+  expectedHours  Float?
+  status         String    @default("checked_in")
+  vehicleNumber  String?
+  escortRequired Boolean   @default(false)
+  escortName     String?
+  approvedBy     String?
+  notes          String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, visitorNumber])
+  @@index([tenantId, status])
+  @@map("security_visitors")
+}
+
+model SecurityPatrolLog {
+  id           String    @id @default(cuid())
+  tenantId     String
+  patrolNumber String
+  officerId    String?
+  officerName  String
+  route        String
+  startTime    DateTime  @default(now())
+  endTime      DateTime?
+  status       String    @default("active")
+  checkpoints  Json?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, patrolNumber])
+  @@index([tenantId, status])
+  @@map("security_patrol_logs")
+}
+
+model SecurityComplianceRequirement {
+  id                String    @id @default(cuid())
+  tenantId          String
+  title             String
+  category          String
+  frequency         String
+  lastCompletedAt   DateTime?
+  nextDueDate       DateTime
+  responsiblePerson String?
+  penaltyAmount     Decimal?  @db.Decimal(12, 2)
+  notes             String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, nextDueDate])
+  @@map("security_compliance_requirements")
 }
