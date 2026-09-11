@@ -12,6 +12,7 @@ import { trackEvent } from '../lib/analytics/trackEvent';
 import { useStockStore } from '../lib/inventory/stockStore';
 import { useSupplierStore } from '../lib/inventory/supplierStore';
 import { useAccountingStore } from '../lib/accounting/store';
+import { useComplianceStore } from '../lib/compliance/store';
 import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
 import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
 import { BusinessPartner } from '../lib/accounting/models';
@@ -417,15 +418,38 @@ export default function InventorySupplyChainDashboard() {
     taxRate: 0
   });
 
-  // Tax type options
-  const taxOptions = [
-    { value: 'none', label: 'None', rate: 0 },
-    { value: 'vat', label: 'VAT (15%)', rate: 15 },
-    { value: 'nhil', label: 'NHIL (2.5%)', rate: 2.5 },
-    { value: 'getfund', label: 'GETFund (2.5%)', rate: 2.5 },
-    { value: 'tourism', label: 'Tourism Levy (1%)', rate: 1 },
-    { value: 'custom', label: 'Custom Rate', rate: 0 }
-  ];
+  // Tax type options — sourced from the real, tenant-editable compliance tax-rule
+  // engine (Settings → Tax Rate Builder), not a hardcoded guess. Ghana's compliance
+  // seed data tags VAT/NHIL/GETFund/Tourism as domain:'sales' only (they're charged
+  // on what the hotel sells, not what it buys) — the rules actually configured for
+  // domain:'purchases' are the resident Withholding Tax categories (Services/Goods/
+  // Works/Rent), which the buyer deducts from the supplier payment rather than adds
+  // on top, so each carries its real `effect` ('add' | 'subtract') through to the
+  // total calculation below instead of always adding like a sales tax would.
+  const complianceTaxRules = useComplianceStore(s => s.taxRules);
+  const complianceCountry = useComplianceStore(s => s.country);
+  const taxOptions = useMemo(() => {
+    const purchaseRules = complianceTaxRules
+      .filter(r => r.countryCode === complianceCountry && r.domain === 'purchases' && r.enabled !== false)
+      .sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100))
+      .map(r => ({
+        value: r.id,
+        label: `${r.name} (${r.rate}%)`,
+        rate: r.rate,
+        effect: (r.effect === 'subtract' ? 'subtract' : 'add') as 'add' | 'subtract',
+        // The category the server looks up the *current* rate for (repository.ts
+        // resolvePurchaseWithholding) — the id/rate above are only for the client's
+        // own live preview; the server never trusts a client-supplied rate.
+        category: r.appliesTo?.[0],
+      }));
+    return [
+      { value: 'none', label: 'None', rate: 0, effect: 'add' as const, category: undefined as string | undefined },
+      ...purchaseRules,
+      // Manual override for a one-off scenario the compliance rule set doesn't cover
+      // yet — still withholding (subtracted), same as every real option above.
+      { value: 'custom', label: 'Custom Rate', rate: 0, effect: 'subtract' as const, category: 'custom' as string | undefined },
+    ];
+  }, [complianceTaxRules, complianceCountry]);
   const [poSearchTerm, setPOSearchTerm] = useState('');
   const [poFilterStatus, setPOFilterStatus] = useState<string>('all');
   const [poPage, setPOPage] = useState(1);
@@ -1100,20 +1124,29 @@ export default function InventorySupplyChainDashboard() {
 
   const handleEditPO = (po: PurchaseOrder) => {
     setEditingPO(po);
-    // Calculate taxRate from existing taxAmount if taxType is not set
-    let taxType = (po as any).taxType || 'none';
-    let taxRate = (po as any).taxRate || 0;
-    
-    if (taxType === 'none' && po.taxAmount > 0 && po.totalAmount > 0) {
-      // Calculate rate from existing tax amount (backward compatibility)
-      taxRate = (po.taxAmount / po.totalAmount) * 100;
-      // Find closest matching tax type
-      const closestTax = taxOptions.find(opt => Math.abs(opt.rate - taxRate) < 0.1);
+    let taxType = 'none';
+    let taxRate = 0;
+
+    if (po.withholdingCategory) {
+      // Real record: re-select whichever currently-configured rule matches this
+      // category (its rate may have changed in Settings since this PO was saved).
+      taxType = po.withholdingCategory === 'custom'
+        ? 'custom'
+        : (taxOptions.find(opt => opt.category === po.withholdingCategory)?.value || 'custom');
+      taxRate = taxType === 'custom'
+        ? (po.customWithholdingRate ?? (po.totalAmount > 0 ? Math.abs((po.withholdingAmount || 0) / po.totalAmount) * 100 : 0))
+        : (taxOptions.find(opt => opt.value === taxType)?.rate || 0);
+    } else if (po.taxAmount !== 0 && po.totalAmount > 0) {
+      // Legacy record from before VAT/withholding were tracked separately — taxAmount
+      // held the (possibly signed) withholding amount directly.
+      const rate = (po.taxAmount / po.totalAmount) * 100;
+      const closestTax = taxOptions.find(opt => Math.abs(opt.rate - Math.abs(rate)) < 0.1);
       taxType = closestTax?.value || 'custom';
+      taxRate = closestTax ? Math.abs(rate) : Math.abs(rate);
     }
-    
-    setPOFormData({ 
-      ...po, 
+
+    setPOFormData({
+      ...po,
       taxType,
       taxRate,
       items: po.items || []
@@ -1138,13 +1171,18 @@ export default function InventorySupplyChainDashboard() {
       return;
     }
 
-    // Calculate totals
+    // Calculate totals. The server is authoritative for both input VAT (auto-applied
+    // from the real configured rate) and withholding (looked up fresh from the
+    // selected category) — see repository.ts upsertPurchaseOrder — so these are just
+    // an optimistic local preview; createPurchaseOrder/updatePurchaseOrder reconcile
+    // the store with the server's real totals once the save round-trips.
     const subtotal = poFormData.items.reduce((sum, item) => sum + (item.quantity * item.unitCost), 0);
-    const taxRate = poFormData.taxRate || 0;
-    const tax = (subtotal * taxRate) / 100; // Calculate tax based on selected rate
+    const selectedTax = taxOptions.find(opt => opt.value === poFormData.taxType);
+    const withholdingCategory = selectedTax?.category;
+    const withholding = withholdingCategory ? (subtotal * (poFormData.taxRate || 0)) / 100 : 0;
     const shipping = poFormData.shippingAmount || 0;
     const discount = poFormData.discountAmount || 0;
-    const finalAmount = subtotal + tax + shipping - discount;
+    const finalAmount = subtotal + shipping - discount - withholding;
 
     const poData: Omit<PurchaseOrder, 'id' | 'createdAt' | 'updatedAt'> = {
       poNumber: poFormData.poNumber || generatePONumber(),
@@ -1155,7 +1193,10 @@ export default function InventorySupplyChainDashboard() {
       status: poFormData.status || 'draft',
       priority: poFormData.priority || 'medium',
       totalAmount: subtotal,
-      taxAmount: tax,
+      taxAmount: 0,
+      withholdingCategory,
+      withholdingAmount: withholding,
+      customWithholdingRate: withholdingCategory === 'custom' ? (poFormData.taxRate || 0) : undefined,
       shippingAmount: shipping,
       discountAmount: discount,
       finalAmount: finalAmount,
@@ -1285,12 +1326,14 @@ export default function InventorySupplyChainDashboard() {
     // Generate PDF content
     const subtotal = (poFormData.items || []).reduce((sum, item) => sum + item.totalCost, 0);
     const taxRate = poFormData.taxRate || 0;
-    const taxAmount = (subtotal * taxRate) / 100;
+    const selectedTaxOption = taxOptions.find(opt => opt.value === poFormData.taxType);
+    const taxIsWithheld = selectedTaxOption?.effect === 'subtract';
+    const rawTaxAmount = (subtotal * taxRate) / 100;
+    const taxAmount = taxIsWithheld ? -rawTaxAmount : rawTaxAmount;
     const shipping = poFormData.shippingAmount || 0;
     const discount = poFormData.discountAmount || 0;
     const totalAmount = subtotal + taxAmount + shipping - discount;
     const poNumber = poFormData.poNumber || generatePONumber();
-    const selectedTaxOption = taxOptions.find(opt => opt.value === poFormData.taxType);
     const paymentTermsLabels: Record<string, string> = { immediate: 'Immediate', net30: 'Net 30', net60: 'Net 60', net90: 'Net 90' };
     const paymentTermsLabel = paymentTermsLabels[poFormData.paymentTerms || ''] || poFormData.paymentTerms;
     
@@ -1364,7 +1407,7 @@ export default function InventorySupplyChainDashboard() {
           <div class="total">
             <div style="text-align: right; margin-top: 20px;">
               <p><strong>Subtotal:</strong> ₵${subtotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-              ${taxAmount > 0 ? `<p><strong>Tax (${selectedTaxOption?.label || `${taxRate}%`}):</strong> ₵${taxAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>` : ''}
+              ${taxAmount !== 0 ? `<p><strong>${taxIsWithheld ? 'Withholding' : 'Tax'} (${selectedTaxOption?.label || `${taxRate}%`}):</strong> ${taxIsWithheld ? '-' : ''}₵${Math.abs(taxAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>` : ''}
               ${shipping > 0 ? `<p><strong>Shipping:</strong> ₵${shipping.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>` : ''}
               ${discount > 0 ? `<p><strong>Discount:</strong> -₵${discount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>` : ''}
               <p style="font-size: 20px; margin-top: 10px;"><strong>Total Amount:</strong> ₵${totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
@@ -2086,8 +2129,15 @@ export default function InventorySupplyChainDashboard() {
                         <div className="text-sm text-gray-500">
                           Base: ₵{po.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </div>
-                        {po.taxAmount > 0 && (
-                          <div className="text-xs text-gray-400">Tax: ₵{po.taxAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                        {po.taxAmount !== 0 && (
+                          <div className="text-xs text-gray-400">
+                            VAT: ₵{Math.abs(po.taxAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
+                        )}
+                        {!!po.withholdingAmount && (
+                          <div className="text-xs text-gray-400">
+                            Withheld: -₵{Math.abs(po.withholdingAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          </div>
                         )}
                       </div>
                     </TableCell>
@@ -4608,14 +4658,18 @@ export default function InventorySupplyChainDashboard() {
                     ₵{((poFormData.items || []).reduce((sum, item) => sum + item.totalCost, 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </span>
                 </div>
-                {poFormData.taxType && poFormData.taxType !== 'none' && (
-                  <div className="flex justify-between mb-2 text-sm">
-                    <span>Tax ({poFormData.taxRate}%):</span>
-                    <span>
-                      ₵{((poFormData.items || []).reduce((sum, item) => sum + item.totalCost, 0) * (poFormData.taxRate || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                )}
+                {poFormData.taxType && poFormData.taxType !== 'none' && (() => {
+                  const isWithheld = taxOptions.find(opt => opt.value === poFormData.taxType)?.effect === 'subtract';
+                  const rawAmount = (poFormData.items || []).reduce((sum, item) => sum + item.totalCost, 0) * (poFormData.taxRate || 0) / 100;
+                  return (
+                    <div className="flex justify-between mb-2 text-sm">
+                      <span>{isWithheld ? 'Withholding' : 'Tax'} ({poFormData.taxRate}%):</span>
+                      <span>
+                        {isWithheld ? '-' : ''}₵{rawAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </div>
+                  );
+                })()}
                 <div className="flex justify-between mb-2 text-sm">
                   <span>Shipping:</span>
                   <span>
@@ -4632,12 +4686,13 @@ export default function InventorySupplyChainDashboard() {
                 <div className="flex justify-between">
                   <span className="text-lg font-bold">Total Amount:</span>
                   <span className="text-lg font-bold">
-                    ₵{(
-                      (poFormData.items || []).reduce((sum, item) => sum + item.totalCost, 0) +
-                      ((poFormData.items || []).reduce((sum, item) => sum + item.totalCost, 0) * (poFormData.taxRate || 0) / 100) +
-                      (poFormData.shippingAmount || 0) -
-                      (poFormData.discountAmount || 0)
-                    ).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    ₵{(() => {
+                      const isWithheld = taxOptions.find(opt => opt.value === poFormData.taxType)?.effect === 'subtract';
+                      const itemsTotal = (poFormData.items || []).reduce((sum, item) => sum + item.totalCost, 0);
+                      const rawTax = itemsTotal * (poFormData.taxRate || 0) / 100;
+                      const total = itemsTotal + (isWithheld ? -rawTax : rawTax) + (poFormData.shippingAmount || 0) - (poFormData.discountAmount || 0);
+                      return total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    })()}
                   </span>
                 </div>
               </div>
@@ -4760,10 +4815,24 @@ export default function InventorySupplyChainDashboard() {
                     <span className="font-semibold">Subtotal:</span>
                     <span className="font-semibold">₵{viewingPO.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                   </div>
-                  <div className="flex justify-between mb-2 text-sm">
-                    <span>Tax (15%):</span>
-                    <span>₵{viewingPO.taxAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-                  </div>
+                  {viewingPO.taxAmount !== 0 && (() => {
+                    const rate = viewingPO.totalAmount > 0 ? Math.abs((viewingPO.taxAmount / viewingPO.totalAmount) * 100) : 0;
+                    return (
+                      <div className="flex justify-between mb-2 text-sm">
+                        <span>VAT ({rate.toFixed(1)}%):</span>
+                        <span>₵{Math.abs(viewingPO.taxAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    );
+                  })()}
+                  {!!viewingPO.withholdingAmount && (() => {
+                    const rate = viewingPO.totalAmount > 0 ? Math.abs((viewingPO.withholdingAmount || 0) / viewingPO.totalAmount * 100) : 0;
+                    return (
+                      <div className="flex justify-between mb-2 text-sm">
+                        <span>Withholding ({rate.toFixed(1)}%):</span>
+                        <span>-₵{Math.abs(viewingPO.withholdingAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    );
+                  })()}
                   <div className="flex justify-between mb-2 text-sm">
                     <span>Shipping:</span>
                     <span>₵{viewingPO.shippingAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>

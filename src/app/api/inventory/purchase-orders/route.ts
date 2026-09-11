@@ -80,6 +80,8 @@ export async function POST(req: NextRequest) {
       paymentTerms: body.paymentTerms,
       notes: body.notes,
       createdBy: body.createdBy,
+      withholdingCategory: body.withholdingCategory,
+      customWithholdingRate: body.customWithholdingRate,
       items,
     });
 
@@ -133,6 +135,8 @@ export async function PUT(req: NextRequest) {
       notes: body.notes,
       approvedBy: body.approvedBy,
       approvedAt: body.approvedAt,
+      withholdingCategory: body.withholdingCategory,
+      customWithholdingRate: body.customWithholdingRate,
       items,
     });
 

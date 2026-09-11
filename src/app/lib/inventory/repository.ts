@@ -2,6 +2,37 @@ import { prisma } from '../database/client'
 import { resolveTaxConfigs } from '../tax/resolveConfigs'
 import { computeStackedTaxLines } from '../accounting/taxFromConfig'
 
+/**
+ * Resident Withholding Tax on a purchase — reads the same real, user-editable
+ * compliance rules (domain: 'purchases', appliesTo: SERVICE/GOODS/WORKS/RENT)
+ * the client-side WHT helper (accounting/purchaseWht.ts) reads via
+ * useComplianceStore, but that store only exists client-side — this is the
+ * server-safe equivalent used when persisting a purchase order, so the
+ * server (not the client) is the source of truth for what actually gets
+ * charged. Never a hardcoded rate.
+ */
+function resolvePurchaseWithholding(subtotal: number, category?: string | null, customRate?: number): { rate: number; amount: number } {
+	if (!(subtotal > 0)) return { rate: 0, amount: 0 }
+	if (category === 'custom') {
+		const rate = Number(customRate) || 0
+		return { rate, amount: Math.round(subtotal * (rate / 100) * 100) / 100 }
+	}
+	if (!category) return { rate: 0, amount: 0 }
+	try {
+		// Dynamic import avoids bundling fs into client chunks when tree-shaken.
+		const { ComplianceDB } = require('../compliance/db') as typeof import('../compliance/db')
+		const rules = ComplianceDB.getTaxes('GH') as Array<Record<string, any>>
+		const rule = rules
+			.filter((r) => r.domain === 'purchases' && r.enabled !== false && Array.isArray(r.appliesTo) && r.appliesTo.includes(category))
+			.sort((a, b) => (a.priority ?? 100) - (b.priority ?? 100))[0]
+		if (!rule) return { rate: 0, amount: 0 }
+		const rate = Number(rule.rate) || 0
+		return { rate, amount: Math.round(subtotal * (rate / 100) * 100) / 100 }
+	} catch {
+		return { rate: 0, amount: 0 }
+	}
+}
+
 export async function upsertUnitOfMeasure(tenantId: string, code: string, name: string, precision = 0) {
 	console.log('[inventory][upsertUnitOfMeasure]', { tenantId, code, name, precision });
 	return prisma.unitOfMeasure.upsert({
@@ -170,6 +201,13 @@ export async function upsertPurchaseOrder(params: {
 	createdBy?: string;
 	approvedBy?: string;
 	approvedAt?: Date | string;
+	// SERVICE | GOODS | WORKS | RENT — which resident-WHT category (if any) applies to
+	// this purchase; undefined/null means no withholding. Never a client-supplied rate:
+	// the server looks up the real, currently-configured rate for the category itself.
+	withholdingCategory?: string | null;
+	// Only meaningful when withholdingCategory is the literal 'custom' — a manual
+	// override rate for a one-off scenario the compliance rule set doesn't cover yet.
+	customWithholdingRate?: number;
 	items: PurchaseOrderItemInput[];
 }) {
 	const totalAmount = params.items.reduce((sum, i) => sum + i.quantity * i.unitCost, 0);
@@ -179,9 +217,13 @@ export async function upsertPurchaseOrder(params: {
 	// mapPrismaTaxRowToConfig's applyOnPurchases flag).
 	const taxConfigs = resolveTaxConfigs()
 	const { totalTax: taxAmount } = computeStackedTaxLines(totalAmount, taxConfigs, 'purchase')
+	// Resident WHT is a separate, independent mechanism from input VAT above: it's
+	// deducted from what's paid to the supplier (and remitted to GRA on their behalf),
+	// not added on top — a purchase order can have VAT, WHT, both, or neither.
+	const { amount: withholdingAmount } = resolvePurchaseWithholding(totalAmount, params.withholdingCategory, params.customWithholdingRate)
 	const shippingAmount = params.shippingAmount ?? 0;
 	const discountAmount = params.discountAmount ?? 0;
-	const finalAmount = totalAmount + taxAmount + shippingAmount - discountAmount;
+	const finalAmount = totalAmount + taxAmount + shippingAmount - discountAmount - withholdingAmount;
 
 	const data = {
 		supplierId: params.supplierId,
@@ -192,6 +234,8 @@ export async function upsertPurchaseOrder(params: {
 		priority: params.priority,
 		totalAmount,
 		taxAmount,
+		withholdingCategory: params.withholdingCategory || null,
+		withholdingAmount,
 		shippingAmount,
 		discountAmount,
 		finalAmount,

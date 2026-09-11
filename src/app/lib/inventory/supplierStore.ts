@@ -13,13 +13,14 @@ function poTenantHeaders(): HeadersInit {
   return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
 }
 
-// Best-effort background persistence for a purchase order — the store stays
-// synchronous/in-memory for the UI (unchanged interaction model), but every
-// create/update now also durably persists tenant-scoped to the database instead
-// of living only in this tab's memory.
-function syncPurchaseOrderToApi(order: PurchaseOrder) {
-  if (typeof window === 'undefined') return;
-  fetch('/api/inventory/purchase-orders', {
+// Persist a purchase order and return the server's authoritative record — the
+// server (not this optimistic client guess) computes taxAmount/withholdingAmount/
+// finalAmount for real (see repository.ts upsertPurchaseOrder), so callers must
+// reconcile the store with this response instead of trusting the local totals
+// past the optimistic first render.
+function syncPurchaseOrderToApi(order: PurchaseOrder): Promise<PurchaseOrder | null> {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  return fetch('/api/inventory/purchase-orders', {
     method: 'PUT',
     headers: poTenantHeaders(),
     body: JSON.stringify({
@@ -38,6 +39,8 @@ function syncPurchaseOrderToApi(order: PurchaseOrder) {
       notes: order.notes,
       approvedBy: order.approvedBy,
       approvedAt: order.approvedAt,
+      withholdingCategory: order.withholdingCategory,
+      customWithholdingRate: order.customWithholdingRate,
       items: order.items.map((i) => ({
         itemId: i.itemId,
         itemCode: i.itemCode,
@@ -48,7 +51,13 @@ function syncPurchaseOrderToApi(order: PurchaseOrder) {
         notes: i.notes,
       })),
     }),
-  }).catch((e) => console.warn('[Inventory] Failed to sync purchase order to server:', e));
+  })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => (data?.order ? mapApiOrderToStore(data.order) : null))
+    .catch((e) => {
+      console.warn('[Inventory] Failed to sync purchase order to server:', e);
+      return null;
+    });
 }
 
 function deletePurchaseOrderFromApi(id: string) {
@@ -74,6 +83,8 @@ function mapApiOrderToStore(raw: any): PurchaseOrder {
     priority: raw.priority,
     totalAmount: Number(raw.totalAmount),
     taxAmount: Number(raw.taxAmount),
+    withholdingCategory: raw.withholdingCategory ?? undefined,
+    withholdingAmount: raw.withholdingAmount != null ? Number(raw.withholdingAmount) : undefined,
     shippingAmount: Number(raw.shippingAmount),
     discountAmount: Number(raw.discountAmount),
     finalAmount: Number(raw.finalAmount),
@@ -1139,7 +1150,14 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       updatedAt: new Date()
     };
     set(state => ({ purchaseOrders: [...state.purchaseOrders, newOrder] }));
-    syncPurchaseOrderToApi(newOrder);
+    // Reconcile with the server's authoritative totals (real VAT/withholding, not this
+    // optimistic guess) once the sync resolves — see syncPurchaseOrderToApi.
+    syncPurchaseOrderToApi(newOrder).then((serverOrder) => {
+      if (!serverOrder) return;
+      set(state => ({
+        purchaseOrders: state.purchaseOrders.map(o => (o.id === newOrder.id ? serverOrder : o)),
+      }));
+    });
   },
 
   updatePurchaseOrder: (id, updates) => {
@@ -1151,7 +1169,14 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
         return updated;
       })
     }));
-    if (updated) syncPurchaseOrderToApi(updated);
+    if (updated) {
+      syncPurchaseOrderToApi(updated).then((serverOrder) => {
+        if (!serverOrder) return;
+        set(state => ({
+          purchaseOrders: state.purchaseOrders.map(o => (o.id === serverOrder.id ? serverOrder : o)),
+        }));
+      });
+    }
   },
 
   deletePurchaseOrder: (id) => {

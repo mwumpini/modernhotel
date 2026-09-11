@@ -1363,7 +1363,9 @@ model PurchaseOrder {
   status               String    @default("draft") // draft|sent|confirmed|in-transit|delivered|cancelled|closed
   priority             String    @default("medium") // low|medium|high|urgent
   totalAmount          Decimal   @default(0) // pre-tax/shipping/discount subtotal
-  taxAmount            Decimal   @default(0)
+  taxAmount            Decimal   @default(0) // input VAT — added; recoverable
+  withholdingCategory  String?   // SERVICE | GOODS | WORKS | RENT — resident WHT deducted from the supplier payment; null = none
+  withholdingAmount    Decimal   @default(0) // subtracted from what's paid to the supplier, remitted to GRA
   shippingAmount       Decimal   @default(0)
   discountAmount       Decimal   @default(0)
   finalAmount          Decimal   @default(0)

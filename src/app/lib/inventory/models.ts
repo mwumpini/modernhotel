@@ -78,7 +78,10 @@ export interface PurchaseOrder {
   status: 'draft' | 'sent' | 'confirmed' | 'in-transit' | 'delivered' | 'cancelled' | 'closed';
   priority: 'low' | 'medium' | 'high' | 'urgent';
   totalAmount: number;
-  taxAmount: number;
+  taxAmount: number; // input VAT — added, recoverable
+  withholdingCategory?: string; // SERVICE | GOODS | WORKS | RENT | 'custom' — resident WHT category, if any
+  withholdingAmount?: number; // subtracted from what's paid to the supplier
+  customWithholdingRate?: number; // only meaningful when withholdingCategory === 'custom'
   shippingAmount: number;
   discountAmount: number;
   finalAmount: number;
