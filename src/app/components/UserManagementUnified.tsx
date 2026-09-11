@@ -28,11 +28,13 @@ import {
   Divider,
   Tabs,
   Tab,
-  Badge
+  Badge,
+  Checkbox
 } from "@heroui/react";
 import { useSettingsStore } from '../lib/settings/store';
 import { applyTheme, type AppTheme } from '../lib/theme/applyTheme';
 import type { UserPreferences } from '../lib/settings/store';
+import { PERMISSION_MODULES, FULL_SYSTEM_ACCESS } from '../lib/settings/permissionCatalog';
 
 export default function UserManagementUnified() {
   const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, updateUserSecurity, changePassword, addRole, updateRole, deleteRole } = useSettingsStore();
@@ -53,11 +55,11 @@ export default function UserManagementUnified() {
   const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [isEditingRole, setIsEditingRole] = useState(false);
-  const [selectedRole, setSelectedRole] = useState<{ id: string; name: string; description: string; permissionsText: string; isActive: boolean } | null>(null);
+  const [selectedRole, setSelectedRole] = useState<{ id: string; name: string; description: string; permissions: string[]; isActive: boolean } | null>(null);
   const [roleForm, setRoleForm] = useState({
     name: '',
     description: '',
-    permissionsText: 'dashboard.view',
+    permissions: ['dashboard.view'] as string[],
     isActive: true,
   });
 
@@ -144,7 +146,7 @@ export default function UserManagementUnified() {
     });
   };
   const resetRoleForm = () => {
-    setRoleForm({ name: '', description: '', permissionsText: 'dashboard.view', isActive: true });
+    setRoleForm({ name: '', description: '', permissions: ['dashboard.view'], isActive: true });
   };
 
   const handleCreateUser = () => {
@@ -506,17 +508,14 @@ export default function UserManagementUnified() {
     setRoleForm({
       name: role.name,
       description: role.description,
-      permissionsText: (role.permissions || []).join(','),
+      permissions: role.permissions || [],
       isActive: role.isActive,
     });
     setIsRoleModalOpen(true);
   };
 
   const handleSaveRole = () => {
-    const permissions = roleForm.permissionsText
-      .split(',')
-      .map(p => p.trim())
-      .filter(Boolean);
+    const permissions = roleForm.permissions;
     if (isEditingRole && selectedRole) {
       updateRole(selectedRole.id, {
         name: roleForm.name,
@@ -535,6 +534,40 @@ export default function UserManagementUnified() {
       console.log('🔧 [UserManagementUnified] Created role:', { name: roleForm.name });
     }
     setIsRoleModalOpen(false);
+  };
+
+  // Full System Access ('*') supersedes everything — module/action checkboxes
+  // are shown checked-and-disabled under it rather than storing redundant ids.
+  const hasFullSystemAccess = roleForm.permissions.includes(FULL_SYSTEM_ACCESS);
+
+  const toggleFullSystemAccess = (checked: boolean) => {
+    setRoleForm({ ...roleForm, permissions: checked ? [FULL_SYSTEM_ACCESS] : [] });
+  };
+
+  const isModuleFullAccess = (fullAccessId: string) =>
+    hasFullSystemAccess || roleForm.permissions.includes(fullAccessId);
+
+  const toggleModuleFullAccess = (mod: typeof PERMISSION_MODULES[number], checked: boolean) => {
+    if (hasFullSystemAccess) return;
+    setRoleForm(prev => {
+      const withoutModule = prev.permissions.filter(
+        p => p !== mod.fullAccessId && !mod.actions.some(a => a.id === p)
+      );
+      return { ...prev, permissions: checked ? [...withoutModule, mod.fullAccessId] : withoutModule };
+    });
+  };
+
+  const isActionChecked = (mod: typeof PERMISSION_MODULES[number], actionId: string) =>
+    isModuleFullAccess(mod.fullAccessId) || roleForm.permissions.includes(actionId);
+
+  const toggleAction = (actionId: string, checked: boolean) => {
+    if (hasFullSystemAccess) return;
+    setRoleForm(prev => ({
+      ...prev,
+      permissions: checked
+        ? [...prev.permissions, actionId]
+        : prev.permissions.filter(p => p !== actionId),
+    }));
   };
 
   const handleDeleteRole = (roleId: string) => {
@@ -1018,7 +1051,7 @@ export default function UserManagementUnified() {
       </Modal>
 
       {/* Role Modal */}
-      <Modal isOpen={isRoleModalOpen} onClose={() => setIsRoleModalOpen(false)} size="lg">
+      <Modal isOpen={isRoleModalOpen} onClose={() => setIsRoleModalOpen(false)} size="2xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
             {isEditingRole ? 'Edit Role' : 'Create New Role'}
@@ -1037,12 +1070,50 @@ export default function UserManagementUnified() {
                 onChange={(e) => setRoleForm({ ...roleForm, description: e.target.value })}
                 placeholder="Describe the role"
               />
-              <Input
-                label="Permissions (comma separated)"
-                value={roleForm.permissionsText}
-                onChange={(e) => setRoleForm({ ...roleForm, permissionsText: e.target.value })}
-                placeholder="e.g., dashboard.view, frontdesk.*"
-              />
+
+              <div className="border rounded-lg p-3 bg-default-50">
+                <Checkbox
+                  isSelected={hasFullSystemAccess}
+                  onValueChange={toggleFullSystemAccess}
+                >
+                  <span className="font-semibold">Full System Access</span>
+                  <span className="text-default-500 text-sm ml-1">— every module, current and future (System Administrator)</span>
+                </Checkbox>
+              </div>
+
+              <div>
+                <div className="text-sm font-medium text-default-600 mb-2">Permissions by module</div>
+                <div className={`space-y-2 ${hasFullSystemAccess ? 'opacity-50 pointer-events-none' : ''}`}>
+                  {PERMISSION_MODULES.map((mod) => (
+                    <div key={mod.key} className="border rounded-lg p-3">
+                      <Checkbox
+                        isSelected={isModuleFullAccess(mod.fullAccessId)}
+                        onValueChange={(v) => toggleModuleFullAccess(mod, v)}
+                      >
+                        <span className="mr-1">{mod.icon}</span>
+                        <span className="font-medium">{mod.label}</span>
+                        <span className="text-default-500 text-xs ml-1">— full access</span>
+                      </Checkbox>
+                      {mod.actions.length > 0 && (
+                        <div className="ml-7 mt-1 flex flex-wrap gap-x-4 gap-y-1">
+                          {mod.actions.map((action) => (
+                            <Checkbox
+                              key={action.id}
+                              size="sm"
+                              isSelected={isActionChecked(mod, action.id)}
+                              isDisabled={isModuleFullAccess(mod.fullAccessId)}
+                              onValueChange={(v) => toggleAction(action.id, v)}
+                            >
+                              {action.label}
+                            </Checkbox>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <div>
                 <Switch
                   isSelected={roleForm.isActive}
