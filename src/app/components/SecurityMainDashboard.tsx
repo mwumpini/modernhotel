@@ -11,7 +11,7 @@ export default function SecurityMainDashboard() {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🛡️ Security & Compliance</h2>
+        <h2 className="text-2xl font-bold text-ghana-black">🛡️ Security Operations</h2>
       </div>
 
       <DeptMessenger from="security" mode="drawer" />

@@ -10,46 +10,7 @@ import { trackEvent } from '../lib/analytics/trackEvent';
 import { useIncidentStore } from '../lib/security/incidentStore';
 import { useVisitorStore } from '../lib/security/visitorStore';
 import { usePatrolStore } from '../lib/security/patrolStore';
-import { useComplianceStore } from '../lib/security/complianceStore';
-import { SecurityIncident, Visitor, ComplianceRequirement } from '../lib/security/models';
-
-const DEFAULT_COMPLIANCE_REQUIREMENTS: Array<Omit<ComplianceRequirement, 'id' | 'createdAt' | 'updatedAt'>> = [
-  {
-    title: 'Fire Extinguisher & Suppression System Inspection',
-    category: 'fire_safety',
-    frequency: 'monthly',
-    nextDueDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1),
-    responsiblePerson: 'Security Supervisor',
-    penaltyAmount: 50000,
-    notes: 'Fine up to ₵50,000; business closure for serious violations.',
-  },
-  {
-    title: 'Kitchen Hygiene & Food Handling Audit',
-    category: 'health_hygiene',
-    frequency: 'monthly',
-    nextDueDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1),
-    responsiblePerson: 'Kitchen Manager',
-    penaltyAmount: 100000,
-    notes: 'Fine up to ₵100,000; kitchen closure; legal action.',
-  },
-  {
-    title: 'Employee Contract & SSNIT Compliance',
-    category: 'employment',
-    frequency: 'quarterly',
-    nextDueDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1),
-    responsiblePerson: 'HR Manager',
-    penaltyAmount: 200000,
-    notes: 'Fine up to ₵200,000; legal action; business license suspension.',
-  },
-];
-
-const nextDueDateFor = (frequency: ComplianceRequirement['frequency'], from: Date): Date => {
-  const d = new Date(from);
-  if (frequency === 'monthly') d.setMonth(d.getMonth() + 1);
-  else if (frequency === 'quarterly') d.setMonth(d.getMonth() + 3);
-  else if (frequency === 'annually') d.setFullYear(d.getFullYear() + 1);
-  return d;
-};
+import { SecurityIncident, Visitor } from '../lib/security/models';
 
 export default function SecurityComplianceDashboard() {
   const { data: session } = useSession();
@@ -65,30 +26,13 @@ export default function SecurityComplianceDashboard() {
   const { incidents, hydrateFromApi: hydrateIncidents, addIncident, assignIncident, resolveIncident } = useIncidentStore();
   const { visitors, hydrateFromApi: hydrateVisitors, addVisitor, checkOutVisitor } = useVisitorStore();
   const { patrols, hydrateFromApi: hydratePatrols, startPatrol, endPatrol, completeCheckpoint } = usePatrolStore();
-  const { requirements, hydrateFromApi: hydrateCompliance, addRequirement, markCompleted } = useComplianceStore();
 
   useEffect(() => {
     hydrateIncidents();
     hydrateVisitors();
     hydratePatrols();
-    hydrateCompliance();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Seed the standard Ghana compliance register once, if the tenant has none yet.
-  const seededRef = React.useRef(false);
-  useEffect(() => {
-    if (seededRef.current) return;
-    if (requirements.length > 0) { seededRef.current = true; return; }
-    const timer = setTimeout(() => {
-      if (requirements.length === 0 && !seededRef.current) {
-        seededRef.current = true;
-        DEFAULT_COMPLIANCE_REQUIREMENTS.forEach((r) => addRequirement(r));
-      }
-    }, 1500); // give hydrateFromApi a chance to resolve first
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requirements.length]);
 
   const [incidentForm, setIncidentForm] = useState({
     type: 'suspicious_activity' as SecurityIncident['type'],
@@ -107,9 +51,6 @@ export default function SecurityComplianceDashboard() {
   const openIncidents = incidents.filter(i => !['resolved', 'closed'].includes(i.status)).length;
   const criticalIncidents = incidents.filter(i => i.severity === 'critical' && !['resolved', 'closed'].includes(i.status)).length;
   const currentVisitors = visitors.filter(v => v.status === 'checked_in').length;
-  const now = new Date();
-  const compliantCount = requirements.filter(r => r.nextDueDate >= now).length;
-  const complianceScore = requirements.length > 0 ? (compliantCount / requirements.length) * 100 : 100;
 
   const submitIncident = () => {
     if (!incidentForm.location.trim() || !incidentForm.description.trim()) return;
@@ -166,7 +107,7 @@ export default function SecurityComplianceDashboard() {
 
   const renderOverview = () => (
     <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="border-0 shadow-lg">
           <CardBody className="p-6">
             <div className="flex items-center justify-between">
@@ -202,19 +143,6 @@ export default function SecurityComplianceDashboard() {
                 <p className="text-sm text-blue-600">On premises</p>
               </div>
               <div className="text-3xl">👥</div>
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Compliance Score</p>
-                <p className="text-2xl font-bold text-ghana-green">{complianceScore.toFixed(0)}%</p>
-                <p className="text-sm text-green-600">Regulatory compliance</p>
-              </div>
-              <div className="text-3xl">✅</div>
             </div>
           </CardBody>
         </Card>
@@ -541,81 +469,12 @@ export default function SecurityComplianceDashboard() {
     </div>
   );
 
-  const renderComplianceMonitoring = () => (
-    <div className="space-y-6">
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <h3 className="text-xl font-semibold text-ghana-black">⚖️ Ghana Regulatory Compliance</h3>
-        </CardHeader>
-        <CardBody>
-          <div className="max-h-[560px] overflow-y-auto">
-            <Table aria-label="Compliance requirements table">
-              <TableHeader>
-                <TableColumn>Category</TableColumn>
-                <TableColumn>Requirement</TableColumn>
-                <TableColumn>Frequency</TableColumn>
-                <TableColumn>Last Completed</TableColumn>
-                <TableColumn>Next Due</TableColumn>
-                <TableColumn>Status</TableColumn>
-                <TableColumn>Actions</TableColumn>
-              </TableHeader>
-              <TableBody emptyContent="No compliance requirements on file.">
-                {requirements.map((requirement) => {
-                  const overdue = requirement.nextDueDate < now;
-                  return (
-                    <TableRow key={requirement.id}>
-                      <TableCell>
-                        <Chip color={requirement.category === 'fire_safety' ? 'danger' : requirement.category === 'health_hygiene' ? 'warning' : requirement.category === 'employment' ? 'primary' : 'default'} size="sm" variant="flat">
-                          {requirement.category.replace('_', ' ')}
-                        </Chip>
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <div className="font-semibold">{requirement.title}</div>
-                          {requirement.responsiblePerson && <div className="text-sm text-gray-500">Owner: {requirement.responsiblePerson}</div>}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge color="primary" size="sm">{requirement.frequency}</Badge>
-                      </TableCell>
-                      <TableCell>{requirement.lastCompletedAt ? requirement.lastCompletedAt.toLocaleDateString() : 'Never'}</TableCell>
-                      <TableCell>
-                        <div className={`font-semibold ${overdue ? 'text-red-600' : 'text-green-600'}`}>
-                          {requirement.nextDueDate.toLocaleDateString()}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge color={overdue ? 'danger' : 'success'} size="sm">
-                          {overdue ? 'overdue' : 'compliant'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          color="primary"
-                          onClick={() => markCompleted(requirement.id, nextDueDateFor(requirement.frequency, new Date()))}
-                        >
-                          Mark Reviewed
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
-        </CardBody>
-      </Card>
-    </div>
-  );
-
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-ghana-black">🚨 Security & Compliance Management</h1>
-          <p className="text-gray-600">Security operations with Ghana regulatory compliance</p>
+          <h1 className="text-3xl font-bold text-ghana-black">🚨 Security Operations Management</h1>
+          <p className="text-gray-600">Incidents, visitors, and patrols</p>
         </div>
       </div>
 
@@ -628,7 +487,6 @@ export default function SecurityComplianceDashboard() {
         <Tab key="incidents" title="Incident Management" />
         <Tab key="visitors" title="Visitor Management" />
         <Tab key="patrols" title="Patrol Log" />
-        <Tab key="compliance" title="Compliance Monitoring" />
       </Tabs>
 
       <div className="mt-6">
@@ -636,7 +494,6 @@ export default function SecurityComplianceDashboard() {
         {selectedTab === 'incidents' && renderIncidentManagement()}
         {selectedTab === 'visitors' && renderVisitorManagement()}
         {selectedTab === 'patrols' && renderPatrolManagement()}
-        {selectedTab === 'compliance' && renderComplianceMonitoring()}
       </div>
 
       {/* Incident Modal */}
