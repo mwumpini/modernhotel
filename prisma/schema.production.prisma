@@ -1416,8 +1416,13 @@ model Requisition {
   requestedBy         String
   requestedDate       DateTime  @default(now())
   status              String    @default("pending")
+  department          String?
+  assignedToId        String?
+  assignedToName      String?
   approvedBy          String?
   approvedAt          DateTime?
+  readyBy             String?
+  readyAt             DateTime?
   rejectedBy          String?
   rejectedAt          DateTime?
   rejectionReason     String?
@@ -1432,6 +1437,7 @@ model Requisition {
 
   @@unique([tenantId, requisitionNumber])
   @@index([tenantId, status])
+  @@index([tenantId, department])
   @@map("requisitions")
 }
 

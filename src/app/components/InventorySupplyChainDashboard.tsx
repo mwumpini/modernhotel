@@ -28,6 +28,11 @@ export default function InventorySupplyChainDashboard() {
   const settings = useSettingsStore();
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
+  // Requisition action gates — mirrors the server-side requirePermission() checks in
+  // /api/inventory/requisitions, so a user who can't act just doesn't see the button
+  // rather than clicking it and hitting a 403 with no explanation.
+  const canActOnRequisitions = settings.hasPermission('inventory.approve-requisition');
+  const canEditProcessedRequisitions = settings.hasPermission('inventory.edit-processed-requisition');
 
   // Inventory Management Hooks - moved to top level to comply with Rules of Hooks
   const {
@@ -75,6 +80,7 @@ export default function InventorySupplyChainDashboard() {
     updateRequisition,
     deleteRequisition,
     approveRequisition,
+    markRequisitionReady,
     rejectRequisition,
     convertRequisitionToPO,
     getRequisitionsByStatus,
@@ -492,6 +498,47 @@ export default function InventorySupplyChainDashboard() {
   const [requisitionSearchTerm, setRequisitionSearchTerm] = useState('');
   const [requisitionFilterStatus, setRequisitionFilterStatus] = useState<string>('all');
   const [requisitionPage, setRequisitionPage] = useState(1);
+
+  // Approve/Reject/Ready/Convert/Delete confirmation — an in-app modal instead of
+  // native confirm()/prompt(), which some embedded/automated browser contexts
+  // silently auto-dismiss (the action then looks like it "does nothing" when clicked).
+  const [reqActionModal, setReqActionModal] = useState<{ type: 'approve' | 'reject' | 'ready' | 'convert' | 'delete'; requisitionId: string; requisitionNumber: string } | null>(null);
+  const [reqRejectReason, setReqRejectReason] = useState('');
+  const openReqAction = (type: 'approve' | 'reject' | 'ready' | 'convert' | 'delete', req: Requisition) => {
+    setReqRejectReason('');
+    setReqActionModal({ type, requisitionId: req.id, requisitionNumber: req.requisitionNumber });
+  };
+  const closeReqAction = () => setReqActionModal(null);
+  const confirmReqAction = () => {
+    if (!reqActionModal) return;
+    const { type, requisitionId, requisitionNumber } = reqActionModal;
+    if (type === 'approve') {
+      approveRequisition(requisitionId, currentUserName);
+      trackEvent('Stores.Issued', { action: 'approve_requisition', requisitionNumber });
+    } else if (type === 'ready') {
+      markRequisitionReady(requisitionId, currentUserName);
+      trackEvent('Stores.Issued', { action: 'ready_requisition', requisitionNumber });
+    } else if (type === 'reject') {
+      rejectRequisition(requisitionId, currentUserName, reqRejectReason || undefined);
+      trackEvent('Stores.Issued', { action: 'reject_requisition', requisitionNumber });
+    } else if (type === 'convert') {
+      const supplier = mergedSuppliers.find(s => s.isActive);
+      if (!supplier) {
+        alert('Please add a supplier first before converting to PO');
+      } else {
+        const newPO = convertRequisitionToPO(requisitionId, supplier.id);
+        if (newPO) {
+          trackEvent('Stores.Issued', { action: 'convert_requisition_to_po', requisitionNumber, poNumber: newPO.poNumber });
+          setSelectedTab('purchase-orders');
+        }
+      }
+    } else if (type === 'delete') {
+      deleteRequisition(requisitionId);
+      trackEvent('Stores.Issued', { action: 'delete_requisition', requisitionNumber });
+    }
+    if (isRequisitionViewOpen) onRequisitionViewClose();
+    closeReqAction();
+  };
   const requisitionRowsPerPage = 10;
 
   // Calculate metrics for overview
@@ -1544,10 +1591,9 @@ export default function InventorySupplyChainDashboard() {
   };
 
   const handleEditRequisition = (req: Requisition) => {
-    if (req.status !== 'pending') {
-      alert('Only pending requisitions can be edited');
-      return;
-    }
+    // Visibility of the Edit button already enforces this (pending, or
+    // inventory.edit-processed-requisition for anything Stores has acted on) —
+    // the server re-checks it too, so no extra gate needed here.
     setEditingRequisition(req);
     setRequisitionFormData({ ...req });
     onRequisitionModalOpen();
@@ -2365,6 +2411,7 @@ export default function InventorySupplyChainDashboard() {
               <SelectItem key="all">All Status</SelectItem>
               <SelectItem key="pending">Pending</SelectItem>
               <SelectItem key="approved">Approved</SelectItem>
+              <SelectItem key="ready">Ready for Pickup</SelectItem>
               <SelectItem key="rejected">Rejected</SelectItem>
               <SelectItem key="converted-to-po">Converted to PO</SelectItem>
               <SelectItem key="cancelled">Cancelled</SelectItem>
@@ -2385,9 +2432,10 @@ export default function InventorySupplyChainDashboard() {
               {paginatedRequisitions.map((req) => {
                 const getStatusColor = (status: string) => {
                   switch (status) {
-                    case 'approved': return 'success';
+                    case 'approved': return 'primary';
+                    case 'ready': return 'success';
                     case 'rejected': case 'cancelled': return 'danger';
-                    case 'converted-to-po': return 'primary';
+                    case 'converted-to-po': return 'secondary';
                     case 'pending': return 'warning';
                     default: return 'default';
                   }
@@ -2425,72 +2473,75 @@ export default function InventorySupplyChainDashboard() {
                             👁️
                           </Button>
                         </Tooltip>
-                        {req.status === 'pending' && (
+                        {(req.status === 'pending' || canEditProcessedRequisitions) && req.status !== 'converted-to-po' && (
+                          <Tooltip content="Edit">
+                            <Button
+                              size="sm"
+                              variant="flat"
+                              color="secondary"
+                              onPress={() => handleEditRequisition(req)}
+                            >
+                              ✏️
+                            </Button>
+                          </Tooltip>
+                        )}
+                        {req.status === 'pending' && canActOnRequisitions && (
                           <>
-                            <Tooltip content="Edit">
-                              <Button 
-                                size="sm" 
-                                variant="flat" 
-                                color="secondary"
-                                onPress={() => handleEditRequisition(req)}
-                              >
-                                ✏️
-                              </Button>
-                            </Tooltip>
                             <Tooltip content="Approve">
-                              <Button 
-                                size="sm" 
-                                variant="flat" 
+                              <Button
+                                size="sm"
+                                variant="flat"
                                 color="success"
-                                onPress={() => {
-                                  if (confirm('Approve this requisition?')) {
-                                    approveRequisition(req.id, currentUserName);
-                                    trackEvent('Stores.Issued', { action: 'approve_requisition', requisitionNumber: req.requisitionNumber });
-                                  }
-                                }}
+                                onPress={() => openReqAction('approve', req)}
                               >
                                 ✓
                               </Button>
                             </Tooltip>
                             <Tooltip content="Reject">
-                              <Button 
-                                size="sm" 
-                                variant="flat" 
+                              <Button
+                                size="sm"
+                                variant="flat"
                                 color="danger"
-                                onPress={() => {
-                                  const reason = prompt('Enter rejection reason (optional):');
-                                  rejectRequisition(req.id, currentUserName, reason || undefined);
-                                  trackEvent('Stores.Issued', { action: 'reject_requisition', requisitionNumber: req.requisitionNumber });
-                                }}
+                                onPress={() => openReqAction('reject', req)}
                               >
                                 ❌
                               </Button>
                             </Tooltip>
                           </>
                         )}
-                        {req.status === 'approved' && (
-                          <Tooltip content="Convert to Purchase Order">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="primary"
-                              onPress={() => {
-                                const supplier = mergedSuppliers.find(s => s.isActive);
-                                if (!supplier) {
-                                  alert('Please add a supplier first before converting to PO');
-                                  return;
-                                }
-                                if (confirm(`Convert this requisition to a Purchase Order with ${supplier.name}?`)) {
-                                  const newPO = convertRequisitionToPO(req.id, supplier.id);
-                                  if (newPO) {
-                                    alert(`Requisition converted to PO: ${newPO.poNumber}`);
-                                    setSelectedTab('purchase-orders');
-                                    trackEvent('Stores.Issued', { action: 'convert_requisition_to_po', requisitionNumber: req.requisitionNumber, poNumber: newPO.poNumber });
-                                  }
-                                }
-                              }}
+                        {req.status === 'approved' && canActOnRequisitions && (
+                          <>
+                            <Tooltip content="Mark Ready for Pickup">
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                color="success"
+                                onPress={() => openReqAction('ready', req)}
+                              >
+                                📦 Ready
+                              </Button>
+                            </Tooltip>
+                            <Tooltip content="Convert to Purchase Order">
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                color="primary"
+                                onPress={() => openReqAction('convert', req)}
+                              >
+                                📋 Convert to PO
+                              </Button>
+                            </Tooltip>
+                          </>
+                        )}
+                        {(req.status === 'pending' || canEditProcessedRequisitions) && req.status !== 'converted-to-po' && (
+                          <Tooltip content="Delete">
+                            <Button
+                              size="sm"
+                              variant="flat"
+                              color="danger"
+                              onPress={() => openReqAction('delete', req)}
                             >
-                              📋 Convert to PO
+                              🗑️
                             </Button>
                           </Tooltip>
                         )}
@@ -5163,9 +5214,10 @@ export default function InventorySupplyChainDashboard() {
                   <div>
                     <div className="text-xs text-gray-500 mb-1">Status</div>
                     <Badge color={
-                      viewingRequisition.status === 'approved' ? 'success' :
+                      viewingRequisition.status === 'ready' ? 'success' :
+                      viewingRequisition.status === 'approved' ? 'primary' :
                       viewingRequisition.status === 'rejected' || viewingRequisition.status === 'cancelled' ? 'danger' :
-                      viewingRequisition.status === 'converted-to-po' ? 'primary' :
+                      viewingRequisition.status === 'converted-to-po' ? 'secondary' :
                       'warning'
                     }>
                       {viewingRequisition.status.replace('-', ' ')}
@@ -5274,65 +5326,103 @@ export default function InventorySupplyChainDashboard() {
           </ModalBody>
           <ModalFooter>
             <Button variant="bordered" onPress={onRequisitionViewClose}>Close</Button>
-            {viewingRequisition && viewingRequisition.status === 'pending' && (
-              <Button color="primary" onPress={() => {
+            {viewingRequisition && (viewingRequisition.status === 'pending' || canEditProcessedRequisitions) && viewingRequisition.status !== 'converted-to-po' && (
+              <Button color="secondary" variant="flat" onPress={() => {
                 onRequisitionViewClose();
                 handleEditRequisition(viewingRequisition);
               }}>
                 Edit
               </Button>
             )}
-            {viewingRequisition && viewingRequisition.status === 'pending' && (
+            {viewingRequisition && (viewingRequisition.status === 'pending' || canEditProcessedRequisitions) && viewingRequisition.status !== 'converted-to-po' && (
+              <Button color="danger" variant="flat" onPress={() => openReqAction('delete', viewingRequisition)}>
+                Delete
+              </Button>
+            )}
+            {viewingRequisition && viewingRequisition.status === 'pending' && canActOnRequisitions && (
               <>
-                <Button 
-                  color="success" 
-                  onPress={() => {
-                    if (confirm('Approve this requisition?')) {
-                      approveRequisition(viewingRequisition.id, currentUserName);
-                      onRequisitionViewClose();
-                      trackEvent('Stores.Issued', { action: 'approve_requisition', requisitionNumber: viewingRequisition.requisitionNumber });
-                    }
-                  }}
-                >
+                <Button color="success" onPress={() => openReqAction('approve', viewingRequisition)}>
                   Approve
                 </Button>
-                <Button 
-                  color="danger" 
-                  variant="flat"
-                  onPress={() => {
-                    const reason = prompt('Enter rejection reason (optional):');
-                    rejectRequisition(viewingRequisition.id, currentUserName, reason || undefined);
-                    onRequisitionViewClose();
-                    trackEvent('Stores.Issued', { action: 'reject_requisition', requisitionNumber: viewingRequisition.requisitionNumber });
-                  }}
-                >
+                <Button color="danger" variant="flat" onPress={() => openReqAction('reject', viewingRequisition)}>
                   Reject
                 </Button>
               </>
             )}
-            {viewingRequisition && viewingRequisition.status === 'approved' && (
-              <Button 
-                color="primary" 
-                onPress={() => {
-                  const supplier = mergedSuppliers.find(s => s.isActive);
-                  if (!supplier) {
-                    alert('Please add a supplier first before converting to PO');
-                    return;
-                  }
-                  if (confirm(`Convert this requisition to a Purchase Order with ${supplier.name}?`)) {
-                    const newPO = convertRequisitionToPO(viewingRequisition.id, supplier.id);
-                    if (newPO) {
-                      alert(`Requisition converted to PO: ${newPO.poNumber}`);
-                      onRequisitionViewClose();
-                      setSelectedTab('purchase-orders');
-                      trackEvent('Stores.Issued', { action: 'convert_requisition_to_po', requisitionNumber: viewingRequisition.requisitionNumber, poNumber: newPO.poNumber });
-                    }
-                  }
-                }}
-              >
-                Convert to PO
-              </Button>
+            {viewingRequisition && viewingRequisition.status === 'approved' && canActOnRequisitions && (
+              <>
+                <Button color="success" onPress={() => openReqAction('ready', viewingRequisition)}>
+                  📦 Mark Ready
+                </Button>
+                <Button color="primary" onPress={() => openReqAction('convert', viewingRequisition)}>
+                  Convert to PO
+                </Button>
+              </>
             )}
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Requisition Approve/Reject/Ready/Convert/Delete confirmation — see reqActionModal above */}
+      <Modal isOpen={!!reqActionModal} onClose={closeReqAction} size="md">
+        <ModalContent>
+          <ModalHeader>
+            {reqActionModal?.type === 'approve' && 'Approve Requisition'}
+            {reqActionModal?.type === 'ready' && 'Mark Ready for Pickup'}
+            {reqActionModal?.type === 'reject' && 'Reject Requisition'}
+            {reqActionModal?.type === 'convert' && 'Convert to Purchase Order'}
+            {reqActionModal?.type === 'delete' && 'Delete Requisition'}
+          </ModalHeader>
+          <ModalBody>
+            {reqActionModal?.type === 'approve' && (
+              <p>
+                Approve requisition <strong>{reqActionModal.requisitionNumber}</strong>? This means Stores agrees to
+                fulfill it — the requester is still waiting until you mark it ready for pickup.
+              </p>
+            )}
+            {reqActionModal?.type === 'ready' && (
+              <p>
+                Mark requisition <strong>{reqActionModal.requisitionNumber}</strong> ready for pickup? This transfers
+                the requested items from Stores' shared stock into the requesting department's own stock, and lets
+                them know it's ready to collect.
+              </p>
+            )}
+            {reqActionModal?.type === 'reject' && (
+              <div className="space-y-3">
+                <p>Reject requisition <strong>{reqActionModal.requisitionNumber}</strong>?</p>
+                <Textarea
+                  label="Rejection reason (optional)"
+                  value={reqRejectReason}
+                  onChange={(e) => setReqRejectReason(e.target.value)}
+                  placeholder="Let the requester know why..."
+                />
+              </div>
+            )}
+            {reqActionModal?.type === 'convert' && (
+              <p>
+                Convert requisition <strong>{reqActionModal.requisitionNumber}</strong> to a Purchase Order with{' '}
+                <strong>{mergedSuppliers.find(s => s.isActive)?.name || 'the first active supplier'}</strong>?
+              </p>
+            )}
+            {reqActionModal?.type === 'delete' && (
+              <p>
+                Permanently delete requisition <strong>{reqActionModal.requisitionNumber}</strong>? This cannot be
+                undone. It does not reverse any stock already transferred if this requisition was marked ready.
+              </p>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="bordered" onPress={closeReqAction}>Cancel</Button>
+            <Button
+              color={reqActionModal?.type === 'reject' || reqActionModal?.type === 'delete' ? 'danger' : 'primary'}
+              onPress={confirmReqAction}
+            >
+              {reqActionModal?.type === 'approve' && 'Approve'}
+              {reqActionModal?.type === 'ready' && 'Mark Ready'}
+              {reqActionModal?.type === 'reject' && 'Reject'}
+              {reqActionModal?.type === 'convert' && 'Convert'}
+              {reqActionModal?.type === 'delete' && 'Delete'}
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

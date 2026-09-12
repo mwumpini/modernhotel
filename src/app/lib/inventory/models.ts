@@ -120,9 +120,14 @@ export interface Requisition {
   requestedBy: string;
   requestedDate: Date;
   requestedItems: RequisitionItem[];
-  status: 'pending' | 'approved' | 'rejected' | 'converted-to-po' | 'cancelled';
+  status: 'pending' | 'approved' | 'ready' | 'rejected' | 'converted-to-po' | 'cancelled';
+  department?: string;
+  assignedToId?: string;
+  assignedToName?: string;
   approvedBy?: string;
   approvedAt?: Date;
+  readyBy?: string;
+  readyAt?: Date;
   rejectedBy?: string;
   rejectedAt?: Date;
   rejectionReason?: string;

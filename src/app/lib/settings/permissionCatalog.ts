@@ -136,7 +136,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'kitchen.send-to-kitchen', label: 'Send an order to the kitchen' },
       { id: 'kitchen.cancel-order', label: 'Cancel an order' },
       { id: 'kitchen.manager-override', label: 'Manager PIN override (delete/void order)' },
-      { id: 'kitchen.manage-inventory', label: 'Manage kitchen ingredient stock, suppliers & POs' },
+      { id: 'kitchen.manage-inventory', label: 'Manage kitchen ingredient stock & submit stock requisitions' },
     ],
   },
   {
@@ -166,7 +166,8 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'inventory.manage-suppliers', label: 'Add/edit a supplier' },
       { id: 'inventory.approve-po', label: 'Approve/reject a purchase order' },
       { id: 'inventory.create-requisition', label: 'Create a requisition' },
-      { id: 'inventory.approve-requisition', label: 'Approve/reject a requisition' },
+      { id: 'inventory.approve-requisition', label: 'Approve/reject a requisition, and mark it ready for pickup' },
+      { id: 'inventory.edit-processed-requisition', label: 'Edit or delete a requisition Stores has already acted on' },
       { id: 'inventory.receive-goods', label: 'Receive goods against a PO' },
       { id: 'inventory.quality-check', label: 'Perform a quality check' },
       { id: 'inventory.issue-stock', label: 'Issue stock to a department' },

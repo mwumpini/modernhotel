@@ -190,43 +190,63 @@ function deleteSupplierFromApi(id: string) {
 // Same previously-in-memory-only gap as purchase orders/suppliers — requisitions and
 // goods receipt notes are real, live workflows (InventorySupplyChainDashboard.tsx) that
 // had no Prisma model or API route at all.
-function syncRequisitionToApi(req: Requisition) {
-  if (typeof window === 'undefined') return;
-  fetch('/api/inventory/requisitions', {
-    method: 'PUT',
-    headers: poTenantHeaders(),
-    body: JSON.stringify({
-      id: req.id,
-      requisitionNumber: req.requisitionNumber,
-      requestedBy: req.requestedBy,
-      requestedDate: req.requestedDate,
-      status: req.status,
-      approvedBy: req.approvedBy,
-      approvedAt: req.approvedAt,
-      rejectedBy: req.rejectedBy,
-      rejectedAt: req.rejectedAt,
-      rejectionReason: req.rejectionReason,
-      convertedToPOId: req.convertedToPOId,
-      convertedToPONumber: req.convertedToPONumber,
-      notes: req.notes,
-      items: req.requestedItems.map((i) => ({
-        itemId: i.itemId,
-        itemCode: i.itemCode,
-        itemName: i.itemName,
-        quantity: i.quantity,
-        estimatedPrice: i.estimatedPrice,
-        notes: i.notes,
-      })),
-    }),
-  }).catch((e) => console.warn('[Inventory] Failed to sync requisition to server:', e));
+// Returns whether the server actually accepted the change — the caller needs this
+// to revert its optimistic local update and tell the user why (e.g. a permission
+// check on the server rejected it) instead of showing a change that didn't stick.
+async function syncRequisitionToApi(req: Requisition): Promise<boolean> {
+  if (typeof window === 'undefined') return true;
+  try {
+    const res = await fetch('/api/inventory/requisitions', {
+      method: 'PUT',
+      headers: poTenantHeaders(),
+      body: JSON.stringify({
+        id: req.id,
+        requisitionNumber: req.requisitionNumber,
+        requestedBy: req.requestedBy,
+        requestedDate: req.requestedDate,
+        status: req.status,
+        department: req.department,
+        assignedToId: req.assignedToId,
+        assignedToName: req.assignedToName,
+        approvedBy: req.approvedBy,
+        approvedAt: req.approvedAt,
+        readyBy: req.readyBy,
+        readyAt: req.readyAt,
+        rejectedBy: req.rejectedBy,
+        rejectedAt: req.rejectedAt,
+        rejectionReason: req.rejectionReason,
+        convertedToPOId: req.convertedToPOId,
+        convertedToPONumber: req.convertedToPONumber,
+        notes: req.notes,
+        items: req.requestedItems.map((i) => ({
+          itemId: i.itemId,
+          itemCode: i.itemCode,
+          itemName: i.itemName,
+          quantity: i.quantity,
+          estimatedPrice: i.estimatedPrice,
+          notes: i.notes,
+        })),
+      }),
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn('[Inventory] Failed to sync requisition to server:', e);
+    return false;
+  }
 }
 
-function deleteRequisitionFromApi(id: string) {
-  if (typeof window === 'undefined') return;
-  fetch(`/api/inventory/requisitions?id=${encodeURIComponent(id)}`, {
-    method: 'DELETE',
-    headers: poTenantHeaders(),
-  }).catch((e) => console.warn('[Inventory] Failed to delete requisition on server:', e));
+async function deleteRequisitionFromApi(id: string): Promise<boolean> {
+  if (typeof window === 'undefined') return true;
+  try {
+    const res = await fetch(`/api/inventory/requisitions?id=${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+      headers: poTenantHeaders(),
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn('[Inventory] Failed to delete requisition on server:', e);
+    return false;
+  }
 }
 
 function mapApiRequisitionToStore(raw: any): Requisition {
@@ -246,8 +266,13 @@ function mapApiRequisitionToStore(raw: any): Requisition {
       notes: i.notes ?? undefined,
     })),
     status: raw.status,
+    department: raw.department ?? undefined,
+    assignedToId: raw.assignedToId ?? undefined,
+    assignedToName: raw.assignedToName ?? undefined,
     approvedBy: raw.approvedBy ?? undefined,
     approvedAt: raw.approvedAt ? new Date(raw.approvedAt) : undefined,
+    readyBy: raw.readyBy ?? undefined,
+    readyAt: raw.readyAt ? new Date(raw.readyAt) : undefined,
     rejectedBy: raw.rejectedBy ?? undefined,
     rejectedAt: raw.rejectedAt ? new Date(raw.rejectedAt) : undefined,
     rejectionReason: raw.rejectionReason ?? undefined,
@@ -563,6 +588,7 @@ interface SupplierStore {
   deleteRequisition: (id: string) => void;
   hydrateRequisitionsFromApi: () => Promise<void>;
   approveRequisition: (id: string, approvedBy: string) => void;
+  markRequisitionReady: (id: string, readyBy: string) => void;
   rejectRequisition: (id: string, rejectedBy: string, reason?: string) => void;
   convertRequisitionToPO: (requisitionId: string, supplierId: string) => PurchaseOrder | null;
   getRequisition: (id: string) => Requisition | undefined;
@@ -1327,20 +1353,30 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
   },
 
   updateRequisition: (id, updates) => {
-    let updated: Requisition | undefined;
-    set(state => ({
-      requisitions: state.requisitions.map(req => {
-        if (req.id !== id) return req;
-        updated = { ...req, ...updates, updatedAt: new Date() };
-        return updated;
-      })
-    }));
-    if (updated) syncRequisitionToApi(updated);
+    const previous = get().requisitions.find(req => req.id === id);
+    if (!previous) return;
+    const updated: Requisition = { ...previous, ...updates, updatedAt: new Date() };
+    set(state => ({ requisitions: state.requisitions.map(req => (req.id === id ? updated : req)) }));
+    // Optimistic — but a permission check on the server can still reject this (e.g.
+    // editing/approving something the caller's role doesn't cover), so revert and say
+    // why rather than leave the UI showing a change that didn't actually persist.
+    syncRequisitionToApi(updated).then((ok) => {
+      if (!ok) {
+        set(state => ({ requisitions: state.requisitions.map(req => (req.id === id ? previous : req)) }));
+        if (typeof window !== 'undefined') alert("Couldn't save that change — you may not have permission, or the request failed.");
+      }
+    });
   },
 
   deleteRequisition: (id) => {
+    const previous = get().requisitions.find(req => req.id === id);
     set(state => ({ requisitions: state.requisitions.filter(req => req.id !== id) }));
-    deleteRequisitionFromApi(id);
+    deleteRequisitionFromApi(id).then((ok) => {
+      if (!ok && previous) {
+        set(state => ({ requisitions: [...state.requisitions, previous] }));
+        if (typeof window !== 'undefined') alert("Couldn't delete that requisition — you may not have permission, or the request failed.");
+      }
+    });
   },
 
   hydrateRequisitionsFromApi: async () => {
@@ -1356,37 +1392,36 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
     }
   },
 
+  // Both delegate to updateRequisition so the approval/rejection actually persists
+  // (syncRequisitionToApi) instead of only changing local state — approving is also
+  // what triggers the server-side stock transfer into the requester's department
+  // location (see upsertRequisition's pending -> approved transition).
   approveRequisition: (id, approvedBy) => {
-    set(state => ({
-      requisitions: state.requisitions.map(req => 
-        req.id === id 
-          ? { 
-              ...req, 
-              status: 'approved' as const,
-              approvedBy,
-              approvedAt: new Date(),
-              updatedAt: new Date()
-            }
-          : req
-      )
-    }));
+    get().updateRequisition(id, {
+      status: 'approved',
+      approvedBy,
+      approvedAt: new Date(),
+    });
+  },
+
+  // 'approved' is only Stores' decision to fulfill it — the requester is still
+  // waiting until this fires, which is also what actually moves the stock into
+  // their department (see upsertRequisition's approved -> ready transition).
+  markRequisitionReady: (id, readyBy) => {
+    get().updateRequisition(id, {
+      status: 'ready',
+      readyBy,
+      readyAt: new Date(),
+    });
   },
 
   rejectRequisition: (id, rejectedBy, reason) => {
-    set(state => ({
-      requisitions: state.requisitions.map(req => 
-        req.id === id 
-          ? { 
-              ...req, 
-              status: 'rejected' as const,
-              rejectedBy,
-              rejectedAt: new Date(),
-              rejectionReason: reason,
-              updatedAt: new Date()
-            }
-          : req
-      )
-    }));
+    get().updateRequisition(id, {
+      status: 'rejected',
+      rejectedBy,
+      rejectedAt: new Date(),
+      rejectionReason: reason,
+    });
   },
 
   convertRequisitionToPO: (requisitionId, supplierId) => {

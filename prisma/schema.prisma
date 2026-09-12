@@ -1444,9 +1444,14 @@ model Requisition {
   requisitionNumber   String
   requestedBy         String
   requestedDate       DateTime  @default(now())
-  status              String    @default("pending") // pending|approved|rejected|converted-to-po|cancelled
+  status              String    @default("pending") // pending|approved|ready|rejected|converted-to-po|cancelled
+  department          String?   // 'restaurant' | 'kitchen' | null (Stores/general) — which module raised this request
+  assignedToId        String?   // set only when the requester picked a specific Stores staffer instead of the department queue
+  assignedToName      String?
   approvedBy          String?
   approvedAt          DateTime?
+  readyBy             String?   // set when Stores has physically staged the items — this is what actually moves the stock
+  readyAt             DateTime?
   rejectedBy          String?
   rejectedAt          DateTime?
   rejectionReason     String?
@@ -1461,6 +1466,7 @@ model Requisition {
 
   @@unique([tenantId, requisitionNumber])
   @@index([tenantId, status])
+  @@index([tenantId, department])
   @@map("requisitions")
 }
 

@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Tabs, Tab } from "@heroui/react";
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
+import DepartmentRequisitionModal from './inventory/DepartmentRequisitionModal';
 
 function fbHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
@@ -35,41 +36,21 @@ interface InventoryItem {
   isActive: boolean;
 }
 
-interface Supplier {
+interface Requisition {
   id: string;
-  code: string;
-  name: string;
-  contactPerson: string;
-  phone: string;
-  email: string;
-}
-
-interface PurchaseOrder {
-  id: string;
-  poNumber: string;
-  supplierId: string;
-  supplierName: string;
-  items: PurchaseOrderItem[];
-  totalCost: number;
-  status: 'draft' | 'sent' | 'confirmed' | 'in-transit' | 'delivered' | 'cancelled' | 'closed';
-  orderDate: Date;
-  expectedDelivery?: Date;
-  actualDelivery?: Date;
-}
-
-interface PurchaseOrderItem {
-  item: string;
-  quantity: number;
-  unitCost: number;
-  totalCost: number;
+  requisitionNumber: string;
+  requestedBy: string;
+  requestedDate: Date;
+  status: 'pending' | 'approved' | 'ready' | 'rejected' | 'converted-to-po' | 'cancelled';
+  notes: string;
+  items: { itemName: string; quantity: number }[];
 }
 
 export default function FoodBeverageMenuInventory() {
   const [selectedTab, setSelectedTab] = useState('menu');
   const [isNewMenuItemModalOpen, setIsNewMenuItemModalOpen] = useState(false);
   const [isNewInventoryItemModalOpen, setIsNewInventoryItemModalOpen] = useState(false);
-  const [isNewPurchaseOrderModalOpen, setIsNewPurchaseOrderModalOpen] = useState(false);
-  const [isNewSupplierModalOpen, setIsNewSupplierModalOpen] = useState(false);
+  const [isNewRequisitionModalOpen, setIsNewRequisitionModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedInventoryStatus, setSelectedInventoryStatus] = useState('all');
 
@@ -150,39 +131,32 @@ export default function FoodBeverageMenuInventory() {
       }))));
   };
 
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const reloadSuppliers = () => {
-    fetch('/api/inventory/suppliers', { headers: fbHeaders() })
-      .then((r) => (r.ok ? r.json() : { suppliers: [] }))
-      .then((data) => setSuppliers((data.suppliers || []).map((s: any) => ({
-        id: s.id,
-        code: s.code,
-        name: s.name,
-        contactPerson: s.contactPerson || '',
-        phone: s.phone || '',
-        email: s.email || '',
+  const [requisitions, setRequisitions] = useState<Requisition[]>([]);
+  const reloadRequisitions = () => {
+    fetch('/api/inventory/requisitions?department=restaurant', { headers: fbHeaders() })
+      .then((r) => (r.ok ? r.json() : { requisitions: [] }))
+      .then((data) => setRequisitions((data.requisitions || []).map((req: any) => ({
+        id: req.id,
+        requisitionNumber: req.requisitionNumber,
+        requestedBy: req.requestedBy,
+        requestedDate: new Date(req.requestedDate || req.createdAt),
+        status: req.status,
+        notes: req.notes || '',
+        items: (req.items || []).map((it: any) => ({ itemName: it.itemName, quantity: Number(it.quantity) })),
       }))));
   };
 
-  const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
-  const reloadPurchaseOrders = () => {
-    fetch('/api/inventory/purchase-orders', { headers: fbHeaders() })
-      .then((r) => (r.ok ? r.json() : { orders: [] }))
-      .then((data) => setPurchaseOrders((data.orders || []).map((o: any) => ({
-        id: o.id,
-        poNumber: o.poNumber,
-        supplierId: o.supplierId,
-        supplierName: o.supplierName,
-        items: (o.items || []).map((it: any) => ({ item: it.itemName, quantity: it.quantity, unitCost: Number(it.unitCost), totalCost: Number(it.totalCost) })),
-        totalCost: Number(o.finalAmount ?? o.totalAmount ?? 0),
-        status: o.status,
-        orderDate: new Date(o.orderDate || o.createdAt),
-        expectedDelivery: o.expectedDeliveryDate ? new Date(o.expectedDeliveryDate) : undefined,
-        actualDelivery: o.actualDeliveryDate ? new Date(o.actualDeliveryDate) : undefined,
-      }))));
+  // Real, ledger-derived on-hand for THIS department — see getLocationStockLevels.
+  // Populated by requisitions Stores has approved and fulfilled (transfers stock
+  // from the shared central pool into Restaurant & Bar's own location).
+  const [stockOnHand, setStockOnHand] = useState<Record<string, number>>({});
+  const reloadStockLevels = () => {
+    fetch('/api/inventory/stock-levels?department=restaurant', { headers: fbHeaders() })
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((data) => setStockOnHand(Object.fromEntries((data.items || []).map((i: any) => [i.id, Number(i.onHand || 0)]))));
   };
 
-  useEffect(() => { reloadInventoryItems(); reloadSuppliers(); reloadPurchaseOrders(); }, []);
+  useEffect(() => { reloadInventoryItems(); reloadRequisitions(); reloadStockLevels(); }, []);
 
   const [inventoryForm, setInventoryForm] = useState({ name: '', description: '', defaultCost: '0', sellingPrice: '0' });
   const submitInventoryItem = async () => {
@@ -200,51 +174,14 @@ export default function FoodBeverageMenuInventory() {
     }
   };
 
-  const [supplierForm, setSupplierForm] = useState({ name: '', contactPerson: '', phone: '', email: '' });
-  const submitSupplier = async () => {
-    if (!supplierForm.name) return;
-    const id = `SUP-${Date.now().toString().slice(-8)}`;
-    const res = await fetch('/api/inventory/suppliers', { method: 'POST', headers: fbHeaders(), body: JSON.stringify({ id, ...supplierForm }) });
-    if (res.ok) {
-      setSupplierForm({ name: '', contactPerson: '', phone: '', email: '' });
-      setIsNewSupplierModalOpen(false);
-      reloadSuppliers();
-    }
-  };
-
-  const [poSupplierId, setPoSupplierId] = useState('');
-  const [poExpectedDelivery, setPoExpectedDelivery] = useState('');
-  const [poQuantities, setPoQuantities] = useState<Record<string, string>>({});
-  const submitPurchaseOrder = async () => {
-    const supplier = suppliers.find((s) => s.id === poSupplierId);
-    if (!supplier) return;
-    const items = inventoryItems
-      .filter((it) => Number(poQuantities[it.id]) > 0)
-      .map((it) => ({ itemId: it.id, itemCode: it.code, itemName: it.name, quantity: Number(poQuantities[it.id]), unitCost: it.defaultCost }));
-    if (items.length === 0) return;
-    const res = await fetch('/api/inventory/purchase-orders', {
-      method: 'POST',
-      headers: fbHeaders(),
-      body: JSON.stringify({ supplierId: supplier.id, supplierName: supplier.name, expectedDeliveryDate: poExpectedDelivery || undefined, items }),
-    });
-    if (res.ok) {
-      setPoSupplierId('');
-      setPoExpectedDelivery('');
-      setPoQuantities({});
-      setIsNewPurchaseOrderModalOpen(false);
-      reloadPurchaseOrders();
-    }
-  };
-
-  const getOrderStatusColor = (status: string) => {
+  const getRequisitionStatusColor = (status: string) => {
     switch (status) {
-      case 'draft': return 'default';
-      case 'sent': return 'warning';
-      case 'confirmed': return 'primary';
-      case 'in-transit': return 'secondary';
-      case 'delivered': return 'success';
-      case 'closed': return 'success';
-      case 'cancelled': return 'danger';
+      case 'pending': return 'warning';
+      case 'approved': return 'primary';
+      case 'ready': return 'success';
+      case 'converted-to-po': return 'secondary';
+      case 'rejected': return 'danger';
+      case 'cancelled': return 'default';
       default: return 'default';
     }
   };
@@ -266,36 +203,36 @@ export default function FoodBeverageMenuInventory() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-ghana-black">🍽️ Food & Beverage - Menu & Inventory</h2>
-          <p className="text-gray-600">Manage menu items, inventory, suppliers, and purchase orders</p>
+          <h2 className="text-2xl font-bold text-ghana-black">🍽️ Restaurant & Bar - Menu & Inventory</h2>
+          <p className="text-gray-600">Manage menu items, inventory items, and stock requisitions to Stores</p>
         </div>
         <div className="flex gap-3">
-          <Button 
-            color="primary" 
+          <Button
+            color="primary"
             className="bg-ghana-green text-white"
             onClick={() => setIsNewMenuItemModalOpen(true)}
           >
             + Add Menu Item
           </Button>
-          <Button 
-            color="secondary" 
+          <Button
+            color="secondary"
             className="bg-ghana-gold text-white"
             onClick={() => setIsNewInventoryItemModalOpen(true)}
           >
             + Add Inventory Item
           </Button>
-          <Button 
-            color="success" 
+          <Button
+            color="success"
             className="bg-blue-500 text-white"
-            onClick={() => setIsNewPurchaseOrderModalOpen(true)}
+            onClick={() => setIsNewRequisitionModalOpen(true)}
           >
-            + New Purchase Order
+            + Request Stock
           </Button>
         </div>
       </div>
 
       {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <Card className="border-0 shadow-lg">
           <CardBody className="p-6">
             <div className="flex items-center justify-between">
@@ -326,24 +263,11 @@ export default function FoodBeverageMenuInventory() {
           <CardBody className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-gray-600">Purchase Orders</p>
-                <p className="text-2xl font-bold text-ghana-black">{purchaseOrders.length}</p>
-                <p className="text-sm text-blue-600">₵{purchaseOrders.reduce((s, o) => s + o.totalCost, 0).toFixed(2)} total</p>
+                <p className="text-sm font-medium text-gray-600">Requisitions</p>
+                <p className="text-2xl font-bold text-ghana-black">{requisitions.length}</p>
+                <p className="text-sm text-amber-600">{requisitions.filter(r => r.status === 'pending').length} pending</p>
               </div>
-              <div className="text-3xl">📋</div>
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Suppliers</p>
-                <p className="text-2xl font-bold text-ghana-black">{suppliers.length}</p>
-                <p className="text-sm text-gray-500">On file</p>
-              </div>
-              <div className="text-3xl">🏢</div>
+              <div className="text-3xl">📝</div>
             </div>
           </CardBody>
         </Card>
@@ -451,13 +375,14 @@ export default function FoodBeverageMenuInventory() {
                   </Select>
                 </div>
                 <p className="text-xs text-gray-500 mb-3">
-                  Stock quantity isn't tracked yet — this is the real item catalog (code, name, cost). Full stock-level tracking is a separate, larger fix.
+                  On Hand is Restaurant & Bar's own real stock — built up from requisitions Stores has approved and fulfilled. It's separate from what Stores or Kitchen hold; request more via the Requisitions tab.
                 </p>
 
                 <Table aria-label="Inventory table">
                   <TableHeader>
                     <TableColumn>ITEM</TableColumn>
                     <TableColumn>CATEGORY</TableColumn>
+                    <TableColumn>ON HAND</TableColumn>
                     <TableColumn>UNIT</TableColumn>
                     <TableColumn>DEFAULT COST</TableColumn>
                     <TableColumn>SELLING PRICE</TableColumn>
@@ -475,6 +400,11 @@ export default function FoodBeverageMenuInventory() {
                         <TableCell>
                           <Badge color="primary" variant="flat">{item.category}</Badge>
                         </TableCell>
+                        <TableCell>
+                          <span className={(stockOnHand[item.id] ?? 0) <= 0 ? 'text-danger font-semibold' : 'font-semibold'}>
+                            {stockOnHand[item.id] ?? 0}
+                          </span>
+                        </TableCell>
                         <TableCell>{item.unit}</TableCell>
                         <TableCell>₵{item.defaultCost.toFixed(2)}</TableCell>
                         <TableCell>₵{item.sellingPrice.toFixed(2)}</TableCell>
@@ -490,94 +420,52 @@ export default function FoodBeverageMenuInventory() {
               </div>
             </Tab>
 
-            <Tab key="suppliers" title="🏢 Supplier Management">
+            <Tab key="requisitions" title="📝 Requisitions">
               <div className="p-6">
+                <p className="text-xs text-gray-500 mb-3">
+                  Request stock from Stores — Restaurant & Bar doesn't manage suppliers or purchase orders directly. Stores approves it, then marks it <strong>Ready</strong> once it's pulled and staged for pickup (that's also when it lands in your Inventory Management on-hand); until then it's still just approved and you're waiting on it.
+                </p>
                 <div className="flex justify-end mb-4">
-                  <Button color="success" className="bg-blue-500 text-white" onClick={() => setIsNewSupplierModalOpen(true)}>
-                    + Add Supplier
+                  <Button color="success" className="bg-blue-500 text-white" onClick={() => setIsNewRequisitionModalOpen(true)}>
+                    + Request Stock
                   </Button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {suppliers.map((supplier) => (
-                    <Card key={supplier.id} className="border border-gray-200 hover:border-ghana-green transition-colors">
-                      <CardBody className="p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <h4 className="font-semibold text-ghana-black">{supplier.name}</h4>
-                          <Chip size="sm" variant="flat">{supplier.code}</Chip>
-                        </div>
-
-                        <div className="space-y-2 mb-3">
-                          <div className="text-sm">
-                            <span className="font-medium">Contact:</span> {supplier.contactPerson || '—'}
-                          </div>
-                          <div className="text-sm">
-                            <span className="font-medium">Phone:</span> {supplier.phone || '—'}
-                          </div>
-                          <div className="text-sm">
-                            <span className="font-medium">Email:</span> {supplier.email || '—'}
-                          </div>
-                        </div>
-                      </CardBody>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            </Tab>
-
-            <Tab key="purchase-orders" title="📋 Purchase Orders">
-              <div className="p-6">
-                <Table aria-label="Purchase orders table">
+                <Table aria-label="Requisitions table">
                   <TableHeader>
-                    <TableColumn>ORDER #</TableColumn>
-                    <TableColumn>SUPPLIER</TableColumn>
+                    <TableColumn>REQUISITION #</TableColumn>
                     <TableColumn>ITEMS</TableColumn>
-                    <TableColumn>TOTAL COST</TableColumn>
+                    <TableColumn>REQUESTED BY</TableColumn>
+                    <TableColumn>REQUESTED DATE</TableColumn>
                     <TableColumn>STATUS</TableColumn>
-                    <TableColumn>ORDER DATE</TableColumn>
-                    <TableColumn>EXPECTED DELIVERY</TableColumn>
                   </TableHeader>
                   <TableBody>
-                    {purchaseOrders.map((order) => (
-                      <TableRow key={order.id}>
-                        <TableCell className="font-medium">{order.poNumber}</TableCell>
-                        <TableCell>
-                          <div>
-                            <p className="font-medium text-ghana-black">{order.supplierName}</p>
-                          </div>
-                        </TableCell>
+                    {requisitions.map((req) => (
+                      <TableRow key={req.id}>
+                        <TableCell className="font-medium">{req.requisitionNumber}</TableCell>
                         <TableCell>
                           <div className="text-sm">
-                            {order.items.length} items
+                            {req.items.length} items
                             <p className="text-gray-500 text-xs">
-                              {order.items.map(item => item.item).join(', ')}
+                              {req.items.map(item => `${item.itemName} (${item.quantity})`).join(', ')}
                             </p>
                           </div>
                         </TableCell>
-                        <TableCell className="font-bold">₵{order.totalCost.toFixed(2)}</TableCell>
+                        <TableCell>{req.requestedBy}</TableCell>
                         <TableCell>
-                          <Chip color={getOrderStatusColor(order.status)} size="sm">
-                            {order.status.charAt(0).toUpperCase() + order.status.slice(1)}
+                          <div className="text-sm">{req.requestedDate.toLocaleDateString()}</div>
+                        </TableCell>
+                        <TableCell>
+                          <Chip color={getRequisitionStatusColor(req.status)} size="sm">
+                            {req.status.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                           </Chip>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            {order.orderDate.toLocaleDateString()}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            {order.expectedDelivery ? order.expectedDelivery.toLocaleDateString() : '—'}
-                            {order.actualDelivery && (
-                              <p className="text-green-600 text-xs">
-                                Delivered: {order.actualDelivery.toLocaleDateString()}
-                              </p>
-                            )}
-                          </div>
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+                {requisitions.length === 0 && (
+                  <p className="text-sm text-gray-500 text-center py-6">No requisitions yet — request stock from Stores using the button above.</p>
+                )}
               </div>
             </Tab>
           </Tabs>
@@ -656,81 +544,14 @@ export default function FoodBeverageMenuInventory() {
         </ModalContent>
       </Modal>
 
-      {/* New Supplier Modal */}
-      <Modal isOpen={isNewSupplierModalOpen} onClose={() => setIsNewSupplierModalOpen(false)} size="lg">
-        <ModalContent>
-          <ModalHeader>Add Supplier</ModalHeader>
-          <ModalBody>
-            <div className="space-y-4">
-              <Input label="Supplier Name" value={supplierForm.name} onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })} />
-              <Input label="Contact Person" value={supplierForm.contactPerson} onChange={(e) => setSupplierForm({ ...supplierForm, contactPerson: e.target.value })} />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input label="Phone" value={supplierForm.phone} onChange={(e) => setSupplierForm({ ...supplierForm, phone: e.target.value })} />
-                <Input label="Email" type="email" value={supplierForm.email} onChange={(e) => setSupplierForm({ ...supplierForm, email: e.target.value })} />
-              </div>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button color="danger" variant="light" onPress={() => setIsNewSupplierModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button color="primary" className="bg-ghana-green text-white" onPress={submitSupplier} isDisabled={!supplierForm.name}>
-              Add Supplier
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      {/* New Purchase Order Modal */}
-      <Modal isOpen={isNewPurchaseOrderModalOpen} onClose={() => setIsNewPurchaseOrderModalOpen(false)} size="2xl">
-        <ModalContent>
-          <ModalHeader>Create New Purchase Order</ModalHeader>
-          <ModalBody>
-            <div className="space-y-4">
-              <Select label="Supplier" placeholder="Select supplier" selectedKeys={poSupplierId ? [poSupplierId] : []} onSelectionChange={(k) => setPoSupplierId((Array.from(k)[0] as string) || '')}>
-                {suppliers.map((supplier) => (
-                  <SelectItem key={supplier.id}>
-                    {supplier.name}
-                  </SelectItem>
-                ))}
-              </Select>
-
-              <Input label="Expected Delivery Date" type="date" value={poExpectedDelivery} onChange={(e) => setPoExpectedDelivery(e.target.value)} />
-
-              <div className="space-y-2">
-                <p className="text-sm font-medium">Order Items (enter quantity to include):</p>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {inventoryItems.map((item) => (
-                    <div key={item.id} className="flex items-center gap-2 p-2 bg-gray-50 rounded">
-                      <span className="flex-1 text-sm">{item.name}</span>
-                      <span className="text-sm text-gray-600">₵{item.defaultCost.toFixed(2)}/{item.unit}</span>
-                      <Input
-                        size="sm"
-                        type="number"
-                        placeholder="Qty"
-                        className="w-20"
-                        value={poQuantities[item.id] || ''}
-                        onChange={(e) => setPoQuantities({ ...poQuantities, [item.id]: e.target.value })}
-                      />
-                    </div>
-                  ))}
-                  {inventoryItems.length === 0 && (
-                    <p className="text-sm text-gray-500">No inventory items yet — add some in the Inventory Management tab first.</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button color="danger" variant="light" onPress={() => setIsNewPurchaseOrderModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button color="primary" className="bg-ghana-green text-white" onPress={submitPurchaseOrder} isDisabled={!poSupplierId}>
-              Create Order
-            </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
+      <DepartmentRequisitionModal
+        isOpen={isNewRequisitionModalOpen}
+        onClose={() => setIsNewRequisitionModalOpen(false)}
+        department="restaurant"
+        departmentLabel="Restaurant & Bar"
+        inventoryItems={inventoryItems}
+        onCreated={() => { reloadRequisitions(); reloadStockLevels(); }}
+      />
     </div>
   );
 }

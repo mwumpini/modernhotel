@@ -23,7 +23,6 @@ import RecentActivities from './RecentActivities';
 // Import specialized F&B components
 import FBPOS from './FBPOS';
 import FoodBeverageRestaurantBar from './FoodBeverageRestaurantBar';
-import FoodBeverageKitchen from './FoodBeverageKitchen';
 import { openKitchenDisplay } from '../lib/fb/api';
 import FoodBeverageMenuInventory from './FoodBeverageMenuInventory';
 import FoodBeverageStaffReports from './FoodBeverageStaffReports';
@@ -131,7 +130,6 @@ export default function FoodBeverageMainDashboard() {
       items: [
         { title: 'POS Terminal', icon: '💳', description: 'Point of sale and order processing', status: 'active', count: activeOrders.length },
         { title: 'Restaurant & Bar', icon: '🍽️', description: 'Table management and reservations', status: 'active', count: 12 },
-        { title: 'Kitchen Operations', icon: '👨‍🍳', description: 'Kitchen display and order tracking', status: 'active', count: kitchenOrders.length },
         { title: 'Menu & Inventory', icon: '📋', description: 'Menu management and stock control', status: 'active', count: 45 },
       ]
     },
@@ -264,7 +262,7 @@ export default function FoodBeverageMainDashboard() {
     <div className="p-6">
       <DeptMessenger from="f&b" mode="drawer" />
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🍽️ Food & Beverage Operations</h2>
+        <h2 className="text-2xl font-bold text-ghana-black">🍽️ Restaurant & Bar Operations</h2>
         <OfflineIndicator />
       </div>
 
@@ -447,8 +445,6 @@ export default function FoodBeverageMainDashboard() {
                                 setShowPOS(true);
                               } else if (item.title.includes('Restaurant & Bar')) {
                                 setSelectedTab('restaurant');
-                              } else if (item.title.includes('Kitchen Operations')) {
-                                openKitchenDisplay();
                               } else if (item.title.includes('Menu & Inventory')) {
                                 setSelectedTab('menu');
                               } else if (item.title.includes('Staff Reports')) {
@@ -489,10 +485,6 @@ export default function FoodBeverageMainDashboard() {
 
             <Tab key="restaurant" title="🍽️ Restaurant & Bar">
               <FoodBeverageRestaurantBar />
-            </Tab>
-
-            <Tab key="kitchen" title="👨‍🍳 Kitchen Operations">
-              <FoodBeverageKitchen />
             </Tab>
 
             <Tab key="menu" title="📋 Menu & Inventory">

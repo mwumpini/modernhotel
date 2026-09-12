@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant';
-import { requireAuth } from '@/app/lib/api/auth-guard';
+import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard';
 import {
   listRequisitions,
+  getRequisitionById,
   upsertRequisition,
   deleteRequisition,
   type RequisitionItemInput,
@@ -35,7 +36,10 @@ export async function GET(req: NextRequest) {
     if (!tenantId) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 });
 
     const { searchParams } = new URL(req.url);
-    const requisitions = await listRequisitions(tenantId, { status: searchParams.get('status') || undefined });
+    const requisitions = await listRequisitions(tenantId, {
+      status: searchParams.get('status') || undefined,
+      department: searchParams.get('department') || undefined,
+    });
     return NextResponse.json({ requisitions });
   } catch (error) {
     console.error('Error fetching requisitions:', error);
@@ -63,6 +67,9 @@ export async function POST(req: NextRequest) {
       requestedBy: body.requestedBy,
       requestedDate: body.requestedDate,
       status: body.status,
+      department: body.department,
+      assignedToId: body.assignedToId,
+      assignedToName: body.assignedToName,
       notes: body.notes,
       items: mapItems(body),
     });
@@ -75,6 +82,15 @@ export async function POST(req: NextRequest) {
 }
 
 // PUT - Update an existing requisition (full replace of items)
+//
+// Permission gating: a plain edit of a still-pending requisition needs nothing
+// beyond auth (any staffer can fix their own draft before Stores decides). Two
+// things need more:
+//   - Actually changing status (approve/reject/mark ready/convert-to-po) is a
+//     Stores decision — 'inventory.approve-requisition'.
+//   - Editing/deleting a requisition Stores has already acted on (not 'pending'
+//     any more) without changing its status — e.g. correcting quantities on an
+//     approved one — is 'inventory.edit-processed-requisition'.
 export async function PUT(req: NextRequest) {
   try {
     const auth = await requireAuth(req);
@@ -86,6 +102,17 @@ export async function PUT(req: NextRequest) {
     if (!body.id) return NextResponse.json({ error: 'Missing required field: id' }, { status: 400 });
     if (!body.items) return NextResponse.json({ error: 'items is required for an update' }, { status: 400 });
 
+    const existing = await getRequisitionById(tenantId, body.id);
+    if (!existing) return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
+
+    if (body.status && body.status !== existing.status) {
+      const permCheck = await requirePermission(req, 'inventory.approve-requisition');
+      if (!permCheck.ok) return permCheck.response;
+    } else if (existing.status !== 'pending') {
+      const permCheck = await requirePermission(req, 'inventory.edit-processed-requisition');
+      if (!permCheck.ok) return permCheck.response;
+    }
+
     const requisition = await upsertRequisition({
       id: body.id,
       tenantId,
@@ -93,8 +120,13 @@ export async function PUT(req: NextRequest) {
       requestedBy: body.requestedBy,
       requestedDate: body.requestedDate,
       status: body.status,
+      department: body.department,
+      assignedToId: body.assignedToId,
+      assignedToName: body.assignedToName,
       approvedBy: body.approvedBy,
       approvedAt: body.approvedAt,
+      readyBy: body.readyBy,
+      readyAt: body.readyAt,
       rejectedBy: body.rejectedBy,
       rejectedAt: body.rejectedAt,
       rejectionReason: body.rejectionReason,
@@ -122,6 +154,13 @@ export async function DELETE(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get('id');
     if (!id) return NextResponse.json({ error: 'Missing required parameter: id' }, { status: 400 });
+
+    const existing = await getRequisitionById(tenantId, id);
+    if (!existing) return NextResponse.json({ error: 'Requisition not found' }, { status: 404 });
+    if (existing.status !== 'pending') {
+      const permCheck = await requirePermission(req, 'inventory.edit-processed-requisition');
+      if (!permCheck.ok) return permCheck.response;
+    }
 
     const result = await deleteRequisition(tenantId, id);
     if (result.error === 'not_found') {

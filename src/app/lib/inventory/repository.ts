@@ -360,10 +360,13 @@ export async function recordStockTransfer(params: {
 	quantity: number; // positive magnitude
 	notes?: string;
 	performedBy?: string;
+	referenceType?: string;
+	referenceId?: string;
 }) {
 	const item = await prisma.inventoryItem.findFirst({ where: { id: params.itemId, tenantId: params.tenantId } });
 	if (!item) throw new Error('Item not found for this tenant');
-	const referenceId = `transfer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+	const referenceType = params.referenceType || 'transfer';
+	const referenceId = params.referenceId || `transfer_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
 	return prisma.$transaction(async (tx) => {
 		await tx.inventoryTransaction.create({
@@ -373,7 +376,7 @@ export async function recordStockTransfer(params: {
 				locationId: params.fromLocationId,
 				type: 'transfer_out',
 				quantity: -Math.abs(params.quantity),
-				referenceType: 'transfer',
+				referenceType,
 				referenceId,
 				notes: params.notes,
 				performedBy: params.performedBy,
@@ -386,17 +389,82 @@ export async function recordStockTransfer(params: {
 				locationId: params.toLocationId,
 				type: 'transfer_in',
 				quantity: Math.abs(params.quantity),
-				referenceType: 'transfer',
+				referenceType,
 				referenceId,
 				notes: params.notes,
 				performedBy: params.performedBy,
 			},
 		});
 		// Net zero on quantityOnHand (same item, in and out) — the transfer only moves
-		// stock between locations, so no adjustment to the item's flat quantity is needed
-		// unless there's no location dimension in use, in which case this is a no-op pair.
+		// stock between locations (fromLocationId left undefined represents the shared,
+		// untagged central pool — see ensureDepartmentLocations/getLocationStockLevels),
+		// so no adjustment to the item's flat quantity is needed.
 		return { referenceId };
 	});
+}
+
+// ---------------------------------------------------------------------------
+// Per-department stock — Restaurant/Kitchen each get a real StockLocation row;
+// their "on hand" is derived by summing InventoryTransaction.quantity at that
+// location (never a separately-maintained counter, so it can't drift). Stock
+// that hasn't been transferred to a department yet is the implicit central
+// pool: quantityOnHand minus every department's on-hand, rather than its own
+// tracked location — see the transfer_out `fromLocationId: undefined` above.
+// ---------------------------------------------------------------------------
+
+export const DEPARTMENT_LOCATIONS: Record<string, { code: string; name: string }> = {
+	restaurant: { code: 'RESTAURANT', name: 'Restaurant & Bar' },
+	kitchen: { code: 'KITCHEN', name: 'Kitchen' },
+};
+
+export async function ensureDepartmentLocations(tenantId: string): Promise<void> {
+	await Promise.all(
+		Object.values(DEPARTMENT_LOCATIONS).map((loc) =>
+			prisma.stockLocation.upsert({
+				where: { tenantId_code: { tenantId, code: loc.code } },
+				update: {},
+				create: { tenantId, code: loc.code, name: loc.name, type: 'department', isActive: true },
+			}),
+		),
+	);
+}
+
+export async function getDepartmentLocationId(tenantId: string, department: string): Promise<string | null> {
+	const loc = DEPARTMENT_LOCATIONS[department];
+	if (!loc) return null;
+	await ensureDepartmentLocations(tenantId);
+	const row = await prisma.stockLocation.findUnique({ where: { tenantId_code: { tenantId, code: loc.code } } });
+	return row?.id ?? null;
+}
+
+export async function getLocationStockLevels(tenantId: string, department: string) {
+	const locationId = await getDepartmentLocationId(tenantId, department);
+	if (!locationId) return [];
+
+	const [items, sums] = await Promise.all([
+		prisma.inventoryItem.findMany({
+			where: { tenantId, isActive: true },
+			select: { id: true, code: true, name: true, defaultCost: true, sellingPrice: true, category: { select: { name: true } }, unit: { select: { name: true } } },
+			orderBy: { name: 'asc' },
+		}),
+		prisma.inventoryTransaction.groupBy({
+			by: ['itemId'],
+			where: { tenantId, locationId },
+			_sum: { quantity: true },
+		}),
+	]);
+
+	const onHandByItem = new Map(sums.map((s) => [s.itemId, Number(s._sum.quantity ?? 0)]));
+	return items.map((item) => ({
+		id: item.id,
+		code: item.code,
+		name: item.name,
+		category: item.category?.name || '—',
+		unit: item.unit?.name || '—',
+		defaultCost: Number(item.defaultCost || 0),
+		sellingPrice: Number(item.sellingPrice || 0),
+		onHand: onHandByItem.get(item.id) ?? 0,
+	}));
 }
 
 export async function listStockTransactions(
@@ -429,12 +497,16 @@ export interface RequisitionItemInput {
 	notes?: string;
 }
 
-export async function listRequisitions(tenantId: string, filters?: { status?: string }) {
+export async function listRequisitions(tenantId: string, filters?: { status?: string; department?: string }) {
 	return prisma.requisition.findMany({
-		where: { tenantId, status: filters?.status || undefined },
+		where: { tenantId, status: filters?.status || undefined, department: filters?.department || undefined },
 		include: { items: true },
 		orderBy: { createdAt: 'desc' },
 	});
+}
+
+export async function getRequisitionById(tenantId: string, id: string) {
+	return prisma.requisition.findFirst({ where: { id, tenantId }, include: { items: true } });
 }
 
 export async function upsertRequisition(params: {
@@ -444,8 +516,13 @@ export async function upsertRequisition(params: {
 	requestedBy: string;
 	requestedDate?: Date | string;
 	status?: string;
+	department?: string;
+	assignedToId?: string;
+	assignedToName?: string;
 	approvedBy?: string;
 	approvedAt?: Date | string;
+	readyBy?: string;
+	readyAt?: Date | string;
 	rejectedBy?: string;
 	rejectedAt?: Date | string;
 	rejectionReason?: string;
@@ -458,8 +535,13 @@ export async function upsertRequisition(params: {
 		requestedBy: params.requestedBy,
 		requestedDate: params.requestedDate ? new Date(params.requestedDate) : undefined,
 		status: params.status,
+		department: params.department,
+		assignedToId: params.assignedToId,
+		assignedToName: params.assignedToName,
 		approvedBy: params.approvedBy,
 		approvedAt: params.approvedAt ? new Date(params.approvedAt) : undefined,
+		readyBy: params.readyBy,
+		readyAt: params.readyAt ? new Date(params.readyAt) : undefined,
 		rejectedBy: params.rejectedBy,
 		rejectedAt: params.rejectedAt ? new Date(params.rejectedAt) : undefined,
 		rejectionReason: params.rejectionReason,
@@ -472,7 +554,7 @@ export async function upsertRequisition(params: {
 		const existing = await prisma.requisition.findFirst({ where: { id: params.id, tenantId: params.tenantId } });
 		if (existing) {
 			await prisma.requisitionItem.deleteMany({ where: { requisitionId: params.id } });
-			return prisma.requisition.update({
+			const updated = await prisma.requisition.update({
 				where: { id: params.id },
 				data: {
 					...data,
@@ -491,6 +573,34 @@ export async function upsertRequisition(params: {
 				},
 				include: { items: true },
 			});
+
+			// Fulfill on the approved → ready transition (once): 'approved' is just Stores'
+			// decision to fulfill it — the requester is still "waiting on it" until Stores
+			// has actually pulled/staged the items and marks it 'ready' for pickup, which is
+			// the point real stock leaves the shared central pool for the department's own.
+			// Re-saves after that don't re-fire since `existing.status` is already 'ready'.
+			const department = updated.department ?? existing.department;
+			if (existing.status !== 'ready' && updated.status === 'ready' && department && DEPARTMENT_LOCATIONS[department]) {
+				const toLocationId = await getDepartmentLocationId(params.tenantId, department);
+				if (toLocationId) {
+					await Promise.all(
+						updated.items.map((item) =>
+							recordStockTransfer({
+								tenantId: params.tenantId,
+								itemId: item.itemId,
+								toLocationId,
+								quantity: Number(item.quantity),
+								referenceType: 'requisition',
+								referenceId: updated.id,
+								performedBy: updated.readyBy ?? undefined,
+								notes: `Fulfilled requisition ${updated.requisitionNumber}`,
+							}),
+						),
+					);
+				}
+			}
+
+			return updated;
 		}
 	}
 

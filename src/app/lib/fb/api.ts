@@ -151,7 +151,7 @@ export async function patchFbOrder(
 }
 
 export async function fetchKitchenStaff(): Promise<{ id: string; name: string }[]> {
-  const res = await fetch('/api/tenant', { headers: fbTenantHeaders() });
+  const res = await fetch('/api/tenant?module=kitchen', { headers: fbTenantHeaders() });
   if (!res.ok) return [];
   const data = await res.json();
   return (data.staff || []).map((s: { id: string; name: string }) => ({

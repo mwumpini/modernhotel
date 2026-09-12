@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
 import { prisma } from '@/app/lib/database/client'
+import { ensureDefaultRolesForTenant, roleGrantsModule } from '@/app/lib/settings/roleRepository'
 
 /**
  * GET /api/tenant
- * Returns tenant display name and active staff list (for POS waiter select).
+ * Returns tenant display name and active staff list (for POS waiter select,
+ * and — filtered via ?module=<prefix> — for pickers like Kitchen's "assign
+ * cook" that should only offer staff whose role actually grants that module).
  */
 export async function GET(request: NextRequest) {
   try {
@@ -19,12 +22,21 @@ export async function GET(request: NextRequest) {
       select: { name: true },
     })
 
-    // Pull active users as staff (all roles — POS lets manager choose who is serving)
+    // Pull active users as staff (all roles by default — POS lets manager choose who is serving)
     const users = await prisma.user.findMany({
       where: { tenantId: ctx.tenantId, isActive: true },
       select: { id: true, name: true, role: true },
       orderBy: { name: 'asc' },
     })
+
+    const modulePrefix = request.nextUrl.searchParams.get('module')
+    let scopedUsers = users
+    if (modulePrefix) {
+      await ensureDefaultRolesForTenant(ctx.tenantId)
+      const roles = await prisma.role.findMany({ where: { tenantId: ctx.tenantId }, select: { code: true, permissions: true } })
+      const permissionsByCode = new Map(roles.map((r) => [r.code, (Array.isArray(r.permissions) ? r.permissions : []) as string[]]))
+      scopedUsers = users.filter((u) => roleGrantsModule(permissionsByCode.get(u.role) ?? [], modulePrefix))
+    }
 
     // Try to get hotel name from SystemSettings if available
     let hotelName = tenant?.name ?? 'Hotel'
@@ -42,7 +54,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       hotelName,
-      staff: users.map(u => ({ id: u.id, name: u.name, role: u.role })),
+      staff: scopedUsers.map(u => ({ id: u.id, name: u.name, role: u.role })),
     })
   } catch (error) {
     console.error('[/api/tenant][GET] error', error)

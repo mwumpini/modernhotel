@@ -107,3 +107,13 @@ export function permissionGrants(granted: string, permissionId: string): boolean
   if (granted.endsWith('.*')) return permissionId.startsWith(granted.slice(0, -1));
   return false;
 }
+
+/**
+ * True if a role's permission list grants any access to a module (e.g. 'kitchen') —
+ * '*', 'kitchen.*', or any leaf like 'kitchen.view'. Mirrors the client's
+ * hasModuleAccess() in settings/store.ts, for server-side staff-list filtering
+ * (e.g. only showing kitchen-permissioned users in the "assign cook" picker).
+ */
+export function roleGrantsModule(permissions: string[], modulePrefix: string): boolean {
+  return permissions.some((p) => p === '*' || p === `${modulePrefix}.*` || p.startsWith(`${modulePrefix}.`));
+}

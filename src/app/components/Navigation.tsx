@@ -129,24 +129,6 @@ function resolveNavSection(target: string): ActiveSection {
       return target as ActiveSection;
   }
 }
-/** Full-page kitchen display — use assign so navigation is not blocked by the main shell. */
-function KitchenRedirect() {
-  React.useEffect(() => {
-    window.location.assign('/kitchen-display');
-  }, []);
-  return (
-    <div className="min-h-[60vh] flex flex-col items-center justify-center gap-4 p-8">
-      <p className="text-gray-500 animate-pulse">Opening Kitchen Display…</p>
-      <a
-        href="/kitchen-display"
-        className="text-ghana-green font-semibold underline"
-      >
-        Click here if it does not open
-      </a>
-    </div>
-  );
-}
-
 export default function Navigation({ onLogout }: NavigationProps) {
   const router = useRouter();
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
@@ -570,10 +552,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Staff Reports...</div>}><FoodBeverageStaffReports /></Suspense>;
       case 'fb-analytics':
         return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar Analytics...</div>}><FoodBeverageAnalyticsDashboard /></Suspense>;
-      // ── Kitchen (ticket fulfillment) — always the standalone KDS page ───────
+      // ── Kitchen (ticket fulfillment) — its own top-level dashboard, no longer
+      // nested inside Restaurant & Bar's tabs. Embeds the live KDS as its first tab.
       case 'fb-kitchen':
       case 'kitchen':
-        return <KitchenRedirect />;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Kitchen Dashboard...</div>}><FoodBeverageKitchen /></Suspense>;
       case 'security':
         return <Suspense fallback={<div className="p-6 text-center">Loading Security Dashboard...</div>}><SecurityMainDashboard /></Suspense>;
       case 'security-analytics':

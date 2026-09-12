@@ -7,6 +7,7 @@ import { fetchFbOrders, openKitchenDisplay, type FbOrderDto } from '../lib/fb/ap
 import { buildLiveStationBoard, kitchenStats, type LiveStationView } from '../lib/fb/kitchenStations';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import KitchenDisplaySystem from './KitchenDisplaySystem';
+import DepartmentRequisitionModal from './inventory/DepartmentRequisitionModal';
 
 function fbHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
@@ -38,6 +39,16 @@ interface Recipe {
   preparationTime: number;
   difficulty: 'easy' | 'medium' | 'hard';
   allergens: string[];
+}
+
+interface Requisition {
+  id: string;
+  requisitionNumber: string;
+  requestedBy: string;
+  requestedDate: Date;
+  status: 'pending' | 'approved' | 'ready' | 'rejected' | 'converted-to-po' | 'cancelled';
+  notes: string;
+  items: { itemName: string; quantity: number }[];
 }
 
 export default function FoodBeverageKitchen() {
@@ -78,6 +89,47 @@ export default function FoodBeverageKitchen() {
         isActive: i.isActive,
       }))));
   }, []);
+
+  const [requisitions, setRequisitions] = useState<Requisition[]>([]);
+  const reloadRequisitions = () => {
+    fetch('/api/inventory/requisitions?department=kitchen', { headers: fbHeaders() })
+      .then((r) => (r.ok ? r.json() : { requisitions: [] }))
+      .then((data) => setRequisitions((data.requisitions || []).map((req: any) => ({
+        id: req.id,
+        requisitionNumber: req.requisitionNumber,
+        requestedBy: req.requestedBy,
+        requestedDate: new Date(req.requestedDate || req.createdAt),
+        status: req.status,
+        notes: req.notes || '',
+        items: (req.items || []).map((it: any) => ({ itemName: it.itemName, quantity: Number(it.quantity) })),
+      }))));
+  };
+  useEffect(() => { reloadRequisitions(); }, []);
+
+  // Real, ledger-derived on-hand for THIS department — see getLocationStockLevels.
+  // Populated by requisitions Stores has approved and fulfilled (transfers stock
+  // from the shared central pool into Kitchen's own location).
+  const [stockOnHand, setStockOnHand] = useState<Record<string, number>>({});
+  const reloadStockLevels = () => {
+    fetch('/api/inventory/stock-levels?department=kitchen', { headers: fbHeaders() })
+      .then((r) => (r.ok ? r.json() : { items: [] }))
+      .then((data) => setStockOnHand(Object.fromEntries((data.items || []).map((i: any) => [i.id, Number(i.onHand || 0)]))));
+  };
+  useEffect(() => { reloadStockLevels(); }, []);
+
+  const [isNewRequisitionModalOpen, setIsNewRequisitionModalOpen] = useState(false);
+
+  const getRequisitionStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending': return 'warning';
+      case 'approved': return 'primary';
+      case 'ready': return 'success';
+      case 'converted-to-po': return 'secondary';
+      case 'rejected': return 'danger';
+      case 'cancelled': return 'default';
+      default: return 'default';
+    }
+  };
 
   const stats = kitchenStats(liveOrders);
   const kitchenStations: LiveStationView[] = buildLiveStationBoard(liveOrders);
@@ -166,19 +218,26 @@ export default function FoodBeverageKitchen() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-ghana-black">🍽️ Food & Beverage - Kitchen Operations</h2>
-          <p className="text-gray-600">Live kitchen display, stations, inventory, and recipes</p>
+          <h2 className="text-2xl font-bold text-ghana-black">👨‍🍳 Kitchen Operations</h2>
+          <p className="text-gray-600">Live kitchen display, stations, inventory, requisitions, and recipes</p>
         </div>
         <div className="flex gap-3">
-          <Button 
-            color="primary" 
+          <Button
+            color="primary"
             className="bg-ghana-green text-white"
             onClick={openKitchenDisplay}
           >
             Open Full-Screen KDS
           </Button>
-          <Button 
-            color="secondary" 
+          <Button
+            color="success"
+            className="bg-blue-500 text-white"
+            onClick={() => setIsNewRequisitionModalOpen(true)}
+          >
+            + Request Stock
+          </Button>
+          <Button
+            color="secondary"
             className="bg-ghana-gold text-white"
             onClick={() => setIsRecipeModalOpen(true)}
           >
@@ -328,13 +387,14 @@ export default function FoodBeverageKitchen() {
             <Tab key="inventory" title="📦 Kitchen Inventory">
               <div className="p-6">
                 <p className="text-sm text-gray-500 mb-4">
-                  Real item catalog from Inventory & Stores. Stock quantity isn't tracked yet — that's a separate,
-                  larger fix. To add items, suppliers, or purchase orders, use Food &amp; Beverage → Menu &amp; Inventory.
+                  On Hand is Kitchen's own real stock — built up from requisitions Stores has approved and fulfilled.
+                  It's separate from what Stores or Restaurant & Bar hold; request more via the Requisitions tab.
                 </p>
                 <Table aria-label="Kitchen inventory table">
                   <TableHeader>
                     <TableColumn>ITEM</TableColumn>
                     <TableColumn>CATEGORY</TableColumn>
+                    <TableColumn>ON HAND</TableColumn>
                     <TableColumn>UNIT</TableColumn>
                     <TableColumn>DEFAULT COST</TableColumn>
                     <TableColumn>SELLING PRICE</TableColumn>
@@ -352,12 +412,63 @@ export default function FoodBeverageKitchen() {
                         <TableCell>
                           <Badge color="primary" variant="flat">{item.category}</Badge>
                         </TableCell>
+                        <TableCell>
+                          <span className={(stockOnHand[item.id] ?? 0) <= 0 ? 'text-danger font-semibold' : 'font-semibold'}>
+                            {stockOnHand[item.id] ?? 0}
+                          </span>
+                        </TableCell>
                         <TableCell>{item.unit}</TableCell>
                         <TableCell>₵{item.defaultCost.toFixed(2)}</TableCell>
                         <TableCell>₵{item.sellingPrice.toFixed(2)}</TableCell>
                         <TableCell>
                           <Chip color={item.isActive ? 'success' : 'danger'} size="sm">
                             {item.isActive ? 'Active' : 'Inactive'}
+                          </Chip>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </Tab>
+
+            <Tab key="requisitions" title="📝 Requisitions">
+              <div className="p-6">
+                <p className="text-xs text-gray-500 mb-3">
+                  Request stock from Stores — Kitchen doesn't manage suppliers or purchase orders directly. Stores approves it, then marks it <strong>Ready</strong> once it's pulled and staged for pickup (that's also when it lands in your Kitchen Inventory on-hand); until then it's still just approved and you're waiting on it.
+                </p>
+                <div className="flex justify-end mb-4">
+                  <Button color="success" className="bg-blue-500 text-white" onClick={() => setIsNewRequisitionModalOpen(true)}>
+                    + Request Stock
+                  </Button>
+                </div>
+                <Table aria-label="Kitchen requisitions table">
+                  <TableHeader>
+                    <TableColumn>REQUISITION #</TableColumn>
+                    <TableColumn>ITEMS</TableColumn>
+                    <TableColumn>REQUESTED BY</TableColumn>
+                    <TableColumn>REQUESTED DATE</TableColumn>
+                    <TableColumn>STATUS</TableColumn>
+                  </TableHeader>
+                  <TableBody emptyContent="No requisitions yet — request stock from Stores using the button above.">
+                    {requisitions.map((req) => (
+                      <TableRow key={req.id}>
+                        <TableCell className="font-medium">{req.requisitionNumber}</TableCell>
+                        <TableCell>
+                          <div className="text-sm">
+                            {req.items.length} items
+                            <p className="text-gray-500 text-xs">
+                              {req.items.map(item => `${item.itemName} (${item.quantity})`).join(', ')}
+                            </p>
+                          </div>
+                        </TableCell>
+                        <TableCell>{req.requestedBy}</TableCell>
+                        <TableCell>
+                          <div className="text-sm">{req.requestedDate.toLocaleDateString()}</div>
+                        </TableCell>
+                        <TableCell>
+                          <Chip color={getRequisitionStatusColor(req.status)} size="sm">
+                            {req.status.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                           </Chip>
                         </TableCell>
                       </TableRow>
@@ -500,6 +611,15 @@ export default function FoodBeverageKitchen() {
           </ModalFooter>
         </ModalContent>
       </Modal>
+
+      <DepartmentRequisitionModal
+        isOpen={isNewRequisitionModalOpen}
+        onClose={() => setIsNewRequisitionModalOpen(false)}
+        department="kitchen"
+        departmentLabel="Kitchen"
+        inventoryItems={inventoryItems}
+        onCreated={() => { reloadRequisitions(); reloadStockLevels(); }}
+      />
 
       {/* View Recipe Modal */}
       <Modal isOpen={!!viewingRecipe} onClose={() => setViewingRecipe(null)} size="2xl">
