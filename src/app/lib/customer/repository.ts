@@ -1,6 +1,11 @@
 import { prisma } from '../database/client'
 import { UnifiedCustomer } from './types'
 
+const SUPPORTS_INSENSITIVE_MODE = (prisma as any)._activeProvider !== 'sqlite'
+function ci(value: string) {
+	return SUPPORTS_INSENSITIVE_MODE ? { contains: value, mode: 'insensitive' as const } : { contains: value }
+}
+
 export async function searchCustomers(params: {
 	tenantId: string;
 	q?: string;
@@ -15,10 +20,10 @@ export async function searchCustomers(params: {
 		...(q
 			? {
 					OR: [
-						{ name: { contains: q, mode: 'insensitive' } },
-						{ email: { contains: q, mode: 'insensitive' } },
-						{ phone: { contains: q, mode: 'insensitive' } },
-						{ serialNumber: { contains: q, mode: 'insensitive' } },
+						{ name: ci(q) },
+						{ email: ci(q) },
+						{ phone: ci(q) },
+						{ serialNumber: ci(q) },
 					],
 			  }
 			: {}),
@@ -29,11 +34,11 @@ export async function searchCustomers(params: {
 		...(q
 			? {
 					OR: [
-						{ name: { contains: q, mode: 'insensitive' } },
-						{ code: { contains: q, mode: 'insensitive' } },
-						{ email: { contains: q, mode: 'insensitive' } },
-						{ phone: { contains: q, mode: 'insensitive' } },
-						{ taxNumber: { contains: q, mode: 'insensitive' } },
+						{ name: ci(q) },
+						{ code: ci(q) },
+						{ email: ci(q) },
+						{ phone: ci(q) },
+						{ taxNumber: ci(q) },
 					],
 			  }
 			: {}),
