@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 
 async function resolveTenant(req: NextRequest) {
@@ -25,6 +26,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
@@ -51,7 +54,8 @@ export async function POST(request: NextRequest) {
       ? await prisma.housekeepingStaff.update({ where: { id: body.id }, data })
       : await prisma.housekeepingStaff.create({ data: { id: body.id, tenantId: ctx.tenantId, ...data } })
 
-    await createAuditLog(ctx.tenantId, null, 'HOUSEKEEPING_STAFF_SAVED', 'HousekeepingStaff', staff.id, undefined, { name: staff.name, role: staff.role }, request)
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'HOUSEKEEPING_STAFF_SAVED', 'HousekeepingStaff', staff.id, undefined, { name: staff.name, role: staff.role }, request)
     return NextResponse.json({ staff })
   } catch (error) {
     console.error('[housekeeping/staff][POST] error', error)
@@ -61,6 +65,8 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const { searchParams } = new URL(request.url)
@@ -70,7 +76,8 @@ export async function DELETE(request: NextRequest) {
     if (!existing) return NextResponse.json({ error: 'Staff member not found' }, { status: 404 })
     // Soft-delete: past tasks may reference this staff member's id in assignedTo.
     await prisma.housekeepingStaff.update({ where: { id }, data: { isActive: false } })
-    await createAuditLog(ctx.tenantId, null, 'HOUSEKEEPING_STAFF_DEACTIVATED', 'HousekeepingStaff', id, undefined, undefined, request)
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'HOUSEKEEPING_STAFF_DEACTIVATED', 'HousekeepingStaff', id, undefined, undefined, request)
     return NextResponse.json({ message: 'Deactivated' })
   } catch (error) {
     console.error('[housekeeping/staff][DELETE] error', error)

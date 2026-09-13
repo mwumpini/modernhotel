@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listHrOnboardingChecklists, upsertHrOnboardingChecklist } from '@/app/lib/hr/repository'
 
 async function resolveTenant(req: NextRequest) {
@@ -24,12 +25,15 @@ export async function GET(request: NextRequest) {
 // POST /api/hr/onboarding — create or update the checklist for one employee (body.employeeId required)
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.employeeId) return NextResponse.json({ error: 'employeeId is required' }, { status: 400 })
     const checklist = await upsertHrOnboardingChecklist(ctx.tenantId, body.employeeId, body)
-    await createAuditLog(ctx.tenantId, null, 'HR_ONBOARDING_CHECKLIST_SAVED', 'HrOnboardingChecklist', checklist.id, undefined, { employeeId: checklist.employeeId }, request)
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'HR_ONBOARDING_CHECKLIST_SAVED', 'HrOnboardingChecklist', checklist.id, undefined, { employeeId: checklist.employeeId }, request)
     return NextResponse.json({ checklist })
   } catch (error) {
     console.error('[hr/onboarding][POST] error', error)

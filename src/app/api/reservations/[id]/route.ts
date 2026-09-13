@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { updateReservationRow, isRoomAvailable } from '@/app/lib/frontoffice/repository'
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -22,7 +25,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const reservation = await updateReservationRow(ctx.tenantId, id, body)
     if (!reservation) return NextResponse.json({ error: 'Reservation not found' }, { status: 404 })
-    await createAuditLog(ctx.tenantId, null, 'RESERVATION_UPDATED', 'Reservation', id, undefined, { status: reservation.status, roomId: reservation.roomId }, request)
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'RESERVATION_UPDATED', 'Reservation', id, undefined, { status: reservation.status, roomId: reservation.roomId }, request)
     return NextResponse.json({ reservation })
   } catch (error) {
     console.error('[reservations/:id][PATCH] error', error)
