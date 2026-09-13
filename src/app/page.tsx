@@ -8,11 +8,35 @@ import { useSettingsStore } from './lib/settings/store';
 import Navigation from './components/Navigation';
 import LoginForm from './components/LoginForm';
 
+function readLocalSetupCompleted(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const raw = window.localStorage.getItem('system.settings');
+    return !!(raw && JSON.parse(raw)?.initialSetupCompleted);
+  } catch {
+    return false;
+  }
+}
+
 export default function Home() {
   const router = useRouter();
   const { data: session, status } = useSession();
   const initialSetupCompleted = useSettingsStore(s => s.initialSetupCompleted);
+  // Whether this tenant's setup-wizard status has been confirmed against the
+  // server yet (see /api/settings/setup-status, checked from loadSettings() —
+  // triggered by Navigation's own mount effect, not duplicated here). Setup
+  // completion is shared per tenant, not per browser: a device with no local
+  // record of it must wait for this before deciding the wizard is needed,
+  // otherwise every new device would repeat a wizard another device already
+  // finished.
+  const setupStatusChecked = useSettingsStore(s => s.setupStatusChecked);
   const setSessionRole = useSettingsStore(s => s.setSessionRole);
+
+  // Read once, synchronously, on first render — so a browser that already has
+  // a local record renders the dashboard immediately instead of waiting on
+  // the async server check (which still runs, but only matters for a browser
+  // with no local record at all).
+  const [localPersistedComplete] = React.useState(readLocalSetupCompleted);
 
   // Keep the settings store's RBAC engine pointed at the real logged-in user's
   // role from the NextAuth session, not a disconnected local "current user".
@@ -22,32 +46,21 @@ export default function Home() {
 
   // Role-based landing (client-safe, runs after mount)
   React.useEffect(() => {
-    try {
-      if (!initialSetupCompleted) {
-        // Cross-check the persisted value before redirecting. The store hydrates
-        // from localStorage on the client, so a render that observes the default
-        // `false` must not bounce a user who has already completed setup.
-        let persistedComplete = false;
-        try {
-          const raw = window.localStorage.getItem('system.settings');
-          persistedComplete = !!(raw && JSON.parse(raw)?.initialSetupCompleted);
-        } catch {}
-        if (!persistedComplete) {
-          router.replace('/setup');
-          return;
-        }
-      }
-    } catch {}
-    try {
-      const role = window.localStorage.getItem('app.role');
-      // If role matches executive roles, ensure dashboard loads (we already render it by default)
-      if (role && ['gm','general-manager','director','owner','admin','manager'].includes(role)) {
-        // Optionally, could navigate to /management, but we already show Navigation with executive default
-      }
-    } catch {}
-  }, [initialSetupCompleted, router]);
+    if (status !== 'authenticated') return;
+    if (initialSetupCompleted || localPersistedComplete) return;
+    // No local record — wait for the server check (kicked off by Navigation's
+    // mount effect via loadSettings()) before deciding. Only a tenant the
+    // server also has no record for is genuinely new.
+    if (!setupStatusChecked) return;
+    router.replace('/setup');
+  }, [status, initialSetupCompleted, localPersistedComplete, setupStatusChecked, router]);
 
-  if (status === 'loading') {
+  // While a device with no local setup record waits on the server's answer,
+  // show a spinner rather than flashing the dashboard (or the wizard) before
+  // the real, shared answer is known.
+  const awaitingSetupCheck = status === 'authenticated' && !initialSetupCompleted && !localPersistedComplete && !setupStatusChecked;
+
+  if (status === 'loading' || awaitingSetupCheck) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Spinner size="lg" />

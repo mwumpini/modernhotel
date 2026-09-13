@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
-import { 
+import { useSession } from 'next-auth/react';
+import {
   Card,
   CardHeader,
   CardBody,
@@ -12,13 +13,22 @@ import {
   SelectItem,
   Switch,
   Divider,
-  Chip
+  Chip,
+  Spinner
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
 
 export default function SetupWizardPage() {
   const router = useRouter();
+  const { status } = useSession();
   const settings = useSettingsStore();
+
+  // This page had no auth check at all — reachable by URL without logging in
+  // first. Login must come before setup, both because the wizard writes as
+  // this user and because an unauthenticated visitor has no tenant to set up.
+  React.useEffect(() => {
+    if (status === 'unauthenticated') router.replace('/');
+  }, [status, router]);
   const updateSetting = useSettingsStore(s => s.updateSetting);
   const updateNestedSetting = useSettingsStore(s => s.updateNestedSetting);
   const updateCountryCompliance = useSettingsStore(s => s.updateCountryCompliance);
@@ -468,6 +478,14 @@ export default function SetupWizardPage() {
       <span className="text-sm text-gray-600">System Setup</span>
     </div>
   );
+
+  if (status !== 'authenticated') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 md:p-8">

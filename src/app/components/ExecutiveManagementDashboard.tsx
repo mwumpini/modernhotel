@@ -30,8 +30,16 @@ function formatCurrency(amount: number | undefined) {
 }
 
 export default function ExecutiveManagementDashboard() {
-  const { calculateOccupancyAnalytics } = useAnalyticsStore();
-  const { generateDailyFlashReport } = useReportingStore();
+  // Selected (not destructured from the whole store) so this component only
+  // re-renders when these two actions actually change reference — which, since
+  // they're plain Zustand actions, is never. Destructuring the whole store
+  // (the previous code) re-subscribes to every field in analyticsStore /
+  // reportingStore, so any unrelated field changing there re-renders this
+  // component; combined with a useEffect below that depends on these two
+  // functions and re-subscribes several other stores on every run, that turned
+  // into a self-sustaining loop of report/analytics recalculation.
+  const calculateOccupancyAnalytics = useAnalyticsStore((s) => s.calculateOccupancyAnalytics);
+  const generateDailyFlashReport = useReportingStore((s) => s.generateDailyFlashReport);
 
   // IMPORTANT: Keep initial render deterministic across server and client
   const [occupancy, setOccupancy] = React.useState<ReturnType<typeof calculateOccupancyAnalytics> | null>(null);

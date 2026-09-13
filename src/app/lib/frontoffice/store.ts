@@ -44,6 +44,7 @@ class FrontOfficeStore {
   billingPersons: BillingPerson[] = [];
   private hydratedGuests: boolean = false;
   private hydratedFromApi: boolean = false;
+  private lastRefreshFromApiAt: number = 0;
   // Serializes API writes so a reservation's POST always lands before its PATCH.
   private writeQueue: Promise<unknown> = Promise.resolve();
   clientServices: Array<{
@@ -250,7 +251,16 @@ class FrontOfficeStore {
   // Pulls reservations + guests from the database and adopts them when present.
   // During the transition we only replace local data when the server has rows,
   // so an empty DB doesn't wipe seed data.
+  //
+  // Throttled at the source (not just in refreshFromApi's focus/visibility
+  // wrapper) because subscribe() also reaches this indirectly via
+  // ensureHydratedFromApi() — every new subscriber's mount effect notifying
+  // (housekeeping, orders, kitchen ops, etc.) can cascade into re-subscribing
+  // this store too, and without a floor here that turns into the same
+  // uncontrolled repeat-fetch loop refreshFromApi's throttle was added for.
   private async pullFromApi() {
+    if (Date.now() - this.lastRefreshFromApiAt < FrontOfficeStore.MIN_REFRESH_INTERVAL_MS) return;
+    this.lastRefreshFromApiAt = Date.now();
     const t = this.tenant(); if (!t) return;
     try {
       const res = await fetch('/api/reservations', { headers: { 'x-tenant-subdomain': t } });
@@ -335,6 +345,10 @@ class FrontOfficeStore {
   }
 
   // Drain pending writes, then re-pull so a refresh never clobbers unsaved edits.
+  // Wired to window focus/visibilitychange (see ensureHydratedFromApi) — the
+  // actual rate limiting against overly-frequent triggers lives in
+  // pullFromApi() itself, since that's reachable through more than one path.
+  private static readonly MIN_REFRESH_INTERVAL_MS = 10_000;
   async refreshFromApi() {
     if (typeof window === 'undefined') return;
     try { await this.writeQueue; } catch {}

@@ -41,18 +41,22 @@ export function applyDemoFixturesIfNeeded(): void {
     return;
   }
 
-  useSettingsStore.setState({
-    roomManagement: {
-      ...rm,
-      roomTypes: needsRoomTypes ? DEMO_ROOM_TYPES : rm.roomTypes,
-      rooms: needsRooms ? DEMO_ROOMS : rm.rooms,
-      ratePlans: needsRatePlans ? DEMO_RATE_PLANS : rm.ratePlans,
-      roomStatuses: needsStatuses ? DEMO_ROOM_STATUSES : rm.roomStatuses,
-      housekeepingEnabled: rm.housekeepingEnabled ?? true,
-    },
-  });
+  const newRoomManagement = {
+    ...rm,
+    roomTypes: needsRoomTypes ? DEMO_ROOM_TYPES : rm.roomTypes,
+    rooms: needsRooms ? DEMO_ROOMS : rm.rooms,
+    ratePlans: needsRatePlans ? DEMO_RATE_PLANS : rm.ratePlans,
+    roomStatuses: needsStatuses ? DEMO_ROOM_STATUSES : rm.roomStatuses,
+    housekeepingEnabled: rm.housekeepingEnabled ?? true,
+  };
+  useSettingsStore.setState({ roomManagement: newRoomManagement });
 
-  state.saveSettings();
+  // Deliberately NOT state.saveSettings() here: that now also pushes roomManagement
+  // to its server-side mirror (see syncRoomManagementToApi), and placeholder demo
+  // data must never get pushed up as if it were a tenant's real, already-synced
+  // room configuration. Persist locally only, matching the previous behavior of
+  // surviving a reload within this browser.
+  try { localStorage.setItem('room.management', JSON.stringify(newRoomManagement)); } catch {}
   state.publish();
   applied = true;
 }

@@ -5,23 +5,108 @@ import { getClientTenantSubdomain } from '../api/clientTenant';
 import type { BlockTemplate } from '../print/blocks';
 import type { PrintType } from '../print/templates';
 
-// Best-effort background sync of just the no-show policy fields to the server
-// (see /api/settings/room-management) so server-side jobs like the night-audit
-// cron can apply the same policy configured here — the rest of roomManagement
-// stays client-only for now.
-function syncNoShowPolicyToApi(rm: { noShowPolicyEnabled?: boolean; noShowChargeType?: string; noShowChargeValue?: number }) {
-  if (typeof window === 'undefined') return;
-  const t = getClientTenantSubdomain();
-  if (!t) return;
+const ROOM_CONFIG_KEYS = ['roomTypes', 'rooms', 'ratePlans', 'roomStatuses'] as const;
+
+// Deliberately duplicated from lib/demo/index.ts's isDemoFixturesEnabled() rather
+// than imported — that module re-exports applyDemoFixturesIfNeeded, which imports
+// this store, so importing it here would be circular.
+function isDemoModeActive(): boolean {
+  if (process.env.NEXT_PUBLIC_DEMO_MODE === 'true') return true;
+  if (process.env.NEXT_PUBLIC_DEMO_MODE === 'false') return false;
+  return process.env.NODE_ENV === 'development';
+}
+
+// Fire-and-forget sync of the whole roomManagement slice to its server-side mirror
+// (see /api/settings/room-management) — called from saveSettings() after every
+// mutation, the same point that already persisted this to localStorage only.
+// Room types/rooms/rate plans/statuses used to live in that browser's storage
+// alone, which meant a different device (or the same device after clearing
+// storage) saw none of a tenant's actual room configuration.
+//
+// Throttled with a guaranteed trailing call (not just a plain debounce):
+// saveSettings() is called far more often than room config actually changes —
+// including, in practice, from an unrelated pre-existing loop elsewhere in this
+// app (reports/analytics recalculating continuously) that can call it dozens of
+// times a second, indefinitely. Before, that cost nothing (localStorage only);
+// now it's a real network+DB write. A plain trailing debounce would never fire
+// at all under a truly continuous loop (the timer keeps getting pushed back),
+// silently breaking real syncs — so this guarantees at most one request per
+// interval while still always eventually sending the latest state.
+const ROOM_MANAGEMENT_SYNC_INTERVAL_MS = 2000;
+let roomManagementLastSyncAt = 0;
+let roomManagementSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let roomManagementPending: RoomManagementSettings | null = null;
+
+function postRoomManagement(rm: RoomManagementSettings, tenant: string) {
+  roomManagementLastSyncAt = Date.now();
   fetch('/api/settings/room-management', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': t },
+    headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': tenant },
     body: JSON.stringify({
       noShowPolicyEnabled: rm.noShowPolicyEnabled,
       noShowChargeType: rm.noShowChargeType,
       noShowChargeValue: rm.noShowChargeValue,
+      roomTypes: rm.roomTypes,
+      rooms: rm.rooms,
+      ratePlans: rm.ratePlans,
+      roomStatuses: rm.roomStatuses,
     }),
-  }).catch((e) => console.warn('[Settings] Failed to sync no-show policy:', e));
+  }).catch((e) => console.warn('[Settings] Failed to sync room management:', e));
+}
+
+function syncRoomManagementToApi(rm: RoomManagementSettings) {
+  if (typeof window === 'undefined') return;
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+
+  roomManagementPending = rm;
+  const elapsed = Date.now() - roomManagementLastSyncAt;
+  if (elapsed >= ROOM_MANAGEMENT_SYNC_INTERVAL_MS && !roomManagementSyncTimer) {
+    roomManagementPending = null;
+    postRoomManagement(rm, t);
+    return;
+  }
+  if (roomManagementSyncTimer) return; // a trailing call is already scheduled — it'll pick up the latest `roomManagementPending`
+  roomManagementSyncTimer = setTimeout(() => {
+    roomManagementSyncTimer = null;
+    if (roomManagementPending) {
+      const pending = roomManagementPending;
+      roomManagementPending = null;
+      postRoomManagement(pending, t);
+    }
+  }, Math.max(200, ROOM_MANAGEMENT_SYNC_INTERVAL_MS - elapsed));
+}
+
+// Shared across every loadSettings() call within one page load (it's triggered
+// from more than one place — Navigation's mount effect and the demo-fixtures
+// module-init microtask both call loadSettings()) so they share one fetch
+// instead of each firing its own.
+let setupStatusFetchPromise: Promise<any> | null = null;
+function fetchSetupStatusOnce(tenant: string): Promise<any> {
+  if (!setupStatusFetchPromise) {
+    setupStatusFetchPromise = fetch('/api/settings/setup-status', { headers: { 'x-tenant-subdomain': tenant } })
+      .then((res) => (res.ok ? res.json() : null))
+      .catch((e) => { console.warn('[Settings] Failed to hydrate setup status:', e); return null; });
+  }
+  return setupStatusFetchPromise;
+}
+
+// Marks the tenant's setup wizard as done server-side (see /api/settings/setup-status)
+// — was previously tracked only in the completing browser's localStorage, so every
+// other device (or this one after clearing storage) saw the wizard again even
+// though the tenant had already been set up. Only ever sends `true`: once complete,
+// it stays complete, and the API itself no-ops if already recorded.
+let setupStatusSynced = false;
+function syncSetupStatusToApi() {
+  if (typeof window === 'undefined' || setupStatusSynced) return;
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  setupStatusSynced = true;
+  fetch('/api/settings/setup-status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': t },
+    body: JSON.stringify({ initialSetupCompleted: true }),
+  }).catch((e) => { console.warn('[Settings] Failed to sync setup status:', e); setupStatusSynced = false; });
 }
 
 // Background sync of a Role to the server-side mirror (see /api/settings/roles)
@@ -1343,6 +1428,13 @@ interface SettingsStore extends SystemSettings {
    *  time. saveSettings() no-ops until this flips true. */
   hydrated: boolean;
 
+  /** True once the async server check for this tenant's setup-wizard status
+   *  (see /api/settings/setup-status) has resolved, whichever way. A browser
+   *  with no local record of setup being done must wait for this before
+   *  deciding whether to show the wizard — otherwise it would show it every
+   *  time, ahead of the answer the server already has for this tenant. */
+  setupStatusChecked: boolean;
+
   // Printing defaults management
   updatePrintingTemplates: (tpl: Partial<SettingsStore['printing']>) => void;
 
@@ -2316,6 +2408,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   ...defaultSettings,
   subscribers: new Set(),
   hydrated: false,
+  setupStatusChecked: false,
   printing: DEFAULT_PRINTING,
   docBuilder: { templates: [] },
   addDocBuilderTemplate: (template) => {
@@ -2446,8 +2539,36 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
             if (data?.policy) {
               set({ roomManagement: { ...get().roomManagement, ...data.policy } });
             }
+            if (!data) return;
+
+            // Room types/rooms/rate plans/statuses: the server is authoritative once
+            // ANY device has ever saved real config there. If the server has nothing
+            // yet but this browser already has real config (from before this sync
+            // existed, or from local demo fixtures), push it up once so the tenant
+            // isn't left with an empty server-side config that a fresh browser would
+            // then see instead of what's actually configured.
+            const serverHasConfig = ROOM_CONFIG_KEYS.some((k) => Array.isArray(data[k]) && data[k].length > 0);
+            if (serverHasConfig) {
+              set({
+                roomManagement: {
+                  ...get().roomManagement,
+                  roomTypes: data.roomTypes ?? [],
+                  rooms: data.rooms ?? [],
+                  ratePlans: data.ratePlans ?? [],
+                  roomStatuses: data.roomStatuses ?? [],
+                },
+              });
+            } else if (!isDemoModeActive()) {
+              // Only auto-backfill real, user-entered local config to a server that has
+              // none yet — never demo placeholder data (isDemoModeActive() means
+              // applyDemoFixturesIfNeeded() may be the actual source of what's in
+              // `local` right now, not something the tenant configured).
+              const local = get().roomManagement;
+              const localHasConfig = ROOM_CONFIG_KEYS.some((k) => (local[k] as any[])?.length > 0);
+              if (localHasConfig) syncRoomManagementToApi(local);
+            }
           })
-          .catch((e) => console.warn('[Settings] Failed to hydrate no-show policy:', e));
+          .catch((e) => console.warn('[Settings] Failed to hydrate room management:', e));
 
         // Pull the server-side Role mirror (see /api/settings/roles) so API routes'
         // requirePermission() checks and this browser's role editor stay in sync —
@@ -2508,6 +2629,29 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
             set({ users: mapped });
           })
           .catch((e) => console.warn('[Settings] Failed to hydrate users:', e));
+
+        // Whether this tenant finished the setup wizard is shared, not
+        // per-browser — a device that never ran the wizard should see the
+        // dashboard immediately once ANY device has completed it, and a
+        // device that completed it before this sync existed should push that
+        // up once rather than the server staying stuck at "not done". The
+        // fetch itself is shared across every loadSettings() call this page
+        // load (it's triggered from more than one place) via
+        // fetchSetupStatusOnce, rather than each caller firing its own.
+        fetchSetupStatusOnce(t)
+          .then((data) => {
+            if (data?.initialSetupCompleted) {
+              set({ initialSetupCompleted: true });
+            } else if (get().initialSetupCompleted) {
+              syncSetupStatusToApi();
+            }
+          })
+          .finally(() => set({ setupStatusChecked: true }));
+      } else {
+        // No tenant header available yet (shouldn't normally happen once
+        // authenticated) — don't leave page.tsx waiting forever for a check
+        // that can never run.
+        set({ setupStatusChecked: true });
       }
 
     } catch (error) {
@@ -2550,10 +2694,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         ...rest
       } = state as any;
       localStorage.setItem('system.settings', JSON.stringify(rest));
+      if (rest.initialSetupCompleted) syncSetupStatusToApi();
 
       // Save room management settings
       localStorage.setItem('room.management', JSON.stringify(state.roomManagement));
-      syncNoShowPolicyToApi(state.roomManagement);
+      syncRoomManagementToApi(state.roomManagement);
 
       // Save POS settings
       localStorage.setItem('manager.pin', state.posSettings.managerPin);
