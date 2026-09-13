@@ -27,13 +27,14 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
     if (!body.firstName || !body.lastName) return NextResponse.json({ error: 'firstName and lastName are required' }, { status: 400 })
     const customer = await upsertFBCustomer(ctx.tenantId, body.id, body)
-    await createAuditLog(ctx.tenantId, null, 'FB_CUSTOMER_SAVED', 'FBCustomer', body.id, undefined, { name: `${customer.firstName} ${customer.lastName}` }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'FB_CUSTOMER_SAVED', 'FBCustomer', body.id, undefined, { name: `${customer.firstName} ${customer.lastName}` }, request)
     return NextResponse.json({ customer })
   } catch (error) {
     console.error('[fb/customers][POST] error', error)

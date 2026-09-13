@@ -55,6 +55,16 @@ export async function requireRole(request: NextRequest, allowedRoles: string[]):
  * Management still resolves the four defaults instead of failing closed.
  */
 export async function requirePermission(request: NextRequest, permissionId: string): Promise<AuthResult> {
+  return requireAnyPermission(request, [permissionId])
+}
+
+/**
+ * Like requirePermission, but succeeds if the caller's role grants ANY of the
+ * given permission ids — e.g. saving a checkpoint location typed fresh while
+ * starting a patrol should work for someone who can run patrols even if they
+ * don't separately hold the narrower "manage checkpoint locations" permission.
+ */
+export async function requireAnyPermission(request: NextRequest, permissionIds: string[]): Promise<AuthResult> {
   const auth = await requireAuth(request)
   if (!auth.ok) return auth
 
@@ -72,7 +82,7 @@ export async function requirePermission(request: NextRequest, permissionId: stri
   if (!role || !role.isActive) return forbidden()
 
   const permissions = Array.isArray(role.permissions) ? (role.permissions as unknown[]).filter((p): p is string => typeof p === 'string') : []
-  const granted = permissions.some((p) => permissionGrants(p, permissionId))
+  const granted = permissionIds.some((permissionId) => permissions.some((p) => permissionGrants(p, permissionId)))
   if (!granted) return forbidden()
 
   return auth

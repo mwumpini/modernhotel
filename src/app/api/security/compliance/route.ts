@@ -27,6 +27,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
@@ -35,7 +36,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'title, category and nextDueDate are required' }, { status: 400 })
     }
     const requirement = await upsertComplianceRequirement(ctx.tenantId, body.id, body)
-    await createAuditLog(ctx.tenantId, null, 'SECURITY_COMPLIANCE_SAVED', 'SecurityComplianceRequirement', body.id, undefined, { title: requirement.title }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'SECURITY_COMPLIANCE_SAVED', 'SecurityComplianceRequirement', body.id, undefined, { title: requirement.title }, request)
     return NextResponse.json({ requirement })
   } catch (error) {
     console.error('[security/compliance][POST] error', error)

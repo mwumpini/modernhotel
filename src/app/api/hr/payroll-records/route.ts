@@ -27,12 +27,13 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
     const record = await upsertHrPayrollRecord(ctx.tenantId, body.id, body)
-    await createAuditLog(ctx.tenantId, null, 'HR_PAYROLL_RECORD_SAVED', 'HrPayrollRecord', body.id, undefined, { employeeNumber: record.employeeNumber, netPay: record.netPay, status: record.status }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'HR_PAYROLL_RECORD_SAVED', 'HrPayrollRecord', body.id, undefined, { employeeNumber: record.employeeNumber, netPay: record.netPay, status: record.status }, request)
     return NextResponse.json({ record })
   } catch (error) {
     console.error('[hr/payroll-records][POST] error', error)

@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
     if (!body.paymentNumber) return NextResponse.json({ error: 'paymentNumber is required' }, { status: 400 })
 
     const payment = await createPayment(ctx.tenantId, body)
-    await createAuditLog(ctx.tenantId, null, 'PAYMENT_CREATED', 'Payment', payment.id, undefined, { paymentNumber: payment.paymentNumber, type: payment.type, amount: payment.amount }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'PAYMENT_CREATED', 'Payment', payment.id, undefined, { paymentNumber: payment.paymentNumber, type: payment.type, amount: payment.amount }, request)
     return NextResponse.json({ payment }, { status: 201 })
   } catch (error) {
     console.error('[accounting/payments][POST] error', error)

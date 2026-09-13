@@ -38,6 +38,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -70,7 +71,7 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    await createAuditLog(ctx.tenantId, null, 'FB_MENU_ITEM_CREATED', 'FBMenuItem', item.id, undefined, { code: item.code, name: item.name, venue: item.venue }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'FB_MENU_ITEM_CREATED', 'FBMenuItem', item.id, undefined, { code: item.code, name: item.name, venue: item.venue }, request)
     return NextResponse.json({ item }, { status: 201 })
   } catch (error: any) {
     if (error.code === 'P2002') {

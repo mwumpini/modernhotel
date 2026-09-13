@@ -27,6 +27,7 @@ export async function PATCH(
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -72,7 +73,7 @@ export async function PATCH(
     // ── When cancelled: record who cancelled it and why ────────────────────
     if (body.status === 'cancelled' && existing.status !== 'cancelled') {
       await createAuditLog(
-        ctx.tenantId, null,
+        ctx.tenantId, sessionUserId ?? null,
         'FB_ORDER_CANCELLED', 'FBOrder', id,
         { status: existing.status },
         { status: 'cancelled', orderNumber: existing.orderNumber, reason: body.cancelReason ?? null },
@@ -138,7 +139,7 @@ export async function PATCH(
         })
 
         await createAuditLog(
-          ctx.tenantId, null,
+          ctx.tenantId, sessionUserId ?? null,
           'FB_ORDER_BILLED_TO_FOLIO', 'FBOrder', id,
           undefined,
           { folioId: folio.id, amount: Number(existing.total), orderNumber: existing.orderNumber },

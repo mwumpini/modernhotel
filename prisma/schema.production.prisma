@@ -118,6 +118,10 @@ model Tenant {
   securityVisitors       SecurityVisitor[]
   securityPatrolLogs     SecurityPatrolLog[]
   complianceRequirements SecurityComplianceRequirement[]
+  securityPersonnel      SecurityPersonnel[]
+  securityCheckpointLocations SecurityCheckpointLocation[]
+  securityPatrolRoutes   SecurityPatrolRoute[]
+  securityShifts         SecurityShift[]
 
   @@map("tenants")
 }
@@ -645,6 +649,7 @@ model AuditLog {
   tenant     Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, action])
+  @@index([tenantId, createdAt])
   @@map("audit_logs")
 }
 
@@ -2433,4 +2438,68 @@ model SecurityComplianceRequirement {
 
   @@index([tenantId, nextDueDate])
   @@map("security_compliance_requirements")
+}
+
+model SecurityPersonnel {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  phone     String?
+  agency    String?
+  role      String?
+  isActive  Boolean  @default(true)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isActive])
+  @@map("security_personnel")
+}
+
+model SecurityCheckpointLocation {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@map("security_checkpoint_locations")
+}
+
+model SecurityPatrolRoute {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@map("security_patrol_routes")
+}
+
+model SecurityShift {
+  id           String    @id @default(cuid())
+  tenantId     String
+  personKey    String
+  personName   String
+  checkInTime  DateTime  @default(now())
+  checkOutTime DateTime?
+  status       String    @default("on_duty")
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("security_shifts")
 }

@@ -117,6 +117,10 @@ model Tenant {
   securityVisitors       SecurityVisitor[]
   securityPatrolLogs     SecurityPatrolLog[]
   complianceRequirements SecurityComplianceRequirement[]
+  securityPersonnel      SecurityPersonnel[]
+  securityCheckpointLocations SecurityCheckpointLocation[]
+  securityPatrolRoutes   SecurityPatrolRoute[]
+  securityShifts         SecurityShift[]
 
   @@map("tenants")
 }
@@ -557,6 +561,7 @@ model AuditLog {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, action])
+  @@index([tenantId, createdAt])
   @@map("audit_logs")
 }
 
@@ -2507,4 +2512,79 @@ model SecurityComplianceRequirement {
 
   @@index([tenantId, nextDueDate])
   @@map("security_compliance_requirements")
+}
+
+/// Security personnel who don't hold a real login/User account — most commonly
+/// outsourced/agency-contracted guards. Lets them be picked as a patrol officer
+/// or incident handler without needing a system account. A guard who *is* real
+/// staff already appears via the normal User/Role list (see /api/tenant?module=security).
+model SecurityPersonnel {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  phone     String?
+  agency    String? // outsourcing company/agency; blank = independently contracted
+  role      String? // free text, e.g. "Guard", "Supervisor"
+  isActive  Boolean  @default(true)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isActive])
+  @@map("security_personnel")
+}
+
+/// Reusable named checkpoint locations, so building a patrol route is picking
+/// from a list instead of retyping the same location names every time.
+model SecurityCheckpointLocation {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@map("security_checkpoint_locations")
+}
+
+/// Reusable named patrol routes (e.g. "Main Building Perimeter"), same idea as
+/// checkpoint locations — pick from a list instead of retyping each time.
+model SecurityPatrolRoute {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, name])
+  @@map("security_patrol_routes")
+}
+
+/// A duty shift (check-in/check-out) for a security person — real staff or
+/// outsourced/contracted personnel (see SecurityPersonnel) — so management can
+/// see who's on site right now and a real attendance history over time.
+model SecurityShift {
+  id           String    @id @default(cuid())
+  tenantId     String
+  personKey    String // 'staff:<userId>' | 'person:<SecurityPersonnel id>'
+  personName   String
+  checkInTime  DateTime  @default(now())
+  checkOutTime DateTime?
+  status       String    @default("on_duty") // on_duty | completed
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@map("security_shifts")
 }

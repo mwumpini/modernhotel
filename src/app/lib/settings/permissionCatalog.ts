@@ -189,6 +189,10 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'security.register-visitor', label: 'Register a visitor (check in)' },
       { id: 'security.checkout-visitor', label: 'Check out a visitor' },
       { id: 'security.manage-patrols', label: 'Start/complete a security patrol' },
+      { id: 'security.manage-personnel', label: 'Add/deactivate outsourced security personnel' },
+      { id: 'security.manage-checkpoints', label: 'Add/deactivate checkpoint locations' },
+      { id: 'security.manage-routes', label: 'Add/deactivate patrol routes' },
+      { id: 'security.manage-shifts', label: 'Check staff in/out of a duty shift' },
       { id: 'security.mark-compliance', label: 'Mark a compliance requirement completed' },
     ],
   },
@@ -261,6 +265,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'settings.manage-templates', label: 'Save/publish a document template' },
       { id: 'settings.manage-rooms-pricing', label: 'Configure room types, rate plans & seasonal rates' },
       { id: 'settings.manage-security-policy', label: 'Configure security policy (2FA, session timeout, passwords)' },
+      { id: 'settings.view-audit-log', label: 'View the system audit log (logins & actions)' },
     ],
   },
 ];

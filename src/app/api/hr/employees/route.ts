@@ -30,6 +30,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
 
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
     const employee = await upsertHrEmployee(ctx.tenantId, body.id, body)
 
     await createAuditLog(
-      ctx.tenantId, null,
+      ctx.tenantId, sessionUserId ?? null,
       'HR_EMPLOYEE_SAVED', 'HrEmployee', body.id,
       undefined,
       { employeeNumber: employee.employeeNumber, status: employee.status },
@@ -58,6 +59,7 @@ export async function DELETE(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
 
@@ -68,7 +70,7 @@ export async function DELETE(request: NextRequest) {
     const ok = await deleteHrEmployee(ctx.tenantId, id)
     if (!ok) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
 
-    await createAuditLog(ctx.tenantId, null, 'HR_EMPLOYEE_DELETED', 'HrEmployee', id, undefined, undefined, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'HR_EMPLOYEE_DELETED', 'HrEmployee', id, undefined, undefined, request)
 
     return NextResponse.json({ message: 'Deleted' })
   } catch (error) {

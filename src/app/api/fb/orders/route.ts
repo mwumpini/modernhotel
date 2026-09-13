@@ -85,6 +85,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -191,10 +192,10 @@ export async function POST(request: NextRequest) {
     })
 
     await createAuditLog(
-      ctx.tenantId, null,
+      ctx.tenantId, sessionUserId ?? null,
       'FB_ORDER_CREATED', 'FBOrder', order.id,
       undefined,
-      { orderNumber, venue: order.venue, subtotal, taxAmount, total },
+      { orderNumber, venue: order.venue, subtotal, discountAmount, taxAmount, total },
       request
     )
 

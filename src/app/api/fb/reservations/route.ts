@@ -27,12 +27,13 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
     const reservation = await upsertTableReservation(ctx.tenantId, body.id, body)
-    await createAuditLog(ctx.tenantId, null, 'TABLE_RESERVATION_SAVED', 'TableReservation', body.id, undefined, { customerName: reservation.customerName, status: reservation.status }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'TABLE_RESERVATION_SAVED', 'TableReservation', body.id, undefined, { customerName: reservation.customerName, status: reservation.status }, request)
     return NextResponse.json({ reservation })
   } catch (error) {
     console.error('[fb/reservations][POST] error', error)
@@ -44,6 +45,7 @@ export async function DELETE(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const { searchParams } = new URL(request.url)
@@ -51,7 +53,7 @@ export async function DELETE(request: NextRequest) {
     if (!id) return NextResponse.json({ error: 'Missing required parameter: id' }, { status: 400 })
     const ok = await deleteTableReservation(ctx.tenantId, id)
     if (!ok) return NextResponse.json({ error: 'Reservation not found' }, { status: 404 })
-    await createAuditLog(ctx.tenantId, null, 'TABLE_RESERVATION_DELETED', 'TableReservation', id, undefined, undefined, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'TABLE_RESERVATION_DELETED', 'TableReservation', id, undefined, undefined, request)
     return NextResponse.json({ message: 'Deleted' })
   } catch (error) {
     console.error('[fb/reservations][DELETE] error', error)

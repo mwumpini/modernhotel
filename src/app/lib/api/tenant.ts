@@ -129,6 +129,21 @@ export async function validateTenantAccess(
 }
 
 /**
+ * A request-like source of headers. Most callers pass a real NextRequest, but
+ * NextAuth's authorize() (used to log logins) only exposes a plain headers
+ * object — this lets both feed the same IP/user-agent extraction below.
+ */
+type HeaderSource = NextRequest | { headers?: Record<string, any> }
+
+function getHeader(source: HeaderSource | undefined, name: string): string | undefined {
+  if (!source) return undefined
+  const headers = source.headers as any
+  if (typeof headers?.get === 'function') return headers.get(name) || undefined
+  const value = headers?.[name]
+  return Array.isArray(value) ? value[0] : value
+}
+
+/**
  * Create audit log entry
  */
 export async function createAuditLog(
@@ -139,9 +154,12 @@ export async function createAuditLog(
   entityId?: string,
   oldValues?: any,
   newValues?: any,
-  request?: NextRequest
+  request?: HeaderSource
 ) {
   try {
+    // x-forwarded-for can be a proxy chain ("client, proxy1, proxy2") — the first
+    // entry is the originating machine, which is what we actually want to show.
+    const forwardedFor = getHeader(request, 'x-forwarded-for')?.split(',')[0]?.trim()
     await prisma.auditLog.create({
       data: {
         tenantId,
@@ -151,10 +169,8 @@ export async function createAuditLog(
         entityId,
         oldValues: oldValues ? JSON.stringify(oldValues) : null,
         newValues: newValues ? JSON.stringify(newValues) : null,
-        ipAddress: request?.headers.get('x-forwarded-for') || 
-                  request?.headers.get('x-real-ip') || 
-                  'unknown',
-        userAgent: request?.headers.get('user-agent') || 'unknown'
+        ipAddress: forwardedFor || getHeader(request, 'x-real-ip') || 'unknown',
+        userAgent: getHeader(request, 'user-agent') || 'unknown'
       }
     })
   } catch (error) {

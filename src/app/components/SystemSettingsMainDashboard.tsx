@@ -18,8 +18,9 @@ import RoomConfigurationDashboard from './RoomConfigurationDashboard';
 import UserManagementUnified from './UserManagementUnified';
 import NumberingSettingsPanel from './settings/NumberingSettingsPanel';
 import DocumentTemplatesPanel from './settings/DocumentTemplatesPanel';
+import AuditLogPanel from './settings/AuditLogPanel';
 
-const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'security'] as const;
+const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'security', 'audit'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 function resolveInitialTab(searchParams: URLSearchParams): SettingsTab {
@@ -239,6 +240,10 @@ export default function SystemSettingsMainDashboard() {
                   />
                 </div>
               </div>
+            </Tab>
+
+            <Tab key="audit" title="Audit Log">
+              <AuditLogPanel />
             </Tab>
           </Tabs>
         </CardBody>

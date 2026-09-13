@@ -7,6 +7,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -24,7 +25,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const payment = await updatePayment(ctx.tenantId, id, body)
     if (!payment) return NextResponse.json({ error: 'Payment not found' }, { status: 404 })
-    await createAuditLog(ctx.tenantId, null, 'PAYMENT_UPDATED', 'Payment', id, undefined, { status: payment.status, amount: payment.amount }, request)
+    const action = body.status === 'Void' ? 'PAYMENT_VOIDED' : 'PAYMENT_UPDATED'
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, action, 'Payment', id, undefined, { status: payment.status, amount: payment.amount }, request)
     return NextResponse.json({ payment })
   } catch (error) {
     console.error('[accounting/payments/:id][PATCH] error', error)

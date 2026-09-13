@@ -24,6 +24,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
     if (!body.invoiceNumber) return NextResponse.json({ error: 'invoiceNumber is required' }, { status: 400 })
 
     const invoice = await createInvoice(ctx.tenantId, body)
-    await createAuditLog(ctx.tenantId, null, 'INVOICE_CREATED', 'Invoice', invoice.id, undefined, { invoiceNumber: invoice.invoiceNumber, type: invoice.type, total: invoice.total, sourceModule: invoice.sourceModule }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'INVOICE_CREATED', 'Invoice', invoice.id, undefined, { invoiceNumber: invoice.invoiceNumber, type: invoice.type, total: invoice.total, sourceModule: invoice.sourceModule }, request)
     return NextResponse.json({ invoice }, { status: 201 })
   } catch (error) {
     console.error('[accounting/invoices][POST] error', error)

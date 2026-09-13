@@ -85,3 +85,51 @@ export interface ComplianceRequirement {
   createdAt: Date;
   updatedAt: Date;
 }
+
+/** A security guard without a real login/User account — most commonly outsourced/agency
+ *  staff. Lets them be picked as a patrol officer without needing a system account. */
+export interface SecurityPersonnel {
+  id: string;
+  name: string;
+  phone?: string;
+  agency?: string;
+  role?: string;
+  isActive: boolean;
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** A reusable named checkpoint location, so building a patrol route is picking from a
+ *  list instead of retyping the same location names every time. */
+export interface CheckpointLocation {
+  id: string;
+  name: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** A reusable named patrol route, same idea as CheckpointLocation. */
+export interface PatrolRoute {
+  id: string;
+  name: string;
+  isActive: boolean;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/** A duty shift (check-in/check-out) for a security person — real staff or
+ *  outsourced/contracted personnel — so management knows who's on site and when. */
+export interface SecurityShift {
+  id: string;
+  /** 'staff:<userId>' | 'person:<SecurityPersonnel id>' */
+  personKey: string;
+  personName: string;
+  checkInTime: Date;
+  checkOutTime?: Date;
+  status: 'on_duty' | 'completed';
+  notes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}

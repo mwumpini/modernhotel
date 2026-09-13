@@ -238,3 +238,132 @@ export async function upsertComplianceRequirement(tenantId: string, id: string, 
   })
   return toStoreCompliance(row)
 }
+
+// ── Security personnel (outsourced/contracted guards without a User account) ─
+
+function toStorePersonnel(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    phone: row.phone ?? undefined,
+    agency: row.agency ?? undefined,
+    role: row.role ?? undefined,
+    isActive: row.isActive,
+    notes: row.notes ?? undefined,
+    createdAt: new Date(row.createdAt).toISOString(),
+    updatedAt: new Date(row.updatedAt).toISOString(),
+  }
+}
+
+export async function listSecurityPersonnel(tenantId: string) {
+  const rows = await prisma.securityPersonnel.findMany({ where: { tenantId }, orderBy: { name: 'asc' } })
+  return rows.map(toStorePersonnel)
+}
+
+export async function upsertSecurityPersonnel(tenantId: string, id: string, person: Record<string, any>) {
+  const data = stripUndefined({
+    name: person.name,
+    phone: person.phone,
+    agency: person.agency,
+    role: person.role,
+    isActive: person.isActive,
+    notes: person.notes,
+  })
+  const row = await ownershipCheckedUpsert(prisma.securityPersonnel, id, tenantId, data, {
+    name: person.name,
+  })
+  return toStorePersonnel(row)
+}
+
+// ── Checkpoint locations (reusable list for building a patrol route) ────────
+
+function toStoreCheckpointLocation(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    isActive: row.isActive,
+    createdAt: new Date(row.createdAt).toISOString(),
+    updatedAt: new Date(row.updatedAt).toISOString(),
+  }
+}
+
+export async function listCheckpointLocations(tenantId: string) {
+  const rows = await prisma.securityCheckpointLocation.findMany({ where: { tenantId }, orderBy: { name: 'asc' } })
+  return rows.map(toStoreCheckpointLocation)
+}
+
+export async function upsertCheckpointLocation(tenantId: string, id: string, loc: Record<string, any>) {
+  const data = stripUndefined({
+    name: loc.name,
+    isActive: loc.isActive,
+  })
+  const row = await ownershipCheckedUpsert(prisma.securityCheckpointLocation, id, tenantId, data, {
+    name: loc.name,
+  })
+  return toStoreCheckpointLocation(row)
+}
+
+// ── Patrol routes (reusable list, same idea as checkpoint locations) ────────
+
+function toStorePatrolRoute(row: any) {
+  return {
+    id: row.id,
+    name: row.name,
+    isActive: row.isActive,
+    createdAt: new Date(row.createdAt).toISOString(),
+    updatedAt: new Date(row.updatedAt).toISOString(),
+  }
+}
+
+export async function listPatrolRoutes(tenantId: string) {
+  const rows = await prisma.securityPatrolRoute.findMany({ where: { tenantId }, orderBy: { name: 'asc' } })
+  return rows.map(toStorePatrolRoute)
+}
+
+export async function upsertPatrolRoute(tenantId: string, id: string, route: Record<string, any>) {
+  const data = stripUndefined({
+    name: route.name,
+    isActive: route.isActive,
+  })
+  const row = await ownershipCheckedUpsert(prisma.securityPatrolRoute, id, tenantId, data, {
+    name: route.name,
+  })
+  return toStorePatrolRoute(row)
+}
+
+// ── Duty shifts (check-in/check-out attendance for staff or contracted personnel) ─
+
+function toStoreShift(row: any) {
+  return {
+    id: row.id,
+    personKey: row.personKey,
+    personName: row.personName,
+    checkInTime: new Date(row.checkInTime).toISOString(),
+    checkOutTime: row.checkOutTime ? new Date(row.checkOutTime).toISOString() : undefined,
+    status: row.status,
+    notes: row.notes ?? undefined,
+    createdAt: new Date(row.createdAt).toISOString(),
+    updatedAt: new Date(row.updatedAt).toISOString(),
+  }
+}
+
+export async function listShifts(tenantId: string) {
+  const rows = await prisma.securityShift.findMany({ where: { tenantId }, orderBy: { checkInTime: 'desc' } })
+  return rows.map(toStoreShift)
+}
+
+export async function upsertShift(tenantId: string, id: string, shift: Record<string, any>) {
+  const data = stripUndefined({
+    personKey: shift.personKey,
+    personName: shift.personName,
+    checkInTime: shift.checkInTime ? new Date(shift.checkInTime) : undefined,
+    checkOutTime: shift.checkOutTime ? new Date(shift.checkOutTime) : undefined,
+    status: shift.status,
+    notes: shift.notes,
+  })
+  const row = await ownershipCheckedUpsert(prisma.securityShift, id, tenantId, data, {
+    personKey: shift.personKey,
+    personName: shift.personName,
+  })
+  return toStoreShift(row)
+}

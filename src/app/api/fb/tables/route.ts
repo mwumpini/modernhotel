@@ -27,12 +27,13 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
     const table = await upsertRestaurantTable(ctx.tenantId, body.id, body)
-    await createAuditLog(ctx.tenantId, null, 'RESTAURANT_TABLE_SAVED', 'RestaurantTable', body.id, undefined, { number: table.number, status: table.status }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'RESTAURANT_TABLE_SAVED', 'RestaurantTable', body.id, undefined, { number: table.number, status: table.status }, request)
     return NextResponse.json({ table })
   } catch (error) {
     console.error('[fb/tables][POST] error', error)
@@ -44,6 +45,7 @@ export async function DELETE(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const { searchParams } = new URL(request.url)
@@ -51,7 +53,7 @@ export async function DELETE(request: NextRequest) {
     if (!id) return NextResponse.json({ error: 'Missing required parameter: id' }, { status: 400 })
     const ok = await deleteRestaurantTable(ctx.tenantId, id)
     if (!ok) return NextResponse.json({ error: 'Table not found' }, { status: 404 })
-    await createAuditLog(ctx.tenantId, null, 'RESTAURANT_TABLE_DELETED', 'RestaurantTable', id, undefined, undefined, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'RESTAURANT_TABLE_DELETED', 'RestaurantTable', id, undefined, undefined, request)
     return NextResponse.json({ message: 'Deleted' })
   } catch (error) {
     console.error('[fb/tables][DELETE] error', error)

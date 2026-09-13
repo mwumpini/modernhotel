@@ -28,6 +28,7 @@ export async function PUT(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -55,8 +56,37 @@ export async function PUT(request: NextRequest) {
       if (!perm.ok) return perm.response
     }
 
+    // Refund detection mirrors the void check above: refundPayment() (frontoffice/helpers/folio.ts)
+    // either flips an existing payment's status to 'refunded' in place, or — for a partial
+    // refund — pushes a brand-new payment row already carrying status 'refunded'.
+    const existingPayments: any[] = Array.isArray((existing as any)?.payments) ? (existing as any).payments : []
+    const existingPaymentStatus = new Map(existingPayments.map((p: any) => [p?.id, p?.status]))
+    const incomingPayments: any[] = Array.isArray(body.payments) ? body.payments : []
+    const isRefund = incomingPayments.some(
+      (p) => p && p.status === 'refunded' && existingPaymentStatus.get(p.id) !== 'refunded',
+    )
+    if (isRefund) {
+      const perm = await requirePermission(request, 'frontdesk.refund-payment')
+      if (!perm.ok) return perm.response
+    }
+
+    // Discount/comp charges (reportingStore.ts's discount & complimentary-room reports
+    // already rely on these same "Discount: "/"Complimentary: " prefixes) — same
+    // negative-new-line shape as a void, just a different, non-void-specific reason.
+    const discountCharge = incomingCharges.find(
+      (c) => c && !existingChargeIds.has(c.id) && typeof c.description === 'string'
+        && (c.description.startsWith('Discount: ') || c.description.startsWith('Complimentary: '))
+        && Number(c.amount) < 0,
+    )
+
     const folio = await upsertFolio(ctx.tenantId, body)
-    await createAuditLog(ctx.tenantId, null, 'FOLIO_UPSERTED', 'Folio', folio.id, undefined, { reservationId: folio.reservationId, status: folio.status, balance: folio.balance }, request)
+    const action = isVoidCharge ? 'FOLIO_CHARGE_VOIDED' : isRefund ? 'FOLIO_PAYMENT_REFUNDED' : discountCharge ? 'FOLIO_CHARGE_DISCOUNTED' : 'FOLIO_UPSERTED'
+    const details: Record<string, any> = { reservationId: folio.reservationId, status: folio.status, balance: folio.balance }
+    if (discountCharge) {
+      details.discountDescription = discountCharge.description
+      details.discountAmount = discountCharge.amount
+    }
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, action, 'Folio', folio.id, undefined, details, request)
     return NextResponse.json({ folio })
   } catch (error) {
     console.error('[folios][PUT] error', error)

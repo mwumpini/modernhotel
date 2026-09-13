@@ -7,6 +7,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -24,7 +25,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const invoice = await updateInvoice(ctx.tenantId, id, body)
     if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
-    await createAuditLog(ctx.tenantId, null, 'INVOICE_UPDATED', 'Invoice', id, undefined, { status: invoice.status, total: invoice.total }, request)
+    const action = body.status === 'Void' ? 'INVOICE_VOIDED' : 'INVOICE_UPDATED'
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, action, 'Invoice', id, undefined, { status: invoice.status, total: invoice.total }, request)
     return NextResponse.json({ invoice })
   } catch (error) {
     console.error('[accounting/invoices/:id][PATCH] error', error)
@@ -36,6 +38,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -44,7 +47,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     const { id } = await params
     const ok = await deleteInvoice(ctx.tenantId, id)
     if (!ok) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
-    await createAuditLog(ctx.tenantId, null, 'INVOICE_DELETED', 'Invoice', id, undefined, undefined, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'INVOICE_DELETED', 'Invoice', id, undefined, undefined, request)
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('[accounting/invoices/:id][DELETE] error', error)

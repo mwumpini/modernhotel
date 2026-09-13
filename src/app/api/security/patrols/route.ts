@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
-import { requireAuth } from '@/app/lib/api/auth-guard'
+import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { listPatrolLogs, upsertPatrolLog } from '@/app/lib/security/repository'
 
 async function resolveTenant(req: NextRequest) {
@@ -25,15 +25,16 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await requireAuth(request)
+    const auth = await requirePermission(request, 'security.manage-patrols')
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
     if (!body.officerName || !body.route) return NextResponse.json({ error: 'officerName and route are required' }, { status: 400 })
     const patrol = await upsertPatrolLog(ctx.tenantId, body.id, body)
-    await createAuditLog(ctx.tenantId, null, 'SECURITY_PATROL_SAVED', 'SecurityPatrolLog', body.id, undefined, { route: patrol.route, officerName: patrol.officerName }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'SECURITY_PATROL_SAVED', 'SecurityPatrolLog', body.id, undefined, { route: patrol.route, officerName: patrol.officerName }, request)
     return NextResponse.json({ patrol })
   } catch (error) {
     console.error('[security/patrols][POST] error', error)
@@ -43,14 +44,15 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const auth = await requireAuth(request)
+    const auth = await requirePermission(request, 'security.manage-patrols')
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
     const patrol = await upsertPatrolLog(ctx.tenantId, body.id, body)
-    await createAuditLog(ctx.tenantId, null, 'SECURITY_PATROL_UPDATED', 'SecurityPatrolLog', body.id, undefined, { status: patrol.status }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'SECURITY_PATROL_UPDATED', 'SecurityPatrolLog', body.id, undefined, { status: patrol.status }, request)
     return NextResponse.json({ patrol })
   } catch (error) {
     console.error('[security/patrols][PATCH] error', error)

@@ -63,6 +63,7 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const sessionUserId = (auth.session as any).user?.id
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest) {
       })
     }
 
-    await createAuditLog(ctx.tenantId, null, 'INVENTORY_ITEM_CREATED', 'InventoryItem', item.id, undefined, { code: item.code, name: item.name }, request)
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'INVENTORY_ITEM_CREATED', 'InventoryItem', item.id, undefined, { code: item.code, name: item.name }, request)
     const finalItem = initialQuantity > 0
       ? await prisma.inventoryItem.findUnique({ where: { id: item.id }, include: { category: true, unit: true, supplier: true } })
       : item

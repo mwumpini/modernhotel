@@ -2,6 +2,7 @@ import { NextAuthOptions } from 'next-auth'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/app/lib/database/client'
+import { createAuditLog } from '@/app/lib/api/tenant'
 
 // Extend the built-in session types
 declare module 'next-auth' {
@@ -62,7 +63,7 @@ export const authOptions: NextAuthOptions = {
         password: { label: 'Password', type: 'password' },
         tenantId: { label: 'Tenant ID', type: 'text' }
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         try {
           if (!credentials?.email || !credentials?.password || !credentials?.tenantId) {
             return null
@@ -87,6 +88,7 @@ export const authOptions: NextAuthOptions = {
             where: { id: user.id },
             data: { lastLoginAt: new Date() },
           })
+          await createAuditLog(tenant.id, user.id, 'USER_LOGIN', 'User', user.id, undefined, undefined, req)
 
           return {
             id: user.id,
