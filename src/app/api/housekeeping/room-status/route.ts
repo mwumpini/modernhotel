@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 
 // POST /api/housekeeping/room-status — log a room status change
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -30,7 +33,8 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    await createAuditLog(ctx.tenantId, null, 'ROOM_STATUS_CHANGED', 'Room', body.roomId, { status: body.fromStatus }, { status: body.toStatus }, request)
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'ROOM_STATUS_CHANGED', 'Room', body.roomId, { status: body.fromStatus }, { status: body.toStatus }, request)
     return NextResponse.json({ log }, { status: 201 })
   } catch (error) {
     console.error('[housekeeping/room-status][POST] error', error)

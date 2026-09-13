@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { listEventBookings, upsertEventBooking, deleteEventBooking } from '@/app/lib/frontoffice/eventsRepository'
 
 async function resolveTenant(req: NextRequest) {
@@ -22,12 +23,15 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
     if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
     const booking = await upsertEventBooking(ctx.tenantId, body.id, body)
-    await createAuditLog(ctx.tenantId, null, 'EVENT_BOOKING_SAVED', 'EventBooking', body.id, undefined, { title: booking.title, status: booking.status }, request)
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'EVENT_BOOKING_SAVED', 'EventBooking', body.id, undefined, { title: booking.title, status: booking.status }, request)
     return NextResponse.json({ booking })
   } catch (error) {
     console.error('[events/bookings][POST] error', error)
@@ -37,6 +41,8 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const { searchParams } = new URL(request.url)
@@ -44,7 +50,8 @@ export async function DELETE(request: NextRequest) {
     if (!id) return NextResponse.json({ error: 'Missing required parameter: id' }, { status: 400 })
     const ok = await deleteEventBooking(ctx.tenantId, id)
     if (!ok) return NextResponse.json({ error: 'Booking not found' }, { status: 404 })
-    await createAuditLog(ctx.tenantId, null, 'EVENT_BOOKING_DELETED', 'EventBooking', id, undefined, undefined, request)
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'EVENT_BOOKING_DELETED', 'EventBooking', id, undefined, undefined, request)
     return NextResponse.json({ message: 'Deleted' })
   } catch (error) {
     console.error('[events/bookings][DELETE] error', error)

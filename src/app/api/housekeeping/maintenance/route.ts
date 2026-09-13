@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
+import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 
 export async function GET(request: NextRequest) {
@@ -26,6 +27,8 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -54,7 +57,8 @@ export async function POST(request: NextRequest) {
       },
     })
 
-    await createAuditLog(ctx.tenantId, null, 'MAINTENANCE_REQUEST_CREATED', 'MaintenanceRequest', req.id, undefined, { category: req.category, roomNumber: req.roomNumber }, request)
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'MAINTENANCE_REQUEST_CREATED', 'MaintenanceRequest', req.id, undefined, { category: req.category, roomNumber: req.roomNumber }, request)
     return NextResponse.json({ request: req }, { status: 201 })
   } catch (error) {
     console.error('[housekeeping/maintenance][POST] error', error)
