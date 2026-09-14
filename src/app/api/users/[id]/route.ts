@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
-import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
+import { requireAuth, requirePermission, requireAnyPermission } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 
 const USER_SELECT = {
@@ -19,8 +19,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
-    const perm = await requirePermission(request, 'settings.edit')
-    if (!perm.ok) return perm.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -31,6 +29,26 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
     const body = await request.json()
+
+    // Gated per field rather than one blanket permission: activating/deactivating
+    // and resetting a password are each independently grantable
+    // (settings.toggle-user-status / settings.reset-password), separate from
+    // general profile editing (settings.edit) — a role can have one without the
+    // others.
+    const changingProfile = ['email', 'name', 'role'].some((k) => typeof body[k] === 'string' && body[k].trim())
+    if (changingProfile) {
+      const perm = await requirePermission(request, 'settings.edit')
+      if (!perm.ok) return perm.response
+    }
+    if (typeof body.isActive === 'boolean') {
+      const perm = await requireAnyPermission(request, ['settings.edit', 'settings.toggle-user-status'])
+      if (!perm.ok) return perm.response
+    }
+    if (typeof body.password === 'string' && body.password) {
+      const perm = await requireAnyPermission(request, ['settings.edit', 'settings.reset-password'])
+      if (!perm.ok) return perm.response
+    }
+
     const data: Record<string, unknown> = {}
     if (typeof body.email === 'string' && body.email.trim()) data.email = body.email.trim().toLowerCase()
     if (typeof body.name === 'string' && body.name.trim()) data.name = body.name.trim()

@@ -84,7 +84,6 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'frontdesk.post-payment', label: 'Post a payment' },
       { id: 'frontdesk.refund-payment', label: 'Refund a payment' },
       { id: 'frontdesk.apply-credit', label: 'Add/apply a guest credit' },
-      { id: 'frontdesk.manage-rates', label: 'Manage rate plans & room types' },
       { id: 'frontdesk.room-status', label: 'Change room status' },
       { id: 'frontdesk.night-audit', label: 'Run night audit' },
     ],

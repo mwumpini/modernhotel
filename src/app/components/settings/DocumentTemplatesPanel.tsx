@@ -109,6 +109,7 @@ function newBlankTemplate(docType: PrintType): BlockTemplate {
 
 export default function DocumentTemplatesPanel() {
   const settingsStore = useSettingsStore();
+  const canManageTemplates = settingsStore.hasPermission('settings.manage-templates');
   const [docType, setDocType] = useState<PrintType>('invoice');
   const [draft, setDraft] = useState<BlockTemplate | null>(null);
   const [previewing, setPreviewing] = useState<BlockTemplate | null>(null);
@@ -166,10 +167,12 @@ export default function DocumentTemplatesPanel() {
   };
 
   const setActiveTemplate = (template: BlockTemplate) => {
+    if (!canManageTemplates) { alert('You do not have permission to manage document templates.'); return; }
     settingsStore.updateNestedSetting(`printing.${template.docType}`, template.id);
   };
 
   const save = (setActive: boolean) => {
+    if (!canManageTemplates) { alert('You do not have permission to manage document templates.'); return; }
     if (!draft) return;
     const exists = settingsStore.getDocBuilderTemplate(draft.id);
     if (exists) {
@@ -253,8 +256,8 @@ export default function DocumentTemplatesPanel() {
               {savedAt && <Chip color="success" variant="flat" size="sm">Saved</Chip>}
             </div>
             <div className="flex gap-2">
-              <Button variant="flat" onPress={() => save(false)}>Save</Button>
-              <Button color="primary" onPress={() => save(true)}>Save &amp; Set Active</Button>
+              <Button variant="flat" onPress={() => save(false)} isDisabled={!canManageTemplates}>Save</Button>
+              <Button color="primary" onPress={() => save(true)} isDisabled={!canManageTemplates}>Save &amp; Set Active</Button>
             </div>
           </div>
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
@@ -274,7 +277,7 @@ export default function DocumentTemplatesPanel() {
             </div>
             <div className="flex gap-2">
               <Button variant="flat" onPress={() => startEdit(previewing)}>Edit this template</Button>
-              <Button color="primary" onPress={() => setActiveTemplate(previewing)}>Set Active</Button>
+              <Button color="primary" onPress={() => setActiveTemplate(previewing)} isDisabled={!canManageTemplates}>Set Active</Button>
             </div>
           </div>
           <TemplatePreview template={previewing} sampleData={getSampleData(previewing.docType, previewOrg)} />

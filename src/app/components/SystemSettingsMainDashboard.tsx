@@ -47,6 +47,8 @@ export default function SystemSettingsMainDashboard() {
   const settings = useSettingsStore();
   const updateNestedSetting = useSettingsStore((s) => s.updateNestedSetting);
   const initialSetupCompleted = useSettingsStore((s) => s.initialSetupCompleted);
+  const canManage2fa = settings.hasPermission('settings.manage-2fa');
+  const canManageSecurityPolicy = settings.hasPermission('settings.manage-security-policy');
 
   const userCount = settings.users.length;
   const roleCount = settings.roles.length;
@@ -171,6 +173,7 @@ export default function SystemSettingsMainDashboard() {
                   <Switch
                     isSelected={settings.security.twoFactorAuth}
                     onValueChange={(v) => updateNestedSetting('security.twoFactorAuth', v)}
+                    isDisabled={!canManage2fa}
                   />
                 </div>
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -183,6 +186,7 @@ export default function SystemSettingsMainDashboard() {
                     className="max-w-[120px]"
                     value={String(settings.security.sessionTimeout)}
                     onChange={(e) => updateNestedSetting('security.sessionTimeout', Number(e.target.value))}
+                    isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -195,6 +199,7 @@ export default function SystemSettingsMainDashboard() {
                     className="max-w-[120px]"
                     value={String(settings.security.passwordPolicy.minLength)}
                     onChange={(e) => updateNestedSetting('security.passwordPolicy.minLength', Number(e.target.value))}
+                    isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -207,6 +212,7 @@ export default function SystemSettingsMainDashboard() {
                     className="max-w-[120px]"
                     value={String(settings.security.passwordPolicy.expiryDays)}
                     onChange={(e) => updateNestedSetting('security.passwordPolicy.expiryDays', Number(e.target.value))}
+                    isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -217,6 +223,7 @@ export default function SystemSettingsMainDashboard() {
                   <Switch
                     isSelected={settings.security.passwordPolicy.requireUppercase}
                     onValueChange={(v) => updateNestedSetting('security.passwordPolicy.requireUppercase', v)}
+                    isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -227,6 +234,7 @@ export default function SystemSettingsMainDashboard() {
                   <Switch
                     isSelected={settings.security.passwordPolicy.requireLowercase}
                     onValueChange={(v) => updateNestedSetting('security.passwordPolicy.requireLowercase', v)}
+                    isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
                 <div className="flex items-center justify-between p-4 border rounded-lg">
@@ -237,6 +245,7 @@ export default function SystemSettingsMainDashboard() {
                   <Switch
                     isSelected={settings.security.passwordPolicy.requireNumbers}
                     onValueChange={(v) => updateNestedSetting('security.passwordPolicy.requireNumbers', v)}
+                    isDisabled={!canManageSecurityPolicy}
                   />
                 </div>
               </div>

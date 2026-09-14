@@ -175,7 +175,8 @@ export default function RoomConfigurationDashboard() {
   const [visualDisplayExpanded, setVisualDisplayExpanded] = useState(false);
   
   const settingsStore = useSettingsStore();
-  
+  const canManageRoomPricing = settingsStore.hasPermission('settings.manage-rooms-pricing');
+
   // Form states
   const [newRoomType, setNewRoomType] = useState({
     name: '',
@@ -375,6 +376,7 @@ export default function RoomConfigurationDashboard() {
   };
 
   const handleAddRoomType = () => {
+    if (!canManageRoomPricing) { setRoomTypeFormError('You do not have permission to manage room types.'); return; }
     const baseRate = Number(newRoomType.baseRate);
     const capacity = Number(newRoomType.capacity);
     if (!newRoomType.name.trim()) {
@@ -436,6 +438,7 @@ export default function RoomConfigurationDashboard() {
   };
 
   const handleUpdateRoomType = () => {
+    if (!canManageRoomPricing) { setEditRoomTypeFormError('You do not have permission to manage room types.'); return; }
     const baseRate = Number(editRoomType.baseRate);
     const capacity = Number(editRoomType.capacity);
     if (!selectedRoomType) return;
@@ -473,6 +476,7 @@ export default function RoomConfigurationDashboard() {
   };
 
   const handleDeleteRoomType = (roomType: RoomType) => {
+    if (!canManageRoomPricing) { alert('You do not have permission to manage room types.'); return; }
     if (confirm(`Are you sure you want to delete "${roomType.name}"? This will also remove all rooms of this type.`)) {
       // First delete all rooms of this type
       const roomsToDelete = settingsStore.roomManagement.rooms.filter(room => room.typeId === roomType.id);
@@ -488,6 +492,7 @@ export default function RoomConfigurationDashboard() {
   };
 
     const handleAddRoom = () => {
+    if (!canManageRoomPricing) { alert('You do not have permission to manage rooms.'); return; }
     if (newRoom.roomNumber && newRoom.type) {
       // Check for duplicate room number
       if (isRoomNumberDuplicate(newRoom.roomNumber)) {
@@ -536,6 +541,7 @@ export default function RoomConfigurationDashboard() {
   };
 
     const handleUpdateRoom = () => {
+    if (!canManageRoomPricing) { alert('You do not have permission to manage rooms.'); return; }
     if (selectedRoom && editRoom.roomNumber && editRoom.type) {
       // Check for duplicate room number (excluding the current room being edited)
       if (isRoomNumberDuplicate(editRoom.roomNumber, selectedRoom.id)) {
@@ -563,6 +569,7 @@ export default function RoomConfigurationDashboard() {
   };
 
   const handleDeleteRoom = (room: Room) => {
+    if (!canManageRoomPricing) { alert('You do not have permission to manage rooms.'); return; }
     if (confirm(`Are you sure you want to delete room "${room.number}"?`)) {
       settingsStore.deleteRoom(room.id);
       logAction('DELETE_ROOM', { roomId: room.id, roomNumber: room.number });
@@ -668,6 +675,7 @@ export default function RoomConfigurationDashboard() {
   };
 
   const handleAddRatePlan = () => {
+    if (!canManageRoomPricing) { setRatePlanFormError('You do not have permission to manage rate plans.'); return; }
     if (!newRatePlan.name.trim()) {
       setRatePlanFormError('Rate plan name is required.');
       return;
@@ -725,6 +733,7 @@ export default function RoomConfigurationDashboard() {
   };
 
   const handleUpdateRatePlan = () => {
+    if (!canManageRoomPricing) { setEditRatePlanFormError('You do not have permission to manage rate plans.'); return; }
     const price = Number(editRatePlanForm.price);
     if (!selectedRatePlan) return;
     if (!editRatePlanForm.name.trim()) {
@@ -2592,6 +2601,7 @@ export default function RoomConfigurationDashboard() {
                               color="danger" 
                               isIconOnly
                               onClick={() => {
+                                if (!canManageRoomPricing) { alert('You do not have permission to manage rate plans.'); return; }
                                 if (confirm(`Are you sure you want to delete rate plan "${plan.name}"?`)) {
                                   settingsStore.deleteRatePlan(plan.id);
                                   logAction('DELETE_RATE_PLAN', { ratePlan: plan });

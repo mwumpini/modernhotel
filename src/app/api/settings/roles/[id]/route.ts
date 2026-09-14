@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
-import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
+import { requireAuth, requirePermission, requireAnyPermission } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 
 // `id` here is the role's `code` (the client-side UserRole.id, e.g. 'admin'
@@ -10,6 +10,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const perm = await requirePermission(request, 'settings.manage-role-permissions')
+    if (!perm.ok) return perm.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)
@@ -39,7 +41,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
-    const perm = await requirePermission(request, 'settings.delete')
+    const perm = await requireAnyPermission(request, ['settings.manage-role-permissions', 'settings.delete'])
     if (!perm.ok) return perm.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })

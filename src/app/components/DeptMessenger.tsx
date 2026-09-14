@@ -21,7 +21,12 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
   const [isOpen, setIsOpen] = React.useState(false);
   const [activeMode, setActiveMode] = React.useState<'messenger'|'ai'>('messenger');
   const [dmMode, setDmMode] = React.useState(false);
-  const employees = useEmployeeStore.getState().employees || [];
+  // Reactive selector (not .getState(), which only reads a one-time snapshot
+  // and never re-renders this component when the store fills in later) — and
+  // hydrated below, since previously nothing here ever called hydrateFromApi()
+  // at all; the picker only had names if some other component (HR & Payroll)
+  // happened to have populated the store first this session.
+  const employees = useEmployeeStore((s) => s.employees);
   const [dmTarget, setDmTarget] = React.useState<string>('');
   const [dmInput, setDmInput] = React.useState('');
   const [currentUserId, setCurrentUserId] = React.useState<string>('');
@@ -31,6 +36,12 @@ export default function DeptMessenger({ from, mode = 'inline' }: DeptMessengerPr
     const sid = (session as any)?.user?.id || '';
     setCurrentUserId(sid);
   }, [session]);
+
+  React.useEffect(() => {
+    if (useEmployeeStore.getState().employees.length === 0) {
+      void useEmployeeStore.getState().hydrateFromApi();
+    }
+  }, []);
   const [search, setSearch] = React.useState('');
   const [startDate, setStartDate] = React.useState('');
   const [endDate, setEndDate] = React.useState('');

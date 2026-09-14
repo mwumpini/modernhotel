@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
-import { requireAuth } from '@/app/lib/api/auth-guard'
+import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { ensureDefaultRolesForTenant } from '@/app/lib/settings/roleRepository'
 import { prisma } from '@/app/lib/database/client'
 
@@ -31,6 +31,8 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)
     if (!auth.ok) return auth.response
+    const perm = await requirePermission(request, 'settings.manage-role-permissions')
+    if (!perm.ok) return perm.response
     const subdomain = getTenantFromRequest(request)
     if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
     const ctx = await getTenantContext(subdomain)

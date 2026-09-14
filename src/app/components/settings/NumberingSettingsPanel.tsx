@@ -103,6 +103,7 @@ export default function NumberingSettingsPanel() {
   const updateNestedSetting = useSettingsStore(s => s.updateNestedSetting);
   const updateSetting = useSettingsStore(s => s.updateSetting);
   const saveSettings = useSettingsStore(s => s.saveSettings);
+  const canManageNumbering = settings.hasPermission('settings.manage-document-numbering');
 
   const [core, setCore] = React.useState(() => ({
     invoicePrefix: settings.invoiceSettings.prefix,
@@ -141,6 +142,7 @@ export default function NumberingSettingsPanel() {
   };
 
   const handleSave = () => {
+    if (!canManageNumbering) { alert('You do not have permission to configure document numbering.'); return; }
     const errors: string[] = [];
     validateSeries('Invoice', core.invoiceFormat, Number(core.invoiceNext), settings.invoiceSettings.nextNumber, errors);
     validateSeries('Receipt', core.receiptFormat, Number(core.receiptNext), settings.receiptSettings.nextNumber || 1, errors);
@@ -193,7 +195,7 @@ export default function NumberingSettingsPanel() {
         </div>
         <div className="flex items-center gap-3">
           {savedAt && <Chip color="success" variant="flat" size="sm">Saved</Chip>}
-          <Button color="primary" onPress={handleSave}>Save Numbering</Button>
+          <Button color="primary" onPress={handleSave} isDisabled={!canManageNumbering}>Save Numbering</Button>
         </div>
       </div>
 

@@ -40,6 +40,13 @@ import { PERMISSION_MODULES, FULL_SYSTEM_ACCESS } from '../lib/settings/permissi
 
 export default function UserManagementUnified() {
   const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, updateUserSecurity, changePassword, addRole, updateRole, deleteRole, hasPermission } = useSettingsStore();
+  // Toggling a user's active status and resetting their password are each
+  // independently grantable (mirrors the server's per-field check in
+  // /api/users/[id] PATCH) — a role can have one without general edit rights.
+  const canEditUsers = hasPermission('settings.edit');
+  const canToggleUserStatus = canEditUsers || hasPermission('settings.toggle-user-status');
+  const canResetPassword = canEditUsers || hasPermission('settings.reset-password');
+  const canManageRolePermissions = hasPermission('settings.manage-role-permissions');
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [selectedUser, setSelectedUser] = useState<{ id: string; username: string; email: string; firstName: string; lastName: string; roleId: string; isActive: boolean; profile?: { phone?: string; address?: string; department?: string; position?: string; employeeId?: string; bio?: string } } | null>(null);
   const [isEditing, setIsEditing] = useState(false);
@@ -553,6 +560,10 @@ export default function UserManagementUnified() {
   };
 
   const handleSaveRole = () => {
+    if (!canManageRolePermissions) {
+      window.alert("You don't have permission to manage role permissions.");
+      return;
+    }
     const permissions = roleForm.permissions;
     if (isEditingRole && selectedRole) {
       updateRole(selectedRole.id, {
@@ -619,7 +630,7 @@ export default function UserManagementUnified() {
       : mod.extra.filter(a => isActionChecked(mod, a.id)).length;
 
   const handleDeleteRole = (roleId: string) => {
-    if (!hasPermission('settings.delete')) {
+    if (!canManageRolePermissions && !hasPermission('settings.delete')) {
       window.alert("You don't have permission to delete roles.");
       return;
     }
@@ -633,7 +644,7 @@ export default function UserManagementUnified() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-semibold text-ghana-black">Role Management</h3>
-        <Button color="primary" onPress={handleCreateRole}>
+        <Button color="primary" onPress={handleCreateRole} isDisabled={!canManageRolePermissions}>
           + Add New Role
         </Button>
       </div>
@@ -682,10 +693,10 @@ export default function UserManagementUnified() {
                     </TableCell>
                     <TableCell>
                       <div className="flex space-x-2">
-                        <Button size="sm" variant="flat" onPress={() => handleEditRole(role)}>
+                        <Button size="sm" variant="flat" onPress={() => handleEditRole(role)} isDisabled={!canManageRolePermissions}>
                           Edit
                         </Button>
-                        {hasPermission('settings.delete') && (
+                        {(canManageRolePermissions || hasPermission('settings.delete')) && (
                           <Button size="sm" color="danger" variant="flat" onPress={() => handleDeleteRole(role.id)}>
                             Delete
                           </Button>
@@ -1029,7 +1040,8 @@ export default function UserManagementUnified() {
                 value={userForm.password}
                 onChange={(e) => setUserForm({...userForm, password: e.target.value})}
                 placeholder={isEditing ? 'Leave blank to keep unchanged' : 'At least 6 characters'}
-                description={isEditing ? undefined : 'This user will sign in with this email and password.'}
+                description={isEditing ? (!canResetPassword ? "You don't have permission to reset passwords" : undefined) : 'This user will sign in with this email and password.'}
+                isDisabled={isEditing && !canResetPassword}
               />
               <Input
                 label="First Name"
@@ -1096,6 +1108,7 @@ export default function UserManagementUnified() {
               <Switch
                 isSelected={userForm.isActive}
                 onValueChange={(value) => setUserForm({...userForm, isActive: value})}
+                isDisabled={isEditing && !canToggleUserStatus}
               >
                 Active User
               </Switch>

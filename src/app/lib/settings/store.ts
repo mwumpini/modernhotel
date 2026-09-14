@@ -2696,9 +2696,15 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       localStorage.setItem('system.settings', JSON.stringify(rest));
       if (rest.initialSetupCompleted) syncSetupStatusToApi();
 
-      // Save room management settings
+      // Save room management settings locally. Deliberately NOT synced to the
+      // server from here (see the room-management mutator actions below,
+      // which each call syncRoomManagementToApi themselves after making their
+      // specific change) — syncing unconditionally on every save, regardless
+      // of cause, meant an unrelated settings change (anything at all) could
+      // pick up whatever demo-fixture placeholder data happened to be sitting
+      // in local `roomManagement` state and push it to the server as if it
+      // were real, overwriting a tenant's actual configuration.
       localStorage.setItem('room.management', JSON.stringify(state.roomManagement));
-      syncRoomManagementToApi(state.roomManagement);
 
       // Save POS settings
       localStorage.setItem('manager.pin', state.posSettings.managerPin);
@@ -2796,6 +2802,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const state = get();
     const newRoomManagement = { ...state.roomManagement, ...settings };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
@@ -2807,6 +2814,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const updated = { ...existing, [roomTypeId]: ratePlanId };
     const newRoomManagement = { ...state.roomManagement, defaultRatePlanByRoomType: updated } as RoomManagementSettings;
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
@@ -2820,17 +2828,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const newRoomTypes = [...state.roomManagement.roomTypes, roomType];
     const newRoomManagement = { ...state.roomManagement, roomTypes: newRoomTypes };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
 
   updateRoomType: (id: string, updates: Partial<RoomManagementSettings['roomTypes'][0]>) => {
     const state = get();
-    const newRoomTypes = state.roomManagement.roomTypes.map(rt => 
+    const newRoomTypes = state.roomManagement.roomTypes.map(rt =>
       rt.id === id ? { ...rt, ...updates } : rt
     );
     const newRoomManagement = { ...state.roomManagement, roomTypes: newRoomTypes };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
@@ -2840,6 +2850,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const newRoomTypes = state.roomManagement.roomTypes.filter(rt => rt.id !== id);
     const newRoomManagement = { ...state.roomManagement, roomTypes: newRoomTypes };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
@@ -2849,17 +2860,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const newRoomStatuses = [...state.roomManagement.roomStatuses, status];
     const newRoomManagement = { ...state.roomManagement, roomStatuses: newRoomStatuses };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
 
   updateRoomStatus: (id: string, updates: Partial<RoomManagementSettings['roomStatuses'][0]>) => {
     const state = get();
-    const newRoomStatuses = state.roomManagement.roomStatuses.map(rs => 
+    const newRoomStatuses = state.roomManagement.roomStatuses.map(rs =>
       rs.id === id ? { ...rs, ...updates } : rs
     );
     const newRoomManagement = { ...state.roomManagement, roomStatuses: newRoomStatuses };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
@@ -2869,17 +2882,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const newRooms = [...state.roomManagement.rooms, room];
     const newRoomManagement = { ...state.roomManagement, rooms: newRooms };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
 
   updateRoom: (id: string, updates: Partial<RoomManagementSettings['rooms'][0]>) => {
     const state = get();
-    const newRooms = state.roomManagement.rooms.map(r => 
+    const newRooms = state.roomManagement.rooms.map(r =>
       r.id === id ? { ...r, ...updates } : r
     );
     const newRoomManagement = { ...state.roomManagement, rooms: newRooms };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
@@ -2889,6 +2904,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const newRooms = state.roomManagement.rooms.filter(r => r.id !== id);
     const newRoomManagement = { ...state.roomManagement, rooms: newRooms };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
@@ -2899,17 +2915,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const newRatePlans = [...state.roomManagement.ratePlans, ratePlan];
     const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
 
   updateRatePlan: (id: string, updates: Partial<RoomManagementSettings['ratePlans'][0]>) => {
     const state = get();
-    const newRatePlans = state.roomManagement.ratePlans.map(rp => 
+    const newRatePlans = state.roomManagement.ratePlans.map(rp =>
       rp.id === id ? { ...rp, ...updates } : rp
     );
     const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
@@ -2919,30 +2937,32 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     const newRatePlans = state.roomManagement.ratePlans.filter(rp => rp.id !== id);
     const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
 
   addSeasonalRate: (ratePlanId: string, seasonalRate: RoomManagementSettings['ratePlans'][0]['seasonalRates'][0]) => {
     const state = get();
-    const newRatePlans = state.roomManagement.ratePlans.map(rp => 
-      rp.id === ratePlanId 
+    const newRatePlans = state.roomManagement.ratePlans.map(rp =>
+      rp.id === ratePlanId
         ? { ...rp, seasonalRates: [...rp.seasonalRates, seasonalRate] }
         : rp
     );
     const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
 
   updateSeasonalRate: (ratePlanId: string, seasonalRateId: string, updates: Partial<RoomManagementSettings['ratePlans'][0]['seasonalRates'][0]>) => {
     const state = get();
-    const newRatePlans = state.roomManagement.ratePlans.map(rp => 
-      rp.id === ratePlanId 
-        ? { 
-            ...rp, 
-            seasonalRates: rp.seasonalRates.map(sr => 
+    const newRatePlans = state.roomManagement.ratePlans.map(rp =>
+      rp.id === ratePlanId
+        ? {
+            ...rp,
+            seasonalRates: rp.seasonalRates.map(sr =>
               sr.id === seasonalRateId ? { ...sr, ...updates } : sr
             )
           }
@@ -2950,23 +2970,25 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     );
     const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
 
   deleteSeasonalRate: (ratePlanId: string, seasonalRateId: string) => {
     const state = get();
-    const newRatePlans = state.roomManagement.ratePlans.map(rp => 
-      rp.id === ratePlanId 
+    const newRatePlans = state.roomManagement.ratePlans.map(rp =>
+      rp.id === ratePlanId
         ? { ...rp, seasonalRates: rp.seasonalRates.filter(sr => sr.id !== seasonalRateId) }
         : rp
     );
     const newRoomManagement = { ...state.roomManagement, ratePlans: newRatePlans };
     set({ roomManagement: newRoomManagement });
+    syncRoomManagementToApi(newRoomManagement);
     get().saveSettings();
     get().publish();
   },
-  
+
   // NEW: Event Resources Management
   addEventResource: (resource: RoomManagementSettings['eventResources'][0]) => {
     const state = get();

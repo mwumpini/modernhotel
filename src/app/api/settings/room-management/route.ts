@@ -66,11 +66,11 @@ export async function POST(request: NextRequest) {
     // arrays arrive in the body far more often than they actually change. Rather
     // than 403 the whole request (which would also drop an unrelated no-show-policy
     // edit made by someone without this permission), only the array fields
-    // themselves are dropped when the caller lacks frontdesk.manage-rates; the rest
-    // of the patch still applies.
+    // themselves are dropped when the caller lacks settings.manage-rooms-pricing;
+    // the rest of the patch still applies.
     let canManageRoomConfig = true
     if (ROOM_CONFIG_ARRAY_KEYS.some((k) => Array.isArray(body[k]))) {
-      const perm = await requirePermission(request, 'frontdesk.manage-rates')
+      const perm = await requirePermission(request, 'settings.manage-rooms-pricing')
       canManageRoomConfig = perm.ok
     }
 
