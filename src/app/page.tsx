@@ -23,12 +23,11 @@ export default function Home() {
   const { data: session, status } = useSession();
   const initialSetupCompleted = useSettingsStore(s => s.initialSetupCompleted);
   // Whether this tenant's setup-wizard status has been confirmed against the
-  // server yet (see /api/settings/setup-status, checked from loadSettings() —
-  // triggered by Navigation's own mount effect, not duplicated here). Setup
-  // completion is shared per tenant, not per browser: a device with no local
-  // record of it must wait for this before deciding the wizard is needed,
-  // otherwise every new device would repeat a wizard another device already
-  // finished.
+  // server yet (see /api/settings/setup-status, checked from loadSettings()).
+  // Setup completion is shared per tenant, not per browser: a device with no
+  // local record of it must wait for this before deciding the wizard is
+  // needed, otherwise every new device would repeat a wizard another device
+  // already finished.
   const setupStatusChecked = useSettingsStore(s => s.setupStatusChecked);
   const setSessionRole = useSettingsStore(s => s.setSessionRole);
 
@@ -54,13 +53,26 @@ export default function Home() {
     setSessionRole(status === 'authenticated' ? (session?.user as any)?.role ?? null : null);
   }, [status, session, setSessionRole]);
 
+  // Navigation's own mount effect also calls loadSettings(), but Navigation
+  // only mounts once awaitingSetupCheck is false below — which itself depends
+  // on setupStatusChecked, a flag only loadSettings() sets. For a browser with
+  // no local settings record, that's a deadlock: Navigation never mounts, so
+  // setupStatusChecked never resolves, so the spinner never clears. Trigger it
+  // here too, since this component always mounts regardless of which branch it
+  // renders. loadSettings() is safe to call more than once (the setup-status
+  // fetch is shared across calls — see fetchSetupStatusOnce in settings/store.ts).
+  React.useEffect(() => {
+    if (status === 'authenticated') {
+      useSettingsStore.getState().loadSettings();
+    }
+  }, [status]);
+
   // Role-based landing (client-safe, runs after mount)
   React.useEffect(() => {
     if (status !== 'authenticated') return;
     if (initialSetupCompleted || localPersistedComplete) return;
-    // No local record — wait for the server check (kicked off by Navigation's
-    // mount effect via loadSettings()) before deciding. Only a tenant the
-    // server also has no record for is genuinely new.
+    // No local record — wait for the server check (kicked off above) before
+    // deciding. Only a tenant the server also has no record for is genuinely new.
     if (!setupStatusChecked) return;
     router.replace('/setup');
   }, [status, initialSetupCompleted, localPersistedComplete, setupStatusChecked, router]);
