@@ -20,6 +20,19 @@ import { housekeepingStore } from '../lib/housekeeping/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { useRouter } from 'next/navigation';
+import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+
+// Hideable summary/widget cards on this dashboard — the "Operations Overview"
+// tabs are core navigation, not clutter, so they're deliberately not included.
+const FRONTDESK_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'availableRooms', label: 'Available Rooms' },
+  { id: 'occupiedRooms', label: 'Occupied Rooms' },
+  { id: 'maintenance', label: 'Maintenance & Cleaning' },
+  { id: 'todayOps', label: "Today's Room Operations" },
+  { id: 'recentActivities', label: 'Recent Activities' },
+  { id: 'notices', label: 'Front Desk Notices' },
+];
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {
@@ -76,6 +89,8 @@ export default function FrontdeskDashboard() {
   const [selectedTab, setSelectedTab] = useState("overview");
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const router = useRouter();
+
+  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.frontdesk', FRONTDESK_DASHBOARD_SECTIONS);
 
   const settings = useSettingsStore();
   const reservations = frontOfficeStore.reservations;
@@ -152,7 +167,16 @@ export default function FrontdeskDashboard() {
       <DeptMessenger from="frontdesk" mode="drawer" />
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🏨 Front Office Operations</h2>
-        <OfflineIndicator />
+        <div className="flex items-center gap-2">
+          <CustomizeViewControl
+            sections={FRONTDESK_DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggleSection}
+            showAll={showAll}
+            hiddenCount={hiddenCount}
+          />
+          <OfflineIndicator />
+        </div>
       </div>
 
       {/* Room Status Overview */}
@@ -162,15 +186,20 @@ export default function FrontdeskDashboard() {
             🏠 Room Status Overview ({totalRooms} Rooms)
           </h3>
         </div>
-        
+
         {/* Status Cards */}
+        {(!isHidden('availableRooms') || !isHidden('occupiedRooms') || !isHidden('maintenance')) && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           {/* Available Rooms */}
+          {!isHidden('availableRooms') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Available Rooms</h4>
-                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('availableRooms')} label="Available Rooms" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-green-600 mb-3">{availableTotal}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -183,13 +212,18 @@ export default function FrontdeskDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Occupied Rooms */}
+          {!isHidden('occupiedRooms') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-red-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Occupied Rooms</h4>
-                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('occupiedRooms')} label="Occupied Rooms" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-red-600 mb-3">{occupiedTotal}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -208,13 +242,18 @@ export default function FrontdeskDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Maintenance & Cleaning */}
+          {!isHidden('maintenance') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-yellow-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Maintenance & Cleaning</h4>
-                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('maintenance')} label="Maintenance & Cleaning" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-yellow-600 mb-3">{maintenanceOpen + dirtyRooms}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -233,9 +272,12 @@ export default function FrontdeskDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
         </div>
+        )}
 
         {/* Today's Room Operations */}
+        {!isHidden('todayOps') && (
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -257,15 +299,19 @@ export default function FrontdeskDashboard() {
               </div>
             </div>
           </div>
-          <Button 
-            color="success" 
-            variant="solid"
-            className="bg-green-600 hover:bg-green-700"
-            onClick={() => router.push('/room-assignments')}
-          >
-            🏢 View Full Status
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              color="success"
+              variant="solid"
+              className="bg-green-600 hover:bg-green-700"
+              onClick={() => router.push('/room-assignments')}
+            >
+              🏢 View Full Status
+            </Button>
+            <HideCardButton onHide={() => hide('todayOps')} label="Today's Room Operations" />
+          </div>
         </div>
+        )}
       </div>
 
       {/* Main Operations Interface */}
@@ -679,29 +725,37 @@ export default function FrontdeskDashboard() {
       </Card>
 
       {/* Recent Activities & Notices */}
+      {(!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Recent Activities */}
+          {!isHidden('recentActivities') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+              <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
             </CardHeader>
             <CardBody>
               <RecentActivities area="frontdesk" />
             </CardBody>
           </Card>
+          )}
 
           {/* Front Desk Notices placed beside Recent Activities */}
+          {!isHidden('notices') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">🔔 Front Desk Notices</h3>
+              <HideCardButton onHide={() => hide('notices')} label="Front Desk Notices" />
             </CardHeader>
             <CardBody>
               <DeptNotices dept="frontdesk" title="" defaultTab="alerts" />
             </CardBody>
           </Card>
+          )}
         </div>
       </div>
+      )}
     </div>
   );
 }

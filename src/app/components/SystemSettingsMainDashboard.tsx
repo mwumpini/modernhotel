@@ -19,8 +19,9 @@ import UserManagementUnified from './UserManagementUnified';
 import NumberingSettingsPanel from './settings/NumberingSettingsPanel';
 import DocumentTemplatesPanel from './settings/DocumentTemplatesPanel';
 import AuditLogPanel from './settings/AuditLogPanel';
+import ApprovalThresholdsPanel from './settings/ApprovalThresholdsPanel';
 
-const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'security', 'audit'] as const;
+const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'security', 'approvals', 'audit'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 function resolveInitialTab(searchParams: URLSearchParams): SettingsTab {
@@ -249,6 +250,10 @@ export default function SystemSettingsMainDashboard() {
                   />
                 </div>
               </div>
+            </Tab>
+
+            <Tab key="approvals" title="Approvals">
+              <ApprovalThresholdsPanel />
             </Tab>
 
             <Tab key="audit" title="Audit Log">

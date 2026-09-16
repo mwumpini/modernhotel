@@ -555,9 +555,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const postedAt = new Date().toISOString();
       set((state) => ({
         journalEntries: state.journalEntries.map(entry =>
-          entry.id === id 
-            ? { 
-                ...entry, 
+          entry.id === id
+            ? {
+                ...entry,
                 status: 'Posted',
                 postedAt,
                 postedBy: 'current-user'
@@ -565,9 +565,40 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
             : entry
         )
       }));
-      persistJournalEntryStatus(id, { status: 'Posted', postedAt, postedBy: 'current-user' });
-      
-      // Update GL balances
+
+      // The server is authoritative on whether this actually posted or was
+      // parked for director approval (see approvalThresholds.ts) — GL balance
+      // updates below must only run once that's confirmed, not on the
+      // optimistic local 'Posted' set above. Awaiting here (rather than the
+      // old fire-and-forget + onResult-callback correction) means an entry
+      // the server downgrades to 'Pending Approval' never gets its GL
+      // balances applied in the first place, instead of applying them and
+      // only fixing the status label afterward.
+      let serverEntry: { status: string } | null = null;
+      try {
+        serverEntry = await persistJournalEntryStatus(id, { status: 'Posted', postedAt, postedBy: 'current-user' });
+      } catch (e) {
+        console.warn(`[Accounting] Failed to persist journal entry ${id} post:`, e);
+      }
+
+      if (!serverEntry || serverEntry.status !== 'Posted') {
+        set((state) => ({
+          journalEntries: state.journalEntries.map(e =>
+            e.id === id
+              ? {
+                  ...e,
+                  status: (serverEntry?.status as any) ?? e.status,
+                  postedAt: serverEntry ? undefined : e.postedAt,
+                  postedBy: serverEntry ? undefined : e.postedBy,
+                }
+              : e
+          ),
+        }));
+        if (!serverEntry) set({ error: 'Could not confirm the post with the server — please retry.' });
+        return;
+      }
+
+      // Update GL balances — only reached once the server confirmed 'Posted'.
       const entry = get().journalEntries.find(e => e.id === id);
       if (entry) {
         entry.lines.forEach(line => {
@@ -1426,13 +1457,38 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const partner = state.businessPartners.find(bp => bp.id === payment.businessPartnerId);
       if (!partner) throw new Error('Business partner not found');
 
-      if (payment.status === 'Draft') {
+      // 'Pending Approval' is included here (not just 'Draft') so a director can
+      // re-run the same "post" action on a payment the server previously parked
+      // for approval — see approvalThresholds.ts, which this time will actually
+      // grant it now that the caller has accounting.approve-payment.
+      if (payment.status === 'Draft' || payment.status === 'Pending Approval') {
         set((s) => ({
           payments: s.payments.map(pm =>
             pm.id === id ? { ...pm, status: 'Posted' as const, updatedAt: new Date().toISOString() } : pm
           )
         }));
-        persistPaymentPatch(id, { status: 'Posted' });
+
+        // The server is authoritative on whether this actually posted or was
+        // parked for director approval — the ledger sync and bank-balance
+        // update below must only run once that's confirmed, not on the
+        // optimistic local 'Posted' set above. Awaiting here (rather than the
+        // old fire-and-forget + onResult-callback correction) means a payment
+        // the server downgrades to 'Pending Approval' never gets a journal
+        // entry created or its bank balance decremented in the first place.
+        let serverPayment: { status: string } | null = null;
+        try {
+          serverPayment = await persistPaymentPatch(id, { status: 'Posted' });
+        } catch (e) {
+          console.warn(`[Accounting] Failed to persist payment ${id} post:`, e);
+        }
+
+        if (!serverPayment || serverPayment.status !== 'Posted') {
+          set((s) => ({
+            payments: s.payments.map(pm => pm.id === id ? { ...pm, status: (serverPayment?.status as any) ?? pm.status } : pm),
+          }));
+          if (!serverPayment) set({ error: 'Could not confirm the post with the server — please retry.' });
+          return;
+        }
       }
 
       const refreshed = get().payments.find(p => p.id === id)!;

@@ -37,6 +37,21 @@ import CostRevenueCenters from './accounting/CostRevenueCenters';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
+import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+
+// Hideable summary/widget cards on this dashboard — the "Operations Overview"
+// tabs (Chart of Accounts, Bank & Cash, etc.) are core navigation, not
+// clutter, so they're deliberately not included here.
+const ACCOUNTING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'cashBank', label: 'Cash & Bank Position' },
+  { id: 'profitability', label: 'Profitability' },
+  { id: 'operationalMetrics', label: 'Operational Metrics' },
+  { id: 'todayOps', label: "Today's Financial Operations" },
+  { id: 'quickActions', label: 'Quick Actions' },
+  { id: 'recentActivities', label: 'Recent Activities' },
+  { id: 'notices', label: 'Accounting Notices' },
+];
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {
@@ -120,6 +135,8 @@ export default function AccountingMainDashboard() {
   );
 
   const fmt = (amount: number) => formatAccountingCurrency(amount);
+
+  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.accounting', ACCOUNTING_DASHBOARD_SECTIONS);
 
   useEffect(() => {
     initializeAccounting().catch(() => {});
@@ -355,14 +372,29 @@ export default function AccountingMainDashboard() {
             </div>
           </div>
 
+          <div className="flex justify-end mb-3">
+            <CustomizeViewControl
+              sections={ACCOUNTING_DASHBOARD_SECTIONS}
+              isHidden={isHidden}
+              toggle={toggleSection}
+              showAll={showAll}
+              hiddenCount={hiddenCount}
+            />
+          </div>
+
           {/* Status Cards */}
+          {(!isHidden('cashBank') || !isHidden('profitability') || !isHidden('operationalMetrics')) && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             {/* Financial Position */}
+            {!isHidden('cashBank') && (
             <Card className="border-0 shadow-lg border-l-4 border-l-blue-500">
               <CardBody className="p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-lg font-semibold text-ghana-black">Cash &amp; Bank Position</h4>
-                  <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                    <HideCardButton onHide={() => hide('cashBank')} label="Cash & Bank Position" />
+                  </div>
                 </div>
                 <div className="text-3xl font-bold text-blue-600 mb-3">{fmt(totalBankCash)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
@@ -381,13 +413,18 @@ export default function AccountingMainDashboard() {
                 </div>
               </CardBody>
             </Card>
+            )}
 
             {/* Profitability */}
+            {!isHidden('profitability') && (
             <Card className={`border-0 shadow-lg border-l-4 ${netIncome >= 0 ? 'border-l-green-500' : 'border-l-red-500'}`}>
               <CardBody className="p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-lg font-semibold text-ghana-black">Profitability</h4>
-                  <div className={`w-3 h-3 rounded-full ${netIncome >= 0 ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                  <div className="flex items-center gap-2">
+                    <div className={`w-3 h-3 rounded-full ${netIncome >= 0 ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <HideCardButton onHide={() => hide('profitability')} label="Profitability" />
+                  </div>
                 </div>
                 <div className={`text-3xl font-bold mb-3 ${netIncome >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(netIncome)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
@@ -406,13 +443,18 @@ export default function AccountingMainDashboard() {
                 </div>
               </CardBody>
             </Card>
+            )}
 
             {/* Operational Metrics */}
+            {!isHidden('operationalMetrics') && (
             <Card className="border-0 shadow-lg border-l-4 border-l-purple-500">
               <CardBody className="p-4">
                 <div className="flex items-center justify-between mb-3">
                   <h4 className="text-lg font-semibold text-ghana-black">Operational Metrics</h4>
-                  <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
+                    <HideCardButton onHide={() => hide('operationalMetrics')} label="Operational Metrics" />
+                  </div>
                 </div>
                 <div className="text-3xl font-bold text-purple-600 mb-3">{pendingInvoices}</div>
                 <div className="space-y-1 text-sm text-gray-600">
@@ -431,9 +473,12 @@ export default function AccountingMainDashboard() {
                 </div>
               </CardBody>
             </Card>
+            )}
           </div>
+          )}
 
           {/* Today's Financial Operations */}
+          {!isHidden('todayOps') && (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
@@ -455,23 +500,29 @@ export default function AccountingMainDashboard() {
                 </div>
               </div>
             </div>
-            <Button 
-              color="success" 
-              variant="solid"
-              className="bg-green-600 hover:bg-green-700"
-              onClick={() => handleQuickAction('run_reports')}
-            >
-              📊 Generate Reports
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                color="success"
+                variant="solid"
+                className="bg-green-600 hover:bg-green-700"
+                onClick={() => handleQuickAction('run_reports')}
+              >
+                📊 Generate Reports
+              </Button>
+              <HideCardButton onHide={() => hide('todayOps')} label="Today's Financial Operations" />
+            </div>
           </div>
+          )}
 
           {/* Quick Actions */}
+          {!isHidden('quickActions') && (
           <Card className="border-0 shadow-lg mb-6">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="text-xl">🚀</span>
                 <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
               </div>
+              <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
             </CardHeader>
             <CardBody>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -520,6 +571,7 @@ export default function AccountingMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Main Operations Interface - Following Uniform Pattern */}
           <Card className="border-0 shadow-lg">
@@ -670,29 +722,37 @@ export default function AccountingMainDashboard() {
               </Tabs>
 
       {/* Recent Activities & Notices */}
+      {(!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Recent Activities */}
+          {!isHidden('recentActivities') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+              <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
             </CardHeader>
             <CardBody>
               <RecentActivities area="accounting" />
             </CardBody>
           </Card>
+          )}
 
           {/* Accounting Notices */}
+          {!isHidden('notices') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">🔔 Accounting Notices</h3>
+              <HideCardButton onHide={() => hide('notices')} label="Accounting Notices" />
             </CardHeader>
             <CardBody>
               <DeptNotices dept="accounting" title="" defaultTab="alerts" />
             </CardBody>
           </Card>
+          )}
         </div>
       </div>
+      )}
             </CardBody>
           </Card>
         </div>

@@ -77,6 +77,31 @@ function syncRoomManagementToApi(rm: RoomManagementSettings) {
   }, Math.max(200, ROOM_MANAGEMENT_SYNC_INTERVAL_MS - elapsed));
 }
 
+// Fire-and-forget sync of just the director-approval threshold fields to their
+// server-side mirror (see /api/settings/approval-thresholds) — the rest of
+// financialSettings (currency, rounding, discount rules) stays localStorage-only
+// for now, but these six fields are read server-side by every posting/approval
+// endpoint (src/app/lib/api/approvalThresholds.ts), so they have to be real.
+// No throttling needed here (unlike room management): this only fires from an
+// explicit Settings > Approvals save action, not from a hot loop.
+function syncApprovalThresholdsToApi(fs: SystemSettings['financialSettings']) {
+  if (typeof window === 'undefined') return;
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  fetch('/api/settings/approval-thresholds', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': t },
+    body: JSON.stringify({
+      requireApprovalForExpenses: fs.requireApprovalForExpenses,
+      expenseApprovalThreshold: fs.expenseApprovalThreshold,
+      requireApprovalForPurchaseOrders: fs.requireApprovalForPurchaseOrders,
+      purchaseOrderApprovalThreshold: fs.purchaseOrderApprovalThreshold,
+      requireApprovalForPayments: fs.requireApprovalForPayments,
+      paymentApprovalThreshold: fs.paymentApprovalThreshold,
+    }),
+  }).catch((e) => console.warn('[Settings] Failed to sync approval thresholds:', e));
+}
+
 // Shared across every loadSettings() call within one page load (it's triggered
 // from more than one place — Navigation's mount effect and the demo-fixtures
 // module-init microtask both call loadSettings()) so they share one fetch
@@ -194,7 +219,7 @@ async function createUserViaApi(input: { email: string; name: string; password: 
  * as success since there's nothing server-side to reject). Returns an error
  * message on failure (duplicate email, or the last-administrator guard), null
  * on success/no-op. */
-async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string }): Promise<string | null> {
+async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; currentPassword?: string; profile?: { phone?: string }; preferences?: { theme?: string } }): Promise<string | null> {
   const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
   if (!t) return null;
   try {
@@ -875,6 +900,15 @@ export interface SystemSettings {
     maxDiscountPercentage: number;
     requireApprovalForDiscounts: boolean;
     discountApprovalThreshold: number;
+    // Director/GM approval thresholds — see src/app/lib/api/approvalThresholds.ts,
+    // which reads these exact field names server-side to decide whether posting a
+    // journal entry, payment, or approving a requisition needs director sign-off.
+    requireApprovalForExpenses: boolean;
+    expenseApprovalThreshold: number;
+    requireApprovalForPurchaseOrders: boolean;
+    purchaseOrderApprovalThreshold: number;
+    requireApprovalForPayments: boolean;
+    paymentApprovalThreshold: number;
   };
   
   // Communication Settings
@@ -1349,10 +1383,14 @@ interface SettingsStore extends SystemSettings {
   setCurrentUser: (user: User) => void;
   
   // User Profile Management
-  updateUserProfile: (userId: string, profileUpdates: Partial<User['profile']>) => void;
-  updateUserPreferences: (userId: string, preferenceUpdates: Partial<UserPreferences>) => void;
-  updateUserSecurity: (userId: string, securityUpdates: Partial<User['security']>) => void;
-  changePassword: (userId: string, newPassword: string) => void;
+  /** Resolves to an error message if the server rejected it, null on success. */
+  updateUserProfile: (userId: string, profileUpdates: Partial<User['profile']>) => Promise<string | null>;
+  /** Resolves to an error message if the server rejected it, null on success. */
+  updateUserPreferences: (userId: string, preferenceUpdates: Partial<UserPreferences>) => Promise<string | null>;
+  /** Self-service password change — verifies currentPassword server-side before
+   * applying newPassword. Resolves to an error message (e.g. wrong current
+   * password) on failure, null on success. */
+  changePassword: (userId: string, currentPassword: string, newPassword: string) => Promise<string | null>;
   
   // Role Management
   addRole: (role: Omit<UserRole, 'id' | 'createdAt' | 'updatedAt'>) => void;
@@ -2226,6 +2264,12 @@ const defaultSettings: SystemSettings = {
     maxDiscountPercentage: 25,
     requireApprovalForDiscounts: true,
     discountApprovalThreshold: 15,
+    requireApprovalForExpenses: true,
+    expenseApprovalThreshold: 1000,
+    requireApprovalForPurchaseOrders: true,
+    purchaseOrderApprovalThreshold: 1000,
+    requireApprovalForPayments: true,
+    paymentApprovalThreshold: 1000,
   },
   
   // Communication Settings
@@ -2595,6 +2639,19 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           })
           .catch((e) => console.warn('[Settings] Failed to hydrate roles:', e));
 
+        // Pull the tenant's director-approval thresholds (see
+        // /api/settings/approval-thresholds) — server is authoritative since these
+        // are read server-side by every posting/approval endpoint; a browser that
+        // never configured them just gets the same defaults the server itself falls
+        // back to (src/app/lib/api/approvalThresholds.ts).
+        fetch('/api/settings/approval-thresholds', { headers: { 'x-tenant-subdomain': t } })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (!data) return;
+            set({ financialSettings: { ...get().financialSettings, ...data } });
+          })
+          .catch((e) => console.warn('[Settings] Failed to hydrate approval thresholds:', e));
+
         // Pull the real, NextAuth-authenticated accounts (see /api/users) and
         // replace this file's local demo `users` entirely — those ids ('admin_001'
         // etc.) never correspond to a real account, so once real ones are
@@ -2617,8 +2674,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
                 lastLogin: u.lastLoginAt || undefined,
                 createdAt: u.createdAt,
                 updatedAt: u.updatedAt,
-                preferences: defaultSettings.users[0].preferences,
-                profile: { avatar: '', phone: '', address: '', department: '', position: '', employeeId: '' },
+                // profile/preferences are real, server-persisted fields (see
+                // /api/users/[id] PATCH) — merge whatever the server has over
+                // the defaults rather than discarding it on every hydration.
+                preferences: { ...defaultSettings.users[0].preferences, ...(u.preferences || {}) },
+                profile: { avatar: '', phone: '', address: '', department: '', position: '', employeeId: '', ...(u.profile || {}) },
                 security: {
                   failedLoginAttempts: 0,
                   accountLocked: false,
@@ -3336,19 +3396,22 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   // Profile Management
-  updateUserProfile: (userId: string, profileUpdates: Partial<User['profile']>) => {
+  updateUserProfile: async (userId: string, profileUpdates: Partial<User['profile']>) => {
+    const error = await updateUserViaApi(userId, { profile: profileUpdates as { phone?: string } });
+    if (error) return error;
+
     const state = get();
-    const newUsers = state.users.map(user => 
-      user.id === userId 
-        ? { 
-            ...user, 
+    const newUsers = state.users.map(user =>
+      user.id === userId
+        ? {
+            ...user,
             profile: { ...user.profile, ...profileUpdates },
-            updatedAt: new Date().toISOString() 
+            updatedAt: new Date().toISOString()
           }
         : user
     );
     set({ users: newUsers });
-    
+
     // Update current user if it's the same user
     if (state.currentUser?.id === userId) {
       const updatedCurrentUser = newUsers.find(u => u.id === userId);
@@ -3356,24 +3419,28 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         set({ currentUser: updatedCurrentUser });
       }
     }
-    
+
     get().saveSettings();
     get().publish();
+    return null;
   },
 
-  updateUserPreferences: (userId: string, preferenceUpdates: Partial<UserPreferences>) => {
+  updateUserPreferences: async (userId: string, preferenceUpdates: Partial<UserPreferences>) => {
+    const error = await updateUserViaApi(userId, { preferences: preferenceUpdates as { theme?: string } });
+    if (error) return error;
+
     const state = get();
-    const newUsers = state.users.map(user => 
-      user.id === userId 
-        ? { 
-            ...user, 
+    const newUsers = state.users.map(user =>
+      user.id === userId
+        ? {
+            ...user,
             preferences: { ...user.preferences, ...preferenceUpdates },
-            updatedAt: new Date().toISOString() 
+            updatedAt: new Date().toISOString()
           }
         : user
     );
     set({ users: newUsers });
-    
+
     // Update current user if it's the same user
     if (state.currentUser?.id === userId) {
       const updatedCurrentUser = newUsers.find(u => u.id === userId);
@@ -3381,55 +3448,34 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         set({ currentUser: updatedCurrentUser });
       }
     }
-    
+
     get().saveSettings();
     get().publish();
+    return null;
   },
 
-  updateUserSecurity: (userId: string, securityUpdates: Partial<User['security']>) => {
-    const state = get();
-    const newUsers = state.users.map(user => 
-      user.id === userId 
-        ? { 
-            ...user, 
-            security: { ...user.security, ...securityUpdates },
-            updatedAt: new Date().toISOString() 
-          }
-        : user
-    );
-    set({ users: newUsers });
-    
-    // Update current user if it's the same user
-    if (state.currentUser?.id === userId) {
-      const updatedCurrentUser = newUsers.find(u => u.id === userId);
-      if (updatedCurrentUser) {
-        set({ currentUser: updatedCurrentUser });
-      }
-    }
-    
-    get().saveSettings();
-    get().publish();
-  },
+  changePassword: async (userId: string, currentPassword: string, newPassword: string) => {
+    const error = await updateUserViaApi(userId, { password: newPassword, currentPassword });
+    if (error) return error;
 
-  changePassword: (userId: string, newPassword: string) => {
     const state = get();
-    const newUsers = state.users.map(user => 
-      user.id === userId 
-        ? { 
-            ...user, 
-            security: { 
-              ...user.security, 
+    const newUsers = state.users.map(user =>
+      user.id === userId
+        ? {
+            ...user,
+            security: {
+              ...user.security,
               passwordLastChanged: new Date().toISOString(),
               passwordExpiryDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000).toISOString(),
               failedLoginAttempts: 0,
               accountLocked: false,
             },
-            updatedAt: new Date().toISOString() 
+            updatedAt: new Date().toISOString()
           }
         : user
     );
     set({ users: newUsers });
-    
+
     // Update current user if it's the same user
     if (state.currentUser?.id === userId) {
       const updatedCurrentUser = newUsers.find(u => u.id === userId);
@@ -3440,8 +3486,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     
     get().saveSettings();
     get().publish();
+    return null;
   },
-  
+
   updateUser: async (userId, updates, newPassword) => {
     const patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string } = {};
     if (updates.email) patch.email = updates.email;
@@ -3782,6 +3829,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({ financialSettings: updatedSettings });
     get().saveSettings();
     get().publish();
+    syncApprovalThresholdsToApi(updatedSettings);
   },
   
   updateCommunicationSettings: (settings) => {

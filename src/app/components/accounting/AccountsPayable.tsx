@@ -10,6 +10,7 @@ import {
   Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
+import { useSettingsStore } from '@/app/lib/settings/store';
 import { useSupplierStore } from '@/app/lib/inventory/supplierStore';
 import { useStockStore } from '@/app/lib/inventory/stockStore';
 import { computePurchaseTax } from '@/app/lib/tax/engine';
@@ -39,6 +40,7 @@ export default function AccountsPayablePage() {
     recordSupplierWHTPayment,
 
   } = useAccountingStore();
+  const canApprovePayments = useSettingsStore((s) => s.hasPermission('accounting.approve-payment'));
   const { generateNextSupplierCode } = useSupplierStore();
   const { stockItems } = useStockStore();
 
@@ -1098,13 +1100,14 @@ export default function AccountsPayablePage() {
                           </Chip>
                         </TableCell>
                         <TableCell>
-                          <Chip 
+                          <Chip
                             color={
-                              payment.status === 'Posted' ? 'success' : 
-                              payment.status === 'Draft' ? 'default' : 
+                              payment.status === 'Posted' ? 'success' :
+                              payment.status === 'Draft' ? 'default' :
+                              payment.status === 'Pending Approval' ? 'warning' :
                               'danger'
-                            } 
-                            variant="flat" 
+                            }
+                            variant="flat"
                             size="sm"
                           >
                             {payment.status}
@@ -1112,6 +1115,11 @@ export default function AccountsPayablePage() {
                         </TableCell>
                         <TableCell>
                           <div className="flex gap-2">
+                            {payment.status === 'Pending Approval' && canApprovePayments && (
+                              <Button size="sm" color="success" variant="flat" onClick={() => { try { postPayment(payment.id); } catch {} }}>
+                                ✅ Approve &amp; Post
+                              </Button>
+                            )}
                             <Button size="sm" variant="bordered" onClick={() => { setDialogType('payment'); setEditing(payment); setForm({
                               businessPartnerId: payment.businessPartnerId,
                               date: payment.date.slice(0,10),

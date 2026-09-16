@@ -16,6 +16,20 @@ import { trackEvent } from '../lib/analytics/trackEvent';
 import { useRouter } from 'next/navigation';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
+import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+
+// Hideable summary/widget cards on this dashboard — the "Operations Overview"
+// tabs are core navigation, not clutter, so they're deliberately not included.
+const HR_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'activeEmployees', label: 'Active Employees' },
+  { id: 'onLeave', label: 'On Leave' },
+  { id: 'payrollStatus', label: 'Payroll Status' },
+  { id: 'todayOps', label: "Today's Operations" },
+  { id: 'quickActions', label: 'Quick Actions' },
+  { id: 'recentActivities', label: 'Recent Activities' },
+  { id: 'notices', label: 'HR Notices' },
+];
 
 // Import specialized HR components
 import HRAnalyticsDashboard from './HRAnalyticsDashboard';
@@ -103,6 +117,7 @@ const InfoIcon = ({ description }: { description: string }) => {
 
 export default function HRMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
+  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.hr', HR_DASHBOARD_SECTIONS);
   const [employeeView, setEmployeeView] = useState<'dashboard' | 'records' | 'newHires' | 'changes' | 'reviews'>('dashboard');
   const [leaveView, setLeaveView] = useState<'dashboard' | 'leave' | 'time' | 'shifts' | 'overtime'>('dashboard');
   const [complianceView, setComplianceView] = useState<'dashboard' | 'tax' | 'training' | 'labor' | 'reports'>('dashboard');
@@ -296,6 +311,13 @@ export default function HRMainDashboard() {
         <div className="flex items-center gap-2">
           <Badge color="success" variant="flat">System Online</Badge>
           <Badge color="primary" variant="flat">Ghana Compliant</Badge>
+          <CustomizeViewControl
+            sections={HR_DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggleSection}
+            showAll={showAll}
+            hiddenCount={hiddenCount}
+          />
         </div>
       </div>
 
@@ -306,15 +328,20 @@ export default function HRMainDashboard() {
             📊 Employee Status Overview ({totalEmployees} Total Employees)
           </h3>
         </div>
-        
+
         {/* Status Cards - Matching Uniform Design */}
+        {(!isHidden('activeEmployees') || !isHidden('onLeave') || !isHidden('payrollStatus')) && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           {/* Active Employees */}
+          {!isHidden('activeEmployees') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Active Employees</h4>
-                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('activeEmployees')} label="Active Employees" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-green-600 mb-3">{activeEmployees}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -333,13 +360,18 @@ export default function HRMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* On Leave */}
+          {!isHidden('onLeave') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-orange-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">On Leave</h4>
-                <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('onLeave')} label="On Leave" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-orange-600 mb-3">{onLeaveEmployees}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -358,13 +390,18 @@ export default function HRMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Payroll Status */}
+          {!isHidden('payrollStatus') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-blue-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Payroll Status</h4>
-                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('payrollStatus')} label="Payroll Status" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-blue-600 mb-3">₵{(monthlyPayroll / 1000).toFixed(0)}K</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -383,9 +420,12 @@ export default function HRMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
         </div>
+        )}
 
         {/* Today's Operations - Matching Uniform Pattern */}
+        {!isHidden('todayOps') && (
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -407,24 +447,30 @@ export default function HRMainDashboard() {
               </div>
             </div>
           </div>
-          <Button 
-            color="success" 
-            variant="solid"
-            className="bg-green-600 hover:bg-green-700"
-            onClick={() => setSelectedTab('employees')}
-          >
-            👥 Manage Employees
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              color="success"
+              variant="solid"
+              className="bg-green-600 hover:bg-green-700"
+              onClick={() => setSelectedTab('employees')}
+            >
+              👥 Manage Employees
+            </Button>
+            <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
+          </div>
         </div>
+        )}
       </div>
 
       {/* Quick Actions */}
+      {!isHidden('quickActions') && (
       <Card className="border-0 shadow-lg mb-6">
-        <CardHeader className="pb-3">
+        <CardHeader className="pb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-xl">🚀</span>
             <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
           </div>
+          <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
         </CardHeader>
         <CardBody>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -444,8 +490,7 @@ export default function HRMainDashboard() {
           </div>
         </CardBody>
       </Card>
-
-
+      )}
 
       {/* Main Operations Interface - Following Uniform Pattern */}
       <Card className="border-0 shadow-lg">
@@ -663,29 +708,37 @@ export default function HRMainDashboard() {
       <DeptMessenger from="hr" mode="drawer" />
 
       {/* Recent Activities & Notices */}
+      {(!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Recent Activities */}
+          {!isHidden('recentActivities') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+              <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
             </CardHeader>
             <CardBody>
               <RecentActivities area="hr" />
             </CardBody>
           </Card>
+          )}
 
           {/* HR Notices */}
+          {!isHidden('notices') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">🔔 HR Notices</h3>
+              <HideCardButton onHide={() => hide('notices')} label="HR Notices" />
             </CardHeader>
             <CardBody>
               <DeptNotices dept="hr" title="" defaultTab="alerts" />
             </CardBody>
           </Card>
+          )}
         </div>
       </div>
+      )}
     </div>
   );
 }

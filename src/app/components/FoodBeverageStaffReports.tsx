@@ -60,7 +60,9 @@ export default function FoodBeverageStaffReports() {
     ]).then(([empData, deptData, posData]) => {
       const allDepartments = deptData.departments || [];
       const positions = posData.positions || [];
-      const fbDepartments = allDepartments.filter((d: any) => /food|beverage|restaurant|bar|kitchen/i.test(d.name || ''));
+      // Kitchen is deliberately excluded — it has its own Staff Management tab
+      // (FoodBeverageKitchen.tsx) now, separate from Restaurant & Bar.
+      const fbDepartments = allDepartments.filter((d: any) => /food|beverage|restaurant|bar/i.test(d.name || '') && !/kitchen/i.test(d.name || ''));
       const fbDeptIds = new Set(fbDepartments.map((d: any) => d.id));
       setDepartments(fbDepartments);
       const deptById = new Map<string, string>(allDepartments.map((d: any) => [d.id, d.name]));

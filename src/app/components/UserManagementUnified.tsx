@@ -25,7 +25,6 @@ import {
   ModalFooter,
   useDisclosure,
   Textarea,
-  Divider,
   Tabs,
   Tab,
   Badge,
@@ -39,7 +38,7 @@ import type { UserPreferences } from '../lib/settings/store';
 import { PERMISSION_MODULES, FULL_SYSTEM_ACCESS } from '../lib/settings/permissionCatalog';
 
 export default function UserManagementUnified() {
-  const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, updateUserSecurity, changePassword, addRole, updateRole, deleteRole, hasPermission } = useSettingsStore();
+  const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, changePassword, addRole, updateRole, deleteRole, hasPermission } = useSettingsStore();
   // Toggling a user's active status and resetting their password are each
   // independently grantable (mirrors the server's per-field check in
   // /api/users/[id] PATCH) — a role can have one without general edit rights.
@@ -61,7 +60,6 @@ export default function UserManagementUnified() {
       }
     } catch {}
   }, []);
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [isRoleModalOpen, setIsRoleModalOpen] = useState(false);
   const [isEditingRole, setIsEditingRole] = useState(false);
   const [selectedRole, setSelectedRole] = useState<{ id: string; name: string; description: string; permissions: string[]; isActive: boolean } | null>(null);
@@ -108,10 +106,6 @@ export default function UserManagementUnified() {
     lastName: currentUser?.lastName || '',
     email: currentUser?.email || '',
     phone: currentUser?.profile?.phone || '',
-    address: currentUser?.profile?.address || '',
-    department: currentUser?.profile?.department || '',
-    position: currentUser?.profile?.position || '',
-    bio: currentUser?.profile?.bio || '',
   });
 
   // Get user preferences from current user, with fallback defaults
@@ -298,51 +292,34 @@ export default function UserManagementUnified() {
     }
   };
 
-  const savePreferences = () => {
-    console.log('🔧 [UserManagementUnified] Saving user preferences:', { 
-      theme: userPreferences.theme,
-      language: userPreferences.language,
-      timezone: userPreferences.timezone,
-      currency: userPreferences.currency 
-    });
-    // Settings are automatically saved via the store
-    // Apply theme immediately
-    applyTheme(userPreferences.theme as AppTheme);
-  };
-
-  const handleSaveProfile = () => {
+  const handleSaveProfile = async () => {
     if (!currentUser) return;
-    console.log('🔧 [UserManagementUnified] Saving profile for current user:', { userId: currentUser.id });
-    updateUser(currentUser.id, {
+    const nameError = await updateUser(currentUser.id, {
       firstName: profileForm.firstName,
       lastName: profileForm.lastName,
       email: profileForm.email,
     });
-    updateUserProfile(currentUser.id, {
+    if (nameError) { window.alert(nameError); return; }
+    const profileError = await updateUserProfile(currentUser.id, {
       phone: profileForm.phone,
-      address: profileForm.address,
-      department: profileForm.department,
-      position: profileForm.position,
-      bio: profileForm.bio,
     });
+    if (profileError) window.alert(profileError);
   };
 
-  const handleToggleTwoFactor = (value: boolean) => {
+  const handleChangePassword = async () => {
     if (!currentUser) return;
-    console.log('🔧 [UserManagementUnified] Toggling 2FA:', { userId: currentUser.id, value });
-    updateUserSecurity(currentUser.id, { twoFactorEnabled: value });
-  };
-
-  const handleChangePassword = () => {
-    if (!currentUser) return;
-    if (!passwordForm.newPassword || passwordForm.newPassword !== passwordForm.confirmPassword) {
-      console.warn('🔧 [UserManagementUnified] Passwords do not match or are empty');
+    if (!passwordForm.currentPassword) {
+      window.alert('Enter your current password.');
       return;
     }
-    console.log('🔧 [UserManagementUnified] Changing password for user:', { userId: currentUser.id });
-    changePassword(currentUser.id, passwordForm.newPassword);
-    setIsChangingPassword(false);
+    if (!passwordForm.newPassword || passwordForm.newPassword !== passwordForm.confirmPassword) {
+      window.alert('New password and confirmation must match.');
+      return;
+    }
+    const error = await changePassword(currentUser.id, passwordForm.currentPassword, passwordForm.newPassword);
+    if (error) { window.alert(error); return; }
     setPasswordForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
+    window.alert('Password changed successfully.');
   };
 
   const updatePreference = (path: string, value: string | boolean | string[]) => {
@@ -376,25 +353,6 @@ export default function UserManagementUnified() {
       console.warn('🔧 [UserManagementUnified] Cannot update preference - no current user');
     }
   };
-
-  const availableQuickActions = [
-    { key: 'new-reservation', label: 'New Reservation', icon: '📅' },
-    { key: 'check-in', label: 'Check-in Guest', icon: '✅' },
-    { key: 'pos-terminal', label: 'POS Terminal', icon: '💳' },
-    { key: 'housekeeping', label: 'Housekeeping', icon: '🧹' },
-    { key: 'security', label: 'Security', icon: '🛡️' },
-    { key: 'reports', label: 'Reports', icon: '📊' },
-    { key: 'settings', label: 'Settings', icon: '⚙️' },
-  ];
-
-  const availableWidgets = [
-    { key: 'recent-activity', label: 'Recent Activity', icon: '📋' },
-    { key: 'quick-stats', label: 'Quick Stats', icon: '📈' },
-    { key: 'calendar', label: 'Calendar', icon: '📅' },
-    { key: 'notifications', label: 'Notifications', icon: '🔔' },
-    { key: 'weather', label: 'Weather', icon: '🌤️' },
-    { key: 'tasks', label: 'Tasks', icon: '✅' },
-  ];
 
   // Calculate metrics for overview
   const totalUsers = users.length;
@@ -717,9 +675,6 @@ export default function UserManagementUnified() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h3 className="text-xl font-semibold text-ghana-black">User Preferences & Settings</h3>
-        <Button color="primary" onPress={savePreferences}>
-          Save Preferences
-        </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -756,24 +711,15 @@ export default function UserManagementUnified() {
               onChange={(e) => setProfileForm({...profileForm, phone: e.target.value})}
               placeholder="Enter phone number"
             />
-            <Input
-              label="Department"
-              value={profileForm.department}
-              onChange={(e) => setProfileForm({...profileForm, department: e.target.value})}
-              placeholder="Enter department"
-            />
-            <Input
-              label="Position"
-              value={profileForm.position}
-              onChange={(e) => setProfileForm({...profileForm, position: e.target.value})}
-              placeholder="Enter position"
-            />
-            <Textarea
-              label="Bio"
-              value={profileForm.bio}
-              onChange={(e) => setProfileForm({...profileForm, bio: e.target.value})}
-              placeholder="Tell us about yourself"
-            />
+            {/* Department/Position are org-chart facts, not personal taste — shown
+                read-only here and editable only by an admin, in the User Management
+                tab's Edit User dialog (same fields, userForm.department/position). */}
+            {(currentUser?.profile?.department || currentUser?.profile?.position) && (
+              <div className="text-sm text-gray-600">
+                {currentUser?.profile?.position || 'No position set'}
+                {currentUser?.profile?.department ? ` · ${currentUser.profile.department}` : ''}
+              </div>
+            )}
             <div className="flex justify-end pt-2">
               <Button color="primary" onPress={handleSaveProfile}>Save Profile</Button>
             </div>
@@ -796,173 +742,42 @@ export default function UserManagementUnified() {
                <SelectItem key="dark">🌙 Dark</SelectItem>
                <SelectItem key="auto">🔄 Auto (System)</SelectItem>
              </Select>
-            
-            <Select
-              label="Language"
-              selectedKeys={[userPreferences.language]}
-              onChange={(e) => updatePreference('language', e.target.value)}
-            >
-              <SelectItem key="en">English</SelectItem>
-              <SelectItem key="tw">Twi</SelectItem>
-              <SelectItem key="ga">Ga</SelectItem>
-            </Select>
-            
-            <Select
-              label="Timezone"
-              selectedKeys={[userPreferences.timezone]}
-              onChange={(e) => updatePreference('timezone', e.target.value)}
-            >
-              <SelectItem key="Africa/Accra">Ghana (GMT+0)</SelectItem>
-              <SelectItem key="UTC">UTC</SelectItem>
-            </Select>
-            
-            <Select
-              label="Currency"
-              selectedKeys={[userPreferences.currency]}
-              onChange={(e) => updatePreference('currency', e.target.value)}
-            >
-              <SelectItem key="GHS">Ghana Cedi (₵)</SelectItem>
-              <SelectItem key="USD">US Dollar ($)</SelectItem>
-              <SelectItem key="EUR">Euro (€)</SelectItem>
-            </Select>
+
           </CardBody>
         </Card>
       </div>
 
-      {/* Notifications */}
-      <Card className="border-0 shadow-lg">
-        <CardHeader>
-          <h4 className="text-lg font-semibold text-ghana-black">🔔 Notification Preferences</h4>
-        </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Email Notifications</span>
-                <Switch 
-                  isSelected={userPreferences.notifications.email}
-                  onValueChange={(value) => updatePreference('notifications.email', value)}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Push Notifications</span>
-                <Switch 
-                  isSelected={userPreferences.notifications.push}
-                  onValueChange={(value) => updatePreference('notifications.push', value)}
-                />
-              </div>
-            </div>
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">SMS Notifications</span>
-                <Switch 
-                  isSelected={userPreferences.notifications.sms}
-                  onValueChange={(value) => updatePreference('notifications.sms', value)}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium">Sound Notifications</span>
-                <Switch 
-                  isSelected={userPreferences.notifications.sound}
-                  onValueChange={(value) => updatePreference('notifications.sound', value)}
-                />
-              </div>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
-
-      {/* Security Settings */}
+      {/* Security Settings — self-service password change only. A 2FA toggle
+          used to live here but was removed: nothing anywhere in the app
+          actually verified a second factor at login, so it did nothing but
+          look like a security control that worked. */}
       <Card className="border-0 shadow-lg">
         <CardHeader>
           <h4 className="text-lg font-semibold text-ghana-black">🛡️ Security</h4>
         </CardHeader>
         <CardBody className="space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-medium">Two-Factor Authentication (2FA)</span>
-            <Switch 
-              isSelected={!!currentUser?.security?.twoFactorEnabled}
-              onValueChange={handleToggleTwoFactor}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Input
+              label="Current Password"
+              type="password"
+              value={passwordForm.currentPassword}
+              onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
+            />
+            <Input
+              label="New Password"
+              type="password"
+              value={passwordForm.newPassword}
+              onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
+            />
+            <Input
+              label="Confirm Password"
+              type="password"
+              value={passwordForm.confirmPassword}
+              onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
             />
           </div>
-          <Divider />
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Input
-                label="Current Password"
-                type="password"
-                value={passwordForm.currentPassword}
-                onChange={(e) => setPasswordForm({ ...passwordForm, currentPassword: e.target.value })}
-              />
-              <Input
-                label="New Password"
-                type="password"
-                value={passwordForm.newPassword}
-                onChange={(e) => setPasswordForm({ ...passwordForm, newPassword: e.target.value })}
-              />
-              <Input
-                label="Confirm Password"
-                type="password"
-                value={passwordForm.confirmPassword}
-                onChange={(e) => setPasswordForm({ ...passwordForm, confirmPassword: e.target.value })}
-              />
-            </div>
-            <div className="flex justify-end">
-              <Button color="primary" onPress={handleChangePassword}>Change Password</Button>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
-
-      {/* Dashboard Customization */}
-      <Card className="border-0 shadow-lg">
-        <CardHeader>
-          <h4 className="text-lg font-semibold text-ghana-black">📊 Dashboard Customization</h4>
-        </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <h5 className="text-md font-medium mb-3">Quick Actions</h5>
-              <div className="space-y-2">
-                {availableQuickActions.map((action) => (
-                  <div key={action.key} className="flex items-center space-x-2">
-                    <Switch 
-                      isSelected={userPreferences.dashboard.quickActions.includes(action.key)}
-                      onValueChange={(value) => {
-                        const current = userPreferences.dashboard.quickActions;
-                        if (value) {
-                          updatePreference('dashboard.quickActions', [...current, action.key]);
-                        } else {
-                          updatePreference('dashboard.quickActions', current.filter(k => k !== action.key));
-                        }
-                      }}
-                    />
-                    <span className="text-sm">{action.icon} {action.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div>
-              <h5 className="text-md font-medium mb-3">Dashboard Widgets</h5>
-              <div className="space-y-2">
-                {availableWidgets.map((widget) => (
-                  <div key={widget.key} className="flex items-center space-x-2">
-                    <Switch 
-                      isSelected={userPreferences.dashboard.widgets.includes(widget.key)}
-                      onValueChange={(value) => {
-                        const current = userPreferences.dashboard.widgets;
-                        if (value) {
-                          updatePreference('dashboard.widgets', [...current, widget.key]);
-                        } else {
-                          updatePreference('dashboard.widgets', current.filter(k => k !== widget.key));
-                        }
-                      }}
-                    />
-                    <span className="text-sm">{widget.icon} {widget.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
+          <div className="flex justify-end">
+            <Button color="primary" onPress={handleChangePassword}>Change Password</Button>
           </div>
         </CardBody>
       </Card>

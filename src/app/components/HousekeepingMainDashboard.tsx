@@ -23,6 +23,20 @@ import OfflineIndicator from './OfflineIndicator';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
+import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+
+// Hideable summary/widget cards on this dashboard — the "Operations Overview"
+// tabs are core navigation, not clutter, so they're deliberately not included.
+const HOUSEKEEPING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'availableRooms', label: 'Available Rooms' },
+  { id: 'occupiedRooms', label: 'Occupied Rooms' },
+  { id: 'maintenance', label: 'Maintenance & Cleaning' },
+  { id: 'todayOps', label: "Today's Operations" },
+  { id: 'quickActions', label: 'Quick Actions' },
+  { id: 'recentActivities', label: 'Recent Activities' },
+  { id: 'notices', label: 'Housekeeping Notices' },
+];
 
 // Import specialized components
 import RoomStatusGrid from './housekeeping/RoomStatusGrid';
@@ -86,7 +100,9 @@ export default function HousekeepingMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const searchParams = useSearchParams();
   const router = useRouter();
-  
+
+  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.housekeeping', HOUSEKEEPING_DASHBOARD_SECTIONS);
+
   // Get stores
   const settings = useSettingsStore();
   const reservations = frontOfficeStore.reservations;
@@ -287,7 +303,16 @@ export default function HousekeepingMainDashboard() {
       <DeptMessenger from="housekeeping" mode="drawer" />
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🛏️ Housekeeping & Maintenance Operations</h2>
-        <OfflineIndicator />
+        <div className="flex items-center gap-2">
+          <CustomizeViewControl
+            sections={HOUSEKEEPING_DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggleSection}
+            showAll={showAll}
+            hiddenCount={hiddenCount}
+          />
+          <OfflineIndicator />
+        </div>
       </div>
 
       {/* Room Status Overview - Following Front Desk Pattern */}
@@ -297,15 +322,20 @@ export default function HousekeepingMainDashboard() {
             🏠 Room Status Overview ({totalRooms} Rooms)
           </h3>
         </div>
-        
+
         {/* Status Cards - Matching Front Desk Design */}
+        {(!isHidden('availableRooms') || !isHidden('occupiedRooms') || !isHidden('maintenance')) && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           {/* Available Rooms */}
+          {!isHidden('availableRooms') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Available Rooms</h4>
-                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('availableRooms')} label="Available Rooms" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-green-600 mb-3">{availableRooms}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -324,13 +354,18 @@ export default function HousekeepingMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Occupied Rooms */}
+          {!isHidden('occupiedRooms') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-red-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Occupied Rooms</h4>
-                <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-red-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('occupiedRooms')} label="Occupied Rooms" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-red-600 mb-3">{occupiedRooms}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -349,13 +384,18 @@ export default function HousekeepingMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Maintenance & Cleaning */}
+          {!isHidden('maintenance') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-yellow-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Maintenance & Cleaning</h4>
-                <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('maintenance')} label="Maintenance & Cleaning" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-yellow-600 mb-3">{maintenanceRooms + dirtyRooms}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -374,9 +414,12 @@ export default function HousekeepingMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
         </div>
+        )}
 
         {/* Today's Operations - Matching Front Desk */}
+        {!isHidden('todayOps') && (
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -398,24 +441,30 @@ export default function HousekeepingMainDashboard() {
               </div>
             </div>
           </div>
-          <Button 
-            color="success" 
-            variant="solid"
-            className="bg-green-600 hover:bg-green-700"
-            onClick={() => setSelectedTab('rooms')}
-          >
-            🏢 View Full Status
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              color="success"
+              variant="solid"
+              className="bg-green-600 hover:bg-green-700"
+              onClick={() => setSelectedTab('rooms')}
+            >
+              🏢 View Full Status
+            </Button>
+            <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
+          </div>
         </div>
+        )}
       </div>
 
       {/* Quick Actions */}
+      {!isHidden('quickActions') && (
       <Card className="border-0 shadow-lg mb-6">
-        <CardHeader className="pb-3">
+        <CardHeader className="pb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-xl">🚀</span>
             <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
           </div>
+          <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
         </CardHeader>
         <CardBody>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -435,10 +484,7 @@ export default function HousekeepingMainDashboard() {
           </div>
         </CardBody>
       </Card>
-
-      
-
-
+      )}
 
       {/* Main Operations Interface - Following Front Desk Pattern */}
       <Card className="border-0 shadow-lg">
@@ -636,22 +682,34 @@ export default function HousekeepingMainDashboard() {
       </Card>
 
       {/* Bottom section: directly under Operations Overview */}
+      {(!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {!isHidden('recentActivities') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3"><h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3></CardHeader>
+            <CardHeader className="pb-3 flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+              <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
+            </CardHeader>
             <CardBody>
               <RecentActivities area="housekeeping" />
             </CardBody>
           </Card>
+          )}
+          {!isHidden('notices') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3"><h3 className="text-xl font-semibold text-ghana-black">🔔 Housekeeping Notices</h3></CardHeader>
+            <CardHeader className="pb-3 flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-ghana-black">🔔 Housekeeping Notices</h3>
+              <HideCardButton onHide={() => hide('notices')} label="Housekeeping Notices" />
+            </CardHeader>
             <CardBody>
               <DeptNotices dept="housekeeping" title="" defaultTab="alerts" />
             </CardBody>
           </Card>
+          )}
         </div>
       </div>
+      )}
     </div>
   );
 }

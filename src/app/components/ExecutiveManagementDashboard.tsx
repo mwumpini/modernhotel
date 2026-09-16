@@ -18,7 +18,28 @@ import OfflineIndicator from './OfflineIndicator';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import DeptNotices from './DeptNotices';
+import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 // Removed broadcast/mentions sidebar; bottom notices cover communication needs
+
+// The full set of hideable cards on this dashboard — used both to render the
+// ✕ hide button on each card and to populate the "Customize View" restore
+// panel. Kept as a module-level constant (not recreated per render) since
+// useDashboardVisibility only reads it once on mount.
+const DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'liveOps', label: 'Live Operations' },
+  { id: 'security', label: 'Security & Safety' },
+  { id: 'housekeeping', label: 'Housekeeping Status' },
+  { id: 'events', label: 'Conferences & Events' },
+  { id: 'financial', label: "Today's Financial Pulse" },
+  { id: 'alerts', label: 'System Alerts' },
+  { id: 'trend', label: '7-Day Occupancy Trend' },
+  { id: 'fbKitchen', label: 'F&B and Kitchen Efficiency' },
+  { id: 'stock', label: 'Critical Stock Levels' },
+  { id: 'recentActivities', label: 'Recent Activities' },
+  { id: 'notices', label: 'Executive Notices' },
+];
+
 
 function formatCurrency(amount: number | undefined) {
   if (!amount || Number.isNaN(amount)) return '₵0';
@@ -40,6 +61,8 @@ export default function ExecutiveManagementDashboard() {
   // into a self-sustaining loop of report/analytics recalculation.
   const calculateOccupancyAnalytics = useAnalyticsStore((s) => s.calculateOccupancyAnalytics);
   const generateDailyFlashReport = useReportingStore((s) => s.generateDailyFlashReport);
+
+  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.executive', DASHBOARD_SECTIONS);
 
   // IMPORTANT: Keep initial render deterministic across server and client
   const [occupancy, setOccupancy] = React.useState<ReturnType<typeof calculateOccupancyAnalytics> | null>(null);
@@ -373,6 +396,13 @@ export default function ExecutiveManagementDashboard() {
           <Button size="sm" variant="flat" onPress={() => { const d = new Date(); d.setDate(d.getDate() - 1); const iso = d.toISOString().split('T')[0]; setSelectedDate(iso); refreshForDate(iso); }}>Yesterday</Button>
           <Button size="sm" variant="flat" onPress={handleExportCSV}>Export CSV</Button>
           <Button size="sm" variant="flat" onPress={handleExportPDF}>Export PDF</Button>
+          <CustomizeViewControl
+            sections={DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggleSection}
+            showAll={showAll}
+            hiddenCount={hiddenCount}
+          />
           <OfflineIndicator />
         </div>
       </div>
@@ -380,8 +410,12 @@ export default function ExecutiveManagementDashboard() {
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* Left Sidebar - Live Operations & Safety */}
         <aside className="xl:col-span-1 space-y-6">
+          {!isHidden('liveOps') && (
           <Card className="border-0 shadow-md">
-            <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">Live Operations</h3></CardHeader>
+            <CardHeader className="pb-1 flex items-center justify-between">
+              <h3 className="font-semibold text-ghana-black">Live Operations</h3>
+              <HideCardButton onHide={() => hide('liveOps')} label="Live Operations" />
+            </CardHeader>
             <CardBody className="pt-2 space-y-3">
               <button onClick={() => go('/housekeeping')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
                 <span>In-House Guests</span><span className="font-semibold">{inHouse}</span>
@@ -398,9 +432,14 @@ export default function ExecutiveManagementDashboard() {
               <div className="flex justify-between text-xs text-gray-600"><span>Next Hour</span><span>{nextHourCheckins} Check-ins • {nextHourCheckouts} Check-outs</span></div>
             </CardBody>
           </Card>
+          )}
 
+          {!isHidden('security') && (
           <Card className="border-0 shadow-md">
-            <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">Security & Safety</h3></CardHeader>
+            <CardHeader className="pb-1 flex items-center justify-between">
+              <h3 className="font-semibold text-ghana-black">Security & Safety</h3>
+              <HideCardButton onHide={() => hide('security')} label="Security & Safety" />
+            </CardHeader>
             <CardBody className="pt-2 space-y-2 text-sm">
               <div className="flex justify-between"><span>Incident Log</span><span className="font-semibold">[{incidentsToday}]</span></div>
               <div className="flex justify-between"><span>Security Checks</span><span className="font-semibold">{securityRoundsComplete ? 'All completed' : 'Pending'}</span></div>
@@ -408,9 +447,14 @@ export default function ExecutiveManagementDashboard() {
               <div className="flex justify-between"><span>Fire Panel</span><span className="font-semibold">Normal</span></div>
             </CardBody>
           </Card>
+          )}
 
+          {!isHidden('housekeeping') && (
           <Card className="border-0 shadow-md">
-            <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">Housekeeping Status</h3></CardHeader>
+            <CardHeader className="pb-1 flex items-center justify-between">
+              <h3 className="font-semibold text-ghana-black">Housekeeping Status</h3>
+              <HideCardButton onHide={() => hide('housekeeping')} label="Housekeeping Status" />
+            </CardHeader>
             <CardBody className="pt-2 space-y-3 text-sm">
               <div className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
                 <div className="flex justify-between"><span>Clean/Ready</span><span className="font-semibold">{Math.round(hkCleanReadyPct)}%</span></div>
@@ -430,10 +474,15 @@ export default function ExecutiveManagementDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Conferences & Events - live from announcements */}
+          {!isHidden('events') && (
           <Card className="border-0 shadow-md">
-            <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">Conferences & Events</h3></CardHeader>
+            <CardHeader className="pb-1 flex items-center justify-between">
+              <h3 className="font-semibold text-ghana-black">Conferences & Events</h3>
+              <HideCardButton onHide={() => hide('events')} label="Conferences & Events" />
+            </CardHeader>
             <CardBody className="pt-2 space-y-2 text-sm">
               {eventsList.length === 0 && (
                 <div className="p-3 bg-gray-50 border border-gray-200 rounded text-left">No events today</div>
@@ -443,12 +492,17 @@ export default function ExecutiveManagementDashboard() {
               ))}
             </CardBody>
           </Card>
+          )}
         </aside>
 
         {/* Center - Financial, Alerts, Trends, F&B/Kitchen, Stocks, Events */}
         <section className="xl:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+          {!isHidden('financial') && (
           <Card className="border-0 shadow-lg md:col-span-2">
-            <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">Today's Financial Pulse</h3></CardHeader>
+            <CardHeader className="pb-1 flex items-center justify-between">
+              <h3 className="font-semibold text-ghana-black">Today's Financial Pulse</h3>
+              <HideCardButton onHide={() => hide('financial')} label="Today's Financial Pulse" />
+            </CardHeader>
             <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="p-4 bg-gray-50 rounded-lg">
                 <div className="text-xs text-gray-600">REVENUE (Posted to GL)</div>
@@ -474,10 +528,15 @@ export default function ExecutiveManagementDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
 			{/* System Alerts - functional */}
+			{!isHidden('alerts') && (
 			<Card className="border-0 shadow-md md:col-span-2">
-            <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">System Alerts</h3></CardHeader>
+            <CardHeader className="pb-1 flex items-center justify-between">
+              <h3 className="font-semibold text-ghana-black">System Alerts</h3>
+              <HideCardButton onHide={() => hide('alerts')} label="System Alerts" />
+            </CardHeader>
             <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
               {!mounted ? (
                 <>
@@ -520,10 +579,15 @@ export default function ExecutiveManagementDashboard() {
               )}
             </CardBody>
           </Card>
+          )}
 
           {/* Trends */}
+          {!isHidden('trend') && (
           <Card className="border-0 shadow-md">
-            <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">7-Day Occupancy Trend</h3></CardHeader>
+            <CardHeader className="pb-1 flex items-center justify-between">
+              <h3 className="font-semibold text-ghana-black">7-Day Occupancy Trend</h3>
+              <HideCardButton onHide={() => hide('trend')} label="7-Day Occupancy Trend" />
+            </CardHeader>
             <CardBody className="pt-2">
               {!mounted ? (
                 <div className="h-28 bg-gray-50 rounded animate-pulse" />
@@ -562,10 +626,15 @@ export default function ExecutiveManagementDashboard() {
               )}
             </CardBody>
           </Card>
+          )}
 
           {/* F&B and Kitchen Efficiency */}
+          {!isHidden('fbKitchen') && (
           <Card className="border-0 shadow-md">
-            <CardHeader className="pb-1"><h3 className="font-semibold text-ghana-black">F&B and Kitchen Efficiency</h3></CardHeader>
+            <CardHeader className="pb-1 flex items-center justify-between">
+              <h3 className="font-semibold text-ghana-black">F&B and Kitchen Efficiency</h3>
+              <HideCardButton onHide={() => hide('fbKitchen')} label="F&B and Kitchen Efficiency" />
+            </CardHeader>
             <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
               <div className="p-3 bg-gray-50 rounded-lg">
                 <div className="font-semibold mb-2">Restaurant/Bar</div>
@@ -584,12 +653,17 @@ export default function ExecutiveManagementDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Stocks & Inventory - functional */}
+          {!isHidden('stock') && (
           <Card className="border-0 shadow-md md:col-span-2">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">Critical Stock Levels</h3>
-              <div className="text-xs text-gray-500">Low stock %: {useStockStore.getState().getLowStockPercentage().toFixed(0)}%</div>
+              <div className="flex items-center gap-3">
+                <div className="text-xs text-gray-500">Low stock %: {useStockStore.getState().getLowStockPercentage().toFixed(0)}%</div>
+                <HideCardButton onHide={() => hide('stock')} label="Critical Stock Levels" />
+              </div>
             </CardHeader>
             <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div>
@@ -635,8 +709,7 @@ export default function ExecutiveManagementDashboard() {
               </div>
             </CardBody>
           </Card>
-
-          
+          )}
 
           {/* Recent Activity card removed to avoid duplication; see bottom section */}
         </section>
@@ -649,26 +722,34 @@ export default function ExecutiveManagementDashboard() {
       <div className="fixed bottom-6 left-6 text-xs text-gray-500 bg-white/60 backdrop-blur px-2 py-1 rounded shadow">Press Ctrl+M to open Messenger</div>
 
       {/* Recent Activities & Notices - bottom section */}
+      {(!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {!isHidden('recentActivities') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+              <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
             </CardHeader>
             <CardBody>
               <RecentActivities area="system" limit={10} />
             </CardBody>
           </Card>
+          )}
+          {!isHidden('notices') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">🔔 Executive Notices</h3>
+              <HideCardButton onHide={() => hide('notices')} label="Executive Notices" />
             </CardHeader>
             <CardBody>
               <DeptNotices dept="gm" title="" defaultTab="alerts" />
             </CardBody>
           </Card>
+          )}
         </div>
       </div>
+      )}
     </div>
   );
 }

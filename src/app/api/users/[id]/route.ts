@@ -11,6 +11,8 @@ const USER_SELECT = {
   role: true,
   isActive: true,
   lastLoginAt: true,
+  profile: true,
+  preferences: true,
   createdAt: true,
   updatedAt: true,
 } as const
@@ -29,6 +31,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!target) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
     const body = await request.json()
+    const sessionUserId = (auth.session as any).user?.id
+    const isSelf = sessionUserId === id
 
     // Gated per field rather than one blanket permission: activating/deactivating
     // and resetting a password are each independently grantable
@@ -44,9 +48,32 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       const perm = await requireAnyPermission(request, ['settings.edit', 'settings.toggle-user-status'])
       if (!perm.ok) return perm.response
     }
-    if (typeof body.password === 'string' && body.password) {
-      const perm = await requireAnyPermission(request, ['settings.edit', 'settings.reset-password'])
+    // Editing your OWN phone/theme needs no extra permission beyond being
+    // authenticated as that user; an admin setting someone ELSE's needs the
+    // same settings.edit as any other profile field.
+    if ((body.profile || body.preferences) && !isSelf) {
+      const perm = await requirePermission(request, 'settings.edit')
       if (!perm.ok) return perm.response
+    }
+    if (typeof body.password === 'string' && body.password) {
+      // Branch on whether the request actually proves identity via a current
+      // password, not on the caller's permission level — an admin has
+      // settings.edit/reset-password too, but that must NOT let them skip
+      // this check when it's THEM using the self-service Preferences screen
+      // (which always sends currentPassword) rather than the User Management
+      // table's admin-reset dialog (which never does).
+      if (typeof body.currentPassword === 'string') {
+        if (!isSelf || !target.password || !(await bcrypt.compare(body.currentPassword, target.password))) {
+          return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
+        }
+      } else {
+        // No currentPassword sent — only the admin-reset path (resetting
+        // someone else's password, or an admin resetting their own via the
+        // User Management table) reaches here, and that still needs the
+        // permission it always did.
+        const perm = await requireAnyPermission(request, ['settings.edit', 'settings.reset-password'])
+        if (!perm.ok) return perm.response
+      }
     }
 
     const data: Record<string, unknown> = {}
@@ -59,6 +86,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
       }
       data.password = await bcrypt.hash(body.password, 10)
+    }
+    if (body.profile && typeof body.profile === 'object') {
+      const existingProfile = (target.profile as Record<string, unknown>) || {}
+      data.profile = { ...existingProfile, ...body.profile }
+    }
+    if (body.preferences && typeof body.preferences === 'object') {
+      const existingPreferences = (target.preferences as Record<string, unknown>) || {}
+      data.preferences = { ...existingPreferences, ...body.preferences }
     }
 
     // Reassigning away from 'admin' or deactivating could strip the tenant's
@@ -83,7 +118,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       })
     if (!user) return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 })
 
-    const sessionUserId = (auth.session as any).user?.id
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'USER_UPDATED', 'User', id, undefined, { email: user.email, role: user.role, isActive: user.isActive }, request)
     return NextResponse.json({ user })
   } catch (error) {

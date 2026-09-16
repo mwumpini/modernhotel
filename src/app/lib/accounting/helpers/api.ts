@@ -12,10 +12,22 @@ import { JournalEntry, Invoice, Payment, ChartOfAccounts, BankAccount, CostCente
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
-function enqueue(fn: () => Promise<unknown>) {
+// Returns the per-call promise (not just the shared queue) so a caller that
+// needs to know the outcome of THIS specific write — e.g. whether a post
+// actually landed as 'Posted' or was downgraded to 'Pending Approval' — can
+// await it. The shared `writeQueue` chain still absorbs failures (via the
+// trailing .then(ok, err) below) so one failed write never blocks writes
+// queued after it; the raw `result` returned to the caller still rejects on
+// failure so they can handle it themselves.
+function enqueue<T>(fn: () => Promise<T>): Promise<T> {
   const t = getClientTenantSubdomain();
-  if (typeof window === 'undefined' || !t) return;
-  writeQueue = writeQueue.then(fn).catch(e => console.warn('Accounting: persist failed', e));
+  if (typeof window === 'undefined' || !t) return Promise.reject(new Error('No tenant context'));
+  const result = writeQueue.then(fn);
+  writeQueue = result.then(
+    () => undefined,
+    (e) => { console.warn('Accounting: persist failed', e); },
+  );
+  return result;
 }
 
 const headers = (t: string) => ({
@@ -36,19 +48,29 @@ export function persistJournalEntry(entry: JournalEntry) {
   });
 }
 
+/**
+ * Returns the server's actual resulting entry once the PATCH lands (or null
+ * if the tenant context is missing) — the server may silently downgrade a
+ * 'Posted' request to 'Pending Approval' (see approvalThresholds.ts), so a
+ * caller that applied 'Posted' optimistically must await this and check the
+ * real status before treating the post as genuine (e.g. before applying GL
+ * balance changes) — see postJournalEntry in ../store.ts.
+ */
 export function persistJournalEntryStatus(
   id: string,
   patch: { status?: string; postedBy?: string; postedAt?: string },
-) {
+): Promise<{ status: string } | null> {
   const t = getClientTenantSubdomain();
-  if (!t) return;
-  enqueue(async () => {
+  if (!t) return Promise.resolve(null);
+  return enqueue(async () => {
     const res = await fetch(`/api/accounting/journal-entries/${id}`, {
       method: 'PATCH',
       headers: headers(t),
       body: JSON.stringify(patch),
     });
     if (!res.ok) throw new Error('PATCH journal entry failed');
+    const data = await res.json().catch(() => null);
+    return data?.journalEntry ?? null;
   });
 }
 
@@ -139,16 +161,28 @@ export function persistPayment(payment: Payment) {
   });
 }
 
-export function persistPaymentPatch(id: string, patch: Partial<Payment>) {
+/**
+ * Returns the server's actual resulting payment once the PATCH lands (or null
+ * if the tenant context is missing) — the server may silently downgrade a
+ * 'Posted' request to 'Pending Approval' (see approvalThresholds.ts); see
+ * persistJournalEntryStatus above for why a caller must await this before
+ * treating the post as genuine (e.g. before syncing to the ledger).
+ */
+export function persistPaymentPatch(
+  id: string,
+  patch: Partial<Payment>,
+): Promise<{ status: string } | null> {
   const t = getClientTenantSubdomain();
-  if (!t) return;
-  enqueue(async () => {
+  if (!t) return Promise.resolve(null);
+  return enqueue(async () => {
     const res = await fetch(`/api/accounting/payments/${id}`, {
       method: 'PATCH',
       headers: headers(t),
       body: JSON.stringify(patch),
     });
     if (!res.ok) throw new Error('PATCH payment failed');
+    const data = await res.json().catch(() => null);
+    return data?.payment ?? null;
   });
 }
 

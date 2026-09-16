@@ -166,6 +166,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'inventory.approve-po', label: 'Approve/reject a purchase order' },
       { id: 'inventory.create-requisition', label: 'Create a requisition' },
       { id: 'inventory.approve-requisition', label: 'Approve/reject a requisition, and mark it ready for pickup' },
+      { id: 'inventory.approve-high-value-requisition', label: 'Approve/reject a requisition at or above the director approval threshold' },
       { id: 'inventory.edit-processed-requisition', label: 'Edit or delete a requisition Stores has already acted on' },
       { id: 'inventory.receive-goods', label: 'Receive goods against a PO' },
       { id: 'inventory.quality-check', label: 'Perform a quality check' },
@@ -223,6 +224,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     extra: [
       { id: 'accounting.post-journal-entry', label: 'Post a journal entry' },
       { id: 'accounting.approve-journal-entry', label: 'Approve/reverse a journal entry' },
+      { id: 'accounting.approve-payment', label: 'Approve a payment at or above the director approval threshold' },
       { id: 'accounting.manage-ap', label: 'Record a supplier invoice/payment (AP)' },
       { id: 'accounting.manage-ar', label: 'Record a customer invoice/receipt (AR)' },
       { id: 'accounting.void-transaction', label: 'Void an invoice or receipt' },
@@ -265,6 +267,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'settings.manage-rooms-pricing', label: 'Configure room types, rate plans & seasonal rates' },
       { id: 'settings.manage-security-policy', label: 'Configure security policy (2FA, session timeout, passwords)' },
       { id: 'settings.view-audit-log', label: 'View the system audit log (logins & actions)' },
+      { id: 'settings.manage-approval-thresholds', label: 'Configure director-approval thresholds for expenses, purchase orders & payments' },
     ],
   },
 ];

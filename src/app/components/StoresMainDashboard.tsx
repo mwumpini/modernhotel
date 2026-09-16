@@ -23,6 +23,20 @@ import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
+import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+
+// Hideable summary/widget cards on this dashboard — the "Operations Overview"
+// tabs are core navigation, not clutter, so they're deliberately not included.
+const STORES_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'stockLevels', label: 'Stock Levels' },
+  { id: 'inventoryValue', label: 'Inventory Value' },
+  { id: 'purchaseOrders', label: 'Purchase Orders' },
+  { id: 'todayOps', label: "Today's Operations" },
+  { id: 'quickActions', label: 'Quick Actions' },
+  { id: 'recentActivities', label: 'Recent Activities' },
+  { id: 'notices', label: 'Inventory Notices' },
+];
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {
@@ -78,6 +92,8 @@ const InfoIcon = ({ description }: { description: string }) => {
 export default function StoresMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const router = useRouter();
+
+  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.stores', STORES_DASHBOARD_SECTIONS);
 
   // Real data — hydrated from the DB on mount below. These stores already power
   // InventorySupplyChainDashboard.tsx; this landing page just reads the same state.
@@ -270,6 +286,13 @@ export default function StoresMainDashboard() {
         <div className="flex items-center gap-2">
           <Badge color="success" variant="flat">Reorder System</Badge>
           <Badge color="primary" variant="flat">Suppliers Active</Badge>
+          <CustomizeViewControl
+            sections={STORES_DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggleSection}
+            showAll={showAll}
+            hiddenCount={hiddenCount}
+          />
         </div>
       </div>
 
@@ -280,15 +303,20 @@ export default function StoresMainDashboard() {
             📊 Inventory Status Overview ({totalItems} Total Items)
           </h3>
         </div>
-        
+
         {/* Status Cards - Matching Uniform Design */}
+        {(!isHidden('stockLevels') || !isHidden('inventoryValue') || !isHidden('purchaseOrders')) && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           {/* Stock Levels */}
+          {!isHidden('stockLevels') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Stock Levels</h4>
-                <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('stockLevels')} label="Stock Levels" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-green-600 mb-3">{totalItems - lowStockItems - outOfStockItems}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -307,13 +335,18 @@ export default function StoresMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Inventory Value */}
+          {!isHidden('inventoryValue') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-blue-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Inventory Value</h4>
-                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('inventoryValue')} label="Inventory Value" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-blue-600 mb-3">₵{(totalInventoryValue / 1000).toFixed(0)}K</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -332,13 +365,18 @@ export default function StoresMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
 
           {/* Purchase Orders */}
+          {!isHidden('purchaseOrders') && (
           <Card className="border-0 shadow-lg border-l-4 border-l-orange-500">
             <CardBody className="p-4">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-lg font-semibold text-ghana-black">Purchase Orders</h4>
-                <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
+                <div className="flex items-center gap-2">
+                  <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
+                  <HideCardButton onHide={() => hide('purchaseOrders')} label="Purchase Orders" />
+                </div>
               </div>
               <div className="text-3xl font-bold text-orange-600 mb-3">{totalPurchaseOrders}</div>
               <div className="space-y-1 text-sm text-gray-600">
@@ -357,9 +395,12 @@ export default function StoresMainDashboard() {
               </div>
             </CardBody>
           </Card>
+          )}
         </div>
+        )}
 
         {/* Today's Operations - Matching Uniform Pattern */}
+        {!isHidden('todayOps') && (
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="flex items-center gap-2">
@@ -381,24 +422,30 @@ export default function StoresMainDashboard() {
               </div>
             </div>
           </div>
-          <Button 
-            color="success" 
-            variant="solid"
-            className="bg-green-600 hover:bg-green-700"
-            onClick={() => setSelectedTab('inventory')}
-          >
-            📦 Manage Inventory
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              color="success"
+              variant="solid"
+              className="bg-green-600 hover:bg-green-700"
+              onClick={() => setSelectedTab('inventory')}
+            >
+              📦 Manage Inventory
+            </Button>
+            <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
+          </div>
         </div>
+        )}
       </div>
 
       {/* Quick Actions */}
+      {!isHidden('quickActions') && (
       <Card className="border-0 shadow-lg mb-6">
-        <CardHeader className="pb-3">
+        <CardHeader className="pb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="text-xl">🚀</span>
             <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
           </div>
+          <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
         </CardHeader>
         <CardBody>
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
@@ -418,10 +465,7 @@ export default function StoresMainDashboard() {
           </div>
         </CardBody>
       </Card>
-
-      
-
-
+      )}
 
       {/* Main Operations Interface - Following Uniform Pattern */}
       <Card className="border-0 shadow-lg">
@@ -500,29 +544,37 @@ export default function StoresMainDashboard() {
       </Card>
 
       {/* Recent Activities & Notices - directly under Operations Overview */}
+      {(!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Recent Activities */}
+          {!isHidden('recentActivities') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+              <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
             </CardHeader>
             <CardBody>
               <RecentActivities area="inventory" />
             </CardBody>
           </Card>
+          )}
 
           {/* Inventory Notices */}
+          {!isHidden('notices') && (
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 flex items-center justify-between">
               <h3 className="text-xl font-semibold text-ghana-black">🔔 Inventory Notices</h3>
+              <HideCardButton onHide={() => hide('notices')} label="Inventory Notices" />
             </CardHeader>
             <CardBody>
               <DeptNotices dept="inventory" title="" defaultTab="alerts" />
             </CardBody>
           </Card>
+          )}
         </div>
       </div>
+      )}
     </div>
   );
 }

@@ -135,6 +135,11 @@ model User {
   permissions Json      @default("[]")
   isActive    Boolean   @default(true)
   lastLoginAt DateTime?
+  // Self-service profile/preferences — { phone } and { theme } respectively.
+  // Deliberately not normalized columns: small, user-editable, no relational
+  // queries against them, same reasoning as Guest.details/Supplier.details.
+  profile     Json?
+  preferences Json?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

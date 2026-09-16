@@ -38,6 +38,16 @@ export default function Home() {
   // with no local record at all).
   const [localPersistedComplete] = React.useState(readLocalSetupCompleted);
 
+  // getServerSession() at SSR time and the client's own useSession() can
+  // resolve `status` differently for the same request (cookie/edge timing),
+  // which made the branch below render different trees server- vs
+  // client-side — a hydration mismatch. Not evaluating that branch until
+  // after the client has actually mounted guarantees the first client render
+  // always matches the SSR output (both show the spinner); the real
+  // session-aware render only happens on the second, purely-client pass.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => { setMounted(true); }, []);
+
   // Keep the settings store's RBAC engine pointed at the real logged-in user's
   // role from the NextAuth session, not a disconnected local "current user".
   React.useEffect(() => {
@@ -60,7 +70,7 @@ export default function Home() {
   // the real, shared answer is known.
   const awaitingSetupCheck = status === 'authenticated' && !initialSetupCompleted && !localPersistedComplete && !setupStatusChecked;
 
-  if (status === 'loading' || awaitingSetupCheck) {
+  if (!mounted || status === 'loading' || awaitingSetupCheck) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <Spinner size="lg" />

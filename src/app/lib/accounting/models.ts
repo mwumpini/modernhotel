@@ -48,7 +48,7 @@ export interface JournalEntry {
   totalCredit: number;
   currency: string;
   exchangeRate?: number;
-  status: 'Draft' | 'Posted' | 'Void';
+  status: 'Draft' | 'Posted' | 'Void' | 'Pending Approval';
   postedBy?: string;
   postedAt?: string;
   createdAt: string;
@@ -308,7 +308,7 @@ export interface Payment {
   paymentMethod: 'Cash' | 'Bank' | 'Check' | 'Card' | 'Mobile Money' | 'WHT Certificate';
   bankAccountId?: string;
   checkNumber?: string;
-  status: 'Draft' | 'Posted' | 'Void';
+  status: 'Draft' | 'Posted' | 'Void' | 'Pending Approval';
   journalEntryId?: string;
   /** Originating module (manual_ar_ap, restaurant, integration_extended_*, etc.) */
   sourceModule?: string;

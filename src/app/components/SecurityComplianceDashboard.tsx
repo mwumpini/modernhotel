@@ -18,12 +18,46 @@ import { usePatrolRouteStore } from '../lib/security/patrolRouteStore';
 import { useShiftStore } from '../lib/security/shiftStore';
 import { SecurityIncident, Visitor } from '../lib/security/models';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
+import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import type { DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+
+// Hideable summary cards for the whole Security module — the Overview tab's
+// own cards, plus (shared with SecurityMainDashboard.tsx, which renders this
+// component and owns the single useDashboardVisibility call, passed down as
+// props) the bottom Recent Activities/Notices cards that live outside this
+// component. Both sets of cards share one list and one "Customize View"
+// control (rendered here) so hiding/restoring either works from one place.
+// The other tabs here (Incident Management, Visitor Management, etc.) are
+// core navigation, not clutter, so they're deliberately not included.
+export const SECURITY_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'totalIncidents', label: 'Total Incidents' },
+  { id: 'criticalIssues', label: 'Critical Issues' },
+  { id: 'currentVisitors', label: 'Current Visitors' },
+  { id: 'quickActions', label: 'Quick Actions' },
+  { id: 'recentActivities', label: 'Recent Activities' },
+  { id: 'notices', label: 'Security Notices' },
+];
 
 function securityHeaders(): HeadersInit {
   return { 'x-tenant-subdomain': getClientTenantSubdomain() };
 }
 
-export default function SecurityComplianceDashboard() {
+/**
+ * Visibility props are passed down from SecurityMainDashboard (the only
+ * renderer of this component) rather than this component calling its own
+ * useDashboardVisibility — two independent hook instances sharing one
+ * storage key would each keep a stale local copy of the other's writes,
+ * since neither instance's toggle/hide re-renders the other's component.
+ */
+interface SecurityComplianceDashboardProps {
+  isHidden: (id: string) => boolean;
+  hide: (id: string) => void;
+  toggle: (id: string) => void;
+  showAll: () => void;
+  hiddenCount: number;
+}
+
+export default function SecurityComplianceDashboard({ isHidden, hide, toggle, showAll, hiddenCount }: SecurityComplianceDashboardProps) {
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
   const currentUserId = (session?.user as any)?.id as string | undefined;
@@ -254,7 +288,9 @@ export default function SecurityComplianceDashboard() {
 
   const renderOverview = () => (
     <div className="space-y-6">
+      {(!isHidden('totalIncidents') || !isHidden('criticalIssues') || !isHidden('currentVisitors')) && (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {!isHidden('totalIncidents') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-6">
             <div className="flex items-center justify-between">
@@ -263,11 +299,16 @@ export default function SecurityComplianceDashboard() {
                 <p className="text-2xl font-bold text-ghana-black">{totalIncidents}</p>
                 <p className="text-sm text-orange-600">{openIncidents} open</p>
               </div>
-              <div className="text-3xl">🚨</div>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('totalIncidents')} label="Total Incidents" />
+                <div className="text-3xl">🚨</div>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
 
+        {!isHidden('criticalIssues') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-6">
             <div className="flex items-center justify-between">
@@ -276,11 +317,16 @@ export default function SecurityComplianceDashboard() {
                 <p className="text-2xl font-bold text-red-600">{criticalIncidents}</p>
                 <p className="text-sm text-red-600">Requires immediate attention</p>
               </div>
-              <div className="text-3xl">⚠️</div>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('criticalIssues')} label="Critical Issues" />
+                <div className="text-3xl">⚠️</div>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
 
+        {!isHidden('currentVisitors') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-6">
             <div className="flex items-center justify-between">
@@ -289,15 +335,22 @@ export default function SecurityComplianceDashboard() {
                 <p className="text-2xl font-bold text-ghana-black">{currentVisitors}</p>
                 <p className="text-sm text-blue-600">On premises</p>
               </div>
-              <div className="text-3xl">👥</div>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('currentVisitors')} label="Current Visitors" />
+                <div className="text-3xl">👥</div>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
       </div>
+      )}
 
+      {!isHidden('quickActions') && (
       <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
+        <CardHeader className="pb-3 flex items-center justify-between">
           <h3 className="text-xl font-semibold text-ghana-black">🚀 Quick Actions</h3>
+          <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
         </CardHeader>
         <CardBody>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -332,6 +385,7 @@ export default function SecurityComplianceDashboard() {
           </div>
         </CardBody>
       </Card>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <Card className="border-0 shadow-lg">
@@ -933,6 +987,13 @@ export default function SecurityComplianceDashboard() {
           <h1 className="text-3xl font-bold text-ghana-black">🚨 Security Operations Management</h1>
           <p className="text-gray-600">Incidents, visitors, and patrols</p>
         </div>
+        <CustomizeViewControl
+          sections={SECURITY_DASHBOARD_SECTIONS}
+          isHidden={isHidden}
+          toggle={toggle}
+          showAll={showAll}
+          hiddenCount={hiddenCount}
+        />
       </div>
 
       <Tabs

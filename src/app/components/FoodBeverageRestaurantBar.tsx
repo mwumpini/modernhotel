@@ -243,9 +243,12 @@ export default function FoodBeverageRestaurantBar() {
     ]).then(([empData, deptData, posData]) => {
       const departments = deptData.departments || [];
       const positions = posData.positions || [];
+      // Kitchen is deliberately excluded here — it has its own Staff Management
+      // tab (FoodBeverageKitchen.tsx) now that front-of-house (restaurant/bar)
+      // and back-of-house (kitchen) staff need to be managed separately.
       const fbDeptIds = new Set(
         departments
-          .filter((d: any) => /food|beverage|restaurant|bar|kitchen/i.test(d.name || ''))
+          .filter((d: any) => /food|beverage|restaurant|bar/i.test(d.name || '') && !/kitchen/i.test(d.name || ''))
           .map((d: any) => d.id)
       );
       const deptById = new Map<string, string>(departments.map((d: any) => [d.id, d.name]));
@@ -363,7 +366,7 @@ export default function FoodBeverageRestaurantBar() {
               <div>
                 <p className="text-sm font-medium text-gray-600">Active Staff</p>
                 <p className="text-2xl font-bold text-ghana-black">{activeStaffCount}</p>
-                <p className="text-sm text-green-600">of {staff.length} in F&B</p>
+                <p className="text-sm text-green-600">of {staff.length} in Restaurant &amp; Bar</p>
               </div>
               <div className="text-3xl">👥</div>
             </div>
@@ -583,8 +586,9 @@ export default function FoodBeverageRestaurantBar() {
             <Tab key="staff" title="👥 Staff Management">
               <div className="p-6">
                 <p className="text-sm text-gray-500 mb-4">
-                  Staff sourced from HR records for Food &amp; Beverage-related departments. Shift scheduling and per-table
-                  assignment aren't tracked yet — manage those in the HR module once that's built out.
+                  Staff sourced from HR records for Restaurant &amp; Bar departments — Kitchen staff have their own
+                  Staff Management tab under Kitchen. Shift scheduling and per-table assignment aren't tracked yet —
+                  manage those in the HR module once that's built out.
                 </p>
                 <Table aria-label="Staff table">
                   <TableHeader>
@@ -594,7 +598,7 @@ export default function FoodBeverageRestaurantBar() {
                     <TableColumn>EMPLOYMENT TYPE</TableColumn>
                     <TableColumn>STATUS</TableColumn>
                   </TableHeader>
-                  <TableBody emptyContent="No F&B staff found in HR records.">
+                  <TableBody emptyContent="No Restaurant & Bar staff found in HR records.">
                     {staff.map((member) => (
                       <TableRow key={member.id}>
                         <TableCell>

@@ -8,6 +8,7 @@ import {
   deleteRequisition,
   type RequisitionItemInput,
 } from '@/app/lib/inventory/repository';
+import { getApprovalRequirement } from '@/app/lib/api/approvalThresholds';
 
 async function resolveTenantId(req: NextRequest): Promise<string | null> {
   const subdomain = getTenantFromRequest(req);
@@ -108,6 +109,25 @@ export async function PUT(req: NextRequest) {
     if (body.status && body.status !== existing.status) {
       const permCheck = await requirePermission(req, 'inventory.approve-requisition');
       if (!permCheck.ok) return permCheck.response;
+
+      // Approving a requisition whose total value is at/above the tenant's
+      // configured purchase-order-approval threshold needs director sign-off —
+      // same "downgrade rather than reject" pattern as journal entries and
+      // payments: the request still succeeds, just parked at
+      // 'pending-director-approval' instead of 'approved', until someone with
+      // inventory.approve-high-value-requisition runs the same action again.
+      if (body.status === 'approved') {
+        const totalValue = existing.items.reduce((sum, item) => sum + Number(item.totalCost), 0);
+        const { needsApproval } = await getApprovalRequirement(tenantId, 'purchaseOrder', totalValue);
+        if (needsApproval) {
+          const approvePerm = await requirePermission(req, 'inventory.approve-high-value-requisition');
+          if (!approvePerm.ok) {
+            body.status = 'pending-director-approval';
+            body.approvedBy = undefined;
+            body.approvedAt = undefined;
+          }
+        }
+      }
     } else if (existing.status !== 'pending') {
       const permCheck = await requirePermission(req, 'inventory.edit-processed-requisition');
       if (!permCheck.ok) return permCheck.response;

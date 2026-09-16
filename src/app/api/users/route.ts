@@ -11,6 +11,8 @@ const USER_SELECT = {
   role: true,
   isActive: true,
   lastLoginAt: true,
+  profile: true,
+  preferences: true,
   createdAt: true,
   updatedAt: true,
 } as const

@@ -18,6 +18,7 @@ const ROLE_LABELS: Record<string, string> = {
 // Lazy load heavy components to prevent chunk loading errors
 const FrontdeskDashboard = lazy(() => import('./FrontdeskDashboard'));
 const ExecutiveManagementDashboard = lazy(() => import('./ExecutiveManagementDashboard'));
+const ExecutiveApprovalsInbox = lazy(() => import('./ExecutiveApprovalsInbox'));
 const HousekeepingMainDashboard = lazy(() => import('./HousekeepingMainDashboard'));
 const FBPOS = lazy(() => import('./FBPOS').then(module => ({ default: module.default })));
 // BarManagement was removed — restaurant and bar are one unified operation (same
@@ -67,7 +68,7 @@ interface NavigationProps {
   onLogout: () => void;
 }
 
-type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'compliance' | 'inventory' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs';
+type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'compliance' | 'inventory' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'executive-approvals';
 
 /** Maps any ActiveSection (including deep sub-pages) to the top-level module key used for
  *  nav-menu access control (navigationSections[].key / hasModuleAccess). */
@@ -141,6 +142,15 @@ export default function Navigation({ onLogout }: NavigationProps) {
   useSettingsStore(s => s.sessionRoleId);
   useSettingsStore(s => s.roles);
   const hasModuleAccess = useSettingsStore.getState().hasModuleAccess;
+  const hasPermission = useSettingsStore.getState().hasPermission;
+  // The Approvals inbox (pending journal entries/payments/high-value
+  // requisitions) is only useful to someone who can actually approve at
+  // least one of those — gated by permission, not a role name, same as every
+  // approve action itself (see src/app/lib/api/approvalThresholds.ts).
+  const canSeeApprovals =
+    hasPermission('accounting.approve-journal-entry') ||
+    hasPermission('accounting.approve-payment') ||
+    hasPermission('inventory.approve-high-value-requisition');
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
   const currentUserRoleLabel = ROLE_LABELS[(session?.user as any)?.role] || (session?.user as any)?.role || '';
@@ -155,6 +165,22 @@ export default function Navigation({ onLogout }: NavigationProps) {
   React.useEffect(() => {
     useSettingsStore.getState().loadSettings();
   }, []);
+
+  // The settings store's `currentUser` (used by the Settings > User Preferences
+  // self-service screen) previously defaulted to a hardcoded demo record
+  // ('admin_001' / admin@ghana-hotel.com) and setCurrentUser() was never
+  // called anywhere — so that screen always showed/edited a phantom user
+  // disconnected from whoever was actually logged in, no matter their real
+  // account. Once the real user list arrives (loadSettings()'s /api/users
+  // fetch), match it against the real NextAuth session by id and adopt it.
+  const users = useSettingsStore(s => s.users);
+  const setCurrentUser = useSettingsStore(s => s.setCurrentUser);
+  React.useEffect(() => {
+    const sessionUserId = (session?.user as any)?.id;
+    if (!sessionUserId) return;
+    const real = users.find(u => u.id === sessionUserId);
+    if (real) setCurrentUser(real);
+  }, [session, users, setCurrentUser]);
 
   // Every revenue centre (Front Office, F&B, Events & Conferences, Room Configuration,
   // checkout) reads tax rates via getActiveTaxConfigs(), which falls back to a hardcoded
@@ -212,7 +238,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🏛️ Executive Management',
       icon: '📊',
       items: [
-        { title: 'Main Dashboard', href: '#' }
+        { title: 'Main Dashboard', href: '#' },
+        ...(canSeeApprovals ? [{ title: '✅ Approvals', href: '#' }] : []),
       ]
     },
     {
@@ -350,8 +377,15 @@ export default function Navigation({ onLogout }: NavigationProps) {
       return;
     }
 
+    // Handle Executive Management sub-items
+    if (sectionKey === 'dashboard' && itemTitle) {
+      if (itemTitle === '✅ Approvals') {
+        setActiveSection('executive-approvals');
+      } else {
+        setActiveSection('dashboard');
+      }
     // Handle Restaurant & Bar sub-items
-    if (sectionKey === 'restaurant' && itemTitle) {
+    } else if (sectionKey === 'restaurant' && itemTitle) {
       if (itemTitle === '📈 Reports & Analysis') {
         setActiveSection('fb-analytics');
       } else if (itemTitle === '⚙️ User Preferences') {
@@ -472,6 +506,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
 
   const renderDashboardContent = () => {
     switch (activeSection) {
+      case 'executive-approvals':
+        return <Suspense fallback={<div className="p-6 text-center">Loading Approvals...</div>}><ExecutiveApprovalsInbox /></Suspense>;
       case 'frontdesk':
         return <Suspense fallback={<div className="p-6 text-center">Loading Front Desk Dashboard...</div>}><FrontdeskDashboard /></Suspense>;
       case 'frontdesk-activities':
@@ -607,7 +643,12 @@ export default function Navigation({ onLogout }: NavigationProps) {
       <nav className="w-80 bg-white shadow-xl h-screen overflow-y-auto">
         <div className="p-6">
           {/* Logo Header */}
-          <div className="flex items-center mb-8">
+          <div
+            className="flex items-center mb-8 cursor-pointer"
+            role="button"
+            aria-label="Go to main dashboard"
+            onClick={() => setActiveSection('dashboard')}
+          >
             <div className="h-12 w-12 bg-gradient-to-br from-ghana-green to-ghana-gold rounded-2xl flex items-center justify-center mr-4">
               <span className="text-3xl">🏨</span>
             </div>
@@ -695,7 +736,18 @@ export default function Navigation({ onLogout }: NavigationProps) {
 
           {/* User Profile & Logout */}
           <div className="mt-8 pt-6 border-t border-gray-200">
-            <div className="flex items-center mb-4">
+            <div
+              className="flex items-center mb-4 cursor-pointer"
+              role="button"
+              aria-label="Go to user profile and preferences"
+              onClick={() => {
+                try {
+                  localStorage.setItem('settings.tab', 'users');
+                  localStorage.setItem('settings.usersSubTab', 'preferences');
+                } catch {}
+                setActiveSection('settings');
+              }}
+            >
               <Avatar
                 name={currentUserName}
                 className="h-10 w-10 bg-gradient-to-br from-ghana-green to-ghana-gold text-white mr-3"
