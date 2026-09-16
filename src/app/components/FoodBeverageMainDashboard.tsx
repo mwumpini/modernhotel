@@ -21,7 +21,6 @@ import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
-import RequestOvertimeButton from './hr/RequestOvertimeButton';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs (Restaurant & Bar, Menu & Inventory, etc.) are core navigation, not
@@ -282,11 +281,6 @@ export default function FoodBeverageMainDashboard() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🍽️ Restaurant & Bar Operations</h2>
         <div className="flex items-center gap-2">
-          <RequestOvertimeButton
-            departmentLabel="Restaurant & Bar"
-            permissionId="restaurant.log-overtime"
-            departmentNameHints={['restaurant', 'bar']}
-          />
           <CustomizeViewControl
             sections={FB_DASHBOARD_SECTIONS}
             isHidden={isHidden}

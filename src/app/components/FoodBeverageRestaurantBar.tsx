@@ -5,6 +5,11 @@ import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBo
 import { ordersStore } from '../lib/fb/ordersStore';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import DepartmentActivityLog from './DepartmentActivityLog';
+import DepartmentStaffTab from './hr/DepartmentStaffTab';
+import { useDepartmentStaff } from '../lib/hr/useDepartmentStaff';
+
+const RESTAURANT_STAFF_DEPT_HINTS = ['food', 'beverage', 'restaurant', 'bar'];
+const RESTAURANT_STAFF_EXCLUDE_HINTS = ['kitchen'];
 
 function fbHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
@@ -41,15 +46,6 @@ interface MenuItem {
   available: boolean;
   preparationTime: number;
   allergens: string[];
-}
-
-interface StaffMember {
-  id: string;
-  name: string;
-  position: string;
-  department: string;
-  employmentType: string;
-  status: string;
 }
 
 const TABLE_STATUSES: RestaurantTable['status'][] = ['available', 'occupied', 'reserved', 'cleaning'];
@@ -228,47 +224,6 @@ export default function FoodBeverageRestaurantBar() {
     }
   };
 
-  // ---------------------------------------------------------------------
-  // Staff — sourced from real HR employee/department/position records,
-  // filtered to F&B-relevant departments. Shift and per-table assignment
-  // aren't tracked anywhere yet, so they're intentionally left off rather
-  // than fabricated.
-  // ---------------------------------------------------------------------
-  const [staff, setStaff] = useState<StaffMember[]>([]);
-  useEffect(() => {
-    Promise.all([
-      fetch('/api/hr/employees', { headers: fbHeaders() }).then((r) => (r.ok ? r.json() : { employees: [] })),
-      fetch('/api/hr/departments', { headers: fbHeaders() }).then((r) => (r.ok ? r.json() : { departments: [] })),
-      fetch('/api/hr/positions', { headers: fbHeaders() }).then((r) => (r.ok ? r.json() : { positions: [] })),
-    ]).then(([empData, deptData, posData]) => {
-      const departments = deptData.departments || [];
-      const positions = posData.positions || [];
-      // Kitchen is deliberately excluded here — it has its own Staff Management
-      // tab (FoodBeverageKitchen.tsx) now that front-of-house (restaurant/bar)
-      // and back-of-house (kitchen) staff need to be managed separately.
-      const fbDeptIds = new Set(
-        departments
-          .filter((d: any) => /food|beverage|restaurant|bar/i.test(d.name || '') && !/kitchen/i.test(d.name || ''))
-          .map((d: any) => d.id)
-      );
-      const deptById = new Map<string, string>(departments.map((d: any) => [d.id, d.name]));
-      const posById = new Map<string, string>(positions.map((p: any) => [p.id, p.title]));
-      const employees = (empData.employees || []) as any[];
-      setStaff(
-        employees
-          .filter((e) => fbDeptIds.has(e.departmentId))
-          .map((e) => ({
-            id: e.id,
-            name: `${e.firstName} ${e.lastName}`,
-            position: posById.get(e.positionId) || 'Unassigned',
-            department: deptById.get(e.departmentId) || 'Unknown',
-            employmentType: e.employmentType,
-            status: e.status,
-          }))
-      );
-    });
-  }, []);
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'available': return 'success';
@@ -289,16 +244,7 @@ export default function FoodBeverageRestaurantBar() {
     }
   };
 
-  const getStaffStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'success';
-      case 'on_leave': return 'warning';
-      case 'suspended': return 'danger';
-      case 'terminated': return 'danger';
-      default: return 'default';
-    }
-  };
-
+  const staff = useDepartmentStaff(RESTAURANT_STAFF_DEPT_HINTS, RESTAURANT_STAFF_EXCLUDE_HINTS);
   const availableTablesCount = tables.filter((t) => t.status === 'available').length;
   const availablePct = tables.length > 0 ? ((availableTablesCount / tables.length) * 100).toFixed(1) : '0.0';
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -584,41 +530,15 @@ export default function FoodBeverageRestaurantBar() {
             </Tab>
 
             <Tab key="staff" title="👥 Staff Management">
-              <div className="p-6">
-                <p className="text-sm text-gray-500 mb-4">
-                  Staff sourced from HR records for Restaurant &amp; Bar departments — Kitchen staff have their own
-                  Staff Management tab under Kitchen. Shift scheduling and per-table assignment aren't tracked yet —
-                  manage those in the HR module once that's built out.
-                </p>
-                <Table aria-label="Staff table">
-                  <TableHeader>
-                    <TableColumn>STAFF MEMBER</TableColumn>
-                    <TableColumn>POSITION</TableColumn>
-                    <TableColumn>DEPARTMENT</TableColumn>
-                    <TableColumn>EMPLOYMENT TYPE</TableColumn>
-                    <TableColumn>STATUS</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="No Restaurant & Bar staff found in HR records.">
-                    {staff.map((member) => (
-                      <TableRow key={member.id}>
-                        <TableCell>
-                          <p className="font-medium text-ghana-black">{member.name}</p>
-                        </TableCell>
-                        <TableCell>{member.position}</TableCell>
-                        <TableCell>{member.department}</TableCell>
-                        <TableCell>
-                          <Badge color="primary" variant="flat">{member.employmentType}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Chip color={getStaffStatusColor(member.status)} size="sm">
-                            {member.status.charAt(0).toUpperCase() + member.status.slice(1).replace('_', ' ')}
-                          </Chip>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              <DepartmentStaffTab
+                staff={staff}
+                departmentLabel="Restaurant & Bar"
+                overtimePermissionId="restaurant.log-overtime"
+                departmentNameHints={RESTAURANT_STAFF_DEPT_HINTS}
+                excludeNameHints={RESTAURANT_STAFF_EXCLUDE_HINTS}
+                emptyLabel="No Restaurant & Bar staff found in HR records."
+                helperText="Staff sourced from HR records for Restaurant & Bar departments — Kitchen staff have their own Staff Management tab under Kitchen. Per-table assignment isn't tracked yet — manage that in the HR module once that's built out."
+              />
             </Tab>
           </Tabs>
         </CardBody>

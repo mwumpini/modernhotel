@@ -39,7 +39,7 @@ import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
-import RequestOvertimeButton from './hr/RequestOvertimeButton';
+import DepartmentStaffTab from './hr/DepartmentStaffTab';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs (Chart of Accounts, Bank & Cash, etc.) are core navigation, not
@@ -374,11 +374,6 @@ export default function AccountingMainDashboard() {
           </div>
 
           <div className="flex justify-end mb-3 gap-2">
-            <RequestOvertimeButton
-              departmentLabel="Accounting & Finance"
-              permissionId="accounting.log-overtime"
-              departmentNameHints={['accounting', 'finance']}
-            />
             <CustomizeViewControl
               sections={ACCOUNTING_DASHBOARD_SECTIONS}
               isHidden={isHidden}
@@ -725,6 +720,16 @@ export default function AccountingMainDashboard() {
                   <AuditControls />
                 </Tab>
                 )}
+
+                <Tab key="staff" title="👥 Staff Management">
+                  <DepartmentStaffTab
+                    departmentLabel="Accounting & Finance"
+                    overtimePermissionId="accounting.log-overtime"
+                    departmentNameHints={['accounting', 'finance']}
+                    emptyLabel="No Accounting & Finance staff found in HR records."
+                    helperText="Staff sourced from HR records for Accounting & Finance departments."
+                  />
+                </Tab>
               </Tabs>
 
       {/* Recent Activities & Notices */}

@@ -25,7 +25,6 @@ import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
-import RequestOvertimeButton from './hr/RequestOvertimeButton';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs are core navigation, not clutter, so they're deliberately not included.
@@ -305,11 +304,6 @@ export default function HousekeepingMainDashboard() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🛏️ Housekeeping & Maintenance Operations</h2>
         <div className="flex items-center gap-2">
-          <RequestOvertimeButton
-            departmentLabel="Housekeeping"
-            permissionId="housekeeping.log-overtime"
-            departmentNameHints={['housekeeping', 'maintenance']}
-          />
           <CustomizeViewControl
             sections={HOUSEKEEPING_DASHBOARD_SECTIONS}
             isHidden={isHidden}

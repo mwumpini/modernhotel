@@ -30,12 +30,18 @@ import {
 } from "@heroui/react";
 import { housekeepingStore } from '../../lib/housekeeping/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
-import { 
-  HousekeepingStaff, 
-  HousekeepingTask 
+import {
+  HousekeepingStaff,
+  HousekeepingTask
 } from '../../lib/housekeeping/types';
+import { useDepartmentStaff } from '../../lib/hr/useDepartmentStaff';
+import DepartmentShiftsPanel from '../hr/DepartmentShiftsPanel';
+import DepartmentOvertimePanel from '../hr/DepartmentOvertimePanel';
+
+const HOUSEKEEPING_STAFF_DEPT_HINTS = ['housekeeping', 'maintenance'];
 
 export default function StaffManagementPanel() {
+  const hrStaff = useDepartmentStaff(HOUSEKEEPING_STAFF_DEPT_HINTS);
   const [staff, setStaff] = useState<HousekeepingStaff[]>([]);
   const [tasks, setTasks] = useState<HousekeepingTask[]>([]);
   const [selectedStaff, setSelectedStaff] = useState<HousekeepingStaff | null>(null);
@@ -492,6 +498,19 @@ export default function StaffManagementPanel() {
                   </TableBody>
                 </Table>
               </div>
+            </Tab>
+
+            <Tab key="shifts" title="🕐 Shift Scheduling">
+              <DepartmentShiftsPanel staff={hrStaff} departmentLabel="Housekeeping" />
+            </Tab>
+
+            <Tab key="overtime" title="⏱️ Overtime">
+              <DepartmentOvertimePanel
+                staff={hrStaff}
+                departmentLabel="Housekeeping"
+                overtimePermissionId="housekeeping.log-overtime"
+                departmentNameHints={HOUSEKEEPING_STAFF_DEPT_HINTS}
+              />
             </Tab>
           </Tabs>
         </CardBody>

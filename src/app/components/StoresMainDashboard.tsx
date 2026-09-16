@@ -25,7 +25,7 @@ import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
-import RequestOvertimeButton from './hr/RequestOvertimeButton';
+import DepartmentStaffTab from './hr/DepartmentStaffTab';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs are core navigation, not clutter, so they're deliberately not included.
@@ -287,11 +287,6 @@ export default function StoresMainDashboard() {
         <div className="flex items-center gap-2">
           <Badge color="success" variant="flat">Reorder System</Badge>
           <Badge color="primary" variant="flat">Suppliers Active</Badge>
-          <RequestOvertimeButton
-            departmentLabel="Inventory & Stores"
-            permissionId="inventory.log-overtime"
-            departmentNameHints={['stores', 'inventory', 'warehouse']}
-          />
           <CustomizeViewControl
             sections={STORES_DASHBOARD_SECTIONS}
             isHidden={isHidden}
@@ -544,6 +539,16 @@ export default function StoresMainDashboard() {
 
             <Tab key="analytics" title="📈 Analytics Dashboard">
               <InventoryAnalyticsDashboard />
+            </Tab>
+
+            <Tab key="staff" title="👥 Staff Management">
+              <DepartmentStaffTab
+                departmentLabel="Inventory & Stores"
+                overtimePermissionId="inventory.log-overtime"
+                departmentNameHints={['stores', 'inventory', 'warehouse']}
+                emptyLabel="No Inventory & Stores staff found in HR records."
+                helperText="Staff sourced from HR records for Inventory & Stores departments."
+              />
             </Tab>
           </Tabs>
         </CardBody>

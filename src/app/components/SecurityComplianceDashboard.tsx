@@ -20,6 +20,8 @@ import { SecurityIncident, Visitor } from '../lib/security/models';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import type { DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import DepartmentOvertimePanel from './hr/DepartmentOvertimePanel';
+import { useDepartmentStaff } from '../lib/hr/useDepartmentStaff';
 
 // Hideable summary cards for the whole Security module — the Overview tab's
 // own cards, plus (shared with SecurityMainDashboard.tsx, which renders this
@@ -65,6 +67,7 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
   // Mirrors the server-side requirePermission() checks on the security/* API
   // routes, so someone who can't act just doesn't see the button rather than
   // clicking it and hitting a 403 with no explanation.
+  const securityStaffForOvertime = useDepartmentStaff(['security']);
   const canManagePatrols = settings.hasPermission('security.manage-patrols');
   const canManagePersonnel = settings.hasPermission('security.manage-personnel');
   const canManageShifts = settings.hasPermission('security.manage-shifts');
@@ -877,6 +880,26 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
               ))}
             </TableBody>
           </Table>
+        </CardBody>
+      </Card>
+
+      <Card className="border-0 shadow-lg">
+        <CardHeader className="pb-3">
+          <div>
+            <h3 className="text-xl font-semibold text-ghana-black">⏱️ Overtime</h3>
+            <p className="text-sm text-gray-500">
+              For real staff accounts only — outsourced/contracted personnel are paid via their agency, not
+              this tenant's payroll.
+            </p>
+          </div>
+        </CardHeader>
+        <CardBody className="p-0">
+          <DepartmentOvertimePanel
+            staff={securityStaffForOvertime}
+            departmentLabel="Security Operations"
+            overtimePermissionId="security.log-overtime"
+            departmentNameHints={['security']}
+          />
         </CardBody>
       </Card>
 

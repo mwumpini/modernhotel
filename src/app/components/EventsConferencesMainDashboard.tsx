@@ -66,7 +66,7 @@ import EventsModuleFilters, {
   type EventsDateFilterMode,
 } from './EventsModuleFilters';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
-import RequestOvertimeButton from './hr/RequestOvertimeButton';
+import DepartmentStaffTab from './hr/DepartmentStaffTab';
 
 type ManagementMainTabKey =
   | 'events'
@@ -14129,11 +14129,6 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       
       <div className="mb-6 flex items-center justify-between">
         <h2 className="text-2xl font-bold text-ghana-black">🎪 Events & Conferences</h2>
-        <RequestOvertimeButton
-          departmentLabel="Events & Conferences"
-          permissionId="events-conferences.log-overtime"
-          departmentNameHints={['events', 'conference', 'banquet']}
-        />
       </div>
       <Tabs 
             selectedKey={selectedTab} 
@@ -14480,6 +14475,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   </div>
                 </div>
               </div>
+            </Tab>
+
+            <Tab key="staff" title="👥 Staff Management">
+              <DepartmentStaffTab
+                departmentLabel="Events & Conferences"
+                overtimePermissionId="events-conferences.log-overtime"
+                departmentNameHints={['events', 'conference', 'banquet']}
+                emptyLabel="No Events & Conferences staff found in HR records."
+                helperText="Staff sourced from HR records for Events & Conferences departments."
+              />
             </Tab>
       </Tabs>
     </div>

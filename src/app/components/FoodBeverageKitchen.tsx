@@ -10,7 +10,7 @@ import KitchenDisplaySystem from './KitchenDisplaySystem';
 import DepartmentRequisitionModal from './inventory/DepartmentRequisitionModal';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
-import RequestOvertimeButton from './hr/RequestOvertimeButton';
+import DepartmentStaffTab from './hr/DepartmentStaffTab';
 
 // Hideable summary cards on this dashboard — the Tabs below (Kitchen Display,
 // Stations, Inventory, etc.) are core navigation, not clutter.
@@ -63,15 +63,6 @@ interface Requisition {
   items: { itemName: string; quantity: number }[];
 }
 
-interface KitchenStaffMember {
-  id: string;
-  name: string;
-  position: string;
-  department: string;
-  employmentType: string;
-  status: string;
-}
-
 export default function FoodBeverageKitchen() {
   const [selectedTab, setSelectedTab] = useState('kds');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.kitchen', KITCHEN_DASHBOARD_SECTIONS);
@@ -95,51 +86,6 @@ export default function FoodBeverageKitchen() {
     const id = setInterval(refreshLiveOrders, 10_000);
     return () => clearInterval(id);
   }, [refreshLiveOrders]);
-
-  // Staff — sourced from real HR employee/department/position records,
-  // filtered to Kitchen departments specifically (separate from Restaurant &
-  // Bar's own Staff Management tab in FoodBeverageRestaurantBar.tsx — the two
-  // used to share one combined F&B staff list, which mixed back-of-house
-  // kitchen staff in with front-of-house restaurant/bar staff).
-  const [kitchenStaff, setKitchenStaff] = useState<KitchenStaffMember[]>([]);
-  useEffect(() => {
-    Promise.all([
-      fetch('/api/hr/employees', { headers: fbHeaders() }).then((r) => (r.ok ? r.json() : { employees: [] })),
-      fetch('/api/hr/departments', { headers: fbHeaders() }).then((r) => (r.ok ? r.json() : { departments: [] })),
-      fetch('/api/hr/positions', { headers: fbHeaders() }).then((r) => (r.ok ? r.json() : { positions: [] })),
-    ]).then(([empData, deptData, posData]) => {
-      const departments = deptData.departments || [];
-      const positions = posData.positions || [];
-      const kitchenDeptIds = new Set(
-        departments.filter((d: any) => /kitchen/i.test(d.name || '')).map((d: any) => d.id)
-      );
-      const deptById = new Map<string, string>(departments.map((d: any) => [d.id, d.name]));
-      const posById = new Map<string, string>(positions.map((p: any) => [p.id, p.title]));
-      const employees = (empData.employees || []) as any[];
-      setKitchenStaff(
-        employees
-          .filter((e) => kitchenDeptIds.has(e.departmentId))
-          .map((e) => ({
-            id: e.id,
-            name: `${e.firstName} ${e.lastName}`,
-            position: posById.get(e.positionId) || 'Unassigned',
-            department: deptById.get(e.departmentId) || 'Unknown',
-            employmentType: e.employmentType,
-            status: e.status,
-          }))
-      );
-    });
-  }, []);
-
-  const getKitchenStaffStatusColor = (status: string) => {
-    switch (status) {
-      case 'active': return 'success';
-      case 'on_leave': return 'warning';
-      case 'suspended': return 'danger';
-      case 'terminated': return 'danger';
-      default: return 'default';
-    }
-  };
 
   const [inventoryItems, setInventoryItems] = useState<InventoryItem[]>([]);
   useEffect(() => {
@@ -310,11 +256,6 @@ export default function FoodBeverageKitchen() {
           >
             + Add Recipe
           </Button>
-          <RequestOvertimeButton
-            departmentLabel="Kitchen"
-            permissionId="kitchen.log-overtime"
-            departmentNameHints={['kitchen']}
-          />
           <CustomizeViewControl
             sections={KITCHEN_DASHBOARD_SECTIONS}
             isHidden={isHidden}
@@ -648,41 +589,13 @@ export default function FoodBeverageKitchen() {
             </Tab>
 
             <Tab key="staff" title="👥 Staff Management">
-              <div className="p-6">
-                <p className="text-sm text-gray-500 mb-4">
-                  Staff sourced from HR records for Kitchen departments — separate from Restaurant &amp; Bar's own
-                  Staff Management tab. Shift scheduling isn't tracked yet — manage that in the HR module once
-                  that's built out.
-                </p>
-                <Table aria-label="Kitchen staff table">
-                  <TableHeader>
-                    <TableColumn>STAFF MEMBER</TableColumn>
-                    <TableColumn>POSITION</TableColumn>
-                    <TableColumn>DEPARTMENT</TableColumn>
-                    <TableColumn>EMPLOYMENT TYPE</TableColumn>
-                    <TableColumn>STATUS</TableColumn>
-                  </TableHeader>
-                  <TableBody emptyContent="No Kitchen staff found in HR records.">
-                    {kitchenStaff.map((member) => (
-                      <TableRow key={member.id}>
-                        <TableCell>
-                          <p className="font-medium text-ghana-black">{member.name}</p>
-                        </TableCell>
-                        <TableCell>{member.position}</TableCell>
-                        <TableCell>{member.department}</TableCell>
-                        <TableCell>
-                          <Badge color="primary" variant="flat">{member.employmentType}</Badge>
-                        </TableCell>
-                        <TableCell>
-                          <Chip color={getKitchenStaffStatusColor(member.status)} size="sm">
-                            {member.status.charAt(0).toUpperCase() + member.status.slice(1).replace('_', ' ')}
-                          </Chip>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              <DepartmentStaffTab
+                departmentLabel="Kitchen"
+                overtimePermissionId="kitchen.log-overtime"
+                departmentNameHints={['kitchen']}
+                emptyLabel="No Kitchen staff found in HR records."
+                helperText="Staff sourced from HR records for Kitchen departments — separate from Restaurant & Bar's own Staff Management tab."
+              />
             </Tab>
           </Tabs>
         </CardBody>

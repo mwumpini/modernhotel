@@ -8,7 +8,6 @@ import DeptMessenger from './DeptMessenger';
 import SecurityComplianceDashboard, { SECURITY_DASHBOARD_SECTIONS } from './SecurityComplianceDashboard';
 import { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility } from '../lib/dashboard/useDashboardVisibility';
-import RequestOvertimeButton from './hr/RequestOvertimeButton';
 
 export default function SecurityMainDashboard() {
   // Owns the one useDashboardVisibility call for the whole Security module —
@@ -21,11 +20,6 @@ export default function SecurityMainDashboard() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🛡️ Security Operations</h2>
-        <RequestOvertimeButton
-          departmentLabel="Security Operations"
-          permissionId="security.log-overtime"
-          departmentNameHints={['security']}
-        />
       </div>
 
       <DeptMessenger from="security" mode="drawer" />
