@@ -968,7 +968,7 @@ class FrontOfficeStore {
   refundPayment(reservationId: string, paymentId: string, amount: number, reason?: string) { return folioHelpers.refundPayment(this as any, reservationId, paymentId, amount, reason); }
 
   // Allocate a single corporate/company receipt across multiple reservations' folios
-  postCorporateReceipt(payer: string, reservationIds: string[], totalAmount: number, reference?: string) { return folioHelpers.postCorporateReceipt(this as any, payer, reservationIds, totalAmount, reference); }
+  postCorporateReceipt(payer: string, reservationIds: string[], totalAmount: number, reference?: string, processedBy?: string) { return folioHelpers.postCorporateReceipt(this as any, payer, reservationIds, totalAmount, reference, processedBy); }
 
   private getTaxRates() { return folioHelpers.getTaxRates(this as any); }
 
@@ -1026,20 +1026,20 @@ class FrontOfficeStore {
     return true;
   }
 
-  applyCreditPayment(reservationId: string, amount: number, notes?: string) {
+  applyCreditPayment(reservationId: string, amount: number, notes?: string, processedBy?: string) {
     const reservation = this.reservations.find(r => r.id === reservationId);
     if (!reservation) return false;
-    
+
     const guest = this.guests.find(g => g.id === reservation.guestId);
     if (!guest || !guest.creditBalance || guest.creditBalance < amount) {
       return false; // Insufficient credit
     }
-    
+
     // Apply credit payment
     this.addPayment(reservationId, 'Credit', amount, {
       creditApplied: amount,
       notes: notes || 'Credit payment applied',
-      processedBy: 'Front Desk'
+      processedBy: processedBy || 'Front Desk'
     });
 
     guest.creditBalance = Math.max(0, (guest.creditBalance || 0) - amount);

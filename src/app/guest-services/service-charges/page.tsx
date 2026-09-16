@@ -29,6 +29,7 @@ import {
 } from "@heroui/react";
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { useSettingsStore } from '../../lib/settings/store';
+import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { openPrintPreview, openHtmlPrintWindow } from '../../lib/print/engine';
 import { listTemplates } from '../../lib/print/templates';
@@ -75,6 +76,7 @@ interface ServiceCharge {
 }
 
 export default function ServiceChargesPage() {
+  const currentUserName = useCurrentUserName();
   const { roomManagement } = useSettingsStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -456,7 +458,7 @@ export default function ServiceChargesPage() {
           paymentData.amount,
           {
             notes: `Payment for ${selectedCharge.description}`,
-            processedBy: 'Front Desk',
+            processedBy: currentUserName,
             ref: paymentData.reference || undefined
           }
         );

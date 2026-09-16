@@ -38,6 +38,7 @@ import { openPrintPreview } from '../../lib/print/engine';
 import { listTemplates } from '../../lib/print/templates';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 import { useSettingsStore } from '../../lib/settings/store';
+import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { salesTaxBreakdown } from '../../lib/tax/engine';
 import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
@@ -88,6 +89,7 @@ interface CheckOutData {
 }
 
 export default function CheckOutsPage() {
+  const currentUserName = useCurrentUserName();
   const [checkOuts, setCheckOuts] = useState<CheckOutData[]>([]);
   const [filteredCheckOuts, setFilteredCheckOuts] = useState<CheckOutData[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -378,7 +380,7 @@ export default function CheckOutsPage() {
     // Use the enhanced addPayment method with proper options
     frontOfficeStore.addPayment(checkOut.id, quickSettlementMethod, outstandingBalance, {
       notes: `Quick settlement during checkout - ${checkOut.guestName}`,
-      processedBy: 'Front Desk',
+      processedBy: currentUserName,
       ref: `SETTLE-${Date.now()}`
     });
     
@@ -1107,7 +1109,7 @@ export default function CheckOutsPage() {
                             <Button color="success" className="bg-emerald-600 text-white mb-0.5"
                               isDisabled={outstandingBalance <= 0 || settlementAmount <= 0}
                               onPress={() => {
-                                frontOfficeStore.addPayment(selectedCheckOut.id, settlementMethod, settlementAmount, { notes: 'Folio settlement during checkout', processedBy: 'Front Desk', ref: settlementRef });
+                                frontOfficeStore.addPayment(selectedCheckOut.id, settlementMethod, settlementAmount, { notes: 'Folio settlement during checkout', processedBy: currentUserName, ref: settlementRef });
                                 try { handlePrintReceipt(selectedCheckOut); } catch {}
                                 setTimeout(() => loadCheckOuts(), 50);
                               }}
@@ -1168,7 +1170,7 @@ export default function CheckOutsPage() {
                     onPress={() => {
                       if (selectedCheckOut) {
                         const amount = Math.min(creditBalance, selectedCheckOut.outstandingBalance);
-                        frontOfficeStore.applyCreditPayment(selectedCheckOut.id, amount, 'Credit applied during checkout');
+                        frontOfficeStore.applyCreditPayment(selectedCheckOut.id, amount, 'Credit applied during checkout', currentUserName);
                         setTimeout(() => loadCheckOuts(), 100);
                       }
                     }}

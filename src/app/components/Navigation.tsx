@@ -38,8 +38,6 @@ const FrontofficeRoomsBookings = lazy(() => import('./FrontofficeRoomsBookings')
 const FrontofficeClientsServices = lazy(() => import('./FrontofficeClientsServices'));
 const FrontofficeEventsConferences = lazy(() => import('./FrontofficeEventsConferences'));
 const EventsConferencesMainDashboard = lazy(() => import('./EventsConferencesMainDashboard'));
-const GuestExperienceManager = lazy(() => import('./GuestExperienceManager'));
-const MobileGuestServices = lazy(() => import('./MobileGuestServices'));
 const HRMainDashboard = lazy(() => import('./HRMainDashboard'));
 const SecurityMainDashboard = lazy(() => import('./SecurityMainDashboard'));
 const StoresMainDashboard = lazy(() => import('./StoresMainDashboard'));
@@ -68,12 +66,12 @@ interface NavigationProps {
   onLogout: () => void;
 }
 
-type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'compliance' | 'inventory' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'guest-experience-manager' | 'mobile-guest-services' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'executive-approvals';
+type ActiveSection = 'dashboard' | 'frontdesk' | 'housekeeping' | 'f&b' | 'restaurant' | 'kitchen' | 'pos' | 'security' | 'hr' | 'accounting' | 'settings' | 'compliance' | 'inventory' | 'rooms-bookings' | 'invoices-payments' | 'clients-services' | 'events-conferences' | 'events-conferences-standalone' | 'events-conferences-analytics' | 'events-conferences-preferences' | 'food-beverage' | 'fb-analytics' | 'fb-preferences' | 'accounting-management' | 'hr-payroll-management' | 'security-compliance' | 'inventory-supply-chain' | 'reports-analytics' | 'fb-pos' | 'fb-restaurant-bar' | 'fb-kitchen' | 'fb-menu-inventory' | 'fb-staff-reports' | 'housekeeping-analytics' | 'housekeeping-preferences' | 'inventory-analytics' | 'inventory-preferences' | 'security-analytics' | 'security-preferences' | 'hr-analytics' | 'hr-preferences' | 'frontdesk-activities' | 'fb-activities' | 'housekeeping-activities' | 'inventory-activities' | 'security-activities' | 'hr-activities' | 'accounting-activities' | 'chart-of-accounts' | 'bank-cash-management' | 'accounts-payable' | 'inventory-fixed-assets' | 'financial-reports' | 'audit-controls' | 'check-ins' | 'in-house' | 'check-outs' | 'executive-approvals';
 
 /** Maps any ActiveSection (including deep sub-pages) to the top-level module key used for
  *  nav-menu access control (navigationSections[].key / hasModuleAccess). */
 function sectionToModuleKey(section: ActiveSection): string {
-  const frontdesk = new Set(['frontdesk', 'rooms-bookings', 'invoices-payments', 'clients-services', 'guest-experience-manager', 'mobile-guest-services', 'frontdesk-activities', 'check-ins', 'in-house', 'check-outs']);
+  const frontdesk = new Set(['frontdesk', 'rooms-bookings', 'invoices-payments', 'clients-services', 'frontdesk-activities', 'check-ins', 'in-house', 'check-outs']);
   const events = new Set(['events-conferences', 'events-conferences-standalone', 'events-conferences-analytics', 'events-conferences-preferences']);
   // Food & Beverage used to be one combined module ('f&b') -- split into Restaurant
   // (front-of-house: POS, tables, menu, bar) and Kitchen (ticket fulfillment, KDS).
@@ -549,10 +547,6 @@ export default function Navigation({ onLogout }: NavigationProps) {
             </Button>
           </div>
         </Suspense>;
-      case 'guest-experience-manager':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Guest Experience Manager...</div>}><GuestExperienceManager /></Suspense>;
-      case 'mobile-guest-services':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Mobile Guest Services...</div>}><MobileGuestServices /></Suspense>;
       // 'food-beverage' alias handled in the F&B section below
       case 'accounting-management':
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;

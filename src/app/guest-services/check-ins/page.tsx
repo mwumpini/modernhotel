@@ -50,6 +50,7 @@ import { trackEvent } from '../../lib/analytics/trackEvent';
 import type { Reservation } from '../../lib/frontoffice/types';
 import { formatMoney } from '../../lib/format/currency';
 import { useSettingsStore } from '../../lib/settings/store';
+import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
 import { openPrintPreview } from '../../lib/print/engine';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 
@@ -95,6 +96,7 @@ function formatTime(dateString: string) {
   return new Date(dateString).toLocaleTimeString('en-GH', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
 function CheckInsSection() {
+  const currentUserName = useCurrentUserName();
   const [guests, setGuests] = useState<CheckInGuest[]>([]);
   const [filteredGuests, setFilteredGuests] = useState<CheckInGuest[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -303,7 +305,7 @@ function CheckInsSection() {
   const handleApplyCredit = (guest: CheckInGuest) => {
     if (!guest.creditBalance || guest.creditBalance <= 0) return;
     const amount = guest.creditBalance; // Simplified - apply full credit balance
-    const ok = frontOfficeStore.applyCreditPayment(guest.id, amount, 'Credit applied from unified Check-Ins');
+    const ok = frontOfficeStore.applyCreditPayment(guest.id, amount, 'Credit applied from unified Check-Ins', currentUserName);
     if (ok) {
       loadGuests();
       showNotification('success', `Credit of ₵${amount.toLocaleString()} applied to ${guest.guestName}'s account`);
@@ -384,7 +386,7 @@ function CheckInsSection() {
         paymentData.amount,
         {
           notes: `${paymentData.type === 'deposit' ? 'Deposit' : paymentData.type === 'prepayment' ? 'Prepayment' : 'Payment'} - ${paymentData.notes || 'Guest payment'}`,
-          processedBy: 'Front Desk',
+          processedBy: currentUserName,
           ref: paymentData.reference || undefined
         }
       );

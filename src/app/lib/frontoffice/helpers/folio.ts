@@ -414,7 +414,7 @@ export function refundPayment(self: StoreLike, reservationId: string, paymentId:
 /**
  * Allocate a single corporate receipt across multiple folios, highest balance first.
  */
-export function postCorporateReceipt(self: StoreLike, payer: string, reservationIds: string[], totalAmount: number, reference?: string) {
+export function postCorporateReceipt(self: StoreLike, payer: string, reservationIds: string[], totalAmount: number, reference?: string, processedBy?: string) {
 	let remaining = totalAmount || 0;
 	const allocations: Array<{ reservationId: string; applied: number }> = [];
 	const ordered = [...reservationIds]
@@ -432,7 +432,7 @@ export function postCorporateReceipt(self: StoreLike, payer: string, reservation
 		if (apply > 0) {
 			addPayment(self, id, 'Corporate Account', apply, {
 				notes: `Corporate receipt from ${payer}${reference ? ` (${reference})` : ''}`,
-				processedBy: 'Front Desk',
+				processedBy: processedBy || 'Front Desk',
 				ref: reference
 			});
 			allocations.push({ reservationId: id, applied: apply });

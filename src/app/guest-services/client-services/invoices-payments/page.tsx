@@ -29,6 +29,7 @@ import {
 } from '@heroui/react';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
+import { useCurrentUserName } from '../../../lib/auth/useCurrentUserName';
 import { openPrintPreview, openHtmlPrintWindow } from '../../../lib/print/engine';
 import { listTemplates } from '../../../lib/print/templates';
 import { buildOrgProfile } from '../../../lib/print/buildOrgProfile';
@@ -94,6 +95,7 @@ interface Invoice {
 }
 
 export default function InvoicesPaymentsPage() {
+  const currentUserName = useCurrentUserName();
   const [activeTab, setActiveTab] = useState('folios');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -702,7 +704,7 @@ export default function InvoicesPaymentsPage() {
     // Add payment using the enhanced store method — use the user-entered reference, fall back to auto-id
     frontOfficeStore.addPayment(reservation.id, mapToStoreMethod(method), amount, {
       notes: notes || `Payment added to invoice ${invoice.invoiceNumber}`,
-      processedBy: 'Front Desk',
+      processedBy: currentUserName,
       ref: reference?.trim() || `PAY-${Date.now()}`,
       invoiceId: invoice.id
     });
@@ -721,7 +723,7 @@ export default function InvoicesPaymentsPage() {
     if (!guest || !guest.creditBalance || guest.creditBalance <= 0) return;
 
     const amount = Math.min(guest.creditBalance, invoice.balance);
-    const success = frontOfficeStore.applyCreditPayment(reservation.id, amount, `Credit applied to invoice ${invoice.invoiceNumber}`);
+    const success = frontOfficeStore.applyCreditPayment(reservation.id, amount, `Credit applied to invoice ${invoice.invoiceNumber}`, currentUserName);
     
     if (success) {
       try { trackEvent('Invoice.CreditApplied' as any, { reservationId: reservation.id, invoiceId: invoice.id, amount }); } catch {}
@@ -783,7 +785,7 @@ export default function InvoicesPaymentsPage() {
       if (adjustmentType === 'charge') {
         frontOfficeStore.addCharge(selectedFolio.id, adjustmentReason, adjustmentAmount);
       } else if (adjustmentType === 'credit') {
-        frontOfficeStore.addPayment(selectedFolio.id, 'Credit', adjustmentAmount, { notes: adjustmentReason, processedBy: 'Front Desk' });
+        frontOfficeStore.addPayment(selectedFolio.id, 'Credit', adjustmentAmount, { notes: adjustmentReason, processedBy: currentUserName });
       } else if (adjustmentType === 'discount') {
         frontOfficeStore.addCharge(selectedFolio.id, `Discount: ${adjustmentReason}`, -adjustmentAmount);
       } else if (adjustmentType === 'complimentary') {
@@ -1832,7 +1834,7 @@ export default function InvoicesPaymentsPage() {
               const outstanding = frontOfficeStore.reservations
                 .filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0)
                 .map(r => r.id);
-              const result = frontOfficeStore.postCorporateReceipt(payer, outstanding, amount, corpReference.trim() || undefined);
+              const result = frontOfficeStore.postCorporateReceipt(payer, outstanding, amount, corpReference.trim() || undefined, currentUserName);
               try { trackEvent('Invoice.CorporateReceipt' as any, { payer, amount, appliedTo: result.allocations?.length || 0 }); } catch {}
               try { logAudit({ area: 'accounting', action: 'create', entity: 'Payment', entityId: `CORP-${Date.now()}`, details: `Corporate receipt ₵${amount} from ${payer}${corpReference ? ` ref: ${corpReference}` : ''}, allocated to ${result.allocations?.length || 0} folios`, severity: 'medium' }); } catch {}
               showNotification('success', `Corporate receipt ₵${formatMoney(amount)} from ${payer} allocated to ${result.allocations?.length || 0} folio(s). Unallocated: ₵${formatMoney(result.remaining)}`);

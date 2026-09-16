@@ -100,6 +100,7 @@ model Tenant {
   hrTrainingRecords HrTrainingRecord[]
   hrAttendances HrAttendance[]
   hrShifts HrShift[]
+  cashierShifts CashierShift[]
   hrBenefitsPackages HrBenefitsPackage[]
   hrEmployeeBenefits HrEmployeeBenefits[]
   hrPerformanceReviews HrPerformanceReview[]
@@ -1962,6 +1963,37 @@ model HrAttendance {
 
   @@index([tenantId, employeeId])
   @@map("hr_attendances")
+}
+
+// A front-desk agent's till session: declared opening float, real payments
+// attributed to them (Payment.processedBy on GuestFolio.payments) while the
+// shift is open, and a counted closing balance reconciled against the
+// system-expected cash total when closed. See /api/frontoffice/cashier-shifts.
+model CashierShift {
+  id               String    @id @default(cuid())
+  tenantId         String
+  cashierUserId    String
+  cashierName      String
+  openingFloat     Float
+  openedAt         DateTime  @default(now())
+  closedAt         DateTime?
+  closingCount     Float?
+  expectedCash     Float?
+  variance         Float?
+  totalCash        Float?
+  totalCard        Float?
+  totalMobileMoney Float?
+  totalOther       Float?
+  status           String    @default("open")
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@index([tenantId, cashierUserId])
+  @@map("cashier_shifts")
 }
 
 model HrShift {

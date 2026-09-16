@@ -138,29 +138,18 @@ export default function FrontdeskDashboard() {
         { title: 'Check-ins', icon: '✅', description: 'Guest check-in and check-ins management', status: 'active', count: todayCheckIns + occupiedTotal },
         { title: 'Check-outs', icon: '🚪', description: 'Guest check-out processing', status: 'active', count: todayCheckOuts },
         { title: 'Invoices & Payments', icon: '📄', description: 'Billing and payment processing', status: 'active', count: 0 }, // Clean slate - no invoices
-        { title: 'Guest Experience Manager', icon: '👥', description: 'Guest satisfaction and services', status: 'active', count: occupiedTotal },
-        { title: 'Mobile Guest Services', icon: '📱', description: 'Mobile app guest services', status: 'active', count: 0 }, // Clean slate - no mobile services
+      ]
+    },
+    {
+      category: 'Operations & Reports',
+      items: [
+        { title: 'Cashiering', icon: '💵', description: 'Open/close till shifts and reconcile cash against real payments', status: 'active', count: 0 },
+        { title: 'Night Audit', icon: '🌙', description: 'Run and review the nightly revenue/room reconciliation', status: 'active', count: 0 },
+        { title: 'Reports & Analysis', icon: '📊', description: 'Occupancy, arrivals, departures, and front office analytics', status: 'active', count: 0 },
       ]
     },
 
 
-    {
-      category: 'Tools & Support',
-      items: [
-        { title: 'Tools & Templates', icon: '🛠️', description: 'Operational tools and templates', status: 'active', count: 0 }, // Clean slate - no tools configured
-        { title: 'View Activities', icon: '📊', description: 'Activity logs and audit trails', status: 'active', count: 0 }, // Clean slate - no activities
-      ]
-    },
-
-    {
-      category: 'User Preferences',
-      items: [
-        { title: 'System Settings', icon: '⚙️', description: 'System configuration and preferences', status: 'active', count: 0 }, // Clean slate - default settings
-        { title: 'User Management', icon: '👤', description: 'User accounts and permissions', status: 'active', count: 0 }, // Clean slate - no users configured
-        { title: 'Interface Customization', icon: '🎨', description: 'Personalize dashboard and interface', status: 'active', count: 0 }, // Clean slate - default interface
-        { title: 'Notification Settings', icon: '🔔', description: 'Alert and notification preferences', status: 'active', count: 0 }, // Clean slate - default notifications
-      ]
-    }
   ];
 
   return (
@@ -354,18 +343,16 @@ export default function FrontdeskDashboard() {
                                 router.push('/guest-services/check-ins?tab=checkins');
                               } else if (item.title.includes('Check-outs')) {
                                 router.push('/guest-services/check-ins?tab=checkouts');
-                              } else if (item.title.includes('Guest Experience Manager')) {
-                                router.push('/guest-services/guest-experience');
-                              } else if (item.title.includes('Mobile Guest Services')) {
-                                router.push('/guest-services/mobile-services');
                               } else if (item.title.includes('Invoices & Payments')) {
                                 router.push('/guest-services/check-ins?tab=billing');
+                              } else if (item.title.includes('Cashiering')) {
+                                router.push('/cashiering');
+                              } else if (item.title.includes('Night Audit')) {
+                                router.push('/night-audit');
+                              } else if (item.title.includes('Reports & Analysis')) {
+                                router.push('/reports');
                               } else if (item.title.includes('Client Management')) {
                                 router.push('/guest-services/client-services/clients-services');
-                              } else if (item.title.includes('Tools & Templates')) {
-                                router.push('/tools-support/tools-templates');
-                              } else if (item.title.includes('View Activities')) {
-                                router.push('/tools-support/view-activities');
                               }
                             }}
                           >
@@ -397,57 +384,6 @@ export default function FrontdeskDashboard() {
                 ))}
               </div>
             </Tab>
-            <Tab key="reservations" title="📅 Reservations">
-              <div className="mt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {operationalItems[0].items.map((item, index) => (
-                    <Card key={index} className="border border-gray-200">
-                      <CardBody className="p-4">
-                        <div className="flex items-center space-x-3 mb-3">
-                          <span className="text-2xl">{item.icon}</span>
-                          <div>
-                            <div className="flex items-center">
-                              <InfoIcon description={item.description} />
-                              <h4 className="font-semibold text-ghana-black">{item.title}</h4>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <Badge color="success" variant="flat">{item.status}</Badge>
-                          <Chip size="sm" variant="flat" color="primary">{item.count}</Chip>
-                        </div>
-                        <div className="mt-3">
-                          <Button
-                            size="sm"
-                            color="primary"
-                            variant="flat"
-                            className="w-full"
-                            onClick={() => {
-                              if (item.title.includes('Reservations')) {
-                                router.push('/guest-services/check-ins?tab=reservations');
-                              } else if (item.title.includes('Rooms & Bookings')) {
-                                router.push('/room-assignments');
-                              } else if (item.title.includes('Room Management')) {
-                                router.push('/room-status');
-                              } else if (item.title.includes('Client Management')) {
-                                router.push('/guest-services/client-services/clients-services');
-                              }
-                            }}
-                          >
-                            {item.title.includes('Reservations') ? '📅 Manage Reservations' :
-                             item.title.includes('Rooms & Bookings') ? '🏠 Manage Assignments' :
-                             item.title.includes('Room Management') ? '📋 Track Status' :
-                             item.title.includes('Client Management') ? '👥 Manage Clients' :
-                             '📋 Track Status'}
-                          </Button>
-                        </div>
-                      </CardBody>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            </Tab>
-            
             <Tab key="guest-services" title="👥 Guest Services">
               <div className="mt-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -556,10 +492,10 @@ export default function FrontdeskDashboard() {
                     <div className="text-3xl mb-2">📄</div>
                     <h3 className="text-lg font-semibold text-gray-800">Invoices & Payments</h3>
                     <p className="text-sm text-gray-600">Billing and payment processing</p>
-                      <Button 
-                        color="primary" 
-                        variant="flat" 
-                        size="sm" 
+                      <Button
+                        color="primary"
+                        variant="flat"
+                        size="sm"
                         className="mt-3"
                         onClick={() => router.push('/guest-services/check-ins?tab=billing')}
                       >
@@ -567,157 +503,6 @@ export default function FrontdeskDashboard() {
                       </Button>
                     </CardBody>
                   </Card>
-
-                  {/* 5. Guest Experience Manager */}
-                  <Card className="border border-gray-200">
-                    <CardBody className="p-4">
-                      <div className="flex items-center space-x-3 mb-3">
-                        <span className="text-2xl">👥</span>
-                        <div>
-                          <div className="flex items-center">
-                            <InfoIcon description="Manage guest experience and services" />
-                            <h4 className="font-semibold text-ghana-black">Guest Experience Manager</h4>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between mb-3">
-                        <Badge color="success" variant="flat">active</Badge>
-                        <Chip size="sm" variant="flat" color="primary">0</Chip>
-                      </div>
-                      <div className="mt-3">
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="flat"
-                          className="w-full"
-                          onClick={() => router.push('/guest-services/guest-experience')}
-                        >
-                          👥 Manage Experience
-                        </Button>
-                      </div>
-                  </CardBody>
-                </Card>
-
-                  {/* 6. Mobile Guest Services */}
-                  <Card className="border border-gray-200">
-                    <CardBody className="p-4">
-                      <div className="flex items-center space-x-3 mb-3">
-                        <span className="text-2xl">📱</span>
-                        <div>
-                          <div className="flex items-center">
-                            <InfoIcon description="Mobile app guest services" />
-                            <h4 className="font-semibold text-ghana-black">Mobile Guest Services</h4>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between mb-3">
-                        <Badge color="success" variant="flat">active</Badge>
-                        <Chip size="sm" variant="flat" color="primary">0</Chip>
-                      </div>
-                      <div className="mt-3">
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="flat"
-                          className="w-full"
-                          onClick={() => router.push('/guest-services/mobile-services')}
-                        >
-                          📱 Mobile Services
-                        </Button>
-                      </div>
-                  </CardBody>
-                </Card>
-                </div>
-              </div>
-            </Tab>
-            
-
-            
-            <Tab key="tools-support" title="🛠️ Tools & Support">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/tools-support/tools-templates')}>
-                  <CardBody className="p-4 text-center">
-                    <div className="text-3xl mb-2">🛠️</div>
-                    <h3 className="text-lg font-semibold text-gray-800">Tools & Templates</h3>
-                    <p className="text-sm text-gray-600">Operational tools and communication templates</p>
-                    <Button color="primary" variant="flat" size="sm" className="mt-3">Manage</Button>
-                  </CardBody>
-                </Card>
-                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/tools-support/view-activities')}>
-                  <CardBody className="p-4 text-center">
-                    <div className="text-3xl mb-2">📊</div>
-                    <h3 className="text-lg font-semibold text-gray-800">View Activities</h3>
-                    <p className="text-sm text-gray-600">Activity logs and audit trails</p>
-                    <Button color="primary" variant="flat" size="sm" className="mt-3">Monitor</Button>
-                  </CardBody>
-                </Card>
-                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer">
-                  <CardBody className="p-4 text-center">
-                    <div className="text-3xl mb-2">📋</div>
-                    <h3 className="text-lg font-semibold text-gray-800">Reports</h3>
-                    <p className="text-sm text-gray-600">Generate and export reports</p>
-                    <Button color="primary" variant="flat" size="sm" className="mt-3">Create</Button>
-                  </CardBody>
-                </Card>
-                <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer">
-                  <CardBody className="p-4 text-center">
-                    <div className="text-3xl mb-2">⚙️</div>
-                    <h3 className="text-lg font-semibold text-gray-800">System Tools</h3>
-                    <p className="text-sm text-gray-600">System maintenance and utilities</p>
-                    <Button color="primary" variant="flat" size="sm" className="mt-3">Access</Button>
-                  </CardBody>
-                </Card>
-              </div>
-            </Tab>
-            
-
-            
-            <Tab key="user-preferences" title="⚙️ User Preferences">
-              <div className="mt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {operationalItems[3].items.map((item, index) => (
-                    <Card key={index} className="border border-gray-200">
-                      <CardBody className="p-4">
-                        <div className="flex items-center space-x-3 mb-3">
-                          <span className="text-2xl">{item.icon}</span>
-                          <div>
-                            <div className="flex items-center">
-                              <InfoIcon description={item.description} />
-                              <h4 className="font-semibold text-ghana-black">{item.title}</h4>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between mb-3">
-                          <Badge color="success" variant="flat">{item.status}</Badge>
-                          <Chip size="sm" variant="flat" color="primary">{item.count}</Chip>
-                        </div>
-                        <div className="mt-3">
-                          <Button
-                            size="sm"
-                            color="primary"
-                            variant="flat"
-                            className="w-full"
-                            onClick={() => {
-                              if (item.title.includes('System Settings')) {
-                                router.push('/?tab=overview');
-                              } else if (item.title.includes('User Management')) {
-                                router.push('/user-management');
-                              } else if (item.title.includes('Interface Customization')) {
-                                router.push('/?tab=overview');
-                              } else if (item.title.includes('Notification Settings')) {
-                                router.push('/?tab=overview');
-                              }
-                            }}
-                          >
-                            {item.title.includes('System Settings') ? '⚙️ Configure' :
-                             item.title.includes('User Management') ? '👤 Manage Users' :
-                             item.title.includes('Interface Customization') ? '🎨 Customize' :
-                             '🔔 Configure'}
-                          </Button>
-                        </div>
-                      </CardBody>
-                    </Card>
-                  ))}
                 </div>
               </div>
             </Tab>
