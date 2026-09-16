@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import { Spinner } from '@heroui/react';
 import { useSettingsStore } from './lib/settings/store';
+import { setClientTenantSubdomain } from './lib/api/clientTenant';
 import Navigation from './components/Navigation';
 import LoginForm from './components/LoginForm';
 
@@ -52,6 +53,22 @@ export default function Home() {
   React.useEffect(() => {
     setSessionRole(status === 'authenticated' ? (session?.user as any)?.role ?? null : null);
   }, [status, session, setSessionRole]);
+
+  // getClientTenantSubdomain() falls back to guessing the tenant from the URL
+  // hostname when localStorage has no record — wrong on this shared Vercel
+  // domain (ghana-hotel-management.vercel.app resolves to a nonexistent
+  // tenant "ghana-hotel-management", not the real one). A device with no
+  // local record but a valid session already knows its real tenant via the
+  // session itself, so restore it there before loadSettings() (below) needs
+  // it — otherwise a fresh device queries setup-status for the wrong tenant,
+  // gets no record, and gets bounced through the setup wizard again even
+  // though its actual tenant already completed it.
+  React.useEffect(() => {
+    const subdomain = (session?.user as any)?.tenant?.subdomain;
+    if (status === 'authenticated' && subdomain) {
+      setClientTenantSubdomain(subdomain);
+    }
+  }, [status, session]);
 
   // Navigation's own mount effect also calls loadSettings(), but Navigation
   // only mounts once awaitingSetupCheck is false below — which itself depends
