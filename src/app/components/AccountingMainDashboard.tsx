@@ -39,6 +39,7 @@ import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import RequestOvertimeButton from './hr/RequestOvertimeButton';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs (Chart of Accounts, Bank & Cash, etc.) are core navigation, not
@@ -372,7 +373,12 @@ export default function AccountingMainDashboard() {
             </div>
           </div>
 
-          <div className="flex justify-end mb-3">
+          <div className="flex justify-end mb-3 gap-2">
+            <RequestOvertimeButton
+              departmentLabel="Accounting & Finance"
+              permissionId="accounting.log-overtime"
+              departmentNameHints={['accounting', 'finance']}
+            />
             <CustomizeViewControl
               sections={ACCOUNTING_DASHBOARD_SECTIONS}
               isHidden={isHidden}

@@ -81,6 +81,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'frontdesk.void-charge', label: 'Void a folio charge' },
       { id: 'frontdesk.transfer-charge', label: 'Transfer/split a charge between folios' },
       { id: 'frontdesk.close-folio', label: 'Close a folio' },
+      { id: 'frontdesk.log-overtime', label: 'Submit an overtime request' },
       { id: 'frontdesk.post-payment', label: 'Post a payment' },
       { id: 'frontdesk.refund-payment', label: 'Refund a payment' },
       { id: 'frontdesk.apply-credit', label: 'Add/apply a guest credit' },
@@ -108,6 +109,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'events-conferences.post-payment', label: 'Record a payment/deposit' },
       { id: 'events-conferences.export-data', label: 'Export event data' },
       { id: 'events-conferences.manage-rates', label: 'Add/edit an event rate' },
+      { id: 'events-conferences.log-overtime', label: 'Submit an overtime request' },
     ],
   },
   {
@@ -123,6 +125,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'restaurant.manage-tables', label: 'Set/change a table status' },
       { id: 'restaurant.manage-reservations', label: 'Create/edit a table reservation' },
       { id: 'restaurant.toggle-availability', label: 'Toggle menu item availability' },
+      { id: 'restaurant.log-overtime', label: 'Submit an overtime request' },
     ],
   },
   {
@@ -136,6 +139,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'kitchen.cancel-order', label: 'Cancel an order' },
       { id: 'kitchen.manager-override', label: 'Manager PIN override (delete/void order)' },
       { id: 'kitchen.manage-inventory', label: 'Manage kitchen ingredient stock & submit stock requisitions' },
+      { id: 'kitchen.log-overtime', label: 'Submit an overtime request' },
     ],
   },
   {
@@ -153,6 +157,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'housekeeping.manage-inspection', label: 'Create/save a room inspection' },
       { id: 'housekeeping.manage-supplies', label: 'Restock / add / edit supplies' },
       { id: 'housekeeping.manage-staff', label: 'Add/edit housekeeping staff' },
+      { id: 'housekeeping.log-overtime', label: 'Submit an overtime request' },
     ],
   },
   {
@@ -175,6 +180,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'inventory.stock-count', label: 'Start/complete a stock count' },
       { id: 'inventory.manage-supplier-invoices', label: 'Create/pay a supplier invoice' },
       { id: 'inventory.acknowledge-alert', label: 'Acknowledge an inventory alert' },
+      { id: 'inventory.log-overtime', label: 'Submit an overtime request' },
     ],
   },
   {
@@ -194,6 +200,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'security.manage-routes', label: 'Add/deactivate patrol routes' },
       { id: 'security.manage-shifts', label: 'Check staff in/out of a duty shift' },
       { id: 'security.mark-compliance', label: 'Mark a compliance requirement completed' },
+      { id: 'security.log-overtime', label: 'Submit an overtime request' },
     ],
   },
   {
@@ -208,6 +215,8 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'hr.process-payroll', label: 'Process payroll for a period' },
       { id: 'hr.approve-payroll', label: 'Approve payroll' },
       { id: 'hr.manage-leave', label: 'Approve/reject a leave request' },
+      { id: 'hr.log-overtime', label: 'Submit an overtime request' },
+      { id: 'hr.approve-overtime', label: 'Approve overtime at/above the director threshold' },
       { id: 'hr.manage-shifts', label: 'Schedule a shift' },
       { id: 'hr.manage-benefits', label: 'Enroll/cancel a benefits enrollment' },
       { id: 'hr.manage-performance-reviews', label: 'Add/edit a performance review' },
@@ -236,6 +245,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'accounting.manage-centers', label: 'Manage cost/revenue centers' },
       { id: 'accounting.close-period', label: 'Close an accounting period' },
       { id: 'accounting.manage-ppe', label: 'Add/dispose a fixed asset (PPE)' },
+      { id: 'accounting.log-overtime', label: 'Submit an overtime request' },
     ],
   },
   {

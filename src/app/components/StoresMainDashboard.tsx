@@ -25,6 +25,7 @@ import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import RequestOvertimeButton from './hr/RequestOvertimeButton';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs are core navigation, not clutter, so they're deliberately not included.
@@ -286,6 +287,11 @@ export default function StoresMainDashboard() {
         <div className="flex items-center gap-2">
           <Badge color="success" variant="flat">Reorder System</Badge>
           <Badge color="primary" variant="flat">Suppliers Active</Badge>
+          <RequestOvertimeButton
+            departmentLabel="Inventory & Stores"
+            permissionId="inventory.log-overtime"
+            departmentNameHints={['stores', 'inventory', 'warehouse']}
+          />
           <CustomizeViewControl
             sections={STORES_DASHBOARD_SECTIONS}
             isHidden={isHidden}

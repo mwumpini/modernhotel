@@ -15,10 +15,17 @@ function syncLeaveRequestToApi(leave: LeaveRequest) {
   fetch('/api/hr/leave-requests', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(leave) })
     .catch((e) => console.warn('[HR] Failed to sync leave request to server:', e));
 }
-function syncAttendanceToApi(rec: Attendance) {
-  if (typeof window === 'undefined') return;
-  fetch('/api/hr/attendance', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(rec) })
-    .catch((e) => console.warn('[HR] Failed to sync attendance to server:', e));
+// Returns the server's persisted record so callers that need to know the real
+// outcome — e.g. whether an overtime approval attempt actually took (it's
+// silently downgraded server-side if it needed director sign-off the caller
+// doesn't have — see /api/hr/attendance) — can reconcile local state against
+// it instead of assuming the optimistic value stuck.
+function syncAttendanceToApi(rec: Attendance): Promise<Attendance | null> {
+  if (typeof window === 'undefined') return Promise.resolve(null);
+  return fetch('/api/hr/attendance', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(rec) })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => data?.attendance ?? null)
+    .catch((e) => { console.warn('[HR] Failed to sync attendance to server:', e); return null; });
 }
 function syncShiftToApi(shift: Shift) {
   if (typeof window === 'undefined') return;
@@ -75,6 +82,12 @@ interface LeaveAttendanceState {
   // Time tracking
   clockIn: (employeeId: string, date?: Date, when?: Date, notes?: string) => Attendance;
   clockOut: (employeeId: string, when?: Date) => Attendance | null;
+
+  // Overtime
+  updateOvertimeHours: (id: string, hours: number) => void;
+  approveOvertime: (id: string, approver: string) => Promise<{ approved: boolean }>;
+  logManualOvertime: (employeeId: string, date: Date, startTime: Date, endTime: Date, notes?: string) => Attendance;
+  getApprovedOvertimeHours: (employeeId: string, periodStart: Date, periodEnd: Date) => number;
 
   // Shifts
   scheduleShift: (shift: Omit<Shift, 'id'>) => Shift;
@@ -209,6 +222,83 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
     console.log('[HR][Time] clockOut', { employeeId, when });
     if (result) syncAttendanceToApi(result);
     return result;
+  },
+
+  updateOvertimeHours: (id, hours) => {
+    let updated: Attendance | undefined;
+    set((state) => ({
+      attendances: state.attendances.map((a) => {
+        if (a.id !== id) return a;
+        // Editing a still-pending amount only — an approved figure is a record of what was
+        // actually paid, not something to quietly rewrite after the fact.
+        if (a.approvedAt) return a;
+        updated = { ...a, overtimeHours: Math.max(0, hours), updatedAt: new Date() };
+        return updated;
+      })
+    }));
+    if (updated) syncAttendanceToApi(updated);
+  },
+
+  approveOvertime: async (id, approver) => {
+    const target = get().attendances.find((a) => a.id === id);
+    if (!target) return { approved: false };
+    const optimistic: Attendance = { ...target, approvedBy: approver, approvedAt: new Date(), updatedAt: new Date() };
+    // The server is authoritative here — an over-threshold request needing
+    // director sign-off gets silently downgraded (approvedAt/approvedBy
+    // stripped) if this caller lacks hr.approve-overtime, so the local state
+    // must reflect what actually got persisted, not the optimistic attempt.
+    const persisted = await syncAttendanceToApi(optimistic);
+    // The API round-trips dates as JSON strings — rehydrate before merging into
+    // store state, matching hydrateFromApi's own date-field conversion below.
+    const result = persisted
+      ? { ...persisted, date: new Date(persisted.date), checkInTime: persisted.checkInTime ? new Date(persisted.checkInTime) : undefined, checkOutTime: persisted.checkOutTime ? new Date(persisted.checkOutTime) : undefined, approvedAt: persisted.approvedAt ? new Date(persisted.approvedAt) : undefined, createdAt: new Date(persisted.createdAt), updatedAt: new Date(persisted.updatedAt) }
+      : target;
+    set((state) => ({
+      attendances: state.attendances.map((a) => (a.id === id ? result : a)),
+    }));
+    return { approved: !!result.approvedAt };
+  },
+
+  logManualOvertime: (employeeId, date, startTime, endTime, notes) => {
+    // Real start/end times, not a self-reported hour count — auditable against a
+    // dispute the same way a clock-in/out record is, rather than taking a bare
+    // number on trust. Overnight shifts (end past midnight) roll to the next day.
+    const end = endTime.getTime() > startTime.getTime() ? endTime : new Date(endTime.getTime() + 24 * 60 * 60 * 1000);
+    const hours = Math.max(0, (end.getTime() - startTime.getTime()) / (1000 * 60 * 60));
+    const rec: Attendance = {
+      id: `att_${Date.now()}`,
+      employeeId,
+      date,
+      checkInTime: startTime,
+      checkOutTime: end,
+      totalHours: hours,
+      overtimeHours: hours,
+      breakTime: 0,
+      status: 'present',
+      shift: 'flexible',
+      location: '',
+      // Manual entries exist precisely for staff the clock-in system never sees, so there's
+      // no computed totalHours/overtimeHours split to trust — flagged in notes for the
+      // approver rather than silently presented the same as a clock-derived record.
+      notes: notes ? `[Manual OT] ${notes}` : '[Manual OT entry]',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as Attendance;
+    set((state) => ({ attendances: [rec, ...state.attendances] }));
+    syncAttendanceToApi(rec);
+    return rec;
+  },
+
+  getApprovedOvertimeHours: (employeeId, periodStart, periodEnd) => {
+    const start = periodStart.getTime();
+    const end = periodEnd.getTime();
+    return get()
+      .attendances.filter((a) => {
+        if (a.employeeId !== employeeId || !a.approvedAt) return false;
+        const t = new Date(a.date).getTime();
+        return t >= start && t <= end;
+      })
+      .reduce((sum, a) => sum + (a.overtimeHours || 0), 0);
   },
 
   scheduleShift: (shift) => {

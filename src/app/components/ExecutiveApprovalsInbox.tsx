@@ -1,9 +1,12 @@
 'use client';
 
 import React from 'react';
+import { useSession } from 'next-auth/react';
 import { Card, CardHeader, CardBody, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Button, Chip, Spinner } from '@heroui/react';
 import { useAccountingStore } from '../lib/accounting/store';
 import { useSettingsStore } from '../lib/settings/store';
+import { useLeaveAttendanceStore } from '../lib/hr/leaveAttendanceStore';
+import { useEmployeeStore } from '../lib/hr/employeeStore';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { formatAccountingCurrency } from '../lib/accounting/tenantAccountingConfig';
 
@@ -17,12 +20,12 @@ type PendingRequisition = {
 };
 
 /**
- * Director/GM approval inbox — journal entries, payments, and requisitions
- * the tenant's configured thresholds parked for sign-off (see
+ * Director/GM approval inbox — journal entries, payments, requisitions, and
+ * overtime the tenant's configured thresholds parked for sign-off (see
  * src/app/lib/api/approvalThresholds.ts). Gated in Navigation.tsx so only
- * someone holding at least one of the three approve permissions ever
+ * someone holding at least one of the four approve permissions ever
  * reaches this screen; each section below still re-checks its own
- * permission independently in case a role only has one of the three.
+ * permission independently in case a role only has one of the four.
  */
 export default function ExecutiveApprovalsInbox() {
   const {
@@ -37,6 +40,17 @@ export default function ExecutiveApprovalsInbox() {
   const canApproveJournalEntries = hasPermission('accounting.approve-journal-entry');
   const canApprovePayments = hasPermission('accounting.approve-payment');
   const canApproveRequisitions = hasPermission('inventory.approve-high-value-requisition');
+  const canApproveOvertime = hasPermission('hr.approve-overtime');
+  const requireOvertimeApproval = useSettingsStore(s => s.financialSettings.requireApprovalForOvertime);
+  const overtimeThreshold = useSettingsStore(s => s.financialSettings.overtimeApprovalThreshold);
+
+  const attendances = useLeaveAttendanceStore(s => s.attendances);
+  const hydrateAttendance = useLeaveAttendanceStore(s => s.hydrateFromApi);
+  const approveOvertime = useLeaveAttendanceStore(s => s.approveOvertime);
+  const employees = useEmployeeStore(s => s.employees);
+  const hydrateEmployees = useEmployeeStore(s => s.hydrateFromApi);
+  const { data: session } = useSession();
+  const approverName = (session?.user as any)?.name || (session?.user as any)?.email || 'Director';
 
   const [loading, setLoading] = React.useState(true);
   const [requisitions, setRequisitions] = React.useState<PendingRequisition[]>([]);
@@ -60,7 +74,7 @@ export default function ExecutiveApprovalsInbox() {
   React.useEffect(() => {
     (async () => {
       setLoading(true);
-      await Promise.all([initializeAccounting(), loadRequisitions()]);
+      await Promise.all([initializeAccounting(), loadRequisitions(), hydrateAttendance(), hydrateEmployees()]);
       setLoading(false);
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -68,7 +82,14 @@ export default function ExecutiveApprovalsInbox() {
 
   const pendingJournalEntries = journalEntries.filter(e => e.status === 'Pending Approval');
   const pendingPayments = payments.filter(p => p.status === 'Pending Approval');
+  const pendingOvertime = attendances.filter(
+    a => (a.overtimeHours || 0) > 0 && !a.approvedAt && requireOvertimeApproval && (a.overtimeHours || 0) >= overtimeThreshold
+  );
   const partnerName = (id: string) => businessPartners.find(bp => bp.id === id)?.name || id;
+  const employeeName = (id: string) => {
+    const e = employees.find(emp => emp.id === id);
+    return e ? `${e.firstName} ${e.lastName}` : id;
+  };
   const requisitionTotal = (r: PendingRequisition) =>
     r.items.reduce((sum, i) => sum + Number(i.totalCost ?? Number(i.quantity) * Number(i.estimatedPrice)), 0);
 
@@ -85,6 +106,15 @@ export default function ExecutiveApprovalsInbox() {
     setActingOn(id);
     try {
       await postPayment(id);
+    } finally {
+      setActingOn(null);
+    }
+  };
+
+  const approveOvertimeRequest = async (id: string) => {
+    setActingOn(id);
+    try {
+      await approveOvertime(id, approverName);
     } finally {
       setActingOn(null);
     }
@@ -126,7 +156,7 @@ export default function ExecutiveApprovalsInbox() {
     return <div className="p-6 flex justify-center"><Spinner size="lg" /></div>;
   }
 
-  const totalPending = pendingJournalEntries.length + pendingPayments.length + requisitions.length;
+  const totalPending = pendingJournalEntries.length + pendingPayments.length + requisitions.length + pendingOvertime.length;
 
   return (
     <div className="p-6 space-y-6">
@@ -250,6 +280,45 @@ export default function ExecutiveApprovalsInbox() {
                       <TableCell className="text-right">{formatAccountingCurrency(requisitionTotal(r))}</TableCell>
                       <TableCell>
                         <Button size="sm" color="success" variant="flat" isLoading={actingOn === r.id} onPress={() => approveRequisition(r)}>
+                          Approve
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardBody>
+        </Card>
+      )}
+
+      {canApproveOvertime && (
+        <Card className="border-0 shadow-lg">
+          <CardHeader className="flex items-center justify-between">
+            <h3 className="font-semibold">Overtime</h3>
+            <Chip size="sm" variant="flat" color={pendingOvertime.length ? 'warning' : 'default'}>
+              {pendingOvertime.length} pending
+            </Chip>
+          </CardHeader>
+          <CardBody>
+            {pendingOvertime.length === 0 ? (
+              <p className="text-sm text-gray-500">No overtime requests pending approval.</p>
+            ) : (
+              <Table removeWrapper aria-label="Pending overtime">
+                <TableHeader>
+                  <TableColumn>EMPLOYEE</TableColumn>
+                  <TableColumn>DATE</TableColumn>
+                  <TableColumn className="text-right">HOURS</TableColumn>
+                  <TableColumn> </TableColumn>
+                </TableHeader>
+                <TableBody>
+                  {pendingOvertime.map(a => (
+                    <TableRow key={a.id}>
+                      <TableCell>{employeeName(a.employeeId)}</TableCell>
+                      <TableCell>{new Date(a.date).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-right">{(a.overtimeHours || 0).toFixed(2)}</TableCell>
+                      <TableCell>
+                        <Button size="sm" color="success" variant="flat" isLoading={actingOn === a.id} onPress={() => approveOvertimeRequest(a.id)}>
                           Approve
                         </Button>
                       </TableCell>

@@ -66,6 +66,7 @@ import EventsModuleFilters, {
   type EventsDateFilterMode,
 } from './EventsModuleFilters';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
+import RequestOvertimeButton from './hr/RequestOvertimeButton';
 
 type ManagementMainTabKey =
   | 'events'
@@ -14126,8 +14127,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       {/* Removed top notices; bottom section contains notices & activities */}
       <DeptMessenger from="events" mode="drawer" />
       
-      <div className="mb-6">
+      <div className="mb-6 flex items-center justify-between">
         <h2 className="text-2xl font-bold text-ghana-black">🎪 Events & Conferences</h2>
+        <RequestOvertimeButton
+          departmentLabel="Events & Conferences"
+          permissionId="events-conferences.log-overtime"
+          departmentNameHints={['events', 'conference', 'banquet']}
+        />
       </div>
       <Tabs 
             selectedKey={selectedTab} 

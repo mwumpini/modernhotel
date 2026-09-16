@@ -16,6 +16,8 @@ const FIELDS = [
   'purchaseOrderApprovalThreshold',
   'requireApprovalForPayments',
   'paymentApprovalThreshold',
+  'requireApprovalForOvertime',
+  'overtimeApprovalThreshold',
 ] as const
 
 const DEFAULTS: Record<(typeof FIELDS)[number], boolean | number> = {
@@ -25,6 +27,8 @@ const DEFAULTS: Record<(typeof FIELDS)[number], boolean | number> = {
   purchaseOrderApprovalThreshold: 1000,
   requireApprovalForPayments: true,
   paymentApprovalThreshold: 1000,
+  requireApprovalForOvertime: true,
+  overtimeApprovalThreshold: 8,
 }
 
 export async function GET(request: NextRequest) {

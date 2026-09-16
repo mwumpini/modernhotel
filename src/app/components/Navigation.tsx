@@ -150,7 +150,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const canSeeApprovals =
     hasPermission('accounting.approve-journal-entry') ||
     hasPermission('accounting.approve-payment') ||
-    hasPermission('inventory.approve-high-value-requisition');
+    hasPermission('inventory.approve-high-value-requisition') ||
+    hasPermission('hr.approve-overtime');
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
   const currentUserRoleLabel = ROLE_LABELS[(session?.user as any)?.role] || (session?.user as any)?.role || '';

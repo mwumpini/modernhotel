@@ -4,6 +4,7 @@ import React, { useMemo, useState } from 'react';
 import { Card, CardHeader, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Divider, Tooltip, Checkbox } from '@heroui/react';
 import UniversalPayrollBuilder from '@/app/lib/payroll/builder';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
+import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { syncPayrollRunToComplianceFiling } from '@/app/lib/compliance/payrollSync';
@@ -34,10 +35,24 @@ export default function PayrollBuilderPanel() {
   const [runMonth, setRunMonth] = useState<number>(new Date().getMonth() + 1);
   const [runYear, setRunYear] = useState<number>(new Date().getFullYear());
   const [markPaid, setMarkPaid] = useState<boolean>(true);
-  // Overtime hours worked this period, per employee id — entered by the payroll admin
-  // right before running, since there's no attendance/clock-in system feeding this
-  // automatically yet. Keyed by employee id so it survives re-renders across employees.
+  // Overtime hours worked this period, per employee id. Defaults to the employee's
+  // HR-approved overtime for the run's month (see approvedOvertimeByEmployee below) but
+  // stays manually overridable here for employees the attendance system doesn't cover.
+  // Keyed by employee id so an override survives re-renders across employees.
   const [overtimeHoursByEmployee, setOvertimeHoursByEmployee] = useState<Record<string, number>>({});
+  const attendances = useLeaveAttendanceStore((s: any) => s.attendances);
+  const getApprovedOvertimeHours = useLeaveAttendanceStore((s: any) => s.getApprovedOvertimeHours);
+  const approvedOvertimeByEmployee = useMemo(() => {
+    const start = new Date(runYear, runMonth - 1, 1);
+    const end = new Date(runYear, runMonth, 0);
+    const map: Record<string, number> = {};
+    (employees || []).forEach((emp: any) => {
+      const eid = emp.id || emp.employeeNumber;
+      map[eid] = getApprovedOvertimeHours(eid, start, end);
+    });
+    return map;
+    // attendances is read only to retrigger this memo when overtime gets approved elsewhere
+  }, [employees, runMonth, runYear, attendances, getApprovedOvertimeHours]);
 
   React.useEffect(() => {
     void useComplianceStore.getState().syncCountryFromSetup();
@@ -47,6 +62,7 @@ export default function PayrollBuilderPanel() {
     // Payroll" fails with "No active employees to process" despite real employees existing.
     void useEmployeeStore.getState().hydrateFromApi();
     void usePayrollStore.getState().hydrateFromApi();
+    void useLeaveAttendanceStore.getState().hydrateFromApi();
   }, []);
 
   React.useEffect(() => {
@@ -383,7 +399,7 @@ export default function PayrollBuilderPanel() {
       }
       (builder as any).payrollConfigs.set(runtimeId, runtimeConfig);
 
-      const adjustments = { hours: { OVERTIME: Number(overtimeHoursByEmployee[eid] || 0) } };
+      const adjustments = { hours: { OVERTIME: Number(overtimeHoursByEmployee[eid] ?? approvedOvertimeByEmployee[eid] ?? 0) } };
       const calc = (builder as any).calculatePayroll(eid, runtimeId, { month: runMonth, year: runYear }, adjustments);
       totals.gross += calc.summary.gross;
       totals.net += calc.summary.net;
@@ -625,9 +641,8 @@ export default function PayrollBuilderPanel() {
                   <div className="mt-4">
                     <div className="text-sm font-medium mb-1">Overtime Hours This Period</div>
                     <div className="text-xs text-gray-500 mb-2">
-                      Enter hours worked beyond normal schedule per employee before running — there&apos;s no
-                      attendance/clock-in system feeding this automatically yet, so it defaults to 0 (no overtime pay)
-                      if left blank.
+                      Pre-filled from overtime approved in HR &amp; Payroll → Overtime Management for this month;
+                      override here if needed (e.g. an employee not on the attendance system).
                     </div>
                     <Table aria-label="overtime-hours">
                       <TableHeader>
@@ -638,6 +653,7 @@ export default function PayrollBuilderPanel() {
                       <TableBody>
                         {(employees || []).filter((e: any) => e.status === 'active').map((emp: any) => {
                           const eid = emp.id || emp.employeeNumber;
+                          const value = overtimeHoursByEmployee[eid] ?? approvedOvertimeByEmployee[eid] ?? 0;
                           return (
                             <TableRow key={eid}>
                               <TableCell>{emp.firstName} {emp.lastName}</TableCell>
@@ -648,7 +664,7 @@ export default function PayrollBuilderPanel() {
                                 <Input
                                   type="number"
                                   size="sm"
-                                  value={String(overtimeHoursByEmployee[eid] || 0)}
+                                  value={String(value)}
                                   onChange={(e) => setOvertimeHoursByEmployee(prev => ({ ...prev, [eid]: parseFloat(e.target.value || '0') }))}
                                   variant="bordered"
                                   isDisabled={!Number(emp.hourlyRate || 0)}

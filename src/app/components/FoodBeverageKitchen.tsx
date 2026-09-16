@@ -10,6 +10,7 @@ import KitchenDisplaySystem from './KitchenDisplaySystem';
 import DepartmentRequisitionModal from './inventory/DepartmentRequisitionModal';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import RequestOvertimeButton from './hr/RequestOvertimeButton';
 
 // Hideable summary cards on this dashboard — the Tabs below (Kitchen Display,
 // Stations, Inventory, etc.) are core navigation, not clutter.
@@ -309,6 +310,11 @@ export default function FoodBeverageKitchen() {
           >
             + Add Recipe
           </Button>
+          <RequestOvertimeButton
+            departmentLabel="Kitchen"
+            permissionId="kitchen.log-overtime"
+            departmentNameHints={['kitchen']}
+          />
           <CustomizeViewControl
             sections={KITCHEN_DASHBOARD_SECTIONS}
             isHidden={isHidden}

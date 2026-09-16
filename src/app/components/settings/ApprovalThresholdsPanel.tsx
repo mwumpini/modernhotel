@@ -11,9 +11,9 @@ import { useSettingsStore } from '../../lib/settings/store';
  * immediately. Enforced server-side in src/app/lib/api/approvalThresholds.ts;
  * this panel just edits the tenant's values.
  */
-function ThresholdRow({ label, description, required, threshold, onRequired, onThreshold, disabled }: {
+function ThresholdRow({ label, description, required, threshold, onRequired, onThreshold, disabled, unit = 'GHS' }: {
   label: string; description: string; required: boolean; threshold: number;
-  onRequired: (v: boolean) => void; onThreshold: (v: number) => void; disabled: boolean;
+  onRequired: (v: boolean) => void; onThreshold: (v: number) => void; disabled: boolean; unit?: string;
 }) {
   return (
     <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border rounded-lg">
@@ -24,7 +24,7 @@ function ThresholdRow({ label, description, required, threshold, onRequired, onT
       <div className="flex items-center gap-4">
         <Input
           type="number"
-          label="Threshold (GHS)"
+          label={`Threshold (${unit})`}
           className="max-w-[160px]"
           value={String(threshold)}
           onChange={(e) => onThreshold(Number(e.target.value))}
@@ -50,6 +50,8 @@ export default function ApprovalThresholdsPanel() {
     purchaseOrderApprovalThreshold: settings.financialSettings.purchaseOrderApprovalThreshold,
     requireApprovalForPayments: settings.financialSettings.requireApprovalForPayments,
     paymentApprovalThreshold: settings.financialSettings.paymentApprovalThreshold,
+    requireApprovalForOvertime: settings.financialSettings.requireApprovalForOvertime,
+    overtimeApprovalThreshold: settings.financialSettings.overtimeApprovalThreshold,
   }));
   const [savedAt, setSavedAt] = React.useState<number | null>(null);
 
@@ -63,6 +65,8 @@ export default function ApprovalThresholdsPanel() {
       purchaseOrderApprovalThreshold: settings.financialSettings.purchaseOrderApprovalThreshold,
       requireApprovalForPayments: settings.financialSettings.requireApprovalForPayments,
       paymentApprovalThreshold: settings.financialSettings.paymentApprovalThreshold,
+      requireApprovalForOvertime: settings.financialSettings.requireApprovalForOvertime,
+      overtimeApprovalThreshold: settings.financialSettings.overtimeApprovalThreshold,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -72,6 +76,8 @@ export default function ApprovalThresholdsPanel() {
     settings.financialSettings.purchaseOrderApprovalThreshold,
     settings.financialSettings.requireApprovalForPayments,
     settings.financialSettings.paymentApprovalThreshold,
+    settings.financialSettings.requireApprovalForOvertime,
+    settings.financialSettings.overtimeApprovalThreshold,
   ]);
 
   const handleSave = () => {
@@ -142,6 +148,22 @@ export default function ApprovalThresholdsPanel() {
             onRequired={(v) => setForm((f) => ({ ...f, requireApprovalForPayments: v }))}
             onThreshold={(v) => setForm((f) => ({ ...f, paymentApprovalThreshold: v }))}
             disabled={!canManage}
+          />
+        </CardBody>
+      </Card>
+
+      <Card>
+        <CardHeader><h4 className="font-semibold">Overtime</h4></CardHeader>
+        <CardBody>
+          <ThresholdRow
+            label="Overtime approval"
+            description="An overtime request at or above this many hours needs a director's approval instead of Payroll/HR approving it directly."
+            required={form.requireApprovalForOvertime}
+            threshold={form.overtimeApprovalThreshold}
+            onRequired={(v) => setForm((f) => ({ ...f, requireApprovalForOvertime: v }))}
+            onThreshold={(v) => setForm((f) => ({ ...f, overtimeApprovalThreshold: v }))}
+            disabled={!canManage}
+            unit="hours"
           />
         </CardBody>
       </Card>

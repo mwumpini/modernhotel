@@ -98,6 +98,8 @@ function syncApprovalThresholdsToApi(fs: SystemSettings['financialSettings']) {
       purchaseOrderApprovalThreshold: fs.purchaseOrderApprovalThreshold,
       requireApprovalForPayments: fs.requireApprovalForPayments,
       paymentApprovalThreshold: fs.paymentApprovalThreshold,
+      requireApprovalForOvertime: fs.requireApprovalForOvertime,
+      overtimeApprovalThreshold: fs.overtimeApprovalThreshold,
     }),
   }).catch((e) => console.warn('[Settings] Failed to sync approval thresholds:', e));
 }
@@ -909,6 +911,10 @@ export interface SystemSettings {
     purchaseOrderApprovalThreshold: number;
     requireApprovalForPayments: boolean;
     paymentApprovalThreshold: number;
+    // Hours, not currency — an overtime request at or above this needs director
+    // sign-off; below it, Payroll/HR can approve it directly.
+    requireApprovalForOvertime: boolean;
+    overtimeApprovalThreshold: number;
   };
   
   // Communication Settings
@@ -2270,6 +2276,8 @@ const defaultSettings: SystemSettings = {
     purchaseOrderApprovalThreshold: 1000,
     requireApprovalForPayments: true,
     paymentApprovalThreshold: 1000,
+    requireApprovalForOvertime: true,
+    overtimeApprovalThreshold: 8,
   },
   
   // Communication Settings

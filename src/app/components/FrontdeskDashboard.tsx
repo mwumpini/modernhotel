@@ -22,6 +22,7 @@ import { useSettingsStore } from '../lib/settings/store';
 import { useRouter } from 'next/navigation';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import RequestOvertimeButton from './hr/RequestOvertimeButton';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs are core navigation, not clutter, so they're deliberately not included.
@@ -168,6 +169,11 @@ export default function FrontdeskDashboard() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🏨 Front Office Operations</h2>
         <div className="flex items-center gap-2">
+          <RequestOvertimeButton
+            departmentLabel="Front Office"
+            permissionId="frontdesk.log-overtime"
+            departmentNameHints={['front', 'reception', 'desk']}
+          />
           <CustomizeViewControl
             sections={FRONTDESK_DASHBOARD_SECTIONS}
             isHidden={isHidden}

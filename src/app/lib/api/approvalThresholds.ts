@@ -1,6 +1,6 @@
 import { prisma } from '@/app/lib/database/client'
 
-export type ApprovalCategory = 'expense' | 'purchaseOrder' | 'payment'
+export type ApprovalCategory = 'expense' | 'purchaseOrder' | 'payment' | 'overtime'
 
 /**
  * Tenant-configurable director-approval thresholds (see
@@ -13,18 +13,22 @@ const DEFAULTS: Record<ApprovalCategory, { required: boolean; threshold: number 
   expense: { required: true, threshold: 1000 },
   purchaseOrder: { required: true, threshold: 1000 },
   payment: { required: true, threshold: 1000 },
+  // Hours, not currency.
+  overtime: { required: true, threshold: 8 },
 }
 
 const FIELD_NAMES: Record<ApprovalCategory, { requiredKey: string; thresholdKey: string }> = {
   expense: { requiredKey: 'requireApprovalForExpenses', thresholdKey: 'expenseApprovalThreshold' },
   purchaseOrder: { requiredKey: 'requireApprovalForPurchaseOrders', thresholdKey: 'purchaseOrderApprovalThreshold' },
   payment: { requiredKey: 'requireApprovalForPayments', thresholdKey: 'paymentApprovalThreshold' },
+  overtime: { requiredKey: 'requireApprovalForOvertime', thresholdKey: 'overtimeApprovalThreshold' },
 }
 
 export const APPROVAL_PERMISSION: Record<ApprovalCategory, string> = {
   expense: 'accounting.approve-journal-entry',
   purchaseOrder: 'inventory.approve-high-value-requisition',
   payment: 'accounting.approve-payment',
+  overtime: 'hr.approve-overtime',
 }
 
 /** Whether a transaction of `amount` in this category needs director sign-off for this tenant. */
