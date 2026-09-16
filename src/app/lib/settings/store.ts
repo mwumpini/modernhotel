@@ -122,7 +122,7 @@ function fetchSetupStatusOnce(tenant: string): Promise<any> {
 // though the tenant had already been set up. Only ever sends `true`: once complete,
 // it stays complete, and the API itself no-ops if already recorded.
 let setupStatusSynced = false;
-function syncSetupStatusToApi() {
+export function syncSetupStatusToApi() {
   if (typeof window === 'undefined' || setupStatusSynced) return;
   const t = getClientTenantSubdomain();
   if (!t) return;

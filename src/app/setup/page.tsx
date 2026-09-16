@@ -16,7 +16,7 @@ import {
   Chip,
   Spinner
 } from '@heroui/react';
-import { useSettingsStore } from '../lib/settings/store';
+import { useSettingsStore, syncSetupStatusToApi } from '../lib/settings/store';
 
 export default function SetupWizardPage() {
   const router = useRouter();
@@ -466,6 +466,11 @@ export default function SetupWizardPage() {
       // Finalize
       updateSetting('initialSetupCompleted', true as any);
       saveSettings();
+      // Push completion to the server immediately rather than waiting for a
+      // future page load to notice the mismatch (see /api/settings/setup-status)
+      // — otherwise another device only learns setup is done once this browser
+      // happens to reload the app again.
+      syncSetupStatusToApi();
       router.replace('/');
     } catch (e) {
       console.error(e);
