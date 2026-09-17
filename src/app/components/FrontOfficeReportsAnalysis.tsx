@@ -427,12 +427,14 @@ export default function FrontOfficeReportsAnalysis() {
 
             <Card id="report-print-area">
               <CardHeader className="flex flex-col items-start gap-0">
-                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
-                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
-                  <p className="text-xs text-gray-500">
-                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
-                  </p>
-                )}
+                <div className="hidden print:block">
+                  <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                  {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                    <p className="text-xs text-gray-500">
+                      {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
                 <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
@@ -496,12 +498,14 @@ export default function FrontOfficeReportsAnalysis() {
 
             <Card id="report-print-area">
               <CardHeader className="flex flex-col items-start gap-0">
-                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
-                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
-                  <p className="text-xs text-gray-500">
-                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
-                  </p>
-                )}
+                <div className="hidden print:block">
+                  <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                  {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                    <p className="text-xs text-gray-500">
+                      {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
                 <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
@@ -555,12 +559,14 @@ export default function FrontOfficeReportsAnalysis() {
 
             <Card id="report-print-area">
               <CardHeader className="flex flex-col items-start gap-0">
-                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
-                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
-                  <p className="text-xs text-gray-500">
-                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
-                  </p>
-                )}
+                <div className="hidden print:block">
+                  <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                  {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                    <p className="text-xs text-gray-500">
+                      {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
                 <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
@@ -618,12 +624,14 @@ export default function FrontOfficeReportsAnalysis() {
 
             <Card id="report-print-area">
               <CardHeader className="flex flex-col items-start gap-0">
-                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
-                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
-                  <p className="text-xs text-gray-500">
-                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
-                  </p>
-                )}
+                <div className="hidden print:block">
+                  <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                  {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                    <p className="text-xs text-gray-500">
+                      {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
                 <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
