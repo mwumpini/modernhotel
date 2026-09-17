@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Select, SelectItem, Chip } from '@heroui/react';
+import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Select, SelectItem, Autocomplete, AutocompleteItem, Chip } from '@heroui/react';
 
 export interface TransactionRow {
   transactionId: string;
@@ -75,10 +75,15 @@ export default function DailyTransactionReportView({ transactions }: { transacti
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
-        <Select label="Guest" size="sm" selectedKeys={[filters.guest]} onSelectionChange={setFilter('guest')}>
-          <SelectItem key="all">All Guests</SelectItem>
-          {options.guest.map((g) => <SelectItem key={g}>{g}</SelectItem>) as any}
-        </Select>
+        <Autocomplete
+          label="Guest"
+          size="sm"
+          selectedKey={filters.guest}
+          onSelectionChange={(key) => setFilters((f) => ({ ...f, guest: (key as string) || 'all' }))}
+        >
+          <AutocompleteItem key="all">All Guests</AutocompleteItem>
+          {options.guest.map((g) => <AutocompleteItem key={g}>{g}</AutocompleteItem>) as any}
+        </Autocomplete>
         <Select label="Staff" size="sm" selectedKeys={[filters.staff]} onSelectionChange={setFilter('staff')}>
           <SelectItem key="all">All Staff</SelectItem>
           {options.staff.map((s) => <SelectItem key={s}>{s}</SelectItem>) as any}
