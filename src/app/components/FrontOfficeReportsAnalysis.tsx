@@ -26,6 +26,16 @@ export default function FrontOfficeReportsAnalysis() {
   const [selectedReportData, setSelectedReportData] = useState<any>(null);
   const [reportNotes, setReportNotes] = useState('');
 
+  // Report data reads frontOfficeStore.rooms/reservations/roomTypes directly,
+  // which start empty on the server (and on the client's first paint) and
+  // only get populated once syncRoomsFromSettings() runs in an effect
+  // elsewhere in the app. Rendering the report table before that finishes
+  // would show placeholders like a room's "TBD" during SSR and the real
+  // value once hydrated — a hydration mismatch. Defer the table itself
+  // (not the surrounding page chrome) until after mount.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
   const settings = useSettingsStore();
   const reportingStore = useReportingStore();
   const { logs: nightAuditLogs } = useNightAuditLog();
@@ -156,6 +166,14 @@ export default function FrontOfficeReportsAnalysis() {
   };
 
   const renderReportTable = () => {
+    if (!mounted) {
+      return (
+        <div className="text-center py-8">
+          <p className="text-gray-500">Loading…</p>
+        </div>
+      );
+    }
+
     const data = getCurrentReportData();
 
     if (!data || (Array.isArray(data) && data.length === 0)) {
