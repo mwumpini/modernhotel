@@ -103,12 +103,15 @@ export default function FrontOfficeReportsAnalysis() {
   const [cashierId, setCashierId] = useState('');
   const [guestId, setGuestId] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  const [startDate, setStartDate] = useState(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
+  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
-  // 'Today' vs 'Specific Date' for single-date reports — mirrors the compact
-  // date-pill pattern used elsewhere (e.g. Guest Folios) instead of always
-  // showing a date input regardless of whether "today" would do.
-  const [reportDateMode, setReportDateMode] = useState<'today' | 'specific'>('today');
+  // One consistent 3-way control — Today / Specific Date / Range — always
+  // rendered the same way regardless of report type, instead of the date
+  // section restructuring itself per report (which read as broken/flaky).
+  // "Today" and "Specific Date" are just a range collapsed to a single day
+  // (start === end); "Range" is disabled, not hidden, for reports whose
+  // generator only accepts one date — see RANGE_REPORT_KEYS.
+  const [reportDateMode, setReportDateMode] = useState<'today' | 'specific' | 'range'>('today');
   const [exportFormat, setExportFormat] = useState<'pdf' | 'excel' | 'csv'>('pdf');
   const [isGenerating, setIsGenerating] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -145,6 +148,20 @@ export default function FrontOfficeReportsAnalysis() {
   useEffect(() => {
     setGeneratedAt(new Date().toLocaleString('en-GH'));
   }, [selectedReport, selectedTab, selectedDate, startDate, endDate]);
+
+  // Switching to a report whose generator doesn't accept a range shouldn't
+  // leave the control stuck showing a disabled "Range" pill with nothing to
+  // fill in — fall back to Today, the same single-day value Range collapses
+  // to anyway.
+  useEffect(() => {
+    if (reportDateMode === 'range' && !RANGE_REPORT_KEYS.has(selectedReport)) {
+      const today = new Date().toISOString().split('T')[0];
+      setReportDateMode('today');
+      setSelectedDate(today);
+      setStartDate(today);
+      setEndDate(today);
+    }
+  }, [selectedReport, reportDateMode]);
 
   // Generate reports with detailed logging using the reporting store
   const generateArrivalsReport = useMemo(() => {
@@ -334,33 +351,17 @@ export default function FrontOfficeReportsAnalysis() {
       {/* Date and Report Selection */}
       <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
         <div className="flex items-end gap-2 flex-wrap">
-          {RANGE_REPORT_KEYS.has(selectedReport) ? (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Specific Period</label>
-              <div className="flex items-center gap-2">
-                <Input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  className="w-40"
-                />
-                <span className="text-gray-400 text-sm">→</span>
-                <Input
-                  type="date"
-                  value={endDate}
-                  onChange={(e) => setEndDate(e.target.value)}
-                  className="w-40"
-                />
-              </div>
-            </div>
-          ) : !NO_DATE_REPORT_KEYS.has(selectedReport) ? (
+          {!NO_DATE_REPORT_KEYS.has(selectedReport) && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Report Date</label>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
+                    const today = new Date().toISOString().split('T')[0];
                     setReportDateMode('today');
-                    setSelectedDate(new Date().toISOString().split('T')[0]);
+                    setSelectedDate(today);
+                    setStartDate(today);
+                    setEndDate(today);
                   }}
                   className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${reportDateMode === 'today' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
                 >
@@ -372,17 +373,52 @@ export default function FrontOfficeReportsAnalysis() {
                 >
                   Specific Date
                 </button>
+                <button
+                  onClick={() => setReportDateMode('range')}
+                  disabled={!RANGE_REPORT_KEYS.has(selectedReport)}
+                  title={RANGE_REPORT_KEYS.has(selectedReport) ? undefined : "This report doesn't support a date range yet — it runs for a single day"}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                    !RANGE_REPORT_KEYS.has(selectedReport)
+                      ? 'bg-gray-50 text-gray-300 border-gray-200 cursor-not-allowed'
+                      : reportDateMode === 'range'
+                      ? 'bg-blue-600 text-white border-blue-600'
+                      : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                  }`}
+                >
+                  Range
+                </button>
                 {reportDateMode === 'specific' && (
                   <Input
                     type="date"
                     value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
+                    onChange={(e) => {
+                      setSelectedDate(e.target.value);
+                      setStartDate(e.target.value);
+                      setEndDate(e.target.value);
+                    }}
                     className="w-40"
                   />
                 )}
+                {reportDateMode === 'range' && RANGE_REPORT_KEYS.has(selectedReport) && (
+                  <>
+                    <Input
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                      className="w-40"
+                    />
+                    <span className="text-gray-400 text-sm">→</span>
+                    <Input
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                      className="w-40"
+                    />
+                  </>
+                )}
               </div>
             </div>
-          ) : null}
+          )}
         </div>
         <div className="flex items-end space-x-2">
           <Button
