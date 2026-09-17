@@ -27,6 +27,8 @@ import {
   Pagination,
   Switch
 } from "@heroui/react";
+import CustomizeViewControl, { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { useSettingsStore } from '../../lib/settings/store';
 import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
@@ -75,8 +77,17 @@ interface ServiceCharge {
   taxExempt?: boolean;
 }
 
+const SERVICE_CHARGES_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'totalCharges', label: 'Total Charges (incl. tax)' },
+  { id: 'paidAmount', label: 'Paid Amount (incl. tax)' },
+  { id: 'outstanding', label: 'Outstanding (incl. tax)' },
+  { id: 'paidTotal', label: 'Paid/Total' },
+];
+
 export default function ServiceChargesPage() {
   const currentUserName = useCurrentUserName();
+  const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
+    useDashboardVisibility('dashboard.hidden.serviceCharges', SERVICE_CHARGES_DASHBOARD_SECTIONS);
   const { roomManagement } = useSettingsStore();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -502,6 +513,13 @@ export default function ServiceChargesPage() {
           <p className="text-gray-600">Manage additional charges for guests (swimming pool, laundry, spa, etc.)</p>
         </div>
         <div className="flex gap-2">
+          <CustomizeViewControl
+            sections={SERVICE_CHARGES_DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggleStatSection}
+            showAll={showAllStats}
+            hiddenCount={hiddenStatsCount}
+          />
           <Button
             color="primary"
             onClick={() => {
@@ -602,40 +620,62 @@ export default function ServiceChargesPage() {
       </Card>
 
       {/* Payment Summary — totals reflect the active filter so cards match table rows */}
+      {hiddenStatsCount < SERVICE_CHARGES_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
+        {!isHidden('totalCharges') && (
+        <Card className="relative">
           <CardBody className="text-center">
+            <div className="absolute top-2 right-2">
+              <HideCardButton onHide={() => hide('totalCharges')} label="Total Charges (incl. tax)" />
+            </div>
             <div className="text-2xl font-bold text-blue-600">
               ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt), 0))}
             </div>
             <div className="text-sm text-gray-600">Total Charges (incl. tax)</div>
           </CardBody>
         </Card>
-        <Card>
+        )}
+        {!isHidden('paidAmount') && (
+        <Card className="relative">
           <CardBody className="text-center">
+            <div className="absolute top-2 right-2">
+              <HideCardButton onHide={() => hide('paidAmount')} label="Paid Amount (incl. tax)" />
+            </div>
             <div className="text-2xl font-bold text-green-600">
               ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt), 0))}
             </div>
             <div className="text-sm text-gray-600">Paid Amount (incl. tax)</div>
           </CardBody>
         </Card>
-        <Card>
+        )}
+        {!isHidden('outstanding') && (
+        <Card className="relative">
           <CardBody className="text-center">
+            <div className="absolute top-2 right-2">
+              <HideCardButton onHide={() => hide('outstanding')} label="Outstanding (incl. tax)" />
+            </div>
             <div className="text-2xl font-bold text-orange-600">
               ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt), 0))}
             </div>
             <div className="text-sm text-gray-600">Outstanding (incl. tax)</div>
           </CardBody>
         </Card>
-        <Card>
+        )}
+        {!isHidden('paidTotal') && (
+        <Card className="relative">
           <CardBody className="text-center">
+            <div className="absolute top-2 right-2">
+              <HideCardButton onHide={() => hide('paidTotal')} label="Paid/Total" />
+            </div>
             <div className="text-2xl font-bold text-purple-600">
               {filteredCharges.filter(c => c.status === 'paid').length}/{filteredCharges.length}
             </div>
             <div className="text-sm text-gray-600">Paid/Total</div>
           </CardBody>
         </Card>
+        )}
       </div>
+      )}
 
       {/* Service Charges Table */}
       <Card>
