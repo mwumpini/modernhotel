@@ -180,11 +180,6 @@ export default function FrontOfficeReportsAnalysis() {
     }
   };
 
-  const handlePrintReport = () => {
-    const reportData = getCurrentReportData();
-    reportingStore.printReport(reportData, selectedReport);
-  };
-
   const getCurrentReportData = () => {
     switch (selectedReport) {
       case 'arrivals':
@@ -408,19 +403,13 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="high-balance">High Balance Report</SelectItem>
                   <SelectItem key="wake-up-calls">Wake-up Call Sheet</SelectItem>
                 </Select>
-                <Button 
-                  color="primary" 
+                <Button
+                  color="primary"
                   variant="flat"
                   onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
                   isLoading={isGenerating}
                 >
-                  {isGenerating ? 'Exporting...' : 'Export Report'}
-                </Button>
-                <Button 
-                  variant="bordered"
-                  onClick={handlePrintReport}
-                >
-                  🖨️ Print
+                  {isGenerating ? '🖨️ Printing...' : '🖨️ Print'}
                 </Button>
               </div>
             </div>
@@ -480,18 +469,12 @@ export default function FrontOfficeReportsAnalysis() {
                   </Select>
                 )}
                 <Button
-                  color="primary" 
+                  color="primary"
                   variant="flat"
                   onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
                   isLoading={isGenerating}
                 >
-                  {isGenerating ? 'Exporting...' : 'Export Report'}
-                </Button>
-                <Button 
-                  variant="bordered"
-                  onClick={handlePrintReport}
-                >
-                  🖨️ Print
+                  {isGenerating ? '🖨️ Printing...' : '🖨️ Print'}
                 </Button>
               </div>
             </div>
@@ -540,19 +523,13 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="complimentary-room">Complimentary Room Report</SelectItem>
                   <SelectItem key="pricing-analytics">Pricing Analytics Report</SelectItem>
                 </Select>
-                <Button 
-                  color="primary" 
+                <Button
+                  color="primary"
                   variant="flat"
                   onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
                   isLoading={isGenerating}
                 >
-                  {isGenerating ? 'Exporting...' : 'Export Report'}
-                </Button>
-                <Button 
-                  variant="bordered"
-                  onClick={handlePrintReport}
-                >
-                  🖨️ Print
+                  {isGenerating ? '🖨️ Printing...' : '🖨️ Print'}
                 </Button>
               </div>
             </div>
@@ -605,19 +582,13 @@ export default function FrontOfficeReportsAnalysis() {
                     {frontOfficeStore.guests.slice(0, 200).map(g => <SelectItem key={g.id}>{g.name}</SelectItem>)}
                   </Select>
                 )}
-                <Button 
-                  color="primary" 
+                <Button
+                  color="primary"
                   variant="flat"
                   onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
                   isLoading={isGenerating}
                 >
-                  {isGenerating ? 'Exporting...' : 'Export Report'}
-                </Button>
-                <Button 
-                  variant="bordered"
-                  onClick={handlePrintReport}
-                >
-                  🖨️ Print
+                  {isGenerating ? '🖨️ Printing...' : '🖨️ Print'}
                 </Button>
               </div>
             </div>
