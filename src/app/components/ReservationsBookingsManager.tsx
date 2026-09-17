@@ -33,6 +33,8 @@ import {
 import { Autocomplete, AutocompleteItem } from "@heroui/react";
 import GuestSearchEmptyState from './frontoffice/GuestSearchEmptyState';
 import AttachmentUpload from './shared/AttachmentUpload';
+import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { resolveGuestAddress } from '../lib/frontoffice/helpers/guests';
 import { useSettingsStore } from '../lib/settings/store';
@@ -197,8 +199,20 @@ const AuditLogSection = ({ reservationId }: { reservationId: string }) => {
   );
 };
 
+const RESERVATIONS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'totalReservations', label: 'Total Reservations' },
+  { id: 'confirmed', label: 'Confirmed' },
+  { id: 'checkedIn', label: 'Checked In' },
+  { id: 'businessStays', label: 'Business Stays' },
+  { id: 'thirdPartyBilling', label: 'Third Party Billing' },
+  { id: 'internationalGuests', label: 'International Guests' },
+  { id: 'pending', label: 'Pending' },
+];
+
 export default function ReservationsBookingsManager({ mode = 'reservation', embed = false, autoOpenNew = false }: ReservationsManagerProps) {
   const router = useRouter();
+  const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
+    useDashboardVisibility('dashboard.hidden.reservations', RESERVATIONS_DASHBOARD_SECTIONS);
   // Starts null (matching SSR) and is only ever set from an effect — see the
   // load-reservations effect below — so this component's first render can't
   // diverge from the server-rendered HTML.
@@ -1309,6 +1323,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           <p className="text-sm sm:text-base text-gray-600">Create, view, and manage room reservations and bookings</p>
         </div>
         <div className="flex items-center space-x-2 sm:space-x-4">
+          <CustomizeViewControl
+            sections={RESERVATIONS_DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggleStatSection}
+            showAll={showAllStats}
+            hiddenCount={hiddenStatsCount}
+          />
           <Button
             color="primary"
             variant="flat"
@@ -1321,7 +1342,9 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       </div>
 
       {/* Quick Stats */}
+      {hiddenStatsCount < RESERVATIONS_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
+        {!isHidden('totalReservations') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -1329,10 +1352,15 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                 <p className="text-sm font-medium text-gray-600">Total Reservations</p>
                 <p className="text-2xl font-bold text-ghana-black">{reservations.length}</p>
               </div>
-              <span className="text-2xl">📊</span>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('totalReservations')} label="Total Reservations" />
+                <span className="text-2xl">📊</span>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
+        {!isHidden('confirmed') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -1342,10 +1370,15 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   {reservations.filter(r => r.status === 'confirmed').length}
                 </p>
               </div>
-              <span className="text-2xl">✅</span>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('confirmed')} label="Confirmed" />
+                <span className="text-2xl">✅</span>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
+        {!isHidden('checkedIn') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -1355,10 +1388,15 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   {reservations.filter(r => r.status === 'checked-in').length}
                 </p>
               </div>
-              <span className="text-2xl">🔑</span>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('checkedIn')} label="Checked In" />
+                <span className="text-2xl">🔑</span>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
+        {!isHidden('businessStays') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -1373,10 +1411,15 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   </p>
                 </div>
               </div>
-              <span className="text-2xl">💼</span>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('businessStays')} label="Business Stays" />
+                <span className="text-2xl">💼</span>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
+        {!isHidden('thirdPartyBilling') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -1388,10 +1431,15 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   </p>
                 </div>
               </div>
-              <span className="text-2xl">🏢</span>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('thirdPartyBilling')} label="Third Party Billing" />
+                <span className="text-2xl">🏢</span>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
+        {!isHidden('internationalGuests') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -1407,10 +1455,15 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   </p>
                 </div>
               </div>
-              <span className="text-2xl">🌍</span>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('internationalGuests')} label="International Guests" />
+                <span className="text-2xl">🌍</span>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
+        {!isHidden('pending') && (
         <Card className="border-0 shadow-lg">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -1420,11 +1473,16 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   {reservations.filter(r => r.status === 'pending').length}
                 </p>
               </div>
-              <span className="text-2xl">⏳</span>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('pending')} label="Pending" />
+                <span className="text-2xl">⏳</span>
+              </div>
             </div>
           </CardBody>
         </Card>
+        )}
       </div>
+      )}
 
       {/* Filters */}
       <Card className="border-0 shadow-lg">

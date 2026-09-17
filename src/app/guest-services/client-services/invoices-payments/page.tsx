@@ -27,6 +27,8 @@ import {
   Chip,
   Divider
 } from '@heroui/react';
+import CustomizeViewControl, { HideCardButton } from '../../../components/dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../../../lib/dashboard/useDashboardVisibility';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
 import { useCurrentUserName } from '../../../lib/auth/useCurrentUserName';
@@ -94,8 +96,17 @@ interface Invoice {
   balance: number;
 }
 
+const INVOICES_PAYMENTS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'totalInvoices', label: 'Total Invoices' },
+  { id: 'collected', label: 'Collected' },
+  { id: 'outstanding', label: 'Outstanding' },
+  { id: 'overdue', label: 'Overdue' },
+];
+
 export default function InvoicesPaymentsPage() {
   const currentUserName = useCurrentUserName();
+  const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
+    useDashboardVisibility('dashboard.hidden.invoicesPayments', INVOICES_PAYMENTS_DASHBOARD_SECTIONS);
   const [activeTab, setActiveTab] = useState('folios');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -931,10 +942,21 @@ export default function InvoicesPaymentsPage() {
           <h1 className="text-3xl font-bold text-gray-900">Invoices & Payments</h1>
           <p className="text-gray-600">Manage guest billing and payment processing</p>
         </div>
-        <Button color="primary" onPress={onCreateOpen}>+ Create Invoice</Button>
+        <div className="flex items-center gap-2">
+          <CustomizeViewControl
+            sections={INVOICES_PAYMENTS_DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggleStatSection}
+            showAll={showAllStats}
+            hiddenCount={hiddenStatsCount}
+          />
+          <Button color="primary" onPress={onCreateOpen}>+ Create Invoice</Button>
+        </div>
       </div>
-      
+
+      {hiddenStatsCount < INVOICES_PAYMENTS_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        {!isHidden('totalInvoices') && (
         <Card className="border-l-4 border-l-blue-500">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -942,12 +964,17 @@ export default function InvoicesPaymentsPage() {
                 <p className="text-sm text-gray-600">Total Invoices</p>
                 <p className="text-2xl font-bold text-gray-900">{stats.totalInvoices}</p>
               </div>
-              <div className="text-blue-500 text-2xl">📄</div>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('totalInvoices')} label="Total Invoices" />
+                <div className="text-blue-500 text-2xl">📄</div>
+              </div>
             </div>
             <p className="text-xs text-gray-500 mt-1">{invoices.length} total</p>
           </CardBody>
         </Card>
+        )}
 
+        {!isHidden('collected') && (
         <Card className="border-l-4 border-l-green-500">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -955,12 +982,17 @@ export default function InvoicesPaymentsPage() {
                 <p className="text-sm text-gray-600">Collected</p>
                 <p className="text-2xl font-bold text-green-600">₵{formatMoney(stats.totalCollected)}</p>
               </div>
-              <div className="text-green-500 text-2xl">💰</div>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('collected')} label="Collected" />
+                <div className="text-green-500 text-2xl">💰</div>
+              </div>
             </div>
             <p className="text-xs text-gray-500 mt-1">{stats.collectionRate.toFixed(1)}% collection rate</p>
           </CardBody>
         </Card>
+        )}
 
+        {!isHidden('outstanding') && (
         <Card className="border-l-4 border-l-orange-500">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -968,12 +1000,17 @@ export default function InvoicesPaymentsPage() {
                 <p className="text-sm text-gray-600">Outstanding</p>
                 <p className="text-2xl font-bold text-orange-600">₵{formatMoney(stats.totalOutstanding)}</p>
               </div>
-              <div className="text-orange-500 text-2xl">⏰</div>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('outstanding')} label="Outstanding" />
+                <div className="text-orange-500 text-2xl">⏰</div>
+              </div>
             </div>
             <p className="text-xs text-gray-500 mt-1">To be collected</p>
           </CardBody>
         </Card>
+        )}
 
+        {!isHidden('overdue') && (
         <Card className="border-l-4 border-l-red-500">
           <CardBody className="p-4">
             <div className="flex items-center justify-between">
@@ -981,12 +1018,17 @@ export default function InvoicesPaymentsPage() {
                 <p className="text-sm text-gray-600">Overdue</p>
                 <p className="text-2xl font-bold text-red-600">₵{formatMoney(stats.overdueAmount)}</p>
               </div>
-              <div className="text-red-500 text-2xl">🚨</div>
+              <div className="flex flex-col items-end gap-1">
+                <HideCardButton onHide={() => hide('overdue')} label="Overdue" />
+                <div className="text-red-500 text-2xl">🚨</div>
+              </div>
             </div>
             <p className="text-xs text-gray-500 mt-1">{stats.overdueInvoices} invoices</p>
           </CardBody>
         </Card>
+        )}
       </div>
+      )}
 
       {/* Credit Management Section */}
       {/* Removed per user request */}

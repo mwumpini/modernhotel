@@ -14,6 +14,8 @@ import {
 import dynamic from 'next/dynamic';
 import { useSearchParams, useRouter } from 'next/navigation';
 import FrontOfficeBackButton from '../../components/FrontOfficeBackButton';
+import CustomizeViewControl, { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
 
 // Lazy sections to keep the page responsive
 const CheckOutsPage = dynamic(() => import('../check-outs/page'), { ssr: false });
@@ -95,8 +97,20 @@ function formatDate(dateString: string) {
 function formatTime(dateString: string) {
   return new Date(dateString).toLocaleTimeString('en-GH', { hour: '2-digit', minute: '2-digit', hour12: true });
 }
+const CHECKINS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'totalGuests', label: 'Total Guests' },
+  { id: 'avgRate', label: 'Avg Rate/Night' },
+  { id: 'roomTotal', label: 'Room Total' },
+  { id: 'serviceCharges', label: 'Service Charges' },
+  { id: 'totalAmount', label: 'Total Amount' },
+  { id: 'totalPayments', label: 'Total Payments' },
+  { id: 'netBalance', label: 'Net Balance' },
+];
+
 function CheckInsSection() {
   const currentUserName = useCurrentUserName();
+  const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
+    useDashboardVisibility('dashboard.hidden.checkins', CHECKINS_DASHBOARD_SECTIONS);
   const [guests, setGuests] = useState<CheckInGuest[]>([]);
   const [filteredGuests, setFilteredGuests] = useState<CheckInGuest[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -438,15 +452,40 @@ function CheckInsSection() {
           {inlineNotification.type === 'success' ? '✅' : '❌'} {inlineNotification.message}
         </div>
       )}
+      <div className="flex justify-end">
+        <CustomizeViewControl
+          sections={CHECKINS_DASHBOARD_SECTIONS}
+          isHidden={isHidden}
+          toggle={toggleStatSection}
+          showAll={showAllStats}
+          hiddenCount={hiddenStatsCount}
+        />
+      </div>
+      {hiddenStatsCount < CHECKINS_DASHBOARD_SECTIONS.length && (
       <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Guests</p><p className="text-2xl font-bold text-ghana-black">{filteredGuests.length}</p></div><div className="text-2xl">👥</div></div></CardBody></Card>
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Avg Rate/Night</p><p className="text-2xl font-bold text-ghana-black">₵{filteredGuests.length > 0 ? formatMoney(totalRoomRevenue / filteredGuests.length) : '0.00'}</p></div><div className="text-2xl">💰</div></div></CardBody></Card>
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Room Total</p><p className="text-2xl font-bold text-purple-600">₵{totalRoomAmount.toLocaleString()}</p></div><div className="text-2xl">🏨</div></div></CardBody></Card>
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Service Charges</p><p className="text-2xl font-bold text-orange-600">₵{totalServiceCharges.toLocaleString()}</p></div><div className="text-2xl">🏊</div></div></CardBody></Card>
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Amount</p><p className="text-2xl font-bold text-blue-600">₵{totalCharges.toLocaleString()}</p></div><div className="text-2xl">📊</div></div></CardBody></Card>
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Payments</p><p className="text-2xl font-bold text-green-600">₵{totalPayments.toLocaleString()}</p></div><div className="text-2xl">💳</div></div></CardBody></Card>
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Net Balance</p><p className={`text-2xl font-bold ${totalOutstanding > 0 ? 'text-red-600' : totalOutstanding < 0 ? 'text-green-600' : 'text-gray-500'}`}>₵{totalOutstanding.toLocaleString()}</p></div><div className="text-2xl">⚖️</div></div></CardBody></Card>
+        {!isHidden('totalGuests') && (
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Guests</p><p className="text-2xl font-bold text-ghana-black">{filteredGuests.length}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('totalGuests')} label="Total Guests" /><div className="text-2xl">👥</div></div></div></CardBody></Card>
+        )}
+        {!isHidden('avgRate') && (
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Avg Rate/Night</p><p className="text-2xl font-bold text-ghana-black">₵{filteredGuests.length > 0 ? formatMoney(totalRoomRevenue / filteredGuests.length) : '0.00'}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('avgRate')} label="Avg Rate/Night" /><div className="text-2xl">💰</div></div></div></CardBody></Card>
+        )}
+        {!isHidden('roomTotal') && (
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Room Total</p><p className="text-2xl font-bold text-purple-600">₵{totalRoomAmount.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('roomTotal')} label="Room Total" /><div className="text-2xl">🏨</div></div></div></CardBody></Card>
+        )}
+        {!isHidden('serviceCharges') && (
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Service Charges</p><p className="text-2xl font-bold text-orange-600">₵{totalServiceCharges.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('serviceCharges')} label="Service Charges" /><div className="text-2xl">🏊</div></div></div></CardBody></Card>
+        )}
+        {!isHidden('totalAmount') && (
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Amount</p><p className="text-2xl font-bold text-blue-600">₵{totalCharges.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('totalAmount')} label="Total Amount" /><div className="text-2xl">📊</div></div></div></CardBody></Card>
+        )}
+        {!isHidden('totalPayments') && (
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Payments</p><p className="text-2xl font-bold text-green-600">₵{totalPayments.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('totalPayments')} label="Total Payments" /><div className="text-2xl">💳</div></div></div></CardBody></Card>
+        )}
+        {!isHidden('netBalance') && (
+        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Net Balance</p><p className={`text-2xl font-bold ${totalOutstanding > 0 ? 'text-red-600' : totalOutstanding < 0 ? 'text-green-600' : 'text-gray-500'}`}>₵{totalOutstanding.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('netBalance')} label="Net Balance" /><div className="text-2xl">⚖️</div></div></div></CardBody></Card>
+        )}
         </div>
+        )}
 
       <Card className="mb-2"><CardBody className="p-4 space-y-3">
         <div className="flex flex-col sm:flex-row gap-4">

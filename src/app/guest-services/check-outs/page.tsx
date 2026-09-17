@@ -32,6 +32,8 @@ import {
   Accordion,
   AccordionItem
 } from "@heroui/react";
+import CustomizeViewControl, { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
+import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { resolveGuestAddress } from '../../lib/frontoffice/helpers/guests';
 import { openPrintPreview } from '../../lib/print/engine';
@@ -88,8 +90,17 @@ interface CheckOutData {
   roomTotal?: number;
 }
 
+const CHECKOUTS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
+  { id: 'pending', label: 'Pending Check-outs' },
+  { id: 'completedToday', label: 'Completed Today' },
+  { id: 'extendedStays', label: 'Extended Stays' },
+  { id: 'totalRevenue', label: 'Total Revenue' },
+];
+
 export default function CheckOutsPage() {
   const currentUserName = useCurrentUserName();
+  const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
+    useDashboardVisibility('dashboard.hidden.checkouts', CHECKOUTS_DASHBOARD_SECTIONS);
   const [checkOuts, setCheckOuts] = useState<CheckOutData[]>([]);
   const [filteredCheckOuts, setFilteredCheckOuts] = useState<CheckOutData[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -544,12 +555,23 @@ export default function CheckOutsPage() {
   return (
     <div className="pt-2">
         <div>
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">🚪 Guest Check-outs</h1>
-            <p className="text-gray-600">Process guest departures and manage checkout workflow</p>
+          <div className="mb-8 flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">🚪 Guest Check-outs</h1>
+              <p className="text-gray-600">Process guest departures and manage checkout workflow</p>
+            </div>
+            <CustomizeViewControl
+              sections={CHECKOUTS_DASHBOARD_SECTIONS}
+              isHidden={isHidden}
+              toggle={toggleStatSection}
+              showAll={showAllStats}
+              hiddenCount={hiddenStatsCount}
+            />
           </div>
 
+          {hiddenStatsCount < CHECKOUTS_DASHBOARD_SECTIONS.length && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            {!isHidden('pending') && (
             <Card className="border-0 shadow-lg">
               <CardBody className="p-4">
                 <div className="flex items-center justify-between">
@@ -557,10 +579,15 @@ export default function CheckOutsPage() {
                     <p className="text-sm font-medium text-gray-600">Pending Check-outs</p>
                     <p className="text-2xl font-bold text-ghana-black">{checkoutStats.totalPending}</p>
                   </div>
-                  <div className="text-2xl">⏳</div>
+                  <div className="flex flex-col items-end gap-1">
+                    <HideCardButton onHide={() => hide('pending')} label="Pending Check-outs" />
+                    <div className="text-2xl">⏳</div>
+                  </div>
                 </div>
               </CardBody>
             </Card>
+            )}
+            {!isHidden('completedToday') && (
             <Card className="border-0 shadow-lg">
               <CardBody className="p-4">
                 <div className="flex items-center justify-between">
@@ -568,10 +595,15 @@ export default function CheckOutsPage() {
                     <p className="text-sm font-medium text-gray-600">Completed Today</p>
                     <p className="text-2xl font-bold text-ghana-black">{checkoutStats.totalCompleted}</p>
                   </div>
-                  <div className="text-2xl">✅</div>
+                  <div className="flex flex-col items-end gap-1">
+                    <HideCardButton onHide={() => hide('completedToday')} label="Completed Today" />
+                    <div className="text-2xl">✅</div>
+                  </div>
                 </div>
               </CardBody>
             </Card>
+            )}
+            {!isHidden('extendedStays') && (
             <Card className="border-0 shadow-lg">
               <CardBody className="p-4">
                 <div className="flex items-center justify-between">
@@ -579,10 +611,15 @@ export default function CheckOutsPage() {
                     <p className="text-sm font-medium text-gray-600">Extended Stays</p>
                     <p className="text-2xl font-bold text-ghana-black">{checkoutStats.totalExtended}</p>
                   </div>
-                  <div className="text-2xl">🔄</div>
+                  <div className="flex flex-col items-end gap-1">
+                    <HideCardButton onHide={() => hide('extendedStays')} label="Extended Stays" />
+                    <div className="text-2xl">🔄</div>
+                  </div>
                 </div>
               </CardBody>
             </Card>
+            )}
+            {!isHidden('totalRevenue') && (
             <Card className="border-0 shadow-lg">
               <CardBody className="p-4">
                 <div className="flex items-center justify-between">
@@ -590,11 +627,16 @@ export default function CheckOutsPage() {
                     <p className="text-sm font-medium text-gray-600">Total Revenue</p>
                     <p className="text-2xl font-bold text-ghana-black">₵{checkoutStats.totalRevenue.toLocaleString()}</p>
                   </div>
-                  <div className="text-2xl">💰</div>
+                  <div className="flex flex-col items-end gap-1">
+                    <HideCardButton onHide={() => hide('totalRevenue')} label="Total Revenue" />
+                    <div className="text-2xl">💰</div>
+                  </div>
                 </div>
               </CardBody>
             </Card>
+            )}
           </div>
+          )}
 
           <Card className="mb-6">
             <CardBody className="p-4">
