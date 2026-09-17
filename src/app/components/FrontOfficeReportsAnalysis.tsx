@@ -227,10 +227,14 @@ export default function FrontOfficeReportsAnalysis() {
             <TableRow key={index}>
               {columns.map((column) => (
                 <TableCell key={column}>
-                  {typeof row[column] === 'boolean' 
+                  {typeof row[column] === 'boolean'
                     ? (row[column] ? 'Yes' : 'No')
                     : Array.isArray(row[column])
                     ? row[column].join(', ')
+                    // A plain object isn't a valid React child and crashes the render —
+                    // fall back to a readable "key: value" summary instead.
+                    : row[column] !== null && typeof row[column] === 'object'
+                    ? Object.entries(row[column]).map(([k, v]) => `${k}: ${v}`).join(', ')
                     : row[column]}
                 </TableCell>
               ))}

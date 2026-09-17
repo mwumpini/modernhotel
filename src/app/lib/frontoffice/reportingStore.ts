@@ -1146,14 +1146,11 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
     const buckets = Array.from(new Set(inHouse.map(mealPlanOf)));
     // Per-meal (breakfast/lunch/dinner) attendance and dietary restrictions aren't
-    // tracked anywhere in this system, so those are honestly reported empty/zero
-    // rather than fabricated — only the real guest count per meal plan is shown.
+    // tracked anywhere in this system — omitted rather than reported as
+    // fabricated zeros/empties, so only the real guest count per meal plan shows.
     return buckets.map(key => ({
       mealPlan: mealPlanLabels[key] || key,
       guestCount: inHouse.filter(r => mealPlanOf(r) === key).reduce((sum, r) => sum + (r.adults || 0) + (r.children || 0), 0),
-      dietaryRestrictions: [],
-      specialRequests: [],
-      mealTimes: { breakfast: 0, lunch: 0, dinner: 0 }
     }));
   },
 
