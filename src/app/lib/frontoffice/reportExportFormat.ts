@@ -145,3 +145,54 @@ export function sectionsToExcelHtml(title: string, sections: ExportSection[], or
     </html>
   `;
 }
+
+/** A real PDF — same jsPDF + jspdf-autotable pair (and dynamic import, to
+ * avoid pulling them into the SSR bundle) already used for the Rooms table's
+ * Download PDF in RoomConfigurationDashboard.tsx, applied to arbitrary
+ * report sections instead of one fixed table. */
+export async function sectionsToPdfBlob(title: string, sections: ExportSection[], org?: ReportOrgInfo): Promise<Blob> {
+  const jsPDF = (await import('jspdf')).default;
+  const autoTable = (await import('jspdf-autotable')).default;
+  const doc: any = new jsPDF();
+  let y = 15;
+
+  if (org) {
+    doc.setFontSize(14);
+    doc.text(org.name, 14, y);
+    y += 6;
+    const contact = [org.address, org.phone, org.email].filter(Boolean).join('  |  ');
+    if (contact) {
+      doc.setFontSize(9);
+      doc.setTextColor(100);
+      doc.text(contact, 14, y);
+      doc.setTextColor(0);
+      y += 8;
+    } else {
+      y += 2;
+    }
+  }
+
+  doc.setFontSize(12);
+  doc.text(title, 14, y);
+  y += 6;
+
+  for (const section of sections) {
+    if (sections.length > 1) {
+      doc.setFontSize(10);
+      doc.text(section.title, 14, y);
+      y += 4;
+    }
+    if (section.columns.length === 0) continue;
+    (autoTable as any)(doc, {
+      head: [section.columns],
+      body: section.rows,
+      startY: y,
+      styles: { fontSize: 8, cellPadding: 2 },
+      headStyles: { fillColor: [41, 128, 185], textColor: 255 },
+      margin: { left: 14, right: 14 },
+    });
+    y = (doc as any).lastAutoTable.finalY + 8;
+  }
+
+  return doc.output('blob');
+}

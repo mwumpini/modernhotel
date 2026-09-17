@@ -5,7 +5,7 @@ import { frontOfficeStore } from './store';
 import { trackEvent } from '../analytics/trackEvent';
 import { getFolioDisplayTotals, folioChargeGlCode, findMainFolio } from './helpers/folio';
 import { housekeepingStore } from '../housekeeping/store';
-import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, type ReportOrgInfo } from './reportExportFormat';
+import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob, type ReportOrgInfo } from './reportExportFormat';
 import { useSettingsStore } from '../settings/store';
 import { buildOrgProfile } from '../print/buildOrgProfile';
 
@@ -1414,15 +1414,11 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       filename
     });
 
-    // CSV/Excel are real files, shaped from the same row/section logic the
-    // on-screen table and PDF (print) use — not a JSON dump mislabeled with
-    // a spreadsheet mime type. PDF isn't handled here: Front Office's Export
-    // button routes 'pdf' through the browser's print-to-PDF flow instead
-    // (see handleExportReport in FrontOfficeReportsAnalysis.tsx), since a
-    // real PDF needs either that or a new library dependency. Other callers
-    // of this store (e.g. ExecutiveManagementDashboard) still get the old
-    // placeholder blob for 'pdf' — only Front Office's own report data is
-    // shaped by reportDataToSections in a way this function can render.
+    // Real files for all three formats, shaped from the same row/section
+    // logic the on-screen table uses — not a JSON dump mislabeled with a
+    // spreadsheet/PDF mime type. PDF reuses the same jsPDF + jspdf-autotable
+    // pair RoomConfigurationDashboard.tsx already uses for the Rooms table's
+    // Download PDF, rather than a print-dialog workaround.
     const sections = reportDataToSections(reportData);
     const org: ReportOrgInfo = buildOrgProfile(useSettingsStore.getState());
     // filename is the actual file name (extension and all, e.g.
@@ -1433,7 +1429,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       ? new Blob([sectionsToCSV(sections, org)], { type: 'text/csv' })
       : format === 'excel'
       ? new Blob([sectionsToExcelHtml(title, sections, org)], { type: 'application/vnd.ms-excel' })
-      : new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/pdf' });
+      : await sectionsToPdfBlob(title, sections, org);
     const url = URL.createObjectURL(blob);
 
     console.log(`[REPORTS] Successfully exported report: ${filename}`);

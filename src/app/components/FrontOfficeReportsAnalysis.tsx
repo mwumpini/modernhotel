@@ -158,18 +158,10 @@ export default function FrontOfficeReportsAnalysis() {
   }, [selectedDate, reportingStore]);
 
   const handleExportReport = async (reportData: any, format: 'pdf' | 'excel' | 'csv') => {
-    // A real PDF needs either a print-to-PDF flow or a new library dependency
-    // — reuse the print flow (already isolated to just the report content,
-    // see id="report-print-area") rather than downloading a fake file.
-    if (format === 'pdf') {
-      handlePrintReport();
-      return;
-    }
-
     setIsGenerating(true);
 
     try {
-      const extension = format === 'excel' ? 'xls' : 'csv';
+      const extension = format === 'excel' ? 'xls' : format;
       const filename = `${selectedReport}_report_${selectedDate}.${extension}`;
       const fileUrl = await reportingStore.exportReport(reportData, format, filename);
 
