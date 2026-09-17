@@ -12,6 +12,84 @@ import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
 import DailyTransactionReportView, { type TransactionRow } from './DailyTransactionReportView';
 
+function labelize(key: string): string {
+  return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
+}
+
+function formatReportValue(value: unknown): React.ReactNode {
+  if (value === null || value === undefined || value === '') return '—';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'number') return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return String(value);
+}
+
+/** Renders an array of row objects as a small table — reused for nested
+ * report arrays like discount requests or complimentary rooms. */
+function ReportMiniTable({ rows }: { rows: Record<string, unknown>[] }) {
+  if (rows.length === 0) return <p className="text-sm text-gray-500">None</p>;
+  const columns = Object.keys(rows[0]);
+  return (
+    <Table removeWrapper isCompact aria-label="Report detail">
+      <TableHeader>
+        {columns.map((c) => <TableColumn key={c}>{labelize(c)}</TableColumn>) as any}
+      </TableHeader>
+      <TableBody>
+        {rows.map((row, i) => (
+          <TableRow key={i}>
+            {columns.map((c) => <TableCell key={c}>{formatReportValue(row[c])}</TableCell>) as any}
+          </TableRow>
+        ))}
+      </TableBody>
+    </Table>
+  );
+}
+
+/** Renders a report's summary object recursively: primitive fields as stat
+ * tiles, nested objects as labeled sub-sections, arrays of objects as mini
+ * tables. Used for reports that return one object rather than a row array
+ * (daily flash, occupancy, discount requests, complimentary rooms, pricing
+ * analytics, ...) — previously these silently dropped every non-primitive
+ * field, so most of what the report actually computed never reached the screen. */
+function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
+  const entries = Object.entries(data);
+  const primitives = entries.filter(([, v]) => v === null || typeof v !== 'object');
+  const objects = entries.filter(([, v]) => v !== null && typeof v === 'object' && !Array.isArray(v));
+  const arrays = entries.filter(([, v]) => Array.isArray(v));
+
+  return (
+    <div className="space-y-6">
+      {primitives.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+          {primitives.map(([key, value]) => (
+            <div key={key} className="p-3 bg-gray-50 rounded-lg border">
+              <div className="text-xs text-gray-500">{labelize(key)}</div>
+              <div className="text-lg font-semibold text-ghana-black">{formatReportValue(value)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      {objects.map(([key, value]) => (
+        <div key={key}>
+          <h4 className="text-sm font-semibold text-gray-700 mb-2">{labelize(key)}</h4>
+          <ReportSummarySection data={value as Record<string, unknown>} />
+        </div>
+      ))}
+      {arrays.map(([key, value]) => {
+        const arr = value as unknown[];
+        const isObjectArray = arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null;
+        return (
+          <div key={key}>
+            <h4 className="text-sm font-semibold text-gray-700 mb-2">{labelize(key)}</h4>
+            {isObjectArray
+              ? <ReportMiniTable rows={arr as Record<string, unknown>[]} />
+              : <p className="text-sm text-gray-600">{arr.length > 0 ? arr.join(', ') : 'None'}</p>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function FrontOfficeReportsAnalysis() {
   const [selectedTab, setSelectedTab] = useState('daily-operations');
   const [selectedReport, setSelectedReport] = useState('arrivals');
@@ -191,23 +269,12 @@ export default function FrontOfficeReportsAnalysis() {
       return <DailyTransactionReportView transactions={data as TransactionRow[]} />;
     }
 
-    // Some reports (daily-flash, occupancy, cashier's report, guest history) return
-    // a single summary object rather than a row-per-record array — render those as
-    // a key/value grid instead of feeding a non-array into the table below.
+    // Some reports (daily-flash, occupancy, cashier's report, guest history,
+    // discount requests, complimentary rooms, pricing analytics) return a
+    // single summary object rather than a row-per-record array — render
+    // those recursively instead of feeding a non-array into the table below.
     if (!Array.isArray(data)) {
-      const entries = Object.entries(data).filter(([, v]) => typeof v !== 'object' || v === null);
-      return (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          {entries.map(([key, value]) => (
-            <div key={key} className="p-3 bg-gray-50 rounded-lg border">
-              <div className="text-xs text-gray-500">{key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase())}</div>
-              <div className="text-lg font-semibold text-ghana-black">
-                {typeof value === 'number' ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : String(value)}
-              </div>
-            </div>
-          ))}
-        </div>
-      );
+      return <ReportSummarySection data={data as Record<string, unknown>} />;
     }
 
     // Get column headers from the first item

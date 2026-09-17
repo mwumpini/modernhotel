@@ -1394,27 +1394,11 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         averageRate: complimentaryReport.summary.averageRate,
         reasons: complimentaryReport.analysis.reasons,
         roomTypeImpact: complimentaryReport.analysis.roomTypeImpact
-      },
-      pricingRecommendations: [
-        {
-          category: 'Discount Strategy',
-          recommendation: 'Implement tiered discount structure based on market segment',
-          impact: 'Medium',
-          implementation: 'Short-term'
-        },
-        {
-          category: 'Complimentary Rooms',
-          recommendation: 'Establish clear criteria for complimentary room approvals',
-          impact: 'High',
-          implementation: 'Immediate'
-        },
-        {
-          category: 'Revenue Optimization',
-          recommendation: 'Review pricing strategy for high-demand periods',
-          impact: 'High',
-          implementation: 'Medium-term'
-        }
-      ]
+      }
+      // No pricingRecommendations here — nothing in this system evaluates
+      // pricing strategy, so generic advice text ("implement tiered
+      // discounts", "review pricing for high-demand periods") would be
+      // fabricated, not derived from the actual discount/comp data above.
     };
   },
 
