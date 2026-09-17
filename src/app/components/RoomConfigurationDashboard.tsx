@@ -384,7 +384,7 @@ export default function RoomConfigurationDashboard() {
       return;
     }
     if (!(baseRate > 0)) {
-      setRoomTypeFormError('Base Rate must be greater than 0.');
+      setRoomTypeFormError('Fallback Rate must be greater than 0.');
       return;
     }
     if (!(capacity > 0)) {
@@ -447,7 +447,7 @@ export default function RoomConfigurationDashboard() {
       return;
     }
     if (!(baseRate > 0)) {
-      setEditRoomTypeFormError('Base Rate must be greater than 0.');
+      setEditRoomTypeFormError('Fallback Rate must be greater than 0.');
       return;
     }
     if (!(capacity > 0)) {
@@ -1508,7 +1508,7 @@ export default function RoomConfigurationDashboard() {
                      <Card className="mb-6">
              <CardHeader>
                <h3 className="text-xl font-semibold">Add New Room Type</h3>
-               <p className="text-sm text-gray-600">Base Rate is the fallback nightly price used until a Rate Plan is set up for this room type, in the Rate Plans tab</p>
+               <p className="text-sm text-gray-600">Fallback Rate is the nightly subtotal charged until a Rate Plan is set up for this room type, in the Rate Plans tab</p>
              </CardHeader>
              <CardBody>
                {roomTypeFormError && (
@@ -1533,7 +1533,14 @@ export default function RoomConfigurationDashboard() {
                    onChange={(e) => setNewRoomType({...newRoomType, capacity: e.target.value})}
                  />
                  <Input
-                   label="Base Rate (₵/night)"
+                   label={
+                     <span className="flex items-center gap-1">
+                       Fallback Rate (₵/night)
+                       <Tooltip content="Subtotal (tax-exclusive) — tax is added on top at checkout, same as a Rate Plan's default pricing.">
+                         <span className="text-gray-400 cursor-help">ⓘ</span>
+                       </Tooltip>
+                     </span>
+                   }
                    type="number"
                    min={0.01}
                    step="0.01"
@@ -3382,7 +3389,14 @@ export default function RoomConfigurationDashboard() {
                 onChange={(e) => setEditRoomType({...editRoomType, capacity: e.target.value})}
               />
               <Input
-                label="Base Rate (₵/night)"
+                label={
+                  <span className="flex items-center gap-1">
+                    Fallback Rate (₵/night)
+                    <Tooltip content="Subtotal (tax-exclusive) — tax is added on top at checkout, same as a Rate Plan's default pricing.">
+                      <span className="text-gray-400 cursor-help">ⓘ</span>
+                    </Tooltip>
+                  </span>
+                }
                 type="number"
                 min={0.01}
                 step="0.01"
