@@ -968,7 +968,13 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       .reduce((s, c) => s + c.amount + (c.tax || 0), 0);
     const totalRevenue = roomRevenue + foodBeverageRevenue + otherRevenue;
     const totalPayments = paymentsToday.reduce((s, p) => s + p.amount, 0);
-    const outOfOrderRooms = housekeepingStore.getRoomsByStatus('out-of-order').length;
+    // Like Room Status's housekeeping fields, out-of-order is only known live —
+    // nothing logs a historical out-of-order count per day, so a past date
+    // can't honestly report one. Omit it (not fabricate today's count under a
+    // past-date label) and don't subtract an unknown quantity from
+    // availableRooms either.
+    const today = new Date().toISOString().split('T')[0];
+    const outOfOrderRooms = date === today ? housekeepingStore.getRoomsByStatus('out-of-order').length : undefined;
 
     return {
       date,
@@ -976,7 +982,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         totalRooms,
         occupiedRooms,
         occupancyRate: totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0,
-        availableRooms: Math.max(0, totalRooms - occupiedRooms - outOfOrderRooms),
+        availableRooms: Math.max(0, totalRooms - occupiedRooms - (outOfOrderRooms ?? 0)),
         outOfOrderRooms
       },
       revenue: {

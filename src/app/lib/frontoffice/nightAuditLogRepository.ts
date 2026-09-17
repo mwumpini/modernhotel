@@ -26,12 +26,26 @@ function toDTO(row: any): NightAuditLogDTO {
   }
 }
 
-export async function listNightAuditLogs(tenantId: string, limit = 60): Promise<NightAuditLogDTO[]> {
-  const rows = await prisma.nightAuditLog.findMany({
-    where: { tenantId },
-    orderBy: { runAt: 'desc' },
-    take: limit,
-  })
+// Default (no date range): the last `limit` runs, for the "recent activity"
+// widget on the Night Audit screen. With a date range (Reports & Analysis):
+// every run whose businessDate falls in it, uncapped by recency — a report
+// asked for a specific past date or period needs the actual matching rows,
+// not just whatever's within the last 60 runs.
+export async function listNightAuditLogs(
+  tenantId: string,
+  options: { limit?: number; startDate?: string; endDate?: string } = {},
+): Promise<NightAuditLogDTO[]> {
+  const { limit = 60, startDate, endDate } = options
+  const rows = startDate && endDate
+    ? await prisma.nightAuditLog.findMany({
+        where: { tenantId, businessDate: { gte: startDate, lte: endDate } },
+        orderBy: { businessDate: 'desc' },
+      })
+    : await prisma.nightAuditLog.findMany({
+        where: { tenantId },
+        orderBy: { runAt: 'desc' },
+        take: limit,
+      })
   return rows.map(toDTO)
 }
 

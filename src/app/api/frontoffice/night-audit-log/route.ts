@@ -12,7 +12,9 @@ export async function GET(request: NextRequest) {
     const ctx = await getTenantContext(subdomain)
     if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
 
-    const logs = await listNightAuditLogs(ctx.tenantId)
+    const startDate = request.nextUrl.searchParams.get('startDate') || undefined
+    const endDate = request.nextUrl.searchParams.get('endDate') || undefined
+    const logs = await listNightAuditLogs(ctx.tenantId, { startDate, endDate })
     return NextResponse.json({ logs })
   } catch (error) {
     console.error('[frontoffice/night-audit-log][GET] error', error)

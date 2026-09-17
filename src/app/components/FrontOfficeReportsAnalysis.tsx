@@ -93,14 +93,13 @@ function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
 
 // Reports whose generator accepts an optional endDate to cover a period
 // instead of one day — see getCurrentReportData()'s switch below, which is
-// the source of truth. Room Status, Daily Flash, and Night Audit History
-// stay single-date only (Room Status has no historical per-day log to sum
-// across a range; Daily Flash is an operational snapshot; Night Audit
-// History is its own audit log, not date-filtered the same way).
+// the source of truth. Room Status and Daily Flash stay single-date only:
+// Room Status has no historical per-day log to sum across a range, and
+// Daily Flash is a point-in-time operational snapshot, not an event list.
 const RANGE_REPORT_KEYS = new Set([
   'arrivals', 'departures', 'check-ins', 'high-balance', 'wake-up-calls',
   'daily-transactions', 'cashier-report', 'credit-card-reconciliation', 'guest-ledger',
-  'occupancy', 'pace', 'no-shows',
+  'occupancy', 'pace', 'no-shows', 'night-audit-history',
   'source-business', 'market-segmentation', 'discount-request', 'complimentary-room', 'pricing-analytics',
 ]);
 // Reports that don't take a date at all (guest-history reads guestId instead).
@@ -143,7 +142,7 @@ export default function FrontOfficeReportsAnalysis() {
 
   const settings = useSettingsStore();
   const reportingStore = useReportingStore();
-  const { logs: nightAuditLogs } = useNightAuditLog();
+  const { logs: nightAuditLogs } = useNightAuditLog({ startDate, endDate });
   const orgProfile = buildOrgProfile(settings);
 
   // currentUser.id is a raw database cuid, not something meant for display —
@@ -243,6 +242,8 @@ export default function FrontOfficeReportsAnalysis() {
       case 'guest-ledger':
         return reportingStore.generateGuestLedgerReport(startDate, endDate);
       case 'night-audit-history':
+        // useNightAuditLog({ startDate, endDate }) already fetches only the
+        // matching businessDate range from the server.
         return nightAuditLogs.map((l) => ({
           businessDate: l.businessDate,
           runAt: new Date(l.runAt).toLocaleString(),

@@ -8,15 +8,22 @@ function headers() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
 }
 
-/** History of night-audit runs (server cron + manual button) for this tenant. See /api/frontoffice/night-audit-log. */
-export function useNightAuditLog() {
+/** History of night-audit runs (server cron + manual button) for this tenant. See /api/frontoffice/night-audit-log.
+ * With no range: the last ~60 runs, for a "recent activity" widget. With
+ * `range`, every run whose businessDate falls in it (e.g. Reports & Analysis
+ * querying a specific past date or period) — refetches whenever the range
+ * changes. */
+export function useNightAuditLog(range?: { startDate: string; endDate: string }) {
   const [logs, setLogs] = React.useState<NightAuditLogDTO[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const startDate = range?.startDate;
+  const endDate = range?.endDate;
 
   const refresh = React.useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/frontoffice/night-audit-log', { headers: headers() });
+      const qs = startDate && endDate ? `?startDate=${startDate}&endDate=${endDate}` : '';
+      const res = await fetch(`/api/frontoffice/night-audit-log${qs}`, { headers: headers() });
       if (res.ok) {
         const data = await res.json();
         setLogs(Array.isArray(data.logs) ? data.logs : []);
@@ -26,7 +33,7 @@ export function useNightAuditLog() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [startDate, endDate]);
 
   React.useEffect(() => { void refresh(); }, [refresh]);
 
