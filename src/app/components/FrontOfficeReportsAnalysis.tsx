@@ -91,6 +91,12 @@ function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+// Reports that read startDate/endDate instead of a single selectedDate —
+// see getCurrentReportData()'s switch below, which is the source of truth.
+const RANGE_REPORT_KEYS = new Set(['source-business', 'market-segmentation', 'discount-request', 'complimentary-room', 'pricing-analytics']);
+// Reports that don't take a date at all (guest-history reads guestId instead).
+const NO_DATE_REPORT_KEYS = new Set(['guest-history']);
+
 export default function FrontOfficeReportsAnalysis() {
   const [selectedTab, setSelectedTab] = useState('daily-operations');
   const [selectedReport, setSelectedReport] = useState('arrivals');
@@ -99,6 +105,10 @@ export default function FrontOfficeReportsAnalysis() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [startDate, setStartDate] = useState(new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
+  // 'Today' vs 'Specific Date' for single-date reports — mirrors the compact
+  // date-pill pattern used elsewhere (e.g. Guest Folios) instead of always
+  // showing a date input regardless of whether "today" would do.
+  const [reportDateMode, setReportDateMode] = useState<'today' | 'specific'>('today');
   const [exportFormat, setExportFormat] = useState<'pdf' | 'excel' | 'csv'>('pdf');
   const [isGenerating, setIsGenerating] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -322,39 +332,63 @@ export default function FrontOfficeReportsAnalysis() {
       </div>
 
       {/* Date and Report Selection */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Report Date
-          </label>
-          <Input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="w-full"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-          <Input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            className="w-full"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-          <Input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            className="w-full"
-          />
+      <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
+        <div className="flex items-end gap-2 flex-wrap">
+          {RANGE_REPORT_KEYS.has(selectedReport) ? (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-40"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="w-40"
+                />
+              </div>
+            </>
+          ) : !NO_DATE_REPORT_KEYS.has(selectedReport) ? (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Report Date</label>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setReportDateMode('today');
+                    setSelectedDate(new Date().toISOString().split('T')[0]);
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${reportDateMode === 'today' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
+                >
+                  Today
+                </button>
+                <button
+                  onClick={() => setReportDateMode('specific')}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${reportDateMode === 'specific' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
+                >
+                  Specific Date
+                </button>
+                {reportDateMode === 'specific' && (
+                  <Input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="w-40"
+                  />
+                )}
+              </div>
+            </div>
+          ) : null}
         </div>
         <div className="flex items-end space-x-2">
-          <Button 
-            color="primary" 
+          <Button
+            color="primary"
             variant="flat"
             onClick={() => {
               console.log(`[REPORTS] Manually triggered report generation for ${selectedReport}`);
