@@ -650,7 +650,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
         
         const { totalCharges, totalPayments, balance } = folio
-          ? getFolioDisplayTotals(folio)
+          ? getFolioDisplayTotals(folio, endDate)
           : { totalCharges: 0, totalPayments: 0, balance: 0 };
 
         return {
@@ -706,7 +706,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
 
         const { totalCharges, totalPayments, balance } = folio
-          ? getFolioDisplayTotals(folio)
+          ? getFolioDisplayTotals(folio, endDate)
           : { totalCharges: 0, totalPayments: 0, balance: 0 };
         const nightsStayed = Math.ceil((new Date(endDate).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24));
 
@@ -740,7 +740,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const creditLimit = guest?.creditLimit || defaultCreditLimit;
 
         const { balance: currentBalance } = folio
-          ? getFolioDisplayTotals(folio)
+          ? getFolioDisplayTotals(folio, endDate)
           : { balance: 0 };
 
         // "As of" the report's end date, not today — otherwise a report run
@@ -911,7 +911,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
 
         const { totalCharges, totalPayments, balance: outstandingBalance } = folio
-          ? getFolioDisplayTotals(folio)
+          ? getFolioDisplayTotals(folio, endDate)
           : { totalCharges: 0, totalPayments: 0, balance: 0 };
 
         // "As of" the report's end date, not today — see generateHighBalanceReport.
@@ -1143,7 +1143,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       const bookings = sourceReservations.length;
       const revenue = sourceReservations.reduce((sum, r) => {
         const folio = findMainFolio(frontOfficeStore.folios, r.id);
-        return sum + (folio ? getFolioDisplayTotals(folio).totalCharges : 0);
+        return sum + (folio ? getFolioDisplayTotals(folio, endDate).totalCharges : 0);
       }, 0);
 
       return {
@@ -1178,7 +1178,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       let totalNights = 0;
       for (const r of segReservations) {
         const folio = findMainFolio(frontOfficeStore.folios, r.id);
-        revenue += folio ? getFolioDisplayTotals(folio).totalCharges : 0;
+        revenue += folio ? getFolioDisplayTotals(folio, endDate).totalCharges : 0;
         totalNights += Math.max(0, Math.ceil((new Date(r.departure).getTime() - new Date(r.arrival).getTime()) / (1000 * 60 * 60 * 24)));
       }
 

@@ -98,10 +98,17 @@ export function computeChargeTax(amount: number, description?: string, category?
 	return roundMoney2(total - amount);
 }
 
-/** Canonical folio totals for tables, modals, and billing screens. */
-export function getFolioDisplayTotals(folio: Folio) {
-	const charges = folio.charges || [];
-	const payments = folio.payments || [];
+/** Canonical folio totals for tables, modals, and billing screens.
+ * Pass `asOfDate` (YYYY-MM-DD) to get the balance as it stood on that date
+ * instead of the live current total — each charge/payment carries its own
+ * permanent `date`, so this is exact, not an approximation, unlike the
+ * reservation-status-based in-house checks elsewhere in reporting. Used by
+ * historical reports (see reportingStore.ts); every other call site omits
+ * it and keeps getting the live, unfiltered total. */
+export function getFolioDisplayTotals(folio: Folio, asOfDate?: string) {
+	const inRange = (d?: string) => !asOfDate || (!!d && d.slice(0, 10) <= asOfDate);
+	const charges = (folio.charges || []).filter((c) => inRange(c.date));
+	const payments = (folio.payments || []).filter((p) => inRange(p.date));
 	const subtotal = charges.reduce((s, c) => s + (c.amount || 0), 0);
 	const taxTotal = charges.reduce((s, c) => s + (c.tax || 0), 0);
 	const exactTotalCharges = subtotal + taxTotal;
