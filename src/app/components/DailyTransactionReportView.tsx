@@ -18,90 +18,51 @@ export interface TransactionRow {
   status: string;
 }
 
-type GroupBy = 'none' | 'guest' | 'staff' | 'method' | 'status' | 'category';
-
-const GROUP_LABELS: Record<Exclude<GroupBy, 'none'>, string> = {
-  guest: 'Guest',
-  staff: 'Staff',
-  method: 'Payment Method',
-  status: 'Status',
-  category: 'Category',
-};
-
 function money(n: number) {
   return `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
-function groupKeyFor(row: TransactionRow, groupBy: GroupBy): string {
-  switch (groupBy) {
-    case 'guest': return row.guestName;
-    case 'staff': return row.cashier;
-    case 'method': return row.transactionType === 'payment' ? row.paymentMethod : '—';
-    case 'status': return row.status;
-    case 'category': return row.category;
-    default: return '';
-  }
+function uniqueSorted(values: (string | undefined)[]): string[] {
+  return Array.from(new Set(values.filter((v): v is string => !!v))).sort();
 }
 
-/** Sums charges/payments per key — used for all 5 summary breakdowns. */
-function summarize(rows: TransactionRow[], keyFor: (r: TransactionRow) => string) {
-  const totals = new Map<string, { charges: number; payments: number; count: number }>();
-  for (const r of rows) {
-    const key = keyFor(r);
-    if (!key) continue;
-    const entry = totals.get(key) || { charges: 0, payments: 0, count: 0 };
-    if (r.transactionType === 'charge') entry.charges += r.amount;
-    else entry.payments += r.amount;
-    entry.count += 1;
-    totals.set(key, entry);
-  }
-  return Array.from(totals.entries())
-    .map(([key, v]) => ({ key, ...v, net: v.charges - v.payments }))
-    .sort((a, b) => (b.charges + b.payments) - (a.charges + a.payments));
-}
-
-function SummaryTable({ title, rows }: { title: string; rows: ReturnType<typeof summarize> }) {
-  return (
-    <div>
-      <h5 className="text-xs font-semibold text-gray-500 uppercase mb-1">{title}</h5>
-      <Table aria-label={title} removeWrapper isCompact>
-        <TableHeader>
-          <TableColumn>{title}</TableColumn>
-          <TableColumn>Charges</TableColumn>
-          <TableColumn>Payments</TableColumn>
-          <TableColumn>Count</TableColumn>
-        </TableHeader>
-        <TableBody emptyContent="No data">
-          {rows.map((r) => (
-            <TableRow key={r.key}>
-              <TableCell>{r.key}</TableCell>
-              <TableCell>{money(r.charges)}</TableCell>
-              <TableCell>{money(r.payments)}</TableCell>
-              <TableCell>{r.count}</TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
-  );
-}
+type Filters = { guest: string; staff: string; type: string; method: string; status: string; category: string };
+const EMPTY_FILTERS: Filters = { guest: 'all', staff: 'all', type: 'all', method: 'all', status: 'all', category: 'all' };
 
 export default function DailyTransactionReportView({ transactions }: { transactions: TransactionRow[] }) {
-  const [groupBy, setGroupBy] = React.useState<GroupBy>('none');
+  const [filters, setFilters] = React.useState<Filters>(EMPTY_FILTERS);
 
-  const byGuest = React.useMemo(() => summarize(transactions, (r) => r.guestName), [transactions]);
-  const byStaff = React.useMemo(() => summarize(transactions, (r) => r.cashier), [transactions]);
-  const byMethod = React.useMemo(
-    () => summarize(transactions.filter((r) => r.transactionType === 'payment'), (r) => r.paymentMethod),
-    [transactions]
-  );
-  const byStatus = React.useMemo(() => summarize(transactions, (r) => r.status), [transactions]);
-  const byCategory = React.useMemo(() => summarize(transactions, (r) => r.category), [transactions]);
+  const options = React.useMemo(() => ({
+    guest: uniqueSorted(transactions.map((r) => r.guestName)),
+    staff: uniqueSorted(transactions.map((r) => r.cashier)),
+    method: uniqueSorted(transactions.filter((r) => r.transactionType === 'payment').map((r) => r.paymentMethod)),
+    status: uniqueSorted(transactions.map((r) => r.status)),
+    category: uniqueSorted(transactions.map((r) => r.category)),
+  }), [transactions]);
 
-  const sortedRows = React.useMemo(() => {
-    if (groupBy === 'none') return transactions;
-    return [...transactions].sort((a, b) => groupKeyFor(a, groupBy).localeCompare(groupKeyFor(b, groupBy)));
-  }, [transactions, groupBy]);
+  const filteredRows = React.useMemo(() => {
+    return transactions.filter((r) =>
+      (filters.guest === 'all' || r.guestName === filters.guest) &&
+      (filters.staff === 'all' || r.cashier === filters.staff) &&
+      (filters.type === 'all' || r.transactionType === filters.type) &&
+      (filters.method === 'all' || (r.transactionType === 'payment' && r.paymentMethod === filters.method)) &&
+      (filters.status === 'all' || r.status === filters.status) &&
+      (filters.category === 'all' || r.category === filters.category)
+    );
+  }, [transactions, filters]);
+
+  const totals = React.useMemo(() => {
+    let charges = 0, payments = 0;
+    for (const r of filteredRows) {
+      if (r.transactionType === 'charge') charges += r.amount;
+      else payments += r.amount;
+    }
+    return { charges, payments, net: charges - payments };
+  }, [filteredRows]);
+
+  const setFilter = (key: keyof Filters) => (keys: any) => {
+    setFilters((f) => ({ ...f, [key]: (Array.from(keys)[0] as string) || 'all' }));
+  };
 
   if (transactions.length === 0) {
     return (
@@ -112,72 +73,78 @@ export default function DailyTransactionReportView({ transactions }: { transacti
   }
 
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-        <SummaryTable title="By Guest" rows={byGuest} />
-        <SummaryTable title="By Staff" rows={byStaff} />
-        <SummaryTable title="By Payment Method" rows={byMethod} />
-        <SummaryTable title="By Status" rows={byStatus} />
-        <SummaryTable title="By Category" rows={byCategory} />
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+        <Select label="Guest" size="sm" selectedKeys={[filters.guest]} onSelectionChange={setFilter('guest')}>
+          <SelectItem key="all">All Guests</SelectItem>
+          {options.guest.map((g) => <SelectItem key={g}>{g}</SelectItem>) as any}
+        </Select>
+        <Select label="Staff" size="sm" selectedKeys={[filters.staff]} onSelectionChange={setFilter('staff')}>
+          <SelectItem key="all">All Staff</SelectItem>
+          {options.staff.map((s) => <SelectItem key={s}>{s}</SelectItem>) as any}
+        </Select>
+        <Select label="Type" size="sm" selectedKeys={[filters.type]} onSelectionChange={setFilter('type')}>
+          <SelectItem key="all">All Types</SelectItem>
+          <SelectItem key="charge">Charge</SelectItem>
+          <SelectItem key="payment">Payment</SelectItem>
+        </Select>
+        <Select label="Payment Method" size="sm" selectedKeys={[filters.method]} onSelectionChange={setFilter('method')}>
+          <SelectItem key="all">All Methods</SelectItem>
+          {options.method.map((m) => <SelectItem key={m}>{m}</SelectItem>) as any}
+        </Select>
+        <Select label="Status" size="sm" selectedKeys={[filters.status]} onSelectionChange={setFilter('status')}>
+          <SelectItem key="all">All Statuses</SelectItem>
+          {options.status.map((s) => <SelectItem key={s}>{s}</SelectItem>) as any}
+        </Select>
+        <Select label="Category" size="sm" selectedKeys={[filters.category]} onSelectionChange={setFilter('category')}>
+          <SelectItem key="all">All Categories</SelectItem>
+          {options.category.map((c) => <SelectItem key={c}>{c}</SelectItem>) as any}
+        </Select>
       </div>
 
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <h5 className="text-sm font-semibold">Transaction Detail</h5>
-          <Select
-            label="Group by"
-            className="w-48"
-            size="sm"
-            selectedKeys={[groupBy]}
-            onSelectionChange={(keys) => setGroupBy((Array.from(keys)[0] as GroupBy) || 'none')}
-          >
-            <SelectItem key="none">None</SelectItem>
-            <SelectItem key="guest">Guest</SelectItem>
-            <SelectItem key="staff">Staff</SelectItem>
-            <SelectItem key="method">Payment Method</SelectItem>
-            <SelectItem key="status">Status</SelectItem>
-            <SelectItem key="category">Category</SelectItem>
-          </Select>
-        </div>
-        <Table aria-label="Daily transactions">
-          <TableHeader>
-            <TableColumn>Time</TableColumn>
-            <TableColumn>Guest</TableColumn>
-            <TableColumn>Room</TableColumn>
-            <TableColumn>Type</TableColumn>
-            <TableColumn>{groupBy === 'none' ? 'Group' : GROUP_LABELS[groupBy]}</TableColumn>
-            <TableColumn>Description</TableColumn>
-            <TableColumn>Amount</TableColumn>
-            <TableColumn>Method</TableColumn>
-            <TableColumn>Status</TableColumn>
-            <TableColumn>Staff</TableColumn>
-          </TableHeader>
-          <TableBody emptyContent="No transactions">
-            {sortedRows.map((r) => (
-              <TableRow key={r.transactionId}>
-                <TableCell>{new Date(r.timestamp).toLocaleTimeString()}</TableCell>
-                <TableCell>{r.guestName}</TableCell>
-                <TableCell>{r.roomNumber}</TableCell>
-                <TableCell>
-                  <Chip size="sm" variant="flat" color={r.transactionType === 'payment' ? 'success' : 'warning'}>
-                    {r.transactionType}
-                  </Chip>
-                </TableCell>
-                <TableCell>{groupBy === 'none' ? '—' : groupKeyFor(r, groupBy)}</TableCell>
-                <TableCell>{r.description}</TableCell>
-                <TableCell>{money(r.amount)}</TableCell>
-                <TableCell>{r.transactionType === 'payment' ? r.paymentMethod : '—'}</TableCell>
-                <TableCell>
-                  <Chip size="sm" variant="flat" color={r.status === 'completed' || r.status === 'posted' ? 'success' : r.status === 'pending' ? 'warning' : 'danger'}>
-                    {r.status}
-                  </Chip>
-                </TableCell>
-                <TableCell>{r.cashier}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <Chip size="sm" variant="flat">{filteredRows.length} transaction{filteredRows.length === 1 ? '' : 's'}</Chip>
+        <Chip size="sm" variant="flat" color="warning">Charges {money(totals.charges)}</Chip>
+        <Chip size="sm" variant="flat" color="success">Payments {money(totals.payments)}</Chip>
+        <Chip size="sm" variant="flat" color={totals.net === 0 ? 'default' : totals.net > 0 ? 'danger' : 'primary'}>Net {money(totals.net)}</Chip>
       </div>
+
+      <Table aria-label="Daily transactions">
+        <TableHeader>
+          <TableColumn>Time</TableColumn>
+          <TableColumn>Guest</TableColumn>
+          <TableColumn>Room</TableColumn>
+          <TableColumn>Type</TableColumn>
+          <TableColumn>Description</TableColumn>
+          <TableColumn>Amount</TableColumn>
+          <TableColumn>Method</TableColumn>
+          <TableColumn>Status</TableColumn>
+          <TableColumn>Staff</TableColumn>
+        </TableHeader>
+        <TableBody emptyContent="No transactions match the selected filters">
+          {filteredRows.map((r) => (
+            <TableRow key={r.transactionId}>
+              <TableCell>{new Date(r.timestamp).toLocaleTimeString()}</TableCell>
+              <TableCell>{r.guestName}</TableCell>
+              <TableCell>{r.roomNumber}</TableCell>
+              <TableCell>
+                <Chip size="sm" variant="flat" color={r.transactionType === 'payment' ? 'success' : 'warning'}>
+                  {r.transactionType}
+                </Chip>
+              </TableCell>
+              <TableCell>{r.description}</TableCell>
+              <TableCell>{money(r.amount)}</TableCell>
+              <TableCell>{r.transactionType === 'payment' ? r.paymentMethod : '—'}</TableCell>
+              <TableCell>
+                <Chip size="sm" variant="flat" color={r.status === 'completed' || r.status === 'posted' ? 'success' : r.status === 'pending' ? 'warning' : 'danger'}>
+                  {r.status}
+                </Chip>
+              </TableCell>
+              <TableCell>{r.cashier}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }
