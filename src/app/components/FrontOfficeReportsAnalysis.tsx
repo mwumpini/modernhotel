@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Card, CardBody, CardHeader, Button, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
   Tabs, Tab, Select, SelectItem, Input, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
@@ -35,6 +35,16 @@ export default function FrontOfficeReportsAnalysis() {
   const currentUserLabel = settings.currentUser
     ? `${settings.currentUser.firstName} ${settings.currentUser.lastName}`.trim() || settings.currentUser.email
     : 'System';
+
+  // Starts null (matching SSR, which has no "now" to render) and is only set
+  // from an effect — reading new Date() directly in the render body ran on
+  // both the server and the client's first paint, and those two clock reads
+  // can land in different seconds, failing hydration (the classic Date.now()
+  // case React's own hydration-mismatch docs call out).
+  const [generatedAt, setGeneratedAt] = useState<string | null>(null);
+  useEffect(() => {
+    setGeneratedAt(new Date().toLocaleString('en-GH'));
+  }, [selectedReport, selectedTab, selectedDate, startDate, endDate]);
 
   // Generate reports with detailed logging using the reporting store
   const generateArrivalsReport = useMemo(() => {
@@ -327,7 +337,7 @@ export default function FrontOfficeReportsAnalysis() {
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
-                  Generated on {new Date().toLocaleString('en-GH')} by {currentUserLabel}
+                  Generated on {generatedAt ?? '…'} by {currentUserLabel}
                 </p>
               </CardHeader>
               <CardBody>
@@ -390,7 +400,7 @@ export default function FrontOfficeReportsAnalysis() {
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
-                  Generated on {new Date().toLocaleString('en-GH')} by {currentUserLabel}
+                  Generated on {generatedAt ?? '…'} by {currentUserLabel}
                 </p>
               </CardHeader>
               <CardBody>
@@ -443,7 +453,7 @@ export default function FrontOfficeReportsAnalysis() {
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
-                  Generated on {new Date().toLocaleString('en-GH')} by {currentUserLabel}
+                  Generated on {generatedAt ?? '…'} by {currentUserLabel}
                 </p>
               </CardHeader>
               <CardBody>
@@ -500,7 +510,7 @@ export default function FrontOfficeReportsAnalysis() {
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
-                  Generated on {new Date().toLocaleString('en-GH')} by {currentUserLabel}
+                  Generated on {generatedAt ?? '…'} by {currentUserLabel}
                 </p>
               </CardHeader>
               <CardBody>
