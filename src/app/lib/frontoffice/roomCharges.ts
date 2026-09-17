@@ -83,6 +83,10 @@ export function postRoomChargeForDate(
     description: ROOM_CHARGE_DESCRIPTION,
     amount,
     category: 'room',
+    // Room charges post automatically (night audit or first-night-at-checkin,
+    // not a staff-entered charge) — attribute them honestly rather than the
+    // generic 'Front Desk' fallback other charge types get.
+    staffName: 'Night Audit',
     ...(typeof gross === 'number' && gross >= amount ? { tax: roundMoney2(gross - amount) } : {}),
   });
   store.updateFolioBalances(folio);

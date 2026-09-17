@@ -754,7 +754,13 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
             timestamp: charge.date,
             cashier: (charge as any).staffName || 'Front Desk',
             paymentMethod: 'Folio',
-            folioNumber: folio.id
+            folioNumber: folio.id,
+            category: charge.category || 'other',
+            // Charges don't have a lifecycle status like payments (pending/failed/
+            // refunded) — they're posted once and stay posted — but a uniform
+            // 'posted' label lets the Status breakdown include them consistently
+            // instead of silently dropping every charge row.
+            status: 'posted'
           });
         }
       });
@@ -772,7 +778,9 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
             timestamp: payment.date,
             cashier: payment.processedBy || 'Front Desk',
             paymentMethod: payment.method,
-            folioNumber: folio.id
+            folioNumber: folio.id,
+            category: 'payment',
+            status: payment.status
           });
         }
       });

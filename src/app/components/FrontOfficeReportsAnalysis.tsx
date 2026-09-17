@@ -10,6 +10,7 @@ import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
+import DailyTransactionReportView, { type TransactionRow } from './DailyTransactionReportView';
 
 export default function FrontOfficeReportsAnalysis() {
   const [selectedTab, setSelectedTab] = useState('daily-operations');
@@ -28,6 +29,12 @@ export default function FrontOfficeReportsAnalysis() {
   const settings = useSettingsStore();
   const reportingStore = useReportingStore();
   const { logs: nightAuditLogs } = useNightAuditLog();
+
+  // currentUser.id is a raw database cuid, not something meant for display —
+  // show the person's actual name (or email as a fallback) instead.
+  const currentUserLabel = settings.currentUser
+    ? `${settings.currentUser.firstName} ${settings.currentUser.lastName}`.trim() || settings.currentUser.email
+    : 'System';
 
   // Generate reports with detailed logging using the reporting store
   const generateArrivalsReport = useMemo(() => {
@@ -147,6 +154,13 @@ export default function FrontOfficeReportsAnalysis() {
           <p className="text-gray-500">No data available for the selected report and date.</p>
         </div>
       );
+    }
+
+    // Daily Transaction Report gets its own view — guest/staff/method/status/
+    // category summaries plus a groupable detail table — instead of the plain
+    // auto-columned table every other report uses.
+    if (selectedReport === 'daily-transactions' && Array.isArray(data)) {
+      return <DailyTransactionReportView transactions={data as TransactionRow[]} />;
     }
 
     // Some reports (daily-flash, occupancy, cashier's report, guest history) return
@@ -313,7 +327,7 @@ export default function FrontOfficeReportsAnalysis() {
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
-                  Generated on {new Date().toLocaleString('en-GH')} by {settings.currentUser?.id || 'System'}
+                  Generated on {new Date().toLocaleString('en-GH')} by {currentUserLabel}
                 </p>
               </CardHeader>
               <CardBody>
@@ -376,7 +390,7 @@ export default function FrontOfficeReportsAnalysis() {
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
-                  Generated on {new Date().toLocaleString('en-GH')} by {settings.currentUser?.id || 'System'}
+                  Generated on {new Date().toLocaleString('en-GH')} by {currentUserLabel}
                 </p>
               </CardHeader>
               <CardBody>
@@ -429,7 +443,7 @@ export default function FrontOfficeReportsAnalysis() {
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
-                  Generated on {new Date().toLocaleString('en-GH')} by {settings.currentUser?.id || 'System'}
+                  Generated on {new Date().toLocaleString('en-GH')} by {currentUserLabel}
                 </p>
               </CardHeader>
               <CardBody>
@@ -486,7 +500,7 @@ export default function FrontOfficeReportsAnalysis() {
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
-                  Generated on {new Date().toLocaleString('en-GH')} by {settings.currentUser?.id || 'System'}
+                  Generated on {new Date().toLocaleString('en-GH')} by {currentUserLabel}
                 </p>
               </CardHeader>
               <CardBody>
