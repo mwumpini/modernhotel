@@ -335,18 +335,16 @@ export default function FrontOfficeReportsAnalysis() {
       <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
         <div className="flex items-end gap-2 flex-wrap">
           {RANGE_REPORT_KEYS.has(selectedReport) ? (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Specific Period</label>
+              <div className="flex items-center gap-2">
                 <Input
                   type="date"
                   value={startDate}
                   onChange={(e) => setStartDate(e.target.value)}
                   className="w-40"
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                <span className="text-gray-400 text-sm">→</span>
                 <Input
                   type="date"
                   value={endDate}
@@ -354,7 +352,7 @@ export default function FrontOfficeReportsAnalysis() {
                   className="w-40"
                 />
               </div>
-            </>
+            </div>
           ) : !NO_DATE_REPORT_KEYS.has(selectedReport) ? (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Report Date</label>
