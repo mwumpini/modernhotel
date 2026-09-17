@@ -222,6 +222,47 @@ html {
   border-color: var(--card-border);
 }
 
+/* The bg-*-50 remap above darkens these status cards' backgrounds, but the
+   text-*-700/800/900 classes normally paired with them (dark shades meant for
+   a light background) were never remapped, leaving near-black text on a
+   near-black card. Lighten to a shade of the same hue that stays legible on
+   the darkened background while keeping the color's meaning (info/success/
+   warning/danger) intact, rather than flattening everything to plain gray. */
+.dark .text-blue-700,
+.dark .text-blue-900,
+[data-theme="dark"] .text-blue-700,
+[data-theme="dark"] .text-blue-900 {
+  color: #93c5fd;
+}
+
+.dark .text-green-700,
+.dark .text-green-900,
+[data-theme="dark"] .text-green-700,
+[data-theme="dark"] .text-green-900 {
+  color: #86efac;
+}
+
+.dark .text-yellow-700,
+.dark .text-yellow-900,
+[data-theme="dark"] .text-yellow-700,
+[data-theme="dark"] .text-yellow-900 {
+  color: #fde047;
+}
+
+.dark .text-red-700,
+.dark .text-red-800,
+.dark .text-red-900,
+[data-theme="dark"] .text-red-700,
+[data-theme="dark"] .text-red-800,
+[data-theme="dark"] .text-red-900 {
+  color: #fca5a5;
+}
+
+.dark .text-gray-700,
+[data-theme="dark"] .text-gray-700 {
+  color: var(--text-primary);
+}
+
 @media (prefers-color-scheme: dark) {
   [data-theme="auto"] .text-ghana-black {
     color: var(--text-primary);

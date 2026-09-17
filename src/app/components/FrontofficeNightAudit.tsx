@@ -19,18 +19,38 @@ import {
   Input,
 } from '@heroui/react';
 import { frontOfficeStore } from '../lib/frontoffice/store';
-import { useAccountingStore } from '../lib/accounting/store';
-import { useSettingsStore } from '../lib/settings/store';
+import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
+import { checkNightAuditDiscrepancies, computeDailyRevenue } from '../lib/frontoffice/nightAuditChecks';
 import type { NightAuditRun } from '../lib/frontoffice/nightAudit';
 
+function money(n: number) {
+  return `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 export default function FrontofficeNightAudit() {
-  const journalEntries = useAccountingStore((s) => s.journalEntries);
   const [tick, setTick] = React.useState(0);
   const [lastRun, setLastRun] = React.useState<NightAuditRun | null>(null);
   const [running, setRunning] = React.useState(false);
+  // Only recordManualRun is used here — the run history itself now lives in
+  // Reports & Analysis (Financial & Auditing → Night Audit History), which
+  // reads from the same server log this writes to.
+  const { recordManualRun } = useNightAuditLog();
+
+  // Starts null (matching SSR, which has no client-persisted state to read) and
+  // is only ever set from an effect, so the businessDate this component paints
+  // on its first render can never diverge from the server-rendered HTML —
+  // regardless of whether some unrelated store elsewhere has already loaded a
+  // persisted value into frontOfficeStore by the time this component hydrates.
+  const [businessDate, setBusinessDate] = React.useState<string | null>(null);
+  const [lastNightAuditAt, setLastNightAuditAt] = React.useState<string | undefined>(undefined);
 
   React.useEffect(() => {
-    const u1 = frontOfficeStore.subscribe(() => setTick((t) => t + 1));
+    const sync = () => {
+      setBusinessDate(frontOfficeStore.getBusinessDate());
+      setLastNightAuditAt(frontOfficeStore.lastNightAuditAt);
+    };
+    sync();
+    const u1 = frontOfficeStore.subscribe(() => { setTick((t) => t + 1); sync(); });
     return () => {
       u1();
     };
@@ -38,24 +58,24 @@ export default function FrontofficeNightAudit() {
 
   void tick;
 
-  const postFirstNightAtCheckin = useSettingsStore((s) => s.roomManagement.postFirstNightAtCheckin);
-  const nightAuditAutoRun = useSettingsStore((s) => s.roomManagement.nightAuditAutoRun !== false);
-
-  const businessDate = frontOfficeStore.getBusinessDate();
   const inHouse = frontOfficeStore.reservations.filter((r) => r.status === 'checked-in');
-  const expectedArrivals = frontOfficeStore.reservations.filter(
-    (r) =>
-      r.arrival.slice(0, 10) === businessDate &&
-      (r.status === 'confirmed' || r.status === 'pending'),
-  );
+  const expectedArrivals = businessDate
+    ? frontOfficeStore.reservations.filter(
+        (r) =>
+          r.arrival.slice(0, 10) === businessDate &&
+          (r.status === 'confirmed' || r.status === 'pending'),
+      )
+    : [];
+  const discrepancies = businessDate ? checkNightAuditDiscrepancies(frontOfficeStore as any, businessDate) : [];
+  const revenue = businessDate ? computeDailyRevenue(frontOfficeStore as any, businessDate) : null;
 
   const [wakeUpReservationId, setWakeUpReservationId] = React.useState('');
   const [wakeUpTime, setWakeUpTime] = React.useState('06:00');
   const [wakeUpNotes, setWakeUpNotes] = React.useState('');
-  const todaysWakeUpCalls = frontOfficeStore.wakeUpCalls.filter((c) => c.date === businessDate);
+  const todaysWakeUpCalls = businessDate ? frontOfficeStore.wakeUpCalls.filter((c) => c.date === businessDate) : [];
 
   const scheduleWakeUpCall = () => {
-    if (!wakeUpReservationId) return;
+    if (!wakeUpReservationId || !businessDate) return;
     frontOfficeStore.scheduleWakeUpCall(wakeUpReservationId, businessDate, wakeUpTime, wakeUpNotes || undefined);
     setWakeUpReservationId('');
     setWakeUpNotes('');
@@ -66,6 +86,13 @@ export default function FrontofficeNightAudit() {
     try {
       const result = frontOfficeStore.executeNightAudit();
       setLastRun(result);
+      void recordManualRun({
+        businessDate: result.businessDate,
+        roomChargesPosted: result.roomChargesPosted,
+        noShowsMarked: result.noShowsProcessed,
+        status: result.status,
+        errors: result.error ? [result.error] : undefined,
+      });
     } finally {
       setRunning(false);
     }
@@ -77,10 +104,11 @@ export default function FrontofficeNightAudit() {
         <div>
           <h3 className="text-lg font-semibold text-ghana-black">Night Audit</h3>
           <p className="text-xs text-gray-500 mt-1">
-            Business date: <strong>{businessDate}</strong>
-            {frontOfficeStore.lastNightAuditAt && (
-              <> · Last run: {new Date(frontOfficeStore.lastNightAuditAt).toLocaleString()}</>
+            Business date: <strong>{businessDate ?? '…'}</strong>
+            {lastNightAuditAt && (
+              <> · Last run: {new Date(lastNightAuditAt).toLocaleString()}</>
             )}
+            {' '}· Auto-runs nightly at 1:00am
           </p>
         </div>
         <Button
@@ -94,7 +122,7 @@ export default function FrontofficeNightAudit() {
         </Button>
       </CardHeader>
       <CardBody className="space-y-6">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-3 gap-3">
           <div className="rounded-lg bg-blue-50 p-3 border border-blue-100">
             <div className="text-xs text-blue-700">In-house</div>
             <div className="text-xl font-bold text-blue-900">{inHouse.length}</div>
@@ -103,28 +131,25 @@ export default function FrontofficeNightAudit() {
             <div className="text-xs text-amber-700">Expected arrivals (no-show candidates)</div>
             <div className="text-xl font-bold text-amber-900">{expectedArrivals.length}</div>
           </div>
-          <div className="rounded-lg bg-green-50 p-3 border border-green-100">
-            <div className="text-xs text-green-700">First night at check-in</div>
-            <div className="text-sm font-semibold text-green-900">
-              {postFirstNightAtCheckin ? 'Enabled' : 'Night audit only'}
-            </div>
-          </div>
-          <div className="rounded-lg bg-indigo-50 p-3 border border-indigo-100">
-            <div className="text-xs text-indigo-700">Auto-run 1:00am</div>
-            <div className="text-sm font-semibold text-indigo-900">
-              Server cron{nightAuditAutoRun ? ' + in-browser' : ''}
-            </div>
-            <div className="text-[11px] text-indigo-700 mt-0.5">
-              {nightAuditAutoRun
-                ? 'A server job runs reliably every night; this setting additionally fires it from an open browser tab, which is redundant but harmless.'
-                : 'A server job runs reliably every night regardless of this setting — this only controls an additional, unreliable in-browser trigger.'}
-            </div>
-          </div>
-          <div className="rounded-lg bg-purple-50 p-3 border border-purple-100">
-            <div className="text-xs text-purple-700">GL recognition</div>
-            <div className="text-sm font-semibold text-purple-900">At checkout</div>
+          <div className={`rounded-lg p-3 border ${discrepancies.length > 0 ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-200'}`}>
+            <div className={`text-xs ${discrepancies.length > 0 ? 'text-red-700' : 'text-gray-500'}`}>Discrepancies</div>
+            <div className={`text-xl font-bold ${discrepancies.length > 0 ? 'text-red-900' : 'text-gray-700'}`}>{discrepancies.length}</div>
           </div>
         </div>
+
+        {discrepancies.length > 0 && (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-4">
+            <h4 className="text-sm font-semibold text-red-800 mb-2">Rate &amp; discrepancy checks — fix before running</h4>
+            <ul className="text-sm text-red-800 space-y-1">
+              {discrepancies.map((d, i) => (
+                <li key={`${d.reservationId}-${i}`}>
+                  <span className="font-medium">{d.guestName}</span>
+                  {d.roomId && <span> — Room {d.roomId}</span>}: {d.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {lastRun && (
           <div className="rounded-lg border border-gray-200 p-4 bg-gray-50">
@@ -144,55 +169,70 @@ export default function FrontofficeNightAudit() {
 
         <Divider />
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div>
-            <h4 className="text-sm font-semibold text-ghana-black mb-2">Checked-in reservations</h4>
-            <Table aria-label="Checked-in">
-              <TableHeader>
-                <TableColumn>Reservation</TableColumn>
-                <TableColumn>Guest</TableColumn>
-                <TableColumn>Room type</TableColumn>
-              </TableHeader>
-              <TableBody emptyContent="No in-house guests">
-                {inHouse.map((r) => (
-                  <TableRow key={r.id}>
-                    <TableCell>{r.id}</TableCell>
-                    <TableCell>{r.guestName}</TableCell>
-                    <TableCell>{frontOfficeStore.roomTypes.find((rt) => rt.id === r.roomTypeId)?.name}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-          <div>
-            <h4 className="text-sm font-semibold text-ghana-black mb-2">Recent GL journal entries</h4>
-            <p className="text-xs text-gray-500 mb-2">
-              Room nights post to the guest folio at night audit. Revenue and cash hit the ledger at guest checkout
-              (no-show penalties post directly).
-            </p>
-            <Table aria-label="Journals">
-              <TableHeader>
-                <TableColumn>Date</TableColumn>
-                <TableColumn>Description</TableColumn>
-                <TableColumn>Source</TableColumn>
-              </TableHeader>
-              <TableBody emptyContent="No journal entries">
-                {journalEntries.slice(0, 10).map((j) => (
-                  <TableRow key={j.id}>
-                    <TableCell>{new Date(j.date).toLocaleString()}</TableCell>
-                    <TableCell className="max-w-[180px] truncate">{j.description}</TableCell>
-                    <TableCell className="text-xs">{j.sourceModule || '—'}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+        <div>
+          <h4 className="text-sm font-semibold text-ghana-black mb-2">Daily Revenue — {businessDate ?? '…'}</h4>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
+              <div className="text-xs text-gray-500">Room Charges</div>
+              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.roomCharges ?? 0)}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
+              <div className="text-xs text-gray-500">Other Charges</div>
+              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.otherCharges ?? 0)}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
+              <div className="text-xs text-gray-500">Tax</div>
+              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.taxTotal ?? 0)}</div>
+            </div>
+            <div className="rounded-lg bg-green-50 p-3 border border-green-100">
+              <div className="text-xs text-green-700">Total Charges</div>
+              <div className="text-lg font-semibold text-green-900">{money(revenue?.totalCharges ?? 0)}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
+              <div className="text-xs text-gray-500">Cash</div>
+              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.paymentsByMethod.cash ?? 0)}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
+              <div className="text-xs text-gray-500">Card</div>
+              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.paymentsByMethod.card ?? 0)}</div>
+            </div>
+            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
+              <div className="text-xs text-gray-500">Mobile Money</div>
+              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.paymentsByMethod.mobileMoney ?? 0)}</div>
+            </div>
+            <div className="rounded-lg bg-blue-50 p-3 border border-blue-100">
+              <div className="text-xs text-blue-700">Total Payments</div>
+              <div className="text-lg font-semibold text-blue-900">{money(revenue?.totalPayments ?? 0)}</div>
+            </div>
           </div>
         </div>
 
         <Divider />
 
         <div>
-          <h4 className="text-sm font-semibold text-ghana-black mb-2">Wake-up calls — {businessDate}</h4>
+          <h4 className="text-sm font-semibold text-ghana-black mb-2">Checked-in reservations</h4>
+          <Table aria-label="Checked-in">
+            <TableHeader>
+              <TableColumn>Reservation</TableColumn>
+              <TableColumn>Guest</TableColumn>
+              <TableColumn>Room type</TableColumn>
+            </TableHeader>
+            <TableBody emptyContent="No in-house guests">
+              {inHouse.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell>{r.id}</TableCell>
+                  <TableCell>{r.guestName}</TableCell>
+                  <TableCell>{frontOfficeStore.roomTypes.find((rt) => rt.id === r.roomTypeId)?.name}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </div>
+
+        <Divider />
+
+        <div>
+          <h4 className="text-sm font-semibold text-ghana-black mb-2">Wake-up calls — {businessDate ?? '…'}</h4>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
             <Select
               label="Guest"
@@ -247,10 +287,9 @@ export default function FrontofficeNightAudit() {
           </Table>
         </div>
 
-        <div className="text-xs text-gray-500 space-y-1">
-          <p><strong>Night audit steps:</strong> roll business date → post room charges → process no-shows → reconcile folio activity → open new day.</p>
-          <p>Check-in posts the first night only when enabled in Settings → Operational Policies. Subsequent nights post here (idempotent).</p>
-        </div>
+        <p className="text-xs text-gray-500">
+          Running closes {businessDate ?? 'today'}: posts room charges, processes no-shows, then opens the next day. Full run history is in Reports &amp; Analysis → Financial &amp; Auditing → Night Audit History.
+        </p>
       </CardBody>
     </Card>
   );

@@ -960,20 +960,30 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
   generateOccupancyReport: (date) => {
     console.log(`[REPORTS] Generating occupancy report for ${date}`);
-    
+
     const totalRooms = frontOfficeStore.rooms.length;
-    const occupiedRooms = frontOfficeStore.reservations.filter(r => 
-      r.status === 'checked-in' && 
-      r.arrival <= date && 
+    const inHouse = frontOfficeStore.reservations.filter(r =>
+      r.status === 'checked-in' &&
+      r.arrival <= date &&
       r.departure > date
-    ).length;
-    
+    );
+    const occupiedRooms = inHouse.length;
+    // Room occupancy tells you business performance; actual headcount is what
+    // matters for fire/evacuation safety, security, and kitchen/housekeeping
+    // staffing — a different question, so reported alongside rather than
+    // inferred from room counts (a room can hold more than one guest).
+    const adultsInHouse = inHouse.reduce((sum, r) => sum + (r.adults || 0), 0);
+    const childrenInHouse = inHouse.reduce((sum, r) => sum + (r.children || 0), 0);
+
     return {
       date,
       totalRooms,
       occupiedRooms,
       availableRooms: totalRooms - occupiedRooms,
-      occupancyRate: totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0
+      occupancyRate: totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0,
+      adultsInHouse,
+      childrenInHouse,
+      totalGuestsInHouse: adultsInHouse + childrenInHouse
     };
   },
 

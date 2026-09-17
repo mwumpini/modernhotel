@@ -199,6 +199,10 @@ const AuditLogSection = ({ reservationId }: { reservationId: string }) => {
 
 export default function ReservationsBookingsManager({ mode = 'reservation', embed = false, autoOpenNew = false }: ReservationsManagerProps) {
   const router = useRouter();
+  // Starts null (matching SSR) and is only ever set from an effect — see the
+  // load-reservations effect below — so this component's first render can't
+  // diverge from the server-rendered HTML.
+  const [businessDate, setBusinessDate] = useState<string | null>(null);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [filteredReservations, setFilteredReservations] = useState<Reservation[]>([]);
   const [resPage, setResPage] = useState(1);
@@ -561,7 +565,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
   useEffect(() => {
     loadReservations();
-    const unsubscribe = frontOfficeStore.subscribe(loadReservations);
+    setBusinessDate(frontOfficeStore.getBusinessDate());
+    const unsubscribe = frontOfficeStore.subscribe(() => {
+      loadReservations();
+      setBusinessDate(frontOfficeStore.getBusinessDate());
+    });
     return unsubscribe;
   }, []);
 
@@ -1251,8 +1259,6 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     loadReservations();
   };
 
-  const businessDate = frontOfficeStore.getBusinessDate();
-
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'confirmed': return 'success';
@@ -1722,7 +1728,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                           🔑 Check In
                         </Button>
                       )}
-                      {canMarkNoShow(reservation, businessDate) && (
+                      {canMarkNoShow(reservation, businessDate ?? '') && (
                         <Button
                           size="sm"
                           color="danger"

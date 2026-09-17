@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client'
 import { prisma } from '@/app/lib/database/client'
 import { resolveTaxConfigs, type PrismaTaxRow } from '@/app/lib/tax/resolveConfigs'
 import { computeStackedTaxLines } from '@/app/lib/accounting/taxFromConfig'
+import { createNightAuditLog } from '@/app/lib/frontoffice/nightAuditLogRepository'
 
 /**
  * Server-side Night Audit — runs at 01:00 daily via Vercel Cron or manual trigger.
@@ -48,6 +49,7 @@ export async function GET(request: NextRequest) {
     for (const tenant of tenants) {
       const tenantId = tenant.id
       let tenantCharges = 0
+      const tenantErrors: string[] = []
 
       // Resolve this tenant's real configured tax rates once (falls back to the
       // Ghana template if the tenant has no active taxes configured yet) instead of
@@ -146,7 +148,9 @@ export async function GET(request: NextRequest) {
 
           tenantCharges++
         } catch (folioErr) {
-          errors.push(`Folio ${folio.id}: ${folioErr}`)
+          const msg = `Folio ${folio.id}: ${folioErr}`
+          errors.push(msg)
+          tenantErrors.push(msg)
         }
       }
 
@@ -294,7 +298,9 @@ export async function GET(request: NextRequest) {
 
           totalNoShowsMarked++
         } catch (nsErr) {
-          errors.push(`No-show ${res.id}: ${nsErr}`)
+          const msg = `No-show ${res.id}: ${nsErr}`
+          errors.push(msg)
+          tenantErrors.push(msg)
         }
       }
 
@@ -303,6 +309,20 @@ export async function GET(request: NextRequest) {
       results[tenant.subdomain] = {
         roomChargesPosted: tenantCharges,
         noShowsMarked: noShows.length,
+      }
+
+      // Best-effort — a logging failure shouldn't fail the audit run itself.
+      try {
+        await createNightAuditLog(tenantId, {
+          businessDate: todayIso,
+          source: 'cron',
+          status: tenantErrors.length > 0 ? 'failed' : 'completed',
+          roomChargesPosted: tenantCharges,
+          noShowsMarked: noShows.length,
+          errors: tenantErrors,
+        })
+      } catch (logErr) {
+        console.error('[night-audit] failed to write NightAuditLog', logErr)
       }
     }
 

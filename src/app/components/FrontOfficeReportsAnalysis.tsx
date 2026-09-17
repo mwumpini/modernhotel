@@ -9,6 +9,7 @@ import {
 import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
 
 export default function FrontOfficeReportsAnalysis() {
   const [selectedTab, setSelectedTab] = useState('daily-operations');
@@ -26,6 +27,7 @@ export default function FrontOfficeReportsAnalysis() {
 
   const settings = useSettingsStore();
   const reportingStore = useReportingStore();
+  const { logs: nightAuditLogs } = useNightAuditLog();
 
   // Generate reports with detailed logging using the reporting store
   const generateArrivalsReport = useMemo(() => {
@@ -97,6 +99,16 @@ export default function FrontOfficeReportsAnalysis() {
         return reportingStore.generateCreditCardReconciliationReport(selectedDate);
       case 'guest-ledger':
         return reportingStore.generateGuestLedgerReport(selectedDate);
+      case 'night-audit-history':
+        return nightAuditLogs.map((l) => ({
+          businessDate: l.businessDate,
+          runAt: new Date(l.runAt).toLocaleString(),
+          source: l.source,
+          roomCharges: l.roomChargesPosted,
+          noShows: l.noShowsMarked,
+          status: l.status,
+          runBy: l.runBy || '—',
+        }));
       case 'daily-flash':
         return generateDailyFlashReport;
       case 'occupancy':
@@ -325,6 +337,7 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="cashier-report">Cashier's Report</SelectItem>
                   <SelectItem key="credit-card-reconciliation">Credit Card Reconciliation</SelectItem>
                   <SelectItem key="guest-ledger">Guest Ledger Report</SelectItem>
+                  <SelectItem key="night-audit-history">Night Audit History</SelectItem>
                 </Select>
                 {selectedReport === 'cashier-report' && (
                   <Select

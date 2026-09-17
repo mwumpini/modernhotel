@@ -12,7 +12,7 @@ import type { Reservation } from './types';
 import { roundMoney2 } from '../tax/engine';
 import { genId } from './helpers/ids';
 
-type StoreLike = {
+export type StoreLike = {
   reservations: Reservation[];
   getOrCreateFolio: (reservationId: string) => { id: string; charges?: Array<{ description?: string; date?: string }> };
   addFolioCharge: (folioId: string, charge: Record<string, unknown>) => void;

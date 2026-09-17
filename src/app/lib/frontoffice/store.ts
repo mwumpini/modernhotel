@@ -44,6 +44,7 @@ class FrontOfficeStore {
   billingPersons: BillingPerson[] = [];
   private hydratedGuests: boolean = false;
   private hydratedFromApi: boolean = false;
+  private hydratedNightAuditState: boolean = false;
   private lastRefreshFromApiAt: number = 0;
   // Serializes API writes so a reservation's POST always lands before its PATCH.
   private writeQueue: Promise<unknown> = Promise.resolve();
@@ -112,7 +113,6 @@ class FrontOfficeStore {
   }
 
   constructor() {
-    this.loadNightAuditState();
     // Settings are now managed centrally via useSettingsStore
     this.billingPersons = isDemoFixturesEnabled() ? [...DEMO_BILLING_PERSONS] : [];
 
@@ -184,7 +184,7 @@ class FrontOfficeStore {
     seedFolio('R-006', [1000, 300, 100], [ { method: 'Cash', amount: 700 } ]);
   }
 
-  subscribe(l: () => void) { this.listeners.push(l); this.ensureHydratedFromApi(); return () => { this.listeners = this.listeners.filter(x => x !== l); }; }
+  subscribe(l: () => void) { this.listeners.push(l); this.ensureHydratedFromApi(); this.ensureHydratedNightAuditState(); return () => { this.listeners = this.listeners.filter(x => x !== l); }; }
 
   // ---------------------------------------------------------------------------
   // Server persistence (write-through cache). The in-memory arrays remain the
@@ -383,6 +383,15 @@ class FrontOfficeStore {
   }
 
   // Mirror rooms from Settings -> Front Office
+  //
+  // Subscribed to the ENTIRE settings store (see the constructor), so this
+  // runs on every settings change, not just room-related ones — including a
+  // folio-numbering counter bump from getOrCreateFolio(). Notifying
+  // unconditionally on every call turned that into a reentrant loop: this
+  // store's own notify() re-runs any subscriber that creates a folio (e.g.
+  // check-outs' loadCheckOuts), which bumps the counter again, which
+  // triggers this subscription again — recursing until the call stack
+  // overflows. Only notify when rooms/roomTypes/ratePlans actually changed.
   syncRoomsFromSettings() {
     try {
       const settings = useSettingsStore.getState();
@@ -390,8 +399,8 @@ class FrontOfficeStore {
       // Sync room types and rate plans from settings so FO has authoritative data
       const cfgRoomTypes = settings.roomManagement.roomTypes || [];
       const cfgRatePlans = settings.roomManagement.ratePlans || [];
-      this.roomTypes = cfgRoomTypes.map(rt => ({ id: rt.id, name: rt.name, baseRate: rt.baseRate }));
-      this.ratePlans = cfgRatePlans.map(rp => ({
+      const nextRoomTypes = cfgRoomTypes.map(rt => ({ id: rt.id, name: rt.name, baseRate: rt.baseRate }));
+      const nextRatePlans = cfgRatePlans.map(rp => ({
         id: rp.id,
         name: rp.name,
         roomTypeId: rp.roomTypeId,
@@ -411,11 +420,19 @@ class FrontOfficeStore {
         roomTypeId: r.typeId,
         floor: r.floor || ''
       }));
+
+      const roomsChanged = JSON.stringify(mapped) !== JSON.stringify(this.rooms);
+      const roomTypesChanged = JSON.stringify(nextRoomTypes) !== JSON.stringify(this.roomTypes);
+      const ratePlansChanged = JSON.stringify(nextRatePlans) !== JSON.stringify(this.ratePlans);
+      if (!roomsChanged && !roomTypesChanged && !ratePlansChanged) return;
+
+      this.roomTypes = nextRoomTypes;
+      this.ratePlans = nextRatePlans;
       this.rooms = mapped;
       this.notify();
-      trackEvent('FO.Rooms.SyncedFromSettings', { count: mapped.length });
-      trackEvent('FO.RatePlans.SyncedFromSettings' as any, { count: this.ratePlans.length });
-      trackEvent('FO.RoomTypes.SyncedFromSettings' as any, { count: this.roomTypes.length });
+      if (roomsChanged) trackEvent('FO.Rooms.SyncedFromSettings', { count: mapped.length });
+      if (ratePlansChanged) trackEvent('FO.RatePlans.SyncedFromSettings' as any, { count: this.ratePlans.length });
+      if (roomTypesChanged) trackEvent('FO.RoomTypes.SyncedFromSettings' as any, { count: this.roomTypes.length });
     } catch (e) {
       console.error('FO: Failed to sync rooms from settings', e);
     }
@@ -488,6 +505,28 @@ class FrontOfficeStore {
 
   getBusinessDate(): string {
     return this.businessDate;
+  }
+
+  // Deferred to after mount (see subscribe()), not read synchronously in the
+  // constructor — the constructor also runs during SSR, and a stored
+  // businessDate that has drifted from the server's default "today" would
+  // make the client's first render diverge from the SSR-ed HTML and fail
+  // hydration (React then discards and regenerates the whole tree).
+  //
+  // subscribe() itself isn't a safe-enough gate on its own: other store
+  // singletons (e.g. housekeeping/store.ts) call frontOfficeStore.subscribe()
+  // synchronously in their own module-scope constructor, which on the client
+  // runs while the page's JS bundle is still loading — before React's first
+  // hydration render even starts. The setTimeout pushes the actual state
+  // load past that synchronous window, so it can never win the race against
+  // the hydration diff no matter which caller triggers subscribe() first.
+  private ensureHydratedNightAuditState() {
+    if (this.hydratedNightAuditState || typeof window === 'undefined') return;
+    this.hydratedNightAuditState = true;
+    setTimeout(() => {
+      this.loadNightAuditState();
+      this.notify();
+    }, 0);
   }
 
   private loadNightAuditState() {

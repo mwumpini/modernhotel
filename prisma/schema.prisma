@@ -100,6 +100,7 @@ model Tenant {
   hrAttendances          HrAttendance[]
   hrShifts               HrShift[]
   cashierShifts          CashierShift[]
+  nightAuditLogs         NightAuditLog[]
   hrBenefitsPackages     HrBenefitsPackage[]
   hrEmployeeBenefits     HrEmployeeBenefits[]
   hrPerformanceReviews   HrPerformanceReview[]
@@ -2037,6 +2038,28 @@ model CashierShift {
   @@index([tenantId, status])
   @@index([tenantId, cashierUserId])
   @@map("cashier_shifts")
+}
+
+// One row per tenant per night-audit run (server cron or manual "Run Night
+// Audit" button), so a missed/failed night is visible after the fact instead
+// of only existing in a response body or ephemeral React state. See
+// /api/frontoffice/night-audit-log and /api/cron/night-audit.
+model NightAuditLog {
+  id                String   @id @default(cuid())
+  tenantId          String
+  businessDate      String
+  source            String
+  status            String   @default("completed")
+  roomChargesPosted Int      @default(0)
+  noShowsMarked     Int      @default(0)
+  errors            Json?
+  runBy             String?
+  runAt             DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, runAt])
+  @@map("night_audit_logs")
 }
 
 model HrShift {

@@ -17,19 +17,26 @@ export default function TodaysArrivalsPanel({ onCheckIn, onNoShow, compact }: Pr
   const [tick, setTick] = React.useState(0);
   const noShowEnabled = useSettingsStore((s) => !!s.roomManagement.noShowPolicyEnabled);
 
+  // Starts null (matching SSR) and is only ever set from an effect, so this
+  // component's first render can't diverge from the server-rendered HTML —
+  // frontOfficeStore's businessDate may already reflect a client-persisted
+  // value from an unrelated store's subscribe() by the time this hydrates.
+  const [businessDate, setBusinessDate] = React.useState<string | null>(null);
+
   React.useEffect(() => {
-    return frontOfficeStore.subscribe(() => setTick((t) => t + 1));
+    const sync = () => setBusinessDate(frontOfficeStore.getBusinessDate());
+    sync();
+    return frontOfficeStore.subscribe(() => { setTick((t) => t + 1); sync(); });
   }, []);
   void tick;
 
-  const businessDate = frontOfficeStore.getBusinessDate();
-  const arrivals = filterTodaysArrivals(frontOfficeStore.reservations, businessDate);
+  const arrivals = businessDate ? filterTodaysArrivals(frontOfficeStore.reservations, businessDate) : [];
 
-  if (arrivals.length === 0) {
+  if (!businessDate || arrivals.length === 0) {
     return (
       <Card className="border-0 shadow-md mb-4">
         <CardBody className="py-4">
-          <p className="text-sm text-gray-500">No expected arrivals for business date {businessDate}.</p>
+          <p className="text-sm text-gray-500">No expected arrivals for business date {businessDate ?? '…'}.</p>
         </CardBody>
       </Card>
     );
