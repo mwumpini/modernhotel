@@ -307,3 +307,24 @@ html {
     background-color: color-mix(in srgb, var(--surface-elevated) 80%, white 20%);
   }
 }
+
+/* "Print" buttons across the app call plain window.print(), which by default
+   prints whatever's on screen — sidebar, header, filters, everything, not
+   just the report. Any page that wants a clean printout wraps the actual
+   report content in id="report-print-area"; this hides everything else
+   during printing instead of every page needing its own print stylesheet. */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #report-print-area,
+  #report-print-area * {
+    visibility: visible;
+  }
+  #report-print-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+}

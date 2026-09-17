@@ -420,7 +420,7 @@ export default function FrontOfficeReportsAnalysis() {
               </div>
             </div>
 
-            <Card>
+            <Card id="report-print-area">
               <CardHeader>
                 <h3 className="text-lg font-semibold">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
@@ -483,7 +483,7 @@ export default function FrontOfficeReportsAnalysis() {
               </div>
             </div>
 
-            <Card>
+            <Card id="report-print-area">
               <CardHeader>
                 <h3 className="text-lg font-semibold">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
@@ -536,7 +536,7 @@ export default function FrontOfficeReportsAnalysis() {
               </div>
             </div>
 
-            <Card>
+            <Card id="report-print-area">
               <CardHeader>
                 <h3 className="text-lg font-semibold">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
@@ -593,7 +593,7 @@ export default function FrontOfficeReportsAnalysis() {
               </div>
             </div>
 
-            <Card>
+            <Card id="report-print-area">
               <CardHeader>
                 <h3 className="text-lg font-semibold">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
