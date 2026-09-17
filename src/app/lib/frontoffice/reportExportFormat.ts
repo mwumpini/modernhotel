@@ -153,7 +153,13 @@ export function sectionsToExcelHtml(title: string, sections: ExportSection[], or
 export async function sectionsToPdfBlob(title: string, sections: ExportSection[], org?: ReportOrgInfo): Promise<Blob> {
   const jsPDF = (await import('jspdf')).default;
   const autoTable = (await import('jspdf-autotable')).default;
-  const doc: any = new jsPDF();
+  // Portrait's ~180mm usable width falls apart past ~7-8 columns at a
+  // readable font size — autoTable squeezes every column down until header
+  // words wrap mid-word (e.g. "Number" -> "Numbe"/"r"). Wide reports like
+  // Arrivals (13 columns) get landscape's ~270mm instead.
+  const maxColumns = sections.reduce((max, s) => Math.max(max, s.columns.length), 0);
+  const wide = maxColumns > 7;
+  const doc: any = new jsPDF(wide ? { orientation: 'landscape' } : undefined);
   let y = 15;
 
   if (org) {
