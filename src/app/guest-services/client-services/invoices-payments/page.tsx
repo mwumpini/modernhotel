@@ -1408,12 +1408,12 @@ export default function InvoicesPaymentsPage() {
           ) : activeTab === 'folios' ? (
             <>
             <div className="mb-4 p-4 bg-indigo-50 rounded-lg space-y-2">
-              {/* Row 1: title */}
-              <h3 className="text-lg font-semibold text-indigo-800">Guest Folios</h3>
-
-              {/* Row 2: subtitle left, filters right */}
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-sm text-indigo-600 shrink-0">Live charge ledger per guest — add payments, print invoices, or manage adjustments</p>
+              {/* Row 1: title + subtitle left, filters right */}
+              <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div>
+                  <h3 className="text-lg font-semibold text-indigo-800">Guest Folios</h3>
+                  <p className="text-sm text-indigo-600">Live charge ledger per guest — add payments, print invoices, or manage adjustments</p>
+                </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
                   <Input
                     placeholder="Search guest, room..."
