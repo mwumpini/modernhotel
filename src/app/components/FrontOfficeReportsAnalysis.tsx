@@ -163,7 +163,8 @@ export default function FrontOfficeReportsAnalysis() {
     try {
       const extension = format === 'excel' ? 'xls' : format;
       const filename = `${selectedReport}_report_${selectedDate}.${extension}`;
-      const fileUrl = await reportingStore.exportReport(reportData, format, filename);
+      const generatedLabel = generatedAt ? `Generated on ${generatedAt} by ${currentUserLabel}` : undefined;
+      const fileUrl = await reportingStore.exportReport(reportData, format, filename, generatedLabel);
 
       // Download the file
       const a = document.createElement('a');
@@ -427,7 +428,7 @@ export default function FrontOfficeReportsAnalysis() {
                 <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
-                <p className="text-sm text-gray-600">
+                <p className="hidden print:block text-sm text-gray-600">
                   Generated on {generatedAt ?? '…'} by {currentUserLabel}
                 </p>
               </CardHeader>
@@ -492,7 +493,7 @@ export default function FrontOfficeReportsAnalysis() {
                 <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
-                <p className="text-sm text-gray-600">
+                <p className="hidden print:block text-sm text-gray-600">
                   Generated on {generatedAt ?? '…'} by {currentUserLabel}
                 </p>
               </CardHeader>
@@ -547,7 +548,7 @@ export default function FrontOfficeReportsAnalysis() {
                 <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
-                <p className="text-sm text-gray-600">
+                <p className="hidden print:block text-sm text-gray-600">
                   Generated on {generatedAt ?? '…'} by {currentUserLabel}
                 </p>
               </CardHeader>
@@ -606,7 +607,7 @@ export default function FrontOfficeReportsAnalysis() {
                 <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
-                <p className="text-sm text-gray-600">
+                <p className="hidden print:block text-sm text-gray-600">
                   Generated on {generatedAt ?? '…'} by {currentUserLabel}
                 </p>
               </CardHeader>

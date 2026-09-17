@@ -100,7 +100,7 @@ interface ReportingStore {
   generatePricingAnalyticsReport: (startDate: string, endDate: string) => any;
   
   // Export and Print
-  exportReport: (reportData: any, format: 'pdf' | 'excel' | 'csv', filename: string) => Promise<string>;
+  exportReport: (reportData: any, format: 'pdf' | 'excel' | 'csv', filename: string, generatedLabel?: string) => Promise<string>;
   printReport: (reportData: any, template: string) => void;
   
   // Selection
@@ -1406,7 +1406,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
   },
 
   // Export and Print
-  exportReport: async (reportData, format, filename) => {
+  exportReport: async (reportData, format, filename, generatedLabel) => {
     console.log(`[REPORTS] Exporting report in ${format} format: ${filename}`);
 
     trackEvent('report_exported', {
@@ -1426,10 +1426,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     // document itself, so derive a readable title from it separately.
     const title = filename.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
     const blob = format === 'csv'
-      ? new Blob([sectionsToCSV(sections, org)], { type: 'text/csv' })
+      ? new Blob([sectionsToCSV(sections, org, generatedLabel)], { type: 'text/csv' })
       : format === 'excel'
-      ? new Blob([sectionsToExcelHtml(title, sections, org)], { type: 'application/vnd.ms-excel' })
-      : await sectionsToPdfBlob(title, sections, org);
+      ? new Blob([sectionsToExcelHtml(title, sections, org, generatedLabel)], { type: 'application/vnd.ms-excel' })
+      : await sectionsToPdfBlob(title, sections, org, generatedLabel);
     const url = URL.createObjectURL(blob);
 
     console.log(`[REPORTS] Successfully exported report: ${filename}`);

@@ -98,7 +98,7 @@ function orgCsvLines(org?: ReportOrgInfo): string[] {
   return [escapeCsvCell(org.name), ...(contact ? [escapeCsvCell(contact)] : []), ''];
 }
 
-export function sectionsToCSV(sections: ExportSection[], org?: ReportOrgInfo): string {
+export function sectionsToCSV(sections: ExportSection[], org?: ReportOrgInfo, generatedLabel?: string): string {
   const blocks = sections.map((section) => {
     const lines: string[] = [];
     if (sections.length > 1) lines.push(escapeCsvCell(section.title));
@@ -106,7 +106,8 @@ export function sectionsToCSV(sections: ExportSection[], org?: ReportOrgInfo): s
     for (const row of section.rows) lines.push(row.map(escapeCsvCell).join(','));
     return lines.join('\n');
   });
-  return [...orgCsvLines(org), blocks.join('\n\n')].join('\n');
+  const generatedLine = generatedLabel ? [escapeCsvCell(generatedLabel), ''] : [];
+  return [...orgCsvLines(org), ...generatedLine, blocks.join('\n\n')].join('\n');
 }
 
 function escapeHtml(value: string | number): string {
@@ -125,7 +126,7 @@ function orgHtmlHeader(org?: ReportOrgInfo): string {
 /** Excel opens a well-formed HTML table saved with a .xls extension just
  * fine — the standard dependency-free way to produce an Excel-openable
  * file from the browser without a real xlsx library. */
-export function sectionsToExcelHtml(title: string, sections: ExportSection[], org?: ReportOrgInfo): string {
+export function sectionsToExcelHtml(title: string, sections: ExportSection[], org?: ReportOrgInfo, generatedLabel?: string): string {
   const tables = sections.map((section) => `
     ${sections.length > 1 ? `<h3>${escapeHtml(section.title)}</h3>` : ''}
     <table border="1">
@@ -140,6 +141,7 @@ export function sectionsToExcelHtml(title: string, sections: ExportSection[], or
       <body>
         ${orgHtmlHeader(org)}
         <h2>${escapeHtml(title)}</h2>
+        ${generatedLabel ? `<p style="color:#555;font-size:12px;">${escapeHtml(generatedLabel)}</p>` : ''}
         ${tables}
       </body>
     </html>
@@ -150,7 +152,7 @@ export function sectionsToExcelHtml(title: string, sections: ExportSection[], or
  * avoid pulling them into the SSR bundle) already used for the Rooms table's
  * Download PDF in RoomConfigurationDashboard.tsx, applied to arbitrary
  * report sections instead of one fixed table. */
-export async function sectionsToPdfBlob(title: string, sections: ExportSection[], org?: ReportOrgInfo): Promise<Blob> {
+export async function sectionsToPdfBlob(title: string, sections: ExportSection[], org?: ReportOrgInfo, generatedLabel?: string): Promise<Blob> {
   const jsPDF = (await import('jspdf')).default;
   const autoTable = (await import('jspdf-autotable')).default;
   // Portrait's ~180mm usable width falls apart past ~7-8 columns at a
@@ -181,6 +183,14 @@ export async function sectionsToPdfBlob(title: string, sections: ExportSection[]
   doc.setFontSize(12);
   doc.text(title, 14, y);
   y += 6;
+
+  if (generatedLabel) {
+    doc.setFontSize(8);
+    doc.setTextColor(120);
+    doc.text(generatedLabel, 14, y);
+    doc.setTextColor(0);
+    y += 6;
+  }
 
   for (const section of sections) {
     if (sections.length > 1) {
