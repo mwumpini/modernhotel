@@ -5,6 +5,9 @@ import { frontOfficeStore } from './store';
 import { trackEvent } from '../analytics/trackEvent';
 import { getFolioDisplayTotals, folioChargeGlCode, findMainFolio } from './helpers/folio';
 import { housekeepingStore } from '../housekeeping/store';
+import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, type ReportOrgInfo } from './reportExportFormat';
+import { useSettingsStore } from '../settings/store';
+import { buildOrgProfile } from '../print/buildOrgProfile';
 
 // Report Types
 export interface ReportConfig {
@@ -1405,21 +1408,34 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
   // Export and Print
   exportReport: async (reportData, format, filename) => {
     console.log(`[REPORTS] Exporting report in ${format} format: ${filename}`);
-    
-    trackEvent('report_exported', { 
+
+    trackEvent('report_exported', {
       format,
-      filename 
+      filename
     });
-    
-    // Simulate export process
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // In a real implementation, this would generate and return the file URL
-    const blob = new Blob([JSON.stringify(reportData, null, 2)], { 
-      type: format === 'pdf' ? 'application/pdf' : format === 'excel' ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'text/csv' 
-    });
+
+    // CSV/Excel are real files, shaped from the same row/section logic the
+    // on-screen table and PDF (print) use — not a JSON dump mislabeled with
+    // a spreadsheet mime type. PDF isn't handled here: Front Office's Export
+    // button routes 'pdf' through the browser's print-to-PDF flow instead
+    // (see handleExportReport in FrontOfficeReportsAnalysis.tsx), since a
+    // real PDF needs either that or a new library dependency. Other callers
+    // of this store (e.g. ExecutiveManagementDashboard) still get the old
+    // placeholder blob for 'pdf' — only Front Office's own report data is
+    // shaped by reportDataToSections in a way this function can render.
+    const sections = reportDataToSections(reportData);
+    const org: ReportOrgInfo = buildOrgProfile(useSettingsStore.getState());
+    // filename is the actual file name (extension and all, e.g.
+    // "arrivals_report_2026-09-17.xls") — not fit for display inside the
+    // document itself, so derive a readable title from it separately.
+    const title = filename.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    const blob = format === 'csv'
+      ? new Blob([sectionsToCSV(sections, org)], { type: 'text/csv' })
+      : format === 'excel'
+      ? new Blob([sectionsToExcelHtml(title, sections, org)], { type: 'application/vnd.ms-excel' })
+      : new Blob([JSON.stringify(reportData, null, 2)], { type: 'application/pdf' });
     const url = URL.createObjectURL(blob);
-    
+
     console.log(`[REPORTS] Successfully exported report: ${filename}`);
     return url;
   },

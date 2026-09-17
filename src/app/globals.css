@@ -327,4 +327,20 @@ html {
     top: 0;
     width: 100%;
   }
+  /* HeroUI's Table wraps its content in overflow-auto containers so wide
+     tables scroll on screen — on paper a scrollbar just clips the extra
+     columns instead of showing them (this is what cut off Payment Method
+     on the Arrivals report). Drop the scroll containers and let the table
+     shrink its own columns to the page width instead. */
+  #report-print-area * {
+    overflow: visible !important;
+  }
+  #report-print-area table {
+    width: 100% !important;
+    table-layout: auto;
+    font-size: 10px;
+  }
+  #report-print-area th {
+    white-space: normal !important;
+  }
 }

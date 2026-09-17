@@ -10,6 +10,7 @@ import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
+import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import DailyTransactionReportView, { type TransactionRow } from './DailyTransactionReportView';
 
 function labelize(key: string): string {
@@ -117,6 +118,7 @@ export default function FrontOfficeReportsAnalysis() {
   const settings = useSettingsStore();
   const reportingStore = useReportingStore();
   const { logs: nightAuditLogs } = useNightAuditLog();
+  const orgProfile = buildOrgProfile(settings);
 
   // currentUser.id is a raw database cuid, not something meant for display —
   // show the person's actual name (or email as a fallback) instead.
@@ -156,19 +158,28 @@ export default function FrontOfficeReportsAnalysis() {
   }, [selectedDate, reportingStore]);
 
   const handleExportReport = async (reportData: any, format: 'pdf' | 'excel' | 'csv') => {
+    // A real PDF needs either a print-to-PDF flow or a new library dependency
+    // — reuse the print flow (already isolated to just the report content,
+    // see id="report-print-area") rather than downloading a fake file.
+    if (format === 'pdf') {
+      handlePrintReport();
+      return;
+    }
+
     setIsGenerating(true);
-    
+
     try {
-      const filename = `${selectedReport}_report_${selectedDate}.${format}`;
+      const extension = format === 'excel' ? 'xls' : 'csv';
+      const filename = `${selectedReport}_report_${selectedDate}.${extension}`;
       const fileUrl = await reportingStore.exportReport(reportData, format, filename);
-      
+
       // Download the file
       const a = document.createElement('a');
       a.href = fileUrl;
       a.download = filename;
       a.click();
       URL.revokeObjectURL(fileUrl);
-      
+
       console.log(`[REPORTS] Successfully exported ${selectedReport} report`);
     } catch (error) {
       console.error(`[REPORTS] Error exporting report:`, error);
@@ -369,8 +380,10 @@ export default function FrontOfficeReportsAnalysis() {
                 📥 Export
               </Button>
             </DropdownTrigger>
-            <DropdownMenu 
-              selectedKeys={[exportFormat]} 
+            <DropdownMenu
+              selectionMode="single"
+              disallowEmptySelection
+              selectedKeys={[exportFormat]}
               onSelectionChange={(keys) => setExportFormat(Array.from(keys)[0] as 'pdf' | 'excel' | 'csv')}
             >
               <DropdownItem key="pdf">PDF</DropdownItem>
@@ -421,8 +434,14 @@ export default function FrontOfficeReportsAnalysis() {
             </div>
 
             <Card id="report-print-area">
-              <CardHeader>
-                <h3 className="text-lg font-semibold">
+              <CardHeader className="flex flex-col items-start gap-0">
+                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                  <p className="text-xs text-gray-500">
+                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
@@ -484,8 +503,14 @@ export default function FrontOfficeReportsAnalysis() {
             </div>
 
             <Card id="report-print-area">
-              <CardHeader>
-                <h3 className="text-lg font-semibold">
+              <CardHeader className="flex flex-col items-start gap-0">
+                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                  <p className="text-xs text-gray-500">
+                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
@@ -537,8 +562,14 @@ export default function FrontOfficeReportsAnalysis() {
             </div>
 
             <Card id="report-print-area">
-              <CardHeader>
-                <h3 className="text-lg font-semibold">
+              <CardHeader className="flex flex-col items-start gap-0">
+                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                  <p className="text-xs text-gray-500">
+                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
@@ -594,8 +625,14 @@ export default function FrontOfficeReportsAnalysis() {
             </div>
 
             <Card id="report-print-area">
-              <CardHeader>
-                <h3 className="text-lg font-semibold">
+              <CardHeader className="flex flex-col items-start gap-0">
+                <h2 className="text-xl font-bold">{orgProfile.name}</h2>
+                {(orgProfile.address || orgProfile.phone || orgProfile.email) && (
+                  <p className="text-xs text-gray-500">
+                    {[orgProfile.address, orgProfile.phone, orgProfile.email].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                <h3 className="text-lg font-semibold mt-3">
                   {selectedReport.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
                 </h3>
                 <p className="text-sm text-gray-600">
