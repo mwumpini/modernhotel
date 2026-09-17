@@ -76,20 +76,23 @@ interface ReportingStore {
   getActiveTemplates: () => ReportTemplate[];
   
   // Report Generation Methods
-  generateArrivalsReport: (date: string) => any[];
-  generateDeparturesReport: (date: string) => any[];
+  // endDate is optional on the reports that now support a period, not just a
+  // single day — omitted (or equal to date) means "just this one day", the
+  // same as before this was added.
+  generateArrivalsReport: (date: string, endDate?: string) => any[];
+  generateDeparturesReport: (date: string, endDate?: string) => any[];
   generateRoomStatusReport: (date: string) => any[];
-  generateCheckInGuestReport: (date: string) => any[];
-  generateHighBalanceReport: (date: string) => any[];
-  generateWakeUpCallReport: (date: string) => any[];
-  generateDailyTransactionReport: (date: string) => any[];
-  generateCashierReport: (date: string, cashierId: string) => any;
-  generateCreditCardReconciliationReport: (date: string) => any[];
-  generateGuestLedgerReport: (date: string) => any[];
+  generateCheckInGuestReport: (date: string, endDate?: string) => any[];
+  generateHighBalanceReport: (date: string, endDate?: string) => any[];
+  generateWakeUpCallReport: (date: string, endDate?: string) => any[];
+  generateDailyTransactionReport: (date: string, endDate?: string) => any[];
+  generateCashierReport: (date: string, cashierId: string, endDate?: string) => any;
+  generateCreditCardReconciliationReport: (date: string, endDate?: string) => any[];
+  generateGuestLedgerReport: (date: string, endDate?: string) => any[];
   generateDailyFlashReport: (date: string) => any;
-  generateOccupancyReport: (date: string) => any;
-  generatePaceReport: (date: string) => any[];
-  generateNoShowReport: (date: string) => any[];
+  generateOccupancyReport: (date: string, endDate?: string) => any;
+  generatePaceReport: (date: string, endDate?: string) => any[];
+  generateNoShowReport: (date: string, endDate?: string) => any[];
   generateSourceOfBusinessReport: (startDate: string, endDate: string) => any[];
   generateMarketSegmentationReport: (startDate: string, endDate: string) => any[];
   generateGuestCountMealPlanReport: (date: string) => any[];
@@ -310,6 +313,41 @@ const defaultReportConfigs: ReportConfig[] = [
     exportFormats: ['pdf', 'excel', 'csv']
   }
 ];
+
+// --- Historical in-house resolution --------------------------------------
+// checkedInAt/checkedOutAt are real, permanent event timestamps recorded
+// going forward. Reservations checked in/out before that field started
+// being persisted have neither, so as a one-time fallback for those older
+// records we approximate: arrival date for check-in, updatedAt (falling
+// back to departure) for check-out. New stays get the real event time;
+// old ones get the closest honest approximation rather than being silently
+// dropped from historical reports.
+function resolveCheckedInAt(r: import('./types').Reservation): string | undefined {
+  if (r.checkedInAt) return r.checkedInAt;
+  return (r.status === 'checked-in' || r.status === 'checked-out') ? r.arrival : undefined;
+}
+function resolveCheckedOutAt(r: import('./types').Reservation): string | undefined {
+  if (r.checkedOutAt) return r.checkedOutAt;
+  return r.status === 'checked-out' ? (r.updatedAt || r.departure) : undefined;
+}
+// Matches a stored date/ISO-timestamp string against a [start, end] window
+// (inclusive) — the shared building block for every "date" param that grew
+// an optional "endDate" to become a period instead of a single day.
+function dateInRange(value: string | undefined, start: string, end: string): boolean {
+  if (!value) return false;
+  const d = value.slice(0, 10);
+  return d >= start && d <= end;
+}
+// True if the reservation's actual stay (check-in through check-out, or
+// through now if still in-house) overlaps the [startDate, endDate] window at
+// all — startDate === endDate is "was in-house on this one specific day",
+// for any date past or present, not just "currently checked in".
+function wasInHouseDuring(r: import('./types').Reservation, startDate: string, endDate: string): boolean {
+  const inAt = resolveCheckedInAt(r);
+  if (!inAt || inAt.slice(0, 10) > endDate) return false;
+  const outAt = resolveCheckedOutAt(r);
+  return !outAt || outAt.slice(0, 10) > startDate;
+}
 
 export const useReportingStore = create<ReportingStore>((set, get) => ({
   // Initial state
@@ -565,11 +603,15 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
   },
 
   // Report Generation Methods
-  generateArrivalsReport: (date) => {
-    console.log(`[REPORTS] Generating arrivals report for ${date}`);
-    
+  generateArrivalsReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating arrivals report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
+
     return frontOfficeStore.reservations
-      .filter(reservation => reservation.arrival === date && reservation.status === 'confirmed')
+      // status !== 'confirmed' would drop anyone who has already checked in
+      // (their status has since moved on) or, for a past date, anyone who's
+      // since checked out — neither means they didn't arrive. Only
+      // cancelled/no-show reservations genuinely never arrived.
+      .filter(reservation => dateInRange(reservation.arrival, date, endDate) && reservation.status !== 'cancelled' && reservation.status !== 'no-show')
       .map(reservation => {
         const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
@@ -593,11 +635,15 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       });
   },
 
-  generateDeparturesReport: (date) => {
-    console.log(`[REPORTS] Generating departures report for ${date}`);
-    
+  generateDeparturesReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating departures report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
+
     return frontOfficeStore.reservations
-      .filter(reservation => reservation.departure === date && reservation.status === 'checked-in')
+      // status === 'checked-in' only shows guests still awaiting checkout —
+      // once they actually complete it, status flips to 'checked-out' and
+      // they'd vanish, which is backwards for a report meant to answer "who
+      // departed on this date" (past or present).
+      .filter(reservation => dateInRange(reservation.departure, date, endDate) && reservation.status !== 'cancelled' && reservation.status !== 'no-show')
       .map(reservation => {
         const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
@@ -623,43 +669,46 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
   generateRoomStatusReport: (date) => {
     console.log(`[REPORTS] Generating room status report for ${date}`);
-    
+    // Occupancy (who was in which room) is reconstructed from real reservation
+    // history via wasInHouseDuring, so it's accurate for any past date. Housekeeping
+    // state (clean/dirty/inspected) isn't logged with per-day history anywhere
+    // yet — only today's live state is real, so it's only included for today;
+    // for a past date it's honestly left out rather than shown as if it were
+    // known for that day.
+    const today = new Date().toISOString().split('T')[0];
+    const isToday = date === today;
+
     return frontOfficeStore.rooms.map(room => {
-      const reservation = frontOfficeStore.reservations.find(r => r.roomId === room.id && r.status === 'checked-in');
+      const reservation = frontOfficeStore.reservations.find(r => r.roomId === room.id && wasInHouseDuring(r, date, date));
       const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
-      
+      const hk = isToday ? housekeepingStore.getRoomStatus(room.id) : undefined;
+
       return {
         roomNumber: room.id,
         status: reservation ? 'occupied' : 'vacant',
         guestName: guest?.name || undefined,
         checkInDate: reservation?.arrival || undefined,
         checkOutDate: reservation?.departure || undefined,
-        housekeepingStatus: 'completed',
-        maintenanceIssues: [],
-        lastCleaned: new Date().toISOString().split('T')[0],
-        nextCleaning: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+        housekeepingStatus: hk?.status,
+        lastCleaned: hk?.lastUpdated,
       };
     });
   },
 
-  generateCheckInGuestReport: (date) => {
-    console.log(`[REPORTS] Generating check-in guest report for ${date}`);
-    
+  generateCheckInGuestReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating check-in guest report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
+
     return frontOfficeStore.reservations
-      .filter(reservation => 
-        reservation.status === 'checked-in' && 
-        reservation.arrival <= date && 
-        reservation.departure > date
-      )
+      .filter(reservation => wasInHouseDuring(reservation, date, endDate))
       .map(reservation => {
         const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
         const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
-        
+
         const { totalCharges, totalPayments, balance } = folio
           ? getFolioDisplayTotals(folio)
           : { totalCharges: 0, totalPayments: 0, balance: 0 };
-        const nightsStayed = Math.ceil((new Date(date).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24));
+        const nightsStayed = Math.ceil((new Date(endDate).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24));
 
         return {
           guestName: reservation.guestName,
@@ -672,22 +721,18 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
           currentBalance: balance,
           vipStatus: guest?.vipStatus || 'regular',
           specialRequests: guest?.specialRequests || [],
-          lastActivity: new Date().toISOString()
+          lastActivity: reservation.updatedAt
         };
       });
   },
 
-  generateHighBalanceReport: (date) => {
-    console.log(`[REPORTS] Generating high balance report for ${date}`);
+  generateHighBalanceReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating high balance report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
 
     const defaultCreditLimit = 5000; // Fallback when the guest has no creditLimit on file
 
     return frontOfficeStore.reservations
-      .filter(reservation =>
-        reservation.status === 'checked-in' &&
-        reservation.arrival <= date &&
-        reservation.departure > date
-      )
+      .filter(reservation => wasInHouseDuring(reservation, date, endDate))
       .map(reservation => {
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
         const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
@@ -698,7 +743,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
           ? getFolioDisplayTotals(folio)
           : { balance: 0 };
 
-        const daysOverdue = Math.max(0, Math.ceil((new Date().getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24)));
+        // "As of" the report's end date, not today — otherwise a report run
+        // for a past period would show today's overdue count instead of what
+        // was actually overdue back then.
+        const daysOverdue = Math.max(0, Math.ceil((new Date(endDate).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24)));
         
         let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low';
         if (currentBalance > creditLimit * 2) riskLevel = 'critical';
@@ -719,11 +767,11 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       .filter(guest => guest.currentBalance > guest.creditLimit);
   },
 
-  generateWakeUpCallReport: (date) => {
-    console.log(`[REPORTS] Generating wake-up call report for ${date}`);
+  generateWakeUpCallReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating wake-up call report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
 
     return frontOfficeStore.wakeUpCalls
-      .filter(c => c.date === date)
+      .filter(c => dateInRange(c.date, date, endDate))
       .map(c => ({
         guestName: c.guestName,
         roomNumber: c.roomNumber,
@@ -735,18 +783,18 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       }));
   },
 
-  generateDailyTransactionReport: (date) => {
-    console.log(`[REPORTS] Generating daily transaction report for ${date}`);
-    
+  generateDailyTransactionReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating daily transaction report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
+
     const transactions: any[] = [];
-    
+
     frontOfficeStore.folios.forEach(folio => {
       const reservation = frontOfficeStore.reservations.find(r => r.id === folio.reservationId);
       if (!reservation) return;
-      
+
       // Add charges
       folio.charges?.forEach(charge => {
-        if ((charge.date || '').slice(0, 10) === date) {
+        if (dateInRange(charge.date, date, endDate)) {
           transactions.push({
             transactionId: `charge-${charge.id}`,
             guestName: reservation.guestName,
@@ -770,7 +818,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
       // Add payments
       folio.payments?.forEach(payment => {
-        if ((payment.date || '').slice(0, 10) === date) {
+        if (dateInRange(payment.date, date, endDate)) {
           transactions.push({
             transactionId: `payment-${payment.id}`,
             guestName: reservation.guestName,
@@ -792,10 +840,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     return transactions;
   },
 
-  generateCashierReport: (date, cashierId) => {
-    console.log(`[REPORTS] Generating cashier report for ${date} and cashier ${cashierId}`);
-    
-    const transactions = get().generateDailyTransactionReport(date);
+  generateCashierReport: (date, cashierId, endDate = date) => {
+    console.log(`[REPORTS] Generating cashier report for ${date}${endDate !== date ? ` to ${endDate}` : ''} and cashier ${cashierId}`);
+
+    const transactions = get().generateDailyTransactionReport(date, endDate);
     const cashierTransactions = transactions.filter(t => t.cashier === cashierId);
     
     const totalCash = cashierTransactions
@@ -830,10 +878,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     };
   },
 
-  generateCreditCardReconciliationReport: (date) => {
-    console.log(`[REPORTS] Generating credit card reconciliation report for ${date}`);
+  generateCreditCardReconciliationReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating credit card reconciliation report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
 
-    const transactions = get().generateDailyTransactionReport(date);
+    const transactions = get().generateDailyTransactionReport(date, endDate);
     const cardTransactions = transactions.filter(t => t.paymentMethod === 'Card' && t.transactionType === 'payment');
 
     // Card network (Visa/Mastercard/Amex) isn't captured anywhere on a payment
@@ -845,33 +893,30 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       cardType: 'Card',
       transactionCount: cardTransactions.length,
       totalAmount,
-      batchNumber: `BATCH-${date}`,
-      settlementDate: date,
+      batchNumber: `BATCH-${date}${endDate !== date ? `_${endDate}` : ''}`,
+      settlementDate: endDate,
       status: 'pending' as const,
       merchantId: 'N/A',
       terminalId: 'N/A'
     }];
   },
 
-  generateGuestLedgerReport: (date) => {
-    console.log(`[REPORTS] Generating guest ledger report for ${date}`);
-    
+  generateGuestLedgerReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating guest ledger report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
+
     return frontOfficeStore.reservations
-      .filter(reservation => 
-        reservation.status === 'checked-in' && 
-        reservation.arrival <= date && 
-        reservation.departure > date
-      )
+      .filter(reservation => wasInHouseDuring(reservation, date, endDate))
       .map(reservation => {
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
         const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
-        
+
         const { totalCharges, totalPayments, balance: outstandingBalance } = folio
           ? getFolioDisplayTotals(folio)
           : { totalCharges: 0, totalPayments: 0, balance: 0 };
 
-        const agingDays = Math.ceil((new Date().getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24));
-        
+        // "As of" the report's end date, not today — see generateHighBalanceReport.
+        const agingDays = Math.ceil((new Date(endDate).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24));
+
         return {
           guestName: reservation.guestName,
           roomNumber: room?.id || 'Unknown',
@@ -882,7 +927,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
           totalPayments,
           outstandingBalance,
           agingDays,
-          lastActivity: new Date().toISOString()
+          lastActivity: reservation.updatedAt
         };
       });
   },
@@ -891,20 +936,16 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     console.log(`[REPORTS] Generating daily flash report for ${date}`);
 
     const totalRooms = frontOfficeStore.rooms.length;
-    const occupiedRooms = frontOfficeStore.reservations.filter(r =>
-      r.status === 'checked-in' &&
-      r.arrival <= date &&
-      r.departure > date
-    ).length;
+    const occupiedRooms = frontOfficeStore.reservations.filter(r => wasInHouseDuring(r, date, date)).length;
 
     const arrivalReservations = frontOfficeStore.reservations.filter(r =>
-      r.arrival === date && r.status === 'confirmed'
+      r.arrival === date && r.status !== 'cancelled' && r.status !== 'no-show'
     );
     const arrivals = arrivalReservations.length;
     const guaranteedArrivals = arrivalReservations.filter(r => r.isGuaranteed).length;
 
     const departures = frontOfficeStore.reservations.filter(r =>
-      r.departure === date && r.status === 'checked-in'
+      r.departure === date && r.status !== 'cancelled' && r.status !== 'no-show'
     ).length;
 
     // Only charges/payments actually posted ON this date (not every charge that
@@ -969,46 +1010,64 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     };
   },
 
-  generateOccupancyReport: (date) => {
-    console.log(`[REPORTS] Generating occupancy report for ${date}`);
+  generateOccupancyReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating occupancy report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
 
     const totalRooms = frontOfficeStore.rooms.length;
-    const inHouse = frontOfficeStore.reservations.filter(r =>
-      r.status === 'checked-in' &&
-      r.arrival <= date &&
-      r.departure > date
-    );
-    const occupiedRooms = inHouse.length;
     // Room occupancy tells you business performance; actual headcount is what
     // matters for fire/evacuation safety, security, and kitchen/housekeeping
     // staffing — a different question, so reported alongside rather than
     // inferred from room counts (a room can hold more than one guest).
-    const adultsInHouse = inHouse.reduce((sum, r) => sum + (r.adults || 0), 0);
-    const childrenInHouse = inHouse.reduce((sum, r) => sum + (r.children || 0), 0);
-
-    return {
-      date,
-      totalRooms,
-      occupiedRooms,
-      availableRooms: totalRooms - occupiedRooms,
-      occupancyRate: totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0,
-      adultsInHouse,
-      childrenInHouse,
-      totalGuestsInHouse: adultsInHouse + childrenInHouse
+    const snapshotFor = (d: string) => {
+      const inHouse = frontOfficeStore.reservations.filter(r => wasInHouseDuring(r, d, d));
+      const occupiedRooms = inHouse.length;
+      const adultsInHouse = inHouse.reduce((sum, r) => sum + (r.adults || 0), 0);
+      const childrenInHouse = inHouse.reduce((sum, r) => sum + (r.children || 0), 0);
+      return {
+        date: d,
+        totalRooms,
+        occupiedRooms,
+        availableRooms: totalRooms - occupiedRooms,
+        occupancyRate: totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0,
+        adultsInHouse,
+        childrenInHouse,
+        totalGuestsInHouse: adultsInHouse + childrenInHouse
+      };
     };
+
+    if (endDate === date) return snapshotFor(date);
+
+    // Ranged: one row per day in the window — a trend, not a single
+    // aggregate, since "average occupancy over a week" hides more than it
+    // shows. Built with Date.UTC/setUTCDate rather than local-time Date
+    // construction — `new Date('2026-09-12T00:00:00')` is LOCAL midnight, so
+    // in any timezone ahead of UTC, .toISOString() reads back as the
+    // previous day, shifting the whole range back by one.
+    const days: string[] = [];
+    const [sy, sm, sd] = date.split('-').map(Number);
+    const [ey, em, ed] = endDate.split('-').map(Number);
+    const cursor = new Date(Date.UTC(sy, sm - 1, sd));
+    const last = new Date(Date.UTC(ey, em - 1, ed));
+    for (let guard = 0; cursor.getTime() <= last.getTime() && guard < 3660; guard++) {
+      days.push(cursor.toISOString().slice(0, 10));
+      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    }
+    return days.map(snapshotFor);
   },
 
-  generatePaceReport: (date) => {
-    console.log(`[REPORTS] Generating pace report for ${date}`);
+  generatePaceReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating pace report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
 
     // A true pace report compares bookings-on-the-books today to the equivalent
     // point last year — that needs daily historical snapshots, which nothing in
-    // this system captures yet. What's reported here is real: bookings currently
-    // on the books for this arrival date, segmented by RatePlan.marketSegment.
+    // this system captures yet. What's reported here is real: bookings on the
+    // books for each arrival date in range, segmented by RatePlan.marketSegment.
     // historicalBookings/pacePercentage are explicitly null rather than a
     // fabricated comparison — there is no baseline to compare against.
+    // Excludes only cancelled/no-show — a reservation whose current status has
+    // since moved on to checked-in/checked-out still genuinely arrived that day.
     const arrivals = frontOfficeStore.reservations.filter(r =>
-      r.arrival === date && (r.status === 'confirmed' || r.status === 'checked-in' || r.status === 'pending')
+      dateInRange(r.arrival, date, endDate) && r.status !== 'cancelled' && r.status !== 'no-show'
     );
     if (arrivals.length === 0) return [];
 
@@ -1016,23 +1075,30 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       const plan = r.ratePlanId ? frontOfficeStore.ratePlans.find(rp => rp.id === r.ratePlanId) : undefined;
       return plan?.marketSegment || 'Unclassified';
     };
-    const segments = Array.from(new Set(arrivals.map(segmentOf)));
-
     const totalRooms = frontOfficeStore.rooms.length;
-    const occupiedRooms = frontOfficeStore.reservations.filter(r =>
-      r.status === 'checked-in' && r.arrival <= date && r.departure > date
-    ).length;
-    const projectedOccupancy = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
 
-    return segments.map(marketSegment => {
-      const segReservations = arrivals.filter(r => segmentOf(r) === marketSegment);
+    // Grouped by (arrival date, segment) rather than segment alone — a
+    // ranged query spans multiple distinct arrival dates, each of which
+    // needs its own occupancy-as-of-that-day figure, not one figure for
+    // the whole window.
+    const groups = new Map<string, typeof arrivals>();
+    for (const r of arrivals) {
+      const key = `${r.arrival}::${segmentOf(r)}`;
+      const existing = groups.get(key);
+      if (existing) existing.push(r); else groups.set(key, [r]);
+    }
+
+    return Array.from(groups.entries()).map(([key, segReservations]) => {
+      const [arrivalDate, marketSegment] = key.split('::');
+      const occupiedRooms = frontOfficeStore.reservations.filter(r => wasInHouseDuring(r, arrivalDate, arrivalDate)).length;
+      const projectedOccupancy = totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0;
       const revenuePace = segReservations.reduce((sum, r) => {
         const quote = frontOfficeStore.getReservationQuote(r);
         return sum + quote.grandTotal;
       }, 0);
 
       return {
-        date,
+        date: arrivalDate,
         currentBookings: segReservations.length,
         historicalBookings: null,
         pacePercentage: null,
@@ -1043,15 +1109,15 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     });
   },
 
-  generateNoShowReport: (date) => {
-    console.log(`[REPORTS] Generating no-show report for ${date}`);
-    
+  generateNoShowReport: (date, endDate = date) => {
+    console.log(`[REPORTS] Generating no-show report for ${date}${endDate !== date ? ` to ${endDate}` : ''}`);
+
     // Actual no-shows — reservations the night audit already flagged 'no-show'
     // (frontoffice/store.ts markNoShow / the night-audit cron), not merely
     // reservations still sitting in 'confirmed' for the date.
     return frontOfficeStore.reservations
       .filter(reservation =>
-        reservation.arrival === date &&
+        dateInRange(reservation.arrival, date, endDate) &&
         reservation.status === 'no-show'
       )
       .map(reservation => ({

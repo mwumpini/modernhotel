@@ -91,9 +91,18 @@ function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-// Reports that read startDate/endDate instead of a single selectedDate —
-// see getCurrentReportData()'s switch below, which is the source of truth.
-const RANGE_REPORT_KEYS = new Set(['source-business', 'market-segmentation', 'discount-request', 'complimentary-room', 'pricing-analytics']);
+// Reports whose generator accepts an optional endDate to cover a period
+// instead of one day — see getCurrentReportData()'s switch below, which is
+// the source of truth. Room Status, Daily Flash, and Night Audit History
+// stay single-date only (Room Status has no historical per-day log to sum
+// across a range; Daily Flash is an operational snapshot; Night Audit
+// History is its own audit log, not date-filtered the same way).
+const RANGE_REPORT_KEYS = new Set([
+  'arrivals', 'departures', 'check-ins', 'high-balance', 'wake-up-calls',
+  'daily-transactions', 'cashier-report', 'credit-card-reconciliation', 'guest-ledger',
+  'occupancy', 'pace', 'no-shows',
+  'source-business', 'market-segmentation', 'discount-request', 'complimentary-room', 'pricing-analytics',
+]);
 // Reports that don't take a date at all (guest-history reads guestId instead).
 const NO_DATE_REPORT_KEYS = new Set(['guest-history']);
 
@@ -102,7 +111,11 @@ export default function FrontOfficeReportsAnalysis() {
   const [selectedReport, setSelectedReport] = useState('arrivals');
   const [cashierId, setCashierId] = useState('');
   const [guestId, setGuestId] = useState('');
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  // startDate doubles as "the date" for Today/Specific Date mode (where it's
+  // always equal to endDate) and as the period start for Range mode — kept
+  // as one value instead of a separate date state, which used to go stale
+  // the moment Range mode was selected (Range only ever updated
+  // startDate/endDate, never that other field).
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   // One consistent 3-way control — Today / Specific Date / Range — always
@@ -147,7 +160,7 @@ export default function FrontOfficeReportsAnalysis() {
   const [generatedAt, setGeneratedAt] = useState<string | null>(null);
   useEffect(() => {
     setGeneratedAt(new Date().toLocaleString('en-GH'));
-  }, [selectedReport, selectedTab, selectedDate, startDate, endDate]);
+  }, [selectedReport, selectedTab, startDate, endDate]);
 
   // Switching to a report whose generator doesn't accept a range shouldn't
   // leave the control stuck showing a disabled "Range" pill with nothing to
@@ -157,7 +170,6 @@ export default function FrontOfficeReportsAnalysis() {
     if (reportDateMode === 'range' && !RANGE_REPORT_KEYS.has(selectedReport)) {
       const today = new Date().toISOString().split('T')[0];
       setReportDateMode('today');
-      setSelectedDate(today);
       setStartDate(today);
       setEndDate(today);
     }
@@ -165,31 +177,31 @@ export default function FrontOfficeReportsAnalysis() {
 
   // Generate reports with detailed logging using the reporting store
   const generateArrivalsReport = useMemo(() => {
-    return reportingStore.generateArrivalsReport(selectedDate);
-  }, [selectedDate, reportingStore]);
+    return reportingStore.generateArrivalsReport(startDate, endDate);
+  }, [startDate, endDate, reportingStore]);
 
   const generateDeparturesReport = useMemo(() => {
-    return reportingStore.generateDeparturesReport(selectedDate);
-  }, [selectedDate, reportingStore]);
+    return reportingStore.generateDeparturesReport(startDate, endDate);
+  }, [startDate, endDate, reportingStore]);
 
   const generateRoomStatusReport = useMemo(() => {
-    return reportingStore.generateRoomStatusReport(selectedDate);
-  }, [selectedDate, reportingStore]);
+    return reportingStore.generateRoomStatusReport(startDate);
+  }, [startDate, reportingStore]);
 
   const generateCheckInGuestReport = useMemo(() => {
-    return reportingStore.generateCheckInGuestReport(selectedDate);
-  }, [selectedDate, reportingStore]);
+    return reportingStore.generateCheckInGuestReport(startDate, endDate);
+  }, [startDate, endDate, reportingStore]);
 
   const generateDailyFlashReport = useMemo(() => {
-    return reportingStore.generateDailyFlashReport(selectedDate);
-  }, [selectedDate, reportingStore]);
+    return reportingStore.generateDailyFlashReport(startDate);
+  }, [startDate, reportingStore]);
 
   const handleExportReport = async (reportData: any, format: 'pdf' | 'excel' | 'csv') => {
     setIsGenerating(true);
 
     try {
       const extension = format === 'excel' ? 'xls' : format;
-      const filename = `${selectedReport}_report_${selectedDate}.${extension}`;
+      const filename = `${selectedReport}_report_${startDate}.${extension}`;
       const generatedLabel = generatedAt ? `Generated on ${generatedAt} by ${currentUserLabel}` : undefined;
       const fileUrl = await reportingStore.exportReport(reportData, format, filename, generatedLabel);
 
@@ -219,17 +231,17 @@ export default function FrontOfficeReportsAnalysis() {
       case 'check-ins':
         return generateCheckInGuestReport;
       case 'high-balance':
-        return reportingStore.generateHighBalanceReport(selectedDate);
+        return reportingStore.generateHighBalanceReport(startDate, endDate);
       case 'wake-up-calls':
-        return reportingStore.generateWakeUpCallReport(selectedDate);
+        return reportingStore.generateWakeUpCallReport(startDate, endDate);
       case 'daily-transactions':
-        return reportingStore.generateDailyTransactionReport(selectedDate);
+        return reportingStore.generateDailyTransactionReport(startDate, endDate);
       case 'cashier-report':
-        return reportingStore.generateCashierReport(selectedDate, cashierId);
+        return reportingStore.generateCashierReport(startDate, cashierId, endDate);
       case 'credit-card-reconciliation':
-        return reportingStore.generateCreditCardReconciliationReport(selectedDate);
+        return reportingStore.generateCreditCardReconciliationReport(startDate, endDate);
       case 'guest-ledger':
-        return reportingStore.generateGuestLedgerReport(selectedDate);
+        return reportingStore.generateGuestLedgerReport(startDate, endDate);
       case 'night-audit-history':
         return nightAuditLogs.map((l) => ({
           businessDate: l.businessDate,
@@ -243,11 +255,11 @@ export default function FrontOfficeReportsAnalysis() {
       case 'daily-flash':
         return generateDailyFlashReport;
       case 'occupancy':
-        return reportingStore.generateOccupancyReport(selectedDate);
+        return reportingStore.generateOccupancyReport(startDate, endDate);
       case 'pace':
-        return reportingStore.generatePaceReport(selectedDate);
+        return reportingStore.generatePaceReport(startDate, endDate);
       case 'no-shows':
-        return reportingStore.generateNoShowReport(selectedDate);
+        return reportingStore.generateNoShowReport(startDate, endDate);
       case 'source-business':
         return reportingStore.generateSourceOfBusinessReport(startDate, endDate);
       case 'market-segmentation':
@@ -259,9 +271,9 @@ export default function FrontOfficeReportsAnalysis() {
       case 'pricing-analytics':
         return reportingStore.generatePricingAnalyticsReport(startDate, endDate);
       case 'guest-count-meal-plan':
-        return reportingStore.generateGuestCountMealPlanReport(selectedDate);
+        return reportingStore.generateGuestCountMealPlanReport(startDate);
       case 'vip':
-        return reportingStore.generateVIPReport(selectedDate);
+        return reportingStore.generateVIPReport(startDate);
       case 'guest-history':
         return reportingStore.generateGuestHistoryReport(guestId);
       default:
@@ -359,7 +371,6 @@ export default function FrontOfficeReportsAnalysis() {
                   onClick={() => {
                     const today = new Date().toISOString().split('T')[0];
                     setReportDateMode('today');
-                    setSelectedDate(today);
                     setStartDate(today);
                     setEndDate(today);
                   }}
@@ -390,9 +401,8 @@ export default function FrontOfficeReportsAnalysis() {
                 {reportDateMode === 'specific' && (
                   <Input
                     type="date"
-                    value={selectedDate}
+                    value={startDate}
                     onChange={(e) => {
-                      setSelectedDate(e.target.value);
                       setStartDate(e.target.value);
                       setEndDate(e.target.value);
                     }}

@@ -248,6 +248,13 @@ model Reservation {
   linkedReservationId String?
   groupSize           Int?
   totalAmount         Float?
+  // Real, permanent check-in/check-out event timestamps — distinct from
+  // checkInDate/checkOutDate (the planned stay window) and from status
+  // (which is live/mutable and doesn't tell you what was true on a past
+  // date). These are what let reports answer "who was in-house on date X"
+  // accurately forever, instead of only for guests still checked in today.
+  checkedInAt  DateTime?
+  checkedOutAt DateTime?
 
   // Long-tail fields (rateBreakdown, marketCodes, internalNotes, remarksToGuest,
   // projectCode, costCenter, stayReasonDetails, etc.)
@@ -265,6 +272,7 @@ model Reservation {
   @@index([tenantId, guestId])
   @@index([tenantId, roomId])
   @@index([tenantId, groupId])
+  @@index([tenantId, checkedOutAt])
   @@map("reservations")
 }
 

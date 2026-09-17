@@ -12,6 +12,12 @@ function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
 const toISO = (v: any): string =>
   v instanceof Date ? v.toISOString() : (v ?? new Date().toISOString())
 
+// Unlike toISO, doesn't default a missing value to "now" — for fields that
+// are legitimately absent (an event that hasn't happened yet), defaulting
+// to "now" would fabricate a timestamp instead of reporting it as unset.
+const toISOOrUndefined = (v: any): string | undefined =>
+  v instanceof Date ? v.toISOString() : (v ?? undefined)
+
 // ---------------------------------------------------------------------------
 // Reservation mapping
 // ---------------------------------------------------------------------------
@@ -67,6 +73,8 @@ export function toStoreReservation(row: any): Reservation {
     taxExemptionExpiry: details.taxExemptionExpiry,
     taxExemptionDocuments: details.taxExemptionDocuments || [],
     taxExemptionNotes: details.taxExemptionNotes,
+    checkedInAt: toISOOrUndefined(row.checkedInAt),
+    checkedOutAt: toISOOrUndefined(row.checkedOutAt),
     createdAt: toISO(row.createdAt),
     updatedAt: toISO(row.updatedAt),
   } as Reservation
@@ -121,6 +129,8 @@ export function toDbReservationData(r: Partial<Reservation>) {
     groupSize: r.groupSize,
     checkInDate: r.arrival ? new Date(r.arrival) : undefined,
     checkOutDate: r.departure ? new Date(r.departure) : undefined,
+    checkedInAt: r.checkedInAt ? new Date(r.checkedInAt) : undefined,
+    checkedOutAt: r.checkedOutAt ? new Date(r.checkedOutAt) : undefined,
   })
   if (Object.keys(details).length) data.details = details
   return data

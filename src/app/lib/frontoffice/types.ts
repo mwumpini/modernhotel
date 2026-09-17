@@ -475,6 +475,14 @@ export interface Reservation {
   taxExemptionDocuments?: string[]; // uploaded file URLs (AttachmentUpload)
   taxExemptionNotes?: string;
 
+  // Real, permanent check-in/check-out event timestamps (ISO), set once the
+  // actual event happens and never changed afterward — distinct from
+  // arrival/departure (the planned stay window) and status (live, mutable).
+  // Undefined until that event has actually happened. Used by reports to
+  // answer "who was in-house on date X" for any date, not just today.
+  checkedInAt?: string;
+  checkedOutAt?: string;
+
   createdAt: string;
   updatedAt: string;
 }

@@ -826,15 +826,16 @@ class FrontOfficeStore {
       }
     } catch {}
 
-    this.reservations = this.reservations.map(r => 
-      r.id === id 
-        ? { 
-            ...r, 
-            status: 'checked-in', 
+    const checkedInAt = assignedRoomId ? new Date().toISOString() : undefined;
+    this.reservations = this.reservations.map(r =>
+      r.id === id
+        ? {
+            ...r,
+            status: 'checked-in',
             roomId: assignedRoomId || r.roomId || 'TBD',
             updatedAt: new Date().toISOString(),
-            ...(assignedRoomId ? { checkInTime: new Date().toISOString() } as any : {})
-          } 
+            ...(assignedRoomId ? { checkInTime: new Date().toISOString(), checkedInAt } : {})
+          }
         : r
     );
     this.notify();
@@ -864,7 +865,11 @@ class FrontOfficeStore {
         meta: { eventId: checkInEventId, eventType: 'check-in', autoAssignedRoom: assignedRoomId }
       });
     } catch {}
-    this.persistReservationPatch(id, { status: 'checked-in', roomId: assignedRoomId || res?.roomId || 'TBD' });
+    this.persistReservationPatch(id, {
+      status: 'checked-in',
+      roomId: assignedRoomId || res?.roomId || 'TBD',
+      ...(checkedInAt ? { checkedInAt } : {}),
+    });
   }
   private applyEarlyCheckoutAdjustments(reservationId: string) {
     const res = this.reservations.find(r => r.id === reservationId);
@@ -899,9 +904,11 @@ class FrontOfficeStore {
 
     try { this.applyEarlyCheckoutAdjustments(reservationId); } catch {}
 
+    const checkedOutAt = new Date().toISOString();
     res.status = 'checked-out';
-    res.updatedAt = new Date().toISOString();
-    (res as any).checkOutTime = new Date().toISOString();
+    res.updatedAt = checkedOutAt;
+    (res as any).checkOutTime = checkedOutAt;
+    res.checkedOutAt = checkedOutAt;
     if (checkoutNotes !== undefined) (res as any).checkoutNotes = checkoutNotes;
 
     this.notify();
@@ -932,6 +939,7 @@ class FrontOfficeStore {
     // 'gl_pending' reservation is recoverable after a reload, not just for this session.
     this.persistReservationPatch(reservationId, {
       status: 'checked-out',
+      checkedOutAt,
       invoiceGenerated: res.invoiceGenerated,
       invoiceStatus: res.invoiceStatus,
       pendingGlPost: (res as any).pendingGlPost ?? null,
