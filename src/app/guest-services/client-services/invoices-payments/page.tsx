@@ -255,10 +255,15 @@ export default function InvoicesPaymentsPage() {
     setFolioPage(1);
   }, [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFilterMode, folioDateSingle, folioDateFrom, folioDateTo]);
 
-  const totalFolioPages = useMemo(() => Math.max(1, Math.ceil(
+  // frontOfficeStore.reservations is empty during SSR and on the very first
+  // client paint (before mount), same reasoning as the folio table's mounted
+  // gate above — computing this pre-mount would render a different page
+  // count (and so a different number of Pagination buttons) than the server
+  // did, a structural hydration mismatch, not just a text one.
+  const totalFolioPages = useMemo(() => !mounted ? 1 : Math.max(1, Math.ceil(
     frontOfficeStore.reservations.filter(matchesFolioFilters).length / itemsPerPage
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  )), [folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFilterMode, folioDateSingle, folioDateFrom, folioDateTo, itemsPerPage, storeVersion]);
+  )), [mounted, folioSearchTerm, folioStatusFilter, payerFilter, balanceFilter, folioDateFilterMode, folioDateSingle, folioDateFrom, folioDateTo, itemsPerPage, storeVersion]);
 
   // Live folio-backed invoices & payments derived from frontOfficeStore
   const [invoices, setInvoices] = useState<Invoice[]>([]);
