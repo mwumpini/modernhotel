@@ -38,6 +38,7 @@ import EmployeeRecordsPanel from './hr/EmployeeRecordsPanel';
 import NewHiresPanel from './hr/NewHiresPanel';
 import EmployeeChangesPanel from './hr/EmployeeChangesPanel';
 import PerformanceReviewsPanel from './hr/PerformanceReviewsPanel';
+import DepartmentsPositionsPanel from './hr/DepartmentsPositionsPanel';
 import LeaveAttendanceDashboard from './hr/LeaveAttendanceDashboard';
 import LeaveManagementPanel from './hr/LeaveManagementPanel';
 import TimeTrackingPanel from './hr/TimeTrackingPanel';
@@ -118,7 +119,7 @@ const InfoIcon = ({ description }: { description: string }) => {
 export default function HRMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.hr', HR_DASHBOARD_SECTIONS);
-  const [employeeView, setEmployeeView] = useState<'dashboard' | 'records' | 'newHires' | 'changes' | 'reviews'>('dashboard');
+  const [employeeView, setEmployeeView] = useState<'dashboard' | 'records' | 'newHires' | 'changes' | 'reviews' | 'departments'>('dashboard');
   const [leaveView, setLeaveView] = useState<'dashboard' | 'leave' | 'time' | 'shifts' | 'overtime'>('dashboard');
   const [complianceView, setComplianceView] = useState<'dashboard' | 'tax' | 'training' | 'labor' | 'reports'>('dashboard');
   const [payrollView, setPayrollView] = useState<'dashboard' | 'processing' | 'payslips' | 'benefits' | 'analytics'>('dashboard');
@@ -593,6 +594,7 @@ export default function HRMainDashboard() {
                 {employeeView === 'newHires' && <NewHiresPanel />}
                 {employeeView === 'changes' && <EmployeeChangesPanel />}
                 {employeeView === 'reviews' && <PerformanceReviewsPanel />}
+                {employeeView === 'departments' && <DepartmentsPositionsPanel />}
               </div>
             </Tab>
 

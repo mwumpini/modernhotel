@@ -6,7 +6,7 @@ import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useEmployeeChangesStore } from '@/app/lib/hr/employeeChangesStore';
 import { usePerformanceStore } from '@/app/lib/hr/performanceStore';
 
-type SectionKey = 'records' | 'newHires' | 'changes' | 'reviews';
+type SectionKey = 'records' | 'newHires' | 'changes' | 'reviews' | 'departments';
 
 interface Props {
   onSelect?: (key: SectionKey) => void;
@@ -15,6 +15,8 @@ interface Props {
 export default function EmployeeManagementDashboard({ onSelect }: Props) {
   const getEmployeeAnalytics = useEmployeeStore((s) => s.getEmployeeAnalytics);
   const employees = useEmployeeStore((s) => s.employees);
+  const departments = useEmployeeStore((s) => s.departments);
+  const positions = useEmployeeStore((s) => s.positions);
   const hydrateFromApi = useEmployeeStore((s) => s.hydrateFromApi);
   const changes = useEmployeeChangesStore((s) => s.changes);
   const reviews = usePerformanceStore((s) => s.reviews);
@@ -106,6 +108,23 @@ export default function EmployeeManagementDashboard({ onSelect }: Props) {
         <CardBody>
           <div className="text-3xl font-semibold">{pendingReviews}</div>
           <div className="text-xs text-gray-500">Open reviews</div>
+        </CardBody>
+      </Card>
+
+      <Card isPressable onPress={() => handleSelect('departments')}>
+        <CardHeader className="justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">🏢</span>
+            <div className="font-medium">Departments &amp; Positions</div>
+            <Tooltip content="Manage the Department/Position options used on New Staff and Settings → User Management">
+              <span className="inline-flex w-4 h-4 items-center justify-center rounded-full bg-gray-200 text-gray-700 text-xs cursor-help">i</span>
+            </Tooltip>
+          </div>
+          <Chip color="success" variant="flat">active</Chip>
+        </CardHeader>
+        <CardBody>
+          <div className="text-3xl font-semibold">{departments.length}</div>
+          <div className="text-xs text-gray-500">{positions.length} position{positions.length !== 1 ? 's' : ''}</div>
         </CardBody>
       </Card>
     </div>
