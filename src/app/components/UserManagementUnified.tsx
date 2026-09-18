@@ -36,9 +36,19 @@ import { useSettingsStore } from '../lib/settings/store';
 import { applyTheme, type AppTheme } from '../lib/theme/applyTheme';
 import type { UserPreferences } from '../lib/settings/store';
 import { PERMISSION_MODULES, FULL_SYSTEM_ACCESS } from '../lib/settings/permissionCatalog';
+import { useEmployeeStore } from '../lib/hr/employeeStore';
 
 export default function UserManagementUnified() {
   const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, changePassword, addRole, updateRole, deleteRole, hasPermission } = useSettingsStore();
+  // Department/Position options come from the same HR data source as the New
+  // Staff form (HR → Employee Management → Departments & Positions) instead
+  // of free text, so a user account's department can't drift into a typo'd
+  // duplicate of a real HR department.
+  const hrDepartments = useEmployeeStore((s) => s.departments);
+  const hrPositions = useEmployeeStore((s) => s.positions);
+  const hydrateHrData = useEmployeeStore((s) => s.hydrateFromApi);
+  useEffect(() => { hydrateHrData(); }, [hydrateHrData]);
+  const [selectedDeptId, setSelectedDeptId] = useState('');
   // Toggling a user's active status and resetting their password are each
   // independently grantable (mirrors the server's per-field check in
   // /api/users/[id] PATCH) — a role can have one without general edit rights.
@@ -159,6 +169,7 @@ export default function UserManagementUnified() {
     setIsEditing(false);
     setSelectedUser(null);
     resetForm();
+    setSelectedDeptId('');
     onOpen();
   };
 
@@ -181,6 +192,10 @@ export default function UserManagementUnified() {
       bio: user.profile?.bio || '',
       password: '',
     });
+    // The stored value is the department's display name (see form save
+    // below), not its id — resolve it back to an id so the Select can show
+    // it selected and the Position dropdown can filter by it.
+    setSelectedDeptId(hrDepartments.find((d) => d.name === user.profile?.department)?.id || '');
     onOpen();
   };
 
@@ -887,18 +902,35 @@ export default function UserManagementUnified() {
                 onChange={(e) => setUserForm({...userForm, employeeId: e.target.value})}
                 placeholder="Enter employee ID"
               />
-              <Input
+              <Select
                 label="Department"
-                value={userForm.department}
-                onChange={(e) => setUserForm({...userForm, department: e.target.value})}
-                placeholder="Enter department"
-              />
-              <Input
+                placeholder={hrDepartments.length === 0 ? 'No departments set up yet' : 'Select department'}
+                isDisabled={hrDepartments.length === 0}
+                description={hrDepartments.length === 0 ? 'Add one under HR → Employee Management → Departments & Positions' : undefined}
+                selectedKeys={selectedDeptId ? [selectedDeptId] : []}
+                onSelectionChange={(keys) => {
+                  const id = (Array.from(keys)[0] as string) || '';
+                  setSelectedDeptId(id);
+                  const dept = hrDepartments.find((d) => d.id === id);
+                  // Changing department invalidates whatever position was
+                  // picked for the old one.
+                  setUserForm({ ...userForm, department: dept?.name || '', position: '' });
+                }}
+              >
+                {hrDepartments.map((d) => <SelectItem key={d.id}>{d.name}</SelectItem>)}
+              </Select>
+              <Select
                 label="Position"
-                value={userForm.position}
-                onChange={(e) => setUserForm({...userForm, position: e.target.value})}
-                placeholder="Enter position"
-              />
+                placeholder={!selectedDeptId ? 'Select a department first' : 'Select position'}
+                isDisabled={!selectedDeptId}
+                selectedKeys={userForm.position ? [userForm.position] : []}
+                onSelectionChange={(keys) => {
+                  const title = (Array.from(keys)[0] as string) || '';
+                  setUserForm({ ...userForm, position: title });
+                }}
+              >
+                {hrPositions.filter((p) => p.departmentId === selectedDeptId).map((p) => <SelectItem key={p.title}>{p.title}</SelectItem>)}
+              </Select>
               <Input
                 label="Phone"
                 value={userForm.phone}

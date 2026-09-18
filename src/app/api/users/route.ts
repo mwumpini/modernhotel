@@ -74,6 +74,7 @@ export async function POST(request: NextRequest) {
           password: hashed,
           role,
           isActive: typeof body.isActive === 'boolean' ? body.isActive : true,
+          profile: body.profile && typeof body.profile === 'object' ? body.profile : undefined,
         },
         select: USER_SELECT,
       })

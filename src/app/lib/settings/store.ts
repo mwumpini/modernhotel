@@ -198,7 +198,7 @@ async function deleteUserFromApi(userId: string): Promise<string | null> {
  * the server-assigned id (a real Prisma cuid, not the client's placeholder) on
  * success, or an error message (e.g. duplicate email, weak password) on failure —
  * the caller must not add the row locally when this returns an error. */
-async function createUserViaApi(input: { email: string; name: string; password: string; role: string; isActive: boolean }): Promise<{ id: string } | { error: string }> {
+async function createUserViaApi(input: { email: string; name: string; password: string; role: string; isActive: boolean; profile?: Partial<User['profile']> }): Promise<{ id: string } | { error: string }> {
   const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
   if (!t) return { error: 'No tenant context — reload and try again' };
   try {
@@ -221,7 +221,7 @@ async function createUserViaApi(input: { email: string; name: string; password: 
  * as success since there's nothing server-side to reject). Returns an error
  * message on failure (duplicate email, or the last-administrator guard), null
  * on success/no-op. */
-async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; currentPassword?: string; profile?: { phone?: string }; preferences?: { theme?: string } }): Promise<string | null> {
+async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; currentPassword?: string; profile?: Partial<User['profile']>; preferences?: { theme?: string } }): Promise<string | null> {
   const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
   if (!t) return null;
   try {
@@ -3379,6 +3379,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       password,
       role: user.roleId,
       isActive: user.isActive,
+      profile: user.profile,
     });
     if ('error' in result) return result.error;
 
@@ -3498,7 +3499,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   },
 
   updateUser: async (userId, updates, newPassword) => {
-    const patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string } = {};
+    const patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; profile?: Partial<User['profile']> } = {};
     if (updates.email) patch.email = updates.email;
     if (updates.firstName || updates.lastName) {
       const state = get();
@@ -3510,6 +3511,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     if (updates.roleId) patch.role = updates.roleId;
     if (typeof updates.isActive === 'boolean') patch.isActive = updates.isActive;
     if (newPassword) patch.password = newPassword;
+    // Previously dropped silently — the form's Department/Position/etc.
+    // edits looked saved (the local users array updated below) but never
+    // reached the database, so they vanished on the next real hydration.
+    if (updates.profile) patch.profile = updates.profile;
 
     const error = await updateUserViaApi(userId, patch);
     if (error) return error;
