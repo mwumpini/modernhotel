@@ -23,6 +23,7 @@ import { useRouter } from 'next/navigation';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
+import { useCashierShift } from '../lib/frontoffice/useCashierShift';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs are core navigation, not clutter, so they're deliberately not included.
@@ -97,6 +98,7 @@ export default function FrontdeskDashboard() {
   const reservations = frontOfficeStore.reservations;
   const rooms = frontOfficeStore.rooms;
   const hkAllRooms = housekeepingStore.getAllRooms();
+  const { shifts: cashierShifts } = useCashierShift();
 
   // Subscribe to store changes to update client count
   useEffect(() => {
@@ -121,6 +123,16 @@ export default function FrontdeskDashboard() {
     hkAllRooms.filter(r => r.roomTypeId === typeId && ['vacant', 'clean', 'inspected'].includes(r.status as any)).length;
   const todayCheckIns = reservations.filter(r => (r.status === 'confirmed' || r.status === 'pending') && r.arrival.slice(0,10) === todayIso).length;
   const todayCheckOuts = checkingOutToday;
+  // Reservations with an outstanding folio balance right now — the same
+  // "unpaid" concept the Invoices & Payments page itself tracks, without
+  // duplicating its reservation-by-reservation recompute here. Deduped by
+  // reservationId, not a raw folio-row count: some reservations have
+  // accumulated many duplicate folio rows (a separate data-integrity issue,
+  // not something this card should surface as if it were real invoice volume).
+  const outstandingFolios = new Set(
+    frontOfficeStore.folios.filter(f => (f.balance || 0) > 0).map(f => f.reservationId)
+  ).size;
+  const openCashierShifts = cashierShifts.filter(s => s.status === 'open').length;
 
   const operationalItems = [
     {
@@ -129,7 +141,6 @@ export default function FrontdeskDashboard() {
         { title: 'Reservations', icon: '📅', description: 'Manage room reservations and bookings', status: 'active', count: reservations.length },
         { title: 'Rooms & Bookings', icon: '🏠', description: 'View and manage room assignments', status: 'active', count: totalRooms },
         { title: 'Room Management', icon: '📋', description: 'Room status and maintenance tracking', status: 'active', count: totalRooms },
-        { title: 'Client Management', icon: '👥', description: 'Manage client profiles, search, and preferences', status: 'active', count: frontOfficeStore.guests.length },
       ]
     },
     {
@@ -137,19 +148,21 @@ export default function FrontdeskDashboard() {
       items: [
         { title: 'Check-ins', icon: '✅', description: 'Guest check-in and check-ins management', status: 'active', count: todayCheckIns + occupiedTotal },
         { title: 'Check-outs', icon: '🚪', description: 'Guest check-out processing', status: 'active', count: todayCheckOuts },
-        { title: 'Invoices & Payments', icon: '📄', description: 'Billing and payment processing', status: 'active', count: 0 }, // Clean slate - no invoices
+        { title: 'Invoices & Payments', icon: '📄', description: 'Billing and payment processing', status: 'active', count: outstandingFolios },
+        { title: 'Client Management', icon: '👥', description: 'Manage client profiles, search, and preferences', status: 'active', count: frontOfficeStore.guests.length },
       ]
     },
     {
       category: 'Operations & Reports',
       items: [
-        { title: 'Cashiering', icon: '💵', description: 'Open/close till shifts and reconcile cash against real payments', status: 'active', count: 0 },
-        { title: 'Night Audit', icon: '🌙', description: 'Run and review the nightly revenue/room reconciliation', status: 'active', count: 0 },
-        { title: 'Reports & Analysis', icon: '📊', description: 'Occupancy, arrivals, departures, and front office analytics', status: 'active', count: 0 },
+        { title: 'Cashiering', icon: '💵', description: 'Open/close till shifts and reconcile cash against real payments', status: 'active', count: openCashierShifts },
+        // No count concept fits either of these — a report catalog and an
+        // audit-run log aren't countable "N items waiting" the way the
+        // others are, so the count badge is omitted rather than faked.
+        { title: 'Night Audit', icon: '🌙', description: 'Run and review the nightly revenue/room reconciliation', status: 'active' },
+        { title: 'Reports & Analysis', icon: '📊', description: 'Occupancy, arrivals, departures, and front office analytics', status: 'active' },
       ]
     },
-
-
   ];
 
   return (
@@ -372,9 +385,11 @@ export default function FrontdeskDashboard() {
                               >
                                 {item.status}
                               </Badge>
-                              <Chip size="sm" variant="flat" color="primary">
-                                {item.count}
-                              </Chip>
+                              {item.count !== undefined && (
+                                <Chip size="sm" variant="flat" color="primary">
+                                  {item.count}
+                                </Chip>
+                              )}
                             </div>
                           </div>
                         ))}
