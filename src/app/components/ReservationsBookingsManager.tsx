@@ -52,6 +52,7 @@ import { canMarkNoShow } from '../lib/frontoffice/arrivals';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 import { openPrintPreview, renderPrint } from '../lib/print/engine';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
+import { notifySuccess } from '../lib/notifications/notify';
 
 interface ReservationFormData {
   guestName: string;
@@ -1233,6 +1234,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             setIsAssignOpen(true);
           } else {
             frontOfficeStore.checkIn(reservation.id);
+            // Confirm the check-in without navigating away — front desk
+            // processes arrivals back-to-back, and jumping to Check-Ins
+            // Management after every click would interrupt that.
+            const updated = frontOfficeStore.reservations.find(r => r.id === reservation.id);
+            const roomLabel = updated?.roomId && updated.roomId !== 'TBD' ? `Room ${updated.roomId}` : 'room pending assignment';
+            notifySuccess(`${reservation.guestName} checked in — ${roomLabel}`, 'Checked in');
           }
         }
         break;
