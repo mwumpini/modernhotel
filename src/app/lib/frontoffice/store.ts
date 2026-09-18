@@ -43,7 +43,20 @@ class FrontOfficeStore {
   guests: GuestProfile[] = [];
   billingPersons: BillingPerson[] = [];
   private hydratedGuests: boolean = false;
+  // Set the instant ensureHydratedFromApi() is entered — guards against firing
+  // pullFromApi() more than once, nothing more. NOT safe as an "is real data
+  // loaded yet" check: see hydrationComplete below for why persistFolio needs
+  // a separately-timed flag.
   private hydratedFromApi: boolean = false;
+  // Set only once pullFromApi()'s folios fetch has actually resolved (or
+  // failed) — unlike hydratedFromApi, which flips true synchronously before
+  // that fetch even starts. persistFolio gates on this one: getOrCreateFolio
+  // finding no match in a still-empty/still-loading self.folios during that
+  // window would otherwise create a folio with a fresh, non-deterministic id
+  // that duplicates one the server already has once the real data lands —
+  // this was confirmed as the root cause of hundreds of duplicate GuestFolio
+  // rows per reservation in production data.
+  private hydrationComplete: boolean = false;
   private hydratedNightAuditState: boolean = false;
   private lastRefreshFromApiAt: number = 0;
   // Serializes API writes so a reservation's POST always lands before its PATCH.
@@ -240,10 +253,13 @@ class FrontOfficeStore {
 
   // Upsert a folio (the in-house subledger) after any charge/payment mutation.
   // Called from the folio helpers, which funnel through updateFolioBalances.
-  // Skipped until hydration so the constructor's demo seed folios are never
-  // written to the database (mirrors how seeded reservations/guests behave).
+  // Skipped until hydration genuinely completes (hydrationComplete, not
+  // hydratedFromApi — see field comment) so neither the constructor's demo
+  // seed folios nor a getOrCreateFolio() race-created phantom folio (created
+  // because self.folios hadn't finished loading yet) get written to the
+  // database as a duplicate of a folio the server already has.
   persistFolio(folio: Folio) {
-    if (!this.hydratedFromApi) return;
+    if (!this.hydrationComplete) return;
     const t = this.tenant(); if (!t || !folio?.id || !folio?.reservationId) return;
     this.enqueueWrite(() => apiHelpers.upsertFolioViaApi(this as any, t, folio));
   }
@@ -330,6 +346,10 @@ class FrontOfficeStore {
         }
       }
     } catch (e) { console.warn('FO: folio sync failed', e); }
+    // Reached only once the reservations/guests/folios fetches above have all
+    // been attempted (success or failure) — see the hydrationComplete field
+    // comment for why persistFolio needs this instead of hydratedFromApi.
+    this.hydrationComplete = true;
   }
 
   // Hydrate once on the client, then keep fresh when the tab regains focus so
