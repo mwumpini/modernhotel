@@ -104,6 +104,14 @@ const INVOICES_PAYMENTS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
 ];
 
 export default function InvoicesPaymentsPage() {
+  // frontOfficeStore.rooms/reservations/folios are empty during SSR (and on
+  // the client's first paint, before the store's client-side hydration
+  // effect runs) and only populate afterward — rendering derived fields like
+  // a room number from them before that finishes renders "TBD" on the server
+  // and the real value on the client, a hydration mismatch. Defer the
+  // data-dependent table rows (not the surrounding page chrome) until mount.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
   const currentUserName = useCurrentUserName();
   const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
     useDashboardVisibility('dashboard.hidden.invoicesPayments', INVOICES_PAYMENTS_DASHBOARD_SECTIONS);
@@ -1510,8 +1518,8 @@ export default function InvoicesPaymentsPage() {
                 <TableColumn>ACTIONS</TableColumn>
               </TableHeader>
               <TableBody>
-                {frontOfficeStore.reservations
-                  .filter(matchesFolioFilters)
+                {(!mounted ? [] : frontOfficeStore.reservations
+                  .filter(matchesFolioFilters))
                   .sort((a, b) => {
                     const fa = frontOfficeStore.getOrCreateFolio(a.id);
                     const fb = frontOfficeStore.getOrCreateFolio(b.id);
