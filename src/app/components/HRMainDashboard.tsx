@@ -16,6 +16,7 @@ import { trackEvent } from '../lib/analytics/trackEvent';
 import { useRouter } from 'next/navigation';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
+import ExpiryAlertsCard from './hr/ExpiryAlertsCard';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 
@@ -26,6 +27,7 @@ const HR_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'onLeave', label: 'On Leave' },
   { id: 'payrollStatus', label: 'Payroll Status' },
   { id: 'todayOps', label: "Today's Operations" },
+  { id: 'expiryAlerts', label: 'Expiring Documents' },
   { id: 'quickActions', label: 'Quick Actions' },
   { id: 'recentActivities', label: 'Recent Activities' },
   { id: 'notices', label: 'HR Notices' },
@@ -38,6 +40,7 @@ import EmployeeRecordsPanel from './hr/EmployeeRecordsPanel';
 import NewHiresPanel from './hr/NewHiresPanel';
 import EmployeeChangesPanel from './hr/EmployeeChangesPanel';
 import PerformanceReviewsPanel from './hr/PerformanceReviewsPanel';
+import PerformanceLogPanel from './hr/PerformanceLogPanel';
 import DepartmentsPositionsPanel from './hr/DepartmentsPositionsPanel';
 import LeaveAttendanceDashboard from './hr/LeaveAttendanceDashboard';
 import LeaveManagementPanel from './hr/LeaveManagementPanel';
@@ -119,7 +122,7 @@ const InfoIcon = ({ description }: { description: string }) => {
 export default function HRMainDashboard() {
   const [selectedTab, setSelectedTab] = useState('overview');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.hr', HR_DASHBOARD_SECTIONS);
-  const [employeeView, setEmployeeView] = useState<'dashboard' | 'records' | 'newHires' | 'changes' | 'reviews' | 'departments'>('dashboard');
+  const [employeeView, setEmployeeView] = useState<'dashboard' | 'records' | 'newHires' | 'changes' | 'reviews' | 'log' | 'departments'>('dashboard');
   const [leaveView, setLeaveView] = useState<'dashboard' | 'leave' | 'time' | 'shifts' | 'overtime'>('dashboard');
   const [complianceView, setComplianceView] = useState<'dashboard' | 'tax' | 'training' | 'labor' | 'reports'>('dashboard');
   const [payrollView, setPayrollView] = useState<'dashboard' | 'processing' | 'payslips' | 'benefits' | 'analytics'>('dashboard');
@@ -463,6 +466,9 @@ export default function HRMainDashboard() {
         )}
       </div>
 
+      {/* Expiring contracts, permits, health certificates, probation */}
+      {!isHidden('expiryAlerts') && <ExpiryAlertsCard onHide={() => hide('expiryAlerts')} />}
+
       {/* Quick Actions */}
       {!isHidden('quickActions') && (
       <Card className="border-0 shadow-lg mb-6">
@@ -594,6 +600,7 @@ export default function HRMainDashboard() {
                 {employeeView === 'newHires' && <NewHiresPanel />}
                 {employeeView === 'changes' && <EmployeeChangesPanel />}
                 {employeeView === 'reviews' && <PerformanceReviewsPanel />}
+                {employeeView === 'log' && <PerformanceLogPanel />}
                 {employeeView === 'departments' && <DepartmentsPositionsPanel />}
               </div>
             </Tab>
@@ -669,6 +676,9 @@ export default function HRMainDashboard() {
                             table itself is the report). */}
                         <Button color="primary" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('reviews'); }}>
                           📊 New Performance Review
+                        </Button>
+                        <Button color="warning" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('log'); }}>
+                          📝 Record Performance Entry (good or bad)
                         </Button>
                         <Button color="secondary" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('reviews'); }}>
                           🎯 Set Goals

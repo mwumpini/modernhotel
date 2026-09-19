@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
-import { requireAuth } from '@/app/lib/api/auth-guard'
+import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { listHrPayrollRecords, upsertHrPayrollRecord } from '@/app/lib/hr/repository'
 
 async function resolveTenant(req: NextRequest) {
@@ -31,10 +31,27 @@ export async function POST(request: NextRequest) {
     const ctx = await resolveTenant(request)
     if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
     const body = await request.json()
-    if (!body.id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
-    const record = await upsertHrPayrollRecord(ctx.tenantId, body.id, body)
-    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'HR_PAYROLL_RECORD_SAVED', 'HrPayrollRecord', body.id, undefined, { employeeNumber: record.employeeNumber, netPay: record.netPay, status: record.status }, request)
-    return NextResponse.json({ record })
+    // One request can carry a whole batch (a month's records, or one bank's worth being paid)
+    // — hundreds of staff shouldn't mean hundreds of round trips.
+    const isBatch = Array.isArray(body.records)
+    const items: Record<string, any>[] = isBatch ? body.records : [body]
+    if (items.length === 0 || items.some((i) => !i?.id)) return NextResponse.json({ error: 'id is required' }, { status: 400 })
+    if (items.some((i) => i.status === 'paid')) {
+      const perm = await requirePermission(request, 'hr.approve-payroll')
+      if (!perm.ok) return perm.response
+    }
+    const saved = []
+    for (const item of items) saved.push(await upsertHrPayrollRecord(ctx.tenantId, item.id, item))
+    await createAuditLog(
+      ctx.tenantId, sessionUserId ?? null,
+      isBatch ? 'HR_PAYROLL_RECORDS_SAVED' : 'HR_PAYROLL_RECORD_SAVED',
+      'HrPayrollRecord', isBatch ? `batch:${items.length}` : items[0].id, undefined,
+      isBatch
+        ? { count: saved.length, statuses: Array.from(new Set(saved.map((r) => r.status))) }
+        : { employeeNumber: saved[0].employeeNumber, netPay: saved[0].netPay, status: saved[0].status },
+      request,
+    )
+    return NextResponse.json(isBatch ? { payrollRecords: saved } : { record: saved[0] })
   } catch (error) {
     console.error('[hr/payroll-records][POST] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

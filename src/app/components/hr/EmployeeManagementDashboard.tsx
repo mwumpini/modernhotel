@@ -5,8 +5,10 @@ import { Card, CardHeader, CardBody, Chip, Tooltip } from '@heroui/react';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useEmployeeChangesStore } from '@/app/lib/hr/employeeChangesStore';
 import { usePerformanceStore } from '@/app/lib/hr/performanceStore';
+import { usePerformanceLogStore } from '@/app/lib/hr/performanceLogStore';
+import { lastDaysFrom, summarize } from '@/app/lib/hr/performanceLog';
 
-type SectionKey = 'records' | 'newHires' | 'changes' | 'reviews' | 'departments';
+type SectionKey = 'records' | 'newHires' | 'changes' | 'reviews' | 'log' | 'departments';
 
 interface Props {
   onSelect?: (key: SectionKey) => void;
@@ -20,6 +22,13 @@ export default function EmployeeManagementDashboard({ onSelect }: Props) {
   const hydrateFromApi = useEmployeeStore((s) => s.hydrateFromApi);
   const changes = useEmployeeChangesStore((s) => s.changes);
   const reviews = usePerformanceStore((s) => s.reviews);
+  const logEntries = usePerformanceLogStore((s) => s.entries);
+  const hydrateLog = usePerformanceLogStore((s) => s.hydrateFromApi);
+  React.useEffect(() => { void hydrateLog(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  // Depends on today's date — only computed after mount so the server and browser first paints agree.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
+  const logSummary = React.useMemo(() => summarize(mounted ? logEntries : [], lastDaysFrom(30)), [mounted, logEntries]);
 
   // Load real persisted employees/departments/positions once on mount, replacing the
   // hardcoded in-memory seed.
@@ -108,6 +117,22 @@ export default function EmployeeManagementDashboard({ onSelect }: Props) {
         <CardBody>
           <div className="text-3xl font-semibold">{pendingReviews}</div>
           <div className="text-xs text-gray-500">Open reviews</div>
+        </CardBody>
+      </Card>
+
+      <Card isPressable onPress={() => handleSelect('log')}>
+        <CardHeader className="justify-between">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">📝</span>
+            <div className="font-medium">Performance Log</div>
+            <Tooltip content="Good and bad moments recorded for staff, scored −5 to +5">
+              <span className="inline-flex w-4 h-4 items-center justify-center rounded-full bg-gray-200 text-gray-700 text-xs cursor-help">i</span>
+            </Tooltip>
+          </div>
+        </CardHeader>
+        <CardBody>
+          <div className="text-3xl font-semibold">{logSummary.count}</div>
+          <div className="text-xs text-gray-500">Entries in the last 30 days · {logSummary.positives} good, {logSummary.negatives} concerns</div>
         </CardBody>
       </Card>
 

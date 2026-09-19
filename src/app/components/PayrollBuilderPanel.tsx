@@ -1,14 +1,15 @@
 'use client';
 
 import React, { useMemo, useState } from 'react';
-import { Card, CardHeader, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Divider, Tooltip, Checkbox } from '@heroui/react';
+import { Card, CardHeader, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Divider, Tooltip } from '@heroui/react';
 import UniversalPayrollBuilder from '@/app/lib/payroll/builder';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { syncPayrollRunToComplianceFiling } from '@/app/lib/compliance/payrollSync';
-import { useAccountingStore } from '@/app/lib/accounting/store';
+import { runMonthlyPayroll } from '@/app/lib/payroll/monthlyRun';
+import { useCurrentUserName } from '@/app/lib/auth/useCurrentUserName';
 import PayrollTaxRatesEditor from './PayrollTaxRatesEditor';
 
 export default function PayrollBuilderPanel() {
@@ -21,20 +22,10 @@ export default function PayrollBuilderPanel() {
   const complianceCountry = useComplianceStore((s) => s.country);
   const [selectedTemplate, setSelectedTemplate] = useState(complianceCountry);
   const [configId, setConfigId] = useState<string>('');
-  const [employeeId, setEmployeeId] = useState<string>('');
-  const [result, setResult] = useState<any>(null);
   const [editableConfig, setEditableConfig] = useState<any>(null);
-  const [employeeForm, setEmployeeForm] = useState({
-    salary: 5000,
-    additionalWithholding: 0,
-    overtimeHours: 0,
-    vehicleBenefit: 0,
-    housingBenefit: 0,
-    otherNonCashBenefits: 0
-  });
   const [runMonth, setRunMonth] = useState<number>(new Date().getMonth() + 1);
   const [runYear, setRunYear] = useState<number>(new Date().getFullYear());
-  const [markPaid, setMarkPaid] = useState<boolean>(true);
+  const userName = useCurrentUserName();
   // Overtime hours worked this period, per employee id. Defaults to the employee's
   // HR-approved overtime for the run's month (see approvedOvertimeByEmployee below) but
   // stays manually overridable here for employees the attendance system doesn't cover.
@@ -133,63 +124,6 @@ export default function PayrollBuilderPanel() {
     try { localStorage.setItem(`payroll.config.${editableConfig.country}`, JSON.stringify(editableConfig)); } catch {}
   }, [editableConfig]);
 
-  const handleCreateDemoEmployee = () => {
-    const emp = builder.createEmployee({
-      employeeId: `EMP-${Math.floor(Math.random() * 1000)}`,
-      firstName: 'Demo', lastName: 'User', email: 'demo@hotel.com',
-      employment: { type: 'full-time', department: 'Frontdesk', position: 'Agent', salary: 5000, currency: 'GHS' },
-    });
-    setEmployeeId(emp.id);
-  };
-
-  const handleRun = () => {
-    // Auto-load template if not loaded
-    if (!configId && !editableConfig) {
-      const cfg = builder.getCountryTemplate(selectedTemplate || complianceCountry);
-      builder.payrollConfigs.set(cfg.id, cfg);
-      setConfigId(cfg.id);
-      setEditableConfig(JSON.parse(JSON.stringify(cfg)));
-    }
-    if (!configId && !editableConfig?.id) return;
-    // Ensure employee exists and get id immediately
-    let eid = employeeId;
-    if (!eid) {
-      const created = builder.createEmployee({
-        employeeId: `EMP-${Math.floor(Math.random() * 1000)}`,
-        firstName: 'Demo', lastName: 'User', email: 'demo@hotel.com',
-        employment: { type: 'full-time', department: 'Frontdesk', position: 'Agent', salary: Number(employeeForm.salary) || 0, currency: (editableConfig?.currency || 'GHS') },
-        taxInfo: { additionalWithholding: Number(employeeForm.additionalWithholding) || 0 }
-      });
-      eid = created.id; setEmployeeId(created.id);
-    }
-    // Persist edited config
-    if (editableConfig?.id) builder.payrollConfigs.set(editableConfig.id, editableConfig);
-    // Update employee profile with current form
-    const emp = (builder as any).employeeProfiles.get(eid);
-    if (emp) {
-      emp.employment.salary = Number(employeeForm.salary) || 0;
-      emp.taxInfo = emp.taxInfo || {};
-      emp.taxInfo.additionalWithholding = Number(employeeForm.additionalWithholding) || 0;
-      (builder as any).employeeProfiles.set(eid, emp);
-    }
-    const adjustments = { hours: { OVERTIME: Number(employeeForm.overtimeHours) || 0 } };
-    // Inject benefit components for this run
-    const runtimeConfigId = editableConfig?.id || configId;
-    const baseCfg = JSON.parse(JSON.stringify((builder as any).payrollConfigs.get(runtimeConfigId)));
-    baseCfg.earnings = baseCfg.earnings || [];
-    const v = Number(employeeForm.vehicleBenefit) || 0;
-    const h = Number(employeeForm.housingBenefit) || 0;
-    const o = Number(employeeForm.otherNonCashBenefits) || 0;
-    // Remove previous runtime benefit items if present
-    baseCfg.earnings = baseCfg.earnings.filter((c: any) => !['VEHICLE_BENEFIT','HOUSING_BENEFIT','OTHER_NON_CASH'].includes(c.code));
-    if (v > 0) baseCfg.earnings.push({ name: 'Vehicle Benefit', code: 'VEHICLE_BENEFIT', calculationType: 'fixed', amount: v, taxable: true });
-    if (h > 0) baseCfg.earnings.push({ name: 'Housing Benefit', code: 'HOUSING_BENEFIT', calculationType: 'fixed', amount: h, taxable: true });
-    if (o > 0) baseCfg.earnings.push({ name: 'Other Non-Cash Benefits', code: 'OTHER_NON_CASH', calculationType: 'fixed', amount: o, taxable: true });
-    (builder as any).payrollConfigs.set(runtimeConfigId, baseCfg);
-    const res = (builder as any).calculatePayroll(eid, runtimeConfigId, { month: new Date().getMonth() + 1, year: new Date().getFullYear() }, adjustments);
-    setResult(res);
-  };
-
   const addBracket = () => {
     if (!editableConfig) return;
     const next = { ...editableConfig };
@@ -210,16 +144,6 @@ export default function PayrollBuilderPanel() {
     if (!editableConfig) return;
     const next = { ...editableConfig };
     next.taxConfig.income.brackets = next.taxConfig.income.brackets.map((b: any, i: number) => i === idx ? { ...b, [field]: value } : b);
-    setEditableConfig(next);
-  };
-
-  const setSS = (key: 'employeeRate' | 'employerRate' | 'ceiling', value: number) => {
-    if (!editableConfig) return;
-    const next = { ...editableConfig };
-    const firstKey = Object.keys(next.socialSecurity || {})[0] || 'ssnit';
-    next.socialSecurity = next.socialSecurity || {};
-    next.socialSecurity[firstKey] = next.socialSecurity[firstKey] || {};
-    next.socialSecurity[firstKey][key] = value;
     setEditableConfig(next);
   };
 
@@ -285,11 +209,6 @@ export default function PayrollBuilderPanel() {
     }
   };
 
-  const saveConfig = () => {
-    if (!editableConfig?.country) return;
-    try { localStorage.setItem(`payroll.config.${editableConfig.country}`, JSON.stringify(editableConfig)); } catch {}
-  };
-
   const ensureConfigLoaded = () => {
     if (!configId && !editableConfig) {
       const cfg = builder.getCountryTemplate(selectedTemplate || complianceCountry);
@@ -304,267 +223,13 @@ export default function PayrollBuilderPanel() {
   const handleRunMonthly = () => {
     const runtimeId = ensureConfigLoaded();
     if (!runtimeId) return;
-    // Use active employees only
-    const activeEmployees = (employees || []).filter((e: any) => e.status === 'active');
-    if (activeEmployees.length === 0) {
-      alert('No active employees to process.');
+    const result = runMonthlyPayroll({ builder, runtimeId, employees, periods: payrollPeriods, month: runMonth, year: runYear, overtimeOverrides: overtimeHoursByEmployee, userName, complianceCountry });
+    if (!result.ok) {
+      alert(result.error);
       return;
     }
-    // Create payroll period
-    const periodNumber = `PP-${runYear}-${String(runMonth).padStart(2, '0')}`;
-    const existingPeriod = (payrollPeriods || []).find((p: any) => p.periodNumber === periodNumber);
-    if (existingPeriod) {
-      alert(`Payroll for ${periodNumber} has already been processed (status: ${existingPeriod.status}). Re-running would double-count gross/net pay for every employee — void the existing period first if you need to redo it.`);
-      return;
-    }
-    const period = createPayrollPeriod({
-      periodNumber,
-      startDate: new Date(runYear, runMonth - 1, 1),
-      endDate: new Date(runYear, runMonth, 0),
-      status: 'processing',
-      totalGrossPay: 0,
-      totalNetPay: 0,
-      totalDeductions: 0,
-      totalTaxes: 0,
-      employeeCount: activeEmployees.length,
-      processedBy: 'system'
-    } as any);
-
-    // Prepare config with benefits as runtime add-ons per employee (from HR form values if present)
-    const baseCfg = JSON.parse(JSON.stringify((builder as any).payrollConfigs.get(runtimeId)));
-    (builder as any).payrollConfigs.set(runtimeId, baseCfg);
-
-    // Tier 1/Tier 2 are tracked as fully separate rules (different institutions), each
-    // independently renameable — so downstream code must match on the rule's stable id,
-    // never its (user-editable) display name.
-    const tier1Rule = useComplianceStore.getState().taxRules.find(
-      (r) => r.countryCode === 'GH' && r.domain === 'payroll' && (r.appliesTo || []).includes('TIER1')
-    );
-    const tier2Rule = useComplianceStore.getState().taxRules.find(
-      (r) => r.countryCode === 'GH' && r.domain === 'payroll' && (r.appliesTo || []).includes('TIER2')
-    );
-
-    const totals = { gross: 0, net: 0, tax: 0, ssnit: 0, employerTax: 0, deductions: 0 } as any;
-    activeEmployees.forEach((emp: any) => {
-      // Create or update employee profile for the run
-      const eid = emp.id || emp.employeeNumber || `EMP-${Math.floor(Math.random() * 10000)}`;
-      const prof = (builder as any).employeeProfiles.get(eid) || builder.createEmployee({
-        id: eid,
-        employeeId: emp.employeeNumber || eid,
-        firstName: emp.firstName, lastName: emp.lastName, email: emp.email,
-        employment: { type: emp.employmentType || 'full_time', department: emp.departmentId, position: emp.positionId, salary: Number((emp as any).basicSalary ?? (emp as any).salary ?? 0), currency: (editableConfig?.currency || 'GHS'), hourlyRate: Number((emp as any).hourlyRate || 0) },
-        taxInfo: { filingStatus: (emp as any).taxWithholding?.filingStatus || 'single', allowances: Number((emp as any).taxWithholding?.allowances || 0) }
-      });
-      // Inject allowances & benefits as earnings
-      const runtimeConfig = JSON.parse(JSON.stringify(baseCfg));
-      runtimeConfig.earnings = runtimeConfig.earnings || [];
-      runtimeConfig.earnings = runtimeConfig.earnings.filter((c: any) => !['ALLOWANCE','VEHICLE_BENEFIT','HOUSING_BENEFIT','OTHER_NON_CASH'].includes(c.code));
-      const allowances = Number((emp as any).allowances || 0);
-      if (allowances > 0) runtimeConfig.earnings.push({ name: 'Allowance', code: 'ALLOWANCE', calculationType: 'fixed', amount: allowances, taxable: false });
-      const vehicle = Number((emp as any).vehicleBenefit || 0);
-      if (vehicle > 0) runtimeConfig.earnings.push({ name: 'Vehicle Benefit', code: 'VEHICLE_BENEFIT', calculationType: 'fixed', amount: vehicle, taxable: true });
-      const housing = Number((emp as any).housingBenefit || 0);
-      if (housing > 0) runtimeConfig.earnings.push({ name: 'Housing Benefit', code: 'HOUSING_BENEFIT', calculationType: 'fixed', amount: housing, taxable: true });
-      const other = Number((emp as any).otherNonCashBenefits || 0);
-      if (other > 0) runtimeConfig.earnings.push({ name: 'Other Non-Cash Benefits', code: 'OTHER_NON_CASH', calculationType: 'fixed', amount: other, taxable: true });
-
-      // Tier 3 (voluntary provident fund) — a real, employee-elected pre-tax deduction,
-      // fully separate from Tier 1/Tier 2 (own institution, own election). Only applied
-      // when the employee opted in with a contribution rate; capped at the statutory
-      // relief ceiling. The rule's own (renameable) name is used for the deduction label
-      // so a rename actually shows up on payslips instead of a hardcoded string.
-      runtimeConfig.deductions = (runtimeConfig.deductions || []).filter((d: any) => d.code !== 'TIER3_EMP');
-      const tier3Pct = Number((emp as any).tier3Enrolled ? (emp as any).tier3ContributionPct || 0 : 0);
-      const tier3CapRule = useComplianceStore.getState().taxRules.find(
-        (r) => r.countryCode === 'GH' && r.domain === 'payroll' && (r.appliesTo || []).includes('TIER3_RELIEF_CAP')
-      );
-      if (tier3Pct > 0) {
-        const basicSalary = Number((emp as any).basicSalary ?? (emp as any).salary ?? 0);
-        const grossForTier3 = basicSalary + Number((emp as any).allowances || 0);
-        const reliefCapPct = tier3CapRule?.rate ?? 16.5;
-        // The relief cap limits the RESULTING contribution amount to reliefCapPct% of basic
-        // salary — it's not an income ceiling the rate stops applying above (that's what
-        // `limits.ceiling` means for Tier 1/2), so compute and clamp the amount directly
-        // here rather than pushing a 'percentage' deduction with a ceiling.
-        const rawAmount = grossForTier3 * (tier3Pct / 100);
-        const maxRelief = basicSalary * (reliefCapPct / 100);
-        runtimeConfig.deductions.push({
-          name: tier3CapRule?.name || 'Tier 3',
-          code: 'TIER3_EMP',
-          category: 'statutory',
-          calculationType: 'fixed',
-          amount: Math.round(Math.min(rawAmount, maxRelief) * 100) / 100,
-          base: 'gross',
-        });
-      }
-      (builder as any).payrollConfigs.set(runtimeId, runtimeConfig);
-
-      const adjustments = { hours: { OVERTIME: Number(overtimeHoursByEmployee[eid] ?? approvedOvertimeByEmployee[eid] ?? 0) } };
-      const calc = (builder as any).calculatePayroll(eid, runtimeId, { month: runMonth, year: runYear }, adjustments);
-      totals.gross += calc.summary.gross;
-      totals.net += calc.summary.net;
-      totals.tax += calc.taxes.employee;
-      const ssnitAmt = calc.taxes.items.filter((t: any) => t.type === 'social').reduce((s: number, t: any) => s + (t.amount || 0), 0);
-      totals.ssnit += ssnitAmt;
-      totals.employerTax += calc.taxes.employer || 0;
-      const deductionsSum = (calc.deductions?.total || 0);
-      totals.deductions += deductionsSum;
-
-      const tier1Amount = tier1Rule ? (calc.taxes.items.find((t: any) => t.ruleId === tier1Rule.id)?.amount || 0) : 0;
-      const tier2Amount = tier2Rule ? (calc.taxes.items.find((t: any) => t.ruleId === tier2Rule.id)?.amount || 0) : 0;
-      const tier3Amount = calc.deductions.items.find((d: any) => d.component?.code === 'TIER3_EMP')?.amount || 0;
-      const overtimePay = calc.earnings.items.find((i: any) => i.component?.code === 'OVERTIME')?.amount || 0;
-
-      // Persist payroll record to store
-      createPayrollRecord({
-        payrollPeriodId: period.id,
-        employeeId: eid,
-        employeeNumber: emp.employeeNumber || '',
-        employeeName: `${emp.firstName} ${emp.lastName}`,
-        department: emp.departmentId,
-        position: emp.positionId,
-        basicSalary: Number((emp as any).basicSalary ?? (emp as any).salary ?? 0),
-        allowances: allowances,
-        overtimePay,
-        bonuses: 0,
-        grossPay: calc.summary.gross,
-        deductions: {
-          tax: calc.taxes.employee,
-          // Tier 1 and Tier 2 are separate institutions/rules — kept as separate fields so
-          // a rename of one never bleeds into the other's figure. `pension` historically
-          // meant "Tier 2"; `tier3` is new. socialSecurity/pension/tier3 are the current
-          // display labels' amounts regardless of what the underlying rules are renamed to.
-          socialSecurity: tier1Amount,
-          pension: tier2Amount,
-          tier3: tier3Amount,
-          healthInsurance: 0,
-          other: Math.max(deductionsSum - calc.taxes.employee - tier1Amount - tier2Amount - tier3Amount, 0)
-        },
-        netPay: calc.summary.net,
-        bankAccount: emp.bankAccount?.accountNumber || '',
-        paymentMethod: 'bank_transfer',
-        status: markPaid ? 'paid' : 'processed',
-        paidAt: markPaid ? new Date(runYear, runMonth - 1, 28) : undefined,
-        notes: 'Monthly payroll run'
-      } as any);
-    });
-
-    // Update period totals
-    updatePayrollPeriod(period.id, {
-      status: markPaid ? 'paid' : 'processed',
-      totalGrossPay: totals.gross,
-      totalNetPay: totals.net,
-      totalDeductions: totals.deductions,
-      totalTaxes: totals.tax,
-      processedAt: new Date(),
-      approvedAt: markPaid ? new Date() : undefined,
-      approvedBy: markPaid ? 'system' : undefined
-    } as any);
-
-    syncPayrollRunToComplianceFiling({
-      countryCode: complianceCountry,
-      period: `${runYear}-${String(runMonth).padStart(2, '0')}`,
-      payeTotal: totals.tax,
-      ssnitTotal: totals.ssnit,
-      employeeCount: activeEmployees.length,
-    });
-
-    // Post the run to the GL — previously payroll never touched the ledger at all, so
-    // Salary Expense/PAYE/SSNIT payables and the accrued net-pay liability permanently
-    // omitted the largest opex line from every financial report. The "Accrued Expenses"
-    // credit is a residual (gross − PAYE − SSNIT) rather than a hardcoded totals.net, so
-    // the entry balances exactly even if some employee has other post-tax deductions
-    // this run's totals don't itemize separately.
-    if (totals.gross > 0) {
-      try {
-        const accountingStore = useAccountingStore.getState();
-        const now = new Date().toISOString();
-        const entryId = `JE-PAYROLL-${period.id}`;
-        const round2 = (n: number) => Math.round(n * 100) / 100;
-        const grossExpense = round2(totals.gross);
-        const employerTax = round2(totals.employerTax);
-        const payeAmount = round2(totals.tax);
-        const ssnitPayable = round2(totals.ssnit + totals.employerTax);
-        const accruedNetPay = round2(totals.gross - totals.tax - totals.ssnit);
-        const totalDebit = round2(grossExpense + employerTax);
-        const totalCredit = round2(payeAmount + ssnitPayable + accruedNetPay);
-
-        accountingStore.addJournalEntry({
-          id: entryId,
-          entryNumber: `JE-PR-${periodNumber}`,
-          date: now,
-          reference: periodNumber,
-          description: `Payroll run — ${periodNumber} (${activeEmployees.length} employees)`,
-          totalDebit,
-          totalCredit,
-          currency: 'GHS',
-          status: 'Posted',
-          postedBy: 'system',
-          postedAt: now,
-          createdAt: now,
-          updatedAt: now,
-          sourceModule: 'payroll',
-          sourceTransactionId: period.id,
-          lines: [
-            {
-              id: `JL-${entryId}-salaries`,
-              journalEntryId: entryId,
-              accountCode: '5210', // Salaries and Wages
-              description: `Gross pay — ${periodNumber}`,
-              debit: grossExpense,
-              credit: 0,
-              currency: 'GHS',
-              reference: periodNumber,
-            },
-            ...(employerTax > 0 ? [{
-              id: `JL-${entryId}-employercost`,
-              journalEntryId: entryId,
-              accountCode: '5220', // Employee Benefits (employer-side statutory cost)
-              description: `Employer statutory contributions — ${periodNumber}`,
-              debit: employerTax,
-              credit: 0,
-              currency: 'GHS',
-              reference: periodNumber,
-            }] : []),
-            ...(payeAmount > 0 ? [{
-              id: `JL-${entryId}-paye`,
-              journalEntryId: entryId,
-              accountCode: '2210', // PAYE Payable
-              description: `PAYE withheld — ${periodNumber}`,
-              debit: 0,
-              credit: payeAmount,
-              currency: 'GHS',
-              reference: periodNumber,
-            }] : []),
-            ...(ssnitPayable > 0 ? [{
-              id: `JL-${entryId}-ssnit`,
-              journalEntryId: entryId,
-              accountCode: '2220', // SSNIT & Tier-1 Contributions Payable
-              description: `SSNIT due (employee + employer) — ${periodNumber}`,
-              debit: 0,
-              credit: ssnitPayable,
-              currency: 'GHS',
-              reference: periodNumber,
-            }] : []),
-            {
-              id: `JL-${entryId}-accrued`,
-              journalEntryId: entryId,
-              accountCode: '2300', // Accrued Expenses (net pay owed to employees)
-              description: `Net pay accrued — ${periodNumber}`,
-              debit: 0,
-              credit: accruedNetPay,
-              currency: 'GHS',
-              reference: periodNumber,
-            },
-          ],
-        });
-      } catch (e) {
-        console.error('[Payroll] Failed to post payroll journal entry:', e);
-        alert('Payroll was processed, but posting it to the general ledger failed. Please notify accounting to post it manually.');
-      }
-    }
-
-    alert(`Monthly payroll processed for ${activeEmployees.length} employee(s).`);
+    if (result.warning) alert(result.warning);
+    alert(`Monthly payroll processed for ${result.employeeCount} employee(s). It now needs approval (which posts it to the ledger), then paying, under HR → Payroll Management → Payroll Processing.`);
   };
 
   return (
@@ -579,42 +244,25 @@ export default function PayrollBuilderPanel() {
               ))}
             </Select>
             <Button className="bg-ghana-green text-white" onPress={handleLoadTemplate}>Load Template</Button>
-            <Button variant="flat" onPress={handleCreateDemoEmployee}>Create Demo Employee</Button>
-            <Button color="primary" onPress={handleRun} isDisabled={!configId}>Run Payroll</Button>
-            <Button variant="flat" onPress={saveConfig} isDisabled={!editableConfig}>Save Config</Button>
           </div>
         </div>
       </CardHeader>
       <CardBody>
         {!editableConfig && (
-          <div className="text-sm text-gray-600">Load a template, create a demo employee, then adjust PAYE brackets, SSNIT, earnings and deductions before running payroll.</div>
+          <div className="text-sm text-gray-600">Load a template, then adjust PAYE brackets, SSNIT, earnings and deductions before processing monthly payroll.</div>
         )}
         {editableConfig && (
           <div className="space-y-4">
-            {/* Employee Controls */}
+            {/* Rate effective dates */}
             <Card>
               <CardHeader>
-                <h5 className="font-medium">Employee & Run Controls</h5>
+                <h5 className="font-medium">Rate Effective Dates</h5>
               </CardHeader>
               <CardBody>
-                {(() => { const currency = (editableConfig?.currency || editableConfig?.countryCurrency || 'GHS'); return (
-                <>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                  <Input label={`Salary (${currency})`} type="number" value={String(employeeForm.salary)} onChange={(e) => setEmployeeForm({ ...employeeForm, salary: parseFloat(e.target.value || '0') })} variant="bordered" />
-                  <Input label={`Addl. Withholding (${currency})`} type="number" value={String(employeeForm.additionalWithholding)} onChange={(e) => setEmployeeForm({ ...employeeForm, additionalWithholding: parseFloat(e.target.value || '0') })} variant="bordered" />
-                  <Input label="Overtime Hours" type="number" value={String(employeeForm.overtimeHours)} onChange={(e) => setEmployeeForm({ ...employeeForm, overtimeHours: parseFloat(e.target.value || '0') })} variant="bordered" />
-                  <div className="grid grid-cols-2 gap-2">
-                    <Input label="Effective From" type="date" value={editableConfig?.effectiveFrom || ''} onChange={(e) => setEditableConfig((prev: any) => ({ ...prev, effectiveFrom: e.target.value }))} variant="bordered" />
-                    <Input label="Effective To" type="date" value={editableConfig?.effectiveTo || ''} onChange={(e) => setEditableConfig((prev: any) => ({ ...prev, effectiveTo: e.target.value }))} variant="bordered" />
-                  </div>
+                  <Input label="Effective From" type="date" value={editableConfig?.effectiveFrom || ''} onChange={(e) => setEditableConfig((prev: any) => ({ ...prev, effectiveFrom: e.target.value }))} variant="bordered" />
+                  <Input label="Effective To" type="date" value={editableConfig?.effectiveTo || ''} onChange={(e) => setEditableConfig((prev: any) => ({ ...prev, effectiveTo: e.target.value }))} variant="bordered" />
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
-                  <Input label={`Vehicle Benefit (${currency})`} type="number" value={String(employeeForm.vehicleBenefit)} onChange={(e) => setEmployeeForm({ ...employeeForm, vehicleBenefit: parseFloat(e.target.value || '0') })} variant="bordered" />
-                  <Input label={`Housing Benefit (${currency})`} type="number" value={String(employeeForm.housingBenefit)} onChange={(e) => setEmployeeForm({ ...employeeForm, housingBenefit: parseFloat(e.target.value || '0') })} variant="bordered" />
-                  <Input label={`Other Non-Cash Benefits (${currency})`} type="number" value={String(employeeForm.otherNonCashBenefits)} onChange={(e) => setEmployeeForm({ ...employeeForm, otherNonCashBenefits: parseFloat(e.target.value || '0') })} variant="bordered" />
-                </div>
-                </>
-                ); })()}
               </CardBody>
             </Card>
             {/* Monthly Payroll Run */}
@@ -630,9 +278,6 @@ export default function PayrollBuilderPanel() {
                     ))}
                   </Select>
                   <Input label="Year" type="number" value={String(runYear)} onChange={(e) => setRunYear(parseInt(e.target.value || String(new Date().getFullYear()), 10))} variant="bordered" />
-                  <div className="flex items-center gap-2">
-                    <Checkbox isSelected={markPaid} onValueChange={setMarkPaid}>Mark as Paid</Checkbox>
-                  </div>
                   <div className="md:col-span-3 flex justify-end">
                     <Button color="primary" onPress={handleRunMonthly}>Process Monthly Payroll</Button>
                   </div>
@@ -732,7 +377,6 @@ export default function PayrollBuilderPanel() {
                     </Table>
                     <div className="mt-2 flex gap-2 flex-wrap">
                       <Button size="sm" variant="flat" onPress={addBracket}>+ Add Bracket</Button>
-                      <Button size="sm" color="primary" onPress={handleRun}>Recalculate</Button>
                       <Button size="sm" variant="flat" onPress={resetFromTemplate}>Reset from template</Button>
                     </div>
                   </div>
@@ -776,7 +420,6 @@ export default function PayrollBuilderPanel() {
                         </div>
                       ))}
                     </div>
-                    <Button size="sm" color="primary" onPress={handleRun}>Recalculate</Button>
                   </div>
                 </CardBody>
               </Card>
@@ -845,141 +488,6 @@ export default function PayrollBuilderPanel() {
                   </div>
                 </CardBody>
               </Card>
-
-            {/* Results */}
-            <Divider />
-            {!result && (
-              <div className="text-sm text-gray-600">Click Run Payroll to see results.</div>
-            )}
-        {result && (
-            <>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="p-3 bg-gray-50 rounded">
-                <div className="text-xs text-gray-500">Gross</div>
-                <div className="text-xl font-semibold">{result.summary.gross.toFixed(2)}</div>
-              </div>
-              <div className="p-3 bg-gray-50 rounded">
-                <div className="text-xs text-gray-500">Taxable</div>
-                <div className="text-xl font-semibold">{result.summary.taxable.toFixed(2)}</div>
-              </div>
-              <div className="p-3 bg-gray-50 rounded">
-                <div className="text-xs text-gray-500">Employee Tax</div>
-                <div className="text-xl font-semibold text-red-600">{result.taxes.employee.toFixed(2)}</div>
-              </div>
-              <div className="p-3 bg-gray-50 rounded">
-                <div className="text-xs text-gray-500">Net Pay</div>
-                <div className="text-xl font-semibold text-green-600">{result.summary.net.toFixed(2)}</div>
-              </div>
-            </div>
-
-            {/* Consolidated summary aligned with HR columns */}
-            {(() => {
-              const currency = (editableConfig?.currency || editableConfig?.countryCurrency || 'GHS');
-              const findEarning = (name: string) => (result.earnings.items.find((x: any) => x.component?.name === name)?.amount || 0);
-              const basic = findEarning('Basic Salary');
-              const vehicle = findEarning('Vehicle Benefit');
-              const housing = findEarning('Housing Benefit');
-              const otherNonCash = findEarning('Other Non-Cash Benefits');
-              const allowances = result.earnings.items
-                .filter((x: any) => x.component?.name?.toLowerCase().includes('allowance'))
-                .reduce((sum: number, x: any) => sum + (x.amount || 0), 0);
-              const socialSecurity = result.taxes.items
-                .filter((t: any) => t.type === 'social' && String(t.name).toLowerCase().includes('ssnit'))
-                .reduce((sum: number, t: any) => sum + (t.amount || 0), 0);
-              // Tier 2 is a reporting split of the same SSNIT contribution above (see
-              // calculateTaxes' tier2Amount), not an extra deduction — the old code tried to
-              // match an item literally named 'pension', which never existed, so this was
-              // always 0. Tier 3 is a real, separate voluntary deduction (see the
-              // TIER3_EMP entry injected above) and now genuinely reflects what was withheld.
-              const tier2 = result.taxes.items
-                .filter((t: any) => t.type === 'social')
-                .reduce((sum: number, t: any) => sum + (t.tier2Amount || 0), 0);
-              const tier3 = (result.deductions.items || [])
-                .filter((d: any) => d.component?.code === 'TIER3_EMP')
-                .reduce((sum: number, d: any) => sum + (d.amount || 0), 0);
-              const incomeTax = result.taxes.items
-                .filter((t: any) => t.type === 'income')
-                .reduce((sum: number, t: any) => sum + (t.amount || 0), 0);
-              const fmt = (n: number) => new Intl.NumberFormat('en-GH', { style: 'currency', currency }).format(n || 0);
-              return (
-                <div className="mt-4">
-                  <h5 className="font-medium mb-2">Payroll Summary</h5>
-                  <Table aria-label="payroll-summary">
-                    <TableHeader>
-                      <TableColumn>BASIC SALARY</TableColumn>
-                      <TableColumn>Social Security</TableColumn>
-                      <TableColumn>TIER 2</TableColumn>
-                      <TableColumn>TIER 3</TableColumn>
-                      <TableColumn>ALLOWANCES</TableColumn>
-                      <TableColumn>VEHICLE BENEFIT</TableColumn>
-                      <TableColumn>HOUSING BENEFIT</TableColumn>
-                      <TableColumn>OTHER NON-CASH BENEFITS</TableColumn>
-                      <TableColumn>INCOME TAX</TableColumn>
-                      <TableColumn>NET PAY</TableColumn>
-                    </TableHeader>
-                    <TableBody>
-                      <TableRow>
-                        <TableCell>{fmt(basic)}</TableCell>
-                        <TableCell>{fmt(socialSecurity)}</TableCell>
-                        <TableCell>{fmt(tier2)}</TableCell>
-                        <TableCell>{fmt(tier3)}</TableCell>
-                        <TableCell>{fmt(allowances)}</TableCell>
-                        <TableCell>{fmt(vehicle)}</TableCell>
-                        <TableCell>{fmt(housing)}</TableCell>
-                        <TableCell>{fmt(otherNonCash)}</TableCell>
-                        <TableCell>{fmt(incomeTax)}</TableCell>
-                        <TableCell>{fmt(result.summary.net)}</TableCell>
-                      </TableRow>
-                    </TableBody>
-                  </Table>
-                </div>
-              );
-            })()}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <h5 className="font-medium mb-2">Earnings</h5>
-                <Table aria-label="earnings">
-                  <TableHeader>
-                    <TableColumn>NAME</TableColumn>
-                    <TableColumn>AMOUNT</TableColumn>
-                    <TableColumn>TAXABLE</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {result.earnings.items.map((e: any, idx: number) => (
-                      <TableRow key={idx}>
-                        <TableCell>{e.component.name}</TableCell>
-                        <TableCell>{e.amount.toFixed(2)}</TableCell>
-                        <TableCell><Chip size="sm" variant="flat" color={e.taxable ? 'success' : 'default'}>{e.taxable ? 'Yes' : 'No'}</Chip></TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-              <div>
-                <h5 className="font-medium mb-2">Taxes & Deductions</h5>
-                <Table aria-label="taxes">
-                  <TableHeader>
-                    <TableColumn>TYPE</TableColumn>
-                    <TableColumn>NAME</TableColumn>
-                    <TableColumn>EMPLOYEE</TableColumn>
-                    <TableColumn>EMPLOYER</TableColumn>
-                  </TableHeader>
-                  <TableBody>
-                    {result.taxes.items.map((t: any, idx: number) => (
-                      <TableRow key={idx}>
-                        <TableCell>{t.type}</TableCell>
-                        <TableCell>{t.name}</TableCell>
-                        <TableCell>{(t.amount || 0).toFixed(2)}</TableCell>
-                        <TableCell>{(t.employerAmount || 0).toFixed(2)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          </>
-        )}
         </div>
         )}
       </CardBody>

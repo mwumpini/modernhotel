@@ -27,6 +27,8 @@ import {
   Chip,
   Divider
 } from '@heroui/react';
+import { usePathname } from 'next/navigation';
+import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
 import CustomizeViewControl, { HideCardButton } from '../../../components/dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../../../lib/dashboard/useDashboardVisibility';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
@@ -104,6 +106,7 @@ const INVOICES_PAYMENTS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
 ];
 
 export default function InvoicesPaymentsPage() {
+  const pathname = usePathname();
   // frontOfficeStore.rooms/reservations/folios are empty during SSR (and on
   // the client's first paint, before the store's client-side hydration
   // effect runs) and only populate afterward — rendering derived fields like
@@ -952,6 +955,8 @@ export default function InvoicesPaymentsPage() {
       )}
       <div className="flex justify-between items-center">
         <div>
+          {/* Only on the standalone route (e.g. "View Folio →" from a reservation). When embedded as a tab in Front Office Operations, that page already renders its own back button. */}
+          {pathname?.startsWith('/guest-services/client-services/invoices-payments') && <FrontOfficeBackButton />}
           <h1 className="text-3xl font-bold text-gray-900">Invoices & Payments</h1>
           <p className="text-gray-600">Manage guest billing and payment processing</p>
         </div>

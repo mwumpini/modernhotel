@@ -21,8 +21,8 @@ export default function HRAnalyticsDashboard() {
     employeeStore.getEmployeeAnalytics(selectedPeriod), [selectedPeriod, employeeStore]
   );
 
-  const payrollAnalytics = useMemo(() => 
-    payrollStore.getPayrollAnalytics(selectedPeriod), [selectedPeriod, payrollStore]
+  const payrollAnalytics = useMemo(() =>
+    payrollStore.getPayrollAnalytics(), [payrollStore]
   );
 
   return (

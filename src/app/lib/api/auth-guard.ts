@@ -87,3 +87,21 @@ export async function requireAnyPermission(request: NextRequest, permissionIds: 
 
   return auth
 }
+
+/**
+ * True if some OTHER active user in the tenant holds a role that grants `permissionId`.
+ * Used for separation-of-duties rules (e.g. whoever processed payroll can't also approve it)
+ * that must not lock a one-person setup out of the action entirely.
+ */
+export async function anotherUserHoldsPermission(tenantId: string, excludeUserId: string | undefined, permissionId: string): Promise<boolean> {
+  await ensureDefaultRolesForTenant(tenantId)
+  const roles = await prisma.role.findMany({ where: { tenantId, isActive: true } })
+  const codes = roles
+    .filter((r) => (Array.isArray(r.permissions) ? (r.permissions as unknown[]) : []).some((p) => typeof p === 'string' && permissionGrants(p, permissionId)))
+    .map((r) => r.code)
+  if (codes.length === 0) return false
+  const others = await prisma.user.count({
+    where: { tenantId, isActive: true, role: { in: codes }, ...(excludeUserId ? { id: { not: excludeUserId } } : {}) },
+  })
+  return others > 0
+}

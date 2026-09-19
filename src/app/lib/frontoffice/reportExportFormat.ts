@@ -7,6 +7,8 @@
  * report's CSV and Excel output always match what's on screen.
  */
 
+import { openHtmlPrintWindow } from '../print/engine';
+
 export type ExportSection = {
   title: string;
   columns: string[];
@@ -152,7 +154,7 @@ export function sectionsToExcelHtml(title: string, sections: ExportSection[], or
  * avoid pulling them into the SSR bundle) already used for the Rooms table's
  * Download PDF in RoomConfigurationDashboard.tsx, applied to arbitrary
  * report sections instead of one fixed table. */
-export async function sectionsToPdfBlob(title: string, sections: ExportSection[], org?: ReportOrgInfo, generatedLabel?: string): Promise<Blob> {
+export async function sectionsToPdfBlob(title: string, sections: ExportSection[], org?: ReportOrgInfo, generatedLabel?: string, landscape = false): Promise<Blob> {
   const jsPDF = (await import('jspdf')).default;
   const autoTable = (await import('jspdf-autotable')).default;
   // Portrait's ~180mm usable width falls apart past ~7-8 columns at a
@@ -160,7 +162,7 @@ export async function sectionsToPdfBlob(title: string, sections: ExportSection[]
   // words wrap mid-word (e.g. "Number" -> "Numbe"/"r"). Wide reports like
   // Arrivals (13 columns) get landscape's ~270mm instead.
   const maxColumns = sections.reduce((max, s) => Math.max(max, s.columns.length), 0);
-  const wide = maxColumns > 7;
+  const wide = landscape || maxColumns > 7;
   const doc: any = new jsPDF(wide ? { orientation: 'landscape' } : undefined);
   let y = 15;
 
@@ -211,4 +213,66 @@ export async function sectionsToPdfBlob(title: string, sections: ExportSection[]
   }
 
   return doc.output('blob');
+}
+
+export type ExportFormat = 'excel' | 'pdf' | 'print';
+
+/** The same sections as a page laid out for paper, opened straight in the print dialog. */
+export function sectionsToPrintHtml(title: string, sections: ExportSection[], org?: ReportOrgInfo, generatedLabel?: string, landscape = true): string {
+  const tables = sections.map((section) => `
+    ${sections.length > 1 ? `<h3>${escapeHtml(section.title)}</h3>` : ''}
+    <table>
+      ${section.columns.length > 0 ? `<thead><tr>${section.columns.map((c) => `<th>${escapeHtml(c)}</th>`).join('')}</tr></thead>` : ''}
+      <tbody>
+        ${section.rows.length > 0
+          ? section.rows.map((row) => `<tr>${row.map((v) => `<td>${escapeHtml(v)}</td>`).join('')}</tr>`).join('')
+          : `<tr><td colspan="${Math.max(1, section.columns.length)}" style="text-align:center;color:#888;">No records</td></tr>`}
+      </tbody>
+    </table>`).join('');
+  return `<html><head><title>${escapeHtml(title)}</title>
+<style>
+  @page { size: A4 ${landscape ? 'landscape' : 'portrait'}; margin: 12mm; }
+  body { font-family: Arial, Helvetica, sans-serif; color: #111; font-size: 11px; }
+  h1 { font-size: 17px; margin: 0; }
+  h2 { font-size: 14px; margin: 10px 0 2px; }
+  h3 { font-size: 12px; margin: 12px 0 4px; }
+  .meta { color: #555; margin: 2px 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  th, td { border: 1px solid #999; padding: 4px 6px; text-align: left; vertical-align: top; }
+  th { background: #f2f2f2; }
+  tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+</style></head><body>
+  ${orgHtmlHeader(org)}
+  <h2>${escapeHtml(title)}</h2>
+  ${generatedLabel ? `<div class="meta">${escapeHtml(generatedLabel)}</div>` : ''}
+  ${tables}
+</body></html>`;
+}
+
+/** Builds the requested file from `sections` and saves it through the browser.
+ * `filename` has no extension — it's added from the format (.xls / .pdf). */
+export async function downloadSections(args: {
+  format: ExportFormat;
+  filename: string;
+  title: string;
+  sections: ExportSection[];
+  org?: ReportOrgInfo;
+  generatedLabel?: string;
+  landscape?: boolean;
+}): Promise<void> {
+  const { format, filename, title, sections, org, generatedLabel, landscape } = args;
+  if (format === 'print') {
+    openHtmlPrintWindow(sectionsToPrintHtml(title, sections, org, generatedLabel, landscape));
+    return;
+  }
+  const blob = format === 'excel'
+    ? new Blob([sectionsToExcelHtml(title, sections, org, generatedLabel)], { type: 'application/vnd.ms-excel' })
+    : await sectionsToPdfBlob(title, sections, org, generatedLabel, landscape);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${filename}.${format === 'excel' ? 'xls' : 'pdf'}`;
+  a.click();
+  URL.revokeObjectURL(url);
 }

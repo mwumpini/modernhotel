@@ -8,7 +8,7 @@ import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 
 export default function SalaryAnalyticsPanel() {
   const getAnalytics = usePayrollStore((s) => s.getPayrollAnalytics);
-  const a = getAnalytics('monthly');
+  const a = getAnalytics();
   const trainingEnrollments = useTrainingStore((s) => s.enrollments);
   const employees = useEmployeeStore((s) => s.employees);
   const getDepartment = useEmployeeStore((s) => s.getDepartment);

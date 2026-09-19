@@ -104,6 +104,7 @@ model Tenant {
   hrBenefitsPackages     HrBenefitsPackage[]
   hrEmployeeBenefits     HrEmployeeBenefits[]
   hrPerformanceReviews   HrPerformanceReview[]
+  hrPerformanceLogs  HrPerformanceLog[]
   hrEmployeeChanges      HrEmployeeChange[]
   hrOnboardingChecklists HrOnboardingChecklist[]
   guestServices          GuestService[]
@@ -1927,6 +1928,8 @@ model HrLeaveRequest {
   approvedBy       String?
   approvedAt       DateTime?
   rejectionReason  String?
+  coveringEmployeeId String? // relief officer covering while on leave
+  handoverNotes      String? // what the relief officer is taking over
   notes            String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -2162,6 +2165,35 @@ model HrPerformanceReview {
 
   @@index([tenantId, employeeId])
   @@map("hr_performance_reviews")
+}
+
+// Running record of things a staff member did well or badly, at any point in time.
+// Score is -5..-1 (concern) or 1..5 (commendation) — never 0. Entries are never deleted:
+// a wrong one is voided with a reason so the history stays auditable.
+model HrPerformanceLog {
+  id               String    @id @default(cuid())
+  tenantId         String
+  employeeId       String
+  date             DateTime  // when it happened
+  score            Int
+  category         String    @default("other") // guest_service|punctuality|teamwork|hygiene_safety|cash_handling|conduct|initiative|other
+  note             String    // what happened
+  attachments      Json?     // uploaded file URLs
+  recordedById     String?
+  recordedByName   String?
+  employeeResponse String?   // the staff member's side
+  respondedAt      DateTime?
+  status           String    @default("active") // active|voided
+  voidedReason     String?
+  voidedBy         String?
+  voidedAt         DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, employeeId, date])
+  @@map("hr_performance_logs")
 }
 
 model HrEmployeeChange {

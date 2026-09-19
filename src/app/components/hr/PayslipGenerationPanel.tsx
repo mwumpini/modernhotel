@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Button, Card, CardBody, CardHeader, Select, SelectItem } from '@heroui/react';
-import { usePayrollStore } from '@/app/lib/hr/payrollStore';
+import { usePayrollStore, payrollRecordLabels } from '@/app/lib/hr/payrollStore';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useSettingsStore } from '@/app/lib/settings/store';
 import { openPrintPreview } from '@/app/lib/print/engine';
@@ -19,6 +19,7 @@ export default function PayslipGenerationPanel() {
 
   const record = records.find((r) => r.id === recordId);
   const period = periods.find((p) => p.id === periodId);
+  const labels = record ? payrollRecordLabels(record) : undefined;
 
   const generate = () => {
     if (!record) return;
@@ -37,8 +38,8 @@ export default function PayslipGenerationPanel() {
       employee: {
         name: record.employeeName,
         employeeNumber: record.employeeNumber,
-        position: record.position,
-        department: record.department,
+        position: labels?.position ?? record.position,
+        department: labels?.department ?? record.department,
         payPeriod: monthLabel,
         dateOfJoining: employee?.hireDate ? new Date(employee.hireDate).toISOString() : undefined,
       },
@@ -94,8 +95,8 @@ export default function PayslipGenerationPanel() {
               <div className="text-lg font-semibold">Payslip</div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
                 <div>Employee: <span className="font-medium">{record.employeeName}</span></div>
-                <div>Department: {record.department}</div>
-                <div>Position: {record.position}</div>
+                <div>Department: {labels?.department}</div>
+                <div>Position: {labels?.position}</div>
                 <div>Payment Method: {record.paymentMethod}</div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-sm mt-2">

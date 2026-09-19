@@ -6,6 +6,9 @@ import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useEmployeeChangesStore } from '@/app/lib/hr/employeeChangesStore';
 import { usePayrollStore } from '@/app/lib/hr/payrollStore';
 import { useTrainingStore } from '@/app/lib/hr/trainingStore';
+import { usePerformanceLogStore } from '@/app/lib/hr/performanceLogStore';
+import { categoryLabel, fmtScore, lastDaysFrom, summarize } from '@/app/lib/hr/performanceLog';
+import ScoreChip from './ScoreChip';
 import { useComplianceStore } from '@/app/lib/compliance/store';
 import { useSettingsStore } from '@/app/lib/settings/store';
 import AttachmentUpload from '@/app/components/shared/AttachmentUpload';
@@ -23,6 +26,9 @@ export default function EmployeeRecordsPanel() {
   const payrollRecords = usePayrollStore((s) => s.payrollRecords);
   const trainingPrograms = useTrainingStore((s) => s.programs);
   const trainingEnrollments = useTrainingStore((s) => s.enrollments);
+  const performanceLog = usePerformanceLogStore((s) => s.entries);
+  const hydratePerformanceLog = usePerformanceLogStore((s) => s.hydrateFromApi);
+  React.useEffect(() => { void hydratePerformanceLog(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
   const taxRules = useComplianceStore((s) => s.taxRules);
 
   // Tier 1/2/3 are separate, independently-renameable rules (different institutions) — the
@@ -110,6 +116,7 @@ export default function EmployeeRecordsPanel() {
     ghanaCardNumber: '',
     contractEndDate: '',
     workPermitExpiryDate: '',
+    healthCertificateExpiryDate: '',
     nextOfKin: { name: '', relationship: '', phone: '', address: '' },
     probation: { startDate: '', endDate: '', status: 'active' },
     // Bank
@@ -176,6 +183,7 @@ export default function EmployeeRecordsPanel() {
     ghanaCardNumber: '',
     contractEndDate: '',
     workPermitExpiryDate: '',
+    healthCertificateExpiryDate: '',
     nextOfKin: { name: '', relationship: '', phone: '', address: '' },
     probation: { startDate: '', endDate: '', status: 'active' },
       bankAccount: { accountNumber: '', bankName: '', branchCode: '' },
@@ -237,6 +245,7 @@ export default function EmployeeRecordsPanel() {
       ghanaCardNumber: (e as any).ghanaCardNumber || '',
       contractEndDate: (e as any).contractEndDate ? new Date((e as any).contractEndDate).toISOString().slice(0, 10) : '',
       workPermitExpiryDate: (e as any).workPermitExpiryDate ? new Date((e as any).workPermitExpiryDate).toISOString().slice(0, 10) : '',
+      healthCertificateExpiryDate: (e as any).healthCertificateExpiryDate ? new Date((e as any).healthCertificateExpiryDate).toISOString().slice(0, 10) : '',
       nextOfKin: (e as any).nextOfKin || { name: '', relationship: '', phone: '', address: '' },
       probation: (e as any).probation
         ? {
@@ -377,6 +386,7 @@ export default function EmployeeRecordsPanel() {
         ghanaCardNumber: form.ghanaCardNumber || undefined,
         contractEndDate: form.contractEndDate ? new Date(form.contractEndDate) : undefined,
         workPermitExpiryDate: form.workPermitExpiryDate ? new Date(form.workPermitExpiryDate) : undefined,
+        healthCertificateExpiryDate: form.healthCertificateExpiryDate ? new Date(form.healthCertificateExpiryDate) : undefined,
         nextOfKin: (form.nextOfKin?.name ? form.nextOfKin : undefined),
         probation: (form.probation?.startDate && form.probation?.endDate)
           ? { startDate: new Date(form.probation.startDate), endDate: new Date(form.probation.endDate), status: form.probation.status }
@@ -472,6 +482,7 @@ export default function EmployeeRecordsPanel() {
         ghanaCardNumber: form.ghanaCardNumber || undefined,
         contractEndDate: form.contractEndDate ? new Date(form.contractEndDate) : undefined,
         workPermitExpiryDate: form.workPermitExpiryDate ? new Date(form.workPermitExpiryDate) : undefined,
+        healthCertificateExpiryDate: form.healthCertificateExpiryDate ? new Date(form.healthCertificateExpiryDate) : undefined,
         nextOfKin: (form.nextOfKin?.name ? form.nextOfKin : undefined),
         probation: (form.probation?.startDate && form.probation?.endDate)
           ? { startDate: new Date(form.probation.startDate), endDate: new Date(form.probation.endDate), status: form.probation.status }
@@ -534,6 +545,7 @@ export default function EmployeeRecordsPanel() {
     ghanaCardNumber: '',
     contractEndDate: '',
     workPermitExpiryDate: '',
+    healthCertificateExpiryDate: '',
     nextOfKin: { name: '', relationship: '', phone: '', address: '' },
     probation: { startDate: '', endDate: '', status: 'active' },
       bankAccount: { accountNumber: '', bankName: '', branchCode: '' },
@@ -1263,6 +1275,7 @@ export default function EmployeeRecordsPanel() {
                       {form.nationality && form.nationality !== 'Ghana' && (
                         <Input label="Work Permit Expiry" type="date" value={form.workPermitExpiryDate} onChange={(e) => setForm({ ...form, workPermitExpiryDate: e.target.value })} variant="bordered" />
                       )}
+                      <Input label="Health Certificate Expiry" type="date" value={form.healthCertificateExpiryDate} onChange={(e) => setForm({ ...form, healthCertificateExpiryDate: e.target.value })} variant="bordered" description="Food-handler / medical fitness certificate" />
                     </div>
                   </div>
                   )}
@@ -1342,6 +1355,36 @@ export default function EmployeeRecordsPanel() {
                           </div>
                         ) : (
                           <div className="text-xs text-gray-500">No training records for this employee.</div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {step === 3 && isEditing && editingId && (() => {
+                    const mine = performanceLog.filter((e) => e.employeeId === editingId && e.status === 'active');
+                    const last90 = summarize(mine, lastDaysFrom(90));
+                    const recent = [...mine].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5);
+                    return (
+                      <div>
+                        <div className="text-sm font-medium mb-2">Performance Log</div>
+                        <div className="flex gap-4 mb-3 text-sm">
+                          <div>Last 90 days net: <span className={`font-semibold ${last90.net > 0 ? 'text-green-700' : last90.net < 0 ? 'text-red-600' : ''}`}>{fmtScore(last90.net)}</span></div>
+                          <div>Good: <span className="font-semibold">{last90.positives}</span></div>
+                          <div>Concerns: <span className="font-semibold">{last90.negatives}</span></div>
+                        </div>
+                        {recent.length > 0 ? (
+                          <div className="space-y-1 text-xs text-gray-700">
+                            {recent.map((e) => (
+                              <div key={e.id} className="flex items-center gap-2 border-b border-gray-100 py-1">
+                                <ScoreChip score={e.score} />
+                                <span className="text-gray-500 w-24 shrink-0">{new Date(e.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</span>
+                                <span className="w-32 shrink-0">{categoryLabel(e.category)}</span>
+                                <span className="truncate" title={e.note}>{e.note}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500">Nothing recorded yet. Add entries under Employee Management → Performance Log.</div>
                         )}
                       </div>
                     );

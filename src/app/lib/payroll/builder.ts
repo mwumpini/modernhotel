@@ -34,13 +34,11 @@ function findGhanaTaxRule(appliesToTag: string) {
 export default class UniversalPayrollBuilder {
   payrollConfigs: Map<string, any>;
   employeeProfiles: Map<string, any>;
-  payrollRuns: Map<string, any>;
   countryTemplates: Map<string, any>;
 
   constructor() {
     this.payrollConfigs = new Map();
     this.employeeProfiles = new Map();
-    this.payrollRuns = new Map();
     this.countryTemplates = new Map();
     this.initializeDefaultTemplates();
   }
@@ -115,26 +113,6 @@ export default class UniversalPayrollBuilder {
       conditions: config.conditions || [],
       formula: config.formula || null,
       limits: config.limits || {},
-      metadata: { created: new Date().toISOString() }
-    };
-  }
-
-  createDeductionComponent(config: any) {
-    return {
-      type: 'deduction',
-      id: config.id || this.generateId('ded'),
-      name: config.name,
-      code: config.code,
-      category: config.category || 'statutory',
-      calculationType: config.calculationType || 'fixed',
-      amount: config.amount || 0,
-      rate: config.rate || 0,
-      base: config.base || 'gross',
-      taxable: config.taxable || false,
-      appliesTo: config.appliesTo || 'all',
-      conditions: config.conditions || [],
-      limits: config.limits || {},
-      priority: config.priority || 1,
       metadata: { created: new Date().toISOString() }
     };
   }
@@ -580,74 +558,6 @@ export default class UniversalPayrollBuilder {
 
   evaluateCustomCondition(_condition: any, _employee: any) { return true; }
 
-  createPayrollRun(configId: string, period: any, employeeIds: string[]) {
-    const payrollRun = { id: this.generateId('payrun'), configId, period, employeeIds, status: 'draft', results: [], totals: {}, metadata: { created: new Date().toISOString(), processed: null, completed: null } };
-    this.payrollRuns.set(payrollRun.id, payrollRun);
-    return payrollRun;
-  }
-
-  processPayrollRun(payrollRunId: string) {
-    const payrollRun = this.payrollRuns.get(payrollRunId);
-    if (!payrollRun) throw new Error('Payroll run not found');
-    payrollRun.status = 'processing';
-    payrollRun.results = [];
-    const grandTotal = { gross: 0, taxable: 0, net: 0, employeeTax: 0, employerTax: 0, employerCost: 0 } as any;
-    payrollRun.employeeIds.forEach((employeeId: string) => {
-      try {
-        const result = this.calculatePayroll(employeeId, payrollRun.configId, payrollRun.period);
-        payrollRun.results.push(result);
-        grandTotal.gross += result.summary.gross;
-        grandTotal.taxable += result.summary.taxable;
-        grandTotal.net += result.summary.net;
-        grandTotal.employeeTax += result.taxes.employee;
-        grandTotal.employerTax += result.taxes.employer;
-        grandTotal.employerCost += result.summary.employerCost;
-      } catch (e: any) {
-        payrollRun.results.push({ employeeId, error: e.message, status: 'failed' });
-      }
-    });
-    payrollRun.totals = grandTotal;
-    payrollRun.status = 'completed';
-    payrollRun.metadata.processed = new Date().toISOString();
-    return payrollRun;
-  }
-
-  generatePayrollReport(payrollRunId: string, format = 'summary') {
-    const payrollRun = this.payrollRuns.get(payrollRunId);
-    if (!payrollRun) throw new Error('Payroll run not found');
-    switch (format) {
-      case 'summary': return this.generateSummaryReport(payrollRun);
-      case 'detailed': return this.generateDetailedReport(payrollRun);
-      case 'tax': return this.generateTaxReport(payrollRun);
-      case 'bank': return this.generateBankTransferReport(payrollRun);
-      default: return this.generateSummaryReport(payrollRun);
-    }
-  }
-
-  generateSummaryReport(payrollRun: any) {
-    return { payrollRunId: payrollRun.id, period: payrollRun.period, processedDate: payrollRun.metadata.processed, employeeCount: payrollRun.results.filter((r: any) => !r.error).length, totals: payrollRun.totals, summaryByDepartment: this.groupByDepartment(payrollRun.results), status: payrollRun.status };
-  }
-
-  generateDetailedReport(payrollRun: any) { return payrollRun; }
-  generateTaxReport(payrollRun: any) { return { taxTotals: payrollRun.results.reduce((acc: any, r: any) => acc + (r?.taxes?.employee || 0), 0) }; }
-  generateBankTransferReport(payrollRun: any) { return payrollRun.results.map((r: any) => ({ account: r.employee?.bankInfo?.account, amount: r.summary?.net })); }
-
-  groupByDepartment(results: any[]) {
-    const departmentSummary: any = {};
-    results.forEach((result: any) => {
-      if (result.error) return;
-      const dept = result.employee.employment.department || 'Unassigned';
-      if (!departmentSummary[dept]) departmentSummary[dept] = { employeeCount: 0, gross: 0, net: 0, tax: 0 };
-      departmentSummary[dept].employeeCount++;
-      departmentSummary[dept].gross += result.summary.gross;
-      departmentSummary[dept].net += result.summary.net;
-      departmentSummary[dept].tax += result.taxes.employee;
-    });
-    return departmentSummary;
-  }
-
-  exportConfiguration(configId: string) { const config = this.payrollConfigs.get(configId); if (!config) throw new Error('Configuration not found'); return { ...config, exportDate: new Date().toISOString(), format: 'Universal Payroll Builder v1.0' }; }
-  importConfiguration(configData: any) { return this.createPayrollConfig(configData); }
   getCountryTemplate(countryCode: string) {
     const key = (countryCode ?? '').toString().toLowerCase();
     // Accept common aliases and ISO codes

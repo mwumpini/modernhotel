@@ -1,74 +1,102 @@
 import { create } from 'zustand';
 import { PayrollPeriod, PayrollRecord } from './models';
+import { useEmployeeStore } from './employeeStore';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+import { notifyError } from '../notifications/notify';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
   return { 'x-tenant-subdomain': sub, 'x-tenant-id': sub, 'Content-Type': 'application/json' };
 }
-function syncPayrollPeriodToApi(period: PayrollPeriod) {
-  if (typeof window === 'undefined') return;
-  fetch('/api/hr/payroll-periods', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(period) })
-    .catch((e) => console.warn('[HR] Failed to sync payroll period to server:', e));
+// New records store the department name / position title, but earlier runs stored the raw
+// departmentId / positionId — show the real label for both, falling back to the stored value.
+export function payrollRecordLabels(record: Pick<PayrollRecord, 'department' | 'position'>) {
+  const emp = useEmployeeStore.getState();
+  return {
+    department: emp.getDepartment(record.department)?.name ?? record.department,
+    position: emp.getPosition(record.position)?.title ?? record.position,
+  };
 }
-function syncPayrollRecordToApi(record: PayrollRecord) {
-  if (typeof window === 'undefined') return;
-  fetch('/api/hr/payroll-records', { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(record) })
-    .catch((e) => console.warn('[HR] Failed to sync payroll record to server:', e));
+// Optimistic locally, then confirmed by the server. Approving and paying are permission-gated
+// there, so if it refuses the screen must go back to what is really saved.
+//
+// Saves for the same item are sent one after another, in the order they were made. A payroll
+// run saves each period twice in quick succession (created, then given its totals); sent
+// side by side they could land out of order and leave the period stuck at its first, empty state.
+const saveQueues = new Map<string, Promise<unknown>>();
+function postToApi(url: string, body: { id?: string }, what: string): Promise<boolean> {
+  if (typeof window === 'undefined') return Promise.resolve(false);
+  const key = `${url}:${body.id ?? ''}`;
+  const previous = saveQueues.get(key) ?? Promise.resolve();
+  const next = previous.then(async () => {
+    try {
+      const res = await fetch(url, { method: 'POST', headers: hrTenantHeaders(), body: JSON.stringify(body) });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notifyError(data.error || `The ${what} could not be saved.`, 'Not saved');
+        await usePayrollStore.getState().hydrateFromApi();
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.warn(`[HR] Failed to sync ${what} to server:`, e);
+      notifyError(`Could not reach the server — the ${what} was not saved.`, 'Not saved');
+      await usePayrollStore.getState().hydrateFromApi();
+      return false;
+    }
+  });
+  saveQueues.set(key, next);
+  return next;
+}
+function syncPayrollPeriodToApi(period: PayrollPeriod) {
+  return postToApi('/api/hr/payroll-periods', period, 'payroll period');
+}
+// Records changed in the same moment (a run creating every employee's record, or a bank batch
+// being marked paid) are sent as ONE request.
+let pendingRecords: Array<{ record: PayrollRecord; resolve: (ok: boolean) => void }> = [];
+function flushRecords() {
+  const batch = pendingRecords;
+  pendingRecords = [];
+  if (batch.length === 0) return;
+  // A record belongs to a period in the database, so wait for any period save still in flight.
+  const periodSaves = [...saveQueues.entries()].filter(([k]) => k.startsWith('/api/hr/payroll-periods')).map(([, p]) => p);
+  void Promise.all(periodSaves)
+    .then(() => postToApi('/api/hr/payroll-records', { id: 'batch', records: batch.map((b) => b.record) } as any, 'payroll records'))
+    .then((ok) => batch.forEach((b) => b.resolve(ok)));
+}
+function syncPayrollRecordToApi(record: PayrollRecord): Promise<boolean> {
+  return new Promise((resolve) => {
+    pendingRecords.push({ record, resolve });
+    if (pendingRecords.length === 1) setTimeout(flushRecords, 0);
+  });
 }
 
 interface PayrollStore {
   payrollPeriods: PayrollPeriod[];
   payrollRecords: PayrollRecord[];
-  selectedPeriod: PayrollPeriod | null;
-  selectedRecord: PayrollRecord | null;
 
-  // Payroll Period Management
   createPayrollPeriod: (period: Omit<PayrollPeriod, 'id' | 'createdAt' | 'updatedAt'>) => PayrollPeriod;
   updatePayrollPeriod: (id: string, updates: Partial<PayrollPeriod>) => void;
-  deletePayrollPeriod: (id: string) => void;
-  getPayrollPeriod: (id: string) => PayrollPeriod | undefined;
-
-  // Payroll Record Management
   createPayrollRecord: (record: Omit<PayrollRecord, 'id' | 'createdAt' | 'updatedAt'>) => void;
-  updatePayrollRecord: (id: string, updates: Partial<PayrollRecord>) => void;
-  deletePayrollRecord: (id: string) => void;
-  getPayrollRecord: (id: string) => PayrollRecord | undefined;
 
-  // Payroll Processing
-  processPayroll: (periodId: string) => void;
-  approvePayroll: (periodId: string, approvedBy: string) => void;
-  markAsPaid: (recordId: string) => void;
+  /** Sign off a processed period. Needs the payroll-approval permission on the server, and
+   * resolves to whether the server actually accepted it — callers gate side effects on that. */
+  approvePeriod: (periodId: string, approver: string) => Promise<boolean>;
+  /** Record that these payroll records (one bank/MoMo/cash batch, or the whole month) were paid on
+   * `paidAt`. Once every record of an approved period is paid, the period itself becomes paid.
+   * Resolves to whether the server accepted all of it. */
+  markRecordsPaid: (periodId: string, recordIds: string[], paidAt: Date) => Promise<boolean>;
 
-  // Search and Filtering
-  getPayrollRecordsByPeriod: (periodId: string) => PayrollRecord[];
-  getPayrollRecordsByEmployee: (employeeId: string) => PayrollRecord[];
-  getPayrollRecordsByStatus: (status: PayrollRecord['status']) => PayrollRecord[];
-  getPayrollRecordsByDateRange: (startDate: Date, endDate: Date) => PayrollRecord[];
-
-  // Analytics
-  getPayrollAnalytics: (period: 'daily' | 'weekly' | 'monthly') => {
+  // Totals over all paid records.
+  getPayrollAnalytics: () => {
     totalPayroll: number;
     totalGrossPay: number;
-    totalNetPay: number;
     totalDeductions: number;
-    totalTaxes: number;
     averageSalary: number;
     payrollByDepartment: Record<string, number>;
-    payrollByStatus: Record<string, number>;
     deductionsBreakdown: Record<string, number>;
-    trends: Array<{
-      date: Date;
-      totalPayroll: number;
-      employeeCount: number;
-      averageSalary: number;
-    }>;
   };
-
-  // Selection
-  selectPayrollPeriod: (period: PayrollPeriod | null) => void;
-  selectPayrollRecord: (record: PayrollRecord | null) => void;
 
   hydrateFromApi: () => Promise<void>;
 }
@@ -81,10 +109,6 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
 
   payrollRecords: [],
 
-  selectedPeriod: null,
-  selectedRecord: null,
-
-  // Payroll Period Management
   createPayrollPeriod: (period) => {
     const newPeriod: PayrollPeriod = {
       ...period,
@@ -92,17 +116,9 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
       createdAt: new Date(),
       updatedAt: new Date()
     };
-    console.log('[HR][Payroll][Store] createPayrollPeriod: Creating new period', {
-      id: newPeriod.id,
-      periodNumber: newPeriod.periodNumber,
-      startDate: newPeriod.startDate,
-      endDate: newPeriod.endDate,
-      status: newPeriod.status
-    });
     set((state) => ({
       payrollPeriods: [...state.payrollPeriods, newPeriod]
     }));
-    console.log('[HR][Payroll][Store] createPayrollPeriod: Period created successfully', newPeriod.id);
     syncPayrollPeriodToApi(newPeriod);
     return newPeriod;
   },
@@ -119,17 +135,6 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
     if (updated) syncPayrollPeriodToApi(updated);
   },
 
-  deletePayrollPeriod: (id) => {
-    set((state) => ({
-      payrollPeriods: state.payrollPeriods.filter(period => period.id !== id)
-    }));
-  },
-
-  getPayrollPeriod: (id) => {
-    return get().payrollPeriods.find(period => period.id === id);
-  },
-
-  // Payroll Record Management
   createPayrollRecord: (record) => {
     const newRecord: PayrollRecord = {
       ...record,
@@ -143,156 +148,83 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
     syncPayrollRecordToApi(newRecord);
   },
 
-  updatePayrollRecord: (id, updates) => {
-    let updated: PayrollRecord | undefined;
-    set((state) => ({
-      payrollRecords: state.payrollRecords.map(record => {
-        if (record.id !== id) return record;
-        updated = { ...record, ...updates, updatedAt: new Date() };
-        return updated;
-      })
-    }));
-    if (updated) syncPayrollRecordToApi(updated);
-  },
-
-  deletePayrollRecord: (id) => {
-    set((state) => ({
-      payrollRecords: state.payrollRecords.filter(record => record.id !== id)
-    }));
-  },
-
-  getPayrollRecord: (id) => {
-    return get().payrollRecords.find(record => record.id === id);
-  },
-
-  // Payroll Processing
-  processPayroll: (periodId) => {
+  approvePeriod: (periodId, approver) => {
     let updated: PayrollPeriod | undefined;
     set((state) => ({
-      payrollPeriods: state.payrollPeriods.map(period => {
-        if (period.id !== periodId) return period;
-        updated = { ...period, status: 'processing', processedAt: new Date(), updatedAt: new Date() };
+      payrollPeriods: state.payrollPeriods.map((p) => {
+        if (p.id !== periodId || p.status === 'approved' || p.status === 'paid' || p.status === 'closed') return p;
+        updated = { ...p, status: 'approved', approvedBy: approver, approvedAt: new Date(), updatedAt: new Date() };
         return updated;
-      })
+      }),
     }));
-    if (updated) syncPayrollPeriodToApi(updated);
+    return updated ? syncPayrollPeriodToApi(updated) : Promise.resolve(false);
   },
 
-  approvePayroll: (periodId, approvedBy) => {
-    let updated: PayrollPeriod | undefined;
+  markRecordsPaid: async (periodId, recordIds, paidAt) => {
+    const period = get().payrollPeriods.find((p) => p.id === periodId);
+    // Payment follows approval — an unapproved run can't be paid.
+    if (!period || (period.status !== 'approved' && period.status !== 'paid')) return false;
+    const ids = new Set(recordIds);
+    const changed: PayrollRecord[] = [];
     set((state) => ({
-      payrollPeriods: state.payrollPeriods.map(period => {
-        if (period.id !== periodId) return period;
-        updated = { ...period, status: 'approved', approvedAt: new Date(), approvedBy, updatedAt: new Date() };
-        return updated;
-      })
+      payrollRecords: state.payrollRecords.map((r) => {
+        if (r.payrollPeriodId !== periodId || !ids.has(r.id) || r.status === 'paid' || r.status === 'failed') return r;
+        const next = { ...r, status: 'paid' as const, paidAt, updatedAt: new Date() };
+        changed.push(next);
+        return next;
+      }),
     }));
-    if (updated) syncPayrollPeriodToApi(updated);
+    if (changed.length === 0) return true;
+
+    // The period is paid once nothing in it is left unpaid.
+    const remaining = get().payrollRecords.filter((r) => r.payrollPeriodId === periodId && r.status !== 'paid' && r.status !== 'failed');
+    let updatedPeriod: PayrollPeriod | undefined;
+    if (remaining.length === 0 && period.status !== 'paid') {
+      set((state) => ({
+        payrollPeriods: state.payrollPeriods.map((p) => {
+          if (p.id !== periodId) return p;
+          updatedPeriod = { ...p, status: 'paid', updatedAt: new Date() };
+          return updatedPeriod;
+        }),
+      }));
+    }
+    // Records first, then the period, so the server sees them in the order they became true.
+    const results = await Promise.all(changed.map(syncPayrollRecordToApi));
+    const periodOk = updatedPeriod ? await syncPayrollPeriodToApi(updatedPeriod) : true;
+    return periodOk && results.every(Boolean);
   },
 
-  markAsPaid: (recordId) => {
-    let updated: PayrollRecord | undefined;
-    set((state) => ({
-      payrollRecords: state.payrollRecords.map(record => {
-        if (record.id !== recordId) return record;
-        updated = { ...record, status: 'paid', paidAt: new Date(), updatedAt: new Date() };
-        return updated;
-      })
-    }));
-    if (updated) syncPayrollRecordToApi(updated);
-  },
-
-  // Search and Filtering
-  getPayrollRecordsByPeriod: (periodId) => {
-    return get().payrollRecords.filter(record => record.payrollPeriodId === periodId);
-  },
-
-  getPayrollRecordsByEmployee: (employeeId) => {
-    return get().payrollRecords.filter(record => record.employeeId === employeeId);
-  },
-
-  getPayrollRecordsByStatus: (status) => {
-    return get().payrollRecords.filter(record => record.status === status);
-  },
-
-  getPayrollRecordsByDateRange: (startDate, endDate) => {
-    return get().payrollRecords.filter(record => {
-      if (!record.paidAt) return false;
-      const paymentDate = new Date(record.paidAt);
-      return paymentDate >= startDate && paymentDate <= endDate;
-    });
-  },
-
-  // Analytics
-  getPayrollAnalytics: (period) => {
+  getPayrollAnalytics: () => {
     const records = get().payrollRecords.filter(record => record.status === 'paid');
-    
+
     const totalPayroll = records.reduce((sum, record) => sum + record.netPay, 0);
     const totalGrossPay = records.reduce((sum, record) => sum + record.grossPay, 0);
-    const totalNetPay = records.reduce((sum, record) => sum + record.netPay, 0);
     const totalDeductions = records.reduce((sum, record) => {
       const recordDeductions = Object.values(record.deductions).reduce((a, b) => a + b, 0);
       return sum + recordDeductions;
     }, 0);
-    const totalTaxes = records.reduce((sum, record) => sum + record.deductions.tax, 0);
     const averageSalary = records.length > 0 ? totalGrossPay / records.length : 0;
-    
+
     const payrollByDepartment: Record<string, number> = {};
-    const payrollByStatus: Record<string, number> = {};
     const deductionsBreakdown: Record<string, number> = {};
-    
+
     records.forEach(record => {
-      payrollByDepartment[record.department] = (payrollByDepartment[record.department] || 0) + record.netPay;
-      payrollByStatus[record.status] = (payrollByStatus[record.status] || 0) + record.netPay;
-      
+      const { department } = payrollRecordLabels(record);
+      payrollByDepartment[department] = (payrollByDepartment[department] || 0) + record.netPay;
+
       Object.entries(record.deductions).forEach(([key, value]) => {
         deductionsBreakdown[key] = (deductionsBreakdown[key] || 0) + value;
       });
     });
-    
-    // Generate trends for the last 6 months
-    const trends = [];
-    const now = new Date();
-    for (let i = 5; i >= 0; i--) {
-      const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const monthRecords = records.filter(record => {
-        if (!record.paidAt) return false;
-        const recordDate = new Date(record.paidAt);
-        return recordDate.getMonth() === date.getMonth() && recordDate.getFullYear() === date.getFullYear();
-      });
-      
-      const monthTotal = monthRecords.reduce((sum, record) => sum + record.netPay, 0);
-      const monthAverage = monthRecords.length > 0 ? monthTotal / monthRecords.length : 0;
-      
-      trends.push({
-        date,
-        totalPayroll: monthTotal,
-        employeeCount: monthRecords.length,
-        averageSalary: monthAverage
-      });
-    }
-    
+
     return {
       totalPayroll,
       totalGrossPay,
-      totalNetPay,
       totalDeductions,
-      totalTaxes,
       averageSalary,
       payrollByDepartment,
-      payrollByStatus,
       deductionsBreakdown,
-      trends
     };
-  },
-
-  // Selection
-  selectPayrollPeriod: (period) => {
-    set({ selectedPeriod: period });
-  },
-
-  selectPayrollRecord: (record) => {
-    set({ selectedRecord: record });
   },
 
   hydrateFromApi: async () => {

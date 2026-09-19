@@ -96,19 +96,20 @@ function toStoreEmployee(row: any) {
     qualifications: details.qualifications || [],
     acknowledgments: details.acknowledgments || [],
     probation: details.probation,
+    healthCertificateExpiryDate: details.healthCertificateExpiryDate,
   }
 }
 
 function splitEmployeeData(e: Partial<Record<string, any>>) {
   const {
     taxWithholding, leaveEntitlements, governmentIds, bankAccount, emergencyContact,
-    nextOfKin, address, documents, qualifications, acknowledgments, probation,
+    nextOfKin, address, documents, qualifications, acknowledgments, probation, healthCertificateExpiryDate,
     ...columns
   } = e
 
   const details = stripUndefined({
     taxWithholding, leaveEntitlements, governmentIds, bankAccount, emergencyContact,
-    nextOfKin, address, documents, qualifications, acknowledgments, probation,
+    nextOfKin, address, documents, qualifications, acknowledgments, probation, healthCertificateExpiryDate,
   })
 
   const data: Record<string, any> = stripUndefined({
@@ -265,6 +266,11 @@ export async function listHrPayrollPeriods(tenantId: string) {
   return rows.map(toStorePayrollPeriod)
 }
 
+/** Saved status and processor of a payroll period, or undefined if it isn't saved yet. */
+export async function getHrPayrollPeriodStatus(tenantId: string, id: string) {
+  return (await prisma.hrPayrollPeriod.findFirst({ where: { id, tenantId }, select: { status: true, processedBy: true } })) ?? undefined
+}
+
 export async function upsertHrPayrollPeriod(tenantId: string, id: string, period: Record<string, any>) {
   const data = stripUndefined({
     ...period,
@@ -343,6 +349,8 @@ function toStoreLeaveRequest(row: any) {
     approvedBy: row.approvedBy ?? undefined,
     approvedAt: row.approvedAt ?? undefined,
     rejectionReason: row.rejectionReason ?? undefined,
+    coveringEmployeeId: row.coveringEmployeeId ?? undefined,
+    handoverNotes: row.handoverNotes ?? undefined,
     notes: row.notes ?? undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -691,6 +699,72 @@ export async function deleteHrPerformanceReview(tenantId: string, id: string) {
   if (!existing) return false
   await prisma.hrPerformanceReview.delete({ where: { id } })
   return true
+}
+
+// ---------------------------------------------------------------------------
+// Performance log — running good/bad entries per staff member
+// ---------------------------------------------------------------------------
+
+function toStorePerformanceLog(row: any) {
+  return {
+    id: row.id,
+    employeeId: row.employeeId,
+    date: row.date,
+    score: row.score,
+    category: row.category,
+    note: row.note,
+    attachments: (row.attachments as string[] | null) || [],
+    recordedById: row.recordedById ?? undefined,
+    recordedByName: row.recordedByName ?? undefined,
+    employeeResponse: row.employeeResponse ?? undefined,
+    respondedAt: row.respondedAt ?? undefined,
+    status: row.status,
+    voidedReason: row.voidedReason ?? undefined,
+    voidedBy: row.voidedBy ?? undefined,
+    voidedAt: row.voidedAt ?? undefined,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  }
+}
+
+export async function listHrPerformanceLogs(tenantId: string) {
+  const rows = await prisma.hrPerformanceLog.findMany({ where: { tenantId }, orderBy: { date: 'desc' } })
+  return rows.map(toStorePerformanceLog)
+}
+
+/** Entries are a record, not a draft: once created, what happened and its score can't be
+ * edited. Only the employee's response and voiding (with a reason) can change afterwards. */
+export async function upsertHrPerformanceLog(tenantId: string, id: string, log: Record<string, any>) {
+  const existing = await prisma.hrPerformanceLog.findFirst({ where: { id, tenantId } })
+  if (existing) {
+    const row = await prisma.hrPerformanceLog.update({
+      where: { id },
+      data: stripUndefined({
+        employeeResponse: log.employeeResponse,
+        respondedAt: toDate(log.respondedAt),
+        status: log.status,
+        voidedReason: log.voidedReason,
+        voidedBy: log.voidedBy,
+        voidedAt: toDate(log.voidedAt),
+      }),
+    })
+    return toStorePerformanceLog(row)
+  }
+  const row = await prisma.hrPerformanceLog.create({
+    data: {
+      id,
+      tenantId,
+      employeeId: log.employeeId,
+      date: toDate(log.date) || new Date(),
+      score: Number(log.score),
+      category: log.category || 'other',
+      note: String(log.note || ''),
+      attachments: Array.isArray(log.attachments) ? log.attachments : undefined,
+      recordedById: log.recordedById,
+      recordedByName: log.recordedByName,
+    },
+  })
+  return toStorePerformanceLog(row)
 }
 
 // ---------------------------------------------------------------------------

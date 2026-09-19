@@ -62,6 +62,8 @@ export interface Employee {
   contractEndDate?: Date;
   /** Non-Ghanaian staff work-permit renewal tracking — governmentIds.workPermit has no expiry today. */
   workPermitExpiryDate?: Date;
+  /** Food-handler / medical fitness certificate expiry — required for hotel staff who handle food. Stored in the details JSON, not its own column. */
+  healthCertificateExpiryDate?: Date | string;
   probation?: {
     startDate: Date;
     endDate: Date;
@@ -229,6 +231,10 @@ export interface LeaveRequest {
   approvedBy?: string;
   approvedAt?: Date;
   rejectionReason?: string;
+  /** Colleague taking over the applicant's duties while they are away. */
+  coveringEmployeeId?: string;
+  /** What the relief officer is taking over (tasks, contacts, anything pending). */
+  handoverNotes?: string;
   notes?: string;
   createdAt: Date;
   updatedAt: Date;
