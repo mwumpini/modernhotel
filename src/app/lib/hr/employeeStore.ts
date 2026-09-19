@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { Employee, Department, Position } from './models';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+import { newId } from './newId';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -113,7 +114,7 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
   addEmployee: (employee) => {
     const newEmployee: Employee = {
       ...employee,
-      id: Date.now().toString(),
+      id: newId(),
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -154,7 +155,7 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
   addDepartment: (department) => {
     const newDepartment: Department = {
       ...department,
-      id: Date.now().toString(),
+      id: newId(),
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -191,7 +192,7 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
   addPosition: (position) => {
     const newPosition: Position = {
       ...position,
-      id: Date.now().toString(),
+      id: newId(),
       createdAt: new Date(),
       updatedAt: new Date()
     };

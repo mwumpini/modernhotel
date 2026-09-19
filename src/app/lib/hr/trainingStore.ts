@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import type { TrainingProgram, TrainingRecord } from './models';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+import { newId } from './newId';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -53,7 +54,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   enrollments: [],
 
   addProgram: (p) => {
-    const prog: TrainingProgram = { ...p, id: `tp_${Date.now()}`, status: p.status || 'scheduled', createdAt: new Date(), updatedAt: new Date() } as TrainingProgram;
+    const prog: TrainingProgram = { ...p, id: newId('tp_'), status: p.status || 'scheduled', createdAt: new Date(), updatedAt: new Date() } as TrainingProgram;
     console.log('[HR][Training] addProgram', { title: prog.title });
     set((s) => ({ programs: [prog, ...s.programs] }));
     syncProgramToApi(prog);
@@ -76,7 +77,7 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   },
 
   enroll: (r) => {
-    const rec: TrainingRecord = { ...r, id: `tr_${Date.now()}`, status: r.status || 'enrolled', createdAt: new Date(), updatedAt: new Date() } as TrainingRecord;
+    const rec: TrainingRecord = { ...r, id: newId('tr_'), status: r.status || 'enrolled', createdAt: new Date(), updatedAt: new Date() } as TrainingRecord;
     console.log('[HR][Training] enroll', { employeeId: r.employeeId, program: r.trainingProgramId });
     set((s) => ({ enrollments: [rec, ...s.enrollments] }));
     syncRecordToApi(rec);

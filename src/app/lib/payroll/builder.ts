@@ -178,7 +178,12 @@ export default class UniversalPayrollBuilder {
       payrollResult.summary.taxable = round2(payrollResult.earnings.taxable - payrollResult.deductions.pretax);
       this.calculateTaxes(payrollResult, employee, config);
       this.calculatePostTaxDeductions(payrollResult, employee, config);
-      payrollResult.summary.net = round2(payrollResult.summary.taxable - payrollResult.taxes.employee - payrollResult.deductions.posttax);
+      // Net = everything earned, less pre-tax deductions, less income tax, less post-tax
+      // deductions. `summary.taxable` leaves out NON-taxable earnings (e.g. an allowance), so
+      // add those back — otherwise they are counted in gross but never paid out in net.
+      payrollResult.summary.net = round2(
+        payrollResult.summary.taxable + (payrollResult.earnings.total - payrollResult.earnings.taxable) - payrollResult.taxes.employee - payrollResult.deductions.posttax,
+      );
       this.calculateEmployerCosts(payrollResult, employee, config);
       payrollResult.summary.gross = round2(payrollResult.summary.gross);
       payrollResult.summary.employerCost = round2(payrollResult.summary.employerCost);

@@ -5,6 +5,7 @@ import type { Attendance, LeaveRequest } from './models';
 import { useEmployeeStore } from './employeeStore';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+import { newId } from './newId';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -109,7 +110,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
   requestLeave: (req) => {
     const newReq: LeaveRequest = {
       ...req,
-      id: `lr_${Date.now()}`,
+      id: newId('lr_'),
       status: req.status || 'pending',
       requestedBy: req.requestedBy || req.employeeId,
       requestedAt: new Date(),
@@ -184,7 +185,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
 
   clockIn: (employeeId, date = new Date(), when = new Date(), notes) => {
     const rec: Attendance = {
-      id: `att_${Date.now()}`,
+      id: newId('att_'),
       employeeId,
       date,
       checkInTime: when,
@@ -266,7 +267,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
     const end = endTime.getTime() > startTime.getTime() ? endTime : new Date(endTime.getTime() + 24 * 60 * 60 * 1000);
     const hours = Math.max(0, (end.getTime() - startTime.getTime()) / (1000 * 60 * 60));
     const rec: Attendance = {
-      id: `att_${Date.now()}`,
+      id: newId('att_'),
       employeeId,
       date,
       checkInTime: startTime,
@@ -302,7 +303,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
   },
 
   scheduleShift: (shift) => {
-    const s: Shift = { ...shift, id: `sh_${Date.now()}` };
+    const s: Shift = { ...shift, id: newId('sh_') };
     console.log('[HR][Shift] schedule', s);
     set((state) => ({ shifts: [s, ...state.shifts] }));
     syncShiftToApi(s);

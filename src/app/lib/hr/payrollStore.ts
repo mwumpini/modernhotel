@@ -4,6 +4,7 @@ import { useEmployeeStore } from './employeeStore';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
 import { notifyError } from '../notifications/notify';
+import { newId } from './newId';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -79,6 +80,10 @@ interface PayrollStore {
   createPayrollPeriod: (period: Omit<PayrollPeriod, 'id' | 'createdAt' | 'updatedAt'>) => PayrollPeriod;
   updatePayrollPeriod: (id: string, updates: Partial<PayrollPeriod>) => void;
   createPayrollRecord: (record: Omit<PayrollRecord, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  updatePayrollRecord: (id: string, updates: Partial<PayrollRecord>) => void;
+  /** Removes a month that has not been approved yet (and its records, ledger draft and filing
+   * hints, on the server). Resolves to whether the server did it. */
+  deletePayrollPeriod: (id: string) => Promise<boolean>;
 
   /** Sign off a processed period. Needs the payroll-approval permission on the server, and
    * resolves to whether the server actually accepted it — callers gate side effects on that. */
@@ -112,7 +117,7 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
   createPayrollPeriod: (period) => {
     const newPeriod: PayrollPeriod = {
       ...period,
-      id: Date.now().toString(),
+      id: newId(),
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -138,7 +143,7 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
   createPayrollRecord: (record) => {
     const newRecord: PayrollRecord = {
       ...record,
-      id: Date.now().toString(),
+      id: newId(),
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -146,6 +151,40 @@ export const usePayrollStore = create<PayrollStore>((set, get) => ({
       payrollRecords: [...state.payrollRecords, newRecord]
     }));
     syncPayrollRecordToApi(newRecord);
+  },
+
+  updatePayrollRecord: (id, updates) => {
+    let updated: PayrollRecord | undefined;
+    set((state) => ({
+      payrollRecords: state.payrollRecords.map((r) => {
+        if (r.id !== id) return r;
+        updated = { ...r, ...updates, updatedAt: new Date() };
+        return updated;
+      }),
+    }));
+    if (updated) void syncPayrollRecordToApi(updated);
+  },
+
+  deletePayrollPeriod: async (id) => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const res = await fetch(`/api/hr/payroll-periods?id=${encodeURIComponent(id)}`, { method: 'DELETE', headers: hrTenantHeaders() });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        notifyError(data.error || 'The payroll month could not be deleted.', 'Not deleted');
+        await get().hydrateFromApi();
+        return false;
+      }
+      set((state) => ({
+        payrollPeriods: state.payrollPeriods.filter((p) => p.id !== id),
+        payrollRecords: state.payrollRecords.filter((r) => r.payrollPeriodId !== id),
+      }));
+      return true;
+    } catch (e) {
+      console.warn('[HR] Failed to delete payroll period:', e);
+      notifyError('Could not reach the server — the month was not deleted.', 'Not deleted');
+      return false;
+    }
   },
 
   approvePeriod: (periodId, approver) => {

@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import type { BenefitsPackage, EmployeeBenefits } from './models';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+import { newId } from './newId';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -60,7 +61,7 @@ export const useBenefitsStore = create<BenefitsState>((set, get) => ({
   addPackage: (pkg) => {
     const newPkg: BenefitsPackage = {
       ...pkg,
-      id: `bp_${Date.now()}`,
+      id: newId('bp_'),
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -93,7 +94,7 @@ export const useBenefitsStore = create<BenefitsState>((set, get) => ({
   enrollEmployee: (enrollment) => {
     const newEn: EmployeeBenefits = {
       ...enrollment,
-      id: `en_${Date.now()}`,
+      id: newId('en_'),
       createdAt: new Date(),
       updatedAt: new Date()
     };

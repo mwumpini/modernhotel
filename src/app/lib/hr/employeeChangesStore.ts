@@ -3,6 +3,7 @@
 import { create } from 'zustand';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+import { newId } from './newId';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -53,7 +54,7 @@ export const useEmployeeChangesStore = create<EmployeeChangesState>((set, get) =
   changes: [],
 
   logChange: (change) => {
-    const entry: EmployeeChange = { ...change, id: `chg_${Date.now()}` };
+    const entry: EmployeeChange = { ...change, id: newId('chg_') };
     console.log('[HR][ChangeLog] logChange', entry);
     set((state) => ({ changes: [entry, ...state.changes] }));
     syncChangeToApi(entry);

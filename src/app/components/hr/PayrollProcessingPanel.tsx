@@ -13,7 +13,7 @@ import { useCurrentUserName } from '@/app/lib/auth/useCurrentUserName';
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
 import UniversalPayrollBuilder from '@/app/lib/payroll/builder';
-import { prepareBuilderForRun, runMonthlyPayroll } from '@/app/lib/payroll/monthlyRun';
+import { approvedOvertimeFor, buildPayrollJournal, monthYearOf, prepareBuilderForRun, readAdjustments, readEmployerContribution, recalculateStaffLine, runMonthlyPayroll } from '@/app/lib/payroll/monthlyRun';
 import { notifyError, notifySuccess } from '@/app/lib/notifications/notify';
 import ExportButtons from '@/app/components/ExportButtons';
 import type { PayrollPeriod, PayrollRecord } from '@/app/lib/hr/models';
@@ -64,6 +64,8 @@ export default function PayrollProcessingPanel() {
   const payrollPeriods = usePayrollStore((s) => s.payrollPeriods);
   const approvePeriod = usePayrollStore((s) => s.approvePeriod);
   const markRecordsPaid = usePayrollStore((s) => s.markRecordsPaid);
+  const deletePayrollPeriod = usePayrollStore((s) => s.deletePayrollPeriod);
+  const canProcessPayroll = useSettingsStore((s) => s.hasPermission('hr.process-payroll'));
   const canApprovePayroll = useSettingsStore((s) => s.hasPermission('hr.approve-payroll'));
   const currentUserName = useCurrentUserName();
   // Each tab has its own month. '' means "the default": Staff Payroll opens on the first month
@@ -79,6 +81,11 @@ export default function PayrollProcessingPanel() {
   const [prepMonth, setPrepMonth] = React.useState<number>(new Date().getMonth() + 1);
   const [prepYear, setPrepYear] = React.useState<number>(new Date().getFullYear());
   const [prepError, setPrepError] = React.useState('');
+  const [deleteOpen, setDeleteOpen] = React.useState(false);
+  // The staff line being edited, and its form (kept as text so a field can be cleared while typing).
+  const [editRow, setEditRow] = React.useState<any | null>(null);
+  const [editForm, setEditForm] = React.useState({ allowances: '', overtimeHours: '', bonus: '', otherDeduction: '', reason: '' });
+  const [editError, setEditError] = React.useState('');
   const taxRules = useComplianceStore((s) => s.taxRules);
   const hotelName = useSettingsStore((s) => s.hotelSettings.hotelName) || 'Hotel';
   const exportFile = useSectionExport();
@@ -443,7 +450,10 @@ export default function PayrollProcessingPanel() {
                   ...shownColumns.map((c) => <TableCell key={c.key}>{c.render ? c.render(r) : c.value(r)}</TableCell>),
                   ...(showActions ? [(
                     <TableCell key="actions">
-                      <Button size="sm" variant="flat" onPress={() => setDetailRow({ ...r, month: label })}>View</Button>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="flat" onPress={() => setDetailRow({ ...r, month: label })}>View</Button>
+                        {p && p.id === workPeriod?.id && canEditLines && r.record && <Button size="sm" variant="flat" color="primary" onPress={() => openEdit(r)}>Edit</Button>}
+                      </div>
                     </TableCell>
                   )] : []),
                 ]}
@@ -549,7 +559,13 @@ export default function PayrollProcessingPanel() {
     const approved = await approvePeriod(p.id, currentUserName);
     if (!approved) return;
     try {
-      await useAccountingStore.getState().postJournalEntry(`JE-PAYROLL-${p.id}`);
+      const accounting = useAccountingStore.getState();
+      const jeId = `JE-PAYROLL-${p.id}`;
+      // The entry is built now, from the figures as approved, so any edits are in it. A month
+      // prepared before this change already has its draft entry saved; post that one instead.
+      const entry = readEmployerContribution(p) !== undefined ? buildPayrollJournal(p, payrollRecords.filter((r) => r.payrollPeriodId === p.id)) : undefined;
+      if (entry) accounting.addJournalEntry(entry);
+      await accounting.postJournalEntry(jeId);
       notifySuccess(`${periodMonth(p)} payroll approved and posted to the ledger — pay it from Payment Advice.`, 'Payroll approved');
     } catch (e) {
       console.warn('[Payroll] Ledger post failed after approval:', e);
@@ -559,6 +575,55 @@ export default function PayrollProcessingPanel() {
     setAdviceKey(p.id);
     setActiveTab('advice');
   };
+  const doDelete = async () => {
+    if (!workPeriod) return;
+    const p = workPeriod;
+    setDeleteOpen(false);
+    const ok = await deletePayrollPeriod(p.id);
+    if (!ok) return;
+    useAccountingStore.getState().deleteJournalEntry(`JE-PAYROLL-${p.id}`); // drop any stale draft held in memory
+    setWorkKey('');
+    notifySuccess(`${periodMonth(p)} payroll deleted — you can prepare it again.`, 'Payroll deleted');
+  };
+
+  const openEdit = (r: Row) => {
+    if (!workPeriod || !r.record) return;
+    const my = monthYearOf(workPeriod);
+    const adj = readAdjustments(r.record.notes);
+    setEditForm({
+      allowances: String(adj.allowances ?? r.record.allowances ?? 0),
+      overtimeHours: String(adj.overtimeHours ?? (my ? approvedOvertimeFor(r.record.employeeId, my.month, my.year) : 0)),
+      bonus: String(adj.bonus ?? r.record.bonuses ?? 0),
+      otherDeduction: String(adj.otherDeduction ?? 0),
+      reason: '',
+    });
+    setEditError('');
+    setEditRow(r);
+  };
+  const doEditSave = () => {
+    if (!workPeriod || !editRow?.record) return;
+    const num = (v: string) => (v.trim() === '' ? 0 : Number(v));
+    const values = { allowances: num(editForm.allowances), overtimeHours: num(editForm.overtimeHours), bonus: num(editForm.bonus), otherDeduction: num(editForm.otherDeduction) };
+    if (Object.values(values).some((v) => !Number.isFinite(v) || v < 0)) { setEditError('Amounts and hours must be numbers, zero or more.'); return; }
+    if (!editForm.reason.trim()) { setEditError('Say why the line is being changed — it is kept with the record.'); return; }
+    try {
+      const builder = new UniversalPayrollBuilder();
+      const country = useComplianceStore.getState().country;
+      const runtimeId = prepareBuilderForRun(builder, country);
+      const result = recalculateStaffLine({
+        builder, runtimeId, period: workPeriod, record: editRow.record, employee: empById.get(editRow.record.employeeId),
+        adjustments: { ...values, reason: editForm.reason.trim(), editedBy: currentUserName }, complianceCountry: country,
+      });
+      if (!result.ok) { setEditError(result.error); return; }
+      setEditRow(null);
+      notifySuccess(`${editRow.name}: net pay ${fmtCurrency(result.before)} → ${fmtCurrency(result.after)}`, 'Line recalculated');
+    } catch (e: any) {
+      console.error('[Payroll] Edit failed', e);
+      setEditError(e?.message || 'Could not recalculate this line.');
+    }
+  };
+  const canEditLines = !!workPeriod && canProcessPayroll;
+
   const processedByMe = !!workPeriod?.processedBy && workPeriod.processedBy.trim().toLowerCase() === currentUserName.trim().toLowerCase();
 
   // ================= Payment Advice: pay the approved month, one bank/MoMo/cash batch at a time =================
@@ -635,9 +700,14 @@ export default function PayrollProcessingPanel() {
   const historyRows = buildRows(historyPeriod);
 
   const approveButton = workPeriod && (
-    <Tooltip content="Needs the payroll-approval permission" isDisabled={canApprovePayroll}>
-      <span><Button color="primary" isDisabled={!canApprovePayroll} onPress={() => setConfirm('approve')}>Approve payroll</Button></span>
-    </Tooltip>
+    <div className="flex items-center gap-2">
+      <Tooltip content="Needs the payroll-approval permission" isDisabled={canApprovePayroll}>
+        <span><Button color="primary" isDisabled={!canApprovePayroll} onPress={() => setConfirm('approve')}>Approve payroll</Button></span>
+      </Tooltip>
+      <Tooltip content="Needs the payroll-processing permission" isDisabled={canProcessPayroll}>
+        <span><Button color="danger" variant="flat" isDisabled={!canProcessPayroll} onPress={() => setDeleteOpen(true)}>Delete month</Button></span>
+      </Tooltip>
+    </div>
   );
 
   return (
@@ -955,6 +1025,10 @@ export default function PayrollProcessingPanel() {
                       ))}
                     </TableBody>
                   </Table>
+                  {(() => {
+                    const adj = readAdjustments(r.record?.notes);
+                    return adj.reason ? <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-900">Adjusted{adj.editedBy ? ` by ${adj.editedBy}` : ''}: {adj.reason}</div> : null;
+                  })()}
                   {r.pay === 'estimate' && (
                     <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-800">
                       These are estimates from today&apos;s rates, not a processed payroll. Prepare a month to get the actual figures.
@@ -1034,6 +1108,51 @@ export default function PayrollProcessingPanel() {
               <ModalFooter>
                 <Button variant="flat" onPress={() => setPayTarget(null)}>Cancel</Button>
                 <Button color="success" onPress={doPay} isDisabled={!payDate || payDate > todayKey() || payIds.length === 0}>Mark as paid</Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
+      {/* Edit one staff line (before approval) */}
+      <Modal isOpen={!!editRow} onOpenChange={(open) => { if (!open) setEditRow(null); }} size="lg">
+        <ModalContent>
+          {editRow && (
+            <>
+              <ModalHeader>Edit {editRow.name} — {workPeriod ? periodMonth(workPeriod) : ''}</ModalHeader>
+              <ModalBody>
+                <p className="text-sm text-gray-600">Saving recalculates this person&apos;s income tax and contributions with today&apos;s rates, then updates the month&apos;s totals. Currently: gross {fmtCurrency(editRow.gross)}, net <strong className="text-green-700">{fmtCurrency(editRow.net)}</strong>.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label="Allowances (GHS)" type="number" min={0} value={editForm.allowances} onChange={(e) => setEditForm({ ...editForm, allowances: e.target.value })} variant="bordered" />
+                  <Input label="Overtime hours" type="number" min={0} value={editForm.overtimeHours} onChange={(e) => setEditForm({ ...editForm, overtimeHours: e.target.value })} variant="bordered" description="Starts from the HR-approved hours" />
+                  <Input label="Bonus (GHS, taxable)" type="number" min={0} value={editForm.bonus} onChange={(e) => setEditForm({ ...editForm, bonus: e.target.value })} variant="bordered" />
+                  <Input label="Other deduction (GHS, after tax)" type="number" min={0} value={editForm.otherDeduction} onChange={(e) => setEditForm({ ...editForm, otherDeduction: e.target.value })} variant="bordered" description="Loan repayment, salary advance…" />
+                </div>
+                <Input label="Reason for the change" isRequired value={editForm.reason} onChange={(e) => setEditForm({ ...editForm, reason: e.target.value })} variant="bordered" />
+                {editError && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded p-2">{editError}</div>}
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="flat" onPress={() => setEditRow(null)}>Cancel</Button>
+                <Button color="primary" onPress={doEditSave}>Save and recalculate</Button>
+              </ModalFooter>
+            </>
+          )}
+        </ModalContent>
+      </Modal>
+
+      {/* Delete a prepared month */}
+      <Modal isOpen={deleteOpen} onOpenChange={setDeleteOpen} size="md">
+        <ModalContent>
+          {workPeriod && (
+            <>
+              <ModalHeader>Delete {periodMonth(workPeriod)} payroll?</ModalHeader>
+              <ModalBody>
+                <p className="text-sm">This removes the prepared payroll for {workRows.length} staff, its draft ledger entry and its PAYE/SSNIT filing hints. Nothing has been approved or paid, so no money records are affected.</p>
+                <p className="text-xs text-gray-600">You can prepare {periodMonth(workPeriod)} again afterwards. This can&apos;t be undone.</p>
+              </ModalBody>
+              <ModalFooter>
+                <Button variant="flat" onPress={() => setDeleteOpen(false)}>Cancel</Button>
+                <Button color="danger" onPress={doDelete}>Delete month</Button>
               </ModalFooter>
             </>
           )}

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
-import { listHrPayrollRecords, upsertHrPayrollRecord } from '@/app/lib/hr/repository'
+import { listHrPayrollRecords, upsertHrPayrollRecord, payrollRecordLockedReason } from '@/app/lib/hr/repository'
 
 async function resolveTenant(req: NextRequest) {
   const subdomain = getTenantFromRequest(req)
@@ -36,9 +36,14 @@ export async function POST(request: NextRequest) {
     const isBatch = Array.isArray(body.records)
     const items: Record<string, any>[] = isBatch ? body.records : [body]
     if (items.length === 0 || items.some((i) => !i?.id)) return NextResponse.json({ error: 'id is required' }, { status: 400 })
-    if (items.some((i) => i.status === 'paid')) {
-      const perm = await requirePermission(request, 'hr.approve-payroll')
-      if (!perm.ok) return perm.response
+    // Marking paid takes the approval permission; anything else (creating or correcting a
+    // record before approval) takes the processing permission.
+    const perm = await requirePermission(request, items.some((i) => i.status === 'paid') ? 'hr.approve-payroll' : 'hr.process-payroll')
+    if (!perm.ok) return perm.response
+    const periodStatuses = new Map<string, string | undefined>()
+    for (const item of items) {
+      const locked = await payrollRecordLockedReason(ctx.tenantId, item, periodStatuses)
+      if (locked) return NextResponse.json({ error: locked }, { status: 409 })
     }
     const saved = []
     for (const item of items) saved.push(await upsertHrPayrollRecord(ctx.tenantId, item.id, item))

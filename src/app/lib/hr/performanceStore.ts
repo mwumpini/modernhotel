@@ -4,6 +4,7 @@ import { create } from 'zustand';
 import type { PerformanceReview } from './models';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
+import { newId } from './newId';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -45,7 +46,7 @@ export const usePerformanceStore = create<PerformanceState>((set, get) => ({
   addReview: (review) => {
     const newReview: PerformanceReview = {
       ...review,
-      id: `pr_${Date.now()}`,
+      id: newId('pr_'),
       createdAt: new Date(),
       updatedAt: new Date()
     };

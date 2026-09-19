@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission, anotherUserHoldsPermission } from '@/app/lib/api/auth-guard'
-import { listHrPayrollPeriods, upsertHrPayrollPeriod, getHrPayrollPeriodStatus } from '@/app/lib/hr/repository'
+import { listHrPayrollPeriods, upsertHrPayrollPeriod, getHrPayrollPeriodStatus, deleteUnapprovedHrPayrollPeriod } from '@/app/lib/hr/repository'
 
 async function resolveTenant(req: NextRequest) {
   const subdomain = getTenantFromRequest(req)
@@ -53,6 +53,26 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ period })
   } catch (error) {
     console.error('[hr/payroll-periods][POST] error', error)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}
+
+// Only a month still awaiting approval can be removed — an approved one is a signed-off record.
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requirePermission(request, 'hr.process-payroll')
+    if (!auth.ok) return auth.response
+    const ctx = await resolveTenant(request)
+    if (!ctx) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 })
+    const id = new URL(request.url).searchParams.get('id')
+    if (!id) return NextResponse.json({ error: 'Missing required parameter: id' }, { status: 400 })
+    const result = await deleteUnapprovedHrPayrollPeriod(ctx.tenantId, id)
+    if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status })
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'HR_PAYROLL_PERIOD_DELETED', 'HrPayrollPeriod', id, undefined, { periodNumber: result.periodNumber, records: result.records }, request)
+    return NextResponse.json({ message: 'Deleted' })
+  } catch (error) {
+    console.error('[hr/payroll-periods][DELETE] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

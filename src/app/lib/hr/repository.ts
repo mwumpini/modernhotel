@@ -271,6 +271,46 @@ export async function getHrPayrollPeriodStatus(tenantId: string, id: string) {
   return (await prisma.hrPayrollPeriod.findFirst({ where: { id, tenantId }, select: { status: true, processedBy: true } })) ?? undefined
 }
 
+/** Deletes a payroll month that has not been approved, together with everything the run made for
+ * it: its records, the draft ledger entry (never a posted one) and the PAYE/SSNIT filing hints. */
+export async function deleteUnapprovedHrPayrollPeriod(tenantId: string, id: string) {
+  const period = await prisma.hrPayrollPeriod.findFirst({ where: { id, tenantId } })
+  if (!period) return { ok: false as const, status: 404, error: 'Payroll period not found' }
+  if (period.status !== 'processing' && period.status !== 'draft') {
+    return { ok: false as const, status: 409, error: 'Approved payroll can no longer be deleted' }
+  }
+  const records = await prisma.hrPayrollRecord.deleteMany({ where: { payrollPeriodId: id, tenantId } })
+  const jeId = `JE-PAYROLL-${id}`
+  const je = await prisma.journalEntry.findFirst({ where: { id: jeId, tenantId }, select: { status: true } })
+  if (je && je.status !== 'Posted') {
+    await prisma.journalEntryLine.deleteMany({ where: { journalEntryId: jeId } })
+    await prisma.journalEntry.deleteMany({ where: { id: jeId, tenantId } })
+  }
+  const ym = /(\d{4})-(\d{2})/.exec(period.periodNumber)
+  if (ym) {
+    await prisma.complianceReport.deleteMany({ where: { tenantId, period: `${ym[1]}-${ym[2]}`, notes: { startsWith: 'Auto from payroll run' } } })
+  }
+  await prisma.hrPayrollPeriod.delete({ where: { id } })
+  return { ok: true as const, periodNumber: period.periodNumber, records: records.count }
+}
+
+/** Approved, paid or closed payroll is a record of what was signed off: its amounts can't be
+ * rewritten. Returns why an incoming record update must be refused, or undefined if it's fine
+ * (a status change such as marking it paid doesn't touch the amounts). */
+export async function payrollRecordLockedReason(tenantId: string, item: Record<string, any>, periodStatusCache: Map<string, string | undefined>) {
+  const existing = await prisma.hrPayrollRecord.findFirst({ where: { id: item.id, tenantId }, select: { payrollPeriodId: true, grossPay: true, netPay: true } })
+  if (!existing) return undefined
+  if (!periodStatusCache.has(existing.payrollPeriodId)) {
+    const p = await prisma.hrPayrollPeriod.findFirst({ where: { id: existing.payrollPeriodId, tenantId }, select: { status: true } })
+    periodStatusCache.set(existing.payrollPeriodId, p?.status)
+  }
+  const status = periodStatusCache.get(existing.payrollPeriodId)
+  if (status !== 'approved' && status !== 'paid' && status !== 'closed') return undefined
+  const sameGross = item.grossPay === undefined || Number(item.grossPay) === Number(existing.grossPay)
+  const sameNet = item.netPay === undefined || Number(item.netPay) === Number(existing.netPay)
+  return sameGross && sameNet ? undefined : 'Approved payroll can no longer be changed.'
+}
+
 export async function upsertHrPayrollPeriod(tenantId: string, id: string, period: Record<string, any>) {
   const data = stripUndefined({
     ...period,

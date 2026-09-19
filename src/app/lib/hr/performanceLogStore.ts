@@ -5,6 +5,7 @@ import type { PerformanceLogEntry } from './performanceLog';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
 import { notifyError } from '../notifications/notify';
+import { newId } from './newId';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -76,7 +77,7 @@ export const usePerformanceLogStore = create<PerformanceLogState>((set, get) => 
     addEntry: (input) => {
       const entry: PerformanceLogEntry = {
         ...input,
-        id: `pl_${Date.now()}`,
+        id: newId('pl_'),
         date: new Date(input.date),
         status: 'active',
         createdAt: new Date(),
