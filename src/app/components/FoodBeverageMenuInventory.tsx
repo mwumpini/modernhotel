@@ -22,6 +22,7 @@ interface MenuItem {
   available: boolean;
   preparationTime: number;
   allergens: string[];
+  aliases: string[];
 }
 
 interface InventoryItem {
@@ -74,33 +75,42 @@ export default function FoodBeverageMenuInventory() {
           available: i.isAvailable,
           preparationTime: i.prepMinutes,
           allergens: i.allergens ? i.allergens.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
+          aliases: i.aliases ? i.aliases.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
         };
       })));
   };
   useEffect(() => { reloadMenu(); }, []);
 
-  const [menuForm, setMenuForm] = useState({ name: '', category: 'main-course', venue: 'restaurant', description: '', price: '0', cost: '0', prepTime: '15', allergens: '' });
+  const emptyMenuForm = { name: '', category: 'main-course', venue: 'restaurant', description: '', price: '0', cost: '0', prepTime: '15', allergens: '', aliases: '' };
+  const [menuForm, setMenuForm] = useState(emptyMenuForm);
+  const [editingMenuId, setEditingMenuId] = useState<string | null>(null);
+  const closeMenuModal = () => { setIsNewMenuItemModalOpen(false); setEditingMenuId(null); setMenuForm(emptyMenuForm); };
+  const openMenuEdit = (item: MenuItem) => {
+    setEditingMenuId(item.id);
+    setMenuForm({ name: item.name, category: item.category, venue: item.venue, description: item.description, price: String(item.price), cost: String(item.cost), prepTime: String(item.preparationTime), allergens: item.allergens.join(', '), aliases: item.aliases.join(', ') });
+    setIsNewMenuItemModalOpen(true);
+  };
   const submitMenuItem = async () => {
     if (!menuForm.name) return;
+    const fields = {
+      name: menuForm.name,
+      description: menuForm.description,
+      category: menuForm.category,
+      venue: menuForm.venue,
+      unitPrice: Number(menuForm.price) || 0,
+      costPrice: Number(menuForm.cost) || 0,
+      prepMinutes: Number(menuForm.prepTime) || 10,
+      allergens: menuForm.allergens,
+      aliases: menuForm.aliases.split(',').map((a) => a.trim()).filter(Boolean).join(','),
+    };
     const code = menuForm.name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 20) + '-' + Date.now().toString().slice(-4);
     const res = await fetch('/api/fb/menu', {
-      method: 'POST',
+      method: editingMenuId ? 'PATCH' : 'POST',
       headers: fbHeaders(),
-      body: JSON.stringify({
-        code,
-        name: menuForm.name,
-        description: menuForm.description,
-        category: menuForm.category,
-        venue: menuForm.venue,
-        unitPrice: Number(menuForm.price) || 0,
-        costPrice: Number(menuForm.cost) || 0,
-        prepMinutes: Number(menuForm.prepTime) || 10,
-        allergens: menuForm.allergens || undefined,
-      }),
+      body: JSON.stringify(editingMenuId ? { id: editingMenuId, ...fields } : { code, ...fields }),
     });
     if (res.ok) {
-      setMenuForm({ name: '', category: 'main-course', venue: 'restaurant', description: '', price: '0', cost: '0', prepTime: '15', allergens: '' });
-      setIsNewMenuItemModalOpen(false);
+      closeMenuModal();
       reloadMenu();
     }
   };
@@ -314,6 +324,9 @@ export default function FoodBeverageMenuInventory() {
                           </Chip>
                         </div>
                         <p className="text-sm text-gray-600 mb-3">{item.description}</p>
+                        {item.aliases.length > 0 && (
+                          <p className="text-xs text-gray-500 mb-3">Also known as: {item.aliases.join(', ')}</p>
+                        )}
                         
                         <div className="space-y-2 mb-3">
                           <div className="flex items-center justify-between text-sm">
@@ -348,6 +361,7 @@ export default function FoodBeverageMenuInventory() {
                         )}
 
                         <div className="flex gap-2">
+                          <Button size="sm" variant="flat" onPress={() => openMenuEdit(item)}>Edit</Button>
                           <Button size="sm" color="secondary" variant="flat" onPress={() => toggleMenuItemAvailability(item)}>
                             {item.available ? 'Mark Unavailable' : 'Mark Available'}
                           </Button>
@@ -473,9 +487,9 @@ export default function FoodBeverageMenuInventory() {
       </Card>
 
       {/* New Menu Item Modal */}
-      <Modal isOpen={isNewMenuItemModalOpen} onClose={() => setIsNewMenuItemModalOpen(false)} size="3xl">
+      <Modal isOpen={isNewMenuItemModalOpen} onClose={closeMenuModal} size="3xl">
         <ModalContent>
-          <ModalHeader>Add New Menu Item</ModalHeader>
+          <ModalHeader>{editingMenuId ? 'Edit Menu Item' : 'Add New Menu Item'}</ModalHeader>
           <ModalBody>
             <div className="space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -506,14 +520,15 @@ export default function FoodBeverageMenuInventory() {
               </div>
 
               <Input label="Allergens" placeholder="e.g., Peanuts, Fish, Gluten" value={menuForm.allergens} onChange={(e) => setMenuForm({ ...menuForm, allergens: e.target.value })} />
+              <Input label="Short names (aliases)" placeholder="e.g., SB, Star, Club" description="Separate with commas. Staff can type any of these in the POS search to find this item." value={menuForm.aliases} onChange={(e) => setMenuForm({ ...menuForm, aliases: e.target.value })} />
             </div>
           </ModalBody>
           <ModalFooter>
-            <Button color="danger" variant="light" onPress={() => setIsNewMenuItemModalOpen(false)}>
+            <Button color="danger" variant="light" onPress={closeMenuModal}>
               Cancel
             </Button>
             <Button color="primary" className="bg-ghana-green text-white" onPress={submitMenuItem} isDisabled={!menuForm.name}>
-              Add Menu Item
+              {editingMenuId ? 'Save Changes' : 'Add Menu Item'}
             </Button>
           </ModalFooter>
         </ModalContent>

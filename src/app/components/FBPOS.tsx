@@ -40,6 +40,7 @@ import { customerStore } from '../lib/fb/customerStore';
 import { fbTenantHeaders, normalizePosVenue, createFbOrder, patchFbOrderStatus, fetchFbOrderById, type FbOrderStatus } from '../lib/fb/api';
 import { computeSalesTaxTotal } from '../lib/tax/engine';
 import { useSettingsStore } from '../lib/settings/store';
+import { notifyError } from '../lib/notifications/notify';
 
 type CustomerType = 'In-house' | 'Walk-in';
 type VenueMode = 'Restaurant' | 'Bar';
@@ -55,6 +56,8 @@ interface MenuItem {
   price: number;
   category: string;
   route: 'kitchen' | 'bar';
+  aliases?: string[];
+  isPinned?: boolean;
 }
 
 interface CartItem extends MenuItem {
@@ -122,7 +125,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   ]);
 
   const paymentModal = useDisclosure();
-  const aliasModal = useDisclosure();
   const newItemModal = useDisclosure();
   const orderDetailModal = useDisclosure();
   const managerPinModal = useDisclosure();
@@ -288,6 +290,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           price: Number(it.unitPrice),
           category: it.category,
           venue: it.venue,
+          aliases: it.aliases ? it.aliases.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
+          isPinned: !!it.isPinned,
           route: (it.route || (it.category?.toLowerCase().includes('drink') || it.category?.toLowerCase().includes('bever') ? 'bar' : 'kitchen')) as 'kitchen' | 'bar',
         }));
         if (mapped.length > 0) {
@@ -329,21 +333,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     return () => { cancelled = true; };
   }, []);
 
-  type AliasesMap = Record<string, string[]>; // menuId -> aliases
-  const [aliases, setAliases] = useState<AliasesMap>(() => {
-    try {
-      const raw = localStorage.getItem('fbpos.aliases');
-      return raw ? JSON.parse(raw) : {};
-    } catch {
-      return {};
-    }
-  });
-
-  const saveAliases = (next: AliasesMap) => {
-    setAliases(next);
-    localStorage.setItem('fbpos.aliases', JSON.stringify(next));
-    trackEvent('FB.MenuAliasesUpdated', { count: Object.values(next).reduce((a, b) => a + b.length, 0) }, { sourceModule: 'F&B' });
-  };
+  // Short names are kept on the menu item (set in Menu & Inventory); this is menuId -> aliases.
+  const aliases = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    menu.forEach(m => { map[m.id] = m.aliases || []; });
+    return map;
+  }, [menu]);
 
   const aliasMatches = (m: MenuItem, q: string) => {
     const qs = q.trim().toLowerCase();
@@ -362,6 +357,35 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
 
   const categories = useMemo(() => Array.from(new Set(visibleMenu.map(m => m.category))), [visibleMenu]);
+
+  // Pinned items get a tab of their own, first in line, so frequent orders stay a tap away
+  // however long the menu grows. While a search is typed the results are shown across all tabs.
+  const PINNED_TAB = '__pinned';
+  const [menuTab, setMenuTab] = useState('');
+  const pinnedItems = useMemo(() => visibleMenu.filter(m => m.isPinned), [visibleMenu]);
+  const menuTabs = useMemo(() => [...(pinnedItems.length ? [PINNED_TAB] : []), ...categories], [pinnedItems, categories]);
+  const activeTab = menuTabs.includes(menuTab) ? menuTab : menuTabs[0];
+  const searching = search.trim() !== '';
+  const shownMenu = searching ? visibleMenu : activeTab === PINNED_TAB ? pinnedItems : visibleMenu.filter(m => m.category === activeTab);
+
+  // Pins are kept on the menu item itself, so every terminal shows the same ones.
+  const togglePin = async (item: MenuItem) => {
+    const setPinned = (pinned: boolean) => setMenu(prev => {
+      const next = prev.map(m => (m.id === item.id ? { ...m, isPinned: pinned } : m));
+      try { localStorage.setItem('fbpos.menu', JSON.stringify(next)); } catch {}
+      return next;
+    });
+    const pinned = !item.isPinned;
+    if (!searching) setMenuTab(activeTab); // stay on this tab, even when this is the first pin and the Pinned tab appears
+    setPinned(pinned);
+    try {
+      const res = await fetch('/api/fb/menu', { method: 'PATCH', headers: fbTenantHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ id: item.id, isPinned: pinned }) });
+      if (!res.ok) throw new Error(`Menu API ${res.status}`);
+    } catch {
+      setPinned(!pinned);
+      notifyError(`Could not ${pinned ? 'pin' : 'unpin'} ${item.name}. Please try again.`, 'Pin not saved');
+    }
+  };
   const menuIdToCategory = useMemo(() => {
     const map: Record<string, string> = {};
     menu.forEach(m => { map[m.id] = m.category; });
@@ -381,10 +405,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         case 'time':
           aValue = a.order.createdAt || '';
           bValue = b.order.createdAt || '';
-          break;
-        case 'itemCode':
-          aValue = (aliases[a.item.id]?.[0]) || a.item.id;
-          bValue = (aliases[b.item.id]?.[0]) || b.item.id;
           break;
         case 'itemName':
           aValue = a.item.name;
@@ -445,7 +465,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     });
     
     return sorted;
-  }, [orders, aliases, menuIdToCategory, waiters, sortKey, sortDirection]);
+  }, [orders, menuIdToCategory, waiters, sortKey, sortDirection]);
 
   const activityStatusOptions = useMemo(
     () => Array.from(new Set(sortedOrders.map(({ order, item }) => item.status || order.status))).sort(),
@@ -1055,7 +1075,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-2xl font-bold text-ghana-black">🛒 POS Terminal</h1>
           <div className="flex gap-2">
-            <Button variant="flat" className="bg-gray-100" onClick={aliasModal.onOpen}>Aliases</Button>
             <Button variant="flat" className="bg-gray-200" onClick={() => {
               try {
                 const evt = new CustomEvent('app.navigate', { detail: { section: 'fb-kitchen' } });
@@ -1184,7 +1203,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <SelectItem key={t}>{t}</SelectItem>
                   ))}
                 </Select>
-                <Input label="Search menu" value={search} onChange={(e) => setSearch(e.target.value)} />
                 <Input label="Order notes / allergies" value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} />
                 <div className="grid grid-cols-2 gap-2">
                   <Select label="Room Service" selectedKeys={[applyRoomServiceCharge ? 'yes' : 'no']} onSelectionChange={(k) => setApplyRoomServiceCharge(Array.from(k as Set<string>)[0] === 'yes')}>
@@ -1200,33 +1218,52 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             {/* Orders table removed per request; replaced by POS Activity Table at top of screen */}
           </div>
 
-          <div className="lg:col-span-2 space-y-4">
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="pb-2 flex items-center justify-between">
-                <h3 className="font-semibold text-ghana-black">Menu</h3>
-                {menuLoading && <span className="text-xs text-gray-400 animate-pulse">Loading from database…</span>}
-                {!menuLoading && menu.length === 0 && <span className="text-xs text-orange-500">No menu items found. Run accounting setup to seed.</span>}
+          <div className="lg:col-span-2 relative">
+            {/* Wide screens: the card is laid over the row and scrolls inside, so a long menu never makes it taller than Order Context. */}
+            <Card className="border-0 shadow-lg lg:absolute lg:inset-0">
+              <CardHeader className="pb-2 flex-col items-stretch gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <h3 className="font-semibold text-ghana-black">Menu</h3>
+                    {menuLoading && <span className="text-xs text-gray-400 animate-pulse">Loading from database…</span>}
+                    {!menuLoading && menu.length === 0 && <span className="text-xs text-orange-500">No menu items found. Run accounting setup to seed.</span>}
+                  </div>
+                  <Input aria-label="Search menu" size="sm" className="max-w-[16rem]" placeholder="Search menu" value={search} onValueChange={setSearch} isClearable onClear={() => setSearch('')} />
+                </div>
+                {!searching && menuTabs.length > 0 && (
+                  <Tabs aria-label="Menu categories" selectedKey={activeTab} onSelectionChange={(k) => setMenuTab(String(k))}>
+                    {menuTabs.map(t => <Tab key={t} title={t === PINNED_TAB ? `★ Pinned (${pinnedItems.length})` : t} />)}
+                  </Tabs>
+                )}
               </CardHeader>
-              <CardBody>
-                <Tabs aria-label="Menu categories">
-                  {categories.map(cat => (
-                    <Tab key={cat} title={cat}>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                        {visibleMenu.filter(m => m.category === cat).map(mi => (
-                          <button key={mi.id} className="p-3 rounded-lg border border-gray-200 bg-white text-left hover:bg-gray-50" onClick={() => addToCart(mi)}>
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="font-medium text-ghana-black">{mi.name}</div>
-                                <div className="text-xs text-gray-500 capitalize">{mi.route}</div>
-                              </div>
-                              <div className="text-sm font-semibold">₵{mi.price}</div>
+              <CardBody className="min-h-0 max-h-[70vh] lg:max-h-none">
+                {shownMenu.length === 0 ? (
+                  <p className="text-sm text-gray-500">{searching ? 'No items match your search.' : 'No items here yet.'}</p>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {shownMenu.map(mi => (
+                      <div key={mi.id} className="relative">
+                        <button className="w-full h-full p-3 rounded-lg border border-gray-200 bg-white text-left hover:bg-gray-50" onClick={() => addToCart(mi)}>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="font-medium text-ghana-black">{mi.name}</div>
+                              <div className="text-xs text-gray-500 capitalize">{mi.route}</div>
                             </div>
-                          </button>
-                        ))}
+                            <div className="text-sm font-semibold">₵{mi.price}</div>
+                          </div>
+                        </button>
+                        <button
+                          aria-label={mi.isPinned ? `Unpin ${mi.name}` : `Pin ${mi.name}`}
+                          title={mi.isPinned ? 'Unpin' : 'Pin to the top'}
+                          className={`absolute bottom-1 right-2 text-base leading-none ${mi.isPinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}
+                          onClick={() => togglePin(mi)}
+                        >
+                          {mi.isPinned ? '★' : '☆'}
+                        </button>
                       </div>
-                    </Tab>
-                  ))}
-                </Tabs>
+                    ))}
+                  </div>
+                )}
               </CardBody>
             </Card>
           </div>
@@ -1461,19 +1498,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       <TableColumn 
                         className="cursor-pointer select-none"
                         onClick={() => {
-                          if (sortKey === 'itemCode') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('itemCode');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        ITEM CODE {sortKey === 'itemCode' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
                           if (sortKey === 'itemName') {
                             setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
                           } else {
@@ -1634,7 +1658,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                         <TableRow key={`${o.id}-${it.id}`} onDoubleClick={() => openActivityModal(o, it)}>
                           <TableCell>{o.orderNumber || o.id}</TableCell>
                           <TableCell>{o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}</TableCell>
-                          <TableCell>{(aliases[it.id]?.[0]) || it.id}</TableCell>
                           <TableCell>{it.name}</TableCell>
                           <TableCell>{it.category || menuIdToCategory[it.id] || '-'}</TableCell>
                           <TableCell>{(it.status || o.status)}</TableCell>
@@ -2056,44 +2079,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       </Modal>
 
       {/* Split bill and tips modals removed */}
-
-      <Modal isOpen={aliasModal.isOpen} onClose={aliasModal.onClose} size="lg">
-        <ModalContent>
-          <ModalHeader className="text-ghana-black">Menu Short Names (Aliases)</ModalHeader>
-          <ModalBody>
-            <div className="space-y-3 max-h-[60vh] overflow-y-auto">
-              {menu.map(m => (
-                <div key={m.id} className="p-2 rounded-lg border border-gray-200">
-                  <div className="text-sm font-medium text-ghana-black">{m.name} <span className="text-xs text-gray-500">(₵{m.price})</span></div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {(aliases[m.id] || []).map((a, idx) => (
-                      <Chip key={idx} variant="flat" className="bg-ghana-green/10 text-ghana-green">
-                        {a}
-                        <button className="ml-2 text-xs" onClick={() => {
-                          const next = { ...aliases, [m.id]: (aliases[m.id] || []).filter(x => x !== a) };
-                          saveAliases(next);
-                        }}>✕</button>
-                      </Chip>
-                    ))}
-                    <Input className="w-48" size="sm" placeholder="Add alias and press Enter" onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        const val = (e.target as HTMLInputElement).value.trim();
-                        if (!val) return;
-                        const next = { ...aliases, [m.id]: Array.from(new Set([...(aliases[m.id] || []), val])) };
-                        saveAliases(next);
-                        (e.target as HTMLInputElement).value = '';
-                      }
-                    }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" className="bg-gray-200" onClick={aliasModal.onClose}>Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
 
       {/* Print Preview Modal */}
       <Modal isOpen={printPreviewModal.isOpen} onClose={() => { setPrintPreview(null); printPreviewModal.onClose(); }} size="lg">

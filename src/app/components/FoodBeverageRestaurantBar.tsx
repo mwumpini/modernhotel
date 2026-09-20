@@ -175,7 +175,7 @@ export default function FoodBeverageRestaurantBar() {
   };
   useEffect(() => { reloadMenu(); }, []);
 
-  const [menuForm, setMenuForm] = useState({ name: '', category: 'main-course', venue: 'restaurant', description: '', price: '0', prepTime: '15', allergens: '' });
+  const [menuForm, setMenuForm] = useState({ name: '', category: 'main-course', venue: 'restaurant', description: '', price: '0', prepTime: '15', allergens: '', aliases: '' });
   const submitMenuItem = async () => {
     if (!menuForm.name) return;
     const code = menuForm.name.toUpperCase().replace(/[^A-Z0-9]+/g, '-').slice(0, 20) + '-' + Date.now().toString().slice(-4);
@@ -192,10 +192,11 @@ export default function FoodBeverageRestaurantBar() {
         costPrice: 0,
         prepMinutes: Number(menuForm.prepTime) || 10,
         allergens: menuForm.allergens || undefined,
+        aliases: menuForm.aliases.split(',').map((a) => a.trim()).filter(Boolean).join(',') || undefined,
       }),
     });
     if (res.ok) {
-      setMenuForm({ name: '', category: 'main-course', venue: 'restaurant', description: '', price: '0', prepTime: '15', allergens: '' });
+      setMenuForm({ name: '', category: 'main-course', venue: 'restaurant', description: '', price: '0', prepTime: '15', allergens: '', aliases: '' });
       setIsNewMenuItemModalOpen(false);
       reloadMenu();
     }
@@ -343,7 +344,7 @@ export default function FoodBeverageRestaurantBar() {
           >
             <Tab key="pos-activity" title="📊 POS Activity Table">
               <div className="p-6">
-                <DepartmentActivityLog area="f&b" title="POS Activity Table" showCategory showAlias />
+                <DepartmentActivityLog area="f&b" title="POS Activity Table" showCategory />
               </div>
             </Tab>
 
@@ -654,6 +655,7 @@ export default function FoodBeverageRestaurantBar() {
               </div>
 
               <Input label="Allergens" placeholder="e.g., Peanuts, Fish, Gluten" value={menuForm.allergens} onChange={(e) => setMenuForm({ ...menuForm, allergens: e.target.value })} />
+              <Input label="Short names (aliases)" placeholder="e.g., SB, Star, Club" description="Separate with commas. Staff can type any of these in the POS search to find this item." value={menuForm.aliases} onChange={(e) => setMenuForm({ ...menuForm, aliases: e.target.value })} />
             </div>
           </ModalBody>
           <ModalFooter>

@@ -1181,6 +1181,8 @@ model FBMenuItem {
   glAccountCode String   @default("4200")
   isAvailable   Boolean  @default(true)
   allergens     String?
+  aliases       String?
+  isPinned      Boolean  @default(false)
   prepMinutes   Int      @default(10)
   sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())

@@ -8,12 +8,11 @@ interface Props {
 	 area: AuditArea;
 	 title?: string;
 	 showCategory?: boolean;
-	 showAlias?: boolean;
 }
 
 type SortKey = 'at' | 'action' | 'entity' | 'details';
 
-export default function DepartmentActivityLog({ area, title, showCategory, showAlias }: Props) {
+export default function DepartmentActivityLog({ area, title, showCategory }: Props) {
 	 const [rows, setRows] = React.useState(auditLogStore.byArea(area));
 	 const [search, setSearch] = React.useState('');
 	 const [action, setAction] = React.useState('');
@@ -78,12 +77,11 @@ export default function DepartmentActivityLog({ area, title, showCategory, showA
 			 { key: 'time', label: 'TIME' },
 			 { key: 'action', label: 'ACTION' },
 		 ];
-		 if (showAlias) base.push({ key: 'alias', label: 'ITEM CODE' });
 		 if (showCategory) base.push({ key: 'category', label: 'CATEGORY' });
 		 base.push({ key: 'entity', label: 'ENTITY' });
 		 base.push({ key: 'details', label: 'DETAILS' });
 		 return base as Array<{ key: string; label: string }>;
-	 }, [showAlias, showCategory]);
+	 }, [showCategory]);
 
 	 return (
 		 <Card className="border-0 shadow-lg">
@@ -150,8 +148,6 @@ export default function DepartmentActivityLog({ area, title, showCategory, showA
 												 return <TableCell>{new Date(item.at).toLocaleString()}</TableCell>;
 											 case 'action':
 												 return <TableCell>{item.action}</TableCell>;
-											 case 'alias':
-												 return <TableCell>{String((item.meta as any)?.alias ?? (item.meta as any)?.itemCode ?? '-')}</TableCell>;
 											 case 'category':
 												 return <TableCell>{String((item.meta as any)?.category ?? '-')}</TableCell>;
 											 case 'entity':
