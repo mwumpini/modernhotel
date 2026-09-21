@@ -957,7 +957,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     console.log(`[REPORTS] Generating daily flash report for ${date}`);
 
     const totalRooms = frontOfficeStore.rooms.length;
-    const occupiedRooms = frontOfficeStore.reservations.filter(r => wasInHouseDuring(r, date, date)).length;
+    const inHouse = frontOfficeStore.reservations.filter(r => wasInHouseDuring(r, date, date));
+    const occupiedRooms = inHouse.length;
+    // Headcount (adults + children), same as the Occupancy report — a room can hold more than one guest.
+    const guestsInHouse = inHouse.reduce((sum, r) => sum + (r.adults || 0) + (r.children || 0), 0);
 
     const arrivalReservations = frontOfficeStore.reservations.filter(r =>
       r.arrival === date && r.status !== 'cancelled' && r.status !== 'no-show'
@@ -1015,6 +1018,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       occupancy: {
         totalRooms,
         occupiedRooms,
+        guestsInHouse,
         occupancyRate: totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0,
         availableRooms: Math.max(0, totalRooms - occupiedRooms - (outOfOrderRooms ?? 0)),
         outOfOrderRooms

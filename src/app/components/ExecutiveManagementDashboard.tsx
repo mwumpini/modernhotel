@@ -11,6 +11,11 @@ import { useStockStore } from '../lib/inventory/stockStore';
 import { announcementStore } from '../lib/analytics/announcementStore';
 import { ordersStore } from '../lib/fb/ordersStore';
 import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
+import { useIncidentStore } from '../lib/security/incidentStore';
+import { usePatrolStore } from '../lib/security/patrolStore';
+import { fetchEventBookings } from '../lib/frontoffice/eventsApi';
+import { getZonedClockParts } from '../lib/frontoffice/propertyTime';
+import { resolvePropertyTimezone } from '../lib/frontoffice/propertyTimeClient';
 import { useAccountingStore } from '../lib/accounting/store';
 import { toRollupCoa } from '../lib/accounting/coaHierarchy';
 import { buildFinancialAccountTree } from '../lib/accounting/financialReportRollup';
@@ -40,6 +45,16 @@ const DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'notices', label: 'Executive Notices' },
 ];
 
+
+/** Today's date at the hotel, in the hotel's own timezone — not the browser's clock or UTC. */
+function propertyToday(): string {
+  return getZonedClockParts(new Date(), resolvePropertyTimezone()).date;
+}
+
+function addDays(isoDate: string, days: number): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
 
 function formatCurrency(amount: number | undefined) {
   if (!amount || Number.isNaN(amount)) return '₵0';
@@ -79,28 +94,28 @@ export default function ExecutiveManagementDashboard() {
   const [occupancyTrend, setOccupancyTrend] = React.useState<Array<{date: string; rate: number}>>([]);
   const [revenueSplit, setRevenueSplit] = React.useState<{room: number; fb: number; other: number; total: number}>({ room: 0, fb: 0, other: 0, total: 0 });
   const [selectedDate, setSelectedDate] = React.useState<string>('');
+  // Live store updates refresh whichever date is on screen, not just today.
+  const selectedDateRef = React.useRef('');
+  selectedDateRef.current = selectedDate;
   // Room counts for the selected date — kept separate from `occupancy` (which is
   // always "today") so CSV/PDF exports don't mix today's room counts with a
   // different selected date's revenue/ADR/arrivals figures.
   const [roomCounts, setRoomCounts] = React.useState<{ totalRooms: number; occupiedRooms: number; availableRooms: number }>({ totalRooms: 0, occupiedRooms: 0, availableRooms: 0 });
 
   // LIVE OPS SNAPSHOT
-  const [inHouse, setInHouse] = React.useState<number>(0);
-  const [arrivalsToday, setArrivalsToday] = React.useState<number>(0);
-  const [departuresToday, setDeparturesToday] = React.useState<number>(0);
+  const [guestsInHouse, setGuestsInHouse] = React.useState<number>(0);
+  const [awaitingArrival, setAwaitingArrival] = React.useState<number>(0);
+  const [awaitingDeparture, setAwaitingDeparture] = React.useState<number>(0);
+  const [overstays, setOverstays] = React.useState<number>(0);
   const [expectedOcc, setExpectedOcc] = React.useState<number>(0);
-  const [nextHourCheckins, setNextHourCheckins] = React.useState<number>(0);
-  const [nextHourCheckouts, setNextHourCheckouts] = React.useState<number>(0);
 
-  // SECURITY
-  const [incidentsToday, setIncidentsToday] = React.useState<number>(0);
-  const [securityRoundsComplete, setSecurityRoundsComplete] = React.useState<boolean>(true);
+  // HOUSEKEEPING SUMMARY — rooms by their real status
+  const [hk, setHk] = React.useState({ total: 0, ready: 0, occupied: 0, inProgress: 0, dirty: 0, outOfOrder: 0 });
 
-  // HOUSEKEEPING SUMMARY
-  const [hkCleanReadyPct, setHkCleanReadyPct] = React.useState<number>(0);
-  const [hkInProgressPct, setHkInProgressPct] = React.useState<number>(0);
-  const [hkDirtyPct, setHkDirtyPct] = React.useState<number>(0);
-  const [hkOooPct, setHkOooPct] = React.useState<number>(0);
+  // SECURITY and EVENTS come straight from their own stores / bookings
+  const incidents = useIncidentStore((st) => st.incidents);
+  const patrols = usePatrolStore((st) => st.patrols);
+  const [eventBookings, setEventBookings] = React.useState<Array<Record<string, any>>>([]);
 
   // F&B and Kitchen Efficiency
   const [fbEff, setFbEff] = React.useState<{ total: number; served: number; queue: number; avgOrder: number; lastHour: number }>({ total: 0, served: 0, queue: 0, avgOrder: 0, lastHour: 0 });
@@ -150,50 +165,39 @@ export default function ExecutiveManagementDashboard() {
       setPostedRevenue(0);
     }
 
-    // Live operations snapshot from Front Office store
+    // Live operations snapshot — the same definitions as the Daily Flash report, so every screen agrees.
     try {
       const res = frontOfficeStore.reservations || [];
-      const today = isoDate;
-      // Individually checked-in reservations, plus pax from bulk accommodation
-      // event bookings checked in as a group (headcounts only — see
-      // EventsConferencesMainDashboard's checkInEventGroup / addInHouseGroup).
-      const inHouseNow = res.filter(r => r.status === 'checked-in' && r.arrival <= today && r.departure > today).length
-        + frontOfficeStore.getInHouseGroupPax();
-      const arr = res.filter(r => r.arrival === today).length;
-      const dep = res.filter(r => r.departure === today).length;
-      setInHouse(inHouseNow);
-      setArrivalsToday(arr);
-      setDeparturesToday(dep);
+      const on = (d?: string) => (d || '').slice(0, 10);
+      const today = propertyToday();
+      const isToday = isoDate === today;
+      // Headcount, not reservations. Event groups checked in as a block are only known "right now".
+      setGuestsInHouse((flash?.occupancy?.guestsInHouse || 0) + (isToday ? frontOfficeStore.getInHouseGroupPax() : 0));
       const occRate = Number(flash?.occupancy?.occupancyRate);
       setExpectedOcc(Number.isFinite(occRate) ? occRate : 0);
-      // Without check-in times, we cannot compute next-hour movements precisely
-      setNextHourCheckins(0);
-      setNextHourCheckouts(0);
+      // What is still to happen today (meaningless for another date)
+      setAwaitingArrival(isToday ? res.filter(r => on(r.arrival) === isoDate && (r.status === 'confirmed' || r.status === 'pending')).length : 0);
+      setAwaitingDeparture(isToday ? res.filter(r => r.status === 'checked-in' && on(r.departure) === isoDate).length : 0);
+      // Still checked in after their departure date
+      setOverstays(res.filter(r => r.status === 'checked-in' && on(r.departure) < today).length);
     } catch {}
 
-    // Housekeeping summary from housekeepingStore
+    // Housekeeping: rooms by their real status right now (a room held by a checked-in guest is occupied).
     try {
-      const attn = housekeepingStore.getRoomsNeedingAttention();
-      const total = Math.max(attn.total || 0, 1);
-      const dirty = (attn.dirty?.length || 0);
-      const ooo = (attn.outOfOrder?.length || 0);
-      const maintenance = (attn.maintenance?.length || 0);
-      const notReady = dirty + ooo + maintenance;
-      const cleanReady = Math.max(total - notReady, 0);
-      setHkCleanReadyPct((cleanReady / total) * 100);
-      setHkDirtyPct((dirty / total) * 100);
-      setHkOooPct((ooo / total) * 100);
-      // We do not track in-progress explicitly; approximate
-      setHkInProgressPct(Math.max(0, 100 - ((cleanReady / total) * 100) - ((dirty / total) * 100) - ((ooo / total) * 100)));
+      const rooms = housekeepingStore.getAllRooms();
+      const heldNow = new Set((frontOfficeStore.reservations || []).filter(r => r.status === 'checked-in' && r.roomId).map(r => r.roomId));
+      const beingCleaned = new Set(housekeepingStore.getAllTasks().filter(t => t.status === 'in-progress').map(t => t.roomNumber));
+      const count = { ready: 0, occupied: 0, inProgress: 0, dirty: 0, outOfOrder: 0 };
+      for (const room of rooms) {
+        if (room.status === 'out-of-order' || room.status === 'maintenance') count.outOfOrder++;
+        else if (beingCleaned.has(room.roomNumber)) count.inProgress++;
+        else if (room.status === 'occupied' || heldNow.has(room.roomNumber)) count.occupied++;
+        else if (room.status === 'dirty') count.dirty++;
+        else count.ready++;
+      }
+      setHk({ total: rooms.length, ...count });
     } catch {}
 
-    // Security incidents from audit log (area === 'security') as proxy
-    try {
-      const todayStr = new Date(isoDate).toISOString().split('T')[0];
-      const secs = auditLogStore.all().filter(r => (r as any).area === 'security' && (r.at || '').startsWith(todayStr));
-      setIncidentsToday(secs.length);
-      setSecurityRoundsComplete(true);
-    } catch {}
     // Refresh analytics-derived trend to keep it live
     try { setOccupancyTrend(calculateOccupancyAnalytics()?.occupancyTrend || []); } catch {}
     // F&B efficiency from orders (today)
@@ -230,7 +234,7 @@ export default function ExecutiveManagementDashboard() {
     // Refresh KPIs on mount
     // Compute metrics on client after mount to avoid SSR/client mismatches
     setOccupancy(calculateOccupancyAnalytics());
-    const todayISO = new Date().toISOString().split('T')[0];
+    const todayISO = propertyToday();
     setSelectedDate(todayISO);
     refreshForDate(todayISO);
 
@@ -245,8 +249,8 @@ export default function ExecutiveManagementDashboard() {
 
     // Subscriptions for live updates
     const unsubs: Array<(() => void) | null> = [];
-    try { unsubs.push(frontOfficeStore.subscribe(() => refreshForDate(todayISO))); } catch {}
-    try { unsubs.push(housekeepingStore.subscribe(() => refreshForDate(todayISO))); } catch {}
+    try { unsubs.push(frontOfficeStore.subscribe(() => refreshForDate(selectedDateRef.current || todayISO))); } catch {}
+    try { unsubs.push(housekeepingStore.subscribe(() => refreshForDate(selectedDateRef.current || todayISO))); } catch {}
     try {
       const uaUnsub = (useAnalyticsStore as any).subscribe?.(() => {
         try {
@@ -260,10 +264,8 @@ export default function ExecutiveManagementDashboard() {
       const stockUnsub = (useStockStore as any).subscribe?.(() => setStockSummary(computeStockSummary())) || null;
       unsubs.push(stockUnsub);
     } catch {}
-    // Announcement store (no unsubscribe returned)
-    try { announcementStore.subscribe(() => setEventsList(announcementStore.getForDepartment('events', 3).map(m => m.message))); } catch {}
-    try { unsubs.push(ordersStore.subscribe(() => refreshForDate(todayISO))); } catch {}
-    try { unsubs.push(kitchenOpsStore.subscribe(() => refreshForDate(todayISO))); } catch {}
+    try { unsubs.push(ordersStore.subscribe(() => refreshForDate(selectedDateRef.current || todayISO))); } catch {}
+    try { unsubs.push(kitchenOpsStore.subscribe(() => refreshForDate(selectedDateRef.current || todayISO))); } catch {}
     // Pulls in real persisted order history — the subscribe above re-runs
     // refreshForDate once this resolves and notifies listeners.
     try { ordersStore.hydrateFromApi(); } catch {}
@@ -271,6 +273,11 @@ export default function ExecutiveManagementDashboard() {
     // Executive dashboard sees every room as the default 'vacant' instead of
     // its real logged status.
     try { housekeepingStore.hydrateFromApi(); } catch {}
+    // Security, stock and events aren't loaded by anything else on this screen — without these the
+    // cards would show only what another page happened to load first.
+    try { useIncidentStore.getState().hydrateFromApi(); } catch {}
+    try { usePatrolStore.getState().hydrateFromApi(); } catch {}
+    try { useStockStore.getState().hydrateFromApi(); } catch {}
 
     return () => {
       unsubs.forEach((fn) => {
@@ -280,6 +287,15 @@ export default function ExecutiveManagementDashboard() {
       });
     };
   }, [calculateOccupancyAnalytics, refreshForDate, generateDailyFlashReport]);
+
+  // Event bookings (the hotel's real conference / event calendar)
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = () => { fetchEventBookings().then((b) => { if (!cancelled) setEventBookings(b); }).catch(() => {}); };
+    load();
+    const timer = setInterval(load, 5 * 60_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
 
   // Auto-refresh timers
   React.useEffect(() => {
@@ -300,7 +316,7 @@ export default function ExecutiveManagementDashboard() {
 
   const handleExportCSV = () => {
     const data = {
-      date: selectedDate || new Date().toISOString().split('T')[0],
+      date: selectedDate || propertyToday(),
       totalRooms,
       occupiedRooms,
       availableRooms,
@@ -308,6 +324,7 @@ export default function ExecutiveManagementDashboard() {
       postedRevenue,
       adr,
       revpar,
+      guestsInHouse,
       arrivals,
       departures,
       revenueSplit
@@ -324,7 +341,7 @@ export default function ExecutiveManagementDashboard() {
 
   const handleExportPDF = async () => {
     const data = {
-      date: selectedDate || new Date().toISOString().split('T')[0],
+      date: selectedDate || propertyToday(),
       kpis: { totalRooms, occupiedRooms, availableRooms, revenueToday, postedRevenue, adr, revpar, arrivals, departures },
       trend: occupancyTrend,
       revenueSplit
@@ -354,8 +371,29 @@ export default function ExecutiveManagementDashboard() {
   };
   const [stockSummary, setStockSummary] = React.useState(computeStockSummary());
 
-  // Conferences & Events - live from announcements (events dept)
-  const [eventsList, setEventsList] = React.useState<string[]>(() => announcementStore.getForDepartment('events', 3).map(m => m.message));
+  // The hotel's own timezone decides what "today" is; everything below is for the selected date.
+  const isTodaySelected = selectedDate !== '' && selectedDate === propertyToday();
+  const hkDirtyPct = hk.total > 0 ? (hk.dirty / hk.total) * 100 : 0;
+
+  const security = React.useMemo(() => {
+    const tz = resolvePropertyTimezone();
+    const dayOf = (d: unknown) => (d ? getZonedClockParts(new Date(d as any), tz).date : '');
+    const open = incidents.filter((i) => i.status !== 'resolved' && i.status !== 'closed');
+    const dayPatrols = patrols.filter((p) => dayOf(p.startTime) === selectedDate);
+    return {
+      reported: incidents.filter((i) => dayOf(i.reportedAt) === selectedDate).length,
+      open: open.length,
+      openSerious: open.filter((i) => i.severity === 'high' || i.severity === 'critical').length,
+      patrolsTotal: dayPatrols.length,
+      patrolsCompleted: dayPatrols.filter((p) => p.status === 'completed').length,
+      missedCheckpoints: dayPatrols.reduce((n, p) => n + p.checkpoints.filter((c) => c.status === 'missed').length, 0),
+    };
+  }, [incidents, patrols, selectedDate]);
+
+  const eventsOnDate = React.useMemo(() => {
+    const on = (d: unknown) => (d ? String(d).slice(0, 10) : '');
+    return eventBookings.filter((b) => b.status !== 'cancelled' && on(b.startDate) <= selectedDate && selectedDate <= on(b.endDate));
+  }, [eventBookings, selectedDate]);
 
   // Generate live system alerts from stores
   const buildLiveAlerts = React.useCallback(() => {
@@ -367,33 +405,37 @@ export default function ExecutiveManagementDashboard() {
         out[sev].push({ id: `inv-${a.id}`, severity: sev as any, text: `${a.message} (${a.itemName})`, nav: '/?tab=overview' });
       });
     } catch {}
-    try {
-      if ((occupancy?.occupancyRate || expectedOcc) > 95) {
-        out.warning.push({ id: 'occ-high', severity: 'warning', text: 'Occupancy above 95% - monitor overbooking risk', nav: '/reports' });
-      }
-    } catch {}
-    try {
-      if (hkDirtyPct > 30) {
-        out.warning.push({ id: 'hk-backlog', severity: 'warning', text: 'Housekeeping backlog: Dirty rooms exceed 30%', nav: '/housekeeping' });
-      }
-    } catch {}
+    // Ids carry the date (or the count), so acknowledging one occurrence doesn't hide every future one.
+    if (expectedOcc > 95) {
+      out.warning.push({ id: `occ-high:${selectedDate}`, severity: 'warning', text: 'Occupancy above 95% - monitor overbooking risk', nav: '/reports' });
+    }
+    if (hkDirtyPct > 30) {
+      out.warning.push({ id: `hk-backlog:${selectedDate}`, severity: 'warning', text: 'Housekeeping backlog: Dirty rooms exceed 30%', nav: '/housekeeping' });
+    }
+    if (overstays > 0) {
+      out.warning.push({ id: `overstays:${overstays}`, severity: 'warning', text: `${overstays} guest${overstays === 1 ? '' : 's'} still checked in past their check-out date`, nav: '/guest-services/check-ins?tab=checkouts' });
+    }
+    if (security.openSerious > 0) {
+      out.critical.push({ id: `sec-serious:${security.openSerious}`, severity: 'critical', text: `${security.openSerious} high-severity security incident${security.openSerious === 1 ? '' : 's'} still open` });
+    }
     return out;
-  }, [occupancy?.occupancyRate, expectedOcc, hkDirtyPct]);
+  }, [expectedOcc, hkDirtyPct, overstays, security.openSerious, selectedDate]);
 
   return (
-    <div className="p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🏛️ Master Command Center</h2>
-        <div className="flex items-center gap-2">
+    <div className="p-4 sm:p-6">
+      {/* Header — wraps on phones and tablets */}
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between mb-6">
+        <h2 className="text-xl sm:text-2xl font-bold text-ghana-black">🏛️ Master Command Center</h2>
+        <div className="flex flex-wrap items-center gap-2">
           <input
             type="date"
-            className="h-8 px-2 rounded border border-gray-300 text-sm bg-white"
+            aria-label="Date"
+            className="h-9 px-2 rounded border border-gray-300 text-sm bg-white"
             value={selectedDate}
             onChange={(e) => { setSelectedDate(e.target.value); if (e.target.value) refreshForDate(e.target.value); }}
           />
-          <Button size="sm" variant="flat" onPress={() => { const d = new Date(); const iso = d.toISOString().split('T')[0]; setSelectedDate(iso); refreshForDate(iso); }}>Today</Button>
-          <Button size="sm" variant="flat" onPress={() => { const d = new Date(); d.setDate(d.getDate() - 1); const iso = d.toISOString().split('T')[0]; setSelectedDate(iso); refreshForDate(iso); }}>Yesterday</Button>
+          <Button size="sm" variant="flat" onPress={() => { const iso = propertyToday(); setSelectedDate(iso); refreshForDate(iso); }}>Today</Button>
+          <Button size="sm" variant="flat" onPress={() => { const iso = addDays(propertyToday(), -1); setSelectedDate(iso); refreshForDate(iso); }}>Yesterday</Button>
           <Button size="sm" variant="flat" onPress={handleExportCSV}>Export CSV</Button>
           <Button size="sm" variant="flat" onPress={handleExportPDF}>Export PDF</Button>
           <CustomizeViewControl
@@ -409,27 +451,31 @@ export default function ExecutiveManagementDashboard() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* Left Sidebar - Live Operations & Safety */}
-        <aside className="xl:col-span-1 space-y-6">
+        <aside className="xl:col-span-1 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-1 gap-6 content-start">
           {!isHidden('liveOps') && (
           <Card className="border-0 shadow-md">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">Live Operations</h3>
               <HideCardButton onHide={() => hide('liveOps')} label="Live Operations" />
             </CardHeader>
-            <CardBody className="pt-2 space-y-3">
-              <button onClick={() => go('/housekeeping')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
-                <span>In-House Guests</span><span className="font-semibold">{inHouse}</span>
+            <CardBody className="pt-2 space-y-1">
+              <button onClick={() => go('/housekeeping')} className="w-full text-left flex justify-between items-baseline text-sm hover:bg-gray-100 px-1.5 py-2 rounded">
+                <span>In-House Guests <span className="text-xs text-gray-500">({occupiedRooms} {occupiedRooms === 1 ? 'room' : 'rooms'})</span></span><span className="font-semibold">{guestsInHouse}</span>
               </button>
-              <button onClick={() => go('/guest-services/check-ins?tab=checkins')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
-                <span>Today's Arrivals</span><span className="font-semibold">{arrivalsToday}</span>
+              <button onClick={() => go('/guest-services/check-ins?tab=checkins')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 px-1.5 py-2 rounded">
+                <span>{isTodaySelected ? "Today's " : ''}Arrivals</span><span className="font-semibold">{arrivals}</span>
               </button>
-              <button onClick={() => go('/guest-services/check-ins?tab=checkouts')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
-                <span>Today's Departures</span><span className="font-semibold">{departuresToday}</span>
+              <button onClick={() => go('/guest-services/check-ins?tab=checkouts')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 px-1.5 py-2 rounded">
+                <span>{isTodaySelected ? "Today's " : ''}Departures</span><span className="font-semibold">{departures}</span>
               </button>
-              <button onClick={() => go('/reports')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
-                <span>Expected Occupancy</span><span className="font-semibold">{Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0}%</span>
+              <button onClick={() => go('/reports')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 px-1.5 py-2 rounded">
+                <span>Occupancy</span><span className="font-semibold">{Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0}%</span>
               </button>
-              <div className="flex justify-between text-xs text-gray-600"><span>Next Hour</span><span>{nextHourCheckins} Check-ins • {nextHourCheckouts} Check-outs</span></div>
+              {isTodaySelected && (
+                <div className="flex justify-between gap-2 text-xs text-gray-600 px-1.5 pt-1">
+                  <span>Still to arrive: {awaitingArrival}</span><span>Still to depart: {awaitingDeparture}</span>
+                </div>
+              )}
             </CardBody>
           </Card>
           )}
@@ -441,10 +487,20 @@ export default function ExecutiveManagementDashboard() {
               <HideCardButton onHide={() => hide('security')} label="Security & Safety" />
             </CardHeader>
             <CardBody className="pt-2 space-y-2 text-sm">
-              <div className="flex justify-between"><span>Incident Log</span><span className="font-semibold">[{incidentsToday}]</span></div>
-              <div className="flex justify-between"><span>Security Checks</span><span className="font-semibold">{securityRoundsComplete ? 'All completed' : 'Pending'}</span></div>
-              <div className="flex justify-between"><span>CCTV Status</span><span className="font-semibold">Operational</span></div>
-              <div className="flex justify-between"><span>Fire Panel</span><span className="font-semibold">Normal</span></div>
+              <div className="flex justify-between gap-2"><span>Incidents reported</span><span className="font-semibold">{security.reported}</span></div>
+              <div className="flex justify-between gap-2">
+                <span>Open incidents</span>
+                <span className={`font-semibold ${security.openSerious > 0 ? 'text-red-600' : ''}`}>
+                  {security.open}{security.openSerious > 0 ? ` (${security.openSerious} high/critical)` : ''}
+                </span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span>Patrols completed</span>
+                <span className="font-semibold">{security.patrolsTotal === 0 ? 'None logged' : `${security.patrolsCompleted} of ${security.patrolsTotal}`}</span>
+              </div>
+              {security.missedCheckpoints > 0 && (
+                <div className="flex justify-between gap-2"><span>Checkpoints missed</span><span className="font-semibold text-red-600">{security.missedCheckpoints}</span></div>
+              )}
             </CardBody>
           </Card>
           )}
@@ -456,27 +512,33 @@ export default function ExecutiveManagementDashboard() {
               <HideCardButton onHide={() => hide('housekeeping')} label="Housekeeping Status" />
             </CardHeader>
             <CardBody className="pt-2 space-y-3 text-sm">
-              <div className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>Clean/Ready</span><span className="font-semibold">{Math.round(hkCleanReadyPct)}%</span></div>
-                <div className="h-2 bg-gray-100 rounded overflow-hidden"><div className="h-2 bg-green-600" style={{ width: `${hkCleanReadyPct}%` }} /></div>
-              </div>
-              <div className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>In Progress</span><span className="font-semibold">{Math.round(hkInProgressPct)}%</span></div>
-                <div className="h-2 bg-gray-100 rounded overflow-hidden"><div className="h-2 bg-blue-600" style={{ width: `${hkInProgressPct}%` }} /></div>
-              </div>
-              <div className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>Dirty</span><span className="font-semibold">{Math.round(hkDirtyPct)}%</span></div>
-                <div className="h-2 bg-gray-100 rounded overflow-hidden"><div className="h-2 bg-yellow-500" style={{ width: `${hkDirtyPct}%` }} /></div>
-              </div>
-              <div className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>Out of Order</span><span className="font-semibold">{Math.round(hkOooPct)}%</span></div>
-                <div className="h-2 bg-gray-100 rounded overflow-hidden"><div className="h-2 bg-red-600" style={{ width: `${hkOooPct}%` }} /></div>
-              </div>
+              {hk.total === 0 ? (
+                <p className="text-gray-500">No rooms configured yet.</p>
+              ) : (
+                <>
+                  {([
+                    ['Clean / Ready', hk.ready, 'bg-green-600'],
+                    ['Occupied', hk.occupied, 'bg-slate-500'],
+                    ['Being cleaned', hk.inProgress, 'bg-blue-600'],
+                    ['Dirty', hk.dirty, 'bg-yellow-500'],
+                    ['Out of order', hk.outOfOrder, 'bg-red-600'],
+                  ] as const).map(([label, count, color]) => (
+                    <div key={label} className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
+                      <div className="flex justify-between">
+                        <span>{label}</span>
+                        <span className="font-semibold">{count} <span className="text-xs text-gray-500 font-normal">· {Math.round((count / hk.total) * 100)}%</span></span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded overflow-hidden"><div className={`h-2 ${color}`} style={{ width: `${(count / hk.total) * 100}%` }} /></div>
+                    </div>
+                  ))}
+                  {!isTodaySelected && <p className="text-xs text-gray-500">Rooms are shown as they are right now.</p>}
+                </>
+              )}
             </CardBody>
           </Card>
           )}
 
-          {/* Conferences & Events - live from announcements */}
+          {/* Conferences & Events — the hotel's real event bookings for the selected date */}
           {!isHidden('events') && (
           <Card className="border-0 shadow-md">
             <CardHeader className="pb-1 flex items-center justify-between">
@@ -484,12 +546,19 @@ export default function ExecutiveManagementDashboard() {
               <HideCardButton onHide={() => hide('events')} label="Conferences & Events" />
             </CardHeader>
             <CardBody className="pt-2 space-y-2 text-sm">
-              {eventsList.length === 0 && (
-                <div className="p-3 bg-gray-50 border border-gray-200 rounded text-left">No events today</div>
+              {eventsOnDate.length === 0 && (
+                <div className="p-3 bg-gray-50 border border-gray-200 rounded text-left">{isTodaySelected ? 'No events today' : 'No events on this date'}</div>
               )}
-              {eventsList.slice(0,3).map((t, idx) => (
-                <div key={idx} className="p-3 bg-green-50 border border-green-200 rounded text-left">{t}</div>
+              {eventsOnDate.slice(0, 4).map((e) => (
+                <div key={e.id} className="p-3 bg-green-50 border border-green-200 rounded text-left">
+                  <div className="font-medium">{e.title}</div>
+                  <div className="text-xs text-gray-600">
+                    {[e.hallName, e.startTime && e.endTime ? `${e.startTime}–${e.endTime}` : null, e.attendees ? `${e.attendees} guests` : null].filter(Boolean).join(' · ')}
+                  </div>
+                  {e.status === 'pending' && <div className="text-xs text-amber-700">Pending confirmation</div>}
+                </div>
               ))}
+              {eventsOnDate.length > 4 && <div className="text-xs text-gray-500">+{eventsOnDate.length - 4} more</div>}
             </CardBody>
           </Card>
           )}
@@ -500,7 +569,7 @@ export default function ExecutiveManagementDashboard() {
           {!isHidden('financial') && (
           <Card className="border-0 shadow-lg md:col-span-2">
             <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">Today's Financial Pulse</h3>
+              <h3 className="font-semibold text-ghana-black">{isTodaySelected || !selectedDate ? "Today's Financial Pulse" : `Financial Pulse — ${selectedDate}`}</h3>
               <HideCardButton onHide={() => hide('financial')} label="Today's Financial Pulse" />
             </CardHeader>
             <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -514,7 +583,6 @@ export default function ExecutiveManagementDashboard() {
               <div className="p-4 bg-gray-50 rounded-lg">
                 <div className="text-xs text-gray-600">OCCUPANCY</div>
                 <div className="text-2xl font-bold text-ghana-black">{Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0}%</div>
-                <div className="text-xs text-gray-500">Target: 92%</div>
               </div>
               <div className="p-4 bg-gray-50 rounded-lg flex items-center justify-between">
                 <div>
@@ -568,7 +636,7 @@ export default function ExecutiveManagementDashboard() {
                       <div className="font-semibold mb-1">{b.title}</div>
                       {b.items.length === 0 && <div className="text-xs text-gray-500">No alerts</div>}
                       {b.items.map(a => (
-                        <div key={a.id} className="flex items-start justify-between gap-2">
+                        <div key={a.id} className="flex flex-col items-start gap-1.5">
                           <button onClick={() => a.nav && go(a.nav)} className="text-left hover:underline">{a.text}</button>
                           <Button size="sm" variant="flat" onPress={() => acknowledgeAlert(a.id)}>Acknowledge</Button>
                         </div>
@@ -583,7 +651,7 @@ export default function ExecutiveManagementDashboard() {
 
           {/* Trends */}
           {!isHidden('trend') && (
-          <Card className="border-0 shadow-md">
+          <Card className="border-0 shadow-md md:col-span-2">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">7-Day Occupancy Trend</h3>
               <HideCardButton onHide={() => hide('trend')} label="7-Day Occupancy Trend" />
@@ -596,29 +664,34 @@ export default function ExecutiveManagementDashboard() {
                   const trend = occupancyTrend || [];
                   const avg = trend.length ? trend.reduce((s, t) => s + (t.rate || 0), 0) / trend.length : 0;
                   return (
-                    <div className="relative h-32">
-                      {/* average line */}
-                      <div className="absolute left-0 right-0 border-t-2 border-dashed border-gray-300" style={{ bottom: `${Math.max(0, Math.min(100, avg))}%` }} />
-                      <div className="absolute right-0 -top-2 text-xs text-gray-500">Avg {avg.toFixed(0)}%</div>
-                      <div className="absolute inset-0 flex items-end gap-2">
-                        {trend.map((p, i) => {
-                          const day = new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3);
-                          const height = Math.max(8, Math.min(100, p.rate));
-                          return (
-                            <div key={i} className="flex-1 flex flex-col items-center">
+                    <div>
+                      {/* Bars sit in a box with a fixed height, so their percentage heights mean something; labels go underneath. */}
+                      <div className="relative h-28">
+                        <div className="absolute left-0 right-0 border-t-2 border-dashed border-gray-300" style={{ bottom: `${Math.max(0, Math.min(100, avg))}%` }} />
+                        <div className="absolute right-0 -top-5 text-xs text-gray-500">Avg {avg.toFixed(0)}%</div>
+                        <div className="absolute inset-0 flex items-end gap-1 sm:gap-2">
+                          {trend.map((p, i) => {
+                            const height = Math.max(2, Math.min(100, p.rate)); // a day at 0% stays a sliver, not a fake bar
+                            return (
                               <button
+                                key={i}
                                 onClick={() => { setSelectedDate(p.date); refreshForDate(p.date); }}
-                                className="w-full rounded-t-md bg-gradient-to-t from-ghana-green to-emerald-400 hover:from-emerald-600 hover:to-emerald-400 transition-colors"
+                                aria-label={`${p.date}: ${p.rate.toFixed(0)}% occupancy`}
+                                className="flex-1 rounded-t-md bg-gradient-to-t from-ghana-green to-emerald-400 hover:from-emerald-600 hover:to-emerald-400 transition-colors"
                                 style={{ height: `${height}%` }}
                                 title={`${p.date}: ${p.rate.toFixed(0)}%`}
                               />
-                              <div className="mt-1 text-[10px] text-gray-600">{day}</div>
-                            </div>
-                          );
-                        })}
-                        {trend.length === 0 && (
-                          <div className="text-sm text-gray-500">No trend data</div>
-                        )}
+                            );
+                          })}
+                          {trend.length === 0 && (
+                            <div className="text-sm text-gray-500">No trend data</div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-1 flex gap-1 sm:gap-2 text-[10px] text-gray-600">
+                        {trend.map((p, i) => (
+                          <div key={i} className="flex-1 text-center">{new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3)}</div>
+                        ))}
                       </div>
                     </div>
                   );
@@ -630,12 +703,12 @@ export default function ExecutiveManagementDashboard() {
 
           {/* F&B and Kitchen Efficiency */}
           {!isHidden('fbKitchen') && (
-          <Card className="border-0 shadow-md">
+          <Card className="border-0 shadow-md md:col-span-2">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">F&B and Kitchen Efficiency</h3>
               <HideCardButton onHide={() => hide('fbKitchen')} label="F&B and Kitchen Efficiency" />
             </CardHeader>
-            <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <CardBody className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <div className="p-3 bg-gray-50 rounded-lg">
                 <div className="font-semibold mb-2">Restaurant/Bar</div>
                 <div className="flex justify-between"><span>Total Orders</span><span className="font-semibold">{fbEff.total}</span></div>
@@ -665,11 +738,11 @@ export default function ExecutiveManagementDashboard() {
                 <HideCardButton onHide={() => hide('stock')} label="Critical Stock Levels" />
               </div>
             </CardHeader>
-            <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <CardBody className="pt-2 grid grid-cols-1 lg:grid-cols-3 gap-4 text-sm">
               <div>
                 <div className="font-semibold mb-2">🟢 Adequate</div>
                 <ul className="space-y-1 list-disc list-inside">
-                  {stockSummary.adequate.map(i => (<li key={i.id} className="flex justify-between items-center"><span>{i.name}</span><Button size="sm" variant="light" onPress={() => go('/?tab=overview')}>View</Button></li>))}
+                  {stockSummary.adequate.map(i => (<li key={i.id} className="flex justify-between items-center gap-2"><span>{i.name}</span><Button size="sm" variant="light" onPress={() => go('/?tab=overview')}>View</Button></li>))}
                   {stockSummary.adequate.length === 0 && <li className="text-gray-500">No items</li>}
                 </ul>
               </div>
@@ -677,7 +750,7 @@ export default function ExecutiveManagementDashboard() {
                 <div className="font-semibold mb-2">🟡 Low (Reorder)</div>
                  <ul className="space-y-1 list-disc list-inside">
                   {stockSummary.low.map(i => (
-                    <li key={i.id} className="flex justify-between items-center">
+                    <li key={i.id} className="flex justify-between items-center gap-2">
                       <span>{i.name}</span>
                       <Button size="sm" variant="flat" onPress={() => {
                         try {
@@ -694,7 +767,7 @@ export default function ExecutiveManagementDashboard() {
                 <div className="font-semibold mb-2">🔴 Critical</div>
                 <ul className="space-y-1 list-disc list-inside">
                   {stockSummary.critical.map(i => (
-                    <li key={i.id} className="flex justify-between items-center">
+                    <li key={i.id} className="flex justify-between items-center gap-2">
                       <span>{i.name}</span>
                       <Button size="sm" color="danger" variant="flat" onPress={() => {
                         try {
@@ -719,7 +792,7 @@ export default function ExecutiveManagementDashboard() {
       {/* Global messenger for GM */}
       <DeptMessenger from="master" mode="drawer" />
       {/* Quick hotkey hint */}
-      <div className="fixed bottom-6 left-6 text-xs text-gray-500 bg-white/60 backdrop-blur px-2 py-1 rounded shadow">Press Ctrl+M to open Messenger</div>
+      <div className="hidden lg:block fixed bottom-6 left-6 text-xs text-gray-500 bg-white/60 backdrop-blur px-2 py-1 rounded shadow">Press Ctrl+M to open Messenger</div>
 
       {/* Recent Activities & Notices - bottom section */}
       {(!isHidden('recentActivities') || !isHidden('notices')) && (

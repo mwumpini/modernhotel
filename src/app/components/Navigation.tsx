@@ -132,18 +132,35 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const router = useRouter();
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
+  // (narrow screens: choosing a section closes the open pane — see the effect after the sidebar state)
   const [hasMounted, setHasMounted] = React.useState(false);
   React.useEffect(() => { setHasMounted(true); }, []);
   // The side pane can be tucked away to give the work area the full width. The choice is a
   // per-device convenience, remembered between visits; Ctrl/Cmd+B toggles it from anywhere.
+  // On phones and tablets the pane always starts tucked away and opens OVER the content (tap outside or pick
+  // a section to close it), so the work area keeps the full width.
+  const NARROW_QUERY = '(max-width: 1023px)';
+  const [narrow, setNarrow] = React.useState(() => {
+    try { return window.matchMedia(NARROW_QUERY).matches; } catch { return false; }
+  });
+  React.useEffect(() => {
+    const mq = window.matchMedia(NARROW_QUERY);
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
   const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
-    try { return localStorage.getItem('nav.collapsed') === '1'; } catch { return false; }
+    try {
+      if (window.matchMedia(NARROW_QUERY).matches) return true;
+      return localStorage.getItem('nav.collapsed') === '1';
+    } catch { return false; }
   });
   const toggleSidebar = () => {
     const next = !sidebarCollapsed;
     setSidebarCollapsed(next);
-    try { localStorage.setItem('nav.collapsed', next ? '1' : '0'); } catch {}
+    if (!narrow) { try { localStorage.setItem('nav.collapsed', next ? '1' : '0'); } catch {} } // only the desktop choice is remembered
   };
+  React.useEffect(() => { if (narrow) setSidebarCollapsed(true); }, [narrow, activeSection]);
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
@@ -655,8 +672,15 @@ export default function Navigation({ onLogout }: NavigationProps) {
 
   return (
     <div className="flex h-screen">
+      {narrow && !sidebarCollapsed && (
+        <>
+          {/* the open pane floats over the content: keep the rail's space, and dim the page behind it */}
+          <div className="w-14 shrink-0" aria-hidden />
+          <div className="fixed inset-0 z-30 bg-black/40" onClick={toggleSidebar} aria-hidden />
+        </>
+      )}
       {/* Sidebar */}
-      <nav className={`${sidebarCollapsed ? 'w-14' : 'w-80'} shrink-0 bg-white shadow-xl h-screen overflow-y-auto overflow-x-hidden transition-[width] duration-200`}>
+      <nav className={`${sidebarCollapsed ? 'w-14' : 'w-80'} ${narrow && !sidebarCollapsed ? 'fixed inset-y-0 left-0 z-40 max-w-[85vw]' : ''} shrink-0 bg-white shadow-xl h-screen overflow-y-auto overflow-x-hidden transition-[width] duration-200`}>
         {sidebarCollapsed ? (
           <div className="flex flex-col items-center gap-1 py-3">
             <Tooltip content="Show side pane (Ctrl+B)" placement="right">
@@ -830,7 +854,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       </nav>
 
       {/* Main Content Area */}
-      <div className="flex-1 bg-gray-50 overflow-y-auto">
+      <div className="flex-1 min-w-0 bg-gray-50 overflow-y-auto">
         {renderDashboardContent()}
       </div>
     </div>
