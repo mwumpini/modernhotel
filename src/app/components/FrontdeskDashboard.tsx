@@ -25,6 +25,8 @@ import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboa
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import { useCashierShift } from '../lib/frontoffice/useCashierShift';
 
+import { overviewGridClass } from '../lib/ui/overviewGrid';
+
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
 // tabs are core navigation, not clutter, so they're deliberately not included.
 const FRONTDESK_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
@@ -332,7 +334,7 @@ export default function FrontdeskDashboard() {
             className="w-full"
           >
             <Tab key="overview" title="📊 Overview">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-4">
+              <div className={overviewGridClass(Math.min(operationalItems.length, 5))}>
                 {operationalItems.slice(0, 5).map((category, categoryIndex) => (
                   <Card key={categoryIndex} className="border border-gray-200 shadow-md">
                     <CardHeader className="pb-3">
