@@ -3,7 +3,7 @@
 import { create } from 'zustand';
 import { frontOfficeStore } from './store';
 import { trackEvent } from '../analytics/trackEvent';
-import { getFolioDisplayTotals, folioChargeGlCode, findMainFolio } from './helpers/folio';
+import { getFolioDisplayTotals, folioChargeGlCode, findMainFolio, stayFolio, allStayFolios } from './helpers/folio';
 import { housekeepingStore } from '../housekeeping/store';
 import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob, type ReportOrgInfo } from './reportExportFormat';
 import { useSettingsStore } from '../settings/store';
@@ -366,6 +366,9 @@ function eachDay(startDate: string, endDate: string): string[] {
   }
   return days;
 }
+
+// Shown in place of a misleading 0 for a figure the system doesn't record.
+const NOT_TRACKED = 'Not tracked';
 
 export const useReportingStore = create<ReportingStore>((set, get) => ({
   // Initial state
@@ -961,6 +964,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     );
     const arrivals = arrivalReservations.length;
     const guaranteedArrivals = arrivalReservations.filter(r => r.isGuaranteed).length;
+    // Walk-ins are marked on the reservation itself (its source or the WALK IN market code).
+    const walkInArrivals = arrivalReservations.filter(r =>
+      /walk.?in/i.test(r.source || '') || (r.marketCodes || []).some(c => /walk.?in/i.test(c))
+    ).length;
 
     const departures = frontOfficeStore.reservations.filter(r =>
       r.departure === date && r.status !== 'cancelled' && r.status !== 'no-show'
@@ -968,10 +975,11 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
     // Only charges/payments actually posted ON this date (not every charge that
     // has ever accumulated on a folio whose stay happens to overlap the date).
-    const chargesToday = frontOfficeStore.folios.flatMap(f =>
+    const billing = allStayFolios(frontOfficeStore.folios);
+    const chargesToday = billing.flatMap(f =>
       (f.charges || []).filter(c => (c.date || '').slice(0, 10) === date)
     );
-    const paymentsToday = frontOfficeStore.folios.flatMap(f =>
+    const paymentsToday = billing.flatMap(f =>
       (f.payments || []).filter(p => p.status === 'completed' && (p.date || '').slice(0, 10) === date)
     );
 
@@ -986,6 +994,14 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       .reduce((s, c) => s + c.amount + (c.tax || 0), 0);
     const totalRevenue = roomRevenue + foodBeverageRevenue + otherRevenue;
     const totalPayments = paymentsToday.reduce((s, p) => s + p.amount, 0);
+    // What the guests in the house owe as of the end of this date (balances still due, credits not
+    // netted off) — the guest ledger total. Charges less payments for the day alone says nothing about that.
+    const inHouseBalanceDue = Math.round(
+      frontOfficeStore.reservations
+        .filter(r => wasInHouseDuring(r, date, date))
+        .map(r => stayFolio(frontOfficeStore.folios, r.id))
+        .reduce((sum, f) => sum + (f ? getFolioDisplayTotals(f, date).outstandingBalance : 0), 0) * 100
+    ) / 100;
     // Like Room Status's housekeeping fields, out-of-order is only known live —
     // nothing logs a historical out-of-order count per day, so a past date
     // can't honestly report one. Omit it (not fabricate today's count under a
@@ -1013,22 +1029,21 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       },
       arrivals: {
         total: arrivals,
-        confirmed: arrivals,
         guaranteed: guaranteedArrivals,
-        walkIns: 0
+        walkIns: walkInArrivals
       },
       departures: {
-        // Actual-vs-scheduled checkout timing isn't tracked per guest today, so
-        // this only reports the real total rather than a fabricated split.
+        // Actual-vs-scheduled checkout timing isn't classified per guest anywhere, so the
+        // split is marked as not tracked rather than shown as a row of zeros.
         total: departures,
-        early: 0,
-        onTime: 0,
-        late: 0
+        early: NOT_TRACKED,
+        onTime: NOT_TRACKED,
+        late: NOT_TRACKED
       },
       financial: {
         totalCharges: totalRevenue,
         totalPayments,
-        outstandingBalance: Math.max(0, totalRevenue - totalPayments),
+        inHouseBalanceDue,
         cashOnHand: paymentsToday.filter(p => p.method === 'Cash').reduce((s, p) => s + p.amount, 0)
       }
     };
@@ -1081,13 +1096,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       const stays = frontOfficeStore.reservations
         .filter(r => r.roomId === room.id && wasInHouseDuring(r, startDate, endDate))
         .map(r => {
-          // The stay's main folio plus any split folios — not every folio row carrying its id, because
-          // a hydration race can leave many duplicate rows for one reservation (see findMainFolio),
-          // and summing those would multiply the room's revenue.
-          const main = findMainFolio(frontOfficeStore.folios, r.id);
-          const charges = frontOfficeStore.folios
-            .filter(f => f.reservationId === r.id && (f === main || f.type === 'split'))
-            .flatMap(f => f.charges || [])
+          const charges = (stayFolio(frontOfficeStore.folios, r.id)?.charges || [])
             .filter(c => dateInRange(c.date, startDate, endDate));
           const gross = (match: (glCode: string) => boolean) =>
             round2(charges.filter(c => match(folioChargeGlCode(c))).reduce((sum, c) => sum + c.amount + (c.tax || 0), 0));

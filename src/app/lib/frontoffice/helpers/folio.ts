@@ -181,6 +181,55 @@ export function findMainFolio(folios: Folio[] | undefined, reservationId: string
 }
 
 /**
+ * One reservation's folio, with charges and payments de-duplicated across every folio row that carries
+ * its id. A hydration race (see findMainFolio) can leave several rows for one stay, and background
+ * posting can put the very same night's charge on each of them — same date, amount and description
+ * under different ids. Adding those up would multiply the stay's revenue, while dropping all but the
+ * main folio would lose charges that genuinely sit on another row. So an identical charge (or payment)
+ * that shows up on several rows counts once, and different ones all count. Two identical charges on
+ * the SAME row are real (two of the same drink) and both count. Use this — not a plain filter on
+ * reservationId — whenever amounts are summed across folios.
+ */
+export function stayFolio(folios: Folio[] | undefined, reservationId: string): Folio | undefined {
+	return mergeStayRows((folios || []).filter((f) => f.reservationId === reservationId));
+}
+
+/** stayFolio for every reservation that has a folio. */
+export function allStayFolios(folios: Folio[] | undefined): Folio[] {
+	const byReservation = new Map<string, Folio[]>();
+	for (const f of folios || []) byReservation.set(f.reservationId, [...(byReservation.get(f.reservationId) || []), f]);
+	return Array.from(byReservation.values()).flatMap((rows) => mergeStayRows(rows) || []);
+}
+
+function mergeStayRows(rows: Folio[]): Folio | undefined {
+	if (rows.length === 0) return undefined;
+	const base = findMainFolio(rows, rows[0].reservationId) || rows[0];
+	if (rows.length === 1) return base;
+	return {
+		...base,
+		charges: uniqueAcrossRows(rows.map((f) => f.charges || []), (c) => `${(c.date || '').slice(0, 10)}|${c.amount}|${c.tax || 0}|${c.description}|${c.category || ''}`),
+		payments: uniqueAcrossRows(rows.map((f) => f.payments || []), (p) => `${(p.date || '').slice(0, 10)}|${p.amount}|${p.method}|${p.status}`),
+	};
+}
+
+/** For each distinct item, the largest group of it found on any single row (so a repeat across rows
+ * is one item, but a repeat within one row stays as many). */
+function uniqueAcrossRows<T>(lists: T[][], signature: (item: T) => string): T[] {
+	const best = new Map<string, T[]>();
+	for (const list of lists) {
+		const bySignature = new Map<string, T[]>();
+		for (const item of list) {
+			const key = signature(item);
+			bySignature.set(key, [...(bySignature.get(key) || []), item]);
+		}
+		bySignature.forEach((items, key) => {
+			if (items.length > (best.get(key)?.length || 0)) best.set(key, items);
+		});
+	}
+	return Array.from(best.values()).flat();
+}
+
+/**
  * Drops later items that repeat an earlier item's id, keeping the first
  * occurrence. Returns the same array reference when nothing was removed, so
  * callers can cheaply tell whether anything changed.
