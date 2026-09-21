@@ -91,6 +91,7 @@ interface ReportingStore {
   generateGuestLedgerReport: (date: string, endDate?: string) => any[];
   generateDailyFlashReport: (date: string) => any;
   generateOccupancyReport: (date: string, endDate?: string) => any;
+  generateRoomPerformanceReport: (startDate: string, endDate: string, roomId?: string) => any;
   generatePaceReport: (date: string, endDate?: string) => any[];
   generateNoShowReport: (date: string, endDate?: string) => any[];
   generateSourceOfBusinessReport: (startDate: string, endDate: string) => any[];
@@ -347,6 +348,23 @@ function wasInHouseDuring(r: import('./types').Reservation, startDate: string, e
   if (!inAt || inAt.slice(0, 10) > endDate) return false;
   const outAt = resolveCheckedOutAt(r);
   return !outAt || outAt.slice(0, 10) > startDate;
+}
+
+// Every calendar day from startDate to endDate inclusive, as YYYY-MM-DD. Built with
+// Date.UTC/setUTCDate rather than local-time Date construction — `new Date('2026-09-12T00:00:00')`
+// is LOCAL midnight, so in any timezone ahead of UTC, .toISOString() reads back as the previous
+// day, shifting the whole range back by one.
+function eachDay(startDate: string, endDate: string): string[] {
+  const days: string[] = [];
+  const [sy, sm, sd] = startDate.split('-').map(Number);
+  const [ey, em, ed] = endDate.split('-').map(Number);
+  const cursor = new Date(Date.UTC(sy, sm - 1, sd));
+  const last = new Date(Date.UTC(ey, em - 1, ed));
+  for (let guard = 0; cursor.getTime() <= last.getTime() && guard < 3660; guard++) {
+    days.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return days;
 }
 
 export const useReportingStore = create<ReportingStore>((set, get) => ({
@@ -1045,20 +1063,121 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
 
     // Ranged: one row per day in the window — a trend, not a single
     // aggregate, since "average occupancy over a week" hides more than it
-    // shows. Built with Date.UTC/setUTCDate rather than local-time Date
-    // construction — `new Date('2026-09-12T00:00:00')` is LOCAL midnight, so
-    // in any timezone ahead of UTC, .toISOString() reads back as the
-    // previous day, shifting the whole range back by one.
-    const days: string[] = [];
-    const [sy, sm, sd] = date.split('-').map(Number);
-    const [ey, em, ed] = endDate.split('-').map(Number);
-    const cursor = new Date(Date.UTC(sy, sm - 1, sd));
-    const last = new Date(Date.UTC(ey, em - 1, ed));
-    for (let guard = 0; cursor.getTime() <= last.getTime() && guard < 3660; guard++) {
-      days.push(cursor.toISOString().slice(0, 10));
-      cursor.setUTCDate(cursor.getUTCDate() + 1);
+    // shows.
+    return eachDay(date, endDate).map(snapshotFor);
+  },
+
+  generateRoomPerformanceReport: (startDate, endDate, roomId) => {
+    console.log(`[REPORTS] Generating room performance report for ${startDate} to ${endDate}${roomId ? ` (room ${roomId})` : ''}`);
+
+    // Rebuilt from real stay history and dated folio charges, so it holds for any past period.
+    // A stay counts toward the room it ended up in (room moves aren't recorded, so a stay is never
+    // split across rooms). Money is gross of tax, the same basis as the Daily Flash report.
+    const days = eachDay(startDate, endDate);
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const typeName = (typeId: string) => frontOfficeStore.roomTypes.find(rt => rt.id === typeId)?.name || 'Unknown';
+
+    const summarise = (room: import('./types').RoomEntity) => {
+      const stays = frontOfficeStore.reservations
+        .filter(r => r.roomId === room.id && wasInHouseDuring(r, startDate, endDate))
+        .map(r => {
+          // The stay's main folio plus any split folios — not every folio row carrying its id, because
+          // a hydration race can leave many duplicate rows for one reservation (see findMainFolio),
+          // and summing those would multiply the room's revenue.
+          const main = findMainFolio(frontOfficeStore.folios, r.id);
+          const charges = frontOfficeStore.folios
+            .filter(f => f.reservationId === r.id && (f === main || f.type === 'split'))
+            .flatMap(f => f.charges || [])
+            .filter(c => dateInRange(c.date, startDate, endDate));
+          const gross = (match: (glCode: string) => boolean) =>
+            round2(charges.filter(c => match(folioChargeGlCode(c))).reduce((sum, c) => sum + c.amount + (c.tax || 0), 0));
+          return {
+            reservation: r,
+            guests: (r.adults || 0) + (r.children || 0),
+            nights: days.filter(d => wasInHouseDuring(r, d, d)).length,
+            roomRevenue: gross(g => g === '4100'),
+            foodBeverage: gross(g => g === '4200'),
+            otherCharges: gross(g => g !== '4100' && g !== '4200'),
+          };
+        });
+      const total = (key: 'roomRevenue' | 'foodBeverage' | 'otherCharges') => round2(stays.reduce((sum, st) => sum + st[key], 0));
+      const nightsOccupied = days.filter(d => stays.some(st => wasInHouseDuring(st.reservation, d, d))).length;
+      const roomRevenue = total('roomRevenue');
+      const foodBeverage = total('foodBeverage');
+      const otherCharges = total('otherCharges');
+      return {
+        room,
+        stays,
+        guests: stays.reduce((sum, st) => sum + st.guests, 0),
+        nightsOccupied,
+        roomRevenue,
+        foodBeverage,
+        otherCharges,
+        totalSales: round2(roomRevenue + foodBeverage + otherCharges),
+      };
+    };
+    const rowOf = (x: ReturnType<typeof summarise>) => ({
+      room: x.room.id,
+      roomType: typeName(x.room.roomTypeId),
+      nightsOccupied: x.nightsOccupied,
+      occupancyRate: days.length > 0 ? round2((x.nightsOccupied / days.length) * 100) : 0,
+      stays: x.stays.length,
+      guests: x.guests,
+      roomRevenue: x.roomRevenue,
+      foodBeverage: x.foodBeverage,
+      otherCharges: x.otherCharges,
+      totalSales: x.totalSales,
+      averageDailyRate: x.nightsOccupied > 0 ? round2(x.roomRevenue / x.nightsOccupied) : 0,
+    });
+
+    // One room: its summary plus every stay in the period.
+    if (roomId) {
+      const room = frontOfficeStore.rooms.find(r => r.id === roomId);
+      if (!room) return [];
+      const x = summarise(room);
+      return {
+        ...rowOf(x),
+        daysInPeriod: days.length,
+        stayDetails: x.stays.map(st => ({
+          guest: st.reservation.guestName,
+          arrival: st.reservation.arrival.slice(0, 10),
+          departure: st.reservation.departure.slice(0, 10),
+          status: st.reservation.status,
+          nightsInPeriod: st.nights,
+          roomRevenue: st.roomRevenue,
+          foodBeverage: st.foodBeverage,
+          otherCharges: st.otherCharges,
+          total: round2(st.roomRevenue + st.foodBeverage + st.otherCharges),
+        })),
+      };
     }
-    return days.map(snapshotFor);
+
+    // Every room, best seller first (rooms nobody stayed in still appear, at the bottom),
+    // with a totals row.
+    const summaries = frontOfficeStore.rooms
+      .map(summarise)
+      .sort((a, b) => b.totalSales - a.totalSales || a.room.id.localeCompare(b.room.id, undefined, { numeric: true }));
+    if (summaries.length === 0) return [];
+    const sumOf = (pick: (x: ReturnType<typeof summarise>) => number) => summaries.reduce((t, x) => t + pick(x), 0);
+    const nights = sumOf(x => x.nightsOccupied);
+    const roomRevenue = round2(sumOf(x => x.roomRevenue));
+    return [
+      ...summaries.map((x, i) => ({ rank: i + 1, ...rowOf(x) })),
+      {
+        rank: '',
+        room: 'Total',
+        roomType: '',
+        nightsOccupied: nights,
+        occupancyRate: days.length > 0 ? round2((nights / (summaries.length * days.length)) * 100) : 0,
+        stays: sumOf(x => x.stays.length),
+        guests: sumOf(x => x.guests),
+        roomRevenue,
+        foodBeverage: round2(sumOf(x => x.foodBeverage)),
+        otherCharges: round2(sumOf(x => x.otherCharges)),
+        totalSales: round2(sumOf(x => x.totalSales)),
+        averageDailyRate: nights > 0 ? round2(roomRevenue / nights) : 0,
+      },
+    ];
   },
 
   generatePaceReport: (date, endDate = date) => {

@@ -12,15 +12,16 @@ import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import DailyTransactionReportView, { type TransactionRow } from './DailyTransactionReportView';
+import { formatPercent, isPercentKey } from '../lib/frontoffice/reportExportFormat';
 
 function labelize(key: string): string {
   return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
 }
 
-function formatReportValue(value: unknown): React.ReactNode {
+function formatReportValue(value: unknown, key?: string): React.ReactNode {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (typeof value === 'number') return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (typeof value === 'number') return key && isPercentKey(key) ? formatPercent(value) : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return String(value);
 }
 
@@ -32,12 +33,12 @@ function ReportMiniTable({ rows }: { rows: Record<string, unknown>[] }) {
   return (
     <Table removeWrapper isCompact aria-label="Report detail">
       <TableHeader>
-        {columns.map((c) => <TableColumn key={c}>{labelize(c)}</TableColumn>) as any}
+        {columns.map((c) => <TableColumn key={c} align="center">{labelize(c)}</TableColumn>) as any}
       </TableHeader>
       <TableBody>
         {rows.map((row, i) => (
           <TableRow key={i}>
-            {columns.map((c) => <TableCell key={c}>{formatReportValue(row[c])}</TableCell>) as any}
+            {columns.map((c) => <TableCell key={c}>{formatReportValue(row[c], c)}</TableCell>) as any}
           </TableRow>
         ))}
       </TableBody>
@@ -64,7 +65,7 @@ function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
           {primitives.map(([key, value]) => (
             <div key={key} className="p-3 bg-gray-50 rounded-lg border">
               <div className="text-xs text-gray-500">{labelize(key)}</div>
-              <div className="text-lg font-semibold text-ghana-black">{formatReportValue(value)}</div>
+              <div className="text-lg font-semibold text-ghana-black">{formatReportValue(value, key)}</div>
             </div>
           ))}
         </div>
@@ -99,7 +100,7 @@ function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
 const RANGE_REPORT_KEYS = new Set([
   'arrivals', 'departures', 'check-ins', 'high-balance', 'wake-up-calls',
   'daily-transactions', 'cashier-report', 'credit-card-reconciliation', 'guest-ledger',
-  'occupancy', 'pace', 'no-shows', 'night-audit-history',
+  'occupancy', 'room-performance', 'pace', 'no-shows', 'night-audit-history',
   'source-business', 'market-segmentation', 'discount-request', 'complimentary-room', 'pricing-analytics',
 ]);
 // Reports that don't take a date at all (guest-history reads guestId instead).
@@ -110,6 +111,8 @@ export default function FrontOfficeReportsAnalysis() {
   const [selectedReport, setSelectedReport] = useState('arrivals');
   const [cashierId, setCashierId] = useState('');
   const [guestId, setGuestId] = useState('');
+  // '' = every room (Room Performance report).
+  const [roomFilter, setRoomFilter] = useState('');
   // startDate doubles as "the date" for Today/Specific Date mode (where it's
   // always equal to endDate) and as the period start for Range mode — kept
   // as one value instead of a separate date state, which used to go stale
@@ -257,6 +260,8 @@ export default function FrontOfficeReportsAnalysis() {
         return generateDailyFlashReport;
       case 'occupancy':
         return reportingStore.generateOccupancyReport(startDate, endDate);
+      case 'room-performance':
+        return reportingStore.generateRoomPerformanceReport(startDate, endDate, roomFilter || undefined);
       case 'pace':
         return reportingStore.generatePaceReport(startDate, endDate);
       case 'no-shows':
@@ -323,7 +328,7 @@ export default function FrontOfficeReportsAnalysis() {
       <Table aria-label={`${selectedReport} report table`}>
         <TableHeader>
           {columns.map((column) => (
-            <TableColumn key={column}>
+            <TableColumn key={column} align="center">
               {column.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
             </TableColumn>
           ))}
@@ -335,6 +340,8 @@ export default function FrontOfficeReportsAnalysis() {
                 <TableCell key={column}>
                   {typeof row[column] === 'boolean'
                     ? (row[column] ? 'Yes' : 'No')
+                    : typeof row[column] === 'number' && isPercentKey(column)
+                    ? formatPercent(row[column])
                     : Array.isArray(row[column])
                     ? row[column].join(', ')
                     // A plain object isn't a valid React child and crashes the render —
@@ -474,7 +481,7 @@ export default function FrontOfficeReportsAnalysis() {
                 <Select
                   selectedKeys={[selectedReport]}
                   onSelectionChange={(keys) => setSelectedReport(Array.from(keys)[0] as string)}
-                  className="w-48"
+                  className="w-80"
                 >
                   <SelectItem key="arrivals">Arrivals Report</SelectItem>
                   <SelectItem key="departures">Departures Report</SelectItem>
@@ -526,7 +533,7 @@ export default function FrontOfficeReportsAnalysis() {
                 <Select
                   selectedKeys={[selectedReport]}
                   onSelectionChange={(keys) => setSelectedReport(Array.from(keys)[0] as string)}
-                  className="w-48"
+                  className="w-80"
                 >
                   <SelectItem key="daily-transactions">Daily Transaction Report</SelectItem>
                   <SelectItem key="cashier-report">Cashier's Report</SelectItem>
@@ -538,7 +545,7 @@ export default function FrontOfficeReportsAnalysis() {
                   <Select
                     selectedKeys={cashierId ? [cashierId] : []}
                     onSelectionChange={(keys) => setCashierId(Array.from(keys)[0] as string || '')}
-                    className="w-48"
+                    className="w-64"
                     placeholder="Select cashier"
                   >
                     {/* Matched against FolioPayment.processedBy, which records a name, not a user id. */}
@@ -591,10 +598,11 @@ export default function FrontOfficeReportsAnalysis() {
                 <Select
                   selectedKeys={[selectedReport]}
                   onSelectionChange={(keys) => setSelectedReport(Array.from(keys)[0] as string)}
-                  className="w-48"
+                  className="w-80"
                 >
                   <SelectItem key="daily-flash">Daily Flash Report</SelectItem>
                   <SelectItem key="occupancy">Daily Occupancy Report</SelectItem>
+                  <SelectItem key="room-performance">Room Performance Report</SelectItem>
                   <SelectItem key="pace">Pace Report</SelectItem>
                   <SelectItem key="no-shows">No-Show Report</SelectItem>
                   <SelectItem key="source-business">Source of Business Report</SelectItem>
@@ -603,6 +611,20 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="complimentary-room">Complimentary Room Report</SelectItem>
                   <SelectItem key="pricing-analytics">Pricing Analytics Report</SelectItem>
                 </Select>
+                {selectedReport === 'room-performance' && (
+                  <Select
+                    aria-label="Room"
+                    selectedKeys={[roomFilter || '__all']}
+                    onSelectionChange={(keys) => {
+                      const key = Array.from(keys)[0] as string | undefined;
+                      setRoomFilter(!key || key === '__all' ? '' : key);
+                    }}
+                    disallowEmptySelection
+                    className="w-48"
+                  >
+                    {[<SelectItem key="__all">All rooms</SelectItem>, ...frontOfficeStore.rooms.map(r => <SelectItem key={r.id}>{`Room ${r.id}`}</SelectItem>)]}
+                  </Select>
+                )}
                 <Button
                   color="primary"
                   variant="flat"
@@ -646,7 +668,7 @@ export default function FrontOfficeReportsAnalysis() {
                 <Select
                   selectedKeys={[selectedReport]}
                   onSelectionChange={(keys) => setSelectedReport(Array.from(keys)[0] as string)}
-                  className="w-48"
+                  className="w-80"
                 >
                   <SelectItem key="guest-count-meal-plan">Guest Count & Meal Plan Report</SelectItem>
                   <SelectItem key="vip">VIP Report</SelectItem>
@@ -656,7 +678,7 @@ export default function FrontOfficeReportsAnalysis() {
                   <Select
                     selectedKeys={guestId ? [guestId] : []}
                     onSelectionChange={(keys) => setGuestId(Array.from(keys)[0] as string || '')}
-                    className="w-48"
+                    className="w-64"
                     placeholder="Select guest"
                   >
                     {frontOfficeStore.guests.slice(0, 200).map(g => <SelectItem key={g.id}>{g.name}</SelectItem>)}
