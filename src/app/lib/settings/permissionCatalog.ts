@@ -278,6 +278,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'settings.manage-security-policy', label: 'Configure security policy (2FA, session timeout, passwords)' },
       { id: 'settings.view-audit-log', label: 'View the system audit log (logins & actions)' },
       { id: 'settings.manage-approval-thresholds', label: 'Configure director-approval thresholds for expenses, purchase orders & payments' },
+      { id: 'settings.manage-sample-data', label: 'Load or remove sample (starter) data for testing' },
     ],
   },
 ];

@@ -20,8 +20,9 @@ import NumberingSettingsPanel from './settings/NumberingSettingsPanel';
 import DocumentTemplatesPanel from './settings/DocumentTemplatesPanel';
 import AuditLogPanel from './settings/AuditLogPanel';
 import ApprovalThresholdsPanel from './settings/ApprovalThresholdsPanel';
+import SampleDataPanel from './settings/SampleDataPanel';
 
-const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'security', 'approvals', 'audit'] as const;
+const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'security', 'approvals', 'audit', 'sample-data'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 function resolveInitialTab(searchParams: URLSearchParams): SettingsTab {
@@ -258,6 +259,10 @@ export default function SystemSettingsMainDashboard() {
 
             <Tab key="audit" title="Audit Log">
               <AuditLogPanel />
+            </Tab>
+
+            <Tab key="sample-data" title="Sample Data">
+              <SampleDataPanel />
             </Tab>
           </Tabs>
         </CardBody>
