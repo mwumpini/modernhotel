@@ -1,11 +1,11 @@
 'use client';
 
-import { SalesReport, InventoryReport, LaborReport } from './models';
 import { ordersStore, type FBOrder } from './ordersStore';
-import { inventoryStore } from './inventoryStore';
 import { customerStore } from './customerStore';
-import { supplierStore } from './supplierStore';
-import { employeeStore } from './employeeStore';
+import { useTenantStaffStore } from '../tenant/tenantStaffStore';
+import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob, type ReportOrgInfo } from '../frontoffice/reportExportFormat';
+import { useSettingsStore } from '../settings/store';
+import { buildOrgProfile } from '../print/buildOrgProfile';
 
 /**
  * order.id is a cuid or `ORD-<timestamp>` string — never a valid Date input — and
@@ -20,83 +20,163 @@ function orderDate(order: FBOrder): Date {
   return isNaN(d.getTime()) ? new Date() : d;
 }
 
+/** The [startDate, endDate] order filter every report below needs — was three
+ * separate copies of the same start/end comparison before this. `endDate`'s day
+ * is included in full (23:59:59.999), not cut off at midnight, so a single-day
+ * "Today" range (start === end) actually captures that whole day's orders. */
+function ordersInRange(startDate: string, endDate: string): FBOrder[] {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  end.setHours(23, 59, 59, 999);
+  return ordersStore.all().filter((order) => {
+    const d = orderDate(order);
+    return d >= start && d <= end;
+  });
+}
+
+function lineTotal(item: FBOrder['items'][number]): number {
+  return item.price * item.qty;
+}
+
+function orderTotal(order: FBOrder): number {
+  return order.items.reduce((sum, item) => sum + lineTotal(item), 0);
+}
+
+// The real per-item category (food|beverage|dessert|snack|special, set from
+// FBMenuItem.category — see serializeOrder.ts) — not a fake Meals/Drinks binary
+// invented on top of `route` (route only distinguishes kitchen vs bar prep
+// station, not what's actually on the menu). Empty/undefined = no filter (every
+// category); a multi-select list, not one choice at a time, since a manager may
+// want e.g. Food + Dessert together.
+export type CategoryFilter = string[];
+function matchesCategoryFilter(item: FBOrder['items'][number], filter: CategoryFilter): boolean {
+  if (!filter || filter.length === 0) return true;
+  return filter.some((f) => (item.category || '').toLowerCase() === f.toLowerCase());
+}
+
+function matchesList(value: string, filter?: string[]): boolean {
+  return !filter || filter.length === 0 || filter.includes(value);
+}
+
+export interface DailySalesFilters {
+  categories?: string[];
+  staff?: string[];
+  items?: string[];
+  customerTypes?: string[];
+}
+
+type TicketRow = {
+  orderNumber: string;
+  table: string;
+  item: string;
+  quantity: number;
+  orderStatus: string;
+  // Three distinct, real milestones in the order's own state machine (see
+  // VALID_TRANSITIONS in api/fb/orders/[id]/route.ts) — kept as separate columns
+  // rather than one "Completed" flag, because they're owned by different people
+  // and happen at different times: the kitchen/bar finishing prep (status
+  // reaches 'ready') is not the same event as the guest actually being served,
+  // which is not the same event as the sale being paid for. A plate can be
+  // fully cooked and eaten while still "unpaid" for however long the guest
+  // takes to settle the bill — that's not a stuck ticket, so it shouldn't be
+  // read as "kitchen didn't finish".
+  kitchenBarStatus: 'Completed' | 'Pending' | 'Cancelled';
+  billedPaid: 'Yes' | 'No';
+  sentAt: string;
+  startedPreparingAt: string;
+  servedAt: string;
+  prepTimeMinutes: number | string;
+  preparedBy: string;
+};
+
+/** Minutes between two ISO timestamps, or undefined if either is missing —
+ * callers show "—" rather than a misleading 0 when the workflow timestamp
+ * that would make the duration real was never recorded. */
+function minutesBetween(fromIso?: string, toIso?: string): number | undefined {
+  if (!fromIso || !toIso) return undefined;
+  const from = new Date(fromIso).getTime();
+  const to = new Date(toIso).getTime();
+  if (isNaN(from) || isNaN(to)) return undefined;
+  return Math.max(0, Math.round((to - from) / 60000));
+}
+
 class ReportingStore {
-  private listeners: Array<() => void> = [];
-
   // Sales Reports
-  generateDailySalesReport(date: string): SalesReport {
-    const orders = ordersStore.all().filter(order => {
-      const d = orderDate(order).toISOString().split('T')[0];
-      return d === date;
+  //
+  // One row per real line item — not one row per order with its items squashed into a
+  // comma-joined cell (not actually queryable/sortable/summable), and not an aggregate
+  // summary object either. The KPI cards above the report already show the day's Total
+  // Revenue/Discounts/Voids; this is the real list of sales that adds up to those
+  // totals — count the rows, sum the Amount column, it should match the KPI card.
+  //
+  // Cancelled orders are excluded entirely — they were never actually sold, so counting
+  // them as "sales" would be wrong; that's what the separate Voided Orders report is
+  // for. Status isn't shown as a raw string (pending/preparing/ready/served/billed all
+  // read as equally valid "sales" otherwise); Billed/Paid answers the one question that
+  // actually matters for a sales log — has this been paid for.
+  generateDailySalesReport(date: string, filters: DailySalesFilters = {}): Array<{
+    orderNumber: string;
+    time: string;
+    table: string;
+    category: string;
+    item: string;
+    quantity: number;
+    unitPrice: number;
+    amount: number;
+    customer: string;
+    customerType: string;
+    server: string;
+    discount: number;
+    tax: number;
+    billedPaid: 'Yes' | 'No';
+  }> {
+    const orders = ordersStore.all()
+      .filter((order) => orderDate(order).toISOString().split('T')[0] === date)
+      .filter((order) => order.status !== 'cancelled')
+      .filter((order) => matchesList(order.waiterId || '', filters.staff))
+      .filter((order) => matchesList(order.customerType, filters.customerTypes));
+
+    const rows: ReturnType<typeof this.generateDailySalesReport> = [];
+    orders.forEach((order) => {
+      const time = orderDate(order).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      // Real guest/room when there is one, else the real customer-type label
+      // (Walk-in/Bar Tab/Takeout) — never a fabricated name.
+      const customer = order.guestName || (order.roomNumber ? `Room ${order.roomNumber}` : order.customerType);
+
+      order.items
+        .filter((item) => matchesCategoryFilter(item, filters.categories || []))
+        .filter((item) => matchesList(item.name, filters.items))
+        .forEach((item) => {
+          rows.push({
+            orderNumber: order.orderNumber || order.id,
+            time,
+            table: order.table || '—',
+            category: item.category || 'Uncategorized',
+            item: item.name,
+            quantity: item.qty,
+            unitPrice: item.price,
+            amount: lineTotal(item),
+            customer,
+            customerType: order.customerType,
+            // waiterId already holds the real server name for API-hydrated orders (see
+            // ordersStore.hydrateFromApi's field-reconciliation notes), not a raw staff id.
+            server: order.waiterId || '—',
+            // Discount/Tax are captured per ORDER, not per item (see FBOrderItem —
+            // taxAmount is always 0 there; "tax tracked at order level" per the order
+            // creation route) — so on a multi-item order, the same order-level figure
+            // appears on each of its item rows rather than being split by item, which
+            // would be a made-up allocation.
+            discount: order.discountAmount || 0,
+            tax: order.taxAmount || 0,
+            billedPaid: order.status === 'billed' ? 'Yes' : 'No',
+          });
+        });
     });
 
-    const totalSales = orders.reduce((sum, order) => {
-      return sum + order.items.reduce((itemSum, item) => {
-        return itemSum + (item.price * item.qty);
-      }, 0);
-    }, 0);
-
-    const totalOrders = orders.length;
-    const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
-
-    // Payment breakdown (simplified - in real system this would come from payment records)
-    const paymentBreakdown = {
-      cash: totalSales * 0.4, // 40% cash
-      card: totalSales * 0.45, // 45% card
-      mobile: totalSales * 0.1, // 10% mobile
-      roomCharge: totalSales * 0.05 // 5% room charge
-    };
-
-    // Top selling items
-    const itemSales: Record<string, { itemId: string; name: string; quantity: number; revenue: number }> = {};
-    orders.forEach(order => {
-      order.items.forEach(item => {
-        if (!itemSales[item.id]) {
-          itemSales[item.id] = { itemId: item.id, name: item.name, quantity: 0, revenue: 0 };
-        }
-        itemSales[item.id].quantity += item.qty;
-        itemSales[item.id].revenue += item.price * item.qty;
-      });
-    });
-
-    const topSellingItems = Object.values(itemSales)
-      .sort((a, b) => b.revenue - a.revenue)
-      .slice(0, 10);
-
-    // Sales by hour
-    const salesByHour: Array<{ hour: number; orders: number; revenue: number }> = [];
-    for (let hour = 6; hour <= 23; hour++) {
-      const hourOrders = orders.filter(order => {
-        const orderHour = orderDate(order).getHours();
-        return orderHour === hour;
-      });
-
-      const hourRevenue = hourOrders.reduce((sum, order) => {
-        return sum + order.items.reduce((itemSum, item) => {
-          return itemSum + (item.price * item.qty);
-        }, 0);
-      }, 0);
-
-      salesByHour.push({
-        hour,
-        orders: hourOrders.length,
-        revenue: hourRevenue
-      });
-    }
-
-    return {
-      id: `SALES-${date}`,
-      date,
-      totalSales,
-      totalOrders,
-      averageOrderValue,
-      paymentBreakdown,
-      topSellingItems,
-      salesByHour
-    };
+    return rows.sort((a, b) => (a.time < b.time ? 1 : -1));
   }
 
-  generateProductMixReport(startDate: string, endDate: string): {
+  generateProductMixReport(startDate: string, endDate: string, categoryFilter: CategoryFilter = []): {
     period: string;
     totalRevenue: number;
     totalOrders: number;
@@ -111,20 +191,14 @@ class ReportingStore {
     }>;
     categoryBreakdown: Record<string, { quantity: number; revenue: number; percentage: number }>;
   } {
-    const orders = ordersStore.all().filter(order => {
-      const d = orderDate(order);
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      return d >= start && d <= end;
-    });
+    // Same "only the matching items count, and only orders that have any" shape as
+    // Daily Sales' category filter above — see matchesCategoryFilter.
+    const rows = ordersInRange(startDate, endDate)
+      .map(order => order.items.filter(item => matchesCategoryFilter(item, categoryFilter)))
+      .filter(items => items.length > 0);
 
-    const totalRevenue = orders.reduce((sum, order) => {
-      return sum + order.items.reduce((itemSum, item) => {
-        return itemSum + (item.price * item.qty);
-      }, 0);
-    }, 0);
-
-    const totalOrders = orders.length;
+    const totalRevenue = rows.reduce((sum, items) => sum + items.reduce((s, i) => s + lineTotal(i), 0), 0);
+    const totalOrders = rows.length;
 
     // Product performance
     const productSales: Record<string, {
@@ -135,8 +209,8 @@ class ReportingStore {
       orderCount: number;
     }> = {};
 
-    orders.forEach(order => {
-      order.items.forEach(item => {
+    rows.forEach(items => {
+      items.forEach(item => {
         if (!productSales[item.id]) {
           productSales[item.id] = {
             name: item.name,
@@ -147,7 +221,7 @@ class ReportingStore {
           };
         }
         productSales[item.id].quantity += item.qty;
-        productSales[item.id].revenue += item.price * item.qty;
+        productSales[item.id].revenue += lineTotal(item);
         productSales[item.id].orderCount += 1;
       });
     });
@@ -188,270 +262,283 @@ class ReportingStore {
     };
   }
 
-  generateSalesByEmployeeReport(startDate: string, endDate: string): {
-    period: string;
-    totalSales: number;
-    employeePerformance: Array<{
-      employeeId: string;
-      name: string;
-      role: string;
-      orders: number;
-      revenue: number;
-      averageOrderValue: number;
-      percentageOfSales: number;
-    }>;
-  } {
-    const orders = ordersStore.all().filter(order => {
-      const d = orderDate(order);
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      return d >= start && d <= end;
-    });
+  // One row per staff member — Gross/Discount/Net/Tax/Grand Total/Average Check/Voids,
+  // the same shape a hotel POS's "Sales by Staff" report uses. Cancelled orders don't
+  // count toward sales (they were never actually sold — see Daily Sales' same rule)
+  // but are counted separately as Voids, so a manager can see both how much someone
+  // sold AND how often their orders got cancelled.
+  generateSalesByEmployeeReport(startDate: string, endDate: string): Array<{
+    staff: string;
+    role: string;
+    transactions: number;
+    grossSales: number;
+    discounts: number;
+    netSales: number;
+    tax: number;
+    grandTotal: number;
+    averageCheck: number;
+    voids: number;
+  }> {
+    const orders = ordersInRange(startDate, endDate);
+    const sold = orders.filter((o) => o.status !== 'cancelled');
+    const voided = orders.filter((o) => o.status === 'cancelled');
 
-    const totalSales = orders.reduce((sum, order) => {
-      return sum + order.items.reduce((itemSum, item) => {
-        return itemSum + (item.price * item.qty);
-      }, 0);
-    }, 0);
+    // Real name/role for the id FBPOS recorded as waiterId — the same tenant staff list its own
+    // waiter picker uses (see /api/tenant), not the disconnected, hardcoded lib/fb/employeeStore
+    // this replaced (fake staff like "Kwame Addo" that never existed in this hotel's real data).
+    // waiterId holds a raw staff id for an order placed in this browser session before its
+    // first sync, but the real, already-resolved NAME for anything hydrated from the API (see
+    // ordersStore.hydrateFromApi's field-reconciliation notes) — so a name-keyed lookup is
+    // checked too, not just the id one, or every real historical order fell through to
+    // "Not recorded" despite the correct name already sitting in waiterId.
+    const staff = useTenantStaffStore.getState().staff;
+    const staffById = new Map(staff.map((s) => [s.id, s]));
+    const staffByName = new Map(staff.map((s) => [s.name, s]));
+    const resolveStaff = (waiterId: string) => {
+      const match = staffById.get(waiterId) || staffByName.get(waiterId);
+      return { name: match?.name || waiterId || 'Not recorded', role: match?.role || 'Not recorded' };
+    };
 
-    // Employee performance
-    const employeeSales: Record<string, {
-      name: string;
-      role: string;
-      orders: number;
-      revenue: number;
+    const byStaff: Record<string, {
+      transactions: number; grossSales: number; discounts: number; tax: number; grandTotal: number;
     }> = {};
-
-    orders.forEach(order => {
+    sold.forEach((order) => {
       const waiterId = order.waiterId;
       if (!waiterId) return;
+      if (!byStaff[waiterId]) byStaff[waiterId] = { transactions: 0, grossSales: 0, discounts: 0, tax: 0, grandTotal: 0 };
+      const gross = order.subtotal ?? orderTotal(order);
+      byStaff[waiterId].transactions += 1;
+      byStaff[waiterId].grossSales += gross;
+      byStaff[waiterId].discounts += order.discountAmount || 0;
+      byStaff[waiterId].tax += order.taxAmount || 0;
+      byStaff[waiterId].grandTotal += order.total ?? gross;
+    });
 
-      if (!employeeSales[waiterId]) {
-        employeeSales[waiterId] = {
-          name: waiterId, // In real system, this would be looked up from employee store
-          role: 'waiter',
-          orders: 0,
-          revenue: 0
+    const voidsByStaff: Record<string, number> = {};
+    voided.forEach((order) => {
+      if (!order.waiterId) return;
+      voidsByStaff[order.waiterId] = (voidsByStaff[order.waiterId] || 0) + 1;
+    });
+
+    const allWaiterIds = new Set([...Object.keys(byStaff), ...Object.keys(voidsByStaff)]);
+
+    return Array.from(allWaiterIds).map((waiterId) => {
+      const data = byStaff[waiterId] || { transactions: 0, grossSales: 0, discounts: 0, tax: 0, grandTotal: 0 };
+      const { name, role } = resolveStaff(waiterId);
+      return {
+        staff: name,
+        role,
+        transactions: data.transactions,
+        grossSales: data.grossSales,
+        discounts: data.discounts,
+        netSales: data.grossSales - data.discounts,
+        tax: data.tax,
+        grandTotal: data.grandTotal,
+        averageCheck: data.transactions > 0 ? data.grandTotal / data.transactions : 0,
+        voids: voidsByStaff[waiterId] || 0,
+      };
+    }).sort((a, b) => b.grandTotal - a.grandTotal);
+  }
+
+  // Room Charge Report — every order tagged with a room number (charged, or intended to
+  // be charged, to a guest's room) in the period. Posting Status can only honestly be
+  // Posted (folioId set — the charge actually landed on the guest's folio, see
+  // api/fb/orders/[id]/route.ts's billed handling) or Not Posted — there's no real
+  // Failed/Reversed state recorded anywhere to distinguish "not yet billed" from
+  // "posting failed".
+  generateRoomChargeReport(startDate: string, endDate: string): Array<{
+    orderNumber: string;
+    date: string;
+    room: string;
+    guest: string;
+    table: string;
+    staff: string;
+    amount: number;
+    tax: number;
+    total: number;
+    postingStatus: 'Posted' | 'Not Posted';
+  }> {
+    return ordersInRange(startDate, endDate)
+      .filter((order) => !!order.roomNumber && order.status !== 'cancelled')
+      .map((order) => ({
+        orderNumber: order.orderNumber || order.id,
+        date: (order.createdAt || order.timestamp || '').split('T')[0],
+        room: order.roomNumber || '—',
+        guest: order.guestName || '—',
+        table: order.table || '—',
+        staff: order.waiterId || '—',
+        amount: order.subtotal ?? orderTotal(order),
+        tax: order.taxAmount || 0,
+        total: order.total ?? orderTotal(order),
+        postingStatus: (order.folioId ? 'Posted' : 'Not Posted') as 'Posted' | 'Not Posted',
+      }))
+      .sort((a, b) => (a.date < b.date ? 1 : -1));
+  }
+
+  // Kitchen/Bar tickets — a real history log (every item sent to that station in
+  // the period), not a "what's outstanding right now" snapshot: that live view
+  // already exists in KitchenDisplaySystem.tsx. Per-item prep timestamps aren't
+  // persisted (FBOrderItem has no startedAt/readyAt/preparedAt columns — see
+  // schema.prisma) — only the order's own preparingAt/servedAt are real, so a
+  // multi-item order's prep time is shown once per ticket row, not computed
+  // per item.
+  private ticketRows(route: 'kitchen' | 'bar', startDate: string, endDate: string): TicketRow[] {
+    const orders = ordersInRange(startDate, endDate);
+    const rows: TicketRow[] = [];
+    orders.forEach((order) => {
+      const kitchenBarStatus: TicketRow['kitchenBarStatus'] =
+        order.status === 'cancelled' ? 'Cancelled'
+        : (order.status === 'ready' || order.status === 'served' || order.status === 'billed') ? 'Completed'
+        : 'Pending';
+      const billedPaid: TicketRow['billedPaid'] = order.status === 'billed' ? 'Yes' : 'No';
+
+      order.items.filter((item) => item.route === route).forEach((item) => {
+        const prep = minutesBetween(order.preparingAt, order.servedAt);
+        rows.push({
+          orderNumber: order.orderNumber || order.id,
+          table: order.table || '—',
+          item: item.name,
+          quantity: item.qty,
+          orderStatus: order.status,
+          kitchenBarStatus,
+          billedPaid,
+          sentAt: order.createdAt || order.timestamp || '',
+          startedPreparingAt: order.preparingAt || '—',
+          servedAt: order.servedAt || '—',
+          prepTimeMinutes: prep ?? '—',
+          preparedBy: order.assignedToName || order.waiterId || '—',
+        });
+      });
+    });
+    return rows.sort((a, b) => (a.sentAt < b.sentAt ? 1 : -1));
+  }
+
+  generateKitchenTicketsReport(startDate: string, endDate: string) {
+    return this.ticketRows('kitchen', startDate, endDate);
+  }
+
+  generateBarTicketsReport(startDate: string, endDate: string) {
+    return this.ticketRows('bar', startDate, endDate);
+  }
+
+  // Voided/Cancelled Orders — filtered on updatedAt (the closest real timestamp
+  // to "when it was cancelled"; there's no dedicated cancelledAt column) rather
+  // than createdAt, so an order placed yesterday and cancelled today shows up
+  // in today's range, not yesterday's. The cancellation reason isn't shown here
+  // — it's captured in the audit log (FB_ORDER_CANCELLED, see
+  // api/fb/orders/[id]/route.ts), not on the order record itself.
+  generateVoidedOrdersReport(startDate: string, endDate: string): Array<{
+    orderNumber: string;
+    table: string;
+    venue: string;
+    server: string;
+    items: string;
+    total: number;
+    cancelledAt: string;
+  }> {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+    return ordersStore.all()
+      .filter((order) => order.status === 'cancelled')
+      .filter((order) => {
+        const d = new Date(order.updatedAt || order.createdAt || '');
+        return !isNaN(d.getTime()) && d >= start && d <= end;
+      })
+      .map((order) => ({
+        orderNumber: order.orderNumber || order.id,
+        table: order.table || '—',
+        venue: order.venue,
+        server: order.waiterId || '—',
+        items: order.items.map((i) => `${i.qty}x ${i.name}`).join(', ') || 'None',
+        total: order.total ?? orderTotal(order),
+        cancelledAt: order.updatedAt || '—',
+      }))
+      .sort((a, b) => (a.cancelledAt < b.cancelledAt ? 1 : -1));
+  }
+
+  // Discount Report — every order with a real discountAmount in the period,
+  // straight from the persisted order (not reconstructed per line item).
+  generateDiscountReport(startDate: string, endDate: string): Array<{
+    orderNumber: string;
+    date: string;
+    table: string;
+    server: string;
+    subtotal: number;
+    discountAmount: number;
+    discountPercentage: number;
+    serviceCharge: number;
+    total: number;
+  }> {
+    return ordersInRange(startDate, endDate)
+      .filter((order) => (order.discountAmount || 0) > 0)
+      .map((order) => {
+        const subtotal = order.subtotal ?? orderTotal(order);
+        return {
+          orderNumber: order.orderNumber || order.id,
+          date: (order.createdAt || order.timestamp || '').split('T')[0],
+          table: order.table || '—',
+          server: order.waiterId || '—',
+          subtotal,
+          discountAmount: order.discountAmount || 0,
+          discountPercentage: subtotal > 0 ? ((order.discountAmount || 0) / subtotal) * 100 : 0,
+          serviceCharge: order.serviceCharge || 0,
+          total: order.total ?? subtotal,
         };
-      }
-
-      employeeSales[waiterId].orders += 1;
-      employeeSales[waiterId].revenue += order.items.reduce((sum, item) => {
-        return sum + (item.price * item.qty);
-      }, 0);
-    });
-
-    const employeePerformance = Object.entries(employeeSales).map(([employeeId, data]) => ({
-      employeeId,
-      name: data.name,
-      role: data.role,
-      orders: data.orders,
-      revenue: data.revenue,
-      averageOrderValue: data.orders > 0 ? data.revenue / data.orders : 0,
-      percentageOfSales: totalSales > 0 ? (data.revenue / totalSales) * 100 : 0
-    })).sort((a, b) => b.revenue - a.revenue);
-
-    return {
-      period: `${startDate} to ${endDate}`,
-      totalSales,
-      employeePerformance
-    };
+      })
+      .sort((a, b) => b.discountAmount - a.discountAmount);
   }
 
-  // Inventory Reports
-  generateInventoryReport(date: string): InventoryReport {
-    const totalValue = inventoryStore.getInventoryValue();
-    const lowStockItems = inventoryStore.getLowStockIngredients();
-    const expiringItems = inventoryStore.getExpiringIngredients();
-    
-    // Calculate waste value for the last 30 days
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const wasteValue = inventoryStore.getWasteValue(thirtyDaysAgo.toISOString(), date);
-    
-    // Calculate COGS for the last 30 days
-    const cogs = inventoryStore.getCostOfGoodsSold(thirtyDaysAgo.toISOString(), date);
-    
-    // Calculate stock turnover (simplified)
-    const stockTurnover = totalValue > 0 ? cogs / totalValue : 0;
-
-    return {
-      id: `INV-${date}`,
-      date,
-      totalValue,
-      lowStockItems,
-      expiringItems,
-      wasteValue,
-      cogs,
-      stockTurnover
-    };
+  // Table Sales — one row per table, aggregated over the selected period (the
+  // same "aggregate a real dimension over a range" shape as Front Office's Room
+  // Performance report), not a live "who's sitting there now" view.
+  generateTableSalesReport(startDate: string, endDate: string): Array<{
+    table: string;
+    orders: number;
+    covers: number;
+    sales: number;
+    averageCheck: number;
+  }> {
+    const orders = ordersInRange(startDate, endDate).filter((o) => o.status !== 'cancelled');
+    const byTable: Record<string, { orders: number; covers: number; sales: number }> = {};
+    orders.forEach((order) => {
+      const table = order.table || 'Unassigned';
+      if (!byTable[table]) byTable[table] = { orders: 0, covers: 0, sales: 0 };
+      byTable[table].orders += 1;
+      byTable[table].covers += order.covers || 0;
+      byTable[table].sales += order.total ?? orderTotal(order);
+    });
+    return Object.entries(byTable)
+      .map(([table, data]) => ({
+        table,
+        orders: data.orders,
+        covers: data.covers,
+        sales: data.sales,
+        averageCheck: data.orders > 0 ? data.sales / data.orders : 0,
+      }))
+      .sort((a, b) => b.sales - a.sales);
   }
 
-  generateWasteReport(startDate: string, endDate: string): {
-    period: string;
-    totalWasteValue: number;
-    wasteByReason: Record<string, { quantity: number; cost: number; percentage: number }>;
-    wasteByIngredient: Array<{
-      ingredientId: string;
-      name: string;
-      quantity: number;
-      cost: number;
-      reason: string;
-    }>;
-    wasteByEmployee: Record<string, { quantity: number; cost: number; percentage: number }>;
-  } {
-    const wasteRecords = inventoryStore.getWasteRecords();
-    const filteredWaste = wasteRecords.filter(waste => {
-      const wasteDate = new Date(waste.date);
-      const start = new Date(startDate);
-      const end = new Date(endDate);
-      return wasteDate >= start && wasteDate <= end;
-    });
-
-    const totalWasteValue = filteredWaste.reduce((sum, waste) => sum + waste.cost, 0);
-
-    // Waste by reason
-    const wasteByReason: Record<string, { quantity: number; cost: number; percentage: number }> = {};
-    filteredWaste.forEach(waste => {
-      if (!wasteByReason[waste.reason]) {
-        wasteByReason[waste.reason] = { quantity: 0, cost: 0, percentage: 0 };
-      }
-      wasteByReason[waste.reason].quantity += waste.quantity;
-      wasteByReason[waste.reason].cost += waste.cost;
-    });
-
-    // Calculate percentages
-    Object.keys(wasteByReason).forEach(reason => {
-      wasteByReason[reason].percentage = totalWasteValue > 0 
-        ? (wasteByReason[reason].cost / totalWasteValue) * 100 
-        : 0;
-    });
-
-    // Waste by ingredient
-    const wasteByIngredient = filteredWaste.map(waste => {
-      const ingredient = inventoryStore.getIngredient(waste.ingredientId);
-      return {
-        ingredientId: waste.ingredientId,
-        name: ingredient?.name || 'Unknown',
-        quantity: waste.quantity,
-        cost: waste.cost,
-        reason: waste.reason
-      };
-    }).sort((a, b) => b.cost - a.cost);
-
-    // Waste by employee
-    const wasteByEmployee: Record<string, { quantity: number; cost: number; percentage: number }> = {};
-    filteredWaste.forEach(waste => {
-      if (!wasteByEmployee[waste.employeeId]) {
-        wasteByEmployee[waste.employeeId] = { quantity: 0, cost: 0, percentage: 0 };
-      }
-      wasteByEmployee[waste.employeeId].quantity += waste.quantity;
-      wasteByEmployee[waste.employeeId].cost += waste.cost;
-    });
-
-    // Calculate percentages
-    Object.keys(wasteByEmployee).forEach(employeeId => {
-      wasteByEmployee[employeeId].percentage = totalWasteValue > 0 
-        ? (wasteByEmployee[employeeId].cost / totalWasteValue) * 100 
-        : 0;
-    });
-
-    return {
-      period: `${startDate} to ${endDate}`,
-      totalWasteValue,
-      wasteByReason,
-      wasteByIngredient,
-      wasteByEmployee
-    };
-  }
-
-  // Labor Reports
-  generateLaborReport(startDate: string, endDate: string): LaborReport {
-    const laborCosts = employeeStore.getLaborCosts(startDate, endDate);
-    const totalHours = laborCosts.totalHours;
-    const totalPay = laborCosts.totalPay;
-    const averageHourlyRate = laborCosts.averageHourlyRate;
-
-    // Calculate labor percentage (would need sales data for this)
-    const salesData = this.generateDailySalesReport(startDate);
-    const totalSales = salesData.totalSales;
-    const laborPercentage = totalSales > 0 ? (totalPay / totalSales) * 100 : 0;
-
-    // Employee breakdown
-    const employeeBreakdown = Object.entries(laborCosts.byRole).map(([role, data]) => {
-      const employees = employeeStore.getEmployeesByRole(role);
-      const totalRoleHours = data.hours;
-      const totalRolePay = data.pay;
-      
-      // Calculate efficiency (simplified - could be based on orders processed, etc.)
-      const efficiency = totalRoleHours > 0 ? Math.min(100, (totalRoleHours / (employees.length * 40)) * 100) : 0;
-
-      return {
-        employeeId: role, // Using role as ID for this summary
-        name: `${role} (${employees.length} employees)`,
-        hours: totalRoleHours,
-        pay: totalRolePay,
-        efficiency
-      };
-    });
-
-    return {
-      id: `LABOR-${startDate}-${endDate}`,
-      period: `${startDate} to ${endDate}`,
-      totalHours,
-      totalPay,
-      averageHourlyRate,
-      laborPercentage,
-      employeeBreakdown
-    };
-  }
-
-  // Financial Reports
-  generateFinancialSummary(startDate: string, endDate: string): {
-    period: string;
+  // The 4 top-row KPI tiles shown above whichever report table is selected (Total
+  // Revenue/Discounts/Voids for the chosen period; Pending Orders is deliberately
+  // NOT period-filtered — it's a live "what's outstanding right now" count, the
+  // same thing the Restaurant & Bar overview's Active Orders card shows, not a
+  // historical figure a date range would make sense for).
+  generateSummaryKPIs(startDate: string, endDate: string): {
     totalRevenue: number;
-    totalCOGS: number;
-    grossProfit: number;
-    grossProfitMargin: number;
-    totalLaborCost: number;
-    laborPercentage: number;
-    totalWaste: number;
-    wastePercentage: number;
-    netProfit: number;
-    netProfitMargin: number;
+    totalDiscounts: number;
+    totalVoids: number;
+    pendingOrders: number;
   } {
-    const salesReport = this.generateDailySalesReport(startDate);
-    const inventoryReport = this.generateInventoryReport(endDate);
-    const laborReport = this.generateLaborReport(startDate, endDate);
-    const wasteReport = this.generateWasteReport(startDate, endDate);
-
-    const totalRevenue = salesReport.totalSales;
-    const totalCOGS = inventoryReport.cogs;
-    const grossProfit = totalRevenue - totalCOGS;
-    const grossProfitMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
-    
-    const totalLaborCost = laborReport.totalPay;
-    const laborPercentage = totalRevenue > 0 ? (totalLaborCost / totalRevenue) * 100 : 0;
-    
-    const totalWaste = wasteReport.totalWasteValue;
-    const wastePercentage = totalRevenue > 0 ? (totalWaste / totalRevenue) * 100 : 0;
-    
-    const netProfit = grossProfit - totalLaborCost - totalWaste;
-    const netProfitMargin = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
-
-    return {
-      period: `${startDate} to ${endDate}`,
-      totalRevenue,
-      totalCOGS,
-      grossProfit,
-      grossProfitMargin,
-      totalLaborCost,
-      laborPercentage,
-      totalWaste,
-      wastePercentage,
-      netProfit,
-      netProfitMargin
-    };
+    const orders = ordersInRange(startDate, endDate);
+    const totalRevenue = orders
+      .filter((o) => o.status !== 'cancelled')
+      .reduce((sum, o) => sum + (o.total ?? orderTotal(o)), 0);
+    const totalDiscounts = orders.reduce((sum, o) => sum + (o.discountAmount || 0), 0);
+    const totalVoids = orders.filter((o) => o.status === 'cancelled').length;
+    const pendingOrders = ordersStore.all()
+      .filter((o) => o.status === 'pending' || o.status === 'preparing' || o.status === 'ready').length;
+    return { totalRevenue, totalDiscounts, totalVoids, pendingOrders };
   }
 
   // Customer Analytics
@@ -506,60 +593,20 @@ class ReportingStore {
     };
   }
 
-  // Supplier Analytics
-  generateSupplierAnalyticsReport(): {
-    totalSuppliers: number;
-    activeSuppliers: number;
-    averageRating: number;
-    topProductCategory: string;
-    supplierDistribution: Record<string, number>;
-    topRatedSuppliers: Array<{
-      supplierId: string;
-      name: string;
-      rating: number;
-      products: string[];
-      contactPerson: string;
-    }>;
-  } {
-    const metrics = supplierStore.getSupplierPerformanceMetrics();
-    const topRatedSuppliers = supplierStore.getTopRatedSuppliers(5).map(supplier => ({
-      supplierId: supplier.id,
-      name: supplier.name,
-      rating: supplier.rating,
-      products: supplier.products,
-      contactPerson: supplier.contactPerson
-    }));
 
-    return {
-      totalSuppliers: metrics.totalSuppliers,
-      activeSuppliers: metrics.activeSuppliers,
-      averageRating: metrics.averageRating,
-      topProductCategory: metrics.topProductCategory,
-      supplierDistribution: metrics.supplierDistribution,
-      topRatedSuppliers
-    };
-  }
-
-  // Export functionality
-  exportReport(reportType: string, data: any): string {
-    const timestamp = new Date().toISOString().split('T')[0];
-    const filename = `${reportType}_${timestamp}.csv`;
-    
-    // This would generate CSV data based on the report type
-    // For now, return a simple JSON string
-    return JSON.stringify(data, null, 2);
-  }
-
-  // Subscription management
-  subscribe(listener: () => void): () => void {
-    this.listeners.push(listener);
-    return () => {
-      this.listeners = this.listeners.filter(l => l !== listener);
-    };
-  }
-
-  private notifyListeners(): void {
-    this.listeners.forEach(listener => listener());
+  // Export and Print — same shared shaping/serializing pipeline Front Office's
+  // reportingStore uses (reportExportFormat.ts), so a report's CSV/Excel/PDF
+  // always matches what's on screen instead of a JSON dump wearing a .csv name.
+  async exportReport(reportData: any, format: 'pdf' | 'excel' | 'csv', filename: string, generatedLabel?: string): Promise<string> {
+    const sections = reportDataToSections(reportData);
+    const org: ReportOrgInfo = buildOrgProfile(useSettingsStore.getState());
+    const title = filename.replace(/\.[^.]+$/, '').replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+    const blob = format === 'csv'
+      ? new Blob([sectionsToCSV(sections, org, generatedLabel)], { type: 'text/csv' })
+      : format === 'excel'
+      ? new Blob([sectionsToExcelHtml(title, sections, org, generatedLabel)], { type: 'application/vnd.ms-excel' })
+      : await sectionsToPdfBlob(title, sections, org, generatedLabel);
+    return URL.createObjectURL(blob);
   }
 }
 

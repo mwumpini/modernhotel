@@ -56,6 +56,26 @@ function addDays(isoDate: string, days: number): string {
   return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
 }
 
+/** A smooth curve through the given points (Catmull-Rom, converted to cubic Beziers) — used for the
+ * occupancy trend so it reads as a trend line rather than a bar-by-bar comparison. */
+function smoothLinePath(points: Array<{ x: number; y: number }>): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x},${points[0].y}`;
+  let d = `M ${points[0].x},${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${c1x},${c1y} ${c2x},${c2y} ${p2.x},${p2.y}`;
+  }
+  return d;
+}
+
 function formatCurrency(amount: number | undefined) {
   if (!amount || Number.isNaN(amount)) return '₵0';
   try {
@@ -92,6 +112,7 @@ export default function ExecutiveManagementDashboard() {
   const [arrivals, setArrivals] = React.useState<number>(0);
   const [departures, setDepartures] = React.useState<number>(0);
   const [occupancyTrend, setOccupancyTrend] = React.useState<Array<{date: string; rate: number}>>([]);
+  const [trendHoverIdx, setTrendHoverIdx] = React.useState<number | null>(null);
   const [revenueSplit, setRevenueSplit] = React.useState<{room: number; fb: number; other: number; total: number}>({ room: 0, fb: 0, other: 0, total: 0 });
   const [selectedDate, setSelectedDate] = React.useState<string>('');
   // Live store updates refresh whichever date is on screen, not just today.
@@ -658,39 +679,82 @@ export default function ExecutiveManagementDashboard() {
             </CardHeader>
             <CardBody className="pt-2">
               {!mounted ? (
-                <div className="h-28 bg-gray-50 rounded animate-pulse" />
+                <div className="h-40 bg-gray-50 rounded animate-pulse" />
               ) : (
                 (() => {
                   const trend = occupancyTrend || [];
-                  const avg = trend.length ? trend.reduce((s, t) => s + (t.rate || 0), 0) / trend.length : 0;
+                  if (trend.length === 0) return <div className="h-40 flex items-center justify-center text-sm text-gray-500">No trend data</div>;
+
+                  const avg = trend.reduce((s, t) => s + (t.rate || 0), 0) / trend.length;
+                  // A view box in real percentage/day units — CSS stretches it to the card's actual size
+                  // (preserveAspectRatio="none"), so the maths below never has to know the pixel width.
+                  const W = trend.length; // one unit per day
+                  const H = 100;
+                  const topPad = 14; // headroom so a 100% peak, and the "Avg" label, aren't clipped
+                  const bottomPad = 4;
+                  const yFor = (rate: number) => topPad + (1 - Math.max(0, Math.min(100, rate)) / 100) * (H - topPad - bottomPad);
+                  const points = trend.map((p, i) => ({ x: i + 0.5, y: yFor(p.rate) }));
+                  const linePath = smoothLinePath(points);
+                  const areaPath = `${linePath} L ${points[points.length - 1].x},${H} L ${points[0].x},${H} Z`;
+                  const avgY = yFor(avg);
+                  const activeIdx = trendHoverIdx ?? trend.findIndex((p) => p.date === selectedDate);
+                  const active = activeIdx >= 0 ? { day: trend[activeIdx], point: points[activeIdx] } : null;
+
                   return (
                     <div>
-                      {/* Bars sit in a box with a fixed height, so their percentage heights mean something; labels go underneath. */}
-                      <div className="relative h-28">
-                        <div className="absolute left-0 right-0 border-t-2 border-dashed border-gray-300" style={{ bottom: `${Math.max(0, Math.min(100, avg))}%` }} />
-                        <div className="absolute right-0 -top-5 text-xs text-gray-500">Avg {avg.toFixed(0)}%</div>
-                        <div className="absolute inset-0 flex items-end gap-1 sm:gap-2">
-                          {trend.map((p, i) => {
-                            const height = Math.max(2, Math.min(100, p.rate)); // a day at 0% stays a sliver, not a fake bar
-                            return (
-                              <button
-                                key={i}
-                                onClick={() => { setSelectedDate(p.date); refreshForDate(p.date); }}
-                                aria-label={`${p.date}: ${p.rate.toFixed(0)}% occupancy`}
-                                className="flex-1 rounded-t-md bg-gradient-to-t from-ghana-green to-emerald-400 hover:from-emerald-600 hover:to-emerald-400 transition-colors"
-                                style={{ height: `${height}%` }}
-                                title={`${p.date}: ${p.rate.toFixed(0)}%`}
-                              />
-                            );
-                          })}
-                          {trend.length === 0 && (
-                            <div className="text-sm text-gray-500">No trend data</div>
-                          )}
+                      <div className="relative h-40 sm:h-44">
+                        <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 w-full h-full overflow-visible">
+                          <defs>
+                            <linearGradient id="execTrendFill" x1="0" y1="0" x2="0" y2="1">
+                              <stop offset="0%" stopColor="#059669" stopOpacity="0.35" />
+                              <stop offset="100%" stopColor="#059669" stopOpacity="0" />
+                            </linearGradient>
+                          </defs>
+                          <line x1="0" y1={avgY} x2={W} y2={avgY} stroke="#cbd5e1" strokeWidth="0.6" strokeDasharray="2,1.5" vectorEffect="non-scaling-stroke" />
+                          <path d={areaPath} fill="url(#execTrendFill)" stroke="none" />
+                          <path d={linePath} fill="none" stroke="#059669" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+                        </svg>
+                        {/* Dots as HTML, not SVG circles — the chart above stretches x and y by different
+                            amounts to fill the card (preserveAspectRatio="none"), which would turn a true
+                            SVG circle into an ellipse. A percentage-positioned, fixed-pixel-size dot stays round. */}
+                        {points.map((pt, i) => (
+                          <div
+                            key={i}
+                            className={`absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-600 ${i === activeIdx ? 'bg-emerald-600 w-2.5 h-2.5' : 'bg-white w-1.5 h-1.5'}`}
+                            style={{ left: `${(pt.x / W) * 100}%`, top: `${(pt.y / H) * 100}%` }}
+                          />
+                        ))}
+                        {active && (
+                          <div
+                            className="absolute -translate-x-1/2 -translate-y-full bg-ghana-black text-white text-[11px] rounded px-1.5 py-0.5 whitespace-nowrap pointer-events-none shadow"
+                            style={{ left: `${(active.point.x / W) * 100}%`, top: `${(active.point.y / H) * 100}%`, marginTop: '-6px' }}
+                          >
+                            {active.day.rate.toFixed(0)}%
+                          </div>
+                        )}
+                        <div className="absolute left-0 bottom-0 text-[11px] text-gray-500 bg-white/70 pr-1 rounded-tr">Avg {avg.toFixed(0)}%</div>
+                        {/* Transparent per-day columns: click to jump the dashboard to that date, hover/focus to see its value. */}
+                        <div className="absolute inset-0 flex">
+                          {trend.map((p, i) => (
+                            <button
+                              key={i}
+                              onClick={() => { setSelectedDate(p.date); refreshForDate(p.date); }}
+                              onMouseEnter={() => setTrendHoverIdx(i)}
+                              onMouseLeave={() => setTrendHoverIdx(null)}
+                              onFocus={() => setTrendHoverIdx(i)}
+                              onBlur={() => setTrendHoverIdx(null)}
+                              aria-label={`${p.date}: ${p.rate.toFixed(0)}% occupancy`}
+                              title={`${p.date}: ${p.rate.toFixed(0)}%`}
+                              className="flex-1 h-full"
+                            />
+                          ))}
                         </div>
                       </div>
-                      <div className="mt-1 flex gap-1 sm:gap-2 text-[10px] text-gray-600">
+                      <div className="mt-1 flex text-[10px] text-gray-600">
                         {trend.map((p, i) => (
-                          <div key={i} className="flex-1 text-center">{new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3)}</div>
+                          <div key={i} className={`flex-1 text-center ${p.date === selectedDate ? 'font-semibold text-ghana-black' : ''}`}>
+                            {new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3)}
+                          </div>
                         ))}
                       </div>
                     </div>

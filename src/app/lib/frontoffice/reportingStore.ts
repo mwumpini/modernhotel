@@ -5,6 +5,7 @@ import { frontOfficeStore } from './store';
 import { trackEvent } from '../analytics/trackEvent';
 import { getFolioDisplayTotals, folioChargeGlCode, findMainFolio, stayFolio, allStayFolios } from './helpers/folio';
 import { housekeepingStore } from '../housekeeping/store';
+import { useGuestServicesStore } from './guestServicesStore';
 import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob, type ReportOrgInfo } from './reportExportFormat';
 import { useSettingsStore } from '../settings/store';
 import { buildOrgProfile } from '../print/buildOrgProfile';
@@ -92,6 +93,13 @@ interface ReportingStore {
   generateDailyFlashReport: (date: string) => any;
   generateOccupancyReport: (date: string, endDate?: string) => any;
   generateRoomPerformanceReport: (startDate: string, endDate: string, roomId?: string) => any;
+  generateRoomTypeRevenueReport: (startDate: string, endDate: string) => any[];
+  generateCancelledReservationsReport: (startDate: string, endDate: string) => any[];
+  generateReservationStatusReport: (startDate: string, endDate: string) => any;
+  generateAgentSourceReport: (startDate: string, endDate: string) => any[];
+  generateCheckInOutDaybookReport: (startDate: string, endDate: string) => any[];
+  generateForeignGuestDocumentReport: (startDate: string, endDate: string) => any[];
+  generateGuestServiceRequestsReport: (startDate: string, endDate: string) => any[];
   generatePaceReport: (date: string, endDate?: string) => any[];
   generateNoShowReport: (date: string, endDate?: string) => any[];
   generateSourceOfBusinessReport: (startDate: string, endDate: string) => any[];
@@ -369,6 +377,23 @@ function eachDay(startDate: string, endDate: string): string[] {
 
 // Shown in place of a misleading 0 for a figure the system doesn't record.
 const NOT_TRACKED = 'Not tracked';
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** A reservation's real charges within a date range, split the same way the Daily Flash report
+ * splits revenue (room / food & beverage / other), gross of tax. Shared by any report that groups
+ * stay revenue differently — by room (Room Performance), by room type, by source, etc. */
+function stayChargeSplit(reservationId: string, startDate: string, endDate: string) {
+  const charges = (stayFolio(frontOfficeStore.folios, reservationId)?.charges || [])
+    .filter((c) => dateInRange(c.date, startDate, endDate));
+  const gross = (match: (glCode: string) => boolean) =>
+    round2(charges.filter((c) => match(folioChargeGlCode(c))).reduce((sum, c) => sum + c.amount + (c.tax || 0), 0));
+  return {
+    roomRevenue: gross((g) => g === '4100'),
+    foodBeverage: gross((g) => g === '4200'),
+    otherCharges: gross((g) => g !== '4100' && g !== '4200'),
+  };
+}
 
 export const useReportingStore = create<ReportingStore>((set, get) => ({
   // Initial state
@@ -1093,26 +1118,17 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     // A stay counts toward the room it ended up in (room moves aren't recorded, so a stay is never
     // split across rooms). Money is gross of tax, the same basis as the Daily Flash report.
     const days = eachDay(startDate, endDate);
-    const round2 = (n: number) => Math.round(n * 100) / 100;
     const typeName = (typeId: string) => frontOfficeStore.roomTypes.find(rt => rt.id === typeId)?.name || 'Unknown';
 
     const summarise = (room: import('./types').RoomEntity) => {
       const stays = frontOfficeStore.reservations
         .filter(r => r.roomId === room.id && wasInHouseDuring(r, startDate, endDate))
-        .map(r => {
-          const charges = (stayFolio(frontOfficeStore.folios, r.id)?.charges || [])
-            .filter(c => dateInRange(c.date, startDate, endDate));
-          const gross = (match: (glCode: string) => boolean) =>
-            round2(charges.filter(c => match(folioChargeGlCode(c))).reduce((sum, c) => sum + c.amount + (c.tax || 0), 0));
-          return {
-            reservation: r,
-            guests: (r.adults || 0) + (r.children || 0),
-            nights: days.filter(d => wasInHouseDuring(r, d, d)).length,
-            roomRevenue: gross(g => g === '4100'),
-            foodBeverage: gross(g => g === '4200'),
-            otherCharges: gross(g => g !== '4100' && g !== '4200'),
-          };
-        });
+        .map(r => ({
+          reservation: r,
+          guests: (r.adults || 0) + (r.children || 0),
+          nights: days.filter(d => wasInHouseDuring(r, d, d)).length,
+          ...stayChargeSplit(r.id, startDate, endDate),
+        }));
       const total = (key: 'roomRevenue' | 'foodBeverage' | 'otherCharges') => round2(stays.reduce((sum, st) => sum + st[key], 0));
       const nightsOccupied = days.filter(d => stays.some(st => wasInHouseDuring(st.reservation, d, d))).length;
       const roomRevenue = total('roomRevenue');
@@ -1191,6 +1207,211 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         averageDailyRate: nights > 0 ? round2(roomRevenue / nights) : 0,
       },
     ];
+  },
+
+  generateRoomTypeRevenueReport: (startDate, endDate) => {
+    console.log(`[REPORTS] Generating room type revenue report for ${startDate} to ${endDate}`);
+
+    // Same stay-charge split as Room Performance, grouped by room type instead of by individual
+    // room — "how did Standard vs Deluxe vs Suite do", not "how did room 204 do".
+    const days = eachDay(startDate, endDate);
+    const roomsOfType = new Map<string, string[]>();
+    frontOfficeStore.rooms.forEach((r) => roomsOfType.set(r.roomTypeId, [...(roomsOfType.get(r.roomTypeId) || []), r.id]));
+
+    const rows = frontOfficeStore.roomTypes.map((type) => {
+      const roomIds = new Set(roomsOfType.get(type.id) || []);
+      const stays = frontOfficeStore.reservations
+        .filter((r) => roomIds.has(r.roomId || '') && wasInHouseDuring(r, startDate, endDate))
+        .map((r) => ({ reservation: r, guests: (r.adults || 0) + (r.children || 0), ...stayChargeSplit(r.id, startDate, endDate) }));
+      const nightsOccupied = days.filter((d) => stays.some((st) => wasInHouseDuring(st.reservation, d, d))).length;
+      const roomsOfThisType = roomIds.size;
+      const roomRevenue = round2(stays.reduce((s, st) => s + st.roomRevenue, 0));
+      const foodBeverage = round2(stays.reduce((s, st) => s + st.foodBeverage, 0));
+      const otherCharges = round2(stays.reduce((s, st) => s + st.otherCharges, 0));
+      return {
+        roomType: type.name,
+        roomsOfThisType,
+        nightsOccupied,
+        occupancyRate: roomsOfThisType > 0 && days.length > 0 ? round2((nightsOccupied / (roomsOfThisType * days.length)) * 100) : 0,
+        stays: stays.length,
+        guests: stays.reduce((s, st) => s + st.guests, 0),
+        roomRevenue,
+        foodBeverage,
+        otherCharges,
+        totalSales: round2(roomRevenue + foodBeverage + otherCharges),
+        averageDailyRate: nightsOccupied > 0 ? round2(roomRevenue / nightsOccupied) : 0,
+      };
+    }).sort((a, b) => b.totalSales - a.totalSales);
+
+    if (rows.length === 0) return [];
+    const sumOf = (pick: (x: (typeof rows)[number]) => number) => rows.reduce((t, x) => t + pick(x), 0);
+    const nights = sumOf((x) => x.nightsOccupied);
+    const roomRevenue = round2(sumOf((x) => x.roomRevenue));
+    return [
+      ...rows,
+      {
+        roomType: 'Total', roomsOfThisType: sumOf((x) => x.roomsOfThisType), nightsOccupied: nights,
+        occupancyRate: rows.length > 0 && days.length > 0 ? round2((nights / (sumOf((x) => x.roomsOfThisType) * days.length)) * 100) : 0,
+        stays: sumOf((x) => x.stays), guests: sumOf((x) => x.guests), roomRevenue,
+        foodBeverage: round2(sumOf((x) => x.foodBeverage)), otherCharges: round2(sumOf((x) => x.otherCharges)),
+        totalSales: round2(sumOf((x) => x.totalSales)), averageDailyRate: nights > 0 ? round2(roomRevenue / nights) : 0,
+      },
+    ];
+  },
+
+  generateCancelledReservationsReport: (startDate, endDate) => {
+    console.log(`[REPORTS] Generating cancelled reservations report from ${startDate} to ${endDate}`);
+
+    // "Cancelled on" uses updatedAt — a cancellation doesn't get its own timestamp field, but the
+    // cancel action is the last thing that touches the reservation, so this is the closest honest
+    // answer (same convention as resolveCheckedOutAt's historical fallback above). Revenue lost is
+    // the quoted rate for the stay that never happened — an estimate, not money that was ever billed.
+    const cancelled = frontOfficeStore.reservations.filter((r) => r.status === 'cancelled' && dateInRange(r.updatedAt, startDate, endDate));
+    return cancelled.map((r) => {
+      const roomType = frontOfficeStore.roomTypes.find((rt) => rt.id === r.roomTypeId)?.name || 'Unknown';
+      const nightsBooked = Math.max(1, Math.round((new Date(r.departure).getTime() - new Date(r.arrival).getTime()) / 86_400_000));
+      const cancelledOn = (r.updatedAt || '').slice(0, 10);
+      let estimatedRevenueLost = 0;
+      try { estimatedRevenueLost = round2(frontOfficeStore.getReservationQuote(r).grandTotal); } catch {}
+      return {
+        guestName: r.guestName,
+        roomType,
+        arrival: r.arrival.slice(0, 10),
+        departure: r.departure.slice(0, 10),
+        nightsBooked,
+        source: r.source || 'Direct',
+        cancelledOn,
+        leadTimeDays: Math.round((new Date(r.arrival).getTime() - new Date(cancelledOn).getTime()) / 86_400_000),
+        estimatedRevenueLost,
+      };
+    }).sort((a, b) => b.cancelledOn.localeCompare(a.cancelledOn));
+  },
+
+  generateReservationStatusReport: (startDate, endDate) => {
+    console.log(`[REPORTS] Generating reservation status report from ${startDate} to ${endDate}`);
+
+    // Reservations MADE in this period (createdAt), not arriving in it — "how is the booking
+    // pipeline looking for bookings taken this week", including ones for a future arrival date.
+    const inRange = frontOfficeStore.reservations.filter((r) => dateInRange(r.createdAt, startDate, endDate));
+    const STATUSES: Array<import('./types').Reservation['status']> = ['pending', 'confirmed', 'checked-in', 'checked-out', 'cancelled', 'no-show'];
+    const byStatus = STATUSES.map((status) => {
+      const rows = inRange.filter((r) => r.status === status);
+      return { status, count: rows.length, percentage: inRange.length > 0 ? round2((rows.length / inRange.length) * 100) : 0 };
+    });
+    return {
+      summary: { totalReservationsMade: inRange.length, period: `${startDate} to ${endDate}` },
+      byStatus,
+    };
+  },
+
+  generateAgentSourceReport: (startDate, endDate) => {
+    console.log(`[REPORTS] Generating agent/source wise report from ${startDate} to ${endDate}`);
+
+    // Grouped by whatever source values actually appear on real reservations (not a fixed guessed
+    // list — a hotel's own booking channels/agents vary), with the specific company or billing
+    // contact named where a reservation records one (e.g. a named travel agency or corporate account).
+    const inRange = frontOfficeStore.reservations.filter((r) => dateInRange(r.arrival, startDate, endDate));
+    const bySource = new Map<string, { bookings: number; nights: number; revenue: number; companies: Set<string> }>();
+    for (const r of inRange) {
+      const key = r.source || 'Unspecified';
+      const entry = bySource.get(key) || { bookings: 0, nights: 0, revenue: 0, companies: new Set<string>() };
+      entry.bookings += 1;
+      entry.nights += Math.max(1, Math.round((new Date(r.departure).getTime() - new Date(r.arrival).getTime()) / 86_400_000));
+      const folio = findMainFolio(frontOfficeStore.folios, r.id);
+      entry.revenue += folio ? getFolioDisplayTotals(folio, endDate).totalCharges : 0;
+      const company = r.companyName || r.billingPersonName;
+      if (company) entry.companies.add(company);
+      bySource.set(key, entry);
+    }
+    const totalBookings = inRange.length;
+    return Array.from(bySource.entries())
+      .map(([source, v]) => ({
+        source,
+        bookings: v.bookings,
+        roomNights: v.nights,
+        revenue: round2(v.revenue),
+        averageRate: v.bookings > 0 ? round2(v.revenue / v.bookings) : 0,
+        percentageOfTotal: totalBookings > 0 ? round2((v.bookings / totalBookings) * 100) : 0,
+        agentOrCompany: v.companies.size > 0 ? Array.from(v.companies).join(', ') : '—',
+      }))
+      .sort((a, b) => b.bookings - a.bookings);
+  },
+
+  generateCheckInOutDaybookReport: (startDate, endDate) => {
+    console.log(`[REPORTS] Generating check-in/check-out daybook from ${startDate} to ${endDate}`);
+
+    // A log of events that actually happened, in the order they happened — as opposed to Arrivals/
+    // Departures, which are about a scheduled date. Uses the same real-timestamp-with-historical-
+    // fallback rule as the rest of reporting (resolveCheckedInAt/resolveCheckedOutAt above).
+    const rows: Array<{ event: 'Check-In' | 'Check-Out'; at: string; guestName: string; room: string; staff: string }> = [];
+    for (const r of frontOfficeStore.reservations) {
+      const inAt = resolveCheckedInAt(r);
+      if (inAt && dateInRange(inAt, startDate, endDate)) {
+        rows.push({ event: 'Check-In', at: inAt, guestName: r.guestName, room: r.roomId || 'TBD', staff: NOT_TRACKED });
+      }
+      const outAt = resolveCheckedOutAt(r);
+      if (outAt && dateInRange(outAt, startDate, endDate)) {
+        rows.push({ event: 'Check-Out', at: outAt, guestName: r.guestName, room: r.roomId || 'TBD', staff: NOT_TRACKED });
+      }
+    }
+    return rows
+      .sort((a, b) => a.at.localeCompare(b.at))
+      .map((r) => ({ dateTime: new Date(r.at).toLocaleString(), event: r.event, guestName: r.guestName, room: r.room, processedBy: r.staff }));
+  },
+
+  generateForeignGuestDocumentReport: (startDate, endDate) => {
+    console.log(`[REPORTS] Generating foreign guest document report from ${startDate} to ${endDate}`);
+
+    // Any guest travelling on a passport, or whose recorded nationality isn't Ghanaian, arriving in
+    // the period. Visa numbers aren't captured anywhere in the system, so — honestly — there's no
+    // visa column here; adding one would mean making the numbers up.
+    const inRange = frontOfficeStore.reservations.filter((r) => dateInRange(r.arrival, startDate, endDate) && r.status !== 'cancelled' && r.status !== 'no-show');
+    return inRange
+      .map((r) => {
+        const guest = frontOfficeStore.guests.find((g) => g.id === r.guestId);
+        if (!guest) return null;
+        const isForeign = (guest.nationality || '').toLowerCase() !== 'ghanaian';
+        const travelsOnPassport = guest.idType === 'passport';
+        if (!isForeign && !travelsOnPassport) return null;
+        return {
+          guestName: guest.name || r.guestName,
+          nationality: guest.nationality || 'Not recorded',
+          idType: guest.idType || 'Not recorded',
+          idNumber: guest.idNumber || 'Not recorded',
+          arrival: r.arrival.slice(0, 10),
+          departure: r.departure.slice(0, 10),
+          room: r.roomId || 'TBD',
+          status: r.status,
+        };
+      })
+      .filter((row): row is NonNullable<typeof row> => row !== null);
+  },
+
+  generateGuestServiceRequestsReport: (startDate, endDate) => {
+    console.log(`[REPORTS] Generating guest service requests report from ${startDate} to ${endDate}`);
+
+    // Every ancillary service a guest asked for through Guest Services — airport transfers, extra
+    // beds, late check-out, whatever the hotel has set up under Guest Services > Services — not
+    // just one hand-picked service. Nothing to show until Guest Services has been used.
+    const { services, requests } = useGuestServicesStore.getState();
+    const serviceById = new Map(services.map((s) => [s.id, s]));
+    return requests
+      .filter((req) => dateInRange(req.requestDate, startDate, endDate))
+      .map((req) => {
+        const service = serviceById.get(req.serviceId);
+        return {
+          requestDate: (req.requestDate || '').slice(0, 10),
+          service: service?.name || 'Unknown service',
+          category: service?.category || 'Unspecified',
+          guestName: req.clientName,
+          room: req.roomNumber || 'TBD',
+          priority: req.priority,
+          status: req.status,
+          price: service?.price || 0,
+          notes: req.notes || '',
+        };
+      })
+      .sort((a, b) => b.requestDate.localeCompare(a.requestDate));
   },
 
   generatePaceReport: (date, endDate = date) => {

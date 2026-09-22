@@ -1,96 +1,19 @@
 'use client';
 
 import React, { useState, useMemo, useEffect } from 'react';
-import { 
-  Card, CardBody, CardHeader, Button, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, 
-  Tabs, Tab, Select, SelectItem, Input, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
+import {
+  Card, CardBody, CardHeader, Button,
+  Tabs, Tab, Select, SelectItem, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter,
   useDisclosure, Textarea, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem
 } from '@heroui/react';
 import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { useGuestServicesStore } from '../lib/frontoffice/guestServicesStore';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import DailyTransactionReportView, { type TransactionRow } from './DailyTransactionReportView';
-import { formatPercent, isPercentKey } from '../lib/frontoffice/reportExportFormat';
-
-function labelize(key: string): string {
-  return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
-}
-
-function formatReportValue(value: unknown, key?: string): React.ReactNode {
-  if (value === null || value === undefined || value === '') return '—';
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (typeof value === 'number') return key && isPercentKey(key) ? formatPercent(value) : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-  return String(value);
-}
-
-/** Renders an array of row objects as a small table — reused for nested
- * report arrays like discount requests or complimentary rooms. */
-function ReportMiniTable({ rows }: { rows: Record<string, unknown>[] }) {
-  if (rows.length === 0) return <p className="text-sm text-gray-500">None</p>;
-  const columns = Object.keys(rows[0]);
-  return (
-    <Table removeWrapper isCompact aria-label="Report detail">
-      <TableHeader>
-        {columns.map((c) => <TableColumn key={c} align="center">{labelize(c)}</TableColumn>) as any}
-      </TableHeader>
-      <TableBody>
-        {rows.map((row, i) => (
-          <TableRow key={i}>
-            {columns.map((c) => <TableCell key={c}>{formatReportValue(row[c], c)}</TableCell>) as any}
-          </TableRow>
-        ))}
-      </TableBody>
-    </Table>
-  );
-}
-
-/** Renders a report's summary object recursively: primitive fields as stat
- * tiles, nested objects as labeled sub-sections, arrays of objects as mini
- * tables. Used for reports that return one object rather than a row array
- * (daily flash, occupancy, discount requests, complimentary rooms, pricing
- * analytics, ...) — previously these silently dropped every non-primitive
- * field, so most of what the report actually computed never reached the screen. */
-function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
-  const entries = Object.entries(data);
-  const primitives = entries.filter(([, v]) => v === null || typeof v !== 'object');
-  const objects = entries.filter(([, v]) => v !== null && typeof v === 'object' && !Array.isArray(v));
-  const arrays = entries.filter(([, v]) => Array.isArray(v));
-
-  return (
-    <div className="space-y-6">
-      {primitives.length > 0 && (
-        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          {primitives.map(([key, value]) => (
-            <div key={key} className="p-3 bg-gray-50 rounded-lg border">
-              <div className="text-xs text-gray-500">{labelize(key)}</div>
-              <div className="text-lg font-semibold text-ghana-black">{formatReportValue(value, key)}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      {objects.map(([key, value]) => (
-        <div key={key}>
-          <h4 className="text-sm font-semibold text-gray-700 mb-2">{labelize(key)}</h4>
-          <ReportSummarySection data={value as Record<string, unknown>} />
-        </div>
-      ))}
-      {arrays.map(([key, value]) => {
-        const arr = value as unknown[];
-        const isObjectArray = arr.length > 0 && typeof arr[0] === 'object' && arr[0] !== null;
-        return (
-          <div key={key}>
-            <h4 className="text-sm font-semibold text-gray-700 mb-2">{labelize(key)}</h4>
-            {isObjectArray
-              ? <ReportMiniTable rows={arr as Record<string, unknown>[]} />
-              : <p className="text-sm text-gray-600">{arr.length > 0 ? arr.join(', ') : 'None'}</p>}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+import { ReportOutput, ReportDateControl, TransactionFilters, type ReportDateMode } from './reports/ReportBasics';
 
 // Reports whose generator accepts an optional endDate to cover a period
 // instead of one day — see getCurrentReportData()'s switch below, which is
@@ -98,10 +21,11 @@ function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
 // Room Status has no historical per-day log to sum across a range, and
 // Daily Flash is a point-in-time operational snapshot, not an event list.
 const RANGE_REPORT_KEYS = new Set([
-  'arrivals', 'departures', 'check-ins', 'high-balance', 'wake-up-calls',
+  'arrivals', 'departures', 'check-ins', 'high-balance', 'wake-up-calls', 'cancelled-reservations', 'checkinout-daybook',
   'daily-transactions', 'cashier-report', 'credit-card-reconciliation', 'guest-ledger',
-  'occupancy', 'room-performance', 'pace', 'no-shows', 'night-audit-history',
+  'occupancy', 'room-performance', 'room-type-revenue', 'agent-source', 'reservation-status', 'pace', 'no-shows', 'night-audit-history',
   'source-business', 'market-segmentation', 'discount-request', 'complimentary-room', 'pricing-analytics',
+  'foreign-guest-document', 'guest-service-requests',
 ]);
 // Reports that don't take a date at all (guest-history reads guestId instead).
 const NO_DATE_REPORT_KEYS = new Set(['guest-history']);
@@ -126,7 +50,7 @@ export default function FrontOfficeReportsAnalysis() {
   // "Today" and "Specific Date" are just a range collapsed to a single day
   // (start === end); "Range" is disabled, not hidden, for reports whose
   // generator only accepts one date — see RANGE_REPORT_KEYS.
-  const [reportDateMode, setReportDateMode] = useState<'today' | 'specific' | 'range'>('today');
+  const [reportDateMode, setReportDateMode] = useState<ReportDateMode>('today');
   const [exportFormat, setExportFormat] = useState<'pdf' | 'excel' | 'csv'>('pdf');
   const [isGenerating, setIsGenerating] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -141,10 +65,19 @@ export default function FrontOfficeReportsAnalysis() {
   // value once hydrated — a hydration mismatch. Defer the table itself
   // (not the surrounding page chrome) until after mount.
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+    // Nothing else on this screen loads the Guest Services catalog/queue — without this the
+    // Guest Service Requests report would always show empty, not because there's nothing to
+    // report but because it was never fetched.
+    void useGuestServicesStore.getState().hydrateFromApi();
+  }, []);
 
   const settings = useSettingsStore();
   const reportingStore = useReportingStore();
+  // Re-render once the Guest Services catalog/queue finishes loading (see the mount effect below),
+  // so the Guest Service Requests report reflects real data instead of the empty pre-hydration state.
+  useGuestServicesStore((s) => s.hydrated);
   const { logs: nightAuditLogs } = useNightAuditLog({ startDate, endDate });
   const orgProfile = buildOrgProfile(settings);
 
@@ -198,6 +131,15 @@ export default function FrontOfficeReportsAnalysis() {
     return reportingStore.generateDailyFlashReport(startDate);
   }, [startDate, reportingStore]);
 
+  // The report picker's onSelectionChange fires with an empty key set on some
+  // interactions (e.g. Escape while it's open), and Array.from(keys)[0] on an
+  // empty set is undefined — setSelectedReport(undefined) then crashed every
+  // selectedReport.replace(...) call below. Only commit a real selection.
+  const handleSelectReport = (keys: unknown) => {
+    const key = Array.from(keys as Set<string>)[0];
+    if (key) setSelectedReport(key);
+  };
+
   const handleExportReport = async (reportData: any, format: 'pdf' | 'excel' | 'csv') => {
     setIsGenerating(true);
 
@@ -236,6 +178,10 @@ export default function FrontOfficeReportsAnalysis() {
         return reportingStore.generateHighBalanceReport(startDate, endDate);
       case 'wake-up-calls':
         return reportingStore.generateWakeUpCallReport(startDate, endDate);
+      case 'cancelled-reservations':
+        return reportingStore.generateCancelledReservationsReport(startDate, endDate);
+      case 'checkinout-daybook':
+        return reportingStore.generateCheckInOutDaybookReport(startDate, endDate);
       case 'daily-transactions':
         return reportingStore.generateDailyTransactionReport(startDate, endDate);
       case 'cashier-report':
@@ -262,6 +208,12 @@ export default function FrontOfficeReportsAnalysis() {
         return reportingStore.generateOccupancyReport(startDate, endDate);
       case 'room-performance':
         return reportingStore.generateRoomPerformanceReport(startDate, endDate, roomFilter || undefined);
+      case 'room-type-revenue':
+        return reportingStore.generateRoomTypeRevenueReport(startDate, endDate);
+      case 'agent-source':
+        return reportingStore.generateAgentSourceReport(startDate, endDate);
+      case 'reservation-status':
+        return reportingStore.generateReservationStatusReport(startDate, endDate);
       case 'pace':
         return reportingStore.generatePaceReport(startDate, endDate);
       case 'no-shows':
@@ -282,80 +234,24 @@ export default function FrontOfficeReportsAnalysis() {
         return reportingStore.generateVIPReport(startDate);
       case 'guest-history':
         return reportingStore.generateGuestHistoryReport(guestId);
+      case 'foreign-guest-document':
+        return reportingStore.generateForeignGuestDocumentReport(startDate, endDate);
+      case 'guest-service-requests':
+        return reportingStore.generateGuestServiceRequestsReport(startDate, endDate);
       default:
         return generateArrivalsReport;
     }
   };
 
   const renderReportTable = () => {
-    if (!mounted) {
-      return (
-        <div className="text-center py-8">
-          <p className="text-gray-500">Loading…</p>
-        </div>
-      );
-    }
-
-    const data = getCurrentReportData();
-
-    if (!data || (Array.isArray(data) && data.length === 0)) {
-      return (
-        <div className="text-center py-8">
-          <p className="text-gray-500">No data available for the selected report and date.</p>
-        </div>
-      );
-    }
-
+    const data = mounted ? getCurrentReportData() : undefined;
     // Daily Transaction Report gets its own view — guest/staff/method/status/
     // category summaries plus a groupable detail table — instead of the plain
     // auto-columned table every other report uses.
-    if (selectedReport === 'daily-transactions' && Array.isArray(data)) {
-      return <DailyTransactionReportView transactions={data as TransactionRow[]} />;
-    }
-
-    // Some reports (daily-flash, occupancy, cashier's report, guest history,
-    // discount requests, complimentary rooms, pricing analytics) return a
-    // single summary object rather than a row-per-record array — render
-    // those recursively instead of feeding a non-array into the table below.
-    if (!Array.isArray(data)) {
-      return <ReportSummarySection data={data as Record<string, unknown>} />;
-    }
-
-    // Get column headers from the first item
-    const columns = Object.keys(data[0] || {});
-    
-    return (
-      <Table aria-label={`${selectedReport} report table`}>
-        <TableHeader>
-          {columns.map((column) => (
-            <TableColumn key={column} align="center">
-              {column.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase())}
-            </TableColumn>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {data.map((row: any, index: number) => (
-            <TableRow key={index}>
-              {columns.map((column) => (
-                <TableCell key={column}>
-                  {typeof row[column] === 'boolean'
-                    ? (row[column] ? 'Yes' : 'No')
-                    : typeof row[column] === 'number' && isPercentKey(column)
-                    ? formatPercent(row[column])
-                    : Array.isArray(row[column])
-                    ? row[column].join(', ')
-                    // A plain object isn't a valid React child and crashes the render —
-                    // fall back to a readable "key: value" summary instead.
-                    : row[column] !== null && typeof row[column] === 'object'
-                    ? Object.entries(row[column]).map(([k, v]) => `${k}: ${v}`).join(', ')
-                    : row[column]}
-                </TableCell>
-              ))}
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    );
+    const customView = selectedReport === 'daily-transactions' && Array.isArray(data)
+      ? <DailyTransactionReportView transactions={data as TransactionRow[]} />
+      : undefined;
+    return <ReportOutput mounted={mounted} data={data} ariaLabel={`${selectedReport} report table`} customView={customView} />;
   };
 
   return (
@@ -372,70 +268,15 @@ export default function FrontOfficeReportsAnalysis() {
       <div className="flex items-end justify-between gap-4 mb-6 flex-wrap">
         <div className="flex items-end gap-2 flex-wrap">
           {!NO_DATE_REPORT_KEYS.has(selectedReport) && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Report Date</label>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    const today = new Date().toISOString().split('T')[0];
-                    setReportDateMode('today');
-                    setStartDate(today);
-                    setEndDate(today);
-                  }}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${reportDateMode === 'today' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
-                >
-                  Today
-                </button>
-                <button
-                  onClick={() => setReportDateMode('specific')}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${reportDateMode === 'specific' ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
-                >
-                  Specific Date
-                </button>
-                <button
-                  onClick={() => setReportDateMode('range')}
-                  disabled={!RANGE_REPORT_KEYS.has(selectedReport)}
-                  title={RANGE_REPORT_KEYS.has(selectedReport) ? undefined : "This report doesn't support a date range yet — it runs for a single day"}
-                  className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
-                    !RANGE_REPORT_KEYS.has(selectedReport)
-                      ? 'bg-gray-50 text-gray-300 border-gray-200 cursor-not-allowed'
-                      : reportDateMode === 'range'
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
-                  }`}
-                >
-                  Range
-                </button>
-                {reportDateMode === 'specific' && (
-                  <Input
-                    type="date"
-                    value={startDate}
-                    onChange={(e) => {
-                      setStartDate(e.target.value);
-                      setEndDate(e.target.value);
-                    }}
-                    className="w-40"
-                  />
-                )}
-                {reportDateMode === 'range' && RANGE_REPORT_KEYS.has(selectedReport) && (
-                  <>
-                    <Input
-                      type="date"
-                      value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
-                      className="w-40"
-                    />
-                    <span className="text-gray-400 text-sm">→</span>
-                    <Input
-                      type="date"
-                      value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
-                      className="w-40"
-                    />
-                  </>
-                )}
-              </div>
-            </div>
+            <ReportDateControl
+              mode={reportDateMode}
+              setMode={setReportDateMode}
+              startDate={startDate}
+              endDate={endDate}
+              setStartDate={setStartDate}
+              setEndDate={setEndDate}
+              rangeSupported={RANGE_REPORT_KEYS.has(selectedReport)}
+            />
           )}
         </div>
         <div className="flex items-end space-x-2">
@@ -465,6 +306,14 @@ export default function FrontOfficeReportsAnalysis() {
               <DropdownItem key="csv">CSV</DropdownItem>
             </DropdownMenu>
           </Dropdown>
+          <Button
+            color="primary"
+            variant="flat"
+            onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
+            isLoading={isGenerating}
+          >
+            {isGenerating ? 'Exporting…' : '⬇️ Download'}
+          </Button>
         </div>
       </div>
 
@@ -480,7 +329,7 @@ export default function FrontOfficeReportsAnalysis() {
               <div className="flex space-x-2">
                 <Select
                   selectedKeys={[selectedReport]}
-                  onSelectionChange={(keys) => setSelectedReport(Array.from(keys)[0] as string)}
+                  onSelectionChange={handleSelectReport}
                   className="w-80"
                 >
                   <SelectItem key="arrivals">Arrivals Report</SelectItem>
@@ -489,14 +338,15 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="check-ins">Check-In Guest List</SelectItem>
                   <SelectItem key="high-balance">High Balance Report</SelectItem>
                   <SelectItem key="wake-up-calls">Wake-up Call Sheet</SelectItem>
+                  <SelectItem key="cancelled-reservations">Cancelled Reservations</SelectItem>
+                  <SelectItem key="checkinout-daybook">Check-In / Check-Out DayBook</SelectItem>
                 </Select>
                 <Button
                   color="primary"
                   variant="flat"
-                  onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
-                  isLoading={isGenerating}
+                  onClick={() => window.print()}
                 >
-                  {isGenerating ? '🖨️ Printing...' : '🖨️ Print'}
+                  🖨️ Print
                 </Button>
               </div>
             </div>
@@ -532,7 +382,7 @@ export default function FrontOfficeReportsAnalysis() {
               <div className="flex space-x-2">
                 <Select
                   selectedKeys={[selectedReport]}
-                  onSelectionChange={(keys) => setSelectedReport(Array.from(keys)[0] as string)}
+                  onSelectionChange={handleSelectReport}
                   className="w-80"
                 >
                   <SelectItem key="daily-transactions">Daily Transaction Report</SelectItem>
@@ -542,26 +392,25 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="night-audit-history">Night Audit History</SelectItem>
                 </Select>
                 {selectedReport === 'cashier-report' && (
-                  <Select
-                    selectedKeys={cashierId ? [cashierId] : []}
-                    onSelectionChange={(keys) => setCashierId(Array.from(keys)[0] as string || '')}
-                    className="w-64"
-                    placeholder="Select cashier"
-                  >
-                    {/* Matched against FolioPayment.processedBy, which records a name, not a user id. */}
-                    {settings.users.map(u => {
-                      const name = `${u.firstName} ${u.lastName}`.trim();
-                      return <SelectItem key={name}>{name}</SelectItem>;
-                    })}
-                  </Select>
+                  <TransactionFilters
+                    dimensions={[{
+                      key: 'cashier', label: 'Cashier', multi: false,
+                      selected: cashierId ? [cashierId] : [],
+                      setSelected: (values) => setCashierId(values[0] || ''),
+                      // Matched against FolioPayment.processedBy, which records a name, not a user id.
+                      options: settings.users.map((u) => {
+                        const name = `${u.firstName} ${u.lastName}`.trim();
+                        return { value: name, label: name };
+                      }),
+                    }]}
+                  />
                 )}
                 <Button
                   color="primary"
                   variant="flat"
-                  onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
-                  isLoading={isGenerating}
+                  onClick={() => window.print()}
                 >
-                  {isGenerating ? '🖨️ Printing...' : '🖨️ Print'}
+                  🖨️ Print
                 </Button>
               </div>
             </div>
@@ -597,7 +446,7 @@ export default function FrontOfficeReportsAnalysis() {
               <div className="flex space-x-2">
                 <Select
                   selectedKeys={[selectedReport]}
-                  onSelectionChange={(keys) => setSelectedReport(Array.from(keys)[0] as string)}
+                  onSelectionChange={handleSelectReport}
                   className="w-80"
                 >
                   <SelectItem key="daily-flash">Daily Flash Report</SelectItem>
@@ -610,28 +459,26 @@ export default function FrontOfficeReportsAnalysis() {
                   <SelectItem key="discount-request">Discount Request Report</SelectItem>
                   <SelectItem key="complimentary-room">Complimentary Room Report</SelectItem>
                   <SelectItem key="pricing-analytics">Pricing Analytics Report</SelectItem>
+                  <SelectItem key="room-type-revenue">Room Type Revenue Report</SelectItem>
+                  <SelectItem key="agent-source">Agent / Source Wise Report</SelectItem>
+                  <SelectItem key="reservation-status">Reservation Status Report</SelectItem>
                 </Select>
                 {selectedReport === 'room-performance' && (
-                  <Select
-                    aria-label="Room"
-                    selectedKeys={[roomFilter || '__all']}
-                    onSelectionChange={(keys) => {
-                      const key = Array.from(keys)[0] as string | undefined;
-                      setRoomFilter(!key || key === '__all' ? '' : key);
-                    }}
-                    disallowEmptySelection
-                    className="w-48"
-                  >
-                    {[<SelectItem key="__all">All rooms</SelectItem>, ...frontOfficeStore.rooms.map(r => <SelectItem key={r.id}>{`Room ${r.id}`}</SelectItem>)]}
-                  </Select>
+                  <TransactionFilters
+                    dimensions={[{
+                      key: 'room', label: 'Room', multi: false,
+                      selected: roomFilter ? [roomFilter] : [],
+                      setSelected: (values) => setRoomFilter(values[0] || ''),
+                      options: frontOfficeStore.rooms.map((r) => ({ value: r.id, label: `Room ${r.id}` })),
+                    }]}
+                  />
                 )}
                 <Button
                   color="primary"
                   variant="flat"
-                  onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
-                  isLoading={isGenerating}
+                  onClick={() => window.print()}
                 >
-                  {isGenerating ? '🖨️ Printing...' : '🖨️ Print'}
+                  🖨️ Print
                 </Button>
               </div>
             </div>
@@ -667,30 +514,31 @@ export default function FrontOfficeReportsAnalysis() {
               <div className="flex space-x-2">
                 <Select
                   selectedKeys={[selectedReport]}
-                  onSelectionChange={(keys) => setSelectedReport(Array.from(keys)[0] as string)}
+                  onSelectionChange={handleSelectReport}
                   className="w-80"
                 >
                   <SelectItem key="guest-count-meal-plan">Guest Count & Meal Plan Report</SelectItem>
                   <SelectItem key="vip">VIP Report</SelectItem>
                   <SelectItem key="guest-history">Guest History Report</SelectItem>
+                  <SelectItem key="foreign-guest-document">Foreign Guest Document Report</SelectItem>
+                  <SelectItem key="guest-service-requests">Guest Service Requests Report</SelectItem>
                 </Select>
                 {selectedReport === 'guest-history' && (
-                  <Select
-                    selectedKeys={guestId ? [guestId] : []}
-                    onSelectionChange={(keys) => setGuestId(Array.from(keys)[0] as string || '')}
-                    className="w-64"
-                    placeholder="Select guest"
-                  >
-                    {frontOfficeStore.guests.slice(0, 200).map(g => <SelectItem key={g.id}>{g.name}</SelectItem>)}
-                  </Select>
+                  <TransactionFilters
+                    dimensions={[{
+                      key: 'guest', label: 'Guest', multi: false,
+                      selected: guestId ? [guestId] : [],
+                      setSelected: (values) => setGuestId(values[0] || ''),
+                      options: frontOfficeStore.guests.slice(0, 200).map((g) => ({ value: g.id, label: g.name || g.id })),
+                    }]}
+                  />
                 )}
                 <Button
                   color="primary"
                   variant="flat"
-                  onClick={() => handleExportReport(getCurrentReportData(), exportFormat)}
-                  isLoading={isGenerating}
+                  onClick={() => window.print()}
                 >
-                  {isGenerating ? '🖨️ Printing...' : '🖨️ Print'}
+                  🖨️ Print
                 </Button>
               </div>
             </div>

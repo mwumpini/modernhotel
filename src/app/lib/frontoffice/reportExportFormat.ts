@@ -29,6 +29,23 @@ export function formatPercent(value: number): string {
   return `${value.toFixed(2)}%`;
 }
 
+/** Whole-number fields (a count of things, not an amount of money) — most numeric report
+ * fields ARE money, so this is a small explicit exception list rather than trying to guess
+ * "looks like money" from the value itself (a ₵35 sale and a quantity of 35 are both just
+ * the number 35 — only the field name tells them apart). */
+const COUNT_KEYS = new Set([
+  'quantity', 'qty', 'hour', 'covers', 'orders', 'totalOrders', 'totalCustomers', 'activeCustomers',
+  'totalVoids', 'pendingOrders', 'visitCount', 'loyaltyPoints', 'totalSuppliers', 'activeSuppliers',
+  'prepTimeMinutes', 'orderCount', 'transactions', 'voids',
+  // Front Office report fields — nights/stays/guests/rooms are counted, never money.
+  'rank', 'adults', 'children', 'guests', 'guestCount', 'nights', 'nightsInPeriod', 'nightsOccupied',
+  'roomNights', 'stays', 'daysInPeriod', 'leadTimeDays', 'availableRooms', 'totalRooms', 'totalNights',
+  'totalComplimentaryRooms', 'totalGuestsInHouse', 'transactionCount',
+]);
+export function isCountKey(key: string): boolean {
+  return COUNT_KEYS.has(key);
+}
+
 function cell(value: unknown, key?: string): string | number {
   if (value === null || value === undefined || value === '') return '';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';

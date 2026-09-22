@@ -30,6 +30,7 @@ export {
   DEMO_MARKET_CODES,
   DEMO_PAYMENT_METHODS,
   DEMO_STAY_REASONS,
+  DEMO_RESERVATION_IDS,
   buildDemoReservations,
 } from './fixtures';
 
