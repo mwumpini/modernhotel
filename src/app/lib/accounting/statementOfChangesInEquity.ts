@@ -58,13 +58,16 @@ export function buildStatementOfChangesInEquity(
   const openTree = buildFinancialAccountTree(coa, journalEntries, { kind: 'cumulative', endDate: openingEnd });
   const closeTree = buildFinancialAccountTree(coa, journalEntries, { kind: 'cumulative', endDate });
 
-  const openAssets = sumRootBalancesByType(openTree, 'Asset');
-  const openLiab = sumRootBalancesByType(openTree, 'Liability');
-  const openTotalEq = openAssets - openLiab;
-
-  const closeAssets = sumRootBalancesByType(closeTree, 'Asset');
-  const closeLiab = sumRootBalancesByType(closeTree, 'Liability');
-  const closeTotalEq = closeAssets - closeLiab;
+  // Same equity the balance sheet uses: equity accounts plus profit still sitting
+  // on revenue and expense. Assets − liabilities would hide a missing chart code
+  // inside retained earnings and always foot.
+  const explainedEquity = (tree: AccountNode[]) => {
+    const ledger = sumRootBalancesByType(tree, 'Equity');
+    const unclosed = sumRootBalancesByType(tree, 'Revenue') - sumRootBalancesByType(tree, 'Expense');
+    return ledger + unclosed;
+  };
+  const openTotalEq = explainedEquity(openTree);
+  const closeTotalEq = explainedEquity(closeTree);
 
   const openShare = balanceForEquityCode(openTree, '3100');
   const closeShare = balanceForEquityCode(closeTree, '3100');

@@ -39,6 +39,23 @@ const CURRENCY_SYMBOLS: Record<string, string> = {
   ZAR: 'R',
 };
 
+const CURRENCY_NAMES: Record<string, string> = {
+  GHS: 'Ghana cedis',
+  USD: 'US dollars',
+  EUR: 'euros',
+  GBP: 'pounds sterling',
+  NGN: 'naira',
+  KES: 'Kenyan shillings',
+  ZAR: 'rand',
+};
+
+/** One-line statement heading. Columns themselves stay as plain numbers. */
+export function accountingAmountsLabel(currency?: string): string {
+  const code = (currency ?? getTenantAccountingCurrency()).toUpperCase();
+  const name = CURRENCY_NAMES[code] ?? code;
+  return `Amounts in ${name} (${code})`;
+}
+
 export function formatAccountingCurrency(amount: number, currency?: string): string {
   const code = (currency ?? getTenantAccountingCurrency()).toUpperCase();
   const sym = CURRENCY_SYMBOLS[code] ?? code;

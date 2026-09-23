@@ -50,24 +50,48 @@ export function isCashEquivalentAccount(code: string): boolean {
   return isBankOrCashGlCode(code);
 }
 
+export type CashFlowActivity = 'operating' | 'investing' | 'financing';
+
 /**
- * IAS 7-style bucket: classify whole entry by non-cash lines (simplified).
+ * IAS 7 direct-method bucket for the non-cash side of a cash journal.
+ * Non-current assets (1500–1999) are investing. Equity and non-current
+ * liabilities (2500–3999, including drawings through retained earnings) are
+ * financing. Revenue, expenses, receivables, inventory and current payables
+ * stay operating.
  */
-export function classifyCashFlowActivity(je: JournalEntry): 'operating' | 'investing' | 'financing' {
-  const codes = je.lines.map((l) => l.accountCode || '');
-  const nonCash = codes.filter((c) => !isCashEquivalentAccount(c));
-  const pool = nonCash.length > 0 ? nonCash : codes;
-
-  const hits = (test: (c: string) => boolean) => pool.some(test);
-
-  if (hits((c) => c.startsWith('151') || c.startsWith('152') || c === '1500' || c === '1510' || c === '1520')) {
-    return 'investing';
-  }
-  if (hits((c) => c.startsWith('3100') || c === '3100')) {
-    return 'financing';
-  }
+export function classifyCashFlowOffset(code: string, type?: RollupCoa['type']): CashFlowActivity {
+  const n = parseInt(String(code).trim(), 10);
+  if (type === 'Equity' || (!Number.isNaN(n) && n >= 3000 && n <= 3999)) return 'financing';
+  if (!Number.isNaN(n) && n >= 2500 && n <= 2999) return 'financing';
+  if (!Number.isNaN(n) && n >= 1500 && n <= 1999) return 'investing';
   return 'operating';
 }
+
+/** Activity that explains the largest share of the entry's non-cash lines. */
+export function classifyCashFlowActivity(je: JournalEntry, coa?: RollupCoa[]): CashFlowActivity {
+  const typeByCode = new Map((coa ?? []).map((a) => [a.code, a.type]));
+  let operating = 0;
+  let investing = 0;
+  let financing = 0;
+  for (const line of je.lines) {
+    if (isCashEquivalentAccount(line.accountCode)) continue;
+    const mag = Math.abs((line.credit || 0) - (line.debit || 0));
+    const bucket = classifyCashFlowOffset(line.accountCode, typeByCode.get(line.accountCode));
+    if (bucket === 'investing') investing += mag;
+    else if (bucket === 'financing') financing += mag;
+    else operating += mag;
+  }
+  if (investing >= financing && investing >= operating && investing > 0) return 'investing';
+  if (financing >= operating && financing > 0) return 'financing';
+  return 'operating';
+}
+
+export type CashFlowLine = {
+  activity: CashFlowActivity;
+  accountCode: string;
+  accountName: string;
+  amount: number;
+};
 
 export type CashFlowSummary = {
   operating: number;
@@ -77,19 +101,32 @@ export type CashFlowSummary = {
   openingCash: number;
   closingCash: number;
   reconciliationDiff: number;
+  /** Cash effect grouped by the offsetting account, so each section can be read as a statement. */
+  lines: CashFlowLine[];
 };
 
+function roundMoney(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 /**
- * Posted cash activity in period, split operating / investing / financing from journal lines.
+ * Posted cash activity in the period. Each journal's cash movement is split
+ * across its non-cash lines (credit − debit on the offset equals the cash
+ * increase), then grouped by account. A purchase that pays for both equipment
+ * and supplies lands in investing and operating for those amounts, instead of
+ * the whole payment being dropped into one bucket.
  */
 export function computeCashFlowFromJournals(
   journalEntries: JournalEntry[],
   startDate: Date,
-  endDate: Date
+  endDate: Date,
+  coa?: RollupCoa[]
 ): CashFlowSummary {
   const posted = journalEntries.filter((je) => je.status === 'Posted');
   const s = dayStart(startDate).getTime();
   const e = dayEnd(endDate).getTime();
+  const nameByCode = new Map((coa ?? []).map((a) => [a.code, a.name]));
+  const typeByCode = new Map((coa ?? []).map((a) => [a.code, a.type]));
 
   function cashNetForJe(je: JournalEntry): number {
     let n = 0;
@@ -128,26 +165,65 @@ export function computeCashFlowFromJournals(
     return deb - cred;
   }
 
-  let operating = 0;
-  let investing = 0;
-  let financing = 0;
+  const grouped = new Map<string, CashFlowLine>();
+
+  const addLine = (activity: CashFlowActivity, accountCode: string, accountName: string, amount: number) => {
+    const key = `${activity}|${accountCode}`;
+    const prev = grouped.get(key);
+    if (prev) prev.amount += amount;
+    else grouped.set(key, { activity, accountCode, accountName, amount });
+  };
 
   for (const je of posted) {
     const t = jeTime(je);
     if (t < s || t > e) continue;
     const net = cashNetForJe(je);
     if (Math.abs(net) < 1e-6) continue;
-    const bucket = classifyCashFlowActivity(je);
-    if (bucket === 'investing') investing += net;
-    else if (bucket === 'financing') financing += net;
-    else operating += net;
+
+    const offsets: { code: string; signed: number }[] = [];
+    for (const line of je.lines) {
+      if (isCashEquivalentAccount(line.accountCode)) continue;
+      const signed = (line.credit || 0) - (line.debit || 0);
+      if (Math.abs(signed) < 1e-6) continue;
+      offsets.push({ code: line.accountCode || '', signed });
+    }
+
+    const offsetSum = offsets.reduce((sum, o) => sum + o.signed, 0);
+    if (offsets.length === 0 || Math.abs(offsetSum) < 1e-6) {
+      addLine('operating', '', 'Unclassified cash movement', net);
+      continue;
+    }
+
+    // A balanced entry has offsetSum === net. Scale only when the entry itself
+    // does not balance, so the sections still foot to the cash movement.
+    const scale = net / offsetSum;
+    for (const o of offsets) {
+      addLine(
+        classifyCashFlowOffset(o.code, typeByCode.get(o.code)),
+        o.code,
+        nameByCode.get(o.code) || o.code || 'Unclassified cash movement',
+        o.signed * scale
+      );
+    }
   }
 
-  const openingCash = cashBalanceBefore(s);
-  const closingCash = cashBalanceThrough(e);
-  const netChange = closingCash - openingCash;
-  const summed = operating + investing + financing;
-  const reconciliationDiff = netChange - summed;
+  const lines = Array.from(grouped.values())
+    .map((line) => ({ ...line, amount: roundMoney(line.amount) }))
+    .filter((line) => Math.abs(line.amount) >= 0.01)
+    .sort((a, b) => a.activity.localeCompare(b.activity) || a.accountCode.localeCompare(b.accountCode));
+
+  const sumActivity = (activity: CashFlowActivity) =>
+    roundMoney(lines.filter((line) => line.activity === activity).reduce((sum, line) => sum + line.amount, 0));
+
+  const operating = sumActivity('operating');
+  const investing = sumActivity('investing');
+  const financing = sumActivity('financing');
+
+  const openingCash = roundMoney(cashBalanceBefore(s));
+  const closingCash = roundMoney(cashBalanceThrough(e));
+  const netChange = roundMoney(closingCash - openingCash);
+  const summed = roundMoney(operating + investing + financing);
+  const reconciliationDiff = roundMoney(netChange - summed);
 
   return {
     operating,
@@ -157,6 +233,7 @@ export function computeCashFlowFromJournals(
     openingCash,
     closingCash,
     reconciliationDiff,
+    lines,
   };
 }
 

@@ -26,25 +26,69 @@ import {
   RETAINED_EARNINGS_GL,
 } from '@/app/lib/accounting/periodClose';
 import { logAccountingProcess } from '@/app/lib/accounting/accountingProcessLog';
-import { formatAccountingCurrency } from '@/app/lib/accounting/tenantAccountingConfig';
+import { accountingAmountsLabel } from '@/app/lib/accounting/tenantAccountingConfig';
 import { downloadCSV, openPrintPreview } from '@/app/lib/accounting/helpers/exportHelpers';
 
 type PeriodType = 'custom' | 'month' | 'quarter' | 'year' | 'ytd';
 type ReportFormat = 'summary' | 'detailed';
 
 // ==================== HELPERS ====================
-// Financial-statement-specific presentation on top of the shared currency formatter:
-// zero amounts collapse to a dash, negatives render in parentheses (accounting convention).
+// Statement columns are plain numbers. The currency is named once in the heading.
+// Zero amounts collapse to a dash, negatives render in parentheses.
+const formatPlainAmount = (amount: number) =>
+  Math.abs(amount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 const formatCurrency = (amount: number, showZero = false) => {
   if (!showZero && Math.abs(amount) < 0.01) return '-';
-  return formatAccountingCurrency(amount);
+  return formatPlainAmount(amount);
 };
 
 const formatCurrencyWithSign = (amount: number, showZero = false) => {
   if (!showZero && Math.abs(amount) < 0.01) return '-';
   const sign = amount < 0 ? '(' : '';
   const end = amount < 0 ? ')' : '';
-  return `${sign}${formatAccountingCurrency(amount)}${end}`;
+  return `${sign}${formatPlainAmount(amount)}${end}`;
+};
+
+/** Calendar date in the browser's timezone. toISOString() shifts local midnight to the previous day east of UTC. */
+const formatLocalIsoDate = (d: Date) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+};
+
+const roundMoney = (amount: number) => Math.round((amount + Number.EPSILON) * 100) / 100;
+
+const formatDrCr = (debit: number, credit: number) => {
+  const parts: string[] = [];
+  if (debit > 0.005) parts.push(`Dr ${formatCurrency(debit, true)}`);
+  if (credit > 0.005) parts.push(`Cr ${formatCurrency(credit, true)}`);
+  return parts.join(' · ') || '—';
+};
+
+/** Amount posted on this account itself, excluding what its children already show. */
+const directPosting = (node: AccountNode) => {
+  let childDebit = 0;
+  let childCredit = 0;
+  let childBalance = 0;
+  for (const child of node.children) {
+    childDebit += child.debit;
+    childCredit += child.credit;
+    childBalance += child.balance;
+  }
+  return {
+    debit: node.debit - childDebit,
+    credit: node.credit - childCredit,
+    balance: node.balance - childBalance,
+  };
+};
+
+/** Net debit / net credit columns. A parent that is expanded must not be included — its children already are. */
+const addNetColumns = (into: { debit: number; credit: number }, debit: number, credit: number) => {
+  const net = debit - credit;
+  if (net > 0.005) into.debit += net;
+  else if (net < -0.005) into.credit += -net;
 };
 
 // Get period dates helper
@@ -122,6 +166,7 @@ const generateReportHTML = (title: string, period: string, content: string) => `
   <div class="header">
     <h1>${title}</h1>
     <p>${period}</p>
+    <p>${accountingAmountsLabel()}</p>
   </div>
   ${content}
   <div class="footer">
@@ -146,6 +191,7 @@ export default function FinancialReportsPage() {
   // ==================== STATE ====================
   const [selectedTab, setSelectedTab] = useState("overview");
   const [closeAsOfDate, setCloseAsOfDate] = useState('');
+  const [closeDateEdited, setCloseDateEdited] = useState(false);
   const [closeMessage, setCloseMessage] = useState<string | null>(null);
   const [closeBusy, setCloseBusy] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -156,7 +202,7 @@ export default function FinancialReportsPage() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
-  const [selectedQuarter, setSelectedQuarter] = useState('Q1');
+  const [selectedQuarter, setSelectedQuarter] = useState(() => `Q${Math.floor(new Date().getMonth() / 3) + 1}`);
   const [selectedYear, setSelectedYear] = useState(() => String(new Date().getFullYear()));
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
@@ -185,18 +231,12 @@ export default function FinancialReportsPage() {
     setTimeout(() => setIsRefreshing(false), 500);
   }, [initializeAccounting]);
 
-  // Toggle section expansion
-  const toggleSection = (sectionKey: string) => {
-    setExpandedSections(prev => {
-      const next = new Set(prev);
-      if (next.has(sectionKey)) {
-        next.delete(sectionKey);
-      } else {
-        next.add(sectionKey);
-      }
-      return next;
-    });
-  };
+  // 'all' means every section is open (Detailed). An individual click has to
+  // drop that flag, otherwise the triangle can never close one section.
+  const isSectionExpanded = useCallback(
+    (code: string) => expandedSections.has('all') || expandedSections.has(code),
+    [expandedSections]
+  );
 
   // ==================== PERIOD CALCULATIONS ====================
   const { startDate, endDate } = useMemo(() =>
@@ -271,6 +311,28 @@ export default function FinancialReportsPage() {
     setReportFormat('summary');
   };
 
+  const toggleSection = useCallback((sectionKey: string) => {
+    setExpandedSections((prev) => {
+      const next = new Set(prev);
+      if (next.has('all')) {
+        for (const account of rollupCoa) next.add(account.code);
+        next.delete('all');
+        next.delete(sectionKey);
+        return next;
+      }
+      if (next.has(sectionKey)) next.delete(sectionKey);
+      else next.add(sectionKey);
+      return next;
+    });
+  }, [rollupCoa]);
+
+  const yearOptions = useMemo(() => {
+    const current = new Date().getFullYear();
+    const from = Math.min(2024, current);
+    const to = current + 1;
+    return Array.from({ length: to - from + 1 }, (_, i) => from + i);
+  }, []);
+
   const accountTreePeriod = useMemo(
     () => buildFinancialAccountTree(rollupCoa, journalEntries, { kind: 'period', startDate, endDate }),
     [rollupCoa, journalEntries, startDate, endDate]
@@ -329,25 +391,49 @@ export default function FinancialReportsPage() {
   // shallower depth — than what renderAccountRows draws on screen. (Revenue and
   // Expense accounts run 3 levels deep in this chart, e.g. 5000 -> 5200 -> 5210 —
   // a hand-rolled 2-level-only renderer here previously dropped that 3rd level.)
-  const incomeStatementRows = useMemo(() => {
-    const flattenSection = (nodes: AccountNode[], section: 'Revenue' | 'Expense', level = 0, rows: Array<{ section: string; code: string; name: string; level: number; amount: number }> = []) => {
-      nodes.forEach((node) => {
-        const hasBalance = Math.abs(node.balance) > 0.01;
-        if (showZeroBalances || hasBalance || node.children.length > 0) {
-          rows.push({ section, code: node.code, name: node.name, level, amount: node.balance });
-        }
-        if (node.children.length > 0 && (expandedSections.has('all') || expandedSections.has(node.code))) {
-          flattenSection(node.children, section, level + 1, rows);
-        }
-      });
-      return rows;
-    };
-    return [...flattenSection(revenueAccounts, 'Revenue'), ...flattenSection(expenseAccounts, 'Expense')];
-  }, [revenueAccounts, expenseAccounts, showZeroBalances, expandedSections]);
+  // Heading rows (an expanded parent) carry a null amount so a total of the export
+  // matches the lines a reader can add on screen. The parent's own postings, if any,
+  // are a separate "posted directly" line.
+  const flattenStatement = useCallback((
+    nodes: AccountNode[],
+    section: string,
+    level = 0,
+    rows: Array<{ section: string; code: string; name: string; level: number; amount: number | null; heading: boolean }> = []
+  ) => {
+    nodes.forEach((node) => {
+      const hasBalance = Math.abs(node.balance) > 0.01;
+      const hasChildren = node.children.length > 0;
+      if (!showZeroBalances && !hasBalance && !hasChildren) return;
+      const open = hasChildren && isSectionExpanded(node.code);
+      if (!open) {
+        rows.push({ section, code: node.code, name: node.name, level, amount: node.balance, heading: false });
+        return;
+      }
+      rows.push({ section, code: node.code, name: node.name, level, amount: null, heading: true });
+      const direct = directPosting(node);
+      if (Math.abs(direct.balance) > 0.01) {
+        rows.push({
+          section,
+          code: node.code,
+          name: 'Posted directly to this account',
+          level: level + 1,
+          amount: direct.balance,
+          heading: false,
+        });
+      }
+      flattenStatement(node.children, section, level + 1, rows);
+    });
+    return rows;
+  }, [showZeroBalances, isSectionExpanded]);
+
+  const incomeStatementRows = useMemo(
+    () => [...flattenStatement(revenueAccounts, 'Revenue'), ...flattenStatement(expenseAccounts, 'Expense')],
+    [flattenStatement, revenueAccounts, expenseAccounts]
+  );
 
   const cashFlow = useMemo(
-    () => computeCashFlowFromJournals(journalEntries, startDate, endDate),
-    [journalEntries, startDate, endDate]
+    () => computeCashFlowFromJournals(journalEntries, startDate, endDate, rollupCoa),
+    [journalEntries, startDate, endDate, rollupCoa]
   );
 
   // ==================== CALCULATIONS ====================
@@ -359,30 +445,33 @@ export default function FinancialReportsPage() {
     const totalEquityLedger = sumBalance(equityAccounts);
     const totalRevenue = sumBalance(revenueAccounts);
     const totalExpenses = sumBalance(expenseAccounts);
-    const netIncome = totalRevenue - totalExpenses;
+    const netIncome = roundMoney(totalRevenue - totalExpenses);
 
-    // totalEquity is a plug (Assets − Liabilities), shown as "Total Equity" together with an
-    // itemized "Accumulated results (unclosed P&L)" row equal to accumulatedUnclosedPlug — so
-    // totalLiabAndEquity (= Liabilities + the plug) is definitionally equal to totalAssets and
-    // is NOT an independent balance check; it's a display subtotal only. The real check is
-    // accumulatedUnclosedPlug itself: it isolates whatever isn't explained by real ledger
-    // equity + this period's known unclosed P&L (see the "Balance Check" card below).
-    const totalEquity = totalAssets - totalLiabilities;
-    const accumulatedUnclosedPlug = totalEquity - totalEquityLedger;
-    const totalLiabAndEquity = totalLiabilities + totalEquity;
+    // Unclosed profit is the revenue and expense still sitting on the P&L accounts
+    // through the reporting date (cumulative, not just the selected period). Equity
+    // on the statement is that figure plus the equity accounts. Anything left over
+    // — usually a code that is not on the chart — is unexplainedDifference, and the
+    // balance sheet is allowed to show it instead of forcing Assets = Liabilities + Equity.
+    const cumulativeRevenue = sumBalance(accountTreeCumulative.filter((n) => n.type === 'Revenue'));
+    const cumulativeExpenses = sumBalance(accountTreeCumulative.filter((n) => n.type === 'Expense'));
+    const unclosedProfit = roundMoney(cumulativeRevenue - cumulativeExpenses);
+    const totalEquity = roundMoney(totalEquityLedger + unclosedProfit);
+    const unexplainedDifference = roundMoney(totalAssets - totalLiabilities - totalEquity);
+    const totalLiabAndEquity = roundMoney(totalLiabilities + totalEquity);
 
     return {
       totalAssets,
       totalLiabilities,
       totalEquityLedger,
       totalEquity,
-      accumulatedUnclosedPlug,
+      unclosedProfit,
+      unexplainedDifference,
       totalRevenue,
       totalExpenses,
       netIncome,
       totalLiabAndEquity,
     };
-  }, [assetAccounts, liabilityAccounts, equityAccounts, revenueAccounts, expenseAccounts]);
+  }, [assetAccounts, liabilityAccounts, equityAccounts, revenueAccounts, expenseAccounts, accountTreeCumulative]);
 
   // Same shape as `totals`, computed from the prior-year trees — feeds the comparison
   // column's section totals so they're never separately re-derived from the main figures.
@@ -390,51 +479,57 @@ export default function FinancialReportsPage() {
     const sumBalance = (nodes: AccountNode[]): number => nodes.reduce((s, n) => s + n.balance, 0);
     const totalAssets = sumBalance(assetAccountsPrior);
     const totalLiabilities = sumBalance(liabilityAccountsPrior);
-    const totalEquity = totalAssets - totalLiabilities;
+    const totalEquityLedger = sumBalance(equityAccountsPrior);
     const totalRevenue = sumBalance(revenueAccountsPrior);
     const totalExpenses = sumBalance(expenseAccountsPrior);
+    const cumulativeRevenue = sumBalance(accountTreeCumulativePrior.filter((n) => n.type === 'Revenue'));
+    const cumulativeExpenses = sumBalance(accountTreeCumulativePrior.filter((n) => n.type === 'Expense'));
+    const unclosedProfit = roundMoney(cumulativeRevenue - cumulativeExpenses);
+    const totalEquity = roundMoney(totalEquityLedger + unclosedProfit);
+    const unexplainedDifference = roundMoney(totalAssets - totalLiabilities - totalEquity);
     return {
       totalAssets,
       totalLiabilities,
+      totalEquityLedger,
       totalEquity,
+      unclosedProfit,
+      unexplainedDifference,
       totalRevenue,
       totalExpenses,
-      netIncome: totalRevenue - totalExpenses,
-      totalLiabAndEquity: totalLiabilities + totalEquity,
+      netIncome: roundMoney(totalRevenue - totalExpenses),
+      totalLiabAndEquity: roundMoney(totalLiabilities + totalEquity),
     };
-  }, [assetAccountsPrior, liabilityAccountsPrior, revenueAccountsPrior, expenseAccountsPrior]);
+  }, [assetAccountsPrior, liabilityAccountsPrior, equityAccountsPrior, revenueAccountsPrior, expenseAccountsPrior, accountTreeCumulativePrior]);
 
   // Balance Sheet flat list (assets, then liabilities, then equity) — same shape/purpose
   // as trialBalanceRows and incomeStatementRows: one source feeds the CSV export and the
   // print preview so neither can silently stop at a shallower depth than the on-screen
   // Detailed view, or disagree on the "accumulated results" plug row.
   const balanceSheetRows = useMemo(() => {
-    const flattenSection = (nodes: AccountNode[], section: 'Asset' | 'Liability' | 'Equity', level = 0, rows: Array<{ section: string; code: string; name: string; level: number; amount: number }> = []) => {
-      nodes.forEach((node) => {
-        const hasBalance = Math.abs(node.balance) > 0.01;
-        if (showZeroBalances || hasBalance || node.children.length > 0) {
-          rows.push({ section, code: node.code, name: node.name, level, amount: node.balance });
-        }
-        if (node.children.length > 0 && (expandedSections.has('all') || expandedSections.has(node.code))) {
-          flattenSection(node.children, section, level + 1, rows);
-        }
-      });
-      return rows;
-    };
     const rows = [
-      ...flattenSection(assetAccounts, 'Asset'),
-      ...flattenSection(liabilityAccounts, 'Liability'),
-      ...flattenSection(equityAccounts, 'Equity'),
+      ...flattenStatement(assetAccounts, 'Asset'),
+      ...flattenStatement(liabilityAccounts, 'Liability'),
+      ...flattenStatement(equityAccounts, 'Equity'),
     ];
-    if (Math.abs(totals.accumulatedUnclosedPlug) >= 0.01) {
-      rows.push({ section: 'Equity', code: '', name: 'Accumulated results (unclosed P&L to equity GL)', level: 1, amount: totals.accumulatedUnclosedPlug });
+    if (Math.abs(totals.unclosedProfit) >= 0.01 || Math.abs(totalsPrior.unclosedProfit) >= 0.01) {
+      rows.push({ section: 'Equity', code: '', name: 'Unclosed profit / (loss)', level: 1, amount: totals.unclosedProfit, heading: false });
+    }
+    if (Math.abs(totals.unexplainedDifference) >= 0.01) {
+      rows.push({
+        section: 'Difference',
+        code: '',
+        name: 'Assets minus liabilities minus equity (not on the chart of accounts)',
+        level: 0,
+        amount: totals.unexplainedDifference,
+        heading: false,
+      });
     }
     return rows;
-  }, [assetAccounts, liabilityAccounts, equityAccounts, showZeroBalances, expandedSections, totals.accumulatedUnclosedPlug]);
+  }, [flattenStatement, assetAccounts, liabilityAccounts, equityAccounts, totals.unclosedProfit, totals.unexplainedDifference, totalsPrior.unclosedProfit, totalsPrior.unexplainedDifference]);
 
   useEffect(() => {
-    setCloseAsOfDate(endDate.toISOString().slice(0, 10));
-  }, [endDate]);
+    if (!closeDateEdited) setCloseAsOfDate(formatLocalIsoDate(endDate));
+  }, [endDate, closeDateEdited]);
 
   const socie = useMemo(
     () => buildStatementOfChangesInEquity(journalEntries, rollupCoa, startDate, endDate, totals.netIncome),
@@ -446,30 +541,66 @@ export default function FinancialReportsPage() {
     [journalEntries, closeAsOfDate]
   );
 
-  // Trial Balance flat list
+  // Trial balance rows that are safe to add: a collapsed parent contributes its
+  // rolled-up net, an expanded parent contributes nothing (its children do), plus
+  // any amount posted on the parent itself and any code missing from the chart.
   const trialBalanceRows = useMemo(() => {
-    const flattenTree = (nodes: AccountNode[], rows: any[] = []): any[] => {
-      nodes.forEach(node => {
-        const hasBalance = Math.abs(node.debit) > 0.01 || Math.abs(node.credit) > 0.01;
-        if (showZeroBalances || hasBalance || node.children.length > 0) {
+    type TbRow = { code: string; name: string; type: string; level: number; debit: number | null; credit: number | null; heading: boolean };
+    const rows: TbRow[] = [];
+    const netOf = (debit: number, credit: number) => ({
+      debit: debit > credit + 0.005 ? roundMoney(debit - credit) : 0,
+      credit: credit > debit + 0.005 ? roundMoney(credit - debit) : 0,
+    });
+    const walk = (nodes: AccountNode[]) => {
+      nodes.forEach((node) => {
+        const hasBalance = Math.abs(node.debit) > 0.01 || Math.abs(node.credit) > 0.01 || Math.abs(node.balance) > 0.01;
+        const hasChildren = node.children.length > 0;
+        if (!showZeroBalances && !hasBalance && !hasChildren) return;
+        const open = hasChildren && isSectionExpanded(node.code);
+        if (!open) {
+          rows.push({ code: node.code, name: node.name, type: node.type, level: node.level, ...netOf(node.debit, node.credit), heading: false });
+          return;
+        }
+        rows.push({ code: node.code, name: node.name, type: node.type, level: node.level, debit: null, credit: null, heading: true });
+        const direct = directPosting(node);
+        if (Math.abs(direct.debit) > 0.01 || Math.abs(direct.credit) > 0.01) {
           rows.push({
             code: node.code,
-            name: node.name,
+            name: 'Posted directly to this account',
             type: node.type,
-            level: node.level,
-            debit: node.debit > node.credit ? node.debit - node.credit : 0,
-            credit: node.credit > node.debit ? node.credit - node.debit : 0,
+            level: node.level + 1,
+            ...netOf(direct.debit, direct.credit),
+            heading: false,
           });
         }
-        // Show children if expanded or showing all
-        if (node.children.length > 0 && (expandedSections.has('all') || expandedSections.has(node.code))) {
-          flattenTree(node.children, rows);
-        }
+        walk(node.children);
       });
-      return rows;
     };
-    return flattenTree(accountTreeCumulative);
-  }, [accountTreeCumulative, showZeroBalances, expandedSections]);
+    walk(accountTreeCumulative);
+    for (const unmapped of unmappedGlCodes) {
+      const net = unmapped.debit - unmapped.credit;
+      rows.push({
+        code: unmapped.code,
+        name: 'Not on the chart of accounts',
+        type: 'Unmapped',
+        level: 0,
+        debit: net > 0.005 ? roundMoney(net) : 0,
+        credit: net < -0.005 ? roundMoney(-net) : 0,
+        heading: false,
+      });
+    }
+    return rows;
+  }, [accountTreeCumulative, showZeroBalances, isSectionExpanded, unmappedGlCodes]);
+
+  const trialBalanceColumnTotals = useMemo(() => {
+    const into = { debit: 0, credit: 0 };
+    for (const row of trialBalanceRows) {
+      if (row.heading) continue;
+      into.debit += row.debit || 0;
+      into.credit += row.credit || 0;
+    }
+    return { debit: roundMoney(into.debit), credit: roundMoney(into.credit) };
+  }, [trialBalanceRows]);
 
   // Trial Balance / Balance Check totals — the raw debit=credit invariant across every posted
   // entry through the report date, independent of the Chart of Accounts hierarchy. A walk over
@@ -503,8 +634,8 @@ export default function FinancialReportsPage() {
 
     const renderNode = (node: AccountNode, indent: number = 0) => {
       const hasBalance = Math.abs(node.balance) > 0.01;
-      const isExpanded = expandedSections.has('all') || expandedSections.has(node.code);
       const hasChildren = node.children.length > 0;
+      const isExpanded = hasChildren && isSectionExpanded(node.code);
       
       // Skip if no balance and not showing zeros (unless it has children with balances)
       if (!showZeroBalances && !hasBalance && !hasChildren) return;
@@ -545,41 +676,70 @@ export default function FinancialReportsPage() {
         </TableCell>
       );
 
-      const priorBalance = priorNodes ? (priorByCode.get(node.code)?.balance ?? 0) : null;
+      const priorNode = priorNodes ? priorByCode.get(node.code) : undefined;
+      const priorBalance = priorNode ? priorNode.balance : null;
+      // An open parent is a heading. Its figure is the sum of the rows under it,
+      // so printing that figure as well is what made the column overshoot the total.
+      const blankAmounts = isExpanded;
 
+      // Table rows in this library only accept TableCell children. A fragment here
+      // crashes the trial balance (and every other statement) as soon as it renders.
+      const amountCells = (debit: number, credit: number, balance: number, priorAmount: number | null, blank: boolean) => (
+        showDebitCredit ? [
+          <TableCell key="debit" className="text-right font-mono text-sm">
+            {blank ? '' : debit > credit ? formatCurrency(debit - credit) : '-'}
+          </TableCell>,
+          <TableCell key="credit" className="text-right font-mono text-sm">
+            {blank ? '' : credit > debit ? formatCurrency(credit - debit) : '-'}
+          </TableCell>,
+        ] : [
+          <TableCell key="amount" className={`text-right font-mono text-sm ${!blank && balance < 0 ? 'text-rose-600' : ''}`}>
+            {blank ? '' : formatCurrencyWithSign(balance)}
+          </TableCell>,
+          <TableCell key="prior" className={`text-right font-mono text-sm text-gray-500 ${!priorNodes ? 'hidden' : ''} ${!blank && (priorAmount ?? 0) < 0 ? 'text-rose-500' : ''}`}>
+            {blank || !priorNodes ? '' : formatCurrencyWithSign(priorAmount ?? 0)}
+          </TableCell>,
+        ]
+      );
+
+      const amounts = amountCells(node.debit, node.credit, node.balance, priorBalance, blankAmounts);
       rows.push(
-        showDebitCredit ? (
-          <TableRow key={node.code} className={`hover:bg-slate-50 ${bgClass}`}>
-            {accountCell}
-            <TableCell className="text-right font-mono text-sm">
-              {node.debit > node.credit ? formatCurrency(node.debit - node.credit) : '-'}
-            </TableCell>
-            <TableCell className="text-right font-mono text-sm">
-              {node.credit > node.debit ? formatCurrency(node.credit - node.debit) : '-'}
-            </TableCell>
-          </TableRow>
-        ) : (
-          <TableRow key={node.code} className={`hover:bg-slate-50 ${bgClass}`}>
-            {accountCell}
-            <TableCell className={`text-right font-mono text-sm ${node.balance < 0 ? 'text-rose-600' : ''}`}>
-              {formatCurrencyWithSign(node.balance)}
-            </TableCell>
-            <TableCell className={`text-right font-mono text-sm text-gray-500 ${!priorNodes ? 'hidden' : ''} ${(priorBalance ?? 0) < 0 ? 'text-rose-500' : ''}`}>
-              {priorNodes ? formatCurrencyWithSign(priorBalance ?? 0) : ''}
-            </TableCell>
-          </TableRow>
-        )
+        <TableRow key={node.code} className={`hover:bg-slate-50 ${bgClass}`}>
+          {accountCell}
+          {amounts[0]}
+          {amounts[1]}
+        </TableRow>
       );
       
-      // Render children if expanded
-      if (hasChildren && isExpanded) {
+      // Render children if expanded. A balance posted on the parent itself is its own
+      // line, otherwise it disappears once the parent's total is hidden.
+      if (isExpanded) {
+        const direct = directPosting(node);
+        const priorDirect = priorNode ? directPosting(priorNode) : null;
+        if (Math.abs(direct.balance) > 0.01 || (showDebitCredit && (Math.abs(direct.debit) > 0.01 || Math.abs(direct.credit) > 0.01))) {
+          const directPad = indent + 1 === 1 ? 'pl-6' : 'pl-12';
+          const directAmounts = amountCells(direct.debit, direct.credit, direct.balance, priorDirect ? priorDirect.balance : 0, false);
+          rows.push(
+            <TableRow key={`${node.code}-direct`} className="hover:bg-slate-50">
+              <TableCell className={directPad}>
+                <div className="flex items-center gap-2">
+                  <span className="w-4" />
+                  <span className="font-mono text-xs text-gray-400">{node.code}</span>
+                  <span className="italic text-gray-600">Posted directly to this account</span>
+                </div>
+              </TableCell>
+              {directAmounts[0]}
+              {directAmounts[1]}
+            </TableRow>
+          );
+        }
         node.children.forEach(child => renderNode(child, indent + 1));
       }
     };
     
     nodes.forEach(node => renderNode(node, 0));
     return rows;
-  }, [expandedSections, showZeroBalances, toggleSection]);
+  }, [isSectionExpanded, showZeroBalances, toggleSection]);
 
   // ==================== EXPORT FUNCTIONS ====================
   const exportTrialBalanceCSV = useCallback(() => {
@@ -606,8 +766,8 @@ export default function FinancialReportsPage() {
           <td class="font-mono">${row.code}</td>
           <td>${indent}${row.name}</td>
           <td>${row.type}</td>
-          <td class="text-right font-mono">${row.debit > 0 ? formatCurrency(row.debit) : '-'}</td>
-          <td class="text-right font-mono">${row.credit > 0 ? formatCurrency(row.credit) : '-'}</td>
+          <td class="text-right font-mono">${row.heading ? '' : row.debit ? formatCurrency(row.debit) : '-'}</td>
+          <td class="text-right font-mono">${row.heading ? '' : row.credit ? formatCurrency(row.credit) : '-'}</td>
         </tr>`;
       }).join('');
     };
@@ -619,14 +779,14 @@ export default function FinancialReportsPage() {
           ${renderRows()}
           <tr class="total-row">
             <td colspan="3" class="font-bold">TOTAL</td>
-            <td class="text-right font-mono font-bold double-underline">${formatCurrency(trialBalanceTotals.debit)}</td>
-            <td class="text-right font-mono font-bold double-underline">${formatCurrency(trialBalanceTotals.credit)}</td>
+            <td class="text-right font-mono font-bold double-underline">${formatCurrency(trialBalanceColumnTotals.debit)}</td>
+            <td class="text-right font-mono font-bold double-underline">${formatCurrency(trialBalanceColumnTotals.credit)}</td>
           </tr>
         </tbody>
       </table>
     `;
     openPrintPreview(generateReportHTML('TRIAL BALANCE', periodLabel, content));
-  }, [trialBalanceRows, trialBalanceTotals, periodLabel]);
+  }, [trialBalanceRows, trialBalanceColumnTotals, periodLabel]);
 
   const exportIncomeStatementCSV = useCallback(() => {
     const columns = [
@@ -650,7 +810,7 @@ export default function FinancialReportsPage() {
         .map((row) => {
           const levelClass = row.level === 0 ? 'level-1' : row.level === 1 ? 'level-2' : 'level-3';
           const indent = '&nbsp;'.repeat(row.level * 6);
-          return `<tr class="${levelClass}"><td>${indent}${row.code} ${row.name}</td><td class="text-right font-mono">${formatCurrency(row.amount)}</td></tr>`;
+          return `<tr class="${levelClass}"><td>${indent}${row.code} ${row.name}</td><td class="text-right font-mono">${row.amount == null ? '' : formatCurrency(row.amount)}</td></tr>`;
         })
         .join('');
     };
@@ -700,7 +860,7 @@ export default function FinancialReportsPage() {
           const levelClass = row.level === 0 ? 'level-1' : row.level === 1 ? 'level-2' : 'level-3';
           const indent = '&nbsp;'.repeat(row.level * 6);
           const label = row.code ? `${row.code} ${row.name}` : `<em>${row.name}</em>`;
-          return `<tr class="${levelClass}"><td>${indent}${label}</td><td class="text-right font-mono">${formatCurrencyWithSign(row.amount)}</td></tr>`;
+          return `<tr class="${levelClass}"><td>${indent}${label}</td><td class="text-right font-mono">${row.amount == null ? '' : formatCurrencyWithSign(row.amount)}</td></tr>`;
         })
         .join('');
     };
@@ -721,9 +881,10 @@ export default function FinancialReportsPage() {
       <div class="section">
         <div class="section-title">Equity</div>
         <table><tbody>${renderRows('Equity')}
-          <tr class="level-2"><td colspan="2" style="font-size:9px;color:#666">Profit/(loss) for period (SoPL): ${formatCurrencyWithSign(totals.netIncome)} — reference only.</td></tr>
+          <tr class="level-2"><td colspan="2" style="font-size:9px;color:#666">Profit/(loss) for the selected period: ${formatCurrencyWithSign(totals.netIncome)}. Unclosed profit above is everything still open on revenue and expense accounts through the reporting date.</td></tr>
           <tr class="subtotal-row"><td class="font-bold">Total Equity</td><td class="text-right font-mono font-bold underline">${formatCurrencyWithSign(totals.totalEquity)}</td></tr>
           <tr class="total-row"><td class="font-bold">TOTAL LIABILITIES AND EQUITY</td><td class="text-right font-mono font-bold double-underline">${formatCurrencyWithSign(totals.totalLiabAndEquity)}</td></tr>
+          ${Math.abs(totals.unexplainedDifference) >= 0.01 ? `<tr><td>Assets minus liabilities minus equity</td><td class="text-right font-mono">${formatCurrencyWithSign(totals.unexplainedDifference)}</td></tr>` : ''}
         </tbody></table>
       </div>
     `;
@@ -732,10 +893,17 @@ export default function FinancialReportsPage() {
 
   const exportCashFlowCSV = useCallback(() => {
     const cf = cashFlow;
+    const activityLines = (activity: 'operating' | 'investing' | 'financing', title: string) =>
+      cf.lines
+        .filter((line) => line.activity === activity)
+        .map((line) => ({ line: `${title}: ${line.accountCode ? `${line.accountCode} ` : ''}${line.accountName}`, amount: line.amount }));
     const rows = [
       { line: 'Opening cash and cash equivalents', amount: cf.openingCash },
+      ...activityLines('operating', 'Operating'),
       { line: 'Net cash from operating activities', amount: cf.operating },
+      ...activityLines('investing', 'Investing'),
       { line: 'Net cash from investing activities', amount: cf.investing },
+      ...activityLines('financing', 'Financing'),
       { line: 'Net cash from financing activities', amount: cf.financing },
       { line: 'Net increase / (decrease) in cash', amount: cf.operating + cf.investing + cf.financing },
       { line: 'Closing cash and cash equivalents', amount: cf.closingCash },
@@ -749,21 +917,26 @@ export default function FinancialReportsPage() {
 
   const printCashFlow = useCallback(() => {
     const cf = cashFlow;
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const sectionRows = (activity: 'operating' | 'investing' | 'financing', title: string, total: number) => {
+      const lines = cf.lines.filter((line) => line.activity === activity);
+      const body = lines.length
+        ? lines.map((line) => `<tr><td style="padding-left:16px">${esc(line.accountCode ? `${line.accountCode} ` : '')}${esc(line.accountName)}</td><td class="text-right font-mono">${formatCurrencyWithSign(line.amount)}</td></tr>`).join('')
+        : '<tr><td style="padding-left:16px;color:#666">No cash movement in this period.</td><td></td></tr>';
+      return `<tr class="subtotal-row"><td colspan="2"><strong>${title}</strong></td></tr>${body}<tr><td class="font-bold" style="padding-left:16px">Net cash from ${title.toLowerCase()}</td><td class="text-right font-mono font-bold">${formatCurrencyWithSign(total)}</td></tr>`;
+    };
     const content = `
       <div class="section">
         <div class="section-title">Cash and cash equivalents — movement (from general ledger)</div>
-        <p style="font-size:10px;color:#555;margin-bottom:10px">IAS 7 — simplified direct classification by journal entry (cash accounts 1000, 1100, 1110, 1120).</p>
+        <p style="font-size:10px;color:#555;margin-bottom:10px">Each cash journal is split by the other side of the entry. Fixed assets are investing. Equity and long-term borrowings are financing. Revenue, expenses and working capital are operating.</p>
         <table><tbody>
           <tr><td>Opening cash and cash equivalents</td><td class="text-right font-mono">${formatCurrency(cf.openingCash)}</td></tr>
-          <tr class="subtotal-row"><td colspan="2"><strong>Operating activities</strong></td></tr>
-          <tr><td style="padding-left:16px">Net cash flows (classified operating)</td><td class="text-right font-mono">${formatCurrencyWithSign(cf.operating)}</td></tr>
-          <tr class="subtotal-row"><td colspan="2"><strong>Investing activities</strong></td></tr>
-          <tr><td style="padding-left:16px">Net cash flows (PPE-related)</td><td class="text-right font-mono">${formatCurrencyWithSign(cf.investing)}</td></tr>
-          <tr class="subtotal-row"><td colspan="2"><strong>Financing activities</strong></td></tr>
-          <tr><td style="padding-left:16px">Net cash flows (equity capital)</td><td class="text-right font-mono">${formatCurrencyWithSign(cf.financing)}</td></tr>
-          <tr class="total-row"><td class="font-bold">Net increase / (decrease) in cash (sum of above)</td><td class="text-right font-mono font-bold">${formatCurrencyWithSign(cf.operating + cf.investing + cf.financing)}</td></tr>
-          <tr><td>Closing cash and cash equivalents (GL)</td><td class="text-right font-mono">${formatCurrency(cf.closingCash)}</td></tr>
-          <tr class="level-2"><td colspan="2" style="font-size:9px;color:#666">Cross-check: closing − opening = ${formatCurrencyWithSign(cf.netChange)}. Classification residual: ${formatCurrencyWithSign(cf.reconciliationDiff)}</td></tr>
+          ${sectionRows('operating', 'Operating activities', cf.operating)}
+          ${sectionRows('investing', 'Investing activities', cf.investing)}
+          ${sectionRows('financing', 'Financing activities', cf.financing)}
+          <tr class="total-row"><td class="font-bold">Net increase / (decrease) in cash</td><td class="text-right font-mono font-bold">${formatCurrencyWithSign(cf.operating + cf.investing + cf.financing)}</td></tr>
+          <tr><td>Closing cash and cash equivalents</td><td class="text-right font-mono">${formatCurrency(cf.closingCash)}</td></tr>
+          <tr class="level-2"><td colspan="2" style="font-size:9px;color:#666">Closing minus opening: ${formatCurrencyWithSign(cf.netChange)}. Residual: ${formatCurrencyWithSign(cf.reconciliationDiff)}</td></tr>
         </tbody></table>
       </div>
     `;
@@ -801,7 +974,7 @@ export default function FinancialReportsPage() {
       .join('');
     const content = `
       <div class="section">
-        <p style="font-size:10px;color:#555;margin-bottom:10px">Share capital (3100); retained &amp; other is the residual of total equity (assets − liabilities) after share capital. Profit for the period matches the statement of profit or loss for the same dates.</p>
+        <p style="font-size:10px;color:#555;margin-bottom:10px">Share capital (3100). Retained and other is total equity after share capital: the other equity accounts plus profit not yet closed. Profit for the period matches the statement of profit or loss for the same dates.</p>
         <table>
           <thead><tr><th>Description</th><th class="text-right">Share capital</th><th class="text-right">Retained &amp; other</th><th class="text-right">Total equity</th></tr></thead>
           <tbody>${body}</tbody>
@@ -949,7 +1122,7 @@ export default function FinancialReportsPage() {
             className="w-20"
             classNames={{ trigger: 'h-8 min-h-8' }}
           >
-            {[2024, 2025, 2026].map((y) => (
+            {yearOptions.map((y) => (
               <SelectItem key={String(y)}>{y}</SelectItem>
             ))}
           </Select>
@@ -966,7 +1139,7 @@ export default function FinancialReportsPage() {
           className="w-20"
           classNames={{ trigger: 'h-8 min-h-8' }}
         >
-          {[2024, 2025, 2026].map((y) => (
+          {yearOptions.map((y) => (
             <SelectItem key={String(y)}>{y}</SelectItem>
           ))}
         </Select>
@@ -1015,6 +1188,77 @@ export default function FinancialReportsPage() {
     </>
   );
 
+  const ledgerWarnings = (
+    <>
+      {unmappedGlCodes.length > 0 && (
+        <Card className="mt-3 shadow-none border bg-rose-50 border-rose-200">
+          <CardBody className="py-3 text-sm">
+            <p className="font-medium text-rose-800">
+              ⚠ Posted entries reference {unmappedGlCodes.length} account code{unmappedGlCodes.length > 1 ? 's' : ''} not in your Chart of Accounts
+            </p>
+            <p className="text-rose-700 text-xs mt-1">
+              These amounts are posted, but the code is not on the chart, so the income statement and balance sheet leave them out. They are listed on the trial balance. Add the code, or correct the entry.
+            </p>
+            <div className="mt-2 space-y-2.5">
+              {unmappedGlCodes.map((u) => (
+                <div key={u.code}>
+                  <div className="flex justify-between font-mono text-xs font-semibold text-rose-800">
+                    <span>{u.code}</span>
+                    <span>{formatDrCr(u.debit, u.credit)}</span>
+                  </div>
+                  <ul className="mt-1 ml-2 space-y-0.5 border-l-2 border-rose-200 pl-2">
+                    {u.entries.map((e, entryIndex) => (
+                      <li key={`${u.code}-${e.journalEntryId}-${entryIndex}`} className="flex justify-between gap-3 text-[11px] text-rose-700">
+                        <span className="truncate">
+                          {e.entryNumber || e.journalEntryId} · {new Date(e.date).toLocaleDateString()}
+                          {e.sourceModule ? ` · ${e.sourceModule}` : ''}{e.reference ? ` · ${e.reference}` : ''}
+                        </span>
+                        <span className="font-mono shrink-0">{formatDrCr(e.debit, e.credit)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </CardBody>
+        </Card>
+      )}
+      {nonLeafPostings.length > 0 && (
+        <Card className="mt-3 shadow-none border bg-amber-50 border-amber-200">
+          <CardBody className="py-3 text-sm">
+            <p className="font-medium text-amber-800">
+              ⚠ Posted entries reference {nonLeafPostings.length} category header account{nonLeafPostings.length > 1 ? 's' : ''} directly
+            </p>
+            <p className="text-amber-700 text-xs mt-1">
+              A header account summarizes its children. Expand it on the trial balance to see the amount posted on the header itself, and repost those entries to the child account.
+            </p>
+            <div className="mt-2 space-y-2.5">
+              {nonLeafPostings.map((u) => (
+                <div key={u.code}>
+                  <div className="flex justify-between font-mono text-xs font-semibold text-amber-800">
+                    <span>{u.code} — {u.name}</span>
+                    <span>{formatDrCr(u.debit, u.credit)}</span>
+                  </div>
+                  <ul className="mt-1 ml-2 space-y-0.5 border-l-2 border-amber-200 pl-2">
+                    {u.entries.map((e, entryIndex) => (
+                      <li key={`${u.code}-${e.journalEntryId}-${entryIndex}`} className="flex justify-between gap-3 text-[11px] text-amber-700">
+                        <span className="truncate">
+                          {e.entryNumber || e.journalEntryId} · {new Date(e.date).toLocaleDateString()}
+                          {e.sourceModule ? ` · ${e.sourceModule}` : ''}{e.reference ? ` · ${e.reference}` : ''}
+                        </span>
+                        <span className="font-mono shrink-0">{formatDrCr(e.debit, e.credit)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </CardBody>
+        </Card>
+      )}
+    </>
+  );
+
   if (isLoading) {
     return (
       <div className="flex justify-center items-center h-64">
@@ -1028,7 +1272,10 @@ export default function FinancialReportsPage() {
       <Card className="shadow-sm">
         <div className="border-b border-slate-200 px-3 md:px-4 py-2.5">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
-            <h1 className="text-lg md:text-xl font-bold text-gray-800 shrink-0">📊 Financial Reports</h1>
+            <div className="shrink-0">
+              <h1 className="text-lg md:text-xl font-bold text-gray-800">📊 Financial Reports</h1>
+              <p className="text-xs text-gray-500">{accountingAmountsLabel()}</p>
+            </div>
             <div className="flex flex-wrap items-center gap-2">{periodControls}</div>
           </div>
           <p className="text-xs text-gray-500 mt-1.5 md:hidden">{periodRangeLabel}</p>
@@ -1058,12 +1305,14 @@ export default function FinancialReportsPage() {
                     <CardBody className="py-4 text-center">
                       <div className="text-lg md:text-2xl font-bold text-slate-700">{formatCurrency(totals.totalRevenue, true)}</div>
                       <div className="text-xs md:text-sm text-slate-500">Total Revenue</div>
+                      <div className="text-[11px] text-slate-400">This period</div>
                     </CardBody>
                   </Card>
                   <Card className="bg-slate-50 border border-slate-200 shadow-none">
                     <CardBody className="py-4 text-center">
                       <div className="text-lg md:text-2xl font-bold text-slate-700">{formatCurrency(totals.totalExpenses, true)}</div>
                       <div className="text-xs md:text-sm text-slate-500">Total Expenses</div>
+                      <div className="text-[11px] text-slate-400">This period</div>
                     </CardBody>
                   </Card>
                   <Card className={`border shadow-none ${totals.netIncome >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-rose-50 border-rose-200'}`}>
@@ -1074,12 +1323,14 @@ export default function FinancialReportsPage() {
                       <div className={`text-xs md:text-sm ${totals.netIncome >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                         Net {totals.netIncome >= 0 ? 'Profit' : 'Loss'}
                       </div>
+                      <div className={`text-[11px] ${totals.netIncome >= 0 ? 'text-emerald-500' : 'text-rose-400'}`}>This period</div>
                     </CardBody>
                   </Card>
                   <Card className="bg-slate-50 border border-slate-200 shadow-none">
                     <CardBody className="py-4 text-center">
                       <div className="text-lg md:text-2xl font-bold text-slate-700">{formatCurrencyWithSign(totals.totalAssets, true)}</div>
                       <div className="text-xs md:text-sm text-slate-500">Total Assets</div>
+                      <div className="text-[11px] text-slate-400">At period end</div>
                     </CardBody>
                   </Card>
                 </div>
@@ -1108,25 +1359,28 @@ export default function FinancialReportsPage() {
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between"><span className="text-gray-600">Total Assets</span><span className="font-mono">{formatCurrencyWithSign(totals.totalAssets, true)}</span></div>
                         <div className="flex justify-between"><span className="text-gray-600">Total Liabilities</span><span className="font-mono">{formatCurrencyWithSign(totals.totalLiabilities, true)}</span></div>
-                        <div className="flex justify-between"><span className="text-gray-600">Total Equity</span><span className="font-mono">{formatCurrencyWithSign(totals.totalEquity, true)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">Equity accounts</span><span className="font-mono">{formatCurrencyWithSign(totals.totalEquityLedger, true)}</span></div>
+                        <div className="flex justify-between"><span className="text-gray-600">Unclosed profit / (loss)</span><span className="font-mono">{formatCurrencyWithSign(totals.unclosedProfit, true)}</span></div>
                         <Divider />
                         <div className="flex justify-between font-semibold">
-                          <span>Liabilities + Equity</span>
+                          <span>Liabilities + equity</span>
                           <span className="font-mono">{formatCurrencyWithSign(totals.totalLiabAndEquity, true)}</span>
+                        </div>
+                        <div className={`flex justify-between font-semibold ${Math.abs(totals.unexplainedDifference) < 0.01 ? 'text-emerald-700' : 'text-amber-800'}`}>
+                          <span>Assets − liabilities − equity</span>
+                          <span className="font-mono">{formatCurrencyWithSign(totals.unexplainedDifference, true)}</span>
                         </div>
                       </div>
                     </CardBody>
                   </Card>
                 </div>
 
-                {/* Balance Check — real debit=credit check across every posted journal entry
-                    through the report date. (Assets vs Liabilities+Equity can't be used here:
-                    Equity is displayed as a plug, Assets − Liabilities by construction, so that
-                    comparison is always exactly zero regardless of what's actually posted.) */}
+                {/* Gross debit = gross credit across every posted line. Separate from the
+                    balance-sheet equation above, which can fail when a code is missing from the chart. */}
                 <Card className={`mt-4 shadow-none border ${Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <CardBody className="py-3">
                     <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium text-gray-700">Balance Check (Debits = Credits, all posted entries)</span>
+                      <span className="font-medium text-gray-700">Journal lines: gross debits equal gross credits</span>
                       <Chip size="sm" variant="flat" color={Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'success' : 'warning'}>
                         {Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? '✓ Balanced' : '⚠ Difference: ' + formatCurrency(Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit), true)}
                       </Chip>
@@ -1134,82 +1388,7 @@ export default function FinancialReportsPage() {
                   </CardBody>
                 </Card>
 
-                {unmappedGlCodes.length > 0 && (
-                  <Card className="mt-3 shadow-none border bg-rose-50 border-rose-200">
-                    <CardBody className="py-3 text-sm">
-                      <p className="font-medium text-rose-800">
-                        ⚠ Posted entries reference {unmappedGlCodes.length} account code{unmappedGlCodes.length > 1 ? 's' : ''} not in your Chart of Accounts
-                      </p>
-                      <p className="text-rose-700 text-xs mt-1">
-                        These amounts are real (posted) but excluded from every total above — add the code(s) below to
-                        the Chart of Accounts, or fix the entries listed under each, to bring them into your reports and
-                        resolve the balance difference.
-                      </p>
-                      <div className="mt-2 space-y-2.5">
-                        {unmappedGlCodes.map((u) => (
-                          <div key={u.code}>
-                            <div className="flex justify-between font-mono text-xs font-semibold text-rose-800">
-                              <span>{u.code}</span>
-                              <span>{u.debit > 0 ? `Dr ${formatCurrency(u.debit, true)}` : `Cr ${formatCurrency(u.credit, true)}`}</span>
-                            </div>
-                            <ul className="mt-1 ml-2 space-y-0.5 border-l-2 border-rose-200 pl-2">
-                              {u.entries.map((e) => (
-                                <li key={e.journalEntryId} className="flex justify-between gap-3 text-[11px] text-rose-700">
-                                  <span className="truncate">
-                                    {e.entryNumber || e.journalEntryId} · {new Date(e.date).toLocaleDateString()}
-                                    {e.sourceModule ? ` · ${e.sourceModule}` : ''}{e.reference ? ` · ${e.reference}` : ''}
-                                  </span>
-                                  <span className="font-mono shrink-0">
-                                    {e.debit > 0 ? `Dr ${formatCurrency(e.debit, true)}` : `Cr ${formatCurrency(e.credit, true)}`}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    </CardBody>
-                  </Card>
-                )}
-
-                {nonLeafPostings.length > 0 && (
-                  <Card className="mt-3 shadow-none border bg-amber-50 border-amber-200">
-                    <CardBody className="py-3 text-sm">
-                      <p className="font-medium text-amber-800">
-                        ⚠ Posted entries reference {nonLeafPostings.length} category header account{nonLeafPostings.length > 1 ? 's' : ''} directly
-                      </p>
-                      <p className="text-amber-700 text-xs mt-1">
-                        These amounts are counted in every total above — not invisible like an unmapped code — but a
-                        header account summarizes its child accounts and isn't meant to be posted to directly, which is
-                        why a specific child below can show a smaller balance than its own parent. Repost the entries
-                        listed below to the correct child account.
-                      </p>
-                      <div className="mt-2 space-y-2.5">
-                        {nonLeafPostings.map((u) => (
-                          <div key={u.code}>
-                            <div className="flex justify-between font-mono text-xs font-semibold text-amber-800">
-                              <span>{u.code} — {u.name}</span>
-                              <span>{u.debit > 0 ? `Dr ${formatCurrency(u.debit, true)}` : `Cr ${formatCurrency(u.credit, true)}`}</span>
-                            </div>
-                            <ul className="mt-1 ml-2 space-y-0.5 border-l-2 border-amber-200 pl-2">
-                              {u.entries.map((e) => (
-                                <li key={e.journalEntryId} className="flex justify-between gap-3 text-[11px] text-amber-700">
-                                  <span className="truncate">
-                                    {e.entryNumber || e.journalEntryId} · {new Date(e.date).toLocaleDateString()}
-                                    {e.sourceModule ? ` · ${e.sourceModule}` : ''}{e.reference ? ` · ${e.reference}` : ''}
-                                  </span>
-                                  <span className="font-mono shrink-0">
-                                    {e.debit > 0 ? `Dr ${formatCurrency(e.debit, true)}` : `Cr ${formatCurrency(e.credit, true)}`}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ))}
-                      </div>
-                    </CardBody>
-                  </Card>
-                )}
+                {ledgerWarnings}
               </div>
             </Tab>
 
@@ -1407,16 +1586,18 @@ export default function FinancialReportsPage() {
                             <TableBody>
                               {[
                                 ...renderAccountRows(equityAccounts, false, compareWithPriorYear ? equityAccountsPrior : undefined),
-                                ...(Math.abs(totals.accumulatedUnclosedPlug) >= 0.01
+                                ...((Math.abs(totals.unclosedProfit) >= 0.01 || (compareWithPriorYear && Math.abs(totalsPrior.unclosedProfit) >= 0.01))
                                   ? [
-                                      <TableRow key="accumulated-plug">
+                                      <TableRow key="unclosed-profit">
                                         <TableCell className="pl-6 italic text-gray-600">
-                                          Accumulated results (unclosed P&amp;L to equity GL)
+                                          Unclosed profit / (loss)
                                         </TableCell>
                                         <TableCell className="text-right font-mono text-sm">
-                                          {formatCurrencyWithSign(totals.accumulatedUnclosedPlug)}
+                                          {formatCurrencyWithSign(totals.unclosedProfit)}
                                         </TableCell>
-                                        <TableCell className={`text-right font-mono text-sm text-gray-400 ${!compareWithPriorYear ? 'hidden' : ''}`}>—</TableCell>
+                                        <TableCell className={`text-right font-mono text-sm text-gray-500 ${!compareWithPriorYear ? 'hidden' : ''}`}>
+                                          {compareWithPriorYear ? formatCurrencyWithSign(totalsPrior.unclosedProfit, true) : ''}
+                                        </TableCell>
                                       </TableRow>,
                                     ]
                                   : []),
@@ -1425,9 +1606,10 @@ export default function FinancialReportsPage() {
                           </Table>
                         </div>
                         <p className="text-xs text-gray-500 px-4 py-2 border-b border-slate-100">
-                          Profit / (loss) for the selected period (SoPL):{' '}
-                          <span className="font-mono">{formatCurrencyWithSign(totals.netIncome)}</span> — informational; total equity
-                          reconciles assets less liabilities (IAS 1).
+                          Profit / (loss) for the selected period:{' '}
+                          <span className="font-mono">{formatCurrencyWithSign(totals.netIncome)}</span>.
+                          Unclosed profit is everything still open on revenue and expense accounts through the reporting date.
+                          Total equity is the equity accounts plus that figure.
                         </p>
                         <div className="bg-slate-100 px-4 py-1 flex justify-between font-semibold text-sm">
                           <span>Total Equity</span>
@@ -1448,14 +1630,23 @@ export default function FinancialReportsPage() {
                   </Card>
                 </div>
 
-                {/* Balance Check — real debit=credit check across every posted journal entry
-                    through the report date. (Assets vs Liabilities+Equity isn't shown here:
-                    Equity is displayed as a plug, Assets − Liabilities by construction, so that
-                    comparison is always exactly zero regardless of what's actually posted.) */}
-                <Card className={`mt-4 shadow-none border ${Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                <Card className={`mt-4 shadow-none border ${Math.abs(totals.unexplainedDifference) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                  <CardBody className="py-3">
+                    <div className="flex items-center justify-between gap-4 text-sm flex-wrap">
+                      <span>
+                        Assets − liabilities − equity:{' '}
+                        <span className="font-mono font-semibold">{formatCurrencyWithSign(totals.unexplainedDifference, true)}</span>
+                      </span>
+                      <Chip size="sm" variant="flat" color={Math.abs(totals.unexplainedDifference) < 0.01 ? 'success' : 'warning'}>
+                        {Math.abs(totals.unexplainedDifference) < 0.01 ? '✓ Statement balances' : '⚠ Not on the chart of accounts'}
+                      </Chip>
+                    </div>
+                  </CardBody>
+                </Card>
+                <Card className={`mt-3 shadow-none border ${Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                   <CardBody className="py-3">
                     <div className="flex items-center justify-center gap-4 text-sm flex-wrap">
-                      <span>Debits: <span className="font-mono font-semibold">{formatCurrency(trialBalanceTotals.debit, true)}</span></span>
+                      <span>Journal lines — debits: <span className="font-mono font-semibold">{formatCurrency(trialBalanceTotals.debit, true)}</span></span>
                       <span className="text-gray-400">=</span>
                       <span>Credits: <span className="font-mono font-semibold">{formatCurrency(trialBalanceTotals.credit, true)}</span></span>
                       <Chip size="sm" variant="flat" color={Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'success' : 'warning'}>
@@ -1464,6 +1655,7 @@ export default function FinancialReportsPage() {
                     </div>
                   </CardBody>
                 </Card>
+                {ledgerWarnings}
               </div>
             </Tab>
 
@@ -1505,7 +1697,10 @@ export default function FinancialReportsPage() {
                         <Input
                           type="date"
                           value={closeAsOfDate}
-                          onValueChange={setCloseAsOfDate}
+                          onValueChange={(value) => {
+                            setCloseDateEdited(true);
+                            setCloseAsOfDate(value);
+                          }}
                           size="sm"
                           variant="bordered"
                           aria-label="Period close as-of date"
@@ -1532,7 +1727,7 @@ export default function FinancialReportsPage() {
                       </p>
                     )}
                     <p className="text-xs text-gray-500">
-                      One posted close per calendar date. Once posted, every posting path (folio checkout,
+                      The date follows the report end date until you change it. One posted close per calendar date. Once posted, every posting path (folio checkout,
                       manual invoices/payments, departmental capture) refuses new entries dated on or before
                       this date — reopen by voiding the close entry if a correction is needed.
                       Reversals are not automated — void or adjust manually if needed.
@@ -1588,7 +1783,7 @@ export default function FinancialReportsPage() {
                   <div>
                     <h3 className="text-base font-semibold text-gray-800">Statement of cash flows</h3>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      Cash and bank accounts (1000, 1100, 1110, 1120) — operating / investing / financing split.
+                      Cash and bank movement, split by the other side of each journal. Fixed assets are investing. Equity and long-term borrowings are financing. Revenue, expenses and working capital are operating.
                     </p>
                   </div>
                   <Dropdown>
@@ -1625,39 +1820,38 @@ export default function FinancialReportsPage() {
                       </div>
                     </CardBody>
                   </Card>
-                  <Card className="shadow-none border overflow-hidden">
-                    <CardHeader className="bg-slate-100 py-2 border-b">
-                      <h4 className="font-semibold text-gray-700 text-sm">Operating activities</h4>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="flex justify-between font-semibold text-sm">
-                        <span>Net cash from operating activities</span>
-                        <span className="font-mono">{formatCurrencyWithSign(cashFlow.operating)}</span>
-                      </div>
-                    </CardBody>
-                  </Card>
-                  <Card className="shadow-none border overflow-hidden">
-                    <CardHeader className="bg-slate-100 py-2 border-b">
-                      <h4 className="font-semibold text-gray-700 text-sm">Investing activities</h4>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="flex justify-between font-semibold text-sm">
-                        <span>Net cash from investing activities</span>
-                        <span className="font-mono">{formatCurrencyWithSign(cashFlow.investing)}</span>
-                      </div>
-                    </CardBody>
-                  </Card>
-                  <Card className="shadow-none border overflow-hidden">
-                    <CardHeader className="bg-slate-100 py-2 border-b">
-                      <h4 className="font-semibold text-gray-700 text-sm">Financing activities</h4>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="flex justify-between font-semibold text-sm">
-                        <span>Net cash from financing activities</span>
-                        <span className="font-mono">{formatCurrencyWithSign(cashFlow.financing)}</span>
-                      </div>
-                    </CardBody>
-                  </Card>
+                  {([
+                    ['operating', 'Operating activities', cashFlow.operating],
+                    ['investing', 'Investing activities', cashFlow.investing],
+                    ['financing', 'Financing activities', cashFlow.financing],
+                  ] as const).map(([activity, title, total]) => {
+                    const lines = cashFlow.lines.filter((line) => line.activity === activity);
+                    return (
+                      <Card key={activity} className="shadow-none border overflow-hidden">
+                        <CardHeader className="bg-slate-100 py-2 border-b">
+                          <h4 className="font-semibold text-gray-700 text-sm">{title}</h4>
+                        </CardHeader>
+                        <CardBody className="text-sm space-y-1.5">
+                          {lines.length === 0 ? (
+                            <p className="text-xs text-gray-500">No cash movement in this period.</p>
+                          ) : lines.map((line) => (
+                            <div key={`${activity}-${line.accountCode || line.accountName}`} className="flex justify-between gap-3">
+                              <span className="text-gray-600">
+                                {line.accountCode ? <span className="font-mono text-xs text-gray-400 mr-2">{line.accountCode}</span> : null}
+                                {line.accountName}
+                              </span>
+                              <span className="font-mono shrink-0">{formatCurrencyWithSign(line.amount)}</span>
+                            </div>
+                          ))}
+                          <Divider />
+                          <div className="flex justify-between font-semibold">
+                            <span>Net cash from {title.toLowerCase()}</span>
+                            <span className="font-mono">{formatCurrencyWithSign(total)}</span>
+                          </div>
+                        </CardBody>
+                      </Card>
+                    );
+                  })}
                   {Math.abs(cashFlow.reconciliationDiff) >= 0.01 && (
                     <Card className="shadow-none border border-amber-200 bg-amber-50/50">
                       <CardBody className="text-xs text-amber-900 py-3">
@@ -1678,7 +1872,7 @@ export default function FinancialReportsPage() {
                   <div>
                     <h3 className="text-base font-semibold text-gray-800">Trial balance</h3>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      Cumulative posted balances through the reporting date.
+                      Cumulative posted balances through the reporting date. The total adds the amount lines only — an expanded heading is not added again.
                     </p>
                   </div>
                   <Dropdown>
@@ -1702,27 +1896,43 @@ export default function FinancialReportsPage() {
                           <TableColumn width={150} className="text-right">Credit</TableColumn>
                         </TableHeader>
                         <TableBody emptyContent="No posted journal activity through the reporting date.">
-                          {renderAccountRows(accountTreeCumulative, true)}
+                          {[
+                            ...renderAccountRows(accountTreeCumulative, true),
+                            ...unmappedGlCodes.map((u) => {
+                              const net = u.debit - u.credit;
+                              return (
+                                <TableRow key={`unmapped-${u.code}`}>
+                                  <TableCell>
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-mono text-xs text-rose-700">{u.code}</span>
+                                      <span className="italic text-rose-700">Not on the chart of accounts</span>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="text-right font-mono text-sm">{net > 0.005 ? formatCurrency(net) : '-'}</TableCell>
+                                  <TableCell className="text-right font-mono text-sm">{net < -0.005 ? formatCurrency(-net) : '-'}</TableCell>
+                                </TableRow>
+                              );
+                            }),
+                            <TableRow key="tb-totals" className="bg-slate-200 font-bold border-t-2 border-slate-300">
+                              <TableCell>
+                                <Chip size="sm" variant="flat" color={Math.abs(trialBalanceColumnTotals.debit - trialBalanceColumnTotals.credit) < 0.01 ? 'success' : 'warning'}>
+                                  {Math.abs(trialBalanceColumnTotals.debit - trialBalanceColumnTotals.credit) < 0.01 ? '✓ Balanced' : '⚠ Diff: ' + formatCurrency(Math.abs(trialBalanceColumnTotals.debit - trialBalanceColumnTotals.credit), true)}
+                                </Chip>
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-sm font-bold">
+                                {formatCurrency(trialBalanceColumnTotals.debit, true)}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-sm font-bold">
+                                {formatCurrency(trialBalanceColumnTotals.credit, true)}
+                              </TableCell>
+                            </TableRow>,
+                          ]}
                         </TableBody>
                       </Table>
                     </div>
-
-                    {/* Totals */}
-                    <div className="bg-slate-200 px-4 py-3 flex flex-wrap justify-end gap-x-8 gap-y-1 font-bold border-t-2 border-slate-300">
-                      <div className="text-sm">
-                        <span className="text-gray-600 mr-2">Total Debit:</span>
-                        <span className="font-mono">{formatCurrency(trialBalanceTotals.debit, true)}</span>
-                      </div>
-                      <div className="text-sm">
-                        <span className="text-gray-600 mr-2">Total Credit:</span>
-                        <span className="font-mono">{formatCurrency(trialBalanceTotals.credit, true)}</span>
-                      </div>
-                      <Chip size="sm" variant="flat" color={Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? 'success' : 'warning'}>
-                        {Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit) < 0.01 ? '✓ Balanced' : '⚠ Diff: ' + formatCurrency(Math.abs(trialBalanceTotals.debit - trialBalanceTotals.credit), true)}
-                      </Chip>
-                    </div>
                   </CardBody>
                 </Card>
+                {ledgerWarnings}
               </div>
             </Tab>
           </Tabs>

@@ -8,7 +8,7 @@
  * not just an aggregate code+amount, so an accountant can go straight to the
  * offending entry instead of manually searching Journal Entries by code.
  */
-import { findUnmappedGlCodes, findNonLeafPostings, type RollupCoa } from '../src/app/lib/accounting/financialReportRollup';
+import { findUnmappedGlCodes, findNonLeafPostings, computeCashFlowFromJournals, type RollupCoa } from '../src/app/lib/accounting/financialReportRollup';
 import type { JournalEntry } from '../src/app/lib/accounting/models';
 
 function assert(cond: boolean, msg: string) {
@@ -80,6 +80,33 @@ function je(id: string, lines: Array<{ accountCode: string; debit?: number; cred
   const jes = [je('JE-4', [{ accountCode: '1210', debit: 10 }, { accountCode: '4100', credit: 10 }])];
   assert(findUnmappedGlCodes(coa, jes).length === 0, 'clean ledger must not flag any unmapped code');
   assert(findNonLeafPostings(coa, jes).length === 0, 'clean ledger must not flag any header-account posting');
+}
+
+// 4. Cash flow splits a mixed payment, and treats equity / borrowings as financing.
+{
+  const cashCoa: RollupCoa[] = [
+    { code: '1120', name: 'Bank Accounts', type: 'Asset', level: 3 },
+    { code: '1510', name: 'Property and Equipment', type: 'Asset', level: 2 },
+    { code: '2205', name: 'Trade Accounts Payable', type: 'Liability', level: 3 },
+    { code: '2600', name: 'Bank Loan', type: 'Liability', level: 2 },
+    { code: '3200', name: 'Retained Earnings', type: 'Equity', level: 2 },
+    { code: '4100', name: 'Room Revenue', type: 'Revenue', level: 2 },
+    { code: '5110', name: 'Food and Beverage Cost', type: 'Expense', level: 3 },
+  ];
+  const jes = [
+    je('CF-1', [{ accountCode: '1120', debit: 100 }, { accountCode: '4100', credit: 100 }]),
+    je('CF-2', [{ accountCode: '1510', debit: 70 }, { accountCode: '5110', debit: 30 }, { accountCode: '1120', credit: 100 }]),
+    je('CF-3', [{ accountCode: '1120', debit: 50 }, { accountCode: '2600', credit: 50 }]),
+    je('CF-4', [{ accountCode: '3200', debit: 20 }, { accountCode: '1120', credit: 20 }]),
+  ];
+  const cf = computeCashFlowFromJournals(jes, new Date('2026-06-01'), new Date('2026-06-30'), cashCoa);
+  assert(cf.operating === 70, `operating should be 100 revenue - 30 supplies = 70, got ${cf.operating}`);
+  assert(cf.investing === -70, `investing should be -70 equipment, got ${cf.investing}`);
+  assert(cf.financing === 30, `financing should be 50 loan - 20 drawing = 30, got ${cf.financing}`);
+  assert(Math.abs(cf.reconciliationDiff) < 0.01, `sections must foot to the cash movement, residual ${cf.reconciliationDiff}`);
+  assert(cf.lines.some((l) => l.accountCode === '1510' && l.activity === 'investing'), 'equipment must be its own investing line');
+  assert(cf.lines.some((l) => l.accountCode === '5110' && l.activity === 'operating'), 'supplies on the same payment must stay operating');
+  assert(cf.closingCash - cf.openingCash === cf.netChange, 'net change is closing minus opening');
 }
 
 console.log('All financial report audit-flag regression checks passed.');
