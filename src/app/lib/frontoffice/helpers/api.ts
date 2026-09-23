@@ -66,7 +66,7 @@ export async function upsertFolioViaApi(_self: StoreLike, tenantSubdomain: strin
 
 export async function syncGuestsFromApi(self: StoreLike, tenantSubdomain: string) {
   try {
-    const res = await fetch('/api/guests', {
+    const res = await fetch('/api/guests?includeInactive=true', {
       headers: { 'x-tenant-subdomain': tenantSubdomain },
     });
     if (!res.ok) return;
@@ -111,6 +111,26 @@ export async function createGuestViaApi(_self: StoreLike, tenantSubdomain: strin
   if (!res.ok) throw await errorFrom(res, 'Failed to create guest');
   const { guest: created } = await res.json();
   return created;
+}
+
+export async function updateGuestViaApi(_self: StoreLike, tenantSubdomain: string, id: string, patch: any) {
+  const res = await fetch('/api/guests', {
+    method: 'PATCH',
+    headers: tenantHeaders(tenantSubdomain),
+    body: JSON.stringify({ id, ...patch }),
+  });
+  if (!res.ok) throw await errorFrom(res, 'Failed to update guest');
+  const { guest } = await res.json();
+  return guest;
+}
+
+export async function deleteGuestViaApi(_self: StoreLike, tenantSubdomain: string, id: string) {
+  const res = await fetch(`/api/guests?id=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+    headers: tenantHeaders(tenantSubdomain),
+  });
+  if (!res.ok) throw await errorFrom(res, 'Failed to delete guest');
+  return res.json();
 }
 
 export async function createGuestAndReservationViaApi(self: StoreLike, tenantSubdomain: string, payload: {

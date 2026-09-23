@@ -1,5 +1,6 @@
 import { prisma } from '../database/client'
 import { Reservation, GuestProfile, Folio } from './types'
+import { mergedFolioWrite } from './folioServer'
 
 function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
   const out: Record<string, any> = {}
@@ -234,6 +235,7 @@ export function toStoreGuest(row: any): GuestProfile {
     vipStatus: row.vipStatus || undefined,
     source: row.source || undefined,
     emergencyContact: details.emergencyContact || { name: '', relationship: 'other', phone: '' },
+    isActive: row.isActive !== false,
     createdAt: toISO(row.createdAt),
     updatedAt: toISO(row.updatedAt),
   } as GuestProfile
@@ -273,13 +275,19 @@ export function toDbGuestData(g: Partial<GuestProfile>) {
     idNumber: g.idNumber,
     vipStatus: g.vipStatus,
     source: g.source,
+    isActive: typeof g.isActive === 'boolean' ? g.isActive : undefined,
   })
   if (Object.keys(details).length) data.details = details
   return data
 }
 
-export async function listGuests(tenantId: string, search?: string): Promise<GuestProfile[]> {
-  const where: Record<string, any> = { tenantId, isActive: true }
+export async function listGuests(
+  tenantId: string,
+  search?: string,
+  opts?: { includeInactive?: boolean },
+): Promise<GuestProfile[]> {
+  const where: Record<string, any> = { tenantId }
+  if (!opts?.includeInactive) where.isActive = true
   if (search) {
     where.OR = [
       { name: { contains: search } },
@@ -339,6 +347,31 @@ export async function updateGuestRow(
   return toStoreGuest(row)
 }
 
+export async function guestHasHistory(tenantId: string, id: string): Promise<number> {
+  const [reservations, folios, orders, requests] = await Promise.all([
+    prisma.reservation.count({ where: { tenantId, guestId: id } }),
+    prisma.folio.count({ where: { tenantId, guestId: id } }),
+    prisma.fBOrder.count({ where: { tenantId, guestId: id } }),
+    prisma.serviceRequest.count({ where: { tenantId, guestId: id } }),
+  ])
+  return reservations + folios + orders + requests
+}
+
+export async function deleteGuestRow(
+  tenantId: string,
+  id: string,
+): Promise<{ deleted?: boolean; deactivated?: boolean; used?: number; guest?: GuestProfile | null } | null> {
+  const existing = await prisma.guest.findFirst({ where: { id, tenantId } })
+  if (!existing) return null
+  const used = await guestHasHistory(tenantId, id)
+  if (used > 0) {
+    const row = await prisma.guest.update({ where: { id }, data: { isActive: false } })
+    return { deactivated: true, used, guest: toStoreGuest(row) }
+  }
+  await prisma.guest.delete({ where: { id } })
+  return { deleted: true }
+}
+
 // ---------------------------------------------------------------------------
 // Folio mapping. The store's Folio maps 1:1 to columns, with the charge and
 // payment arrays round-tripped through JSON columns so each folio is a single
@@ -374,21 +407,26 @@ export async function listFolios(tenantId: string): Promise<Folio[]> {
 export async function upsertFolio(tenantId: string, f: Partial<Folio>): Promise<Folio> {
   if (!f.id) throw new Error('folio id is required')
   if (!f.reservationId) throw new Error('reservationId is required')
+  const existing = await prisma.guestFolio.findFirst({ where: { id: f.id, tenantId } })
+  const merged = mergedFolioWrite(existing, {
+    status: f.status,
+    charges: (f.charges || []) as any,
+    payments: (f.payments || []) as any,
+  })
   const fields = {
     reservationId: f.reservationId,
     currency: f.currency || 'GHS',
-    status: f.status || 'active',
+    status: merged.status,
     type: f.type,
     description: f.description,
     responsibleParty: f.responsibleParty,
     creditBalance: f.creditBalance,
-    totalCharges: f.totalCharges ?? 0,
-    totalPayments: f.totalPayments ?? 0,
-    balance: f.balance ?? 0,
-    charges: (f.charges || []) as any,
-    payments: (f.payments || []) as any,
+    totalCharges: merged.totalCharges,
+    totalPayments: merged.totalPayments,
+    balance: merged.balance,
+    charges: merged.charges as any,
+    payments: merged.payments as any,
   }
-  const existing = await prisma.guestFolio.findFirst({ where: { id: f.id, tenantId } })
   const row = existing
     ? await prisma.guestFolio.update({ where: { id: f.id }, data: fields as any })
     : await prisma.guestFolio.create({ data: { id: f.id, tenantId, ...fields } as any })

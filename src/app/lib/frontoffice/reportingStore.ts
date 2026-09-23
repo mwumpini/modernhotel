@@ -616,21 +616,29 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
         const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
+        const ratePlan = reservation.ratePlanId ? frontOfficeStore.ratePlans.find(rp => rp.id === reservation.ratePlanId) : undefined;
+        const nights = Math.max(1, Math.ceil((new Date(reservation.departure).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24)));
         
         return {
+          reservationNumber: reservation.resId || reservation.id,
           guestName: reservation.guestName,
+          status: reservation.status,
           roomNumber: room?.id || 'TBD',
           roomType: roomType?.name || 'Unknown',
-          arrivalTime: '14:00',
           departureDate: reservation.departure,
+          nights,
           adults: reservation.adults || 1,
           children: reservation.children || 0,
+          partySize: (reservation.adults || 1) + (reservation.children || 0),
           specialRequests: guest?.specialRequests || [],
           vipStatus: guest?.vipStatus || 'regular',
           source: reservation.source || 'Direct',
+          ratePlan: ratePlan?.name || 'Unassigned',
           rate: reservation.rateBreakdown?.[0]?.total || roomType?.baseRate || 0,
           deposit: reservation.deposit?.amount || 0,
-          paymentMethod: reservation.deposit?.method || 'Not specified'
+          paymentStatus: reservation.paymentStatus || 'pending',
+          guaranteed: reservation.isGuaranteed || false,
+          paymentMethod: reservation.deposit?.method || 'Not specified',
         };
       });
   },
@@ -645,8 +653,8 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       // departed on this date" (past or present).
       .filter(reservation => dateInRange(reservation.departure, date, endDate) && reservation.status !== 'cancelled' && reservation.status !== 'no-show')
       .map(reservation => {
-        const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
         const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
+        const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
         const folio = findMainFolio(frontOfficeStore.folios, reservation.id);
         
         const { totalCharges, totalPayments, balance } = folio
@@ -654,15 +662,17 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
           : { totalCharges: 0, totalPayments: 0, balance: 0 };
 
         return {
+          reservationNumber: reservation.resId || reservation.id,
           guestName: reservation.guestName,
           roomNumber: room?.id || 'Unknown',
-          checkoutTime: '11:00',
+          roomType: roomType?.name || 'Unknown',
+          departureDate: reservation.departure,
+          actualCheckout: reservation.checkedOutAt || undefined,
           totalCharges,
           totalPayments,
           balance,
-          lateCheckout: false,
           folioStatus: folio?.status || 'open',
-          housekeepingStatus: 'pending'
+          paymentStatus: reservation.paymentStatus || 'pending',
         };
       });
   },
@@ -682,9 +692,12 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       const reservation = frontOfficeStore.reservations.find(r => r.roomId === room.id && wasInHouseDuring(r, date, date));
       const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
       const hk = isToday ? housekeepingStore.getRoomStatus(room.id) : undefined;
+      const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === room.roomTypeId);
 
       return {
         roomNumber: room.id,
+        roomType: roomType?.name || 'Unknown',
+        floor: room.floor || '—',
         status: reservation ? 'occupied' : 'vacant',
         guestName: guest?.name || undefined,
         checkInDate: reservation?.arrival || undefined,
@@ -711,11 +724,15 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const nightsStayed = Math.ceil((new Date(endDate).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24));
 
         return {
+          reservationNumber: reservation.resId || reservation.id,
           guestName: reservation.guestName,
           roomNumber: room?.id || 'Unknown',
+          folioNumber: folio?.id || '—',
           checkInDate: reservation.arrival,
           checkOutDate: reservation.departure,
           nightsStayed,
+          partySize: (reservation.adults || 0) + (reservation.children || 0),
+          ratePlan: reservation.ratePlanId ? frontOfficeStore.ratePlans.find(rp => rp.id === reservation.ratePlanId)?.name || 'Unassigned' : 'Unassigned',
           totalCharges,
           totalPayments,
           currentBalance: balance,
@@ -754,10 +771,13 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         else if (currentBalance > creditLimit) riskLevel = 'medium';
         
         return {
+          reservationNumber: reservation.resId || reservation.id,
+          folioNumber: folio?.id || '—',
           guestName: reservation.guestName,
           roomNumber: room?.id || 'Unknown',
           currentBalance,
           creditLimit,
+          amountOverLimit: Math.max(0, currentBalance - creditLimit),
           daysOverdue,
           lastPayment: folio?.payments?.[folio.payments.length - 1]?.date || 'No payments',
           paymentMethod: reservation.deposit?.method || 'Not specified',
@@ -773,9 +793,11 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     return frontOfficeStore.wakeUpCalls
       .filter(c => dateInRange(c.date, date, endDate))
       .map(c => ({
+        callId: c.id,
+        reservationNumber: frontOfficeStore.reservations.find(r => r.id === c.reservationId)?.resId || c.reservationId,
         guestName: c.guestName,
         roomNumber: c.roomNumber,
-        wakeUpTime: c.time,
+        time: c.time,
         date: c.date,
         status: c.status,
         notes: c.notes || '',
@@ -896,8 +918,6 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       batchNumber: `BATCH-${date}${endDate !== date ? `_${endDate}` : ''}`,
       settlementDate: endDate,
       status: 'pending' as const,
-      merchantId: 'N/A',
-      terminalId: 'N/A'
     }];
   },
 
@@ -918,6 +938,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         const agingDays = Math.ceil((new Date(endDate).getTime() - new Date(reservation.arrival).getTime()) / (1000 * 60 * 60 * 24));
 
         return {
+          reservationNumber: reservation.resId || reservation.id,
           guestName: reservation.guestName,
           roomNumber: room?.id || 'Unknown',
           folioNumber: folio?.id || 'Unknown',
@@ -926,6 +947,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
           totalCharges,
           totalPayments,
           outstandingBalance,
+          currency: folio?.currency || 'GHS',
           agingDays,
           lastActivity: reservation.updatedAt
         };
@@ -936,16 +958,22 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     console.log(`[REPORTS] Generating daily flash report for ${date}`);
 
     const totalRooms = frontOfficeStore.rooms.length;
-    const occupiedRooms = frontOfficeStore.reservations.filter(r => wasInHouseDuring(r, date, date)).length;
+    const inHouse = frontOfficeStore.reservations.filter(r => wasInHouseDuring(r, date, date));
+    const occupiedRooms = inHouse.length;
+    const guestsInHouse = inHouse.reduce((sum, r) => sum + (r.adults || 0) + (r.children || 0), 0);
+    const stayOvers = inHouse.filter(r => (r.arrival || '').slice(0, 10) < date && (r.departure || '').slice(0, 10) > date).length;
 
     const arrivalReservations = frontOfficeStore.reservations.filter(r =>
-      r.arrival === date && r.status !== 'cancelled' && r.status !== 'no-show'
+      (r.arrival || '').slice(0, 10) === date && r.status !== 'cancelled' && r.status !== 'no-show'
     );
     const arrivals = arrivalReservations.length;
     const guaranteedArrivals = arrivalReservations.filter(r => r.isGuaranteed).length;
 
     const departures = frontOfficeStore.reservations.filter(r =>
-      r.departure === date && r.status !== 'cancelled' && r.status !== 'no-show'
+      (r.departure || '').slice(0, 10) === date && r.status !== 'cancelled' && r.status !== 'no-show'
+    ).length;
+    const noShows = frontOfficeStore.reservations.filter(r =>
+      (r.arrival || '').slice(0, 10) === date && r.status === 'no-show'
     ).length;
 
     // Only charges/payments actually posted ON this date (not every charge that
@@ -976,6 +1004,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     const today = new Date().toISOString().split('T')[0];
     const outOfOrderRooms = date === today ? housekeepingStore.getRoomsByStatus('out-of-order').length : undefined;
 
+    const cashOnHand = paymentsToday.filter(p => p.method === 'Cash').reduce((s, p) => s + p.amount, 0);
+    const outstandingBalance = Math.max(0, totalRevenue - totalPayments);
+    const highBalanceFolios = get().generateHighBalanceReport(date).length;
+
     return {
       date,
       occupancy: {
@@ -983,7 +1015,15 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         occupiedRooms,
         occupancyRate: totalRooms > 0 ? (occupiedRooms / totalRooms) * 100 : 0,
         availableRooms: Math.max(0, totalRooms - occupiedRooms - (outOfOrderRooms ?? 0)),
-        outOfOrderRooms
+        outOfOrderRooms,
+        guestsInHouse,
+      },
+      movement: {
+        arrivals,
+        guaranteedArrivals,
+        departures,
+        stayOvers,
+        noShows,
       },
       revenue: {
         roomRevenue,
@@ -995,23 +1035,24 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       },
       arrivals: {
         total: arrivals,
-        confirmed: arrivals,
         guaranteed: guaranteedArrivals,
-        walkIns: 0
       },
       departures: {
-        // Actual-vs-scheduled checkout timing isn't tracked per guest today, so
-        // this only reports the real total rather than a fabricated split.
         total: departures,
-        early: 0,
-        onTime: 0,
-        late: 0
+      },
+      collections: {
+        totalPayments,
+        cashOnHand,
+        outstandingBalance,
+      },
+      exceptions: {
+        highBalanceFolios,
       },
       financial: {
         totalCharges: totalRevenue,
         totalPayments,
-        outstandingBalance: Math.max(0, totalRevenue - totalPayments),
-        cashOnHand: paymentsToday.filter(p => p.method === 'Cash').reduce((s, p) => s + p.amount, 0)
+        outstandingBalance,
+        cashOnHand,
       }
     };
   },
@@ -1041,7 +1082,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       };
     };
 
-    if (endDate === date) return snapshotFor(date);
+    if (endDate === date) return [snapshotFor(date)];
 
     // Ranged: one row per day in the window — a trend, not a single
     // aggregate, since "average occupancy over a week" hides more than it
@@ -1127,25 +1168,25 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         reservation.status === 'no-show'
       )
       .map(reservation => ({
+        reservationNumber: reservation.resId || reservation.id,
         guestName: reservation.guestName,
         roomType: frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Unknown',
         arrivalDate: reservation.arrival,
         reservationSource: reservation.source || 'Direct',
         guaranteed: reservation.isGuaranteed || false,
         depositAmount: reservation.deposit?.amount || 0,
-        noShowReason: 'Not recorded',
-        followUpRequired: true
+        guestPhone: reservation.guestPhone || '',
       }));
   },
 
   generateSourceOfBusinessReport: (startDate, endDate) => {
     console.log(`[REPORTS] Generating source of business report from ${startDate} to ${endDate}`);
     
-    const sources = ['Direct', 'Booking.com', 'Expedia', 'Corporate', 'Travel Agent'];
-    
     const inRange = frontOfficeStore.reservations.filter(r => r.arrival >= startDate && r.arrival <= endDate);
+    const sources = Array.from(new Set(inRange.map(r => r.source || 'Direct')));
+    if (sources.length === 0) return [];
     return sources.map(source => {
-      const sourceReservations = inRange.filter(r => r.source === source);
+      const sourceReservations = inRange.filter(r => (r.source || 'Direct') === source);
       const bookings = sourceReservations.length;
       const revenue = sourceReservations.reduce((sum, r) => {
         const folio = findMainFolio(frontOfficeStore.folios, r.id);
@@ -1157,8 +1198,7 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
         bookings,
         revenue,
         averageRate: bookings > 0 ? revenue / bookings : 0,
-        percentageOfTotal: inRange.length > 0 ? (bookings / inRange.length) * 100 : 0,
-        trend: 'stable' as const
+        percentageOfTotal: inRange.length > 0 ? (bookings / inRange.length) * 100 : 0
       };
     });
   },
@@ -1223,10 +1263,17 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
     // Per-meal (breakfast/lunch/dinner) attendance and dietary restrictions aren't
     // tracked anywhere in this system — omitted rather than reported as
     // fabricated zeros/empties, so only the real guest count per meal plan shows.
-    return buckets.map(key => ({
-      mealPlan: mealPlanLabels[key] || key,
-      guestCount: inHouse.filter(r => mealPlanOf(r) === key).reduce((sum, r) => sum + (r.adults || 0) + (r.children || 0), 0),
-    }));
+    return buckets.map(key => {
+      const reservations = inHouse.filter(r => mealPlanOf(r) === key);
+      const adults = reservations.reduce((sum, r) => sum + (r.adults || 0), 0);
+      const children = reservations.reduce((sum, r) => sum + (r.children || 0), 0);
+      return {
+        mealPlan: mealPlanLabels[key] || key,
+        adults,
+        children,
+        guestCount: adults + children,
+      };
+    });
   },
 
   generateVIPReport: (date) => {
@@ -1252,8 +1299,6 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
           preferences: guest?.preferences || [],
           arrivalDate: reservation.arrival,
           departureDate: reservation.departure,
-          assignedButler: 'Butler Service',
-          notes: 'VIP guest - special attention required'
         };
       })
       .filter(Boolean);
@@ -1286,7 +1331,6 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
       lastVisit: guestReservations[guestReservations.length - 1]?.arrival || 'Never',
       preferences: guest.preferences || [],
       specialRequests: guest.specialRequests || [],
-      loyaltyPoints: totalSpent * 0.1, // 10% of spend as points
       vipStatus: guest.vipStatus || 'regular'
     };
   },

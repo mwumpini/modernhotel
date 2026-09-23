@@ -176,6 +176,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     return frontOfficeStore.reservations
       .filter(r => r.status === 'checked-in' && r.roomId && r.roomId !== 'TBD')
       .map(r => ({
+        reservationId: r.id,
         roomId: r.roomId,
         guestName: r.guestName,
         guestId: r.guestId,
@@ -211,6 +212,14 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setGuestName(room.guestName);
     setSelectedGuest(room);
     setRoomSearchTerm('');
+  };
+
+  const inHouseReservationId = () => {
+    if (customerType !== 'In-house' && !settleSelectedRoom) return undefined;
+    const room = settleSelectedRoom?.roomId || roomNumber;
+    return selectedGuest?.reservationId
+      || (settleSelectedRoom as any)?.reservationId
+      || frontOfficeStore.reservations.find(r => r.status === 'checked-in' && r.roomId === room)?.id;
   };
 
   const handleWalkInSelect = (cust: any) => {
@@ -625,6 +634,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         tableNumber,
         roomNumber: customerType === 'In-house' ? roomNumber : undefined,
         guestId: selectedGuest?.guestId,
+        reservationId: inHouseReservationId(),
         guestName: guestDisplayName,
         serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
         notes: orderNotes,
@@ -740,6 +750,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             tableNumber,
             roomNumber: customerType === 'In-house' ? roomNumber : undefined,
             guestId: selectedGuest?.guestId,
+            reservationId: inHouseReservationId(),
             guestName: guestDisplayName,
             serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
             notes: orderNotes,
@@ -1864,8 +1875,9 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     orderNumber: useSettingsStore.getState().getNextModuleNumber('foodBeverage', 'order'),
                     venue: normalizePosVenue(venue),
                     tableNumber,
-                    roomNumber: customerType === 'In-house' ? roomNumber : undefined,
-                    guestId: selectedGuest?.guestId,
+                    roomNumber: settleSelectedRoom?.roomId || (customerType === 'In-house' ? roomNumber : undefined),
+                    guestId: settleSelectedRoom?.guestId || selectedGuest?.guestId,
+                    reservationId: inHouseReservationId(),
                     guestName: guestDisplayName,
                     serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
                     notes: orderNotes,

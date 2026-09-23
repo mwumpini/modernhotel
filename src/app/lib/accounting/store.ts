@@ -1150,6 +1150,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
       const updatedPartners = state.businessPartners.map(p => {
         if (p.id !== invoice.businessPartnerId) return p;
+        if (invoice.isProforma) return p;
         if (invoice.type === 'Purchase' && (p.type === 'Supplier' || p.type === 'Both')) {
           return { ...p, balance: +(p.balance + invoice.total).toFixed(2) };
         }

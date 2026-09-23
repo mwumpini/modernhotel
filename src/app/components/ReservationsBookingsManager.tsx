@@ -621,7 +621,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         try {
       const filtered = frontOfficeStore.guests.filter((guest: any) => {
             // Ensure guest has required fields
-            if (!guest || !guest.id) return false;
+            if (!guest || !guest.id || guest.isActive === false) return false;
             
             const name = guest.name || `${guest.firstName || ''} ${guest.lastName || ''}`.trim();
         const phone = guest.phone || '';
@@ -695,7 +695,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         try {
           const filtered = frontOfficeStore.guests.filter((g: any) => {
             // Ensure guest has required fields
-            if (!g || !g.id) return false;
+            if (!g || !g.id || g.isActive === false) return false;
             
             const name = g.name || `${g.firstName || ''} ${g.lastName || ''}`.trim();
             const company = g.employerCompany || g.companyName || '';
@@ -1313,12 +1313,14 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
   const getAvailableRooms = (roomTypeId: string) => {
     return housekeepingStore.getRoomsByStatus('vacant')
-      .filter(room => room.roomTypeId === roomTypeId)
+      .filter(room => room.roomTypeId === roomTypeId && frontOfficeStore.isRoomBookable(room.roomNumber))
       .map(room => room.roomNumber);
   };
 
   const getVacantRooms = () => {
-    return housekeepingStore.getRoomsByStatus('vacant').map(r => r.roomNumber);
+    return housekeepingStore.getRoomsByStatus('vacant')
+      .filter(room => frontOfficeStore.isRoomBookable(room.roomNumber))
+      .map(r => r.roomNumber);
   };
 
   return (
@@ -2343,7 +2345,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     }}
                         placeholder="Select room type"
                                   >
-                        {(useSettingsStore.getState().roomManagement.roomTypes || []).map((rt: any) => {
+                        {(useSettingsStore.getState().roomManagement.roomTypes || []).filter((rt: any) => rt.isActive !== false || rt.id === bulkGuest.roomTypeId).map((rt: any) => {
                           return (
                             <SelectItem key={rt.id} textValue={rt.name}>
                               {rt.name}

@@ -32,7 +32,7 @@ import {
 } from './helpers/rates';
 import { isCorporateGuest } from './helpers/guests';
 import { postFirstNightAtCheckIn } from './roomCharges';
-import { runNightAudit, type NightAuditResult } from './nightAudit';
+import { type NightAuditResult } from './nightAudit';
 import { postNoShowPenaltyToLedger } from '../accounting/simpleFlow';
 import { DEMO_BILLING_PERSONS, isDemoFixturesEnabled } from '../demo';
 import { notifyError } from '../notifications/notify';
@@ -251,6 +251,54 @@ class FrontOfficeStore {
     this.enqueueWrite(() => apiHelpers.createGuestViaApi(this as any, t, g));
   }
 
+  private persistGuestPatch(id: string, patch: Partial<GuestProfile>) {
+    const t = this.tenant(); if (!t) return;
+    this.enqueueWrite(() => apiHelpers.updateGuestViaApi(this as any, t, id, patch));
+  }
+
+  private persistGuestDelete(id: string) {
+    const t = this.tenant(); if (!t) return;
+    this.enqueueWrite(() => apiHelpers.deleteGuestViaApi(this as any, t, id));
+  }
+
+  isRoomBookable(roomNumber: string): boolean {
+    try {
+      const rm = useSettingsStore.getState().roomManagement;
+      const room = (rm.rooms || []).find((r) => r.number === roomNumber || r.id === roomNumber);
+      if (room && room.isActive === false) return false;
+      const typeId = room?.typeId;
+      if (typeId) {
+        const type = (rm.roomTypes || []).find((t) => t.id === typeId);
+        if (type && type.isActive === false) return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
+  reservationUsesRoom(room: { id: string; number?: string }): boolean {
+    return this.reservations.some((r) => r.roomId === room.number || r.roomId === room.id);
+  }
+
+  roomTypeHasHistory(typeId: string): boolean {
+    return this.reservations.some((r) => r.roomTypeId === typeId);
+  }
+
+  getActiveGuests(): GuestProfile[] {
+    return this.guests.filter((g) => g.isActive !== false);
+  }
+
+  guestHasHistory(id: string): boolean {
+    if (this.reservations.some((r) => r.guestId === id)) return true;
+    if (this.folios.some((f) => {
+      const res = this.reservations.find((r) => r.id === f.reservationId);
+      return res?.guestId === id;
+    })) return true;
+    if (this.clientServices.some((s) => s.clientId === id)) return true;
+    return false;
+  }
+
   // Upsert a folio (the in-house subledger) after any charge/payment mutation.
   // Called from the folio helpers, which funnel through updateFolioBalances.
   // Skipped until hydration genuinely completes (hydrationComplete, not
@@ -261,7 +309,15 @@ class FrontOfficeStore {
   persistFolio(folio: Folio) {
     if (!this.hydrationComplete) return;
     const t = this.tenant(); if (!t || !folio?.id || !folio?.reservationId) return;
-    this.enqueueWrite(() => apiHelpers.upsertFolioViaApi(this as any, t, folio));
+    this.enqueueWrite(async () => {
+      const saved = await apiHelpers.upsertFolioViaApi(this as any, t, folio);
+      if (saved?.id) {
+        const idx = this.folios.findIndex((f) => f.id === saved.id);
+        if (idx >= 0) this.folios[idx] = saved;
+        else this.folios.unshift(saved);
+        this.notify();
+      }
+    });
   }
 
   // Pulls reservations + guests from the database and adopts them when present.
@@ -309,7 +365,7 @@ class FrontOfficeStore {
       }
     } catch (e) { console.warn('FO: reservation sync failed', e); }
     try {
-      const res = await fetch('/api/guests', { headers: { 'x-tenant-subdomain': t } });
+      const res = await fetch('/api/guests?includeInactive=true', { headers: { 'x-tenant-subdomain': t } });
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.guests) && data.guests.length > 0) {
@@ -346,6 +402,13 @@ class FrontOfficeStore {
         }
       }
     } catch (e) { console.warn('FO: folio sync failed', e); }
+    try {
+      const res = await fetch('/api/frontoffice/day-ledger', { headers: { 'x-tenant-subdomain': t } });
+      if (res.ok) {
+        const data = await res.json();
+        if (typeof data.currentBusinessDate === 'string') this.businessDate = data.currentBusinessDate;
+      }
+    } catch (e) { console.warn('FO: business date sync failed', e); }
     // Reached only once the reservations/guests/folios fetches above have all
     // been attempted (success or failure) — see the hydrationComplete field
     // comment for why persistFolio needs this instead of hydratedFromApi.
@@ -482,6 +545,7 @@ class FrontOfficeStore {
       ...g, 
       id: genId('G'),
       serialNumber,
+      isActive: g.isActive !== false,
       // Generate self-reservation token
       selfReservationToken: this.generateSelfCheckinToken(),
       selfReservationExpiry: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days
@@ -609,11 +673,53 @@ class FrontOfficeStore {
     this.notify();
   }
 
-  /** End-of-day close — posts room charges, processes no-shows, rolls business date. */
-  executeNightAudit(): NightAuditResult {
-    const result = runNightAudit(this as any);
-    this.persistNightAuditState();
-    return result;
+  /** End-of-day close — server posts room charges onto GuestFolio, then reconstructs the day. */
+  async executeNightAudit(): Promise<NightAuditResult> {
+    const failed = (error: string): NightAuditResult => ({
+      id: `NA-${this.businessDate}-fail`,
+      businessDate: this.businessDate,
+      completedAt: new Date().toISOString(),
+      roomChargesPosted: 0,
+      noShowsProcessed: 0,
+      checkedInCount: 0,
+      folioChargesTotal: 0,
+      folioPaymentsTotal: 0,
+      status: 'failed',
+      error,
+    });
+    const t = this.tenant();
+    if (!t) return failed('Missing tenant');
+    try {
+      const res = await fetch('/api/frontoffice/night-audit/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': t },
+        body: JSON.stringify({ businessDate: this.businessDate }),
+      });
+      const data = await res.json().catch(() => ({} as any));
+      if (!res.ok) return failed(data.error || `HTTP ${res.status}`);
+      const r = data.result || {};
+      const run: NightAuditResult = {
+        id: r.logId || `NA-${r.businessDate}`,
+        businessDate: r.businessDate,
+        completedAt: r.completedAt,
+        roomChargesPosted: r.roomChargesPosted || 0,
+        noShowsProcessed: r.noShowsMarked || 0,
+        checkedInCount: r.checkedInCount || 0,
+        folioChargesTotal: r.folioChargesTotal || 0,
+        folioPaymentsTotal: r.folioPaymentsTotal || 0,
+        status: r.status === 'failed' ? 'failed' : 'completed',
+        error: Array.isArray(r.errors) && r.errors.length ? r.errors.join('; ') : undefined,
+      };
+      if (r.nextBusinessDate) this.businessDate = r.nextBusinessDate;
+      this.lastNightAuditAt = run.completedAt;
+      this.nightAuditHistory = [run, ...(this.nightAuditHistory || [])].slice(0, 30);
+      this.persistNightAuditState();
+      this.notify();
+      await this.refreshFromApi();
+      return run;
+    } catch (e) {
+      return failed(e instanceof Error ? e.message : String(e));
+    }
   }
 
   createBillingPerson(bp: Omit<BillingPerson,'id'|'createdAt'|'updatedAt'>) {
@@ -808,6 +914,7 @@ class FrontOfficeStore {
         : housekeepingStore.getRoomsByStatus('vacant');
       // Exclude rooms with a date-overlapping active reservation
       const candidates = vacant.filter(room =>
+        this.isRoomBookable(room.roomNumber) &&
         this.isRoomFreeForRange(room.roomNumber, res.arrival, res.departure, res.id)
       );
       if (candidates.length === 0) return undefined;
@@ -1247,6 +1354,7 @@ class FrontOfficeStore {
         updatedAt: new Date().toISOString()
       };
       this.persistGuests();
+      this.persistGuestPatch(id, safeFields);
       this.notify();
       trackEvent('FO.Guest.Updated', {
         id: id,
@@ -1269,11 +1377,19 @@ class FrontOfficeStore {
     return null;
   }
 
+  retireGuest(id: string) {
+    return this.updateGuest(id, { isActive: false } as any);
+  }
+
   deleteGuest(id: string) {
+    if (this.guestHasHistory(id)) {
+      return this.retireGuest(id);
+    }
     const index = this.guests.findIndex(g => g.id === id);
     if (index !== -1) {
       const deleted = this.guests.splice(index, 1)[0];
       this.persistGuests();
+      this.persistGuestDelete(id);
       this.notify();
       trackEvent('FO.Guest.Deleted', { 
         id: deleted.id, 

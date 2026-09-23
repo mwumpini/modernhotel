@@ -163,7 +163,7 @@ export default function SystemSettingsMainDashboard() {
                   </Button>
                   . Tax rates (VAT, NHIL, levies) are in{' '}
                   <Button size="sm" variant="light" className="inline h-auto min-h-0 p-0 align-baseline" onPress={openComplianceTax}>
-                    Compliance → Tax Management
+                    Compliance → Tax rules
                   </Button>.
                 </p>
                 <div className="flex items-center justify-between p-4 border rounded-lg">

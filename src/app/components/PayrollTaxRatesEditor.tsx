@@ -325,7 +325,7 @@ export default function PayrollTaxRatesEditor() {
         <p className="text-xs text-gray-500">
           Rename or adjust any rate below — changes apply to every future payroll run immediately, and to payslips,
           payroll records, and reports across the app. This edits the exact same rules as Settings → Compliance &amp;
-          Reports → Tax Management, just without the sales-tax-oriented filters.
+          Reports → Tax rules, just without the sales-tax-oriented filters.
         </p>
       </div>
       {payeRule && <PayeCard rule={payeRule} onSaved={bump} />}

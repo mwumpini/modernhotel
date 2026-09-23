@@ -114,6 +114,7 @@ export default function FrontofficeReservations() {
       // hand out a room another guest already occupies for an overlapping stay.
       const availableRooms = frontOfficeStore.rooms.filter(room =>
         !(room as any).isOutOfService &&
+        frontOfficeStore.isRoomBookable(room.id) &&
         room.roomTypeId === selectedReservation.roomTypeId &&
         frontOfficeStore.isRoomFreeForRange(room.id, selectedReservation.arrival, selectedReservation.departure, selectedReservation.id)
       );
@@ -186,11 +187,11 @@ export default function FrontofficeReservations() {
           <ModalHeader>New Reservation</ModalHeader>
           <ModalBody>
             <Input label="Guest Name" value={guestName} onChange={(e)=> { setGuestName(e.target.value); setExistingGuestId(''); }} />
-            {frontOfficeStore.guests.length > 0 && (
+            {frontOfficeStore.getActiveGuests().length > 0 && (
               <Select label="Existing Guest (optional)" selectedKeys={[existingGuestId]} onSelectionChange={(k)=> { const id = Array.from(k as Set<string>)[0] || ''; setExistingGuestId(id); const g = frontOfficeStore.guests.find(x => x.id === id); if (g) setGuestName(g.name || ''); }}>
                 <SelectItem key="">—</SelectItem>
                 <>
-                  {frontOfficeStore.guests.slice(0,100).map(g => 
+                  {frontOfficeStore.getActiveGuests().slice(0,100).map(g => 
                     <SelectItem key={g.id} textValue={g.name}>{g.name}</SelectItem>
                   )}
                 </>
@@ -216,7 +217,10 @@ export default function FrontofficeReservations() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Select label="Room Type" selectedKeys={[roomTypeId]} onSelectionChange={(k)=> setRoomTypeId(Array.from(k as Set<string>)[0] || '')}>
-                {frontOfficeStore.roomTypes.map(rt => <SelectItem key={rt.id}>{rt.name}</SelectItem>)}
+                {frontOfficeStore.roomTypes.filter(rt => {
+                  const cfg = useSettingsStore.getState().roomManagement.roomTypes.find((t) => t.id === rt.id);
+                  return !cfg || cfg.isActive !== false;
+                }).map(rt => <SelectItem key={rt.id}>{rt.name}</SelectItem>)}
               </Select>
               <Select label="Rate Plan" selectedKeys={[ratePlanId]} onSelectionChange={(k)=> setRatePlanId(Array.from(k as Set<string>)[0] || '')}>
                 {frontOfficeStore.ratePlans.map(rp => <SelectItem key={rp.id}>{rp.name}</SelectItem>)}
@@ -295,6 +299,7 @@ export default function FrontofficeReservations() {
                 {frontOfficeStore.rooms
                   .filter(room =>
                     !(room as any).isOutOfService &&
+                    frontOfficeStore.isRoomBookable(room.id) &&
                     room.roomTypeId === selectedReservation?.roomTypeId &&
                     (!selectedReservation || frontOfficeStore.isRoomFreeForRange(room.id, selectedReservation.arrival, selectedReservation.departure, selectedReservation.id))
                   )

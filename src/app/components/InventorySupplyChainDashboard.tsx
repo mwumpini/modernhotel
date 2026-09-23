@@ -16,14 +16,15 @@ import { useComplianceStore } from '../lib/compliance/store';
 import { useCalculateTax } from '../hooks/useCalculateTax';
 import { openHtmlPrintWindow } from '../lib/print/engine';
 import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
-import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
 import { BusinessPartner } from '../lib/accounting/models';
+import { useRouter } from 'next/navigation';
 import { GL_ACCOUNTS } from '../lib/accounting/integration';
 
 // Supplier interface removed - using imported Supplier from models.ts
 // PurchaseOrder interface removed - using imported PurchaseOrder from models.ts
 
 export default function InventorySupplyChainDashboard() {
+  const router = useRouter();
   const [selectedTab, setSelectedTab] = useState('overview');
   const settings = useSettingsStore();
   const { data: session } = useSession();
@@ -3439,75 +3440,6 @@ export default function InventorySupplyChainDashboard() {
     );
   };
 
-  // Render Reports & Analytics Function (merged with Analytics Dashboard)
-  const renderReportsAndAnalytics = () => {
-    // Use component-level metrics (already computed above)
-    const reportTotalInventoryValue = getTotalInventoryValue();
-    const reportTotalItems = stockItems.length;
-    const reportLowStockCount = getLowStockItems().length;
-    const reportOutOfStockCount = getOutOfStockItems().length;
-    
-    return (
-      <div className="space-y-6">
-        {/* Key Metrics */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Inventory Value</p>
-                  <p className="text-2xl font-bold text-green-600">₵{reportTotalInventoryValue.toLocaleString()}</p>
-                </div>
-                <div className="text-3xl">💰</div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Items</p>
-                  <p className="text-2xl font-bold text-blue-600">{reportTotalItems}</p>
-                </div>
-                <div className="text-3xl">📦</div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Low Stock Items</p>
-                  <p className="text-2xl font-bold text-orange-600">{reportLowStockCount}</p>
-                </div>
-                <div className="text-3xl">⚠️</div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Out of Stock</p>
-                  <p className="text-2xl font-bold text-red-600">{reportOutOfStockCount}</p>
-                </div>
-                <div className="text-3xl">❌</div>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
-
-        {/* Reports & Analytics — the real dashboard (valuation/movement/low-stock/
-            supplier/financial reports, each with working CSV/PDF export), not a
-            grid of cards with no click handler in front of a "coming soon" stub. */}
-        <InventoryAnalyticsDashboard />
-      </div>
-    );
-  };
-
   // Render Stock Operations Function
   const renderStockOperations = () => {
     // Get POs ready for receipt (confirmed or in-transit)
@@ -3909,7 +3841,13 @@ export default function InventorySupplyChainDashboard() {
 
       <Tabs 
         selectedKey={selectedTab} 
-        onSelectionChange={(key) => setSelectedTab(key as string)}
+        onSelectionChange={(key) => {
+          if (String(key) === 'reports') {
+            router.push('/inventory/reports');
+            return;
+          }
+          setSelectedTab(key as string);
+        }}
         className="w-full"
       >
         <Tab key="overview" title="📊 Overview" />
@@ -3918,7 +3856,7 @@ export default function InventorySupplyChainDashboard() {
         <Tab key="requisitions" title="📝 Requisitions" />
         <Tab key="purchase-orders" title="📋 Purchase Orders" />
         <Tab key="stock-operations" title="🔄 Stock Operations" />
-        <Tab key="reports" title="📊 Reports & Analytics" />
+        <Tab key="reports" title="📊 Reports & Analysis" />
       </Tabs>
 
       <div className="mt-6">
@@ -3928,7 +3866,7 @@ export default function InventorySupplyChainDashboard() {
         {selectedTab === 'requisitions' && renderRequisitions()}
         {selectedTab === 'purchase-orders' && renderPurchaseOrders()}
         {selectedTab === 'stock-operations' && renderStockOperations()}
-        {selectedTab === 'reports' && renderReportsAndAnalytics()}
+        {selectedTab === 'reports' && <div className="p-6 text-center">Opening Reports & Analysis...</div>}
       </div>
       
       {/* Modals for Inventory Management - rendered outside conditional to avoid hook issues */}

@@ -11,7 +11,6 @@ import {
   Tabs, 
   Tab, 
   Chip,
-  Progress,
   Tooltip
 } from "@heroui/react";
 import { housekeepingStore } from '../lib/housekeeping/store';
@@ -41,7 +40,7 @@ const HOUSEKEEPING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
 // Import specialized components
 import RoomStatusGrid from './housekeeping/RoomStatusGrid';
 import TaskManagementPanel from './housekeeping/TaskManagementPanel';
-import StaffManagementPanel from './housekeeping/StaffManagementPanel';
+import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import MaintenancePanel from './housekeeping/MaintenancePanel';
 
 // Info Icon Component with Tooltip
@@ -139,10 +138,6 @@ export default function HousekeepingMainDashboard() {
   const maintenanceRooms = allRooms.filter(r => r.status === 'maintenance' || r.status === 'out-of-order').length;
   const activeStaff = staff.filter(s => s.active).length;
   const totalRooms = allRooms.length;
-  const activeStaffList = staff.filter(s => s.active);
-  const avgStaffEfficiency = activeStaffList.length > 0
-    ? Math.round(activeStaffList.reduce((sum, s) => sum + s.efficiency, 0) / activeStaffList.length)
-    : 0;
 
   // Today's operations
   const todayIso = new Date().toISOString().slice(0,10);
@@ -184,8 +179,7 @@ export default function HousekeepingMainDashboard() {
       category: 'Communication & Reports',
       items: [
         { title: 'Staff Communication', icon: '📱', description: 'Team coordination tools', status: 'active', count: activeStaff },
-        { title: 'Daily Reports', icon: '📊', description: 'Generate daily summaries', status: 'active', count: 0 },
-        { title: 'Performance Analytics', icon: '📈', description: 'Staff performance insights', status: 'active', count: 0 },
+        { title: 'Reports & Analysis', icon: '📊', description: 'Room status, tasks, inspections and maintenance', status: 'active', count: 0 },
         { title: 'Notifications', icon: '🔔', description: 'Alert system', status: 'active', count: 0 },
       ]
     }
@@ -535,6 +529,8 @@ export default function HousekeepingMainDashboard() {
                                 setSelectedTab('inspections');
                               } else if (item.title.includes('Supply Management')) {
                                 setSelectedTab('supplies');
+                              } else if (item.title.includes('Reports & Analysis')) {
+                                router.push('/housekeeping/reports');
                               }
                             }}
                           >
@@ -576,7 +572,11 @@ export default function HousekeepingMainDashboard() {
             </Tab>
 
             <Tab key="staff" title="👥 Staff Management">
-              <StaffManagementPanel />
+              <DepartmentStaffTab
+                departmentLabel="Housekeeping"
+                overtimePermissionId="housekeeping.log-overtime"
+                departmentNameHints={['housekeeping', 'maintenance']}
+              />
             </Tab>
 
             <Tab key="maintenance" title="🔧 Maintenance">
@@ -591,90 +591,6 @@ export default function HousekeepingMainDashboard() {
             <Tab key="supplies" title="📦 Supplies & Inventory">
               <div className="p-4">
                 <p className="text-gray-600">Supply Management Panel - Coming Soon</p>
-              </div>
-            </Tab>
-
-            <Tab key="analytics" title="📊 Analytics & Reports">
-              <div className="space-y-6 mt-6">
-                {/* Performance KPIs */}
-                <Card className="border-0 shadow-lg">
-                  <CardHeader className="flex items-center justify-between">
-                    <h3 className="text-xl font-semibold text-ghana-black">Key Performance Indicators</h3>
-                    <Button size="sm" variant="flat">
-                      Export
-                    </Button>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-                      {/* Rooms Cleaned */}
-                      <div className="text-center p-4 bg-gray-50 rounded-lg">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                          <span className="text-2xl">🏠</span>
-                          <span className="text-sm font-medium text-gray-600">Rooms Cleaned</span>
-                        </div>
-                        <div className="text-2xl font-bold text-ghana-black mb-2">{stats.tasksCompleted}</div>
-                        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                          <span>Target: 50</span>
-                        </div>
-                        <Progress value={Math.min(100, (stats.tasksCompleted / 50) * 100)} color="success" size="sm" />
-                      </div>
-
-                      {/* Quality Score */}
-                      <div className="text-center p-4 bg-gray-50 rounded-lg">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                          <span className="text-2xl">⭐</span>
-                          <span className="text-sm font-medium text-gray-600">Quality Score</span>
-                        </div>
-                        <div className="text-2xl font-bold text-ghana-black mb-2">{stats.averageInspectionScore}%</div>
-                        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                          <span>Target: 95%</span>
-                        </div>
-                        <Progress value={stats.averageInspectionScore} color="primary" size="sm" />
-                      </div>
-
-                      {/* Avg Task Time */}
-                      <div className="text-center p-4 bg-gray-50 rounded-lg">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                          <span className="text-2xl">⏱️</span>
-                          <span className="text-sm font-medium text-gray-600">Avg Task Time</span>
-                        </div>
-                        <div className="text-2xl font-bold text-ghana-black mb-2">{stats.averageTaskTime} min</div>
-                        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                          <span>Target: 30 min</span>
-                        </div>
-                        <Progress value={Math.min(100, (stats.averageTaskTime / 30) * 100)} color="secondary" size="sm" />
-                      </div>
-
-                      {/* Staff Efficiency */}
-                      <div className="text-center p-4 bg-gray-50 rounded-lg">
-                        <div className="flex items-center justify-center gap-2 mb-2">
-                          <span className="text-2xl">👥</span>
-                          <span className="text-sm font-medium text-gray-600">Staff Efficiency</span>
-                        </div>
-                        <div className="text-2xl font-bold text-ghana-black mb-2">{avgStaffEfficiency}%</div>
-                        <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-                          <span>Target: 90%</span>
-                        </div>
-                        <Progress value={avgStaffEfficiency} color="warning" size="sm" />
-                      </div>
-                    </div>
-                  </CardBody>
-                </Card>
-
-                {/* Performance Trends */}
-                <Card className="border-0 shadow-lg">
-                  <CardHeader>
-                    <h3 className="text-xl font-semibold text-ghana-black">Performance Trends</h3>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="text-center py-12 text-gray-500">
-                      <div className="text-4xl mb-4">📊</div>
-                      <h4 className="text-lg font-medium mb-2">Performance Trends</h4>
-                      <p className="text-sm">Historical performance data and trend analysis will be displayed here.</p>
-                      <p className="text-xs mt-2">Connect to live data sources to see real-time trends</p>
-                    </div>
-                  </CardBody>
-                </Card>
               </div>
             </Tab>
           </Tabs>

@@ -88,7 +88,7 @@ export const helpTopics: HelpTopic[] = [
     steps: [
       'First visit: complete System Setup (/setup) for company, country, and currency.',
       'Ongoing: use Settings for users, rooms & rate plans, numbering, and security.',
-      'Tax rates and filing: use Compliance → Tax Management, PAYE, or Reports & Filing.',
+      'Tax rates and filing: use Compliance → Tax rules, Payroll tax, or Reports & Filing.',
     ],
   },
   {
@@ -183,7 +183,7 @@ export const helpTopics: HelpTopic[] = [
     section: 'compliance',
     complianceTab: 'tax',
     steps: [
-      'Compliance → Tax Management tab.',
+      'Compliance → Tax rules tab.',
       'Use Rules, Tax Types, or Simulator sub-tabs as needed.',
       'Ensure each rule has a valid GL code on the chart of accounts.',
       'Save — rates flow to accounting store and computeSalesTax() everywhere.',
@@ -199,11 +199,11 @@ export const helpTopics: HelpTopic[] = [
     section: 'compliance',
     complianceTab: 'payroll',
     steps: [
-      'Compliance → PAYE tab.',
+      'Compliance → Payroll tax tab.',
       'Load or edit the country payroll template.',
       'Run a test calculation before posting payroll periods.',
     ],
-    notHere: 'Guest invoice VAT/NHIL — use Compliance → Tax Management.',
+    notHere: 'Guest invoice VAT/NHIL — use Compliance → Tax rules.',
   },
   {
     id: 'compliance-reports',

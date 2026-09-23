@@ -322,15 +322,34 @@ export default function ManageClientsPage() {
   };
 
   const handleDeleteClient = (client: GuestProfile) => {
-    if (confirm(`Are you sure you want to delete ${client.firstName} ${client.lastName}?`)) {
-      const deletedClient = frontOfficeStore.deleteGuest(client.id);
-      if (deletedClient) {
-        trackEvent('FO.Client.Deleted', {
-          id: deletedClient.id,
-          name: `${deletedClient.firstName} ${deletedClient.lastName}`
-        });
+    const name = `${client.firstName} ${client.lastName}`.trim() || client.name || 'this client';
+    const used = frontOfficeStore.guestHasHistory(client.id);
+    if (used) {
+      if (client.isActive === false) {
+        if (!confirm(`Reactivate ${name} for new bookings? Stay history stays in place.`)) return;
+        frontOfficeStore.updateGuest(client.id, { isActive: true } as any);
         loadClients();
+        return;
       }
+      if (
+        !confirm(
+          `${name} has stay or folio history and cannot be deleted. Mark the profile Inactive so it stays off new bookings but history is kept?`
+        )
+      ) {
+        return;
+      }
+      frontOfficeStore.retireGuest(client.id);
+      loadClients();
+      return;
+    }
+    if (!confirm(`Delete ${name}? This cannot be undone.`)) return;
+    const deletedClient = frontOfficeStore.deleteGuest(client.id);
+    if (deletedClient) {
+      trackEvent('FO.Client.Deleted', {
+        id: deletedClient.id,
+        name: `${deletedClient.firstName} ${deletedClient.lastName}`
+      });
+      loadClients();
     }
   };
   const getNationalityFlag = (nationality: Nationality) => {
@@ -619,7 +638,10 @@ export default function ManageClientsPage() {
                             className="bg-blue-100 text-blue-800"
                           />
                           <div>
+                            <div className="flex items-center gap-2">
                             <p className="font-medium text-gray-900">{`${client.firstName} ${client.lastName}`}</p>
+                            {client.isActive === false && <Chip size="sm" variant="flat">Inactive</Chip>}
+                            </div>
                             <p className="text-sm text-gray-500">#{client.serialNumber}</p>
                             <Badge 
                               color={getValueColor(getClientValue(client))} 
@@ -705,7 +727,9 @@ export default function ManageClientsPage() {
                               ✏️ Edit
                             </DropdownItem>
                             <DropdownItem key="delete" onClick={() => handleDeleteClient(client)}>
-                              🗑️ Delete
+                              {frontOfficeStore.guestHasHistory(client.id)
+                                ? (client.isActive === false ? 'Already inactive' : '⏸️ Deactivate')
+                                : '🗑️ Delete'}
                             </DropdownItem>
                             <DropdownItem key="history">
                               📊 View History

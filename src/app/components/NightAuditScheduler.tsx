@@ -12,7 +12,7 @@ export default function NightAuditScheduler() {
   React.useEffect(() => {
     const interval = window.setInterval(() => {
       try {
-        tickNightAuditScheduler(new Date());
+        void tickNightAuditScheduler(new Date());
       } catch (e) {
         console.warn('[NightAuditScheduler] tick failed', e);
       }
@@ -20,7 +20,7 @@ export default function NightAuditScheduler() {
 
     // Run once on mount in case the tab was opened during the window
     try {
-      tickNightAuditScheduler(new Date());
+      void tickNightAuditScheduler(new Date());
     } catch {}
 
     return () => window.clearInterval(interval);

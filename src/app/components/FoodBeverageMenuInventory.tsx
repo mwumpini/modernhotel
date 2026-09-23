@@ -22,6 +22,7 @@ interface MenuItem {
   available: boolean;
   preparationTime: number;
   allergens: string[];
+  usedCount: number;
 }
 
 interface InventoryItem {
@@ -56,7 +57,7 @@ export default function FoodBeverageMenuInventory() {
 
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const reloadMenu = () => {
-    fetch('/api/fb/menu', { headers: fbHeaders() })
+    fetch('/api/fb/menu?includeUsage=true', { headers: fbHeaders() })
       .then((r) => (r.ok ? r.json() : { items: [] }))
       .then((data) => setMenuItems((data.items || []).map((i: any) => {
         const price = Number(i.unitPrice || 0);
@@ -74,6 +75,7 @@ export default function FoodBeverageMenuInventory() {
           available: i.isAvailable,
           preparationTime: i.prepMinutes,
           allergens: i.allergens ? i.allergens.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
+          usedCount: Number(i.usedCount || 0),
         };
       })));
   };
@@ -110,6 +112,32 @@ export default function FoodBeverageMenuInventory() {
       headers: fbHeaders(),
       body: JSON.stringify({ id: item.id, isAvailable: !item.available }),
     });
+    reloadMenu();
+  };
+
+  const handleRemoveMenuItem = async (item: MenuItem) => {
+    if (item.usedCount > 0) {
+      if (!item.available) {
+        alert(`${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. It is already unavailable.`);
+        return;
+      }
+      if (
+        !confirm(
+          `${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. Mark it Unavailable so it stays off new orders but history is kept?`
+        )
+      ) {
+        return;
+      }
+      await fetch('/api/fb/menu', {
+        method: 'PATCH',
+        headers: fbHeaders(),
+        body: JSON.stringify({ id: item.id, isAvailable: false }),
+      });
+      reloadMenu();
+      return;
+    }
+    if (!confirm(`Delete ${item.name}? This action cannot be undone.`)) return;
+    await fetch(`/api/fb/menu?id=${encodeURIComponent(item.id)}`, { method: 'DELETE', headers: fbHeaders() });
     reloadMenu();
   };
 
@@ -350,6 +378,14 @@ export default function FoodBeverageMenuInventory() {
                         <div className="flex gap-2">
                           <Button size="sm" color="secondary" variant="flat" onPress={() => toggleMenuItemAvailability(item)}>
                             {item.available ? 'Mark Unavailable' : 'Mark Available'}
+                          </Button>
+                          <Button
+                            size="sm"
+                            color={item.usedCount > 0 ? 'warning' : 'danger'}
+                            variant="flat"
+                            onPress={() => handleRemoveMenuItem(item)}
+                          >
+                            {item.usedCount > 0 ? (item.available ? 'Deactivate' : 'Already inactive') : 'Delete'}
                           </Button>
                         </div>
                       </CardBody>

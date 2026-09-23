@@ -674,6 +674,7 @@ export default function FrontofficeEventsConferences() {
                     const guests = frontOfficeStore.guests || [];
                     const results = q.length >= 2
                       ? guests.filter(g => {
+                          if (g.isActive === false) return false;
                           const org = (g.employerCompany || g.company || '').toLowerCase();
                           const name = (g.name || `${g.firstName || ''} ${g.lastName || ''}`).toLowerCase();
                           const phone = (g.companyPhone || g.phone || '').toLowerCase();

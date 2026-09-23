@@ -144,6 +144,7 @@ function toStoreEventBooking(row: any) {
     audioVisual: row.audioVisual,
     decoration: row.decoration,
     totalCost: Number(row.totalCost || 0),
+    details: row.details && typeof row.details === 'object' ? row.details : undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }
@@ -174,6 +175,7 @@ export async function upsertEventBooking(tenantId: string, id: string, booking: 
     audioVisual: booking.audioVisual,
     decoration: booking.decoration,
     totalCost: booking.totalCost,
+    details: booking.details,
   })
   const row = await ownershipCheckedUpsert(prisma.eventBooking, id, tenantId, data, {
     title: booking.title,

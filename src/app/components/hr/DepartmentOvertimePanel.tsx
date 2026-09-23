@@ -7,6 +7,7 @@ import { useSettingsStore } from '../../lib/settings/store';
 import type { DepartmentStaffMember } from '../../lib/hr/useDepartmentStaff';
 import RequestOvertimeButton from './RequestOvertimeButton';
 import { printSimpleReport } from '../../lib/print/simpleReport';
+import { dayKey } from '../../lib/hr/leaveDates';
 
 /**
  * Read-only overtime record for one department's own staff, plus the
@@ -56,7 +57,7 @@ export default function DepartmentOvertimePanel({
         const emp = staff.find((m) => m.id === a.employeeId);
         return [
           emp ? emp.name : a.employeeId,
-          new Date(a.date).toLocaleDateString(),
+          dayKey(a.date),
           (a.totalHours || 0).toFixed(2),
           (a.overtimeHours || 0).toFixed(2),
           statusLabel(a),
@@ -69,8 +70,11 @@ export default function DepartmentOvertimePanel({
     <div className="p-6 space-y-4">
       <Card>
         <CardHeader className="flex items-center justify-between">
-          <div className="font-medium">Overtime Records</div>
-          <Button size="sm" color="primary" variant="flat" onPress={printRecords}>🖨️ Print</Button>
+          <div>
+            <div className="font-medium">Overtime Records</div>
+            <p className="text-xs text-slate-500">Hours already stored on attendance. Empty means none logged for this staff list.</p>
+          </div>
+          <Button size="sm" color="primary" variant="flat" onPress={printRecords}>Print</Button>
         </CardHeader>
         <CardBody>
           <Table aria-label="Department overtime records">
@@ -89,7 +93,7 @@ export default function DepartmentOvertimePanel({
                 return (
                   <TableRow key={a.id}>
                     <TableCell>{emp ? emp.name : a.employeeId}</TableCell>
-                    <TableCell>{new Date(a.date).toLocaleDateString()}</TableCell>
+                    <TableCell>{dayKey(a.date)}</TableCell>
                     <TableCell>{(a.totalHours || 0).toFixed(2)}</TableCell>
                     <TableCell>{(a.overtimeHours || 0).toFixed(2)}</TableCell>
                     <TableCell>
@@ -110,15 +114,15 @@ export default function DepartmentOvertimePanel({
       </Card>
 
       <div className="space-y-3">
-        <p className="text-sm text-gray-500">
-          Submit an overtime request for staff in this department. It goes to Payroll/HR for approval (or
-          the Director if it's above the tenant's overtime threshold) — see HR &amp; Payroll → Overtime
-          Management for the full approval history.
+        <p className="text-sm text-slate-500">
+          Submit overtime for the staff on this list. Approval stays in HR &amp; Payroll → Overtime
+          Management (or the Director above the tenant threshold). This tab does not invent hours.
         </p>
         <RequestOvertimeButton
           departmentLabel={departmentLabel}
           permissionId={overtimePermissionId}
           departmentNameHints={departmentNameHints}
+          staff={staff}
         />
       </div>
     </div>

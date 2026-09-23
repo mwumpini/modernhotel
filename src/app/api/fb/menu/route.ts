@@ -16,6 +16,8 @@ export async function GET(request: NextRequest) {
     const category = searchParams.get('category') || undefined
     const available = searchParams.get('available')
 
+    const includeUsage = searchParams.get('includeUsage') === 'true'
+
     const items = await prisma.fBMenuItem.findMany({
       where: {
         tenantId: ctx.tenantId,
@@ -26,7 +28,19 @@ export async function GET(request: NextRequest) {
       orderBy: [{ category: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
     })
 
-    return NextResponse.json({ items })
+    if (!includeUsage) return NextResponse.json({ items })
+
+    const counts = items.length
+      ? await prisma.fBOrderItem.groupBy({
+          by: ['menuItemId'],
+          where: { tenantId: ctx.tenantId, menuItemId: { in: items.map((i) => i.id) } },
+          _count: { _all: true },
+        })
+      : []
+    const usedById = new Map(counts.filter((c) => c.menuItemId).map((c) => [c.menuItemId as string, c._count._all]))
+    return NextResponse.json({
+      items: items.map((item) => ({ ...item, usedCount: usedById.get(item.id) || 0 })),
+    })
   } catch (error) {
     console.error('[fb/menu][GET] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
@@ -140,8 +154,14 @@ export async function DELETE(request: NextRequest) {
     const existing = await prisma.fBMenuItem.findFirst({ where: { id, tenantId: ctx.tenantId } })
     if (!existing) return NextResponse.json({ error: 'Menu item not found' }, { status: 404 })
 
-    await prisma.fBMenuItem.update({ where: { id }, data: { isAvailable: false } })
-    return NextResponse.json({ success: true })
+    const used = await prisma.fBOrderItem.count({ where: { tenantId: ctx.tenantId, menuItemId: id } })
+    if (used > 0) {
+      await prisma.fBMenuItem.update({ where: { id }, data: { isAvailable: false } })
+      return NextResponse.json({ success: true, deactivated: true, used })
+    }
+
+    await prisma.fBMenuItem.delete({ where: { id } })
+    return NextResponse.json({ success: true, deleted: true })
   } catch (error) {
     console.error('[fb/menu][DELETE] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

@@ -32,9 +32,10 @@ export default function DepartmentStaffTab({
   overtimePermissionId,
   departmentNameHints,
   excludeNameHints = [],
-  emptyLabel = 'No staff found in HR records.',
+  emptyLabel,
   helperText,
   staff: preloadedStaff,
+  alsoStaffNames = [],
 }: {
   departmentLabel: string;
   overtimePermissionId: string;
@@ -48,9 +49,16 @@ export default function DepartmentStaffTab({
   /** Pass this when the parent already calls useDepartmentStaff itself (e.g.
    * for its own staff-count summary card) so the list isn't fetched twice. */
   staff?: DepartmentStaffMember[];
+  /** Extra HR names to include even when they sit in another department
+   * (e.g. coordinators already assigned on live event bookings). */
+  alsoStaffNames?: string[];
 }) {
-  const fetchedStaff = useDepartmentStaff(departmentNameHints, excludeNameHints, !preloadedStaff);
+  const fetchedStaff = useDepartmentStaff(departmentNameHints, excludeNameHints, !preloadedStaff, alsoStaffNames);
   const staff = preloadedStaff ?? fetchedStaff;
+  const listHelper =
+    helperText ||
+    `HR staff in a ${departmentLabel} department. Names come from the HR file — this tab does not invent staff.`;
+  const listEmpty = emptyLabel || `No ${departmentLabel} department in HR.`;
 
   const printStaffList = () => {
     printSimpleReport(
@@ -67,10 +75,10 @@ export default function DepartmentStaffTab({
         <Tab key="list" title="👥 Staff List">
           <div className="pt-4">
             <div className="flex items-center justify-between mb-4">
-              <p className="text-sm text-gray-500">
-                {helperText || 'Staff sourced from HR records for this department.'}
+              <p className="text-sm text-slate-500">
+                {listHelper}
               </p>
-              <Button size="sm" color="primary" variant="flat" onPress={printStaffList}>🖨️ Print</Button>
+              <Button size="sm" color="primary" variant="flat" onPress={printStaffList}>Print</Button>
             </div>
             <Table aria-label="Department staff table">
               <TableHeader>
@@ -80,7 +88,7 @@ export default function DepartmentStaffTab({
                 <TableColumn>EMPLOYMENT TYPE</TableColumn>
                 <TableColumn>STATUS</TableColumn>
               </TableHeader>
-              <TableBody emptyContent={emptyLabel}>
+              <TableBody emptyContent={listEmpty}>
                 {staff.map((member) => (
                   <TableRow key={member.id}>
                     <TableCell>
@@ -89,7 +97,7 @@ export default function DepartmentStaffTab({
                     <TableCell>{member.position}</TableCell>
                     <TableCell>{member.department}</TableCell>
                     <TableCell>
-                      <Badge color="primary" variant="flat">{member.employmentType}</Badge>
+                      <Badge color="primary" variant="flat">{String(member.employmentType || '—').replace(/_/g, ' ')}</Badge>
                     </TableCell>
                     <TableCell>
                       <Chip color={statusColor(member.status) as any} size="sm">

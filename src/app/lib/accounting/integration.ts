@@ -22,9 +22,11 @@
  */
 
 import { useAccountingStore } from './store';
+import { nextNumberFromLabels } from '../events/documentNumbers';
 import { computeStackedTaxLines, getEffectiveTaxConfigs } from './taxFromConfig';
 import { logAccountingProcess, logAccountingProcessError } from './accountingProcessLog';
 import { assertPeriodNotClosed } from './periodClose';
+import { hasReversalForEntry, postJournalEntryReversal } from './journalReversal';
 
 // GL Account Codes for Ghana Hotel Chart of Accounts — leaf (postable) codes only,
 // cross-checked against GHANA_CHART_OF_ACCOUNTS in models.ts. '1100'/'1200'/'2000'
@@ -202,12 +204,20 @@ function getRevenueCenterCode(source: DepartmentSource): string {
  * Generate a unique invoice number
  */
 function generateInvoiceNumber(source: DepartmentSource): string {
-  const prefixes: Record<DepartmentSource, string> = {
+  if (source === 'conference') {
+    const store = useAccountingStore.getState();
+    return nextNumberFromLabels(
+      'INV',
+      store.invoices
+        .filter((invoice) => invoice.sourceModule === 'conference' && !invoice.isProforma && invoice.status !== 'Void')
+        .map((invoice) => invoice.invoiceNumber)
+    );
+  }
+  const prefixes: Partial<Record<DepartmentSource, string>> = {
     front_office: 'FO',
     restaurant: 'REST',
     bar: 'BAR',
     room_service: 'RS',
-    conference: 'CONF',
     spa: 'SPA',
     other: 'OTH',
   };
@@ -221,12 +231,20 @@ function generateInvoiceNumber(source: DepartmentSource): string {
  * Generate a unique payment/receipt number
  */
 function generateReceiptNumber(source: DepartmentSource): string {
-  const prefixes: Record<DepartmentSource, string> = {
+  if (source === 'conference') {
+    const store = useAccountingStore.getState();
+    return nextNumberFromLabels(
+      'RCP',
+      store.payments
+        .filter((payment) => payment.sourceModule === 'conference' && payment.status !== 'Void')
+        .map((payment) => payment.paymentNumber)
+    );
+  }
+  const prefixes: Partial<Record<DepartmentSource, string>> = {
     front_office: 'FO-RCP',
     restaurant: 'REST-RCP',
     bar: 'BAR-RCP',
     room_service: 'RS-RCP',
-    conference: 'CONF-RCP',
     spa: 'SPA-RCP',
     other: 'RCP',
   };
@@ -994,6 +1012,168 @@ export function captureCompleteSale(
     console.error('[Accounting Integration] ❌ Error capturing complete sale:', error);
     return null;
   }
+}
+
+export function conferenceDocBelongsToLiveEvent(
+  doc: { reference?: string; eventId?: string; description?: string; invoiceId?: string },
+  liveEventIds: Iterable<string>,
+): boolean {
+  const live = new Set(Array.from(liveEventIds).filter(Boolean));
+  if (!live.size) return false;
+  const haystack = [doc.reference, doc.eventId, doc.invoiceId, doc.description]
+    .filter(Boolean)
+    .map((value) => String(value));
+  for (const id of live) {
+    if (haystack.some((part) => part === id || part.includes(id))) return true;
+  }
+  return false;
+}
+
+export function captureConferenceProforma(input: {
+  eventId: string;
+  customerId?: string;
+  customerName: string;
+  description: string;
+  subtotal: number;
+  taxAmount?: number;
+  total: number;
+  date?: string;
+  quoteNumber?: string;
+}): string | null {
+  if (!input.eventId || !(input.total > 0)) return null;
+  const store = useAccountingStore.getState();
+  const now = new Date().toISOString();
+  const invoiceId = `INV-CONFERENCE-PRO-${input.eventId}`;
+  const existing = store.invoices.find((invoice) => invoice.id === invoiceId);
+  const invoiceNumber = input.quoteNumber || existing?.invoiceNumber || nextNumberFromLabels(
+    'Q',
+    store.invoices
+      .filter((invoice) => invoice.sourceModule === 'conference' && invoice.isProforma)
+      .map((invoice) => invoice.invoiceNumber)
+  );
+  const payload = {
+    id: invoiceId,
+    invoiceNumber,
+    type: 'Sales' as const,
+    isProforma: true,
+    date: input.date || now,
+    dueDate: now,
+    businessPartnerId: input.customerId || `client_${input.eventId}`,
+    reference: input.eventId,
+    description: input.description,
+    subtotal: input.subtotal,
+    taxAmount: input.taxAmount || 0,
+    total: input.total,
+    currency: 'GHS',
+    status: existing && !existing.isProforma ? existing.status : 'Draft',
+    paidAmount: 0,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+    lines: existing?.lines || [],
+    sourceModule: 'conference' as const,
+    customerName: input.customerName,
+  };
+  if (existing) {
+    if (!existing.isProforma) return existing.id;
+    store.updateInvoice(invoiceId, payload as any);
+    return invoiceId;
+  }
+  store.addInvoice(payload as any);
+  return invoiceId;
+}
+
+export function markConferenceProformaConverted(eventId: string): void {
+  if (!eventId) return;
+  const store = useAccountingStore.getState();
+  const invoiceId = `INV-CONFERENCE-PRO-${eventId}`;
+  const existing = store.invoices.find((invoice) => invoice.id === invoiceId && invoice.isProforma);
+  if (!existing) return;
+  store.updateInvoice(invoiceId, {
+    status: 'Converted' as any,
+    updatedAt: new Date().toISOString(),
+  } as any);
+}
+
+export async function retireOrphanConferenceInvoices(liveEventIds: string[]): Promise<{ voided: string[] }> {
+  const live = Array.from(new Set((liveEventIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+  if (!live.length) return { voided: [] };
+
+  const voided: string[] = [];
+  const snapshot = useAccountingStore.getState();
+  const orphans = snapshot.invoices.filter((invoice) => {
+    if (invoice.sourceModule !== 'conference') return false;
+    if (invoice.isProforma) return false;
+    if (String(invoice.status || '') === 'Void') return false;
+    return !conferenceDocBelongsToLiveEvent(invoice as any, live);
+  });
+
+  for (const invoice of orphans) {
+    const store = useAccountingStore.getState();
+    const invoiceKeys = [invoice.id, invoice.invoiceNumber, invoice.reference]
+      .filter(Boolean)
+      .map((value) => String(value));
+    const receipts = store.payments.filter((payment) => {
+      if (payment.type !== 'Receipt' || payment.status === 'Void') return false;
+      if (payment.invoiceId === invoice.id) return true;
+      if (payment.sourceModule !== 'conference') return false;
+      const haystack = [payment.invoiceId, payment.reference, payment.description]
+        .filter(Boolean)
+        .map((value) => String(value));
+      return invoiceKeys.some((key) => haystack.some((part) => part === key || part.includes(key)));
+    });
+
+    let receiptsOk = true;
+    for (const receipt of receipts) {
+      const latestStore = useAccountingStore.getState();
+      if (receipt.journalEntryId && !hasReversalForEntry(latestStore.journalEntries, receipt.journalEntryId)) {
+        const reversed = postJournalEntryReversal(receipt.journalEntryId, latestStore, {
+          postedBy: 'system',
+          reason: `Retire orphan conference receipt ${receipt.paymentNumber}`,
+        });
+        if (!reversed.ok) {
+          console.warn('[Accounting Integration] Could not reverse orphan conference receipt', receipt.paymentNumber, reversed.error);
+          receiptsOk = false;
+          break;
+        }
+      }
+      try {
+        await latestStore.voidPayment(receipt.id);
+      } catch (error) {
+        console.warn('[Accounting Integration] Could not void orphan conference receipt', receipt.paymentNumber, error);
+        receiptsOk = false;
+        break;
+      }
+    }
+    if (!receiptsOk) continue;
+
+    const latest = useAccountingStore.getState();
+    const current = latest.invoices.find((row) => row.id === invoice.id);
+    if (!current || current.status === 'Void') {
+      voided.push(invoice.invoiceNumber || invoice.id);
+      continue;
+    }
+    if ((current.paidAmount || 0) > 0.01) {
+      console.warn('[Accounting Integration] Orphan conference invoice still shows paid amount after receipts', current.invoiceNumber);
+      continue;
+    }
+    if (current.journalEntryId && !hasReversalForEntry(latest.journalEntries, current.journalEntryId)) {
+      const reversed = postJournalEntryReversal(current.journalEntryId, latest, {
+        postedBy: 'system',
+        reason: `Retire orphan conference invoice ${current.invoiceNumber}`,
+      });
+      if (!reversed.ok) {
+        console.warn('[Accounting Integration] Could not reverse orphan conference invoice', current.invoiceNumber, reversed.error);
+        continue;
+      }
+    }
+    try {
+      await latest.voidInvoice(current.id);
+      voided.push(current.invoiceNumber || current.id);
+    } catch (error) {
+      console.warn('[Accounting Integration] Could not void orphan conference invoice', current.invoiceNumber, error);
+    }
+  }
+  return { voided };
 }
 
 /**

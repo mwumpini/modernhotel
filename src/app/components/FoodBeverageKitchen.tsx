@@ -4,6 +4,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardBody, CardHeader, Button, Input, Textarea, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Progress, Tabs, Tab } from "@heroui/react";
 import { kitchenOpsStore, KitchenOpRecord } from '../lib/fb/kitchenOpsStore';
 import { fetchFbOrders, openKitchenDisplay, type FbOrderDto } from '../lib/fb/api';
+import { useRouter } from 'next/navigation';
 import { buildLiveStationBoard, kitchenStats, type LiveStationView } from '../lib/fb/kitchenStations';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import KitchenDisplaySystem from './KitchenDisplaySystem';
@@ -64,6 +65,7 @@ interface Requisition {
 }
 
 export default function FoodBeverageKitchen() {
+  const router = useRouter();
   const [selectedTab, setSelectedTab] = useState('kds');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.kitchen', KITCHEN_DASHBOARD_SECTIONS);
   const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
@@ -235,6 +237,13 @@ export default function FoodBeverageKitchen() {
           <p className="text-gray-600">Live kitchen display, stations, inventory, requisitions, and recipes</p>
         </div>
         <div className="flex gap-3">
+          <Button
+            variant="bordered"
+            className="border-blue-600 text-blue-700 font-semibold"
+            onClick={() => router.push('/kitchen/reports')}
+          >
+            📊 Reports & Analysis
+          </Button>
           <Button
             color="primary"
             className="bg-ghana-green text-white"
@@ -593,8 +602,7 @@ export default function FoodBeverageKitchen() {
                 departmentLabel="Kitchen"
                 overtimePermissionId="kitchen.log-overtime"
                 departmentNameHints={['kitchen']}
-                emptyLabel="No Kitchen staff found in HR records."
-                helperText="Staff sourced from HR records for Kitchen departments — separate from Restaurant & Bar's own Staff Management tab."
+                helperText="HR staff in a Kitchen department. Restaurant & Bar has its own tab. Names come from the HR file — this tab does not invent staff."
               />
             </Tab>
           </Tabs>

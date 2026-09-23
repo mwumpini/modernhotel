@@ -2064,6 +2064,7 @@ model NightAuditLog {
   roomChargesPosted Int      @default(0)
   noShowsMarked     Int      @default(0)
   errors            Json?
+  snapshot          Json?
   runBy             String?
   runAt             DateTime @default(now())
 
@@ -2338,6 +2339,7 @@ model EventBooking {
   audioVisual   Boolean   @default(false)
   decoration    Boolean   @default(false)
   totalCost     Decimal   @default(0)
+  details       Json?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 

@@ -46,6 +46,7 @@ interface MenuItem {
   available: boolean;
   preparationTime: number;
   allergens: string[];
+  usedCount: number;
 }
 
 const TABLE_STATUSES: RestaurantTable['status'][] = ['available', 'occupied', 'reserved', 'cleaning'];
@@ -159,7 +160,7 @@ export default function FoodBeverageRestaurantBar() {
   // ---------------------------------------------------------------------
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const reloadMenu = () => {
-    fetch('/api/fb/menu', { headers: fbHeaders() })
+    fetch('/api/fb/menu?includeUsage=true', { headers: fbHeaders() })
       .then((r) => (r.ok ? r.json() : { items: [] }))
       .then((data) => setMenuItems((data.items || []).map((i: any) => ({
         id: i.id,
@@ -171,6 +172,7 @@ export default function FoodBeverageRestaurantBar() {
         available: i.isAvailable,
         preparationTime: i.prepMinutes,
         allergens: i.allergens ? i.allergens.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
+        usedCount: Number(i.usedCount || 0),
       }))));
   };
   useEffect(() => { reloadMenu(); }, []);
@@ -206,6 +208,32 @@ export default function FoodBeverageRestaurantBar() {
       headers: fbHeaders(),
       body: JSON.stringify({ id: item.id, isAvailable: !item.available }),
     });
+    reloadMenu();
+  };
+
+  const handleRemoveMenuItem = async (item: MenuItem) => {
+    if (item.usedCount > 0) {
+      if (!item.available) {
+        alert(`${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. It is already unavailable.`);
+        return;
+      }
+      if (
+        !confirm(
+          `${item.name} has ${item.usedCount} order line${item.usedCount === 1 ? '' : 's'} and cannot be deleted. Mark it Unavailable so it stays off new orders but history is kept?`
+        )
+      ) {
+        return;
+      }
+      await fetch('/api/fb/menu', {
+        method: 'PATCH',
+        headers: fbHeaders(),
+        body: JSON.stringify({ id: item.id, isAvailable: false }),
+      });
+      reloadMenu();
+      return;
+    }
+    if (!confirm(`Delete ${item.name}? This action cannot be undone.`)) return;
+    await fetch(`/api/fb/menu?id=${encodeURIComponent(item.id)}`, { method: 'DELETE', headers: fbHeaders() });
     reloadMenu();
   };
 
@@ -518,6 +546,14 @@ export default function FoodBeverageRestaurantBar() {
                           <Button size="sm" color="secondary" variant="flat" onClick={() => toggleMenuItemAvailability(item)}>
                             Toggle Availability
                           </Button>
+                          <Button
+                            size="sm"
+                            color={item.usedCount > 0 ? 'warning' : 'danger'}
+                            variant="flat"
+                            onClick={() => handleRemoveMenuItem(item)}
+                          >
+                            {item.usedCount > 0 ? (item.available ? 'Deactivate' : 'Already inactive') : 'Delete'}
+                          </Button>
                         </div>
                       </CardBody>
                     </Card>
@@ -536,8 +572,7 @@ export default function FoodBeverageRestaurantBar() {
                 overtimePermissionId="restaurant.log-overtime"
                 departmentNameHints={RESTAURANT_STAFF_DEPT_HINTS}
                 excludeNameHints={RESTAURANT_STAFF_EXCLUDE_HINTS}
-                emptyLabel="No Restaurant & Bar staff found in HR records."
-                helperText="Staff sourced from HR records for Restaurant & Bar departments — Kitchen staff have their own Staff Management tab under Kitchen. Per-table assignment isn't tracked yet — manage that in the HR module once that's built out."
+                helperText="HR staff in a Restaurant / Bar / Food & Beverage department. Kitchen staff stay on the Kitchen tab. Names come from the HR file — this tab does not invent staff."
               />
             </Tab>
           </Tabs>

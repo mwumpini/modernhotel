@@ -5,6 +5,7 @@ import { prisma } from '@/app/lib/database/client'
 import { resolveTaxConfigs, type PrismaTaxRow } from '@/app/lib/tax/resolveConfigs'
 import { computeStackedTaxLines } from '@/app/lib/accounting/taxFromConfig'
 import { resolveItemRouteFromPayload, serializeFbOrder } from '@/app/lib/fb/serializeOrder'
+import { resolveCheckedInReservationId } from '@/app/lib/frontoffice/folioServer'
 
 function round2(n: number) { return Math.round((n + Number.EPSILON) * 100) / 100 }
 
@@ -151,6 +152,13 @@ export async function POST(request: NextRequest) {
     // ── Determine GL code per item based on venue ─────────────────────────────
     const revenueGL = venueGL(body.venue)
 
+    const reservationId = await resolveCheckedInReservationId({
+      tenantId: ctx.tenantId,
+      reservationId: body.reservationId,
+      guestId: body.guestId,
+      roomNumber: body.roomNumber,
+    })
+
     const order = await prisma.fBOrder.create({
       data: {
         tenantId: ctx.tenantId,
@@ -160,7 +168,7 @@ export async function POST(request: NextRequest) {
         roomNumber: body.roomNumber,
         guestId: body.guestId,
         guestName: body.guestName,
-        reservationId: body.reservationId,
+        reservationId: reservationId ?? body.reservationId,
         serverName: body.serverName,
         notes: body.notes,
         covers: body.covers ?? 1,

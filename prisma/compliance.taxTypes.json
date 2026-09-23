@@ -1,0 +1,13 @@
+[
+  {
+    "countryCode": "GH",
+    "name": "Ghana Sales (VAT+Levies)",
+    "description": "Auto-created from template ghana_sales_standard",
+    "domain": "sales",
+    "operation": "external",
+    "tags": [
+      "template:ghana_sales_standard"
+    ],
+    "id": "1788077175436"
+  }
+]

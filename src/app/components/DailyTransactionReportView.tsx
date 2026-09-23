@@ -29,7 +29,15 @@ function uniqueSorted(values: (string | undefined)[]): string[] {
 type Filters = { guest: string; staff: string; type: string; method: string; status: string; category: string };
 const EMPTY_FILTERS: Filters = { guest: 'all', staff: 'all', type: 'all', method: 'all', status: 'all', category: 'all' };
 
-export default function DailyTransactionReportView({ transactions }: { transactions: TransactionRow[] }) {
+export default function DailyTransactionReportView({
+  transactions,
+  showFilters = true,
+  visibleColumns,
+}: {
+  transactions: TransactionRow[];
+  showFilters?: boolean;
+  visibleColumns?: string[];
+}) {
   const [filters, setFilters] = React.useState<Filters>(EMPTY_FILTERS);
 
   const options = React.useMemo(() => ({
@@ -63,6 +71,37 @@ export default function DailyTransactionReportView({ transactions }: { transacti
   const setFilter = (key: keyof Filters) => (keys: any) => {
     setFilters((f) => ({ ...f, [key]: (Array.from(keys)[0] as string) || 'all' }));
   };
+  const columns = [
+    ['timestamp', 'Date / Time'],
+    ['transactionId', 'Reference'],
+    ['folioNumber', 'Folio'],
+    ['guestName', 'Guest'],
+    ['roomNumber', 'Room'],
+    ['transactionType', 'Type'],
+    ['category', 'Category'],
+    ['description', 'Description'],
+    ['amount', 'Amount'],
+    ['paymentMethod', 'Method'],
+    ['status', 'Status'],
+    ['cashier', 'Staff'],
+  ].filter(([key]) => !visibleColumns || visibleColumns.includes(key));
+
+  const renderCell = (row: TransactionRow, key: string) => {
+    if (key === 'timestamp') return new Date(row.timestamp).toLocaleString('en-GH');
+    if (key === 'amount') return money(row.amount);
+    if (key === 'paymentMethod') return row.transactionType === 'payment' ? row.paymentMethod : '—';
+    if (key === 'transactionType') {
+      return <Chip size="sm" variant="flat" color={row.transactionType === 'payment' ? 'success' : 'warning'}>{row.transactionType}</Chip>;
+    }
+    if (key === 'status') {
+      return (
+        <Chip size="sm" variant="flat" color={row.status === 'completed' || row.status === 'posted' ? 'success' : row.status === 'pending' ? 'warning' : 'danger'}>
+          {row.status}
+        </Chip>
+      );
+    }
+    return String(row[key as keyof TransactionRow] ?? '—');
+  };
 
   if (transactions.length === 0) {
     return (
@@ -74,7 +113,7 @@ export default function DailyTransactionReportView({ transactions }: { transacti
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+      {showFilters && <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
         <Autocomplete
           label="Guest"
           size="sm"
@@ -105,7 +144,7 @@ export default function DailyTransactionReportView({ transactions }: { transacti
           <SelectItem key="all">All Categories</SelectItem>
           {options.category.map((c) => <SelectItem key={c}>{c}</SelectItem>) as any}
         </Select>
-      </div>
+      </div>}
 
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <Chip size="sm" variant="flat">{filteredRows.length} transaction{filteredRows.length === 1 ? '' : 's'}</Chip>
@@ -116,36 +155,12 @@ export default function DailyTransactionReportView({ transactions }: { transacti
 
       <Table aria-label="Daily transactions">
         <TableHeader>
-          <TableColumn>Time</TableColumn>
-          <TableColumn>Guest</TableColumn>
-          <TableColumn>Room</TableColumn>
-          <TableColumn>Type</TableColumn>
-          <TableColumn>Description</TableColumn>
-          <TableColumn>Amount</TableColumn>
-          <TableColumn>Method</TableColumn>
-          <TableColumn>Status</TableColumn>
-          <TableColumn>Staff</TableColumn>
+          {columns.map(([key, label]) => <TableColumn key={key}>{label}</TableColumn>) as any}
         </TableHeader>
         <TableBody emptyContent="No transactions match the selected filters">
           {filteredRows.map((r) => (
             <TableRow key={r.transactionId}>
-              <TableCell>{new Date(r.timestamp).toLocaleTimeString()}</TableCell>
-              <TableCell>{r.guestName}</TableCell>
-              <TableCell>{r.roomNumber}</TableCell>
-              <TableCell>
-                <Chip size="sm" variant="flat" color={r.transactionType === 'payment' ? 'success' : 'warning'}>
-                  {r.transactionType}
-                </Chip>
-              </TableCell>
-              <TableCell>{r.description}</TableCell>
-              <TableCell>{money(r.amount)}</TableCell>
-              <TableCell>{r.transactionType === 'payment' ? r.paymentMethod : '—'}</TableCell>
-              <TableCell>
-                <Chip size="sm" variant="flat" color={r.status === 'completed' || r.status === 'posted' ? 'success' : r.status === 'pending' ? 'warning' : 'danger'}>
-                  {r.status}
-                </Chip>
-              </TableCell>
-              <TableCell>{r.cashier}</TableCell>
+              {columns.map(([key]) => <TableCell key={key}>{renderCell(r, key)}</TableCell>) as any}
             </TableRow>
           ))}
         </TableBody>

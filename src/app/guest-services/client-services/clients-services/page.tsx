@@ -4,7 +4,7 @@ import React, { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import PageLayout from '../../../components/PageLayout';
 import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
-import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Avatar, Badge, Switch, Tooltip, Pagination } from '@heroui/react';
+import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Avatar, Badge, Chip, Switch, Tooltip, Pagination } from '@heroui/react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Textarea, useDisclosure, Tabs, Tab } from '@heroui/react';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
@@ -42,6 +42,7 @@ interface ClientRow {
 	preferences?: ClientPreferences;
 	reservationCount: number;
 	createdAt: string;
+	isActive: boolean;
 }
 
 interface ClientPreferences {
@@ -358,7 +359,8 @@ function ClientsServicesContent() {
                     marketingEmails: (g as any).preferences?.marketingEmails ?? false
                 },
                 createdAt: (g as any).createdAt || new Date().toISOString(),
-                    reservationCount: clientReservations.length
+                    reservationCount: clientReservations.length,
+                    isActive: g.isActive !== false,
                 };
             });
         
@@ -911,10 +913,29 @@ function ClientsServicesContent() {
         onNewOpen();
     };
 
+    const clientHasHistory = (row: ClientRow) =>
+        row.reservationCount > 0 || row.services > 0 || frontOfficeStore.guestHasHistory(row.id);
+
     const handleDelete = (row: ClientRow) => {
-        if (!confirm('Delete this client? This cannot be undone.')) return;
+        const used = clientHasHistory(row);
+        if (used) {
+            if (!row.isActive) {
+                if (!confirm(`Reactivate ${row.name} for new bookings? Stay history stays in place.`)) return;
+                frontOfficeStore.updateGuest(row.id, { isActive: true } as any);
+                return;
+            }
+            if (
+                !confirm(
+                    `${row.name} has stay or folio history and cannot be deleted. Mark the profile Inactive so it stays off new bookings but history is kept?`
+                )
+            ) {
+                return;
+            }
+            frontOfficeStore.retireGuest(row.id);
+            return;
+        }
+        if (!confirm(`Delete ${row.name}? This cannot be undone.`)) return;
         frontOfficeStore.deleteGuest(row.id);
-        // Also remove associated client services via API
         frontOfficeStore.deleteClientServicesForClient(row.id);
     };
 
@@ -1376,7 +1397,10 @@ function ClientsServicesContent() {
 													return (
 														<TableCell style={{ width: colWidths.name }}>
 											<div>
+												<div className="flex items-center gap-2">
 												<p className="font-medium">{row.name}</p>
+												{!row.isActive && <Chip size="sm" variant="flat">Inactive</Chip>}
+												</div>
 																{row.type==='corporate' && row.contactPerson && (
 																	<p className="text-xs text-gray-500">Contact: {row.contactPerson}</p>
 																)}
@@ -1442,8 +1466,8 @@ function ClientsServicesContent() {
 																		<PencilSquareIcon className="w-4 h-4" />
 																	</Button>
 																</Tooltip>
-																<Tooltip content="Delete">
-																	<Button isIconOnly size="sm" color="danger" variant="light" onClick={()=>handleDelete(row)} aria-label="Delete client">
+																<Tooltip content={clientHasHistory(row) ? (row.isActive ? 'Deactivate' : 'Already inactive') : 'Delete'}>
+																	<Button isIconOnly size="sm" color={clientHasHistory(row) ? 'warning' : 'danger'} variant="light" onClick={()=>handleDelete(row)} aria-label={clientHasHistory(row) ? 'Deactivate client' : 'Delete client'}>
 																		<TrashIcon className="w-4 h-4" />
 																	</Button>
 																</Tooltip>
@@ -2653,12 +2677,14 @@ function ClientsServicesContent() {
                                     email: (a as any).email || (b as any).email,
                                     phone: (a as any).phone || (b as any).phone,
                                   });
-                                  frontOfficeStore.deleteGuest(b.id);
+                                  if (frontOfficeStore.guestHasHistory(b.id)) frontOfficeStore.retireGuest(b.id);
+                                  else frontOfficeStore.deleteGuest(b.id);
                                 }
                                 setDuplicateList(prev => prev.filter((_,i)=>i!==idx));
                               }}>Merge</Button>
                               <Button size="sm" color="danger" variant="light" onPress={()=>{
-                                frontOfficeStore.deleteGuest(d.dupId);
+                                if (frontOfficeStore.guestHasHistory(d.dupId)) frontOfficeStore.retireGuest(d.dupId);
+                                else frontOfficeStore.deleteGuest(d.dupId);
                                 setDuplicateList(prev => prev.filter((_,i)=>i!==idx));
                               }}>Delete Duplicate</Button>
                             </div>

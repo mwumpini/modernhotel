@@ -1,205 +1,330 @@
 'use client';
 
 import React from 'react';
-import { Button, Card, CardBody, CardHeader, Input, Select, SelectItem, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
-import { useLeaveAttendanceStore } from '../../lib/hr/leaveAttendanceStore';
+import { Button, Card, CardBody, CardHeader, Input, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader } from '@heroui/react';
+import { useLeaveAttendanceStore, type Shift } from '../../lib/hr/leaveAttendanceStore';
 import type { DepartmentStaffMember } from '../../lib/hr/useDepartmentStaff';
+import { addDays, leaveOn, todayKey, weekStart } from '../../lib/hr/leaveDates';
 import { printSimpleReport } from '../../lib/print/simpleReport';
+import { notifySuccess } from '../../lib/notifications/notify';
 
-const DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const PRESETS = [
+  { label: 'Morning', start: '06:00', end: '14:00' },
+  { label: 'Afternoon', start: '14:00', end: '22:00' },
+  { label: 'Night', start: '22:00', end: '06:00' },
+];
 
-function mondayOf(date: Date): Date {
-  const d = new Date(date);
-  const day = d.getDay(); // 0=Sun..6=Sat
-  const diff = day === 0 ? -6 : 1 - day; // shift back to Monday
-  d.setDate(d.getDate() + diff);
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
+const shiftLabel = (s: Pick<Shift, 'startTime' | 'endTime'>) =>
+  `${s.startTime}–${s.endTime}${s.endTime < s.startTime ? ' (+1)' : ''}`;
 
-function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
+const dayLabel = (day: string) =>
+  new Date(`${day}T00:00:00Z`).toLocaleDateString('en-GB', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  });
 
-function formatWeekLabel(monday: Date): string {
-  const sunday = new Date(monday);
-  sunday.setDate(sunday.getDate() + 6);
-  const fmt = (d: Date) => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-  return `${fmt(monday)} – ${fmt(sunday)}, ${sunday.getFullYear()}`;
-}
+type Draft = {
+  employeeId: string;
+  date: string;
+  shiftId?: string;
+  startTime: string;
+  endTime: string;
+  location: string;
+};
 
 /**
- * Shift scheduling scoped to one department's own staff — same underlying
- * shifts store as HR & Payroll's own Shift Scheduling panel
- * (leaveAttendanceStore.ts), just filtered to this department's employee
- * list so a department manager only sees and schedules their own people.
- * Defaults to a week-at-a-glance grid (the common case — plan the coming
- * week for everyone at once) with a flat add/edit list underneath for
- * one-off entries.
+ * Department roster on the shared HR shift file. Empty cells are unscheduled,
+ * not a utilisation score. Click a day to add; click a shift to edit.
  */
-export default function DepartmentShiftsPanel({ staff, departmentLabel }: { staff: DepartmentStaffMember[]; departmentLabel: string }) {
+export default function DepartmentShiftsPanel({
+  staff,
+  departmentLabel,
+}: {
+  staff: DepartmentStaffMember[];
+  departmentLabel: string;
+}) {
   const allShifts = useLeaveAttendanceStore((s) => s.shifts);
+  const leaveRequests = useLeaveAttendanceStore((s) => s.leaveRequests);
   const scheduleShift = useLeaveAttendanceStore((s) => s.scheduleShift);
   const updateShift = useLeaveAttendanceStore((s) => s.updateShift);
   const deleteShift = useLeaveAttendanceStore((s) => s.deleteShift);
-  const hydrateShifts = useLeaveAttendanceStore((s) => s.hydrateFromApi);
+  const hydrate = useLeaveAttendanceStore((s) => s.hydrateFromApi);
 
-  React.useEffect(() => { void hydrateShifts(); }, [hydrateShifts]);
+  React.useEffect(() => {
+    void hydrate();
+  }, [hydrate]);
 
-  const staffIds = React.useMemo(() => new Set(staff.map((s) => s.id)), [staff]);
-  const shifts = allShifts.filter((s) => staffIds.has(s.employeeId));
+  const staffIds = React.useMemo(() => new Set(staff.map((row) => row.id)), [staff]);
+  const shifts = allShifts.filter((shift) => staffIds.has(shift.employeeId));
 
-  const [weekStart, setWeekStart] = React.useState(() => mondayOf(new Date()));
-  const weekDates = React.useMemo(
-    () => Array.from({ length: 7 }, (_, i) => { const d = new Date(weekStart); d.setDate(d.getDate() + i); return d; }),
-    [weekStart]
-  );
-  const weekEnd = weekDates[6];
+  const [week, setWeek] = React.useState(() => weekStart(todayKey()));
+  const [draft, setDraft] = React.useState<Draft | null>(null);
+  const days = React.useMemo(() => Array.from({ length: 7 }, (_, index) => addDays(week, index)), [week]);
+  const today = todayKey();
 
-  const shiftsInWeek = (employeeId: string, date: Date) =>
-    shifts.filter((s) => s.employeeId === employeeId && s.date === toISODate(date));
+  const shiftsFor = (employeeId: string, day: string) =>
+    shifts
+      .filter((shift) => shift.employeeId === employeeId && shift.date === day)
+      .sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+  const nameOf = (id: string) => staff.find((row) => row.id === id)?.name || id;
+
+  const openNew = (employeeId: string, date: string) =>
+    setDraft({ employeeId, date, startTime: '08:00', endTime: '16:00', location: '' });
+  const openEdit = (shift: Shift) =>
+    setDraft({
+      employeeId: shift.employeeId,
+      date: shift.date,
+      shiftId: shift.id,
+      startTime: shift.startTime,
+      endTime: shift.endTime,
+      location: shift.location || '',
+    });
+
+  const draftValid = Boolean(draft && draft.startTime && draft.endTime && draft.startTime !== draft.endTime);
+  const save = () => {
+    if (!draft || !draftValid) return;
+    const fields = { startTime: draft.startTime, endTime: draft.endTime, location: draft.location.trim() || undefined };
+    if (draft.shiftId) updateShift(draft.shiftId, fields);
+    else scheduleShift({ employeeId: draft.employeeId, date: draft.date, ...fields });
+    setDraft(null);
+  };
+
+  const copyPreviousWeek = () => {
+    const visible = new Set(staff.map((row) => row.id));
+    const prevDays = new Set(days.map((day) => addDays(day, -7)));
+    let copied = 0;
+    for (const shift of shifts) {
+      if (!visible.has(shift.employeeId) || !prevDays.has(shift.date)) continue;
+      const date = addDays(shift.date, 7);
+      const exists = shiftsFor(shift.employeeId, date).some(
+        (row) => row.startTime === shift.startTime && row.endTime === shift.endTime
+      );
+      if (exists || leaveOn(leaveRequests, shift.employeeId, date)) continue;
+      scheduleShift({
+        employeeId: shift.employeeId,
+        date,
+        startTime: shift.startTime,
+        endTime: shift.endTime,
+        location: shift.location,
+      });
+      copied += 1;
+    }
+    notifySuccess(
+      copied
+        ? `${copied} shift${copied === 1 ? '' : 's'} copied from last week`
+        : 'Nothing to copy — last week is empty or already copied',
+      'Roster'
+    );
+  };
 
   const printWeek = () => {
-    const columns = ['Employee', ...DAY_LABELS.map((d, i) => `${d} ${weekDates[i].getDate()}`)];
-    const rows = staff.map((member) => [
-      member.name,
-      ...weekDates.map((d) => shiftsInWeek(member.id, d).map((s) => `${s.startTime}-${s.endTime}`).join(', ') || '—'),
-    ]);
-    printSimpleReport(`${departmentLabel} — Weekly Shift Schedule`, formatWeekLabel(weekStart), columns, rows);
-  };
-
-  const [form, setForm] = React.useState<any>({ employeeId: '', date: new Date().toISOString().slice(0, 10), startTime: '08:00', endTime: '16:00', location: '' });
-  const [editingShiftId, setEditingShiftId] = React.useState<string | null>(null);
-  const [editTimes, setEditTimes] = React.useState<{ startTime: string; endTime: string }>({ startTime: '', endTime: '' });
-
-  const create = () => {
-    if (!form.employeeId || !form.date || !form.startTime || !form.endTime) return;
-    if (form.endTime <= form.startTime) return;
-    scheduleShift({ employeeId: form.employeeId, date: form.date, startTime: form.startTime, endTime: form.endTime, location: form.location });
-    setForm({ ...form, location: '' });
-  };
-
-  const startEdit = (s: any) => {
-    setEditingShiftId(s.id);
-    setEditTimes({ startTime: s.startTime, endTime: s.endTime });
-  };
-
-  const saveEdit = (shiftId: string) => {
-    if (!editTimes.startTime || !editTimes.endTime || editTimes.endTime <= editTimes.startTime) return;
-    updateShift(shiftId, { startTime: editTimes.startTime, endTime: editTimes.endTime });
-    setEditingShiftId(null);
+    printSimpleReport(
+      `${departmentLabel} — Weekly Shift Schedule`,
+      `${dayLabel(week)} – ${dayLabel(addDays(week, 6))}`,
+      ['Employee', ...days.map(dayLabel)],
+      staff.map((member) => [
+        member.name,
+        ...days.map((day) =>
+          leaveOn(leaveRequests, member.id, day)
+            ? 'Leave'
+            : shiftsFor(member.id, day).map(shiftLabel).join(', ') || '—'
+        ),
+      ])
+    );
   };
 
   return (
-    <div className="p-6 space-y-4">
-      <Card>
-        <CardHeader className="flex items-center justify-between flex-wrap gap-2">
-          <div className="font-medium">Weekly Schedule — {formatWeekLabel(weekStart)}</div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="flat" onPress={() => setWeekStart((d) => { const n = new Date(d); n.setDate(n.getDate() - 7); return n; })}>← Prev</Button>
-            <Button size="sm" variant="flat" onPress={() => setWeekStart(mondayOf(new Date()))}>This Week</Button>
-            <Button size="sm" variant="flat" onPress={() => setWeekStart((d) => { const n = new Date(d); n.setDate(n.getDate() + 7); return n; })}>Next →</Button>
-            <Button size="sm" color="primary" variant="flat" onPress={printWeek}>🖨️ Print</Button>
-          </div>
-        </CardHeader>
-        <CardBody>
-          <Table aria-label="Weekly shift grid">
-            <TableHeader columns={[{ key: 'employee', label: 'EMPLOYEE' }, ...DAY_LABELS.map((label, i) => ({ key: toISODate(weekDates[i]), label: `${label} ${weekDates[i].getDate()}` }))]}>
-              {(col) => <TableColumn key={col.key}>{col.label}</TableColumn>}
-            </TableHeader>
-            <TableBody items={staff} emptyContent="No staff in this department yet.">
-              {(member) => (
-                <TableRow key={member.id}>
-                  {[
-                    <TableCell key="employee" className="font-medium">{member.name}</TableCell>,
-                    ...weekDates.map((d) => {
-                      const dayShifts = shiftsInWeek(member.id, d);
-                      return (
-                        <TableCell key={toISODate(d)}>
-                          {dayShifts.length > 0
-                            ? dayShifts.map((s) => `${s.startTime}-${s.endTime}`).join(', ')
-                            : <span className="text-gray-400">—</span>}
-                        </TableCell>
-                      );
-                    }),
-                  ]}
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardHeader className="justify-between">
-          <div className="font-medium">Add / Manage Shifts</div>
-        </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-4">
-            <Select label="Employee" placeholder="Select employee" selectedKeys={form.employeeId ? [form.employeeId] : []} onSelectionChange={(k) => setForm({ ...form, employeeId: Array.from(k)[0] as string })} variant="bordered">
-              {staff.map((s) => <SelectItem key={s.id}>{s.name}</SelectItem>)}
-            </Select>
-            <Input label="Date" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} variant="bordered" />
-            <Input label="Start" type="time" value={form.startTime} onChange={(e) => setForm({ ...form, startTime: e.target.value })} variant="bordered" />
-            <Input label="End" type="time" value={form.endTime} onChange={(e) => setForm({ ...form, endTime: e.target.value })} variant="bordered" />
-            <Input label="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} variant="bordered" />
-            <div className="md:col-span-5">
-              <Button color="primary" onPress={create} isDisabled={!form.employeeId || !form.date || !form.startTime || !form.endTime || (form.endTime <= form.startTime)}>
-                Add Shift
-              </Button>
+    <div className="pt-4">
+      <Card className="border border-slate-200 shadow-sm">
+        <CardHeader className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <div className="font-medium text-slate-900">
+              Shift roster — {dayLabel(week)} to {dayLabel(addDays(week, 6))}
             </div>
+            <p className="text-xs text-slate-500">
+              Stored HR shifts for this department’s staff. Empty cells are unscheduled, not a coverage score.
+            </p>
           </div>
-
-          <Table aria-label="Department shifts">
-            <TableHeader>
-              <TableColumn>EMPLOYEE</TableColumn>
-              <TableColumn>DATE</TableColumn>
-              <TableColumn>START</TableColumn>
-              <TableColumn>END</TableColumn>
-              <TableColumn>LOCATION</TableColumn>
-              <TableColumn>{' '}</TableColumn>
-            </TableHeader>
-            <TableBody emptyContent="No shifts scheduled for this department.">
-              {shifts.map((s) => {
-                const emp = staff.find((m) => m.id === s.employeeId);
-                const name = emp ? emp.name : s.employeeId;
-                return (
-                  <TableRow key={s.id}>
-                    <TableCell>{name}</TableCell>
-                    <TableCell>{s.date}</TableCell>
-                    <TableCell>
-                      {editingShiftId === s.id
-                        ? <Input type="time" size="sm" value={editTimes.startTime} onChange={(e) => setEditTimes({ ...editTimes, startTime: e.target.value })} variant="bordered" />
-                        : s.startTime}
-                    </TableCell>
-                    <TableCell>
-                      {editingShiftId === s.id
-                        ? <Input type="time" size="sm" value={editTimes.endTime} onChange={(e) => setEditTimes({ ...editTimes, endTime: e.target.value })} variant="bordered" />
-                        : s.endTime}
-                    </TableCell>
-                    <TableCell>{s.location || '-'}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-2">
-                        {editingShiftId === s.id ? (
-                          <>
-                            <Button size="sm" color="primary" variant="flat" onPress={() => saveEdit(s.id)} isDisabled={!editTimes.startTime || !editTimes.endTime || editTimes.endTime <= editTimes.startTime}>Save</Button>
-                            <Button size="sm" variant="flat" onPress={() => setEditingShiftId(null)}>Cancel</Button>
-                          </>
-                        ) : (
-                          <>
-                            <Button size="sm" variant="flat" onPress={() => startEdit(s)}>Move</Button>
-                            <Button size="sm" variant="flat" color="danger" onPress={() => deleteShift(s.id)}>Delete</Button>
-                          </>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="flat" onPress={() => setWeek(addDays(week, -7))}>
+              ← Prev
+            </Button>
+            <Button size="sm" variant="flat" onPress={() => setWeek(weekStart(todayKey()))}>
+              This week
+            </Button>
+            <Button size="sm" variant="flat" onPress={() => setWeek(addDays(week, 7))}>
+              Next →
+            </Button>
+            <Button size="sm" variant="flat" onPress={copyPreviousWeek}>
+              Copy last week
+            </Button>
+            <Button size="sm" color="primary" variant="flat" onPress={printWeek}>
+              Print
+            </Button>
+          </div>
+        </CardHeader>
+        <CardBody>
+          <div className="overflow-x-auto">
+            <table className="min-w-[900px] w-full border-collapse text-sm">
+              <thead>
+                <tr>
+                  <th className="w-48 p-2 text-left text-xs font-medium text-slate-500">Staff</th>
+                  {days.map((day) => (
+                    <th
+                      key={day}
+                      className={`p-2 text-xs font-medium ${day === today ? 'bg-blue-50 text-blue-700' : 'text-slate-500'}`}
+                    >
+                      {dayLabel(day)}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {staff.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="p-4 text-center text-slate-500">
+                      No staff in this department yet.
+                    </td>
+                  </tr>
+                )}
+                {staff.map((member) => (
+                  <tr key={member.id} className="align-top border-t border-slate-200">
+                    <td className="p-2">
+                      <div className="font-medium text-slate-900">{member.name}</div>
+                      <div className="text-xs text-slate-500">{member.position}</div>
+                    </td>
+                    {days.map((day) => {
+                      const leave = leaveOn(leaveRequests, member.id, day);
+                      return (
+                        <td key={day} className={`p-1 ${day === today ? 'bg-blue-50/50' : ''}`}>
+                          <div className="flex flex-col gap-1">
+                            {leave && (
+                              <span className="rounded bg-amber-100 px-1.5 py-1 text-center text-xs text-amber-900">
+                                {leave.leaveType} leave
+                              </span>
+                            )}
+                            {shiftsFor(member.id, day).map((shift) => (
+                              <button
+                                key={shift.id}
+                                type="button"
+                                onClick={() => openEdit(shift)}
+                                title={shift.location ? `Location: ${shift.location}` : 'Edit shift'}
+                                className="rounded bg-emerald-100 px-1.5 py-1 text-center text-xs text-emerald-900 hover:bg-emerald-200"
+                              >
+                                {shiftLabel(shift)}
+                              </button>
+                            ))}
+                            {!leave && (
+                              <button
+                                type="button"
+                                onClick={() => openNew(member.id, day)}
+                                className="rounded border border-dashed border-slate-300 py-0.5 text-xs text-slate-400 hover:border-slate-500 hover:text-slate-700"
+                                aria-label={`Add shift for ${member.name} on ${dayLabel(day)}`}
+                              >
+                                +
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+              {staff.length > 0 && (
+                <tfoot>
+                  <tr className="border-t-2 border-slate-300 text-xs text-slate-600">
+                    <td className="p-2 font-medium">On shift</td>
+                    {days.map((day) => (
+                      <td key={day} className="p-2 text-center">
+                        {new Set(staff.filter((member) => shiftsFor(member.id, day).length > 0).map((member) => member.id)).size}
+                      </td>
+                    ))}
+                  </tr>
+                </tfoot>
+              )}
+            </table>
+          </div>
         </CardBody>
       </Card>
+
+      <Modal isOpen={Boolean(draft)} onOpenChange={(open) => { if (!open) setDraft(null); }} size="md">
+        <ModalContent>
+          {() =>
+            draft && (
+              <>
+                <ModalHeader>
+                  {draft.shiftId ? 'Edit shift' : 'Add shift'} — {nameOf(draft.employeeId)}, {dayLabel(draft.date)}
+                </ModalHeader>
+                <ModalBody>
+                  <div className="flex flex-wrap gap-2">
+                    {PRESETS.map((preset) => (
+                      <Button
+                        key={preset.label}
+                        size="sm"
+                        variant="flat"
+                        onPress={() => setDraft({ ...draft, startTime: preset.start, endTime: preset.end })}
+                      >
+                        {preset.label} {preset.start}–{preset.end}
+                      </Button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Input
+                      label="Start"
+                      type="time"
+                      value={draft.startTime}
+                      onChange={(event) => setDraft({ ...draft, startTime: event.target.value })}
+                      variant="bordered"
+                    />
+                    <Input
+                      label="End"
+                      type="time"
+                      value={draft.endTime}
+                      onChange={(event) => setDraft({ ...draft, endTime: event.target.value })}
+                      variant="bordered"
+                      description={draft.endTime && draft.endTime < draft.startTime ? 'Ends the next day' : undefined}
+                    />
+                  </div>
+                  <Input
+                    label="Location (optional)"
+                    value={draft.location}
+                    onChange={(event) => setDraft({ ...draft, location: event.target.value })}
+                    variant="bordered"
+                  />
+                </ModalBody>
+                <ModalFooter className="justify-between">
+                  <div>
+                    {draft.shiftId && (
+                      <Button
+                        variant="flat"
+                        color="danger"
+                        onPress={() => {
+                          deleteShift(draft.shiftId!);
+                          setDraft(null);
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    )}
+                  </div>
+                  <div className="flex gap-2">
+                    <Button variant="flat" onPress={() => setDraft(null)}>
+                      Cancel
+                    </Button>
+                    <Button color="primary" onPress={save} isDisabled={!draftValid}>
+                      Save
+                    </Button>
+                  </div>
+                </ModalFooter>
+              </>
+            )
+          }
+        </ModalContent>
+      </Modal>
     </div>
   );
 }

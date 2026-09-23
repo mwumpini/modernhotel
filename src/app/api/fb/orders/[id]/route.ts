@@ -3,6 +3,7 @@ import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/li
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 import { serializeFbOrder } from '@/app/lib/fb/serializeOrder'
+import { appendGuestFolioCharge, resolveCheckedInReservationId } from '@/app/lib/frontoffice/folioServer'
 
 // ── Order state machine ───────────────────────────────────────────────────────
 // Valid forward transitions only. Cancellation allowed from any non-billed state.
@@ -82,26 +83,21 @@ export async function PATCH(
     }
 
     // ── When billed: post charge to guest folio ────────────────────────────
-    // Guard on existing.status (not just the incoming body) so a retried PATCH after a
-    // timed-out-but-successful request doesn't re-push the charge onto the folio.
-    if (body.status === 'billed' && existing.status !== 'billed' && existing.guestId && existing.reservationId) {
-      const folio = await prisma.guestFolio.findFirst({
-        where: {
-          tenantId: ctx.tenantId,
-          reservationId: existing.reservationId,
-          status: 'open',
-        },
+    // Guard on existing.status so a retried PATCH doesn't re-push the charge.
+    if (body.status === 'billed' && existing.status !== 'billed') {
+      const reservationId = await resolveCheckedInReservationId({
+        tenantId: ctx.tenantId,
+        reservationId: existing.reservationId,
+        guestId: existing.guestId,
+        roomNumber: existing.roomNumber,
       })
 
-      if (folio) {
-        const charges = (folio.charges as any[]) || []
-        const payments = (folio.payments as any[]) || []
-
-        // Build folio charge with per-tax breakdown stored in reference
+      if (reservationId) {
+        const nowIso = now.toISOString()
         const taxLines = (existing.taxLines as any[]) || []
         const newCharge = {
           id: `FB-${existing.orderNumber}`,
-          date: now.toISOString(),
+          date: nowIso,
           description: `F&B — ${existing.venue.replace('_', ' ')} ${existing.orderNumber}`,
           amount: Number(existing.subtotal),
           tax: Number(existing.taxAmount),
@@ -115,34 +111,22 @@ export async function PATCH(
           covers: existing.covers ?? 1,
         }
 
-        charges.push(newCharge)
-        const totalCharges = charges.reduce(
-          (s: number, c: any) => s + (c.amount ?? 0) + (c.tax ?? 0) + (c.serviceCharge ?? 0) - (c.discountAmount ?? 0), 0
-        )
-        const totalPayments = payments
-          .filter((p: any) => p.status === 'completed')
-          .reduce((s: number, p: any) => s + p.amount, 0)
-
-        await prisma.guestFolio.update({
-          where: { id: folio.id },
-          data: {
-            charges: charges as any,
-            totalCharges,
-            totalPayments,
-            balance: totalCharges - totalPayments,
-          },
+        const { folioId } = await appendGuestFolioCharge({
+          tenantId: ctx.tenantId,
+          reservationId,
+          charge: newCharge,
         })
 
         await prisma.fBOrder.update({
           where: { id },
-          data: { folioId: folio.id, billedAt: now },
+          data: { folioId, billedAt: now, reservationId },
         })
 
         await createAuditLog(
           ctx.tenantId, sessionUserId ?? null,
           'FB_ORDER_BILLED_TO_FOLIO', 'FBOrder', id,
           undefined,
-          { folioId: folio.id, amount: Number(existing.total), orderNumber: existing.orderNumber },
+          { folioId, amount: Number(existing.total), orderNumber: existing.orderNumber, reservationId },
           request
         )
       }

@@ -8,6 +8,7 @@ export interface NightAuditLogDTO {
   roomChargesPosted: number
   noShowsMarked: number
   errors?: string[]
+  snapshot?: Record<string, unknown>
   runBy?: string
   runAt: string
 }
@@ -21,6 +22,7 @@ function toDTO(row: any): NightAuditLogDTO {
     roomChargesPosted: row.roomChargesPosted,
     noShowsMarked: row.noShowsMarked,
     errors: Array.isArray(row.errors) ? row.errors : undefined,
+    snapshot: row.snapshot && typeof row.snapshot === 'object' ? row.snapshot : undefined,
     runBy: row.runBy ?? undefined,
     runAt: row.runAt.toISOString(),
   }
@@ -58,6 +60,7 @@ export async function createNightAuditLog(
     roomChargesPosted: number
     noShowsMarked: number
     errors?: string[]
+    snapshot?: Record<string, unknown>
     runBy?: string
   },
 ): Promise<NightAuditLogDTO> {
@@ -70,6 +73,7 @@ export async function createNightAuditLog(
       roomChargesPosted: data.roomChargesPosted,
       noShowsMarked: data.noShowsMarked,
       errors: data.errors && data.errors.length > 0 ? data.errors : undefined,
+      snapshot: data.snapshot as any,
       runBy: data.runBy || undefined,
     },
   })

@@ -527,8 +527,6 @@ export default function FrontdeskDashboard() {
                 departmentLabel="Front Office"
                 overtimePermissionId="frontdesk.log-overtime"
                 departmentNameHints={['front', 'reception', 'desk']}
-                emptyLabel="No Front Office staff found in HR records."
-                helperText="Staff sourced from HR records for Front Office departments."
               />
             </Tab>
           </Tabs>

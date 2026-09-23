@@ -30,6 +30,7 @@ import {
   Badge
 } from '@heroui/react';
 import { useSettingsStore } from '../lib/settings/store';
+import { frontOfficeStore } from '../lib/frontoffice/store';
 import EventRateManagement from './EventRateManagement';
 import { reverseToSubtotalFromGross } from '../lib/frontoffice/helpers/rates';
 // Dynamic imports for PDF generation to avoid SSR issues
@@ -150,6 +151,7 @@ export default function RoomConfigurationDashboard() {
   const [editRoomTypeFormError, setEditRoomTypeFormError] = useState<string | null>(null);
   const [ratePlanFormError, setRatePlanFormError] = useState<string | null>(null);
   const [editRatePlanFormError, setEditRatePlanFormError] = useState<string | null>(null);
+  const [, setFoTick] = useState(0);
 
   // Deep-link handler from Settings Overview — moved out of the render body (was calling
   // setActiveTab/localStorage.removeItem directly during render, which is unsafe under
@@ -164,6 +166,8 @@ export default function RoomConfigurationDashboard() {
       }
     } catch {}
   }, []);
+
+  useEffect(() => frontOfficeStore.subscribe(() => setFoTick((n) => n + 1)), []);
   
   // Sorting states
   const [roomsSortField, setRoomsSortField] = useState<string>('number');
@@ -475,20 +479,48 @@ export default function RoomConfigurationDashboard() {
     setSelectedRoomType(null);
   };
 
+  const roomHasStayHistory = (room: { id: string; number: string }) =>
+    frontOfficeStore.reservationUsesRoom(room);
+
+  const roomTypeHasStayHistory = (typeId: string) =>
+    frontOfficeStore.roomTypeHasHistory(typeId) ||
+    settingsStore.roomManagement.rooms.some((room) => room.typeId === typeId && roomHasStayHistory(room));
+
   const handleDeleteRoomType = (roomType: RoomType) => {
     if (!canManageRoomPricing) { alert('You do not have permission to manage room types.'); return; }
-    if (confirm(`Are you sure you want to delete "${roomType.name}"? This will also remove all rooms of this type.`)) {
-      // First delete all rooms of this type
-      const roomsToDelete = settingsStore.roomManagement.rooms.filter(room => room.typeId === roomType.id);
-      roomsToDelete.forEach(room => {
-        settingsStore.deleteRoom(room.id);
-        logAction('DELETE_ROOM', { roomId: room.id, roomNumber: room.number });
-      });
-      
-      // Then delete the room type
-      settingsStore.deleteRoomType(roomType.id);
-      logAction('DELETE_ROOM_TYPE', { roomType });
+    const used = roomTypeHasStayHistory(roomType.id);
+    if (used) {
+      if (!roomType.isActive) {
+        alert(`${roomType.name} has stay history and cannot be deleted. It is already inactive.`);
+        return;
+      }
+      if (
+        !confirm(
+          `${roomType.name} has reservations and cannot be deleted. Mark it Inactive so it stays off new bookings but history is kept?`
+        )
+      ) {
+        return;
+      }
+      settingsStore.updateRoomType(roomType.id, { isActive: false });
+      logAction('DEACTIVATE_ROOM_TYPE', { roomTypeId: roomType.id });
+      return;
     }
+    if (!confirm(`Delete "${roomType.name}"? Unused rooms of this type will also be removed.`)) {
+      return;
+    }
+    const roomsToDelete = settingsStore.roomManagement.rooms.filter(room => room.typeId === roomType.id);
+    roomsToDelete.forEach(room => {
+      settingsStore.deleteRoom(room.id);
+      logAction('DELETE_ROOM', { roomId: room.id, roomNumber: room.number });
+    });
+    settingsStore.deleteRoomType(roomType.id);
+    logAction('DELETE_ROOM_TYPE', { roomType });
+  };
+
+  const handleActivateRoomType = (roomType: RoomType) => {
+    if (!canManageRoomPricing) { alert('You do not have permission to manage room types.'); return; }
+    settingsStore.updateRoomType(roomType.id, { isActive: true });
+    logAction('ACTIVATE_ROOM_TYPE', { roomTypeId: roomType.id });
   };
 
     const handleAddRoom = () => {
@@ -570,10 +602,27 @@ export default function RoomConfigurationDashboard() {
 
   const handleDeleteRoom = (room: Room) => {
     if (!canManageRoomPricing) { alert('You do not have permission to manage rooms.'); return; }
-    if (confirm(`Are you sure you want to delete room "${room.number}"?`)) {
-      settingsStore.deleteRoom(room.id);
-      logAction('DELETE_ROOM', { roomId: room.id, roomNumber: room.number });
+    if (roomHasStayHistory(room)) {
+      if (!room.isActive) {
+        alert(`Room ${room.number} has stay history and cannot be deleted. It is already inactive.`);
+        return;
+      }
+      if (
+        !confirm(
+          `Room ${room.number} has reservations and cannot be deleted. Mark it Inactive so it stays off new bookings but history is kept?`
+        )
+      ) {
+        return;
+      }
+      settingsStore.updateRoom(room.id, { isActive: false });
+      logAction('DEACTIVATE_ROOM', { roomId: room.id, roomNumber: room.number });
+      return;
     }
+    if (!confirm(`Delete room ${room.number}? This action cannot be undone.`)) {
+      return;
+    }
+    settingsStore.deleteRoom(room.id);
+    logAction('DELETE_ROOM', { roomId: room.id, roomNumber: room.number });
   };
 
   const handleToggleRoomActive = (room: Room) => {
@@ -1577,7 +1626,12 @@ export default function RoomConfigurationDashboard() {
                 <CardHeader className="pb-2">
                   <div className="flex justify-between items-start">
                     <div>
-                      <h4 className="text-lg font-semibold text-ghana-black">{type.name}</h4>
+                      <div className="flex items-center gap-2">
+                        <h4 className="text-lg font-semibold text-ghana-black">{type.name}</h4>
+                        {!type.isActive && (
+                          <Chip size="sm" variant="flat">Inactive</Chip>
+                        )}
+                      </div>
                                              <p className="text-sm text-gray-600">
                          {type.capacity} Adults
                        </p>
@@ -1593,15 +1647,15 @@ export default function RoomConfigurationDashboard() {
                           ✏️
                         </Button>
                       </Tooltip>
-                      <Tooltip content="Delete Room Type">
+                      <Tooltip content={roomTypeHasStayHistory(type.id) ? (type.isActive ? 'Deactivate Room Type' : 'Activate Room Type') : 'Delete Room Type'}>
                         <Button 
                           size="sm" 
                           variant="light" 
-                          color="danger" 
+                          color={roomTypeHasStayHistory(type.id) ? (type.isActive ? 'warning' : 'success') : 'danger'} 
                           isIconOnly
-                          onClick={() => handleDeleteRoomType(type)}
+                          onClick={() => roomTypeHasStayHistory(type.id) && !type.isActive ? handleActivateRoomType(type) : handleDeleteRoomType(type)}
                         >
-                          🗑️
+                          {roomTypeHasStayHistory(type.id) ? (type.isActive ? '⏸️' : '▶️') : '🗑️'}
                         </Button>
                       </Tooltip>
                     </div>
@@ -2015,6 +2069,23 @@ export default function RoomConfigurationDashboard() {
                                   ✏️
                                 </Button>
                               </Tooltip>
+                              {roomHasStayHistory(room) ? (
+                              <Tooltip content={room.isActive ? 'Deactivate Room' : 'Activate Room'}>
+                                <Button 
+                                  size="sm" 
+                                  variant="light" 
+                                  color={room.isActive ? 'warning' : 'success'}
+                                  isIconOnly
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    room.isActive ? handleDeleteRoom(room) : handleToggleRoomActive(room);
+                                  }}
+                                >
+                                  {room.isActive ? '⏸️' : '▶️'}
+                                </Button>
+                              </Tooltip>
+                              ) : (
+                              <>
                               <Tooltip content="Delete Room">
                                 <Button 
                                   size="sm" 
@@ -2043,6 +2114,8 @@ export default function RoomConfigurationDashboard() {
                                   {room.isActive ? '⏸️' : '▶️'}
                                 </Button>
                               </Tooltip>
+                              </>
+                              )}
                             </div>
                           </div>
                         </CardBody>
@@ -2085,6 +2158,23 @@ export default function RoomConfigurationDashboard() {
                                     ✏️
                                   </Button>
                                 </Tooltip>
+                                {roomHasStayHistory(room) ? (
+                                <Tooltip content={room.isActive ? 'Deactivate Room' : 'Activate Room'}>
+                                  <Button 
+                                    size="sm" 
+                                    variant="light" 
+                                    color={room.isActive ? 'warning' : 'success'}
+                                    isIconOnly
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      room.isActive ? handleDeleteRoom(room) : handleToggleRoomActive(room);
+                                    }}
+                                  >
+                                    {room.isActive ? '⏸️' : '▶️'}
+                                  </Button>
+                                </Tooltip>
+                                ) : (
+                                <>
                                 <Tooltip content="Delete Room">
                                   <Button 
                                     size="sm" 
@@ -2113,6 +2203,8 @@ export default function RoomConfigurationDashboard() {
                                     {room.isActive ? '⏸️' : '▶️'}
                                   </Button>
                                 </Tooltip>
+                                </>
+                                )}
                               </div>
                             </div>
                           </CardBody>
@@ -2258,6 +2350,20 @@ export default function RoomConfigurationDashboard() {
                               ✏️
                             </Button>
                           </Tooltip>
+                          {roomHasStayHistory(room) ? (
+                          <Tooltip content={room.isActive ? 'Deactivate Room' : 'Activate Room'}>
+                            <Button 
+                              size="sm" 
+                              variant="light" 
+                              color={room.isActive ? 'warning' : 'success'}
+                              isIconOnly
+                              onClick={() => room.isActive ? handleDeleteRoom(room) : handleToggleRoomActive(room)}
+                            >
+                              {room.isActive ? '⏸️' : '▶️'}
+                            </Button>
+                          </Tooltip>
+                          ) : (
+                          <>
                           <Tooltip content="Delete Room">
                             <Button 
                               size="sm" 
@@ -2280,6 +2386,8 @@ export default function RoomConfigurationDashboard() {
                               {room.isActive ? '⏸️' : '▶️'}
                             </Button>
                           </Tooltip>
+                          </>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>

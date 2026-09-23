@@ -401,6 +401,9 @@ export interface GuestProfile {
   creditLimit?: number; // Maximum credit allowed
   creditStatus?: 'active' | 'suspended' | 'closed';
   lastCreditUpdate?: string;
+
+  // Soft-retire when the guest has stay or folio history. Missing = active.
+  isActive?: boolean;
 }
 
 export interface Reservation {

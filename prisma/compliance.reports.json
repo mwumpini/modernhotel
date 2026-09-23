@@ -1,0 +1,180 @@
+[
+  {
+    "id": "gh-vat",
+    "countryCode": "GH",
+    "reportType": "VAT",
+    "frequency": "Monthly",
+    "fieldsRequired": [
+      "outputVat",
+      "inputVat",
+      "netVatDue",
+      "salesSchedule",
+      "purchaseSchedule"
+    ],
+    "dueDay": 0,
+    "dueRule": {
+      "type": "lastWorkingDayOfNextMonth"
+    },
+    "description": "VAT return — last working day of the month following the tax period (Act 1151).",
+    "isActive": true,
+    "lastUpdated": "2026-08-30T08:04:44.984Z"
+  },
+  {
+    "id": "gh-paye",
+    "countryCode": "GH",
+    "reportType": "PAYE",
+    "frequency": "Monthly",
+    "fieldsRequired": [
+      "grossPay",
+      "payeDeducted",
+      "employeeCount",
+      "payeSchedule"
+    ],
+    "dueDay": 15,
+    "dueRule": {
+      "type": "dayOfFollowingMonth",
+      "day": 15
+    },
+    "description": "Monthly PAYE return and payment — 15th of the following month.",
+    "isActive": true,
+    "lastUpdated": "2026-08-30T08:04:44.984Z"
+  },
+  {
+    "id": "gh-wht",
+    "countryCode": "GH",
+    "reportType": "WHT",
+    "frequency": "Monthly",
+    "fieldsRequired": [
+      "whtDeductions",
+      "supplierSchedule",
+      "whtRemittance"
+    ],
+    "dueDay": 15,
+    "dueRule": {
+      "type": "dayOfFollowingMonth",
+      "day": 15
+    },
+    "description": "Withholding tax return — 15th of the month following deduction.",
+    "isActive": true,
+    "lastUpdated": "2026-08-30T08:04:44.984Z"
+  },
+  {
+    "id": "gh-ssnit",
+    "countryCode": "GH",
+    "reportType": "SSNIT",
+    "frequency": "Monthly",
+    "fieldsRequired": [
+      "employeeContributions",
+      "employerContributions",
+      "tier1Schedule"
+    ],
+    "dueDay": 15,
+    "dueRule": {
+      "type": "dayOfFollowingMonth",
+      "day": 15
+    },
+    "description": "SSNIT tier 1 contributions — typically filed with payroll cycle; confirm SSNIT portal dates.",
+    "isActive": true,
+    "lastUpdated": "2026-08-30T08:04:44.984Z"
+  },
+  {
+    "id": "gh-nhil",
+    "countryCode": "GH",
+    "reportType": "NHIL",
+    "frequency": "Monthly",
+    "fieldsRequired": [
+      "nhilOnSales",
+      "nhilDue"
+    ],
+    "dueDay": 15,
+    "dueRule": {
+      "type": "dayOfFollowingMonth",
+      "day": 15
+    },
+    "description": "NHIL component — filed with VAT stack returns under Act 1151.",
+    "isActive": true,
+    "lastUpdated": "2026-08-30T08:04:44.984Z"
+  },
+  {
+    "id": "gh-tourism",
+    "countryCode": "GH",
+    "reportType": "Tourism",
+    "frequency": "Monthly",
+    "fieldsRequired": [
+      "roomSales",
+      "fbSales",
+      "tourismLevyCollected",
+      "remittanceRef"
+    ],
+    "dueDay": 30,
+    "dueRule": {
+      "type": "daysAfterPeriodEnd",
+      "days": 30
+    },
+    "description": "Tourism Development Levy — remit to Tourism Development Fund within 30 days of collection (L.I. 2185).",
+    "isActive": true,
+    "lastUpdated": "2026-08-30T08:04:44.984Z"
+  },
+  {
+    "id": "gh-cit-instalment",
+    "countryCode": "GH",
+    "reportType": "CIT",
+    "frequency": "Quarterly",
+    "fieldsRequired": [
+      "estimatedChargeableIncome",
+      "instalmentPaid",
+      "hotelRateApplied"
+    ],
+    "dueDay": 0,
+    "dueRule": {
+      "type": "quarterEndOfAccountingYear"
+    },
+    "description": "Quarterly CIT instalment — end of 3rd, 6th, 9th and 12th month of accounting year (hotel rate 22%).",
+    "isActive": true,
+    "lastUpdated": "2026-08-30T08:04:44.984Z"
+  },
+  {
+    "id": "gh-cit-annual",
+    "countryCode": "GH",
+    "reportType": "IncomeTax",
+    "frequency": "Annually",
+    "fieldsRequired": [
+      "chargeableIncome",
+      "citPayable",
+      "financialStatements",
+      "capitalAllowances"
+    ],
+    "dueDay": 0,
+    "dueRule": {
+      "type": "monthsAfterYearEnd",
+      "months": 4
+    },
+    "description": "Annual corporate income tax return — 4 months after accounting year end.",
+    "isActive": true,
+    "lastUpdated": "2026-08-30T08:04:44.984Z"
+  },
+  {
+    "id": "gh-gsl",
+    "countryCode": "GH",
+    "reportType": "GSL",
+    "frequency": "Quarterly",
+    "fieldsRequired": [
+      "profitBeforeTax",
+      "gslPayable",
+      "category"
+    ],
+    "dueDay": 0,
+    "dueRule": {
+      "type": "fixedCalendarDates",
+      "dates": [
+        "03-31",
+        "06-30",
+        "09-30",
+        "12-31"
+      ]
+    },
+    "description": "Growth & Sustainability Levy — Category C (hotels) 2.5% of PBT; due last day of each calendar quarter.",
+    "isActive": true,
+    "lastUpdated": "2026-08-30T08:04:44.984Z"
+  }
+]

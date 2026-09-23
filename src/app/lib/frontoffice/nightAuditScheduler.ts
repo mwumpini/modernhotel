@@ -32,7 +32,7 @@ function logScheduler(message: string, level: 'log' | 'error' = 'log'): void {
 /**
  * Attempt scheduled night audit when enabled and not already completed for business date.
  */
-export function tryScheduledNightAudit(now = new Date()): AutoNightAuditOutcome {
+export async function tryScheduledNightAudit(now = new Date()): Promise<AutoNightAuditOutcome> {
   const stamp = formatSchedulerStamp(now);
   const rm = useSettingsStore.getState().roomManagement;
 
@@ -48,7 +48,7 @@ export function tryScheduledNightAudit(now = new Date()): AutoNightAuditOutcome 
   }
 
   const started = performance.now();
-  const result = frontOfficeStore.executeNightAudit();
+  const result = await frontOfficeStore.executeNightAudit();
   const elapsedSec = ((performance.now() - started) / 1000).toFixed(1);
 
   if (result.status === 'completed') {
@@ -67,7 +67,7 @@ export function tryScheduledNightAudit(now = new Date()): AutoNightAuditOutcome 
 }
 
 /** Called every minute from NightAuditScheduler — runs once in the 1:00am window. */
-export function tickNightAuditScheduler(now = new Date()): AutoNightAuditOutcome | null {
+export async function tickNightAuditScheduler(now = new Date()): Promise<AutoNightAuditOutcome | null> {
   if (!isNightAuditScheduleWindow(now)) return null;
 
   const stamp = formatSchedulerStamp(now);
@@ -77,5 +77,5 @@ export function tickNightAuditScheduler(now = new Date()): AutoNightAuditOutcome
     return { action: 'skipped', reason: 'auto_run_already_attempted_today' };
   }
 
-  return tryScheduledNightAudit(now);
+  return await tryScheduledNightAudit(now);
 }

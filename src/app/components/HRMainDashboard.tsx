@@ -34,7 +34,6 @@ const HR_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
 ];
 
 // Import specialized HR components
-import HRAnalyticsDashboard from './HRAnalyticsDashboard';
 import EmployeeManagementDashboard from './hr/EmployeeManagementDashboard';
 import EmployeeRecordsPanel from './hr/EmployeeRecordsPanel';
 import NewHiresPanel from './hr/NewHiresPanel';
@@ -224,7 +223,7 @@ export default function HRMainDashboard() {
         { title: 'Payroll Processing', icon: '💰', description: 'Salary calculation and payment', status: 'active', count: payrollProcessedToday },
         { title: 'Payslip Generation', icon: '🧾', description: 'Employee payment documentation', status: 'active', count: 0 },
         { title: 'Benefits Management', icon: '💳', description: 'Health, insurance, and perks', status: 'active', count: activeBenefitsEnrollments },
-        { title: 'Salary Analytics', icon: '📈', description: 'Compensation analysis and planning', status: 'active', count: 0 },
+        { title: 'Reports & Analysis', icon: '📊', description: 'Employees, payroll and time records on file', status: 'active', count: 0 },
       ]
     },
     {
@@ -254,6 +253,7 @@ export default function HRMainDashboard() {
     switch (action) {
       case 'new-hire':
         setSelectedTab('employees');
+        setEmployeeView('records');
         break;
       case 'run-payroll':
         setSelectedTab('payroll');
@@ -313,8 +313,13 @@ export default function HRMainDashboard() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">👥 HR & Payroll</h2>
         <div className="flex items-center gap-2">
-          <Badge color="success" variant="flat">System Online</Badge>
-          <Badge color="primary" variant="flat">Ghana Compliant</Badge>
+          <Button
+            variant="bordered"
+            className="border-blue-600 text-blue-700 font-semibold"
+            onPress={() => router.push('/hr/reports')}
+          >
+            📊 Reports & Analysis
+          </Button>
           <CustomizeViewControl
             sections={HR_DASHBOARD_SECTIONS}
             isHidden={isHidden}
@@ -547,11 +552,13 @@ export default function HRMainDashboard() {
                               } else if (item.title.includes('Benefits Management')) {
                                 setSelectedTab('payroll');
                                 setPayrollView('benefits');
-                              } else if (item.title.includes('Salary Analytics')) {
-                                setSelectedTab('payroll');
-                                setPayrollView('analytics');
+                              } else if (item.title.includes('Reports & Analysis')) {
+                                router.push('/hr/reports');
                               } else if (item.title.includes('Leave Management') || item.title.includes('Time Tracking')) {
                                 setSelectedTab('leave');
+                              } else if (item.title.includes('Compliance Reports')) {
+                                setSelectedTab('compliance');
+                                setComplianceView('reports');
                               } else if (item.title.includes('Tax Compliance') || item.title.includes('Labor Compliance')) {
                                 setSelectedTab('compliance');
                               }
@@ -708,10 +715,6 @@ export default function HRMainDashboard() {
                 {complianceView === 'labor' && <LaborCompliancePanel />}
                 {complianceView === 'reports' && <ComplianceReportsPanel />}
               </div>
-            </Tab>
-
-            <Tab key="analytics" title="📈 HR Analytics">
-              <HRAnalyticsDashboard />
             </Tab>
           </Tabs>
         </CardBody>

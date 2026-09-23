@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
-import { listGuests, createGuestRow, updateGuestRow } from '@/app/lib/frontoffice/repository'
+import { listGuests, createGuestRow, updateGuestRow, deleteGuestRow } from '@/app/lib/frontoffice/repository'
 
 export async function GET(request: NextRequest) {
   try {
@@ -14,7 +14,8 @@ export async function GET(request: NextRequest) {
 
     const { searchParams } = new URL(request.url)
     const search = searchParams.get('search') || undefined
-    const guests = await listGuests(ctx.tenantId, search)
+    const includeInactive = searchParams.get('includeInactive') === 'true'
+    const guests = await listGuests(ctx.tenantId, search, { includeInactive })
     return NextResponse.json({ guests })
   } catch (error) {
     console.error('[guests][GET] error', error)
@@ -63,6 +64,39 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ guest })
   } catch (error) {
     console.error('[guests][PATCH] error', error)
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const auth = await requireAuth(request)
+    if (!auth.ok) return auth.response
+    const subdomain = getTenantFromRequest(request)
+    if (!subdomain) return NextResponse.json({ error: 'Missing tenant header' }, { status: 400 })
+    const ctx = await getTenantContext(subdomain)
+    if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
+
+    const { searchParams } = new URL(request.url)
+    const id = searchParams.get('id')
+    if (!id) return NextResponse.json({ error: 'id is required' }, { status: 400 })
+
+    const result = await deleteGuestRow(ctx.tenantId, id)
+    if (!result) return NextResponse.json({ error: 'Guest not found' }, { status: 404 })
+    const sessionUserId = (auth.session as any).user?.id
+    await createAuditLog(
+      ctx.tenantId,
+      sessionUserId ?? null,
+      result.deactivated ? 'GUEST_DEACTIVATED' : 'GUEST_DELETED',
+      'Guest',
+      id,
+      undefined,
+      { used: result.used || 0 },
+      request,
+    )
+    return NextResponse.json(result)
+  } catch (error) {
+    console.error('[guests][DELETE] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }
 }

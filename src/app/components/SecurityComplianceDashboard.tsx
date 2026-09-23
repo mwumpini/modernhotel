@@ -7,6 +7,7 @@ import {
   Autocomplete, AutocompleteItem
 } from '@heroui/react';
 import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import { useSettingsStore } from '../lib/settings/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useIncidentStore } from '../lib/security/incidentStore';
@@ -20,8 +21,7 @@ import { SecurityIncident, Visitor } from '../lib/security/models';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import type { DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
-import DepartmentOvertimePanel from './hr/DepartmentOvertimePanel';
-import { useDepartmentStaff } from '../lib/hr/useDepartmentStaff';
+import DepartmentStaffTab from './hr/DepartmentStaffTab';
 
 // Hideable summary cards for the whole Security module — the Overview tab's
 // own cards, plus (shared with SecurityMainDashboard.tsx, which renders this
@@ -60,6 +60,7 @@ interface SecurityComplianceDashboardProps {
 }
 
 export default function SecurityComplianceDashboard({ isHidden, hide, toggle, showAll, hiddenCount }: SecurityComplianceDashboardProps) {
+  const router = useRouter();
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
   const currentUserId = (session?.user as any)?.id as string | undefined;
@@ -67,7 +68,6 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
   // Mirrors the server-side requirePermission() checks on the security/* API
   // routes, so someone who can't act just doesn't see the button rather than
   // clicking it and hitting a 403 with no explanation.
-  const securityStaffForOvertime = useDepartmentStaff(['security']);
   const canManagePatrols = settings.hasPermission('security.manage-patrols');
   const canManagePersonnel = settings.hasPermission('security.manage-personnel');
   const canManageShifts = settings.hasPermission('security.manage-shifts');
@@ -835,6 +835,12 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
 
   const renderStaffManagement = () => (
     <div className="space-y-6">
+      <DepartmentStaffTab
+        departmentLabel="Security Operations"
+        overtimePermissionId="security.log-overtime"
+        departmentNameHints={['security']}
+        helperText="HR staff in a Security department. Names come from the HR file — this tab does not invent staff. Contracted guards sit below and are not on payroll."
+      />
       <Card className="border-0 shadow-lg">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between w-full">
@@ -880,26 +886,6 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
               ))}
             </TableBody>
           </Table>
-        </CardBody>
-      </Card>
-
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <div>
-            <h3 className="text-xl font-semibold text-ghana-black">⏱️ Overtime</h3>
-            <p className="text-sm text-gray-500">
-              For real staff accounts only — outsourced/contracted personnel are paid via their agency, not
-              this tenant's payroll.
-            </p>
-          </div>
-        </CardHeader>
-        <CardBody className="p-0">
-          <DepartmentOvertimePanel
-            staff={securityStaffForOvertime}
-            departmentLabel="Security Operations"
-            overtimePermissionId="security.log-overtime"
-            departmentNameHints={['security']}
-          />
         </CardBody>
       </Card>
 
@@ -1010,13 +996,22 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
           <h1 className="text-3xl font-bold text-ghana-black">🚨 Security Operations Management</h1>
           <p className="text-gray-600">Incidents, visitors, and patrols</p>
         </div>
-        <CustomizeViewControl
-          sections={SECURITY_DASHBOARD_SECTIONS}
-          isHidden={isHidden}
-          toggle={toggle}
-          showAll={showAll}
-          hiddenCount={hiddenCount}
-        />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="bordered"
+            className="border-blue-600 text-blue-700 font-semibold"
+            onPress={() => router.push('/security/reports')}
+          >
+            📊 Reports & Analysis
+          </Button>
+          <CustomizeViewControl
+            sections={SECURITY_DASHBOARD_SECTIONS}
+            isHidden={isHidden}
+            toggle={toggle}
+            showAll={showAll}
+            hiddenCount={hiddenCount}
+          />
+        </div>
       </div>
 
       <Tabs

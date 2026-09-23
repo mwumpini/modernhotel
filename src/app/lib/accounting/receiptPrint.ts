@@ -83,6 +83,12 @@ export function paymentMethodLabel(method?: string): string {
     case 'Mobile Money':
       return 'Mobile money';
     default:
+      if (method && method.length <= 2) {
+        const prefix = method.toLowerCase();
+        if (prefix === 'b') return 'Bank transfer';
+        if (prefix === 'm') return 'Mobile money';
+        return 'Cash';
+      }
       return method || 'Cash';
   }
 }

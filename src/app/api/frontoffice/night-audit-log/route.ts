@@ -22,11 +22,8 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Records a manual "Run Night Audit" click from the Front Office UI. The
-// cron's own runs are logged server-side directly in /api/cron/night-audit —
-// this endpoint only covers the client-triggered path, since that one runs
-// against the tenant's in-browser store state and has no other way to report
-// back what it did.
+// Optional: record a client-side note about a night-audit attempt.
+// The real close (room charges, no-shows, day totals) is POST /api/frontoffice/night-audit/run.
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth(request)

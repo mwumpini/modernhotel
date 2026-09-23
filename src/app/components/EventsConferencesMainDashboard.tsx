@@ -47,6 +47,7 @@ import { useFrontOfficeSelector } from '../lib/frontoffice/useFoStore';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useCalculateTax } from '../hooks/useCalculateTax';
 import { enhancedFrontOfficeStore } from '../lib/frontoffice/enhancedStore';
+import { fetchEventBookings, saveEventBooking } from '../lib/frontoffice/eventsApi';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import type { EventBooking, GuestProfile } from '../lib/frontoffice/types';
 import { genId } from '../lib/frontoffice/helpers/ids';
@@ -57,7 +58,8 @@ import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import { listBuiltInTemplates } from '../lib/print/blockDefaults';
 import { useSettingsStore } from '../lib/settings/store';
 import { useAccountingStore } from '../lib/accounting/store';
-import { captureRevenue, capturePayment, recognizeDeferredRevenue } from '../lib/accounting/integration';
+import { captureRevenue, capturePayment, recognizeDeferredRevenue, captureConferenceProforma, markConferenceProformaConverted, retireOrphanConferenceInvoices } from '../lib/accounting/integration';
+import { announcementStore, DepartmentKey } from '../lib/analytics/announcementStore';
 import { computeQuoteTax, exclusiveFromGross } from '../lib/tax/engine';
 import EventsModuleFilters, {
   matchesEventsDateFilter,
@@ -67,6 +69,12 @@ import EventsModuleFilters, {
 } from './EventsModuleFilters';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
+import {
+  buildIdSequence,
+  nextSequenceLabel,
+  sequenceLabel,
+  sortIdsByDate,
+} from '../lib/events/documentNumbers';
 
 type ManagementMainTabKey =
   | 'events'
@@ -79,9 +87,138 @@ type ManagementMainTabKey =
 
 const UNASSIGNED_STAFF = 'Unassigned';
 
-function getEventCoordinator(event: any): string {
+const BEO_LAYOUTS = [
+  'Theatre Style',
+  'Banquet Style',
+  'Classroom Style',
+  'U-Shape',
+  'Boardroom',
+  'Hollow Square',
+  'Cocktail',
+  'Cabaret',
+  'Reception',
+];
+const BEO_ACCESS = [
+  'Main entrance',
+  'Side entrance',
+  'Service entrance',
+  'Elevator',
+  'Ground floor only',
+  'Restricted access',
+  'Loading bay',
+  'Guest drop-off',
+];
+const BEO_PARKING = ['Available for guests', 'Reserved parking', 'Valet', 'Street parking', 'None'];
+const BEO_LIGHTING = ['Standard', 'Dimmed', 'Stage', 'Natural', 'Spotlight'];
+const BEO_INTERNET = ['High-speed WiFi', 'Shared WiFi', 'Dedicated line', 'Wired', 'None'];
+const BEO_SERVICE_STYLES = ['Buffet', 'Plated Service', 'Family style', 'Stations', 'Cocktail'];
+const BEO_MEAL_TYPES = ['Breakfast', 'Lunch', 'Dinner', 'Full day', 'Tea only'];
+const BEO_DEPT_FALLBACK = [
+  'Events & Conferences',
+  'Operations',
+  'Catering',
+  'Housekeeping',
+  'Security',
+  'Front Office',
+  'Kitchen',
+  'Technical',
+  'Finance',
+];
+
+function withCurrentOption(options: string[], current?: string) {
+  const value = String(current || '').trim();
+  if (!value) return options;
+  if (options.some((option) => option.toLowerCase() === value.toLowerCase())) return options;
+  return [value, ...options];
+}
+
+function BeoPick({
+  label,
+  value,
+  options,
+  onChange,
+  className,
+  placeholder,
+}: {
+  label?: string;
+  value: string;
+  options: string[];
+  onChange: (value: string) => void;
+  className?: string;
+  placeholder?: string;
+}) {
+  const items = withCurrentOption(options, value).map((item) => ({ key: item, label: item }));
+  const selected = items.some((item) => item.key === value) ? value : null;
+  return (
+    <Autocomplete
+      className={className}
+      size="sm"
+      label={label}
+      placeholder={placeholder}
+      selectedKey={selected}
+      inputValue={value || ''}
+      allowsCustomValue
+      items={items}
+      onSelectionChange={(key) => {
+        if (key != null) onChange(String(key));
+      }}
+      onInputChange={onChange}
+    >
+      {(item) => (
+        <AutocompleteItem key={item.key} textValue={item.label}>
+          {item.label}
+        </AutocompleteItem>
+      )}
+    </Autocomplete>
+  );
+}
+
+const RECEIPT_METHOD_OPTIONS = ['Bank Transfer', 'Cash', 'Card', 'Mobile Money', 'Cheque'] as const;
+
+function resolveFromOptions(value: string | undefined, options: string[], fallback: string): string {
+  const trimmed = String(value || '').trim();
+  if (!trimmed || trimmed === UNASSIGNED_STAFF) return fallback;
+  const exact = options.find((option) => option.toLowerCase() === trimmed.toLowerCase());
+  if (exact) return exact;
+  const prefixes = options.filter((option) => option.toLowerCase().startsWith(trimmed.toLowerCase()));
+  if (prefixes.length === 1) return prefixes[0];
+  if (trimmed.length <= 2) {
+    if (fallback && fallback !== UNASSIGNED_STAFF && fallback.toLowerCase().startsWith(trimmed.toLowerCase())) {
+      return fallback;
+    }
+    return fallback;
+  }
+  return trimmed;
+}
+
+function resolveReceiptMethod(value?: string): (typeof RECEIPT_METHOD_OPTIONS)[number] {
+  const resolved = resolveFromOptions(value, [...RECEIPT_METHOD_OPTIONS], 'Cash');
+  return (RECEIPT_METHOD_OPTIONS as readonly string[]).includes(resolved)
+    ? (resolved as (typeof RECEIPT_METHOD_OPTIONS)[number])
+    : 'Cash';
+}
+
+function getEventCoordinator(event: any, staffNames: string[] = [], preferred = ''): string {
   const value = (event?.eventCoordinator || '').trim();
-  return value && value !== UNASSIGNED_STAFF ? value : UNASSIGNED_STAFF;
+  if (!staffNames.length) {
+    return value && value !== UNASSIGNED_STAFF ? value : UNASSIGNED_STAFF;
+  }
+  return resolveFromOptions(value, staffNames, preferred || UNASSIGNED_STAFF);
+}
+
+function pickStoredEventCoordinator(
+  employees: { firstName?: string; lastName?: string; status?: string; departmentId?: string }[],
+  departments: { id?: string; name?: string }[],
+) {
+  const active = employees.filter((employee) => employee.status === 'active');
+  if (!active.length) return '';
+  const hinted = /event|conference|banquet/i;
+  const hintedDeptIds = new Set(
+    departments.filter((dept) => hinted.test(String(dept.name || ''))).map((dept) => String(dept.id || ''))
+  );
+  const preferred = active.find((employee) => hintedDeptIds.has(String(employee.departmentId || '')));
+  const pick = preferred || active[0];
+  return `${pick.firstName || ''} ${pick.lastName || ''}`.trim();
 }
 
 function getEventClientContactName(event: any): string {
@@ -90,6 +227,169 @@ function getEventClientContactName(event: any): string {
   if (person && person !== org) return person;
   return person || '—';
 }
+
+function formatEventTableDate(value?: string) {
+  if (!value) return '';
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+}
+
+function formatEventTableRange(start?: string, end?: string) {
+  const from = formatEventTableDate(start);
+  const to = formatEventTableDate(end);
+  if (!from && !to) return '—';
+  if (!to || from === to) return from || to;
+  return `${from} – ${to}`;
+}
+
+function eventStayType(event: any): 'Residential' | 'Non-residential' {
+  if (event?.residential === true || event?.isResidential === true) return 'Residential';
+  if (event?.residential === false || event?.isResidential === false) return 'Non-residential';
+  const type = String(event?.eventType || event?.type || '').toLowerCase();
+  if (type.includes('non-residential') || type.includes('non_residential') || type.includes('nonresidential')) {
+    return 'Non-residential';
+  }
+  if (type.includes('residential')) return 'Residential';
+  return 'Non-residential';
+}
+
+function parseEventDate(value?: string): Date | null {
+  if (!value) return null;
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    const parsed = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+}
+
+function eventStartValue(event: any): string {
+  return event?.arrivalDate || event?.startDate || '';
+}
+
+function eventEndValue(event: any): string {
+  return event?.departureDate || event?.endDate || eventStartValue(event);
+}
+
+function isUnassignedVenueLabel(value?: string) {
+  return !value || /^unassigned(\s+venue)?$/i.test(String(value).trim());
+}
+
+function findVenueInCatalog(
+  venues: Array<{ id: string; name: string }>,
+  key?: string,
+  name?: string
+) {
+  const id = String(key || '').trim();
+  if (id && !isUnassignedVenueLabel(id)) {
+    const byId = venues.find((venue) => venue.id === id);
+    if (byId) return byId;
+  }
+  const label = String(name || '').trim();
+  if (label && !isUnassignedVenueLabel(label)) {
+    const byName = venues.find((venue) => venue.name.toLowerCase() === label.toLowerCase());
+    if (byName) return byName;
+  }
+  return null;
+}
+
+function eventVenueKey(event: any): string {
+  const key = event?.venueKey || event?.venue || event?.hallId || '';
+  if (key && !isUnassignedVenueLabel(key)) return key;
+  const name = event?.venueName || event?.hallName || '';
+  if (name && !isUnassignedVenueLabel(name)) return name;
+  return 'unassigned';
+}
+
+function eventVenueLabel(event: any, venues: Array<{ id: string; name: string }> = []): string {
+  const found = findVenueInCatalog(venues, eventVenueKey(event), event?.venueName || event?.hallName);
+  if (found) return found.name;
+  const stored = String(event?.venueName || event?.hallName || '').trim();
+  return stored && !isUnassignedVenueLabel(stored) ? stored : '—';
+}
+
+function eventUsesVenue(event: any, venue: { id: string; name: string }) {
+  const key = eventVenueKey(event);
+  if (key && key === venue.id) return true;
+  const stored = String(event?.venueName || event?.hallName || '').trim().toLowerCase();
+  return Boolean(stored && stored === venue.name.toLowerCase());
+}
+
+function eventHasBeo(event: any): boolean {
+  return Boolean(
+    event?.lastBeoUpdatedAt ||
+    event?.customCatering ||
+    event?.customRoomSetup ||
+    event?.customRoomDetails ||
+    (Array.isArray(event?.customServiceSchedule) && event.customServiceSchedule.length) ||
+    event?.linkedBEO
+  );
+}
+
+function eventRoomCount(event: any): number | null {
+  const explicit = Number(event?.rooms ?? event?.numberOfRooms ?? event?.roomCount);
+  if (!Number.isNaN(explicit) && explicit > 0) return explicit;
+  const schedule = Array.isArray(event?.dailySchedule) ? event.dailySchedule : [];
+  const fromSchedule = schedule.reduce((max: number, day: any) => Math.max(max, Number(day?.rooms || 0)), 0);
+  if (fromSchedule > 0) return fromSchedule;
+  if (eventStayType(event) === 'Residential') {
+    const pax = Number(event?.pax || event?.expectedPax || 0);
+    return pax > 0 ? pax : null;
+  }
+  return null;
+}
+
+function departmentScheduleLines(event: any, match: RegExp): string[] {
+  const schedule = Array.isArray(event?.customServiceSchedule) ? event.customServiceSchedule : [];
+  return schedule
+    .filter((item: any) => match.test(String(item.department || item.responsible || '')))
+    .map((item: any) => [item.time, item.activity || item.notes].filter(Boolean).join(' ').trim())
+    .filter(Boolean);
+}
+
+function functionFbDuties(event: any): string {
+  const parts: string[] = [];
+  const catering = event?.customCatering;
+  if (catering) {
+    if (catering.mealType) parts.push(String(catering.mealType));
+    if (catering.lunch) parts.push('Lunch');
+    if (catering.dinner) parts.push('Dinner');
+    const tea = Number(catering.teaBreaks || 0);
+    if (tea > 0) parts.push(`${tea} tea break${tea === 1 ? '' : 's'}`);
+    const snacks = Array.isArray(catering.snacks) ? catering.snacks.filter(Boolean) : [];
+    if (snacks.length) parts.push(snacks.join(', '));
+    const drinks = Array.isArray(catering.beverages) ? catering.beverages.filter(Boolean) : [];
+    if (drinks.length) parts.push(drinks.join(', '));
+  }
+  const schedule = Array.isArray(event?.dailySchedule) ? event.dailySchedule : [];
+  if (!parts.length && schedule.length) {
+    if (schedule.some((day: any) => Number(day?.lunchPax || 0) > 0)) parts.push('Lunch');
+    if (schedule.some((day: any) => Number(day?.dinnerPax || 0) > 0)) parts.push('Dinner');
+  }
+  parts.push(...departmentScheduleLines(event, /cater|f&b|food|beverage|restaurant|kitchen/i));
+  if (parts.length) return Array.from(new Set(parts)).join(', ');
+  return eventHasBeo(event) ? 'See BEO' : 'Complete BEO';
+}
+
+function functionHkDuties(event: any): string {
+  const parts: string[] = [];
+  const rooms = eventRoomCount(event);
+  if (eventStayType(event) === 'Residential') {
+    parts.push(rooms ? `Prepare ${rooms} rooms` : 'Prepare rooms — see BEO');
+  }
+  const setup = event?.customRoomSetup;
+  if (setup?.layout) parts.push(setup.layout);
+  if (setup?.tables) parts.push(`${setup.tables} tables`);
+  const notes = event?.customRoomDetails?.setupNotes;
+  if (notes) parts.push(String(notes));
+  parts.push(...departmentScheduleLines(event, /housekeep|room|front desk|frontdesk|reception/i));
+  if (parts.length) return Array.from(new Set(parts)).join(', ');
+  return eventHasBeo(event) ? 'See BEO' : 'Complete BEO';
+}
+
 
 function formatScheduleStatus(status?: string): string {
   switch (status) {
@@ -112,7 +412,7 @@ function formatScheduleStatus(status?: string): string {
   }
 }
 
-type VenueStatus = 'available' | 'booked' | 'setup' | 'maintenance';
+type VenueStatus = 'available' | 'booked' | 'setup' | 'maintenance' | 'inactive';
 
 interface VenueDetails {
   id: string;
@@ -436,11 +736,22 @@ const rateEffectiveForEventDates = (
   return rateOverlapsDateRange(dates, from, to);
 };
 
+const formatRateTableDate = (value?: string) => {
+  if (!value) return '';
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+};
+
 const getRateEffectivePeriodLabel = (dates: RateApplicableDates) => {
   if (dates.isAllYear) return 'All year';
-  if (dates.startDate && dates.endDate) return `${dates.startDate} → ${dates.endDate}`;
-  if (dates.startDate) return `From ${dates.startDate}`;
-  if (dates.endDate) return `Until ${dates.endDate}`;
+  if (dates.startDate && dates.endDate) {
+    const from = formatRateTableDate(dates.startDate);
+    const to = formatRateTableDate(dates.endDate);
+    if (from && to) return `${from} – ${to}`;
+  }
+  if (dates.startDate) return `From ${formatRateTableDate(dates.startDate)}`;
+  if (dates.endDate) return `Until ${formatRateTableDate(dates.endDate)}`;
   return 'Dates not set';
 };
 
@@ -731,9 +1042,113 @@ const RATE_EFFECTIVE_STATUS_META: Record<
 };
 
 const GUEST_RATES_STORAGE_KEY_PREFIX = 'events.conferenceRates';
+const EVENTS_DOCS_STORAGE_KEY_PREFIX = 'events.billingDocs';
 // Tenant is resolved client-side on a shared origin, so negotiated rates must be
 // namespaced per tenant — a flat key would leak one tenant's rates into another's view.
 const guestRatesStorageKey = () => `${GUEST_RATES_STORAGE_KEY_PREFIX}.${getClientTenantSubdomain()}`;
+const eventsDocsStorageKey = () => `${EVENTS_DOCS_STORAGE_KEY_PREFIX}.${getClientTenantSubdomain()}`;
+
+const HARDCODED_EVENT_IDS = new Set([
+  'evt-001',
+  'evt-002',
+  'evt-003',
+  'evt-004',
+  'evt-005',
+  'evt-006',
+  'evt-007',
+  'evt-008',
+  'evt-009',
+  'evt-010',
+  'evt-011',
+  'evt-active-001',
+  'evt-active-002',
+  'evt-active-003',
+  'evt-completed-001',
+  'evt-completed-002',
+  'evt-completed-003',
+]);
+
+const HARDCODED_BILLING_IDS = new Set([
+  'INV-EC-2025-001',
+  'INV-EC-2025-002',
+  'RCPT-2025-030',
+  'RCPT-2025-044',
+  'FOL-EC-001',
+  'FOL-EC-002',
+]);
+
+function isHardcodedDemoEventId(id?: string) {
+  return Boolean(id && HARDCODED_EVENT_IDS.has(id));
+}
+
+function isHardcodedBillingDoc(doc?: { id?: string; eventId?: string }) {
+  if (!doc) return false;
+  return HARDCODED_BILLING_IDS.has(String(doc.id || '')) || isHardcodedDemoEventId(doc.eventId);
+}
+
+function dayKeyFromValue(value: any): string {
+  if (!value) return '';
+  const raw = typeof value === 'string' ? value : (value instanceof Date ? value.toISOString() : String(value));
+  return raw.slice(0, 10);
+}
+
+function mapApiBookingToEvent(row: any) {
+  const details = row?.details && typeof row.details === 'object' ? row.details : {};
+  const start = dayKeyFromValue(row?.startDate);
+  const end = dayKeyFromValue(row?.endDate) || start;
+  const startMs = start ? new Date(`${start}T00:00:00`).getTime() : NaN;
+  const endMs = end ? new Date(`${end}T00:00:00`).getTime() : NaN;
+  const duration = (!Number.isNaN(startMs) && !Number.isNaN(endMs))
+    ? Math.max(1, Math.round((endMs - startMs) / (1000 * 60 * 60 * 24)) + 1)
+    : 1;
+  const residential = Boolean(details.residential);
+  const quoteBudgetSnapshot = details.quoteBudgetSnapshot;
+  return {
+    id: row.id,
+    organization: row.organizer || details.organization || '',
+    eventName: row.title || row.eventName || 'Unnamed Event',
+    eventType: residential ? 'residential-conference' : (row.type || 'conference'),
+    venue: row.hallId || details.venueKey || details.venue || '',
+    venueName: row.hallName || details.venueName || '',
+    venueKey: row.hallId || details.venueKey || details.venue || '',
+    arrivalDate: start,
+    departureDate: end,
+    startDate: start,
+    endDate: end,
+    duration,
+    pax: Number(row.attendees || 0),
+    expectedPax: Number(row.attendees || 0),
+    residential,
+    status: row.status || 'quote',
+    revenue: Number(row.totalCost || quoteBudgetSnapshot?.total || 0),
+    contactPerson: row.contactPerson || '',
+    contactPhone: row.contactPhone || '',
+    contactEmail: row.contactEmail || '',
+    linkedBooking: row.id,
+    linkedBEO: details.linkedBEO || null,
+    quoteBudgetSnapshot,
+    budgetTotal: Number(quoteBudgetSnapshot?.total || row.totalCost || 0),
+    dailySchedule: Array.isArray(details.dailySchedule) ? details.dailySchedule : [],
+    particularLabels: details.particularLabels,
+    ratesByParticulars: details.ratesByParticulars,
+    combinedPackage: details.combinedPackage,
+    conferenceRate: details.conferenceRate,
+    lunchRate: details.lunchRate,
+    dinnerRate: details.dinnerRate,
+    roomRate: details.roomRate,
+    defaultDayRate: details.defaultDayRate,
+    completionStatus: details.completionStatus,
+    checkedIn: Boolean(details.checkedIn),
+    eventCoordinator: details.eventCoordinator || row.eventCoordinator || '',
+    nextAction: details.nextAction || '',
+    followUpDate: details.followUpDate || '',
+    quoteNumber: details.quoteNumber || row.quoteNumber || '',
+    status: details.completionStatus === 'completed'
+      ? 'completed'
+      : (row.status || 'quote'),
+    details,
+  };
+}
 
 const DEFAULT_CONFERENCE_RATES = [
   {
@@ -846,100 +1261,16 @@ const loadStoredConferenceRates = () => {
   }
 };
 
-const EVENTS_REPORT_CATALOG: ReportCategory[] = [
-  {
-    key: 'events-pipeline',
-    label: 'Events & Pipeline',
-    icon: '📊',
-    description: 'Status mix, quotes, and revenue from your event book.',
-    reports: [
-      {
-        key: 'pipeline-summary',
-        label: 'Pipeline Summary',
-        description: 'Events grouped by status with quoted and confirmed value.',
-        metrics: ['Status counts', 'Conversion rate', 'Pipeline value'],
-        filters: { dateRange: true },
-      },
-      {
-        key: 'open-quotes',
-        label: 'Open Quotes',
-        description: 'Quote-stage events in the selected period.',
-        metrics: ['Quote count', 'Quoted value', 'Average pax'],
-        filters: { dateRange: true, venue: true },
-      },
-      {
-        key: 'confirmed-events',
-        label: 'Confirmed & In Progress',
-        description: 'Active confirmed events with coordinator and venue.',
-        metrics: ['Event count', 'Total pax', 'Coordinator assigned'],
-        filters: { dateRange: true, venue: true },
-      },
-    ],
-  },
-  {
-    key: 'venues-operations',
-    label: 'Venues & Operations',
-    icon: '🏢',
-    description: 'Space utilisation and BEO readiness.',
-    reports: [
-      {
-        key: 'venue-status',
-        label: 'Venue Status',
-        description: 'All venues with capacity and current status.',
-        metrics: ['Available', 'Booked', 'Utilisation'],
-        filters: { venue: true },
-      },
-      {
-        key: 'beo-readiness',
-        label: 'BEO Readiness',
-        description: 'Confirmed events and whether a BEO has been saved.',
-        metrics: ['With BEO', 'Pending BEO', 'Coordinator assigned'],
-        filters: { dateRange: true, venue: true },
-      },
-    ],
-  },
-  {
-    key: 'finance-billing',
-    label: 'Finance & Billing',
-    icon: '💰',
-    description: 'Invoices, receipts, and folios linked to events.',
-    reports: [
-      {
-        key: 'invoice-aging',
-        label: 'Invoice Aging',
-        description: 'Event invoices with issue date, total, and balance.',
-        metrics: ['Outstanding', 'Overdue', 'Collected'],
-        filters: { dateRange: true },
-      },
-      {
-        key: 'receipts-register',
-        label: 'Receipts Register',
-        description: 'Payments received against events.',
-        metrics: ['Total collected', 'Receipt count', 'Average payment'],
-        filters: { dateRange: true },
-      },
-      {
-        key: 'folio-balances',
-        label: 'Folio Balances',
-        description: 'Open folio charges, payments, and net balance.',
-        metrics: ['Open folios', 'Net balance', 'Events tracked'],
-        filters: { dateRange: true },
-      },
-      {
-        key: 'budget-variance',
-        label: 'Budget vs Invoiced',
-        description: 'Quoted budget compared to invoiced amount per event.',
-        metrics: ['Over budget', 'Under budget', 'Net variance'],
-        filters: { dateRange: true, venue: true },
-      },
-    ],
-  },
-];
+const EVENTS_REPORT_CATALOG: ReportCategory[] = [];
 
 export default function EventsConferencesMainDashboard() {
   const router = useRouter();
-  const { costCenters, revenueCenters } = useAccountingStore();
+  const { costCenters, revenueCenters, initializeAccounting } = useAccountingStore();
+  const accountingInvoices = useAccountingStore((s) => s.invoices);
+  const accountingPayments = useAccountingStore((s) => s.payments);
   const employees = useEmployeeStore((s) => s.employees);
+  const hrDepartments = useEmployeeStore((s) => s.departments);
+  const hydrateEmployees = useEmployeeStore((s) => s.hydrateFromApi);
   const eventStaffOptions = useMemo(
     () =>
       employees
@@ -955,6 +1286,40 @@ export default function EventsConferencesMainDashboard() {
     () => [{ key: UNASSIGNED_STAFF, label: UNASSIGNED_STAFF }, ...eventStaffOptions],
     [eventStaffOptions]
   );
+  const staffCoordinatorNames = useMemo(
+    () => eventStaffOptions.map((option) => option.key),
+    [eventStaffOptions]
+  );
+  const preferredEventCoordinator = useMemo(
+    () => pickStoredEventCoordinator(employees, hrDepartments),
+    [employees, hrDepartments]
+  );
+  const resolveEventCoordinator = useCallback(
+    (event: any) => getEventCoordinator(event, staffCoordinatorNames, preferredEventCoordinator),
+    [staffCoordinatorNames, preferredEventCoordinator]
+  );
+  const resolveCoordinatorValue = useCallback(
+    (value?: string) =>
+      resolveFromOptions(value, staffCoordinatorNames, preferredEventCoordinator || UNASSIGNED_STAFF),
+    [staffCoordinatorNames, preferredEventCoordinator]
+  );
+  const beoDepartmentOptions = useMemo(() => {
+    const fromHr = hrDepartments
+      .filter((dept) => dept.status !== 'inactive' && dept.isActive !== false)
+      .map((dept) => String(dept.name || '').trim())
+      .filter(Boolean);
+    return fromHr.length ? Array.from(new Set(fromHr)) : BEO_DEPT_FALLBACK;
+  }, [hrDepartments]);
+  const beoResponsibleOptions = useMemo(
+    () => Array.from(new Set([...beoDepartmentOptions, ...eventStaffOptions.map((option) => option.label)])),
+    [beoDepartmentOptions, eventStaffOptions]
+  );
+  useEffect(() => {
+    hydrateEmployees();
+  }, [hydrateEmployees]);
+  useEffect(() => {
+    initializeAccounting().catch(() => {});
+  }, [initializeAccounting]);
   const [selectedTab, setSelectedTab] = useState('confirmed');
   const [venueSearchTerm, setVenueSearchTerm] = useState('');
   const [venueStatusFilter, setVenueStatusFilter] = useState('all');
@@ -967,10 +1332,10 @@ export default function EventsConferencesMainDashboard() {
   const [isEventModalOpen, setIsEventModalOpen] = useState(false);
   const [isVenueModalOpen, setIsVenueModalOpen] = useState(false);
   const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
-  const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
   const [isPackageModalOpen, setIsPackageModalOpen] = useState(false);
   const [isTaxModalOpen, setIsTaxModalOpen] = useState(false);
   const [isBEOModalOpen, setIsBEOModalOpen] = useState(false);
+  const [beoWorkspaceTab, setBeoWorkspaceTab] = useState('overview');
   const [editingEvent, setEditingEvent] = useState<any>(null);
   const [isCreatingEvent, setIsCreatingEvent] = useState<boolean>(false);
   const [isViewMode, setIsViewMode] = useState<boolean>(false);
@@ -998,6 +1363,11 @@ export default function EventsConferencesMainDashboard() {
     try {
       const tab = localStorage.getItem('events.tab');
       const mgmtTab = localStorage.getItem('events.managementTab');
+      if (tab === 'reports') {
+        localStorage.removeItem('events.tab');
+        router.replace('/events/reports');
+        return;
+      }
       if (tab) {
         setSelectedTab(tab);
         localStorage.removeItem('events.tab');
@@ -1079,6 +1449,9 @@ export default function EventsConferencesMainDashboard() {
   }, []);
   type SimpleEventStatus = 'quote' | 'confirmed' | 'invoiced' | 'cancelled';
   const [eventStatus, setEventStatus] = useState<SimpleEventStatus>('quote');
+  const [eventCoordinator, setEventCoordinator] = useState<string>(UNASSIGNED_STAFF);
+  const [nextAction, setNextAction] = useState<string>('');
+  const [followUpDate, setFollowUpDate] = useState<string>('');
   const eventStatusColorMap: Record<SimpleEventStatus, 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'danger'> = {
     quote: 'warning',
     confirmed: 'success',
@@ -1153,7 +1526,7 @@ export default function EventsConferencesMainDashboard() {
   );
 
   type EventInvoiceStatus = 'Draft' | 'Issued' | 'Partial' | 'Paid' | 'Overdue';
-  type ReceiptMethod = 'Cash' | 'Card' | 'Bank Transfer' | 'Mobile Money';
+  type ReceiptMethod = 'Cash' | 'Card' | 'Bank Transfer' | 'Mobile Money' | 'Cheque';
 
   interface EventInvoice {
     id: string;
@@ -1202,6 +1575,7 @@ export default function EventsConferencesMainDashboard() {
     amount: number;
     method: ReceiptMethod;
     reference?: string;
+    checkNumber?: string;
     recordedBy: string;
     notes?: string;
   }
@@ -1228,6 +1602,25 @@ export default function EventsConferencesMainDashboard() {
     createdAt: string;
     updatedAt: string;
   }
+
+  const normalizeFolioEntries = (folio: EventFolio): EventFolio => {
+    const seenRefs = new Set<string>();
+    const uniqueEntries: EventFolioEntry[] = [];
+    (folio.entries || []).forEach((entry) => {
+      const ref = String(entry.reference || '').trim();
+      if (ref) {
+        if (seenRefs.has(ref)) return;
+        seenRefs.add(ref);
+      }
+      uniqueEntries.push(entry);
+    });
+    let running = folio.openingBalance || 0;
+    const entries = uniqueEntries.map((entry) => {
+      running = running + (entry.debit || 0) - (entry.credit || 0);
+      return { ...entry, balance: running };
+    });
+    return { ...folio, entries };
+  };
 
   interface QuoteListItem {
     id: string;
@@ -1333,99 +1726,142 @@ export default function EventsConferencesMainDashboard() {
     total: number;
   }
 
-  const [eventInvoices, setEventInvoices] = useState<EventInvoice[]>([
-    {
-      id: 'INV-EC-2025-001',
-      eventId: 'evt-001',
-      eventName: 'T-TEL Extended Conference',
-      clientName: 'T-TEL',
-      issueDate: '2025-07-15',
-      dueDate: '2025-07-30',
-      subtotal: 45000,
-      tax: 6750,
-      total: 51750,
-      balance: 17250,
-      status: 'Partial',
-      reference: 'PO-4455',
-      notes: 'Initial 50% deposit received. Awaiting balance.'
-    },
-    {
-      id: 'INV-EC-2025-002',
-      eventId: 'evt-004',
-      eventName: 'Garden City University Workshop',
-      clientName: 'Garden City University',
-      issueDate: '2025-07-10',
-      dueDate: '2025-07-25',
-      subtotal: 18000,
-      tax: 2700,
-      total: 20700,
-      balance: 0,
-      status: 'Paid',
-      reference: 'GC-WS-2025',
-      notes: 'Invoice settled in full.'
-    }
-  ]);
+  const [eventInvoices, setEventInvoices] = useState<EventInvoice[]>([]);
 
-  const [eventReceipts, setEventReceipts] = useState<EventReceipt[]>([
-    {
-      id: 'RCPT-2025-030',
-      eventId: 'evt-001',
-      eventName: 'T-TEL Extended Conference',
-      invoiceId: 'INV-EC-2025-001',
-      clientName: 'T-TEL',
-      date: '2025-07-20',
-      amount: 34500,
-      method: 'Bank Transfer',
-      reference: 'TT-DEP-34500',
-      recordedBy: 'Akosua Mensah',
-      notes: 'Payment advice received via email.'
-    },
-    {
-      id: 'RCPT-2025-044',
-      eventId: 'evt-004',
-      eventName: 'Garden City University Workshop',
-      invoiceId: 'INV-EC-2025-002',
-      clientName: 'Garden City University',
-      date: '2025-07-18',
-      amount: 20700,
-      method: 'Mobile Money',
-      reference: 'MTN-2025-741',
-      recordedBy: 'Yaw Sarfo'
-    }
-  ]);
+  const [eventReceipts, setEventReceipts] = useState<EventReceipt[]>([]);
 
-  const [eventFolios, setEventFolios] = useState<EventFolio[]>([
-    {
-      id: 'FOL-EC-001',
-      eventId: 'evt-001',
-      eventName: 'T-TEL Extended Conference',
-      clientName: 'T-TEL',
-      status: 'Open',
-      openingBalance: 0,
-      createdAt: '2025-07-12',
-      updatedAt: '2025-08-02',
-      entries: [
-        { id: 'FLE-001', date: '2025-07-12', description: 'Deposit Received', debit: 0, credit: 30000, balance: -30000 },
-        { id: 'FLE-002', date: '2025-07-20', description: 'Conference Package - Week 1', debit: 28000, credit: 0, balance: -2000 },
-        { id: 'FLE-003', date: '2025-07-28', description: 'Accommodation Block - 45 rooms', debit: 36000, credit: 0, balance: 34000 }
-      ]
-    },
-    {
-      id: 'FOL-EC-002',
-      eventId: 'evt-004',
-      eventName: 'Garden City University Workshop',
-      clientName: 'Garden City University',
-      status: 'Closed',
-      openingBalance: 0,
-      createdAt: '2025-07-05',
-      updatedAt: '2025-07-26',
-      entries: [
-        { id: 'FLE-100', date: '2025-07-05', description: 'Deposit Received', debit: 0, credit: 10000, balance: -10000 },
-        { id: 'FLE-101', date: '2025-07-08', description: 'Workshop Package - 3 Days', debit: 18000, credit: 0, balance: 8000 },
-        { id: 'FLE-102', date: '2025-07-18', description: 'Balance Payment', debit: 0, credit: 8000, balance: 0 }
-      ]
+  const [eventFolios, setEventFolios] = useState<EventFolio[]>([]);
+
+  const [billingDocsReady, setBillingDocsReady] = useState(false);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(eventsDocsStorageKey());
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed.invoices)) {
+          setEventInvoices(parsed.invoices.filter((doc: EventInvoice) => !isHardcodedBillingDoc(doc)));
+        }
+        if (Array.isArray(parsed.receipts)) {
+          setEventReceipts(
+            parsed.receipts
+              .filter((doc: EventReceipt) => !isHardcodedBillingDoc(doc))
+              .map((doc: EventReceipt) => ({ ...doc, method: resolveReceiptMethod(doc.method) }))
+          );
+        }
+        if (Array.isArray(parsed.folios)) {
+          setEventFolios(
+            parsed.folios
+              .filter((doc: EventFolio) => !isHardcodedBillingDoc(doc))
+              .map((doc: EventFolio) => withFolioStatus(normalizeFolioEntries(doc)))
+          );
+        }
+      }
+    } catch {
+      // Keep starter invoices/receipts if stored docs cannot be read.
     }
-  ]);
+    setBillingDocsReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!billingDocsReady) return;
+    setEventFolios((prev) => prev.map((folio) => withFolioStatus(normalizeFolioEntries(folio))));
+    setEventReceipts((prev) => {
+      let changed = false;
+      const next = prev.map((receipt) => {
+        const method = resolveReceiptMethod(receipt.method);
+        if (method === receipt.method) return receipt;
+        changed = true;
+        return { ...receipt, method };
+      });
+      return changed ? next : prev;
+    });
+  }, [billingDocsReady]);
+
+  useEffect(() => {
+    if (!billingDocsReady) return;
+    try {
+      localStorage.setItem(
+        eventsDocsStorageKey(),
+        JSON.stringify({ invoices: eventInvoices, receipts: eventReceipts, folios: eventFolios })
+      );
+    } catch {
+      // Ignore quota / private-mode write failures.
+    }
+  }, [billingDocsReady, eventInvoices, eventReceipts, eventFolios]);
+
+  useEffect(() => {
+    if (!billingDocsReady) return;
+    const live = accountingInvoices.filter(
+      (invoice) =>
+        invoice.sourceModule === 'conference' &&
+        !invoice.isProforma &&
+        invoice.status !== 'Void' &&
+        invoice.reference &&
+        !isHardcodedDemoEventId(String(invoice.reference))
+    );
+    if (!live.length) return;
+    setEventInvoices((prev) => {
+      const byEvent = new Map(prev.map((inv) => [inv.eventId, inv]));
+      let changed = false;
+      live.forEach((invoice) => {
+        const eventId = String(invoice.reference);
+        if (byEvent.has(eventId)) return;
+        const eventsInvoiceId = String(invoice.id || '').replace(/^INV-CONFERENCE-/, '') || genId('INV');
+        const total = Number(invoice.total || 0);
+        const paid = Number(invoice.paidAmount || 0);
+        const balance = Math.max(0, total - paid);
+        byEvent.set(eventId, {
+          id: eventsInvoiceId,
+          eventId,
+          eventName: invoice.description?.replace(/^Conference Invoice:\s*/, '').split(' (')[0] || invoice.customerName || 'Event',
+          clientName: invoice.customerName || 'Client',
+          issueDate: (invoice.issueDate || invoice.date || new Date().toISOString()).slice(0, 10),
+          dueDate: (invoice.dueDate || invoice.issueDate || new Date().toISOString()).slice(0, 10),
+          subtotal: Number(invoice.subtotal ?? total),
+          tax: Number(invoice.taxAmount ?? 0),
+          total,
+          balance,
+          status: deriveInvoiceStatus(paid > 0 && balance <= 0.01 ? 'Paid' : 'Issued', balance, total),
+          reference: invoice.invoiceNumber,
+        });
+        changed = true;
+      });
+      return changed ? Array.from(byEvent.values()) : prev;
+    });
+  }, [billingDocsReady, accountingInvoices]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      await initializeAccounting().catch(() => {});
+      const rows = await fetchEventBookings().catch(() => []);
+      if (cancelled || !Array.isArray(rows) || !rows.length) return;
+      let liveIds: string[] = [];
+      let quotes: any[] = [];
+      setCustomEvents((prev) => {
+        const map = new Map(prev.map((ev) => [ev.id, ev]));
+        rows.forEach((row) => {
+          const ui = mapApiBookingToEvent(row);
+          if (!ui.id || isHardcodedDemoEventId(ui.id)) return;
+          const existing = map.get(ui.id);
+          map.set(ui.id, existing ? { ...ui, ...existing } : ui);
+        });
+        const next = Array.from(map.values());
+        liveIds = next.map((event) => String(event.id)).filter(Boolean);
+        quotes = next.filter((event) => (event.status === 'quote' || event.quoteNumber) && Number(event.budgetTotal || event.revenue || 0) > 0);
+        return next;
+      });
+      if (cancelled) return;
+      if (liveIds.length) {
+        await retireOrphanConferenceInvoices(liveIds).catch(() => {});
+      }
+      quotes.forEach((event) => syncEventQuoteToAccounting(event));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initializeAccounting]);
 
   const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
   const [invoiceModalMode, setInvoiceModalMode] = useState<'create' | 'edit'>('create');
@@ -1436,6 +1872,9 @@ export default function EventsConferencesMainDashboard() {
   const [receiptModalMode, setReceiptModalMode] = useState<'create' | 'edit'>('create');
   const [receiptForm, setReceiptForm] = useState<Partial<EventReceipt>>({});
   const [receiptErrors, setReceiptErrors] = useState<Record<string, string>>({});
+  const [receiptPrintAfterSave, setReceiptPrintAfterSave] = useState(true);
+  const [receiptInvoiceLocked, setReceiptInvoiceLocked] = useState(false);
+  const [receiptInvoiceQuery, setReceiptInvoiceQuery] = useState('');
 
   const [isFolioModalOpen, setIsFolioModalOpen] = useState(false);
   const [activeFolio, setActiveFolio] = useState<any>(null);
@@ -1468,6 +1907,7 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   });
   const [folioCreateError, setFolioCreateError] = useState<string>('');
   const [folioEntrySearch, setFolioEntrySearch] = useState('');
+  const [folioComposerOpen, setFolioComposerOpen] = useState(false);
   const invoiceStatusMeta: Record<EventInvoiceStatus, { color: 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'danger'; label: string }> = {
     Draft: { color: 'default', label: 'Draft' },
     Issued: { color: 'primary', label: 'Issued' },
@@ -1475,12 +1915,20 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
     Paid: { color: 'success', label: 'Paid' },
     Overdue: { color: 'danger', label: 'Overdue' }
   };
-  const receiptMethods: ReceiptMethod[] = ['Cash', 'Card', 'Bank Transfer', 'Mobile Money'];
+  const receiptMethods: ReceiptMethod[] = ['Bank Transfer', 'Cash', 'Card', 'Mobile Money', 'Cheque'];
+  const receiptMethodLabels: Record<ReceiptMethod, string> = {
+    'Bank Transfer': 'Bank transfer',
+    Cash: 'Cash',
+    Card: 'Card',
+    'Mobile Money': 'Mobile money',
+    Cheque: 'Cheque',
+  };
   const receiptMethodColors: Record<ReceiptMethod, 'default' | 'primary' | 'secondary' | 'success' | 'warning' | 'danger'> = {
     Cash: 'secondary',
     Card: 'primary',
     'Bank Transfer': 'success',
-    'Mobile Money': 'warning'
+    'Mobile Money': 'warning',
+    Cheque: 'default',
   };
 
   const [eventViewMode, setEventViewMode] = useState('table');
@@ -1652,6 +2100,160 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
     }
     return folio.entries[folio.entries.length - 1].balance;
   };
+  const getFolioSettledStatus = (folio: EventFolio): 'Open' | 'Closed' => {
+    const charges = (folio.entries || []).reduce((sum, entry) => sum + Number(entry.debit || 0), 0);
+    return charges > 0 && Math.abs(getFolioCurrentBalance(folio)) < 0.01 ? 'Closed' : 'Open';
+  };
+  const withFolioStatus = (folio: EventFolio): EventFolio => ({
+    ...folio,
+    status: getFolioSettledStatus(folio),
+  });
+  const conferenceInvoiceBelongsToEvent = (invoice: { reference?: string; description?: string }, eventId?: string) => {
+    if (!eventId) return true;
+    return invoice.reference === eventId || String(invoice.description || '').includes(eventId);
+  };
+  const eventIdSequence = useMemo(
+    () =>
+      buildIdSequence(
+        sortIdsByDate(
+          customEvents,
+          (event) => String(event.id || ''),
+          (event) => String(event.arrivalDate || event.startDate || event.createdAt || '')
+        )
+      ),
+    [customEvents]
+  );
+  const invoiceIdSequence = useMemo(
+    () =>
+      buildIdSequence(
+        sortIdsByDate(
+          eventInvoices,
+          (invoice) => String(invoice.id || ''),
+          (invoice) => String(invoice.issueDate || '')
+        )
+      ),
+    [eventInvoices]
+  );
+  const receiptIdSequence = useMemo(
+    () =>
+      buildIdSequence(
+        sortIdsByDate(
+          eventReceipts,
+          (receipt) => String(receipt.id || ''),
+          (receipt) => String(receipt.date || '')
+        )
+      ),
+    [eventReceipts]
+  );
+  const folioIdSequence = useMemo(
+    () =>
+      buildIdSequence(
+        sortIdsByDate(
+          eventFolios,
+          (folio) => String(folio.id || ''),
+          (folio) => String(folio.createdAt || '')
+        )
+      ),
+    [eventFolios]
+  );
+  const quoteIdSequence = useMemo(
+    () =>
+      buildIdSequence(
+        sortIdsByDate(
+          customEvents.filter((event) => event.quoteNumber || event.status === 'quote'),
+          (event) => String(event.id || ''),
+          (event) => String(event.createdAt || event.arrivalDate || event.startDate || '')
+        )
+      ),
+    [customEvents]
+  );
+  const formatFolioNumber = (id?: string) => sequenceLabel('FOL', id, folioIdSequence);
+  const formatQuoteNumber = (eventId?: string, fallback = '') => {
+    const labeled = sequenceLabel('Q', eventId, quoteIdSequence);
+    return labeled === '—' ? fallback || '—' : labeled;
+  };
+  const getConferenceInvoiceNumber = (eventsInvoiceId?: string, eventId?: string) => {
+    if (eventsInvoiceId && invoiceIdSequence.has(eventsInvoiceId)) {
+      return sequenceLabel('INV', eventsInvoiceId, invoiceIdSequence);
+    }
+    if (eventId) {
+      const linked = eventInvoices.find((invoice) => invoice.eventId === eventId);
+      if (linked) return sequenceLabel('INV', linked.id, invoiceIdSequence);
+    }
+    return '';
+  };
+  const getConferenceReceiptNumber = (eventsReceiptId?: string, eventId?: string) => {
+    if (eventsReceiptId && receiptIdSequence.has(eventsReceiptId)) {
+      return sequenceLabel('RCP', eventsReceiptId, receiptIdSequence);
+    }
+    if (eventId) {
+      const linked = eventReceipts.find((receipt) => receipt.eventId === eventId);
+      if (linked) return sequenceLabel('RCP', linked.id, receiptIdSequence);
+    }
+    return '';
+  };
+  const formatFolioEntryCopy = (entry: EventFolioEntry) => {
+    const linkedInvoice = entry.reference
+      ? eventInvoices.find((invoice) => invoice.id === entry.reference)
+      : undefined;
+    const linkedReceipt = entry.reference
+      ? eventReceipts.find((receipt) => receipt.id === entry.reference)
+      : undefined;
+
+    if (linkedInvoice) {
+      return {
+        description: 'Invoice',
+        reference: getConferenceInvoiceNumber(linkedInvoice.id, linkedInvoice.eventId) || 'Invoice',
+      };
+    }
+    if (linkedReceipt) {
+      const method = paymentMethodLabel(resolveReceiptMethod(linkedReceipt.method));
+      return {
+        description: method ? `Payment · ${method}` : 'Payment',
+        reference: getConferenceReceiptNumber(linkedReceipt.id, linkedReceipt.eventId) || 'Receipt',
+      };
+    }
+
+    let description = String(entry.description || '')
+      .replace(/Invoice\s+INV-[a-z0-9]+/gi, 'Invoice')
+      .replace(/Receipt\s+RCPT-[a-z0-9]+/gi, 'Receipt')
+      .replace(/\(\s*Invoice\s+INV-[a-z0-9]+\s*\)/gi, '')
+      .replace(/\s*-\s*Updated Details/gi, '')
+      .replace(/\s*-\s*Event Charges/gi, '')
+      .replace(/Payment\s*-\s*/i, 'Payment ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (!description) {
+      description = entry.debit > 0 ? 'Charge' : entry.credit > 0 ? 'Payment' : 'Note';
+    }
+
+    let reference = String(entry.reference || '').trim();
+    if (invoiceIdSequence.has(reference)) {
+      reference = sequenceLabel('INV', reference, invoiceIdSequence);
+    } else if (receiptIdSequence.has(reference)) {
+      reference = sequenceLabel('RCP', reference, receiptIdSequence);
+    } else if (/^(INV|RCPT|RCP|FOL|FLE)-[a-z0-9]{8,}$/i.test(reference)) {
+      reference = '—';
+    }
+
+    return { description, reference: reference || '—' };
+  };
+  const syncEventQuoteToAccounting = (event: any, totals?: { subtotal: number; tax: number; total: number }) => {
+    if (!event?.id) return;
+    const total = Number(totals?.total ?? event.budgetTotal ?? event.revenue ?? event.totalCost ?? 0);
+    if (!(total > 0)) return;
+    const subtotal = Number(totals?.subtotal ?? event.subtotal ?? total);
+    captureConferenceProforma({
+      eventId: String(event.id),
+      customerId: event.clientId || event.orgClientId,
+      customerName: getEventClientName(event) || 'Conference Client',
+      description: `Conference proforma: ${getEventDisplayName(event)}`,
+      subtotal,
+      taxAmount: Number(totals?.tax ?? 0),
+      total,
+      quoteNumber: event.quoteNumber,
+    });
+  };
   
   // Helper: refresh the active folio from the latest eventFolios state
   const refreshActiveFolioByEvent = (eventId: string) => {
@@ -1683,23 +2285,87 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   };
   const getEventDisplayName = (event: any) => event?.eventName || event?.name || event?.title || 'Unnamed Event';
   const getEventClientName = (event: any) => event?.organization || event?.clientName || event?.contactPerson || '';
+  const persistEventBookingPatch = (event: any, extraDetails: Record<string, any> = {}) => {
+    if (!event?.id) return;
+    const start = event.arrivalDate || event.startDate;
+    const end = event.departureDate || event.endDate || start;
+    void saveEventBooking({
+      id: String(event.id),
+      title: getEventDisplayName(event),
+      organizer: getEventClientName(event) || '—',
+      contactPerson: event.contactPerson || getEventClientName(event),
+      contactPhone: event.contactPhone,
+      contactEmail: event.contactEmail,
+      hallId: event.venueKey || event.venue || '',
+      hallName: isUnassignedVenueLabel(event.venueName) ? '' : (event.venueName || ''),
+      startDate: start,
+      endDate: end,
+      attendees: event.pax || event.expectedPax || 0,
+      status: event.status || 'confirmed',
+      type: event.residential ? 'residential-conference' : (event.eventType || 'conference'),
+      catering: Boolean((event.dailySchedule || []).some((day: any) => Number(day.lunchPax || 0) + Number(day.dinnerPax || 0) > 0)),
+      totalCost: Number(event.revenue || event.budgetTotal || 0),
+      details: {
+        ...(event.details || {}),
+        quoteBudgetSnapshot: event.quoteBudgetSnapshot,
+        particularLabels: event.particularLabels,
+        ratesByParticulars: event.ratesByParticulars,
+        combinedPackage: event.combinedPackage ?? !event.ratesByParticulars,
+        residential: Boolean(event.residential),
+        dailySchedule: event.dailySchedule,
+        conferenceRate: event.conferenceRate,
+        lunchRate: event.lunchRate,
+        dinnerRate: event.dinnerRate,
+        roomRate: event.roomRate,
+        defaultDayRate: event.defaultDayRate,
+        completionStatus: event.completionStatus,
+        checkedIn: event.checkedIn,
+        eventCoordinator: event.eventCoordinator || '',
+        nextAction: event.nextAction || '',
+        followUpDate: event.followUpDate || '',
+        quoteNumber: event.quoteNumber || '',
+        venueKey: event.venueKey || event.venue || '',
+        venueName: isUnassignedVenueLabel(event.venueName) ? '' : (event.venueName || ''),
+        ...extraDetails,
+      },
+    }).catch(() => {});
+  };
+  const coordinatorAssignedRef = useRef(false);
+  useEffect(() => {
+    if (coordinatorAssignedRef.current) return;
+    if (!staffCoordinatorNames.length && !preferredEventCoordinator) return;
+    const needsRepair = customEvents.some((event) => {
+      const current = String(event.eventCoordinator || '').trim();
+      const resolved = resolveFromOptions(
+        current,
+        staffCoordinatorNames,
+        preferredEventCoordinator || UNASSIGNED_STAFF
+      );
+      return Boolean(resolved) && resolved !== UNASSIGNED_STAFF && resolved !== current;
+    });
+    if (!needsRepair) {
+      if (customEvents.length) coordinatorAssignedRef.current = true;
+      return;
+    }
+    coordinatorAssignedRef.current = true;
+    setCustomEvents((prev) =>
+      prev.map((event) => {
+        const current = String(event.eventCoordinator || '').trim();
+        const resolved = resolveFromOptions(
+          current,
+          staffCoordinatorNames,
+          preferredEventCoordinator || UNASSIGNED_STAFF
+        );
+        if (!resolved || resolved === UNASSIGNED_STAFF || resolved === current) return event;
+        const updated = { ...event, eventCoordinator: resolved };
+        persistEventBookingPatch(updated, { eventCoordinator: resolved });
+        return updated;
+      })
+    );
+  }, [customEvents, preferredEventCoordinator, staffCoordinatorNames]);
   const formatDateDisplay = (value?: string) =>
     value ? new Date(value).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
-  const formatEventId = (id?: string) => {
-    if (!id) return '—';
-    // If it's already formatted nicely (e.g., "evt-001"), return as is
-    if (id.startsWith('evt-') || id.match(/^[A-Z]{3}-\d+/)) return id;
-    // If it's from store format (e.g., "event_1234567890"), format it nicely
-    if (id.startsWith('event_')) {
-      const timestamp = id.replace('event_', '');
-      const date = new Date(parseInt(timestamp));
-      const year = date.getFullYear();
-      const shortId = timestamp.slice(-4); // Last 4 digits
-      return `EVT-${year}-${shortId}`;
-    }
-    // Otherwise return as is
-    return id;
-  };
+  const formatEventId = (id?: string) => sequenceLabel('EVT', id, eventIdSequence);
 
   const computeLine = (line: QuoteServiceLine) => {
     const subtotal = (Number(line.qty) || 0) * (Number(line.unitPrice) || 0);
@@ -2104,8 +2770,10 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
 
   
   useEffect(() => {
-    if (venueKey && !modernVenues.some(venue => venue.id === venueKey)) {
-      setVenueKey('');
+    if (!venueKey) return;
+    const resolved = findVenueInCatalog(modernVenues, venueKey);
+    if (resolved && resolved.id !== venueKey) {
+      setVenueKey(resolved.id);
     }
   }, [modernVenues, venueKey]);
 
@@ -2582,6 +3250,9 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       const resolvedEnd = eventToLoad?.departureDate || eventToLoad?.endDate || '';
 
       setEventName(eventToLoad?.eventName || eventToLoad?.name || '');
+      setEventCoordinator(resolveEventCoordinator(eventToLoad));
+      setNextAction(eventToLoad?.nextAction || '');
+      setFollowUpDate(eventToLoad?.followUpDate || '');
       setOrgName(eventToLoad?.organization || '');
       setOrgContactPhone(eventToLoad?.contactPhone || eventToLoad?.contact || '');
       setOrgClientEmail(eventToLoad?.contactEmail || eventToLoad?.clientEmail || '');
@@ -2596,7 +3267,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       setEventStatus(normalizeStatus(eventToLoad?.status));
       setStartDate(resolvedStart);
       setEndDate(resolvedEnd);
-      setVenueKey(eventToLoad?.venue || eventToLoad?.venueKey || '');
+      setVenueKey(eventToLoad?.venueKey || eventToLoad?.venue || '');
       setExpectedPax(
         typeof eventToLoad?.expectedPax === 'number'
           ? eventToLoad.expectedPax
@@ -2669,8 +3340,11 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       setDefaultDayRate(250);
       setEventTaxExempt(false);
       setQuoteTaxExempt(false);
+      setEventCoordinator(UNASSIGNED_STAFF);
+      setNextAction('');
+      setFollowUpDate('');
     }
-  }, [isEventModalOpen, editingEvent]);
+  }, [isEventModalOpen, editingEvent?.id]);
 
   // Sample events data - in real app, this would come from stores
   const totalEvents = 24;
@@ -3257,11 +3931,57 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     const emailOk = !orgClientEmail || /[^\s@]+@[^\s@]+\.[^\s@]+/.test(orgClientEmail);
     if (!eventName.trim()) { setPhase1Error('Event Name is required'); return false; }
     if (!orgName.trim()) { setPhase1Error('Organization is required'); return false; }
+    if (!venueKey || !findVenueInCatalog(modernVenues, venueKey)) {
+      setPhase1Error('Select a venue');
+      return false;
+    }
+    const selectedVenue = modernVenues.find((venue) => venue.id === venueKey);
+    const currentVenueKey = editingEvent
+      ? eventVenueKey(editingEvent)
+      : '';
+    if (selectedVenue?.status === 'inactive' && selectedVenue.id !== currentVenueKey) {
+      setPhase1Error('This venue is inactive. Choose another hall.');
+      return false;
+    }
     if (!emailOk) { setPhase1Error('Please enter a valid client email'); return false; }
     setPhase1Error('');
     return true;
   };
   // Save invoice-specific details without modifying the original event
+  const closeEventWorkspace = () => {
+    setIsEventModalOpen(false);
+    setEditingEvent(null);
+    setIsCreatingEvent(false);
+    setIsAdjustMode(false);
+    setIsViewMode(false);
+    setIsEditingInvoiceDetails(false);
+    setIsCreatingInvoiceFromFolio(false);
+    setHoveredGanttEventId(null);
+    setEventSubmitting(false);
+  };
+
+  const closeReceiptWorkspace = () => {
+    setIsReceiptModalOpen(false);
+    setReceiptErrors({});
+    setReceiptPrintAfterSave(false);
+    setReceiptInvoiceLocked(false);
+    setReceiptInvoiceQuery('');
+    setReceiptForm({
+      id: '',
+      eventId: '',
+      eventName: '',
+      invoiceId: '',
+      clientName: '',
+      date: new Date().toISOString().split('T')[0],
+      amount: 0,
+      method: 'Cash',
+      reference: '',
+      checkNumber: '',
+      recordedBy: 'Events Team',
+      notes: '',
+    });
+  };
+
   const handleInvoiceDetailsSave = () => {
     if (!editingEvent) {
       alert('❌ No event selected for invoice details editing.');
@@ -3269,18 +3989,13 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     }
 
     try {
-      // Find the current invoice
       const currentInvoice = eventInvoices.find(inv => inv.eventId === editingEvent.id);
-      if (!currentInvoice) {
-        alert('❌ No invoice found for this event. Please create an invoice first.');
-        return;
-      }
-
-      // Create a snapshot of the current form state (this contains the edited pax, dates, rates etc.)
+      const totals = computeEventTotals();
+      const today = new Date().toISOString().split('T')[0];
       const formSnapshot: InvoiceFormSnapshot = {
         eventId: editingEvent.id,
-        eventName: editingEvent.name,
-        clientName: editingEvent.clientName,
+        eventName: getEventDisplayName(editingEvent),
+        clientName: getEventClientName(editingEvent),
         startDate: startDate,
         endDate: endDate,
         dailySchedule: dailySchedule,
@@ -3288,49 +4003,96 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         discountEnabled: discountEnabled,
         discountType: discountType,
         discountValue: discountValue,
-        subtotal: computeEventTotals().subtotal,
-        tax: computeEventTotals().tax,
-        total: computeEventTotals().total,
-        balance: computeEventTotals().total,
-        issueDate: new Date().toISOString().split('T')[0],
-        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-        status: 'Draft' as EventInvoiceStatus
+        subtotal: totals.subtotal,
+        tax: totals.tax,
+        total: totals.total,
+        balance: totals.total,
+        issueDate: currentInvoice?.issueDate || today,
+        dueDate: currentInvoice?.dueDate || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        status: (currentInvoice?.status || 'Issued') as EventInvoiceStatus
       };
 
-      // Update the invoice with the new snapshot and recalculated totals
+      const paidSoFar = currentInvoice
+        ? Math.max(0, Number(currentInvoice.total || 0) - Number(currentInvoice.balance || 0))
+        : 0;
+      const nextBalance = Math.max(0, formSnapshot.total - paidSoFar);
       const updatedInvoice: EventInvoice = {
-        ...currentInvoice,
+        id: allocateUniqueEventInvoiceId(currentInvoice?.id || invoiceForm.id, editingEvent.id),
+        eventId: editingEvent.id,
+        eventName: formSnapshot.eventName,
+        clientName: formSnapshot.clientName,
+        issueDate: formSnapshot.issueDate,
+        dueDate: formSnapshot.dueDate,
         formSnapshot,
         subtotal: formSnapshot.subtotal,
         tax: formSnapshot.tax,
         total: formSnapshot.total,
-        balance: formSnapshot.total, // Reset balance to new total
-        notes: `Invoice details updated on ${new Date().toLocaleDateString()}. ${currentInvoice.notes || ''}`.trim()
+        balance: nextBalance,
+        status: deriveInvoiceStatus(currentInvoice?.status || 'Issued', nextBalance, formSnapshot.total),
+        reference: currentInvoice?.reference || invoiceForm.reference || '',
+        notes: currentInvoice
+          ? `Invoice details updated on ${new Date().toLocaleDateString()}. ${currentInvoice.notes || ''}`.trim()
+          : `Invoice created from event ${formSnapshot.eventName}`
       };
 
-      // Update the invoice in state
-      setEventInvoices(prev => prev.map(inv => inv.id === currentInvoice.id ? updatedInvoice : inv));
+      if (currentInvoice) {
+        setEventInvoices((prev) => [updatedInvoice, ...prev.filter((inv) => inv.eventId !== editingEvent.id)]);
+        if (updatedInvoice.id !== currentInvoice.id || !eventHasLiveAccountingInvoice(editingEvent.id)) {
+          persistEventBookingPatch({ ...editingEvent, status: 'invoiced' }, { lastInvoiceId: updatedInvoice.id });
+          syncInvoiceToFolio(updatedInvoice, true);
+          captureEventInvoiceToAccounting(updatedInvoice, editingEvent);
+        }
+      } else {
+        setEventInvoices((prev) => [updatedInvoice, ...prev.filter((inv) => inv.eventId !== editingEvent.id)]);
+        const currentStatus = normalizeStatus(editingEvent.status);
+        if (currentStatus === 'confirmed' || currentStatus === 'quote') {
+          setCustomEvents(prev => prev.map(ev =>
+            ev.id === editingEvent.id
+              ? {
+                  ...ev,
+                  status: 'invoiced' as const,
+                  venue: venueKey || ev.venue,
+                  venueKey: venueKey || ev.venueKey,
+                  venueName: findVenueInCatalog(modernVenues, venueKey, ev.venueName)?.name || ev.venueName,
+                }
+              : ev
+          ));
+        }
+        persistEventBookingPatch({
+          ...editingEvent,
+          status: 'invoiced',
+          venue: venueKey || editingEvent.venue,
+          venueKey: venueKey || editingEvent.venueKey,
+          venueName: findVenueInCatalog(modernVenues, venueKey, editingEvent.venueName)?.name || editingEvent.venueName,
+        }, { lastInvoiceId: updatedInvoice.id });
+        syncInvoiceToFolio(updatedInvoice);
+        captureEventInvoiceToAccounting(updatedInvoice, editingEvent);
+        setSelectedTab('confirmed');
+        setManagementMainTab('invoices');
+        setLastCreatedInvoiceId(updatedInvoice.id);
+        trackEvent('Events.EventCreated', { action: 'invoice_created', eventId: editingEvent.id, invoiceId: updatedInvoice.id });
+      }
 
       // If this invoice is already imported to a folio, update the folio entry
-      const activeFolio = eventFolios.find(f => f.eventId === editingEvent.id);
-      if (activeFolio) {
-        const existingEntry = activeFolio.entries.find(e =>
+      const folioForInvoice = eventFolios.find(f => f.eventId === editingEvent.id);
+      if (currentInvoice && folioForInvoice) {
+        const existingEntry = folioForInvoice.entries.find(e =>
           e.reference === currentInvoice.id || e.description.includes(`Invoice ${currentInvoice.id}`)
         );
 
         if (existingEntry) {
           // Update the existing folio entry with new totals
-          const entryIndex = activeFolio.entries.findIndex(e => e.id === existingEntry.id);
+          const entryIndex = folioForInvoice.entries.findIndex(e => e.id === existingEntry.id);
           if (entryIndex !== -1) {
-            const previousBalance = entryIndex > 0 ? activeFolio.entries[entryIndex - 1].balance : 0;
+            const previousBalance = entryIndex > 0 ? folioForInvoice.entries[entryIndex - 1].balance : 0;
             const newBalance = previousBalance + updatedInvoice.total;
 
-            const updatedEntries = [...activeFolio.entries];
+            const updatedEntries = [...folioForInvoice.entries];
             updatedEntries[entryIndex] = {
               ...existingEntry,
               debit: updatedInvoice.total,
               balance: newBalance,
-              description: `Invoice ${updatedInvoice.id} - Updated Details`
+              description: 'Invoice'
             };
 
             // Update subsequent entries' balances
@@ -3344,25 +4106,22 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
             }
 
             setEventFolios(prev => prev.map(f =>
-              f.id === activeFolio.id
+              f.id === folioForInvoice.id
                 ? { ...f, entries: updatedEntries, updatedAt: new Date().toISOString() }
                 : f
             ));
 
-            if (activeFolio.id === activeFolio?.id) {
-              setActiveFolio({ ...activeFolio, entries: updatedEntries, updatedAt: new Date().toISOString() });
+            if (activeFolio?.id === folioForInvoice.id) {
+              setActiveFolio({ ...folioForInvoice, entries: updatedEntries, updatedAt: new Date().toISOString() });
             }
           }
         }
       }
 
-      // Close modal and reset editing state
-      setIsEventModalOpen(false);
-      setIsEditingInvoiceDetails(false);
-
-      alert(`✅ Invoice details updated successfully!\n\nNew Total: ₵${formatCurrency(updatedInvoice.total)}\n\nNote: Original event data remains unchanged.`);
-
-      console.log('[Invoice] Details updated successfully:', updatedInvoice.id);
+      closeEventWorkspace();
+      setSelectedTab('confirmed');
+      setManagementMainTab('invoices');
+      console.log('[Invoice] Saved:', updatedInvoice.id, currentInvoice ? 'updated' : 'created');
 
     } catch (error) {
       console.error('[Invoice] Error saving invoice details:', error);
@@ -3370,10 +4129,16 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     }
   };
 
-  const handleEventSubmit = () => {
+  const handleEventSubmit = (statusOverride?: SimpleEventStatus) => {
     if (eventSubmitting) return;
     if (!validateEventForm()) return;
     setEventSubmitting(true);
+    const savedStatus = (
+      statusOverride === 'quote' ||
+      statusOverride === 'confirmed' ||
+      statusOverride === 'invoiced' ||
+      statusOverride === 'cancelled'
+    ) ? statusOverride : eventStatus;
 
     try {
       const totals = computeEventTotals();
@@ -3397,7 +4162,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       const durationDays = (!isNaN(startDateObj.getTime()) && !isNaN(endDateObj.getTime()))
         ? Math.max(1, Math.round((endDateObj.getTime() - startDateObj.getTime()) / (1000 * 60 * 60 * 24)) + 1)
         : Math.max(1, schedule.length);
-      const venueInfo = modernVenues.find(v => v.id === venueKey);
+      const venueInfo = findVenueInCatalog(modernVenues, venueKey);
 
       let conferenceCost = 0;
       let lunchCost = 0;
@@ -3466,7 +4231,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         taxes: totals.tax,
         totalCost: totals.total
       };
-      const bookingStatus = bookingStatusMap[eventStatus];
+      const bookingStatus = bookingStatusMap[savedStatus] || bookingStatusMap.quote;
       // Check if we're editing an existing event (not a stub created during new event flow)
       const isEditing = editingEvent?.id && !isCreatingEvent && editingEvent?.linkedBooking;
       const existingBookingId = editingEvent?.linkedBooking;
@@ -3541,18 +4306,21 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         eventName,
         eventType: isResidential ? 'residential-conference' : 'non-residential',
         venue: venueKey || '',
-        venueName: venueInfo?.name || 'Unassigned Venue',
+        venueName: venueInfo?.name || '',
         arrivalDate: fallbackStart,
         departureDate: fallbackEnd,
         duration: durationDays,
         pax: attendees || 0,
         residential: isResidential,
-        status: eventStatus,
-        statusColor: eventStatusColorMap[eventStatus],
+        status: savedStatus,
+        statusColor: eventStatusColorMap[savedStatus] || eventStatusColorMap[eventStatus],
         revenue: totals.total,
         deposit: depositAmount,
         balance: Math.max(0, totals.total - depositAmount),
-        eventCoordinator: editingEvent?.eventCoordinator || UNASSIGNED_STAFF,
+        eventCoordinator: resolveCoordinatorValue(eventCoordinator),
+        nextAction: nextAction.trim(),
+        followUpDate,
+        quoteNumber: editingEvent?.quoteNumber || (savedStatus === 'quote' ? nextSequenceLabel('Q', quoteIdSequence) : ''),
         notes: '',
         specialRequirements: '',
         setupTime: '',
@@ -3561,9 +4329,11 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         contactEmail: orgClientEmail,
         linkedQuote: editingQuote?.quoteNumber || null,
         linkedBooking: booking.id,
-        linkedBEO: null,
-        linkedFolio: null,
+        linkedBEO: editingEvent?.linkedBEO || null,
+        linkedFolio: editingEvent?.linkedFolio || null,
         venueKey,
+        completionStatus: editingEvent?.completionStatus,
+        checkedIn: editingEvent?.checkedIn,
         startDate: fallbackStart,
         endDate: fallbackEnd,
         expectedPax: attendees || 0,
@@ -3613,17 +4383,65 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         // Add new event
         return [uiEvent, ...prev];
       });
+      void saveEventBooking({
+        id: String(uiEvent.id),
+        title: eventName || 'Unnamed',
+        organizer: orgName || '—',
+        contactPerson: (clientContactName || '').trim() || orgName,
+        contactPhone: orgContactPhone,
+        contactEmail: orgClientEmail,
+        hallId: venueKey || '',
+        hallName: venueInfo?.name || '',
+        startDate: fallbackStart,
+        endDate: fallbackEnd,
+        attendees: attendees || 0,
+        status: savedStatus || 'pending',
+        type: isResidential ? 'residential-conference' : 'conference',
+        catering: dinnerCost > 0 || lunchCost > 0,
+        audioVisual: false,
+        decoration: false,
+        totalCost: totals.total,
+        details: {
+          quoteBudgetSnapshot,
+          costBreakdown,
+          particularLabels,
+          ratesByParticulars: Boolean(ratesByParticulars),
+          combinedPackage: !ratesByParticulars,
+          residential: Boolean(isResidential),
+          dailySchedule: schedule,
+          conferenceRate,
+          lunchRate,
+          dinnerRate,
+          roomRate,
+          defaultDayRate,
+          completionStatus: editingEvent?.completionStatus,
+          checkedIn: editingEvent?.checkedIn,
+          eventCoordinator: uiEvent.eventCoordinator,
+          nextAction: uiEvent.nextAction,
+          followUpDate: uiEvent.followUpDate,
+          quoteNumber: uiEvent.quoteNumber,
+          venueKey: venueKey || '',
+          venueName: venueInfo?.name || '',
+        },
+      }).catch(() => {});
       trackEvent('Events.EventCreated', {
         action: isEditing ? 'updated' : 'created',
         eventId: uiEvent.id,
         attendees,
         venueId: venueKey,
-        status: eventStatus
+        status: savedStatus
       });
+
+      if (savedStatus === 'quote' && totals.total > 0) {
+        syncEventQuoteToAccounting(uiEvent, totals);
+      }
+      if ((savedStatus === 'invoiced' || eventInvoices.some((inv) => inv.eventId === uiEvent.id)) && uiEvent.id) {
+        markConferenceProformaConverted(String(uiEvent.id));
+      }
       
       // ===== ACCOUNTING INTEGRATION =====
       // When event is confirmed, capture revenue only if no Events invoice exists yet
-      if (eventStatus === 'confirmed' && totals.total > 0) {
+      if (savedStatus === 'confirmed' && totals.total > 0) {
         try {
           const hasEventsInvoice = eventInvoices.some((inv) => inv.eventId === uiEvent.id);
           let result: ReturnType<typeof captureRevenue> | undefined;
@@ -3686,10 +4504,9 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         }
       }
       
-      setIsEventModalOpen(false);
-      setEditingEvent(null);
-      setIsCreatingEvent(false);
-      setIsAdjustMode(false);
+      closeEventWorkspace();
+      setSelectedTab('confirmed');
+      setManagementMainTab('events');
     } catch (error) {
       console.error('Failed to create event booking', error);
     } finally {
@@ -3713,13 +4530,16 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setEventStatus(normalizeStatus(event?.status));
     setStartDate(event?.arrivalDate || event?.startDate || '');
     setEndDate(event?.departureDate || event?.endDate || '');
-    setVenueKey(event?.venue || event?.venueKey || '');
+    setVenueKey(event?.venueKey || event?.venue || '');
     setExpectedPax(
       typeof event?.expectedPax === 'number'
         ? event.expectedPax
         : (event?.pax || 0)
     );
     setEventTaxExempt(Boolean(event?.isTaxExempt ?? event?.taxExempt));
+    setEventCoordinator(resolveEventCoordinator(event));
+    setNextAction(event?.nextAction || '');
+    setFollowUpDate(event?.followUpDate || '');
 
     if (Array.isArray(event?.dailySchedule) && event.dailySchedule.length) {
       setDailySchedule(event.dailySchedule);
@@ -3808,7 +4628,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     const todayStr = new Date().toISOString().split('T')[0];
     const arrival = seed.arrivalDate || todayStr;
     const departure = seed.departureDate || arrival;
-    const venue = seed.venue || '';
+    const venue = seed.venueKey || seed.venue || '';
     const pax = typeof seed.pax === 'number' ? seed.pax : 0;
 
     setEventName(seed.eventName || '');
@@ -3824,6 +4644,9 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setVenueKey(venue);
     setExpectedPax(pax);
     setEventTaxExempt(false);
+    setEventCoordinator(UNASSIGNED_STAFF);
+    setNextAction('');
+    setFollowUpDate('');
     setPhase1Error('');
 
     setDailySchedule([]);
@@ -3995,6 +4818,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         // If creating invoice, automatically update status to 'invoiced' if currently 'confirmed' or 'quote'
         const currentStatus = normalizeStatus(savedEvent.status);
         const shouldUpdateToInvoiced = currentStatus === 'confirmed' || currentStatus === 'quote';
+        persistEventBookingPatch({ ...savedEvent, status: shouldUpdateToInvoiced ? 'invoiced' : savedEvent.status }, { lastInvoiceId: newInvoice.id });
         
         if (shouldUpdateToInvoiced) {
           // Update in customEvents
@@ -4194,19 +5018,43 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     closeVenueModal();
   };
 
+  const getEventsUsingVenue = (venue: VenueDetails) =>
+    customEvents.filter(
+      (event) => event?.id && !isHardcodedDemoEventId(event.id) && eventUsesVenue(event, venue)
+    );
+
+  const deactivateVenue = (venue: VenueDetails) => {
+    setModernVenues((prev) =>
+      prev.map((item) => (item.id === venue.id ? { ...item, status: 'inactive' } : item))
+    );
+    trackEvent('Events.VenueBooked', { action: 'deactivated', venueId: venue.id });
+  };
+
   const handleDeleteVenue = (venue: VenueDetails) => {
+    const linked = getEventsUsingVenue(venue);
+    if (linked.length) {
+      if (venue.status === 'inactive') {
+        alert(
+          `${venue.name} has ${linked.length} event${linked.length === 1 ? '' : 's'} and cannot be deleted. It is already inactive.`
+        );
+        return;
+      }
+      if (
+        !confirm(
+          `${venue.name} has ${linked.length} event${linked.length === 1 ? '' : 's'} and cannot be deleted. Mark it Inactive so it stays off new bookings but history is kept?`
+        )
+      ) {
+        return;
+      }
+      deactivateVenue(venue);
+      return;
+    }
+
     if (!confirm(`Delete ${venue.name}? This action cannot be undone.`)) {
       return;
     }
 
-    setModernVenues(prev => prev.filter(item => item.id !== venue.id));
-    setCustomEvents(prev =>
-      prev.map(event =>
-        event.venue === venue.id
-          ? { ...event, venue: '', venueName: 'Unassigned Venue' }
-          : event
-      )
-    );
+    setModernVenues((prev) => prev.filter((item) => item.id !== venue.id));
 
     if (venueKey === venue.id) {
       setVenueKey('');
@@ -4338,7 +5186,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     const quoteDraft = {
       id: quoteId,
       eventId: editingEvent?.id || editingQuote?.eventId,
-      quoteNumber: editingQuote?.quoteNumber || `Q-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`,
+      quoteNumber: editingQuote?.quoteNumber || nextSequenceLabel('Q', quoteIdSequence),
       clientName: orgName,
       clientEmail: orgClientEmail,
       clientPhone: orgContactPhone,
@@ -4378,53 +5226,9 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
 
   const handleGenerateQuoteFromEvent = () => {
     if (!validateEventForm()) return;
-    const { quoteDraft, quoteDayDrafts } = buildQuoteFromCurrentEvent();
-    setEditingQuote({ ...quoteDraft, eventId: editingEvent?.id || quoteDraft.eventId });
-    setQuoteDays(quoteDayDrafts);
-    setQuoteTaxExempt(eventTaxExempt);
-    trackEvent('Events.EventCreated', { action: 'quote_modal_opened', quoteId: quoteDraft.id, eventName });
-    setIsQuoteModalOpen(true);
-    setIsEventModalOpen(false);
-    setIsAdjustMode(false);
-  };
-
-  const openBlankQuoteModal = () => {
-    const today = new Date().toISOString().split('T')[0];
-    const quoteId = `quote-${Date.now()}`;
-    const quoteNumber = `Q-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000 + 1000)}`;
-    setEditingQuote({
-      id: quoteId,
-      quoteNumber,
-      clientName: '',
-      clientEmail: '',
-      clientPhone: '',
-      eventName: '',
-      eventType: 'conference',
-      startDate: today,
-      endDate: today,
-      totalDays: 1,
-      validity: '14 days',
-      status: 'draft',
-      createdAt: new Date().toISOString(),
-      depositRequired: 50,
-      paymentTerms: '50% deposit required to confirm booking',
-      cancellationPolicy: 'Deposit non-refundable within 14 days of event',
-      guaranteePolicy: 'Final numbers guaranteed 48 hours before event',
-      specialRequirements: '',
-      setupTime: '',
-      contactPerson: '',
-    });
-    setQuoteDays([
-      {
-        id: `quote-day-${Date.now()}`,
-        label: 'Day 1',
-        date: today,
-        services: [],
-      },
-    ]);
-    setQuoteTaxExempt(false);
-    setIsQuoteModalOpen(true);
-    trackEvent('Events.EventCreated', { action: 'blank_quote_modal_opened', quoteId });
+    setEventStatus('quote');
+    handleEventSubmit('quote');
+    trackEvent('Events.EventCreated', { action: 'quote_saved_from_event', eventName });
   };
 
   const handleSaveQuoteDraft = () => {
@@ -4446,7 +5250,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       return;
     }
     const totals = calculateQuoteTotals(exportQuote);
-    const quoteNumber = exportQuote.quoteNumber || `Q-${Date.now()}`;
+    const quoteNumber = exportQuote.quoteNumber || nextSequenceLabel('Q', quoteIdSequence);
     const linkedEventId = exportQuote.eventId || editingEvent?.id;
 
     if (linkedEventId) {
@@ -4498,13 +5302,30 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setEditingQuote({ ...exportQuote, quoteNumber, status: 'draft' });
     trackEvent('Events.EventCreated', { action: 'quote_draft_saved', quoteId: exportQuote.id, quoteNumber });
     alert(`Quote ${quoteNumber} saved.`);
-    setIsQuoteModalOpen(false);
+  };
+
+  const getInvoiceableProformas = () =>
+    allEvents.filter((ev) => {
+      const status = normalizeStatus(ev.status || ev.eventStatus);
+      return status !== 'cancelled' && !eventInvoices.some((inv) => inv.eventId === ev.id);
+    });
+
+  const getProformaPickerLabel = (ev: any) => {
+    const quoteNo = ev?.quoteNumber || formatEventId(ev?.id) || 'Quote';
+    const name = getEventDisplayName(ev);
+    const client = getEventClientName(ev);
+    const amount = formatCurrency(Number(ev?.budgetTotal || ev?.revenue || ev?.totalCost || 0));
+    return `${quoteNo} · ${name} · ${client} · ${amount}`;
   };
 
   const openCreateInvoicePicker = () => {
-    const eligible = allEvents.filter((ev) => !eventInvoices.some((inv) => inv.eventId === ev.id));
+    const eligible = getInvoiceableProformas();
     if (!eligible.length) {
-      alert('All events already have invoices. Edit an existing invoice instead.');
+      alert('No proformas are ready to invoice. Create a quote first, or edit an existing invoice.');
+      return;
+    }
+    if (eligible.length === 1) {
+      openEventInvoiceForm(eligible[0]);
       return;
     }
     setInvoiceCreateEventId(eligible[0]?.id || '');
@@ -4514,11 +5335,11 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
   const confirmCreateInvoiceForEvent = () => {
     const event = allEvents.find((ev) => ev.id === invoiceCreateEventId);
     if (!event) {
-      alert('Select an event to invoice.');
+      alert('Select a proforma to convert to an invoice.');
       return;
     }
     setIsInvoiceEventPickerOpen(false);
-    openInvoiceModal('create', undefined, event);
+    openEventInvoiceForm(event);
   };
 
   const handleOpenContractFromEvent = () => {
@@ -4815,9 +5636,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
 
   // Print an invoice straight from the event's live computed totals — for a
   // Confirmed/Quote event that doesn't (yet) have a separately tracked
-  // EventInvoice record (see the "Quick Import & Create" folio workflow for
-  // that). Keeps Invoice/Receipt usable on any priced event, not just ones
-  // someone remembered to formally invoice first.
+  // EventInvoice record. Keeps Invoice/Receipt usable on any priced event.
   const handlePrintEventInvoicePdf = (templateOverride?: string) => {
     const { type, data } = buildEventPrintData('invoice');
     if (!data) {
@@ -4876,7 +5695,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         title: 'Receipt',
         items: [
           {
-            description: `Payment received (${method})${receipt.reference ? ` · ${receipt.reference}` : ''}`,
+            description: `Payment received (${method})${receipt.checkNumber ? ` · Cheque ${receipt.checkNumber}` : ''}${receipt.reference ? ` · ${receipt.reference}` : ''}`,
             amount: receipt.amount,
             date: receipt.date,
           },
@@ -5200,7 +6019,6 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       status: 'pending'
     };
     setEditingEvent(eventDraft);
-    setIsQuoteModalOpen(false);
     setIsEventModalOpen(true);
     trackEvent('Events.QuoteConverted', { quoteId: exportQuote.id });
   };
@@ -5569,7 +6387,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       },
     ];
 
-    const coordinator = getEventCoordinator(event);
+    const coordinator = resolveEventCoordinator(event);
     if (coordinator !== UNASSIGNED_STAFF) {
       contacts.push({
         name: coordinator,
@@ -5607,9 +6425,9 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
           pax: String(selectedEventForBEO.pax ?? ''),
           notes: selectedEventForBEO.notes || '',
           eventCoordinator:
-            getEventCoordinator(selectedEventForBEO) === UNASSIGNED_STAFF
+            resolveEventCoordinator(selectedEventForBEO) === UNASSIGNED_STAFF
               ? ''
-              : getEventCoordinator(selectedEventForBEO),
+              : resolveEventCoordinator(selectedEventForBEO),
         },
         room: {
           layout: roomSetup.layout || '',
@@ -5659,6 +6477,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       });
     } else if (!isBEOModalOpen) {
       setBeoForm(null);
+      setBeoWorkspaceTab('overview');
     }
   }, [isBEOModalOpen, selectedEventForBEO]);
 
@@ -5811,7 +6630,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       instructionSummary
     ].filter(Boolean).join('\n').trim();
 
-    const eventCoordinator = beoForm.eventInfo.eventCoordinator?.trim() || UNASSIGNED_STAFF;
+    const eventCoordinator = resolveCoordinatorValue(beoForm.eventInfo.eventCoordinator);
     const customContacts = getContactList({
       contactPerson: beoForm.eventInfo.contactPerson,
       contactPhone: beoForm.eventInfo.contactPhone,
@@ -5890,29 +6709,47 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       });
     }
 
+    persistEventBookingPatch(savedEvent, {
+      eventCoordinator: savedEvent.eventCoordinator,
+      beoForm,
+      linkedBEO: savedEvent.linkedBEO,
+    });
     generateBEO(savedEvent);
     generateFunctionSheet(savedEvent);
     trackEvent('Events.EventCreated', { action: 'beo_saved', eventId: savedEvent.id });
     setIsBEOModalOpen(false);
   };
 
-  // Helper functions for export operations
-  const getFoodBeverageServices = (event: any) => {
-    const services = [];
-    if (event.duration > 0) services.push('ARRIVAL DINNER');
-    if (event.duration > 1) {
-      services.push('MORNING SNACK', 'LUNCH');
-      if (event.duration > 2) services.push('AFTERNOON SNACK', 'DINNER');
-    }
-    return services.join(', ');
+  const handleSendFunctionSheetToDepartments = () => {
+    if (!beoForm || !selectedEventForBEO) return;
+    const name = beoForm.eventInfo?.eventName || selectedEventForBEO.eventName || 'Event';
+    const venue = beoForm.eventInfo?.venueName || selectedEventForBEO.venueName || 'venue TBC';
+    const dates = formatEventTableRange(beoForm.eventInfo?.arrivalDate, beoForm.eventInfo?.departureDate);
+    const pax = beoForm.eventInfo?.pax || selectedEventForBEO.pax || 0;
+    const layout = beoForm.room?.layout ? `Layout ${beoForm.room.layout}` : '';
+    const meals = [beoForm.catering?.lunch && 'lunch', beoForm.catering?.dinner && 'dinner'].filter(Boolean).join(', ');
+    const duties = (beoForm.departmentChecklist || [])
+      .filter((item: any) => item?.department)
+      .map((item: any) => `${item.department}: ${item.activity || item.status || 'action'}`)
+      .slice(0, 6)
+      .join('; ');
+    const targets: DepartmentKey[] = ['frontdesk', 'housekeeping', 'f&b'];
+    if (beoForm.technical?.equipment || beoForm.technical?.notes) targets.push('inventory');
+    announcementStore.publish({
+      level: 'normal',
+      from: 'events',
+      departments: Array.from(new Set(targets)),
+      mentions: ['frontdesk', 'housekeeping', 'f&b'],
+      message: `Function sheet: ${name} · ${venue} · ${dates} · ${pax} pax${layout ? ` · ${layout}` : ''}${meals ? ` · ${meals}` : ''}${duties ? ` · Duties: ${duties}` : ''}. Please action.`,
+    });
+    persistEventBookingPatch(selectedEventForBEO, { functionSheetSentAt: new Date().toISOString() });
+    trackEvent('Events.EventCreated', { action: 'function_sheet_sent', eventId: selectedEventForBEO.id });
+    alert('Function sheet sent to Front Office, Housekeeping, and Restaurant.');
   };
 
-  const getHousekeepingNotes = (event: any) => {
-    if (event.residential) {
-      return `PREPARE ${event.pax} ROOMS`;
-    }
-    return 'N/A';
-  };
+  // Helper functions for export operations
+  const getFoodBeverageServices = (event: any) => functionFbDuties(event);
+  const getHousekeepingNotes = (event: any) => functionHkDuties(event);
 
   const getProgrammeType = (event: any) => {
     switch (event.eventType) {
@@ -6368,64 +7205,46 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     setIsInvoiceModalOpen(true);
   };
 
-  // Open detailed invoice editing - allows editing pax, dates, rates without affecting original event
-  const openInvoiceDetailEdit = (invoice: EventInvoice) => {
-    const event = allEvents.find(ev => ev.id === invoice.eventId);
+  const openEventInvoiceForm = (event: any, invoice?: EventInvoice) => {
     if (!event) {
-      alert('❌ Event not found for this invoice.');
+      alert('Event not found for this invoice.');
       return;
     }
 
-    // Always load event data first to populate base form
     convertCustomEventToFormState(event);
-
-    // Then apply invoice snapshot if available (overrides with saved invoice edits)
-    if (invoice.formSnapshot) {
+    if (invoice?.formSnapshot) {
       applyInvoiceSnapshotToState(invoice.formSnapshot);
-    } else {
-      // Create a snapshot from invoice data if no formSnapshot exists
-      // This ensures consistency with the full form experience
-      const invoiceStart = invoice.issueDate || event.startDate || new Date().toISOString().split('T')[0];
-      const invoiceEnd = invoice.dueDate || event.endDate || invoiceStart;
-      setStartDate(invoiceStart);
-      setEndDate(invoiceEnd);
-      
-      // Set financial totals from invoice
-      if (invoice.subtotal !== undefined) {
-        // Apply invoice totals to the form
-        setDiscountEnabled(false);
-        setDiscountValue(0);
-      }
     }
 
-    // Set invoice-specific flags
     setIsCreatingEvent(false);
     setIsViewMode(false);
     setIsAdjustMode(false);
     setIsCreatingInvoiceFromFolio(false);
     setEditingEvent(event);
     setEventStatus('invoiced');
-
-    // Store the invoice ID for saving later
-    setInvoiceForm(prev => ({ 
-      ...prev, 
-      id: invoice.id,
-      eventId: invoice.eventId,
-      eventName: invoice.eventName,
-      clientName: invoice.clientName,
-      subtotal: invoice.subtotal,
-      tax: invoice.tax,
-      total: invoice.total,
-      balance: invoice.balance,
-      status: invoice.status,
-      notes: invoice.notes || ''
+    setInvoiceForm((prev) => ({
+      ...prev,
+      id: allocateUniqueEventInvoiceId(invoice?.id, event.id),
+      eventId: event.id,
+      eventName: invoice?.eventName || getEventDisplayName(event),
+      clientName: invoice?.clientName || getEventClientName(event),
+      subtotal: invoice?.subtotal,
+      tax: invoice?.tax,
+      total: invoice?.total,
+      balance: invoice?.balance,
+      status: invoice?.status || 'Issued',
+      notes: invoice?.notes || '',
+      issueDate: invoice?.issueDate,
+      dueDate: invoice?.dueDate,
+      reference: invoice?.reference || '',
     }));
-
-    // Mark that we're editing invoice details specifically
     setIsEditingInvoiceDetails(true);
-
-    // Open the event modal in a special invoice editing mode
     setIsEventModalOpen(true);
+  };
+
+  const openInvoiceDetailEdit = (invoice: EventInvoice) => {
+    const event = allEvents.find(ev => ev.id === invoice.eventId);
+    openEventInvoiceForm(event, invoice);
   };
 
   const validateInvoiceForm = () => {
@@ -6454,7 +7273,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const balance = Number(invoiceForm.balance ?? total);
 
     const payload: EventInvoice = {
-      id: invoiceForm.id || genId('INV'),
+      id: allocateUniqueEventInvoiceId(invoiceForm.id, invoiceForm.eventId || event?.id || ''),
       eventId: invoiceForm.eventId || '',
       eventName: invoiceForm.eventName || getEventDisplayName(event),
       clientName: invoiceForm.clientName || getEventClientName(event),
@@ -6515,6 +7334,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     if (isNewInvoice) {
       try {
         setSelectedTab('confirmed');
+        setManagementMainTab('invoices');
         setLastCreatedInvoiceId(payload.id);
       } catch (error) {
         console.error('Error navigating to invoice management after invoice creation:', error);
@@ -6534,41 +7354,127 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     );
   };
 
-  const openReceiptModal = (mode: 'create' | 'edit', receipt?: EventReceipt, eventOverride?: any) => {
-    const defaultEvent =
-      eventOverride ||
-      (receipt?.eventId ? allEvents.find(ev => ev.id === receipt.eventId) : allEvents[0]);
-    const today = new Date().toISOString().split('T')[0];
+  const getPayableInvoices = () =>
+    eventInvoices.filter((inv) => Number(inv.balance || 0) > 0);
 
-    setReceiptForm(
-      receipt
-        ? { ...receipt }
-        : {
-            id: genId('RCPT'),
-            eventId: defaultEvent?.id || '',
-            eventName: getEventDisplayName(defaultEvent),
-            invoiceId: '',
-            clientName: getEventClientName(defaultEvent),
-            date: today,
-            amount: Number(defaultEvent?.deposit || defaultEvent?.balance || 0),
-            method: 'Cash',
-            reference: '',
-            recordedBy: 'Events Team',
-            notes: ''
-          }
+  const getInvoiceReceiptLabel = (inv: EventInvoice) => {
+    const outstanding = Number(inv.balance || 0);
+    const due = outstanding > 0 ? `${formatCurrency(outstanding)} due` : 'Paid';
+    const number = getConferenceInvoiceNumber(inv.id, inv.eventId) || 'Invoice';
+    return `${number} · ${inv.eventName || 'Event'} · ${inv.clientName || 'Client'} · ${due}`;
+  };
+
+  const openReceiptFromInvoice = (invoice: EventInvoice, receipt?: EventReceipt) => {
+    const event = allEvents.find((ev) => ev.id === invoice.eventId);
+    openReceiptModal(receipt ? 'edit' : 'create', receipt, {
+      ...(event || {}),
+      id: invoice.eventId,
+      eventId: invoice.eventId,
+      invoiceId: invoice.id,
+      balance: invoice.balance,
+    });
+  };
+
+  const openCreateReceiptPicker = () => {
+    const payable = getPayableInvoices();
+    if (payable.length === 1) {
+      openReceiptFromInvoice(payable[0]);
+      return;
+    }
+    if (eventInvoices.length === 1) {
+      openReceiptFromInvoice(eventInvoices[0]);
+      return;
+    }
+    openReceiptModal('create', undefined, { skipDefaultEvent: true });
+  };
+
+  const openReceiptModal = (mode: 'create' | 'edit', receipt?: EventReceipt, eventOverride?: any) => {
+    const today = new Date().toISOString().split('T')[0];
+    const recorder = eventStaffOptions[0]?.label || 'Events Team';
+
+    if (receipt) {
+      setReceiptForm({ ...receipt });
+      setReceiptModalMode(mode);
+      setReceiptErrors({});
+      setReceiptPrintAfterSave(false);
+      setReceiptInvoiceLocked(true);
+      setReceiptInvoiceQuery('');
+      setIsReceiptModalOpen(true);
+      return;
+    }
+
+    if (eventOverride?.skipDefaultEvent) {
+      setReceiptInvoiceLocked(false);
+      setReceiptInvoiceQuery('');
+      setReceiptForm({
+        id: genId('RCPT'),
+        eventId: '',
+        eventName: '',
+        invoiceId: '',
+        clientName: '',
+        date: today,
+        amount: 0,
+        method: 'Cash',
+        reference: '',
+        checkNumber: '',
+        recordedBy: recorder,
+        notes: ''
+      });
+      setReceiptModalMode(mode);
+      setReceiptErrors({});
+      setReceiptPrintAfterSave(true);
+      setIsReceiptModalOpen(true);
+      return;
+    }
+
+    const defaultEvent =
+      eventOverride && (eventOverride.id || eventOverride.eventId)
+        ? (allEvents.find((ev) => ev.id === (eventOverride.id || eventOverride.eventId)) || eventOverride)
+        : undefined;
+    const linkedInvoice = eventOverride?.invoiceId
+      ? eventInvoices.find((inv) => inv.id === eventOverride.invoiceId)
+      : defaultEvent
+        ? eventInvoices.find((inv) => inv.eventId === defaultEvent.id)
+        : undefined;
+    const outstanding = Number(
+      eventOverride?.balance ??
+      linkedInvoice?.balance ??
+      defaultEvent?.balance ??
+      0
     );
+
+    const resolvedInvoiceId = eventOverride?.invoiceId || linkedInvoice?.id || '';
+    setReceiptForm({
+      id: genId('RCPT'),
+      eventId: defaultEvent?.id || eventOverride?.eventId || '',
+      eventName: getEventDisplayName(defaultEvent) || eventOverride?.eventName || '',
+      invoiceId: resolvedInvoiceId,
+      clientName: getEventClientName(defaultEvent) || eventOverride?.clientName || '',
+      date: today,
+      amount: outstanding,
+      method: 'Cash',
+      reference: '',
+      checkNumber: '',
+      recordedBy: recorder,
+      notes: ''
+    });
 
     setReceiptModalMode(mode);
     setReceiptErrors({});
+    setReceiptPrintAfterSave(true);
+    setReceiptInvoiceLocked(Boolean(resolvedInvoiceId));
+    setReceiptInvoiceQuery('');
     setIsReceiptModalOpen(true);
   };
 
   const validateReceiptForm = () => {
     const errors: Record<string, string> = {};
-    if (!receiptForm.eventId) errors.eventId = 'Select an event';
+    if (!receiptForm.invoiceId) errors.invoiceId = 'Select the invoice this payment is for';
+    if (!receiptForm.eventId) errors.eventId = 'Select an invoice with an event';
     if (!receiptForm.clientName || !receiptForm.clientName.trim()) errors.clientName = 'Client name is required';
     if (!receiptForm.date) errors.date = 'Receipt date is required';
     if (Number.isNaN(Number(receiptForm.amount)) || Number(receiptForm.amount ?? 0) <= 0) errors.amount = 'Enter a valid amount';
+    if (receiptForm.method === 'Cheque' && !receiptForm.checkNumber?.trim()) errors.checkNumber = 'Cheque number is required';
     setReceiptErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -6586,8 +7492,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       clientName: receiptForm.clientName || getEventClientName(event),
       date: receiptForm.date || new Date().toISOString().split('T')[0],
       amount,
-      method: (receiptForm.method || 'Cash') as ReceiptMethod,
+      method: resolveReceiptMethod(receiptForm.method),
       reference: receiptForm.reference || '',
+      checkNumber: receiptForm.checkNumber || '',
       recordedBy: receiptForm.recordedBy || 'Events Team',
       notes: receiptForm.notes || ''
     };
@@ -6614,107 +7521,65 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         prev.map(inv => {
           if (inv.id !== payload.invoiceId) return inv;
           const newBalance = Math.max(0, (inv.balance || inv.total || 0) - amount);
-          const updatedInvoice = {
+          return {
             ...inv,
             balance: newBalance,
             status: deriveInvoiceStatus(inv.status, newBalance, inv.total)
           };
-          
-          // Sync receipt payment to folio
-          const folio = eventFolios.find(f => f.eventId === payload.eventId);
-          if (folio) {
-            const lastBalance = getFolioCurrentBalance(folio);
-            const paymentEntry: EventFolioEntry = {
-              id: genId('FLE'),
-              date: payload.date || new Date().toISOString().split('T')[0],
-              description: `Payment - Receipt ${payload.id}${payload.invoiceId ? ` (Invoice ${payload.invoiceId})` : ''}`,
-              debit: 0,
-              credit: amount,
-              balance: lastBalance - amount,
-              reference: payload.id
-            };
-            
-    setEventFolios((prev: EventFolio[]) =>
-      prev.map((f: EventFolio) =>
-                f.id === folio.id
-                  ? { ...f, entries: [...f.entries, paymentEntry], updatedAt: new Date().toISOString() }
-                  : f
-              )
-            );
-            
-            if (activeFolio && activeFolio.id === folio.id) {
-              setActiveFolio((prev: any) =>
-                prev && prev.id === folio.id
-                  ? { ...prev, entries: [...prev.entries, paymentEntry], updatedAt: new Date().toISOString() }
-                  : prev
-              );
-            }
-            
-            console.log('[Folio] Added receipt payment:', payload.id, formatCurrency(amount));
-          } else {
-            // Ensure folio exists and add payment
-            const createdFolio = ensureFolioExists(payload.eventId);
-            if (createdFolio) {
-              const lastBalance = getFolioCurrentBalance(createdFolio);
-              const paymentEntry: EventFolioEntry = {
-                id: genId('FLE'),
-                date: payload.date || new Date().toISOString().split('T')[0],
-                description: `Payment - Receipt ${payload.id}${payload.invoiceId ? ` (Invoice ${payload.invoiceId})` : ''}`,
-                debit: 0,
-                credit: amount,
-                balance: lastBalance - amount,
-                reference: payload.id
-              };
-              
-    setEventFolios((prev: EventFolio[]) =>
-      prev.map((f: EventFolio) =>
-                  f.id === createdFolio.id
-                    ? { ...f, entries: [...f.entries, paymentEntry], updatedAt: new Date().toISOString() }
-                    : f
-                )
-              );
-              
-              console.log('[Folio] Auto-created folio and added receipt payment:', payload.id, formatCurrency(amount));
-            }
-          }
-          
-          return updatedInvoice;
         })
       );
-    } else {
-      // Receipt not linked to invoice - still add to folio if it exists
-      const folio = eventFolios.find(f => f.eventId === payload.eventId);
-      if (folio) {
-        const lastBalance = getFolioCurrentBalance(folio);
-        const paymentEntry: EventFolioEntry = {
-          id: genId('FLE'),
-          date: payload.date || new Date().toISOString().split('T')[0],
-          description: `Payment - Receipt ${payload.id} (${payload.method})`,
-          debit: 0,
-          credit: amount,
-          balance: lastBalance - amount,
-          reference: payload.id
-        };
-        
-        setEventFolios(prev =>
-          prev.map(f =>
-            f.id === folio.id
-              ? { ...f, entries: [...f.entries, paymentEntry], updatedAt: new Date().toISOString() }
-              : f
-          )
-        );
-        
-        if (activeFolio && activeFolio.id === folio.id) {
-          setActiveFolio((prev: any) =>
-            prev && prev.id === folio.id
-              ? { ...prev, entries: [...prev.entries, paymentEntry], updatedAt: new Date().toISOString() }
-              : prev
-          );
-        }
-        
-        console.log('[Folio] Added unlinked receipt payment:', payload.id, formatCurrency(amount));
-      }
     }
+
+    setEventFolios((prev) => {
+      let folio = prev.find((f) => f.eventId === payload.eventId);
+      let next = prev;
+      if (!folio) {
+        const bookedEvent = allEvents.find((ev) => ev.id === payload.eventId);
+        if (!bookedEvent) return prev;
+        const invoice = eventInvoices.find((inv) => inv.eventId === payload.eventId);
+        const openingEntries: EventFolioEntry[] = invoice && invoice.total > 0
+          ? [{
+              id: genId('FLE'),
+              date: invoice.issueDate || new Date().toISOString().split('T')[0],
+              description: 'Invoice',
+              debit: invoice.total,
+              credit: 0,
+              balance: invoice.total,
+              reference: invoice.id
+            }]
+          : [];
+        folio = {
+          id: genId('FOL'),
+          eventId: bookedEvent.id,
+          eventName: bookedEvent.eventName || 'Unnamed Event',
+          clientName: bookedEvent.organization || 'Unknown Client',
+          status: 'Open',
+          openingBalance: 0,
+          createdAt: new Date().toISOString().split('T')[0],
+          updatedAt: new Date().toISOString().split('T')[0],
+          entries: openingEntries
+        };
+        next = [folio, ...prev];
+      }
+      if (folio.entries.some((entry) => entry.reference === payload.id)) return next;
+      const lastBalance = getFolioCurrentBalance(folio);
+      const paymentEntry: EventFolioEntry = {
+        id: genId('FLE'),
+        date: payload.date || new Date().toISOString().split('T')[0],
+        description: payload.method
+          ? `Payment · ${paymentMethodLabel(resolveReceiptMethod(payload.method))}`
+          : 'Payment',
+        debit: 0,
+        credit: amount,
+        balance: lastBalance - amount,
+        reference: payload.id
+      };
+      return next.map((f) =>
+        f.id === folio!.id
+          ? withFolioStatus({ ...f, entries: [...f.entries, paymentEntry], updatedAt: new Date().toISOString() })
+          : f
+      );
+    });
 
     // Post payment to accounting (idempotent by receipt id)
     const linkedInvoiceForAccounting = payload.invoiceId
@@ -6732,28 +7597,18 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       }
     }
 
-    // Reset form and close modal
-    setReceiptForm({
-      id: '',
-      eventId: '',
-      eventName: '',
-      invoiceId: '',
-      clientName: '',
-      date: new Date().toISOString().split('T')[0],
-      amount: 0,
-      method: 'Cash',
-      reference: '',
-      recordedBy: 'Events Team',
-      notes: ''
-    });
-    setReceiptErrors({});
-    setIsReceiptModalOpen(false);
+    const shouldPrint = isNewReceipt && receiptPrintAfterSave;
+    closeReceiptWorkspace();
+    if (shouldPrint) {
+      handleDownloadReceiptPdf(payload);
+    }
   };
 
   const openFolioDetails = (folio: EventFolio) => {
     setActiveFolio(folio);
-  setFolioEntryForm({ type: 'charge', amount: 0, description: '', reference: '', costCenter: '', revenueCenter: '', method: 'Cash', recordedBy: 'Events Team' });
+    setFolioEntryForm({ type: 'charge', amount: 0, description: '', reference: '', costCenter: '', revenueCenter: '', method: 'Cash', recordedBy: 'Events Team' });
     setFolioEntrySearch('');
+    setFolioComposerOpen(false);
     setIsFolioModalOpen(true);
   };
 
@@ -6980,10 +7835,54 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     });
 
     setFolioEntryForm({ type: 'charge', amount: 0, description: '', reference: '', costCenter: '', revenueCenter: '', method: 'Cash', recordedBy: 'Events Team' });
+    setFolioComposerOpen(false);
   };
+  const getEventsWithoutFolio = () =>
+    allEvents.filter((ev) => {
+      const status = normalizeStatus(ev.status || ev.eventStatus);
+      return status !== 'cancelled' && !eventFolios.some((f) => f.eventId === ev.id);
+    });
+
+  const getFolioCandidateEvents = () =>
+    allEvents.filter((ev) => normalizeStatus(ev.status || ev.eventStatus) !== 'cancelled');
+
+  const getFolioEventLabel = (ev: any) => {
+    const existing = eventFolios.find((f) => f.eventId === ev.id);
+    const invoice = eventInvoices.find((inv) => inv.eventId === ev.id);
+    const name = getEventDisplayName(ev);
+    const client = getEventClientName(ev);
+    if (existing) return `${name} · ${client} · Has folio ${existing.id}`;
+    const extra = invoice
+      ? `${invoice.id} · ${formatCurrency(Number(invoice.balance || 0))} due`
+      : 'No invoice yet';
+    return `${name} · ${client} · ${extra}`;
+  };
+
+  const openCreateFolioPicker = () => {
+    const eligible = getEventsWithoutFolio();
+    const candidates = getFolioCandidateEvents();
+    setFolioCreateError('');
+    if (eligible.length === 1) {
+      setFolioCreateForm({ eventId: eligible[0].id, openingBalance: 0, note: '' });
+    } else if (eligible.length === 0 && candidates.length === 1) {
+      setFolioCreateForm({ eventId: candidates[0].id, openingBalance: 0, note: '' });
+    } else {
+      setFolioCreateForm({ eventId: '', openingBalance: 0, note: '' });
+    }
+    setIsFolioCreateModalOpen(true);
+  };
+
   const handleCreateFolio = () => {
     if (!folioCreateForm.eventId) {
-      setFolioCreateError('Select an event to generate the folio.');
+      setFolioCreateError('Select the event this folio belongs to.');
+      return;
+    }
+    const existingFolio = eventFolios.find((f) => f.eventId === folioCreateForm.eventId);
+    if (existingFolio) {
+      setIsFolioCreateModalOpen(false);
+      setFolioCreateForm({ eventId: '', openingBalance: 0, note: '' });
+      setFolioCreateError('');
+      openFolioDetails(existingFolio);
       return;
     }
     const event = allEvents.find(ev => ev.id === folioCreateForm.eventId);
@@ -6991,26 +7890,54 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       setFolioCreateError('Selected event could not be found.');
       return;
     }
+    const today = new Date().toISOString().split('T')[0];
+    const invoice = eventInvoices.find((inv) => inv.eventId === event.id);
+    const relatedReceipts = eventReceipts.filter((rcpt) => rcpt.eventId === event.id);
+    const initialEntries: EventFolioEntry[] = [];
+    if (invoice && Number(invoice.total || 0) > 0) {
+      initialEntries.push({
+        id: genId('FLE'),
+        date: invoice.issueDate || today,
+        description: 'Invoice',
+        debit: Number(invoice.total || 0),
+        credit: 0,
+        balance: Number(invoice.total || 0),
+        reference: invoice.id,
+      });
+    }
+    relatedReceipts.forEach((receipt) => {
+      if (initialEntries.some((entry) => entry.reference === receipt.id)) return;
+      const lastBalance = initialEntries.length ? initialEntries[initialEntries.length - 1].balance : 0;
+      initialEntries.push({
+        id: genId('FLE'),
+        date: receipt.date || today,
+        description: receipt.method
+          ? `Payment · ${paymentMethodLabel(resolveReceiptMethod(receipt.method))}`
+          : 'Payment',
+        debit: 0,
+        credit: Number(receipt.amount || 0),
+        balance: lastBalance - Number(receipt.amount || 0),
+        reference: receipt.id,
+      });
+    });
     const opening = Number(folioCreateForm.openingBalance || 0);
-    const initialEntries: EventFolioEntry[] = opening
-      ? [
-          {
-            id: genId('FLE'),
-            date: new Date().toISOString().split('T')[0],
-            description: folioCreateForm.note?.trim() || 'Opening Balance',
-            debit: opening > 0 ? opening : 0,
-            credit: opening < 0 ? Math.abs(opening) : 0,
-            balance: opening
-          }
-        ]
-      : [];
+    if (!invoice && opening) {
+      initialEntries.unshift({
+        id: genId('FLE'),
+        date: today,
+        description: folioCreateForm.note?.trim() || 'Opening Balance',
+        debit: opening > 0 ? opening : 0,
+        credit: opening < 0 ? Math.abs(opening) : 0,
+        balance: opening,
+      });
+    }
     const newFolio: EventFolio = {
       id: genId('FOL'),
       eventId: event.id,
       eventName: getEventDisplayName(event),
       clientName: getEventClientName(event),
       status: 'Open',
-      openingBalance: opening,
+      openingBalance: invoice ? Number(invoice.total || 0) : opening,
       entries: initialEntries,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
@@ -7028,33 +7955,54 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     setActiveFolio(null);
     setFolioEntryForm({ type: 'charge', amount: 0, description: '', reference: '', costCenter: '', revenueCenter: '', method: 'Cash', recordedBy: 'Events Team' });
     setFolioEntrySearch('');
+    setFolioComposerOpen(false);
   };
 
-  const handleUpdateFolio = () => {
+  const handlePrintEventFolio = () => {
     if (!activeFolio) return;
-
-    try {
-      const updatedFolio = {
-        ...activeFolio,
-        updatedAt: new Date().toISOString()
-      };
-
-      setEventFolios(prev =>
-        prev.map(f => (f.id === activeFolio.id ? updatedFolio : f))
-      );
-      setActiveFolio(updatedFolio);
-
-      trackEvent('Events.EventCreated', {
-        action: 'folio_updated',
-        folioId: activeFolio.id,
-        eventId: activeFolio.eventId
-      });
-
-      alert('Folio updated successfully.');
-    } catch (error) {
-      console.error('Failed to update folio:', error);
-      alert('Failed to update folio. Please try again.');
-    }
+    const escapeHtml = (value: string) =>
+      String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const folioNumber = formatFolioNumber(activeFolio.id);
+    const rows = (activeFolio.entries || []).map((entry: EventFolioEntry) => {
+      const line = formatFolioEntryCopy(entry);
+      return `
+      <tr>
+        <td>${escapeHtml(entry.date ? new Date(entry.date).toLocaleDateString() : '')}</td>
+        <td>${escapeHtml(line.description)}</td>
+        <td>${escapeHtml(line.reference)}</td>
+        <td class="num">${entry.debit > 0 ? escapeHtml(formatCurrency(entry.debit)) : ''}</td>
+        <td class="num">${entry.credit > 0 ? escapeHtml(formatCurrency(entry.credit)) : ''}</td>
+        <td class="num">${escapeHtml(formatCurrency(entry.balance))}</td>
+      </tr>
+    `;
+    }).join('');
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>${escapeHtml(folioNumber)}</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 28px; color: #111827; }
+        h1 { font-size: 20px; margin: 0 0 4px; }
+        .meta { color: #6b7280; font-size: 13px; margin-bottom: 18px; }
+        table { width: 100%; border-collapse: collapse; font-size: 12px; }
+        th, td { border-bottom: 1px solid #e5e7eb; padding: 8px 6px; text-align: left; }
+        th { color: #6b7280; font-weight: 600; }
+        .num { text-align: right; white-space: nowrap; }
+        .totals { margin-top: 16px; width: 280px; margin-left: auto; font-size: 13px; }
+        .totals div { display: flex; justify-content: space-between; padding: 3px 0; }
+        .due { font-weight: 700; border-top: 1px solid #111827; padding-top: 8px; margin-top: 6px; }
+      </style></head><body>
+      <h1>Event Folio ${escapeHtml(folioNumber)}</h1>
+      <p class="meta">${escapeHtml(activeFolio.eventName || '')} · ${escapeHtml(activeFolio.clientName || '')} · ${escapeHtml(activeFolio.status || '')}</p>
+      <table>
+        <thead><tr><th>Date</th><th>Description</th><th>Reference</th><th class="num">Charge</th><th class="num">Payment</th><th class="num">Balance</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="6">No entries</td></tr>'}</tbody>
+      </table>
+      <div class="totals">
+        <div><span>Charges</span><span>${escapeHtml(formatCurrency(activeFolioTotals.debits))}</span></div>
+        <div><span>Payments</span><span>${escapeHtml(formatCurrency(activeFolioTotals.credits))}</span></div>
+        <div class="due"><span>${activeFolioBalance >= 0 ? 'Amount due' : 'Credit'}</span><span>${escapeHtml(formatCurrency(Math.abs(activeFolioBalance)))}</span></div>
+      </div>
+      </body></html>`;
+    if (!openHtmlPrintWindow(html)) return;
+    trackEvent('Events.EventCreated', { action: 'folio_printed', folioId: activeFolio.id });
   };
 
   // Helper: Ensure folio exists for an event, create if it doesn't
@@ -7079,7 +8027,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           entries.push({
             id: genId('FLE'),
             date: invoice.issueDate || new Date().toISOString().split('T')[0],
-            description: `Invoice ${invoice.id} - Event Charges`,
+            description: 'Invoice',
             debit: invoice.total,
             credit: 0,
             balance: invoice.total,
@@ -7119,6 +8067,36 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         je.sourceTransactionId === transactionId &&
         je.status === 'Posted'
     );
+  };
+
+  const eventHasLiveAccountingInvoice = (eventId?: string) => {
+    if (!eventId) return false;
+    return useAccountingStore.getState().invoices.some(
+      (invoice) =>
+        invoice.sourceModule === 'conference' &&
+        !invoice.isProforma &&
+        invoice.status !== 'Void' &&
+        conferenceInvoiceBelongsToEvent(invoice, eventId)
+    );
+  };
+
+  const allocateUniqueEventInvoiceId = (preferredId: string | undefined, eventId: string) => {
+    const storeInvoices = useAccountingStore.getState().invoices;
+    const isTaken = (id: string) => {
+      if (eventInvoices.some((inv) => inv.id === id && inv.eventId !== eventId)) return true;
+      return storeInvoices.some(
+        (invoice) =>
+          invoice.sourceModule === 'conference' &&
+          !invoice.isProforma &&
+          invoice.status !== 'Void' &&
+          (invoice.id === `INV-CONFERENCE-${id}` || String(invoice.description || '').includes(id)) &&
+          !conferenceInvoiceBelongsToEvent(invoice, eventId)
+      );
+    };
+    if (preferredId && !isTaken(preferredId)) return preferredId;
+    let next = genId('INV');
+    while (isTaken(next)) next = genId('INV');
+    return next;
   };
 
   const captureEventInvoiceToAccounting = (invoice: EventInvoice, event?: any) => {
@@ -7230,6 +8208,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         deferred: true,
       });
       if (result) {
+        if (invoice.eventId) markConferenceProformaConverted(invoice.eventId);
         console.log(`[Events] ✅ Invoice synced to accounting (deferred): ${result.invoiceId}`);
       }
       return result;
@@ -7355,7 +8334,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         const newEntry: EventFolioEntry = {
           id: genId('FLE'),
           date: invoice.issueDate || new Date().toISOString().split('T')[0],
-          description: `Invoice ${invoice.id} - Event Charges`,
+          description: 'Invoice',
           debit: invoice.total,
           credit: 0,
           balance: lastBalance + invoice.total,
@@ -7681,7 +8660,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         return {
           id: genId('FLE'),
           date: receipt.date || new Date().toISOString().split('T')[0],
-          description: `Receipt ${receipt.id} - ${receipt.method}`,
+          description: receipt.method
+            ? `Payment · ${paymentMethodLabel(resolveReceiptMethod(receipt.method))}`
+            : 'Payment',
           debit: 0,
           credit: receipt.amount,
           balance: currentBalance,
@@ -7772,6 +8753,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       case 'booked': return 'warning';
       case 'setup': return 'secondary';
       case 'maintenance': return 'danger';
+      case 'inactive': return 'default';
       case 'active': return 'success';
       default: return 'default';
     }
@@ -8662,23 +9644,11 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       linkedFolio: 'FOL-2025-007'
     }
   ];
-  // Combine all events for modern management system
-  const allEvents = useMemo(() => {
-    const map = new Map<string, any>();
-
-    [...comprehensiveEvents, ...additionalEvents].forEach(event => {
-      if (!event?.id) return;
-      map.set(event.id, event);
-    });
-
-    customEvents.forEach(event => {
-      if (!event?.id) return;
-      const existing = map.get(event.id);
-      map.set(event.id, existing ? { ...existing, ...event } : event);
-    });
-
-    return Array.from(map.values());
-  }, [customEvents, comprehensiveEvents, additionalEvents]);
+  // Operational lists are booked events only — not the old hardcoded sample rows.
+  const allEvents = useMemo(
+    () => customEvents.filter((event) => event?.id && !isHardcodedDemoEventId(event.id)),
+    [customEvents]
+  );
 
   const filteredModernVenues = useMemo(() => {
     let list = modernVenues;
@@ -8738,7 +9708,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     [eventReceipts]
   );
   const openFolioCount = useMemo(
-    () => eventFolios.filter(folio => folio.status === 'Open').length,
+    () => eventFolios.filter(folio => getFolioSettledStatus(folio) === 'Open').length,
     [eventFolios]
   );
   const folioTotals = useMemo(
@@ -8786,7 +9756,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       const completionStatus = (event as any).completionStatus;
       if (completionStatus === 'completed') {
         eventStatus = 'completed';
-      } else if (completionStatus === 'billed' || normalizedStatus === 'invoiced') {
+      } else if (completionStatus === 'billed') {
         eventStatus = 'billed';
       } else {
         const arrivalDateStr = event.arrivalDate || event.startDate;
@@ -8800,8 +9770,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           }
         }
       }
+      const resolvedVenue = findVenueInCatalog(
+        modernVenues,
+        event.venueKey || event.venue,
+        event.venueName
+      );
       return {
         ...event,
+        venue: resolvedVenue?.id || event.venueKey || event.venue || '',
+        venueKey: resolvedVenue?.id || event.venueKey || event.venue || '',
+        venueName: resolvedVenue?.name || (isUnassignedVenueLabel(event.venueName) ? '' : (event.venueName || '')),
         quoteBudgetSnapshot: quoteBudget,
         budgetTotal: quoteTotal, // Keep for backward compatibility
         quoteTotal, // New field name
@@ -8814,7 +9792,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         invoiceCount: eventInvoicesList.length
       };
     },
-    [eventInvoices]
+    [eventInvoices, modernVenues]
   );
 
   const reportingEvents = useMemo(
@@ -8937,7 +9915,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
   const goToVenueManagement = useCallback(() => setSelectedTab('venues'), [setSelectedTab]);
   const goToGuestRates = useCallback(() => setSelectedTab('quoting'), [setSelectedTab]);
-  const goToReports = useCallback(() => setSelectedTab('reports'), [setSelectedTab]);
+  const goToReports = useCallback(() => router.push('/events/reports'), [router]);
 
   const selectedCategoryInsights = useMemo<ReportInsight[]>(() => {
     if (!selectedReportCategory) return [];
@@ -9128,7 +10106,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             .map((event) => ({
               event: event.eventName || 'Unnamed',
               venue: event.venueName || event.venue || '—',
-              coordinator: getEventCoordinator(event),
+              coordinator: resolveEventCoordinator(event),
               dates: `${event.arrivalDate || event.startDate || '—'} → ${event.departureDate || event.endDate || '—'}`,
               pax: String(event.pax || event.expectedPax || 0),
             })),
@@ -9167,7 +10145,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             .map((event) => ({
               event: event.eventName || 'Unnamed',
               venue: event.venueName || '—',
-              coordinator: getEventCoordinator(event),
+              coordinator: resolveEventCoordinator(event),
               beo: event.linkedBEO ? 'Saved' : 'Pending',
               dates: `${event.arrivalDate || event.startDate || '—'} → ${event.departureDate || event.endDate || '—'}`,
             })),
@@ -9660,6 +10638,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       setCustomEvents(prev => prev.map(ev =>
         ev.id === event.id ? updatedEvent : ev
       ));
+      persistEventBookingPatch(updatedEvent, { completionStatus: 'completed' });
 
       // The event is actually delivered now — reclassify whatever confirm-time
       // revenue was held as Deferred Revenue into real, recognized revenue.
@@ -9689,14 +10668,14 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           entries.push({
             id: genId('FLE'),
             date: invoice.issueDate || new Date().toISOString().split('T')[0],
-            description: `Invoice ${invoice.id} - Event Charges`,
+            description: 'Invoice',
             debit: invoice.total,
             credit: 0,
             balance: invoice.total
           });
         }
         
-        const newFolio: EventFolio = {
+        const newFolio: EventFolio = withFolioStatus({
           id: genId('FOL'),
           eventId: updatedEvent.id,
           eventName: updatedEvent.eventName || 'Unnamed Event',
@@ -9706,7 +10685,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           createdAt: new Date().toISOString().split('T')[0],
           updatedAt: new Date().toISOString().split('T')[0],
           entries: entries
-        };
+        });
         
         setEventFolios(prev => [...prev, newFolio]);
         trackEvent('Events.EventCreated', { action: 'folio_auto_created', eventId: updatedEvent.id, folioId: newFolio.id });
@@ -9745,6 +10724,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     const updatedEvent = { ...event, checkedIn: true, checkedInAt: new Date().toISOString() };
     setCustomEvents(prev => prev.map(ev => (ev.id === event.id ? updatedEvent : ev)));
+    persistEventBookingPatch(updatedEvent, { checkedIn: true, checkedInAt: updatedEvent.checkedInAt });
     frontOfficeStore.addInHouseGroup(event.id, pax, event.eventName);
     trackEvent('Events.EventStatusUpdated', { eventId: event.id, action: 'group_checked_in' });
     return true;
@@ -10328,6 +11308,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const [rateDateFilterFrom, setRateDateFilterFrom] = useState('');
     const [rateDateFilterTo, setRateDateFilterTo] = useState('');
     const [ratePage, setRatePage] = useState(1);
+    const [rateSort, setRateSort] = useState<TableSortState>({ column: 'status', direction: 'asc' });
     const [isRateModalOpen, setIsRateModalOpen] = useState(false);
     const [editingRate, setEditingRate] = useState<any>(null);
     const [rateForm, setRateForm] = useState<any>({
@@ -10418,23 +11399,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         );
       }
 
-      const statusOrder: Record<RateEffectiveStatus, number> = {
-        effective: 0,
-        'all-year': 1,
-        upcoming: 2,
-        incomplete: 3,
-        expired: 4,
-      };
-
-      return [...filtered].sort((a, b) => {
-        const statusA = getRateEffectiveStatus(a.applicableDates, today);
-        const statusB = getRateEffectiveStatus(b.applicableDates, today);
-        const statusDiff = statusOrder[statusA] - statusOrder[statusB];
-        if (statusDiff !== 0) return statusDiff;
-        if (a.applicableDates.isAllYear && !b.applicableDates.isAllYear) return 1;
-        if (!a.applicableDates.isAllYear && b.applicableDates.isAllYear) return -1;
-        return (a.applicableDates.startDate || '').localeCompare(b.applicableDates.startDate || '');
-      });
+      return filtered;
     }, [
       conferenceRates,
       rateSearchTerm,
@@ -10452,10 +11417,32 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       onFilteredCountChange?.(filteredRates.length);
     }, [filteredRates.length, onFilteredCountChange]);
 
+    const sortedRates = useMemo(() => {
+      const today = new Date().toISOString().slice(0, 10);
+      const statusOrder: Record<string, number> = {
+        effective: 0,
+        'all-year': 1,
+        upcoming: 2,
+        incomplete: 3,
+        expired: 4,
+        inactive: 5,
+      };
+      return sortRows(filteredRates, rateSort, {
+        name: (rate: any) => rate.name || '',
+        type: (rate: any) => rate.customLabel || rate.type || '',
+        amount: (rate: any) => Number(rate.baseRate || 0),
+        period: (rate: any) =>
+          rate.applicableDates?.isAllYear ? '0000-01-01' : rate.applicableDates?.startDate || '',
+        client: (rate: any) => (rate.clientSpecific ? rate.clientName || '' : 'All clients'),
+        status: (rate: any) =>
+          statusOrder[rate.isActive === false ? 'inactive' : getRateEffectiveStatus(rate.applicableDates, today)] ?? 9,
+      });
+    }, [filteredRates, rateSort]);
+
     const paginatedRates = useMemo(() => {
       const start = (ratePage - 1) * rowsPerPage;
-      return filteredRates.slice(start, start + rowsPerPage);
-    }, [filteredRates, ratePage, rowsPerPage]);
+      return sortedRates.slice(start, start + rowsPerPage);
+    }, [sortedRates, ratePage, rowsPerPage]);
 
     const ratePages = useMemo(() => {
       return Math.ceil(filteredRates.length / rowsPerPage);
@@ -10690,12 +11677,56 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     const getUnitLabel = (unit: string) => {
       const labels: Record<string, string> = {
-        per_person: 'Per Person',
-        per_room: 'Per Room',
-        per_event: 'Per Event',
-        per_day: 'Per Day'
+        per_person: 'Per person',
+        per_room: 'Per room',
+        per_event: 'Per event',
+        per_day: 'Per day'
       };
       return labels[unit] || unit;
+    };
+
+    const getRateTypePlain = (rate: any) => {
+      if (rate?.customLabel && rate.customLabel !== rate.type) return rate.customLabel;
+      const labels: Record<string, string> = {
+        accommodation: 'Accommodation',
+        conference: 'Conference',
+        lunch: 'Lunch',
+        dinner: 'Dinner',
+        other: 'Other',
+      };
+      return labels[rate?.type] || rate?.type || 'Other';
+    };
+
+    const getRateTypeColor = (type: string): 'primary' | 'secondary' | 'warning' | 'success' | 'default' => {
+      if (type === 'accommodation') return 'primary';
+      if (type === 'conference') return 'secondary';
+      if (type === 'lunch') return 'warning';
+      if (type === 'dinner') return 'success';
+      return 'default';
+    };
+
+    const handleRateSort = (column: string) => {
+      setRateSort((prev) => getNextSortState(prev, column));
+    };
+
+    const renderRateSortHeader = (label: string, columnKey: string) => (
+      <button
+        type="button"
+        className="group flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wide text-gray-600 focus:outline-none"
+        onClick={() => handleRateSort(columnKey)}
+      >
+        <span>{label}</span>
+        <span className="text-[10px] text-gray-400 transition-colors group-hover:text-gray-600">
+          {rateSort.column === columnKey ? (rateSort.direction === 'asc' ? '▲' : '▼') : '↕'}
+        </span>
+      </button>
+    );
+
+    const rateTableClassNames = {
+      base: 'overflow-x-auto',
+      table: 'w-full',
+      th: 'bg-slate-50 text-slate-500 text-[11px] font-semibold uppercase tracking-wide h-10 first:rounded-l-lg last:rounded-r-lg',
+      td: 'py-3 text-sm text-slate-700 align-middle',
     };
 
     // Get available clients for client-specific rates (same logic as events form)
@@ -10740,20 +11771,11 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     return (
       <div className="space-y-4 mt-4">
-        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h3 className="text-xl font-semibold text-ghana-black">Guest Rates</h3>
-            <p className="text-sm text-gray-500">
-              Rates apply only when the event dates fall within the rate&apos;s effective period.
-            </p>
-          </div>
-          <Button
-            color="primary"
-            size="sm"
-            onPress={() => openRateModal('create')}
-          >
-            ➕ New Rate
-          </Button>
+        <div>
+          <h3 className="text-xl font-semibold text-ghana-black">Guest Rates</h3>
+          <p className="text-sm text-gray-500">
+            Rates apply only when the event dates fall within the rate&apos;s effective period.
+          </p>
         </div>
 
         {/* Filters */}
@@ -10822,6 +11844,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 const guests = frontOfficeGuests || [];
                 const results = q.length >= 2
                   ? guests.filter((g: any) => {
+                      if (g.isActive === false) return false;
                       const org = (g.employerCompany || '').toLowerCase();
                       const name = (g.name || `${g.firstName || ''} ${g.lastName || ''}`).toLowerCase();
                       const phone = (g.companyPhone || g.phone || '').toLowerCase();
@@ -10860,101 +11883,102 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           }
         />
 
-        {/* Rates Table */}
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between w-full">
-              <h3 className="text-lg font-semibold">Rate List</h3>
-              <Badge content={filteredRates.length} color="primary" variant="flat">
-                <span className="text-sm text-gray-600">Total Rates</span>
-              </Badge>
+        <Card className="shadow-sm border border-slate-200">
+          <CardBody className="p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-base font-semibold text-slate-800">Rates</h3>
+              <Button size="sm" color="primary" variant="solid" onPress={() => openRateModal('create')}>
+                New rate
+              </Button>
             </div>
-          </CardHeader>
-          <CardBody>
-            <Table aria-label="Conference rates table">
+            <Table
+              aria-label="Guest rates"
+              removeWrapper
+              isCompact
+              classNames={rateTableClassNames}
+            >
               <TableHeader>
-                <TableColumn>RATE NAME</TableColumn>
-                <TableColumn>TYPE</TableColumn>
-                <TableColumn>RATE</TableColumn>
-                <TableColumn>UNIT</TableColumn>
-                <TableColumn>EFFECTIVE PERIOD</TableColumn>
-                <TableColumn>CLIENT</TableColumn>
-                <TableColumn>STATUS</TableColumn>
-                <TableColumn>ACTIONS</TableColumn>
+                <TableColumn key="name">
+                  {renderRateSortHeader('Rate', 'name')}
+                </TableColumn>
+                <TableColumn key="type">
+                  {renderRateSortHeader('Type', 'type')}
+                </TableColumn>
+                <TableColumn key="amount" align="end">
+                  {renderRateSortHeader('Amount', 'amount')}
+                </TableColumn>
+                <TableColumn key="period">
+                  {renderRateSortHeader('Period', 'period')}
+                </TableColumn>
+                <TableColumn key="client">
+                  {renderRateSortHeader('Client', 'client')}
+                </TableColumn>
+                <TableColumn key="status">
+                  {renderRateSortHeader('Status', 'status')}
+                </TableColumn>
+                <TableColumn key="actions" align="end"> </TableColumn>
               </TableHeader>
-              <TableBody>
-                {paginatedRates.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={8} className="text-center text-gray-500 py-8">
-                      <div>
-                        <span className="text-4xl">💰</span>
-                        <p className="mt-2">No rates found</p>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  paginatedRates.map((rate: any) => {
+              <TableBody emptyContent="No rates match the current filters.">
+                {paginatedRates.map((rate: any) => {
                     const effectiveStatus = getRateEffectiveStatus(rate.applicableDates);
                     const effectiveMeta = RATE_EFFECTIVE_STATUS_META[effectiveStatus];
+                    const statusLabel = rate.isActive === false ? 'Inactive' : (
+                      effectiveStatus === 'all-year' ? 'Always' :
+                      effectiveStatus === 'effective' ? 'Effective' :
+                      effectiveMeta.label
+                    );
+                    const statusColor = rate.isActive === false ? 'default' : effectiveMeta.color;
                     return (
                     <TableRow key={rate.id}>
                       <TableCell>
-                        <div>
-                          <p className="font-medium">{rate.name}</p>
-                          {rate.notes && (
-                            <p className="text-xs text-gray-500 mt-1">{rate.notes}</p>
-                          )}
+                        <div className="min-w-[160px] max-w-[280px]" title={rate.notes || undefined}>
+                          <p className="font-medium text-slate-900 leading-5">{rate.name}</p>
+                          {rate.notes ? (
+                            <p className="text-xs text-slate-500 mt-0.5 truncate">{rate.notes}</p>
+                          ) : null}
                         </div>
                       </TableCell>
                       <TableCell>
-                        <Badge color="secondary" variant="flat">{getRateTypeLabel(rate)}</Badge>
+                        <Chip size="sm" variant="flat" color={getRateTypeColor(rate.type)}>
+                          {getRateTypePlain(rate)}
+                        </Chip>
                       </TableCell>
-                      <TableCell className="font-semibold">{formatCurrency(rate.baseRate)}</TableCell>
-                      <TableCell className="text-sm text-gray-600">{getUnitLabel(rate.unit)}</TableCell>
                       <TableCell>
-                        <div className="text-sm font-medium text-ghana-black">
+                        <div className="text-right">
+                          <p className="whitespace-nowrap tabular-nums font-medium text-slate-900">
+                            {formatCurrency(rate.baseRate)}
+                          </p>
+                          <p className="text-xs text-slate-500">{getUnitLabel(rate.unit)}</p>
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <span className="whitespace-nowrap text-slate-700">
                           {getRateEffectivePeriodLabel(rate.applicableDates)}
-                        </div>
-                        <Chip color={effectiveMeta.color} size="sm" variant="flat" className="mt-1">
-                          {effectiveMeta.label}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <span className={`whitespace-nowrap ${rate.clientSpecific ? 'text-slate-700' : 'text-slate-400'}`}>
+                          {rate.clientSpecific ? (rate.clientName || '—') : 'All clients'}
+                        </span>
+                      </TableCell>
+                      <TableCell>
+                        <Chip size="sm" variant="flat" color={statusColor}>
+                          {statusLabel}
                         </Chip>
                       </TableCell>
                       <TableCell>
-                        {rate.clientSpecific ? (
-                          <Badge color="primary" variant="flat" size="sm">{rate.clientName || 'N/A'}</Badge>
-                        ) : (
-                          <span className="text-sm text-gray-400">All Clients</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <Chip color={rate.isActive ? 'success' : 'default'} size="sm" variant="flat">
-                          {rate.isActive ? 'Active' : 'Inactive'}
-                        </Chip>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            color="primary"
-                            variant="flat"
-                            onPress={() => openRateModal('edit', rate)}
-                          >
-                            ✏️ Edit
+                        <div className="flex justify-end gap-1">
+                          <Button size="sm" variant="light" onPress={() => openRateModal('edit', rate)}>
+                            Edit
                           </Button>
-                          <Button
-                            size="sm"
-                            color="danger"
-                            variant="flat"
-                            onPress={() => handleDeleteRate(rate.id)}
-                          >
-                            🗑️ Delete
+                          <Button size="sm" variant="light" color="danger" onPress={() => handleDeleteRate(rate.id)}>
+                            Delete
                           </Button>
                         </div>
                       </TableCell>
                     </TableRow>
                     );
-                  })
-                )}
+                  })}
               </TableBody>
             </Table>
             {ratePages > 1 && (
@@ -11229,6 +12253,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         const guests = frontOfficeGuests || [];
                         const results = q.length >= 2
                           ? guests.filter((g: any) => {
+                              if (g.isActive === false) return false;
                               const org = (g.employerCompany || '').toLowerCase();
                               const name = (g.name || `${g.firstName || ''} ${g.lastName || ''}`).toLowerCase();
                               const phone = (g.companyPhone || g.phone || '').toLowerCase();
@@ -11413,7 +12438,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               (event.organization || '').toLowerCase().includes(term) ||
               (event.venueName || event.venue || '').toLowerCase().includes(term) ||
               (event.contactPerson || '').toLowerCase().includes(term) ||
-              getEventCoordinator(event).toLowerCase().includes(term)
+              resolveEventCoordinator(event).toLowerCase().includes(term)
           );
         }
 
@@ -11544,6 +12569,54 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       return filtered;
     }, [managedEvents, applyManagementEventFilters, managementMainTab]);
 
+    const managementEventsByDay = useMemo(() => {
+      const map = new Map<string, any[]>();
+      filteredManagedEvents.forEach((event: any) => {
+        const start = parseEventDate(eventStartValue(event));
+        const end = parseEventDate(eventEndValue(event)) || start;
+        if (!start || !end) return;
+        const last = end < start ? start : end;
+        const cursor = new Date(start);
+        while (cursor <= last) {
+          const key = formatDateKey(cursor);
+          const existing = map.get(key);
+          if (existing) existing.push(event);
+          else map.set(key, [event]);
+          cursor.setDate(cursor.getDate() + 1);
+        }
+      });
+      return map;
+    }, [filteredManagedEvents]);
+
+    const managementDayEvents = useMemo(
+      () => managementEventsByDay.get(formatDateKey(eventCalendarDate)) || [],
+      [managementEventsByDay, eventCalendarDate]
+    );
+
+    const managementCalendarMonthEventCount = useMemo(() => {
+      const month = eventCalendarDate.getMonth();
+      const year = eventCalendarDate.getFullYear();
+      const seen = new Set<string>();
+      managementEventsByDay.forEach((events, key) => {
+        const day = parseEventDate(key);
+        if (!day || day.getMonth() !== month || day.getFullYear() !== year) return;
+        events.forEach((event: any) => {
+          if (event?.id) seen.add(event.id);
+        });
+      });
+      return seen.size;
+    }, [managementEventsByDay, eventCalendarDate]);
+
+    const managementCalendarWeekEventCount = useMemo(() => {
+      const seen = new Set<string>();
+      calendarWeekDays.forEach((day) => {
+        (managementEventsByDay.get(formatDateKey(day)) || []).forEach((event: any) => {
+          if (event?.id) seen.add(event.id);
+        });
+      });
+      return seen.size;
+    }, [calendarWeekDays, managementEventsByDay]);
+
     const eventStatusBuckets = useMemo(
       () =>
         managedEvents.reduce(
@@ -11604,18 +12677,18 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const managementTimelineDays = useMemo(() => Array.from({ length: managementTimelineDayCount }, (_, index) => addDays(managementGanttTimelineStart, index)), [managementGanttTimelineStart, managementTimelineDayCount]);
     const managementGanttMonthInputValue = `${managementGanttReferenceDate.getFullYear()}-${padNumber(managementGanttReferenceDate.getMonth() + 1)}`;
 
-    // Get venues from managed events
     const managementGanttVenues = useMemo(() => {
-      const venueSet = new Set<string>();
-      managedEvents.forEach((event: any) => {
-        const venueId = event.venue || 'unassigned';
-        venueSet.add(venueId);
+      const venueMap = new Map<string, string>();
+      filteredManagedEvents.forEach((event: any) => {
+        const venueId = eventVenueKey(event);
+        const venueName =
+          event.venueName ||
+          modernVenues.find(venue => venue.id === venueId)?.name ||
+          (venueId === 'unassigned' ? 'Unassigned' : venueId);
+        venueMap.set(venueId, venueName);
       });
-      return Array.from(venueSet).map(venueId => ({
-        id: venueId,
-        name: venueId === 'unassigned' ? 'Unassigned' : (modernVenues.find(v => v.id === venueId)?.name || venueId)
-      }));
-    }, [managedEvents]);
+      return Array.from(venueMap.entries()).map(([id, name]) => ({ id, name }));
+    }, [filteredManagedEvents, modernVenues]);
 
     const managementGanttVenuesToRender = useMemo(() => {
       if (managementSelectedGanttVenue === 'all') {
@@ -11626,21 +12699,56 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     // Get events for a specific venue (using managedEvents)
     const getManagedEventsForVenue = (venueId: string, rangeStart?: Date, rangeEnd?: Date) => {
-      const filtered = managedEvents.filter((event: any) => {
-        const matchesVenue = venueId === 'all' ? true : (venueId === 'unassigned' ? !event.venue : event.venue === venueId);
+      const filtered = filteredManagedEvents.filter((event: any) => {
+        const eventVenueId = eventVenueKey(event);
+        const matchesVenue =
+          venueId === 'all'
+            ? true
+            : venueId === 'unassigned'
+              ? eventVenueId === 'unassigned'
+              : eventVenueId === venueId;
         if (!matchesVenue) return false;
 
         if (rangeStart && rangeEnd) {
-          const eventStart = toStartOfDay(new Date(event.arrivalDate || event.startDate));
-          const eventEnd = toStartOfDay(new Date(event.departureDate || event.endDate));
+          const eventStart = parseEventDate(eventStartValue(event));
+          const eventEnd = parseEventDate(eventEndValue(event)) || eventStart;
+          if (!eventStart || !eventEnd) return false;
           return eventEnd >= rangeStart && eventStart <= rangeEnd;
         }
 
         return true;
       });
 
-      return filtered.sort((a: any, b: any) => new Date(a.arrivalDate || a.startDate).getTime() - new Date(b.arrivalDate || b.startDate).getTime());
+      return filtered.sort((a: any, b: any) => {
+        const aTime = parseEventDate(eventStartValue(a))?.getTime() || 0;
+        const bTime = parseEventDate(eventStartValue(b))?.getTime() || 0;
+        return aTime - bTime;
+      });
     };
+
+    const managementGanttDailyPax = useMemo(() => {
+      const events = getManagedEventsForVenue(
+        managementSelectedGanttVenue,
+        managementGanttTimelineStart,
+        managementGanttTimelineEnd
+      );
+      return managementTimelineDays.map((day) => {
+        const dayStart = toStartOfDay(day);
+        return events.reduce((sum: number, event: any) => {
+          const start = parseEventDate(eventStartValue(event));
+          const end = parseEventDate(eventEndValue(event)) || start;
+          if (!start || !end) return sum;
+          if (dayStart < start || dayStart > end) return sum;
+          return sum + (Number(event.pax || event.expectedPax || 0) || 0);
+        }, 0);
+      });
+    }, [
+      managementSelectedGanttVenue,
+      managementGanttTimelineStart,
+      managementGanttTimelineEnd,
+      managementTimelineDays,
+      filteredManagedEvents,
+    ]);
 
     // Gantt navigation handlers
     const handleManagementGanttNavigate = (direction: number) => {
@@ -11701,34 +12809,29 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     // Determine event status context for financial documents
     const getEventStatusContext = () => {
-      // Active tab focuses on in-progress pipeline.
       if (managementMainTab === 'active') return 'active';
-      
-      // Completed, Invoices, Receipts and Folios all work over the "completed/billed" lifecycle.
+      if (managementMainTab === 'completed') return 'completed';
+      // Invoices, receipts and folios follow the event as soon as it is booked.
       if (
-        managementMainTab === 'completed' ||
         managementMainTab === 'invoices' ||
         managementMainTab === 'receipts' ||
         managementMainTab === 'folios'
       ) {
-        return 'completed';
+        return 'all';
       }
-      
-      // Default to active context for Event Master or any fallback.
       return 'active';
     };
 
-    // Filter event IDs based on current context
     const getFilteredEventIds = useMemo(() => {
       const statusContext = getEventStatusContext();
       let eventsToUse = managedEvents;
-      
+
       if (statusContext === 'active') {
         eventsToUse = managedEvents.filter((e: any) => e.eventStatus === 'confirmed' || e.eventStatus === 'in-progress');
       } else if (statusContext === 'completed') {
         eventsToUse = managedEvents.filter((e: any) => e.eventStatus === 'completed' || e.eventStatus === 'billed');
       }
-      
+
       return eventsToUse.map((e: any) => e.id);
     }, [managedEvents, managementMainTab]);
 
@@ -11806,7 +12909,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         return {
           id: event.id,
           eventId: event.id,
-          quoteNumber: event.quoteNumber || formatEventId(event.id),
+          quoteNumber: formatQuoteNumber(event.id, event.quoteNumber || formatEventId(event.id)),
           clientName: event.organization || event.clientName || 'Unknown Client',
           eventName: event.eventName || 'Unnamed Event',
           checkIn,
@@ -11817,7 +12920,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           status,
           statusLabel: getConfirmedStatusLabel(status),
           reference: event.quoteReference || event.reference || '',
-          venueName: event.venueName || event.venue || 'Unassigned',
+          venueName: event.venueName || eventVenueLabel(event, modernVenues),
           rawEvent: event
         };
       });
@@ -11886,9 +12989,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     const managementTabCounts = useMemo(() => {
       const base = applyManagementEventFilters(managedEvents);
-      const completedEventIds = managedEvents
-        .filter((e: any) => e.eventStatus === 'completed' || e.eventStatus === 'billed')
-        .map((e: any) => e.id);
+      const countableEventIds = new Set(managedEvents.map((e: any) => e.id));
 
       const countFinancialDocs = <T extends { eventId: string }>(
         docs: T[],
@@ -11896,7 +12997,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         getSearchFields: (doc: T) => (string | undefined | null)[],
         getDateValue: (doc: T) => string | undefined | null
       ) => {
-        let filtered = docs.filter((doc) => completedEventIds.includes(doc.eventId));
+        let filtered = docs.filter((doc) => countableEventIds.has(doc.eventId));
         const q = search.trim().toLowerCase();
         if (q) {
           filtered = filtered.filter((doc) =>
@@ -11980,19 +13081,32 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     const eventMasterSortAccessors = useMemo(() => ({
       eventId: (row: any) => row.id || '',
       eventName: (row: any) => row.eventName || '',
+      stayType: (row: any) => eventStayType(row),
       venueName: (row: any) => row.venueName || '',
       startDate: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
+      endDate: (row: any) => parseDateValue(row.departureDate || row.endDate),
       duration: (row: any) => computeEventDurationDays(row),
       pax: (row: any) => Number(row.pax || row.expectedPax || 0),
       status: (row: any) => row.eventStatus || row.status || '',
-      coordinator: (row: any) => getEventCoordinator(row),
+      coordinator: (row: any) => resolveEventCoordinator(row),
       clientContact: (row: any) => getEventClientContactName(row),
       revenue: (row: any) => Number(row.revenue || row.budgetTotal || 0)
-    }), []);
+    }), [resolveEventCoordinator]);
+
+    const managementTableClassNames = {
+      base: 'overflow-x-auto',
+      table: 'w-full',
+      th: 'bg-slate-50 text-slate-500 text-[11px] font-semibold uppercase tracking-wide h-10 first:rounded-l-lg last:rounded-r-lg',
+      td: 'py-3 text-sm text-slate-700 align-middle',
+    };
 
     const activeEventsSortAccessors = useMemo(() => ({
+      eventId: (row: any) => row.id || '',
       eventName: (row: any) => row.eventName || '',
+      stayType: (row: any) => eventStayType(row),
       organization: (row: any) => row.organization || '',
+      startDate: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
+      endDate: (row: any) => parseDateValue(row.departureDate || row.endDate),
       dates: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
       venueName: (row: any) => row.venueName || '',
       duration: (row: any) => computeEventDurationDays(row),
@@ -12002,8 +13116,12 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     }), []);
 
     const completedEventsSortAccessors = useMemo(() => ({
+      eventId: (row: any) => row.id || '',
       eventName: (row: any) => row.eventName || '',
+      stayType: (row: any) => eventStayType(row),
       organization: (row: any) => row.organization || '',
+      startDate: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
+      endDate: (row: any) => parseDateValue(row.departureDate || row.endDate),
       dates: (row: any) => parseDateValue(row.arrivalDate || row.startDate),
       venueName: (row: any) => row.venueName || '',
       duration: (row: any) => computeEventDurationDays(row),
@@ -12048,6 +13166,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
     const folioSortAccessors = useMemo(() => ({
       folioId: (row: EventFolio) => row.id,
+      createdAt: (row: EventFolio) => parseDateValue(row.createdAt),
       eventName: (row: EventFolio) => row.eventName || '',
       clientName: (row: EventFolio) => row.clientName || '',
       status: (row: EventFolio) => row.status || '',
@@ -12190,27 +13309,14 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     // Wrapper function to mark event as completed and switch to Completed Events tab
     const handleMarkEventAsCompleted = (event: any) => {
       const wasCompleted = markEventAsCompleted(event);
-      console.log('[Events] handleMarkEventAsCompleted called', {
-        eventId: event?.id,
-        wasCompleted,
-        currentTab: managementMainTab,
-      });
-      // Always direct user to Completed Events tab after clicking Complete
-        setTimeout(() => {
-          setManagementMainTab('completed');
-        setCompletedEventsPage(1);
-        }, 100);
+      if (!wasCompleted) return;
+      setManagementMainTab('completed');
+      setCompletedEventsPage(1);
     };
 
     // Function to open or create folio for an event
     const handleOpenEventFolio = (event: any) => {
       try {
-        // Ensure we stay on the completed tab
-        if (managementMainTab !== 'completed') {
-          setManagementMainTab('completed');
-        }
-        
-        // Prevent any default behavior
         if (!event || !event.id) {
           console.error('Invalid event provided to handleOpenEventFolio');
           return;
@@ -12233,7 +13339,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             entries.push({
               id: genId('FLE'),
               date: invoice.issueDate || new Date().toISOString().split('T')[0],
-              description: `Invoice ${invoice.id} - Event Charges`,
+              description: 'Invoice',
               debit: invoice.total,
               credit: 0,
               balance: invoice.total
@@ -12263,8 +13369,6 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       } catch (error) {
         console.error('Error opening/creating folio:', error);
         alert('Failed to open folio. Please try again.');
-        // Ensure we stay on completed tab even if there's an error
-        setManagementMainTab('completed');
       }
     };
 
@@ -12292,21 +13396,27 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       try {
         trackEvent('Events.EventCreated', { action: 'function_schedule_csv_downloaded', eventCount: filteredManagedEvents.length });
         
-        const headers = ['Item', 'Arrival Date', 'Departure Date', 'Organization', 'Event Name', 'Programme Type', 'No. of Pax', 'No. of Rooms', 'Room Nights', 'Conference Days', 'Event Venue', 'Status'];
-        const rows = filteredManagedEvents.map((event: any, index: number) => [
-          index + 1,
-          event.arrivalDate || event.startDate || '',
-          event.departureDate || event.endDate || '',
-          event.organization || '',
-          event.eventName || '',
-          event.eventType || 'Conference',
-          event.pax || 0,
-          event.residential ? (event.pax || 0) : 0,
-          event.duration || 0,
-          event.duration || 0,
-          event.venueName || event.venue || 'Unassigned',
-          getConfirmedStatusLabel(event.eventStatus || event.status)
-        ]);
+        const headers = ['Item', 'Arrival Date', 'Departure Date', 'Organization', 'Event Name', 'Programme Type', 'No. of Pax', 'No. of Rooms', 'Room Nights', 'Conference Days', 'Event Venue', 'Food & Beverage', 'Housekeeping/Front Desk', 'Status'];
+        const rows = filteredManagedEvents.map((event: any, index: number) => {
+          const rooms = eventRoomCount(event);
+          const days = computeEventDurationDays(event);
+          return [
+            index + 1,
+            eventStartValue(event),
+            eventEndValue(event),
+            event.organization || '',
+            event.eventName || '',
+            getProgrammeType(event),
+            event.pax || event.expectedPax || 0,
+            rooms ?? '',
+            rooms ? rooms * days : '',
+            days,
+            event.venueName || event.venue || 'Unassigned',
+            functionFbDuties(event),
+            functionHkDuties(event),
+            getConfirmedStatusLabel(event.eventStatus || event.status)
+          ];
+        });
         
         const csvContent = [headers, ...rows].map(row => row.map(cell => `"${cell}"`).join(',')).join('\n');
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -12321,6 +13431,99 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       } catch (error) {
         console.error('Error downloading function schedule CSV:', error);
         alert('Failed to download function schedule. Please try again.');
+      }
+    };
+
+    const printDepartmentFunctionBriefing = () => {
+      const events = filteredManagedEvents;
+      const departmentRows = (title: string, duty: (event: any) => string) =>
+        events
+          .map((event: any) => `
+            <tr>
+              <td>${event.eventName || '—'}</td>
+              <td>${event.organization || '—'}</td>
+              <td>${eventStartValue(event) || '—'} – ${eventEndValue(event) || '—'}</td>
+              <td>${event.venueName || event.venue || '—'}</td>
+              <td>${event.pax || event.expectedPax || 0}</td>
+              <td>${duty(event)}</td>
+            </tr>`)
+          .join('');
+
+      const html = `<!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8" />
+            <title>Function Schedule — Department Briefing</title>
+            <style>
+              body { font-family: Arial, sans-serif; margin: 24px; color: #111827; }
+              h1 { font-size: 22px; margin-bottom: 4px; }
+              h2 { font-size: 16px; margin: 24px 0 8px; }
+              p { color: #6b7280; font-size: 13px; }
+              table { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+              th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 12px; }
+              th { background: #f9fafb; }
+            </style>
+          </head>
+          <body>
+            <h1>Function Schedule — Department Briefing</h1>
+            <p>Post or circulate this sheet. Duties come from the BEO on Event Master.</p>
+            <h2>Food &amp; Beverage</h2>
+            <table>
+              <thead><tr><th>Event</th><th>Organization</th><th>Dates</th><th>Venue</th><th>Pax</th><th>Duty</th></tr></thead>
+              <tbody>${departmentRows('Food & Beverage', functionFbDuties) || '<tr><td colspan="6">No events.</td></tr>'}</tbody>
+            </table>
+            <h2>Housekeeping / Front Desk</h2>
+            <table>
+              <thead><tr><th>Event</th><th>Organization</th><th>Dates</th><th>Venue</th><th>Pax</th><th>Duty</th></tr></thead>
+              <tbody>${departmentRows('Housekeeping', functionHkDuties) || '<tr><td colspan="6">No events.</td></tr>'}</tbody>
+            </table>
+            <h2>Reservations</h2>
+            <table>
+              <thead><tr><th>Event</th><th>Organization</th><th>Dates</th><th>Venue</th><th>Pax</th><th>Status</th></tr></thead>
+              <tbody>${departmentRows('Reservations', (event) => getConfirmedStatusLabel(event.eventStatus || event.status)) || '<tr><td colspan="6">No events.</td></tr>'}</tbody>
+            </table>
+          </body>
+        </html>`;
+
+      trackEvent('Events.EventCreated', { action: 'function_schedule_shared_to_departments', eventCount: events.length });
+      if (!openHtmlPrintWindow(html)) {
+        alert('Please allow pop-ups to print the department briefing.');
+      }
+    };
+
+    const renderCalendarEventChip = (event: any) => {
+      const stayType = eventStayType(event);
+      return (
+        <button
+          key={event.id}
+          type="button"
+          className="w-full rounded-md border border-slate-200 bg-white px-2 py-1 text-left transition-colors hover:bg-slate-50"
+          onClick={() => openEventForView(event)}
+        >
+          <p className="truncate text-xs font-medium text-slate-900">{event.eventName || 'Unnamed Event'}</p>
+          <p className="truncate text-[11px] text-slate-500">
+            {event.venueName || 'No venue'} · {stayType === 'Residential' ? 'Res' : 'Non-res'}
+          </p>
+        </button>
+      );
+    };
+
+    const ganttBarTone = (event: any) => {
+      const status = event.eventStatus || event.status || 'confirmed';
+      switch (status) {
+        case 'in-progress':
+          return 'bg-amber-500 border-amber-600';
+        case 'completed':
+          return 'bg-slate-500 border-slate-600';
+        case 'billed':
+        case 'invoiced':
+          return 'bg-blue-500 border-blue-600';
+        case 'cancelled':
+          return 'bg-rose-400 border-rose-500';
+        case 'quote':
+          return 'bg-orange-400 border-orange-500';
+        default:
+          return 'bg-emerald-500 border-emerald-600';
       }
     };
 
@@ -12387,30 +13590,33 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           }}
         >
           <Tab key="events" title={`📊 Event Master (${managementTabCounts.events})`}>
-            <Card className="mt-4">
-              <CardBody className="pt-3">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-semibold text-ghana-black">Event Master</h3>
-                  <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
-                    <Select
-                      size="sm"
-                      aria-label="View mode"
-                      selectedKeys={[managementViewMode]}
-                      onSelectionChange={(keys) =>
-                        setManagementViewMode(Array.from(keys)[0] as 'table' | 'calendar' | 'gantt' | 'function')
-                      }
-                      className="w-36"
-                      variant="flat"
-                    >
-                      <SelectItem key="table">📋 Table</SelectItem>
-                      <SelectItem key="calendar">📅 Calendar</SelectItem>
-                      <SelectItem key="gantt">📊 Gantt</SelectItem>
-                      <SelectItem key="function">📋 Function</SelectItem>
-                    </Select>
+            <Card className="mt-4 shadow-sm border border-slate-200">
+              <CardBody className="p-4">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <h3 className="text-base font-semibold text-slate-800">Event Master</h3>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                      {([
+                        ['table', 'Table'],
+                        ['calendar', 'Calendar'],
+                        ['gantt', 'Gantt'],
+                        ['function', 'Function'],
+                      ] as const).map(([key, label]) => (
+                        <Button
+                          key={key}
+                          size="sm"
+                          variant={managementViewMode === key ? 'solid' : 'light'}
+                          color={managementViewMode === key ? 'primary' : 'default'}
+                          className="min-w-[4.5rem]"
+                          onPress={() => setManagementViewMode(key)}
+                        >
+                          {label}
+                        </Button>
+                      ))}
+                    </div>
                     <Button
                       size="sm"
-                      color="primary"
-                      variant="flat"
+                      variant="bordered"
                       onPress={() => {
                         if (managementViewMode === 'function') {
                           exportManagementFunctionSchedulePDF();
@@ -12423,8 +13629,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     </Button>
                     <Button
                       size="sm"
-                      color="secondary"
-                      variant="flat"
+                      variant="bordered"
                       onPress={() => {
                         if (managementViewMode === 'function') {
                           downloadManagementFunctionScheduleCSV();
@@ -12435,18 +13640,23 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     >
                       Excel
                     </Button>
-                    <Button
-                      color="success"
-                      variant="solid"
-                      size="sm"
-                      onPress={openNewEventModal}
-                    >
-                      ➕ New Event
+                    <Button color="primary" variant="solid" size="sm" onPress={openNewEventModal}>
+                      New event
                     </Button>
                   </div>
                 </div>
                 {managementViewMode === 'table' && (
-                <Table aria-label="Events management table">
+                <Table
+                  aria-label="Events management table"
+                  removeWrapper
+                  isCompact
+                  classNames={{
+                    base: 'overflow-x-auto',
+                    table: 'w-full',
+                    th: 'bg-slate-50 text-slate-500 text-[11px] font-semibold uppercase tracking-wide h-10 first:rounded-l-lg last:rounded-r-lg',
+                    td: 'py-3 text-sm text-slate-700 align-middle',
+                  }}
+                >
                   <TableHeader>
                     <TableColumn key="eventId">
                       {renderSortableHeader('Event ID', 'eventId', eventMasterSort, handleEventMasterSort)}
@@ -12454,17 +13664,23 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     <TableColumn key="eventName">
                       {renderSortableHeader('Event', 'eventName', eventMasterSort, handleEventMasterSort)}
                     </TableColumn>
+                    <TableColumn key="stayType">
+                      {renderSortableHeader('Type', 'stayType', eventMasterSort, handleEventMasterSort)}
+                    </TableColumn>
                     <TableColumn key="venueName">
                       {renderSortableHeader('Venue', 'venueName', eventMasterSort, handleEventMasterSort)}
                     </TableColumn>
                     <TableColumn key="startDate">
-                      {renderSortableHeader('Dates', 'startDate', eventMasterSort, handleEventMasterSort)}
+                      {renderSortableHeader('Start', 'startDate', eventMasterSort, handleEventMasterSort)}
+                    </TableColumn>
+                    <TableColumn key="endDate">
+                      {renderSortableHeader('End', 'endDate', eventMasterSort, handleEventMasterSort)}
                     </TableColumn>
                     <TableColumn key="duration">
                       {renderSortableHeader('Days', 'duration', eventMasterSort, handleEventMasterSort)}
                     </TableColumn>
                     <TableColumn key="pax">
-                      {renderSortableHeader('Attendees', 'pax', eventMasterSort, handleEventMasterSort)}
+                      {renderSortableHeader('Pax', 'pax', eventMasterSort, handleEventMasterSort)}
                     </TableColumn>
                     <TableColumn key="status">
                       {renderSortableHeader('Status', 'status', eventMasterSort, handleEventMasterSort)}
@@ -12475,116 +13691,106 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     <TableColumn key="clientContact">
                       {renderSortableHeader('Client', 'clientContact', eventMasterSort, handleEventMasterSort)}
                     </TableColumn>
-                    <TableColumn key="revenue">
+                    <TableColumn key="revenue" align="end">
                       {renderSortableHeader('Revenue', 'revenue', eventMasterSort, handleEventMasterSort)}
                     </TableColumn>
-                    <TableColumn key="actions">Actions</TableColumn>
+                    <TableColumn key="actions" align="end"> </TableColumn>
                   </TableHeader>
-                  <TableBody>
-                    {eventMasterTableRows.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={11} className="text-center text-gray-500 py-8">
-                          <div>
-                            <span className="text-4xl">📋</span>
-                            <p className="mt-2">No events found</p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      eventMasterTableRows
-                        .filter((event: any) => {
-                          if (!event || !event.id) {
-                            console.warn('[Event Master] Skipping event with missing id:', event);
-                            return false;
-                          }
-                          return true;
-                        })
+                  <TableBody emptyContent="No events in this view.">
+                    {eventMasterTableRows
+                        .filter((event: any) => Boolean(event?.id))
                         .map((event: any) => {
                           const durationDays = computeEventDurationDays(event);
+                          const revenue = Number(event.revenue || event.budgetTotal || 0);
+                          const coordinator = resolveEventCoordinator(event);
                           return (
                         <TableRow key={event.id}>
-                          <TableCell className="font-semibold">{formatEventId(event.id)}</TableCell>
                           <TableCell>
-                            <div className="flex items-center gap-2">
-                              <span className="text-lg">{getEventTypeIcon(event.eventType || 'conference')}</span>
-                              <div>
-                                <p className="font-medium">{event.eventName || 'Unnamed Event'}</p>
-                                <p className="text-sm text-gray-600">{event.organization || 'N/A'}</p>
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge color="primary" variant="flat">{event.venueName || 'N/A'}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">{event.arrivalDate || event.startDate || 'N/A'}</p>
-                                  <p className="text-sm text-gray-600">to {event.departureDate || event.endDate || 'N/A'}</p>
-                            </div>
-                          </TableCell>
-                              <TableCell>
-                                <Chip size="sm" variant="flat" color="warning">
-                                  {durationDays} day{durationDays === 1 ? '' : 's'}
-                                </Chip>
-                              </TableCell>
-                          <TableCell>
-                            <Chip size="sm" variant="flat" color="primary">
-                              {event.pax || event.expectedPax || 0}
-                            </Chip>
-                          </TableCell>
-                          <TableCell>
-                            <Badge color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any} variant="flat">
-                              {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <span className={`text-sm ${getEventCoordinator(event) === UNASSIGNED_STAFF ? 'text-amber-600' : 'text-gray-800'}`}>
-                              {getEventCoordinator(event)}
+                            <span className="whitespace-nowrap font-mono text-xs text-slate-500">
+                              {formatEventId(event.id)}
                             </span>
                           </TableCell>
                           <TableCell>
-                            <div className="text-sm">
-                              <p>{getEventClientContactName(event)}</p>
-                              {event.contactPhone && <p className="text-xs text-gray-500">{event.contactPhone}</p>}
+                            <div className="min-w-[160px] max-w-[260px]">
+                              <p className="font-medium text-slate-900 leading-5">{event.eventName || 'Unnamed Event'}</p>
+                              <p className="text-xs text-slate-500 mt-0.5">{event.organization || '—'}</p>
                             </div>
                           </TableCell>
                           <TableCell>
-                            <div className="space-y-1">
-                              <span className="font-medium">₵{(event.revenue || event.budgetTotal || 0).toLocaleString()}</span>
-                              <div className="text-xs text-gray-600">
-                                {event.status === 'confirmed' ? 'Deposit: ₵' + (event.deposit || 0).toLocaleString() : 'Quote'}
-                              </div>
-                            </div>
+                            <span className="whitespace-nowrap text-slate-700">{eventStayType(event)}</span>
                           </TableCell>
                           <TableCell>
-                            <div className="flex gap-2">
-                              <Button 
-                                size="sm" 
-                                color="default" 
-                                variant="flat"
-                                onClick={() => openEventForView(event)}
-                              >
+                            <span className="whitespace-nowrap text-slate-700">{event.venueName || '—'}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap">
+                              {formatEventTableDate(event.arrivalDate || event.startDate) || '—'}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap">
+                              {formatEventTableDate(event.departureDate || event.endDate) || '—'}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="tabular-nums text-slate-600">{durationDays}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="tabular-nums text-slate-600">{event.pax || event.expectedPax || 0}</span>
+                          </TableCell>
+                          <TableCell>
+                            <Chip size="sm" variant="flat" color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any}>
+                              {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
+                            </Chip>
+                          </TableCell>
+                          <TableCell>
+                            <span className={`whitespace-nowrap text-sm ${coordinator === UNASSIGNED_STAFF ? 'text-amber-600' : 'text-slate-700'}`}>
+                              {coordinator}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap" title={event.contactPhone || undefined}>
+                              {getEventClientContactName(event)}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">
+                              ₵{revenue.toLocaleString()}
+                            </span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-1">
+                              <Button size="sm" variant="light" onPress={() => openEventForView(event)}>
                                 View
                               </Button>
-                              <Button 
-                                size="sm" 
-                                color="secondary" 
-                                variant="flat"
-                                onClick={() => {
+                              <Button
+                                size="sm"
+                                variant="light"
+                                onPress={() => {
+                                  const existing = eventInvoices.find((inv) => inv.eventId === event.id);
+                                  if (existing) openEventInvoiceForm(event, existing);
+                                  else openEventInvoiceForm(event);
+                                }}
+                              >
+                                Invoice
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="light"
+                                onPress={() => {
                                   setSelectedEventForBEO(event);
                                   generateBEO(event);
                                   generateFunctionSheet(event);
                                   setIsBEOModalOpen(true);
                                 }}
                               >
-                                📊 BEO & Sheet
+                                BEO
                               </Button>
                             </div>
                           </TableCell>
                         </TableRow>
                           );
-                        })
-                    )}
+                        })}
                   </TableBody>
                 </Table>
                 )}
@@ -12592,140 +13798,77 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   <div className="space-y-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div>
-                        <h5 className="text-lg font-semibold">📅 {calendarHeaderTitle}</h5>
-                        {eventCalendarView === 'week' && (
-                          <p className="text-sm text-gray-500">{weekRangeTitle}</p>
-                        )}
-                        {eventCalendarView === 'day' && (
-                          <p className="text-sm text-gray-500">Events for {calendarDateInputValue}</p>
-                        )}
+                        <h5 className="text-base font-semibold text-slate-800">{calendarHeaderTitle}</h5>
+                        <p className="text-xs text-slate-500">
+                          {eventCalendarView === 'day'
+                            ? `${managementDayEvents.length} event${managementDayEvents.length === 1 ? '' : 's'} on this day`
+                            : eventCalendarView === 'week'
+                              ? `${managementCalendarWeekEventCount} event${managementCalendarWeekEventCount === 1 ? '' : 's'} this week`
+                              : `${managementCalendarMonthEventCount} event${managementCalendarMonthEventCount === 1 ? '' : 's'} in this month`}
+                          {eventCalendarView === 'month' && filteredManagedEvents.length !== managementCalendarMonthEventCount
+                            ? ` · ${filteredManagedEvents.length} match the current filters`
+                            : ''}
+                        </p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button size="sm" variant="light" onClick={() => handleCalendarNavigate(-1)}>◀</Button>
-                        <Button size="sm" variant="light" onClick={handleCalendarToday}>Today</Button>
-                        <Button size="sm" variant="light" onClick={() => handleCalendarNavigate(1)}>▶</Button>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <Button size="sm" variant="light" onPress={() => handleCalendarNavigate(-1)}>‹</Button>
+                        <Button size="sm" variant="bordered" onPress={handleCalendarToday}>Today</Button>
+                        <Button size="sm" variant="light" onPress={() => handleCalendarNavigate(1)}>›</Button>
                         <Input
                           size="sm"
                           type={eventCalendarView === 'month' ? 'month' : 'date'}
-                          label={eventCalendarView === 'month' ? 'Month' : 'Date'}
+                          aria-label={eventCalendarView === 'month' ? 'Month' : 'Date'}
                           value={eventCalendarView === 'month' ? calendarMonthInputValue : calendarDateInputValue}
                           onChange={(e) => handleCalendarDateInput(e.target.value)}
-                          className="w-[160px]"
+                          className="w-[150px]"
                         />
-                        <div className="flex items-center gap-1">
-                          <Button
-                            size="sm"
-                            color="primary"
-                            variant={eventCalendarView === 'month' ? 'solid' : 'light'}
-                            onClick={() => handleCalendarViewChange('month')}
-                          >
-                            📅 Month
-                          </Button>
-                          <Button
-                            size="sm"
-                            color="primary"
-                            variant={eventCalendarView === 'week' ? 'solid' : 'light'}
-                            onClick={() => handleCalendarViewChange('week')}
-                          >
-                            📆 Week
-                          </Button>
-                          <Button
-                            size="sm"
-                            color="primary"
-                            variant={eventCalendarView === 'day' ? 'solid' : 'light'}
-                            onClick={() => handleCalendarViewChange('day')}
-                          >
-                            📍 Day
-                          </Button>
+                        <div className="flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                          {(['month', 'week', 'day'] as const).map((view) => (
+                            <Button
+                              key={view}
+                              size="sm"
+                              variant={eventCalendarView === view ? 'solid' : 'light'}
+                              color={eventCalendarView === view ? 'primary' : 'default'}
+                              className="min-w-[4.25rem] capitalize"
+                              onPress={() => handleCalendarViewChange(view)}
+                            >
+                              {view}
+                            </Button>
+                          ))}
                         </div>
                       </div>
                     </div>
                     {eventCalendarView === 'month' && (
-                      <div className="grid grid-cols-7 gap-2">
+                      <div className="grid grid-cols-7 gap-1.5">
                         {calendarDayNames.map(day => (
-                          <div key={`header-${day}`} className="text-center text-xs font-semibold uppercase tracking-wide text-gray-500">
+                          <div key={`header-${day}`} className="px-1 py-1 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-400">
                             {day}
                           </div>
                         ))}
                         {calendarGridDays.map(dayInfo => {
-                          const allDayEvents = eventsByDay.get(dayInfo.key) || [];
-                          const cellEvents = allDayEvents.filter((e: any) => {
-                            const status = normalizeStatus(e.status);
-                            return status === 'confirmed';
-                          });
+                          const cellEvents = managementEventsByDay.get(dayInfo.key) || [];
                           const isToday = dayInfo.key === todayKey;
-                          const hasEvents = cellEvents.length > 0;
-                          const dayBreakdownRows = hasEvents
-                            ? buildDailyBreakdownRows(cellEvents, true, dayInfo.date, dayInfo.date)
-                            : [] as ReturnType<typeof buildDailyBreakdownRows>;
-                          const dayTotals = summarizeBreakdown(dayBreakdownRows);
-
-                          const currentMonthClasses = hasEvents
-                            ? 'bg-gradient-to-br from-white via-emerald-50/70 to-sky-50/80 border-transparent shadow-[0_12px_28px_rgba(15,23,42,0.08)]'
-                            : 'bg-gradient-to-br from-white via-slate-50 to-slate-100 border-slate-200 shadow-[0_6px_14px_rgba(15,23,42,0.05)]';
-
-                          const cellClass = dayInfo.isCurrentMonth
-                            ? currentMonthClasses
-                            : 'bg-slate-50 border-slate-100 text-slate-400 shadow-none';
-
                           return (
                             <div
                               key={dayInfo.key}
-                              className={`group relative min-h-[120px] rounded-xl border p-3 transition-all duration-200 ease-out ${cellClass} ${
-                                isToday
-                                  ? 'ring-2 ring-primary-400 shadow-[0_14px_30px_rgba(37,99,235,0.2)]'
-                                  : 'hover:-translate-y-1 hover:shadow-[0_14px_30px_rgba(15,23,42,0.12)]'
-                              }`}
+                              className={`min-h-[108px] rounded-lg border p-2 ${
+                                dayInfo.isCurrentMonth ? 'bg-white border-slate-200' : 'bg-slate-50 border-slate-100'
+                              } ${isToday ? 'border-primary-400 ring-1 ring-primary-300' : ''}`}
                             >
-                              <div className="flex items-center justify-between">
-                                <span className={`text-sm font-semibold ${isToday ? 'text-primary-600' : 'text-slate-700'}`}>
+                              <div className="mb-1.5 flex items-center justify-between">
+                                <span className={`text-xs font-semibold ${
+                                  isToday ? 'text-primary-600' : dayInfo.isCurrentMonth ? 'text-slate-700' : 'text-slate-400'
+                                }`}>
                                   {dayInfo.date.getDate()}
                                 </span>
-                                {isToday && (
-                                  <Chip size="sm" color="primary" variant="solid" className="shadow-sm">
-                                    Today
-                                  </Chip>
+                                {cellEvents.length > 0 && (
+                                  <span className="text-[10px] tabular-nums text-slate-400">{cellEvents.length}</span>
                                 )}
                               </div>
-                              {hasEvents && (
-                                <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-600">
-                                  <span className="font-medium text-emerald-700">Conf: {formatCount(dayTotals.conference)}</span>
-                                  <span className="font-medium text-sky-700">Acc: {formatCount(dayTotals.accommodation)}</span>
-                                </div>
-                              )}
-                              <div className="mt-3 space-y-1.5 overflow-hidden">
-                                {cellEvents.slice(0, 3).map(event => {
-                                  const statusMeta = eventStatuses[event.status as keyof typeof eventStatuses] || {};
-                                  const palette = getEventPalette(event);
-                                  const calendarBgClass = palette?.calendarBg || statusMeta.bgColor || 'bg-slate-100';
-                                  const calendarBorderClass = palette?.calendarBorder || statusMeta.borderColor || 'border-slate-200';
-                                  const calendarTextClass = palette?.calendarText || statusMeta.textColor || 'text-slate-700';
-                                  return (
-                                    <Tooltip
-                                      key={event.id}
-                                      content={
-                                        <div className="max-w-xs space-y-1 rounded-lg bg-white/95 p-2 text-slate-700 shadow-lg backdrop-blur">
-                                          <p className="text-sm font-semibold text-slate-900">{event.eventName}</p>
-                                          <p className="text-xs text-slate-500">{event.organization}</p>
-                                          <p className="text-xs text-slate-500">
-                                            {event.arrivalDate} → {event.departureDate}
-                                          </p>
-                                          <p className="text-xs text-slate-500">Guests: {event.pax}</p>
-                                        </div>
-                                      }
-                                    >
-                                      <div
-                                        className={`cursor-pointer rounded-lg border px-2 py-1.5 text-xs font-semibold shadow-sm backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${calendarBgClass} ${calendarBorderClass} ${calendarTextClass}`}
-                                        onClick={() => openEventForView(event)}
-                                      >
-                                        <p className="truncate leading-tight">{event.organization}</p>
-                                        <p className="truncate text-[11px] font-normal opacity-80">{event.eventName}</p>
-                                      </div>
-                                    </Tooltip>
-                                  );
-                                })}
+                              <div className="space-y-1">
+                                {cellEvents.slice(0, 3).map(renderCalendarEventChip)}
                                 {cellEvents.length > 3 && (
-                                  <p className="text-[11px] font-medium text-slate-500">+{cellEvents.length - 3} more</p>
+                                  <p className="text-[11px] text-slate-500">+{cellEvents.length - 3} more</p>
                                 )}
                               </div>
                             </div>
@@ -12734,71 +13877,32 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       </div>
                     )}
                     {eventCalendarView === 'week' && (
-                      <div className="grid grid-cols-1 gap-3 lg:grid-cols-7">
+                      <div className="grid grid-cols-1 gap-2 lg:grid-cols-7">
                         {calendarWeekDays.map(day => {
                           const key = formatDateKey(day);
-                          const allDayEvents = eventsByDay.get(key) || [];
-                          const eventsForDay = allDayEvents.filter((e: any) => {
-                            const status = normalizeStatus(e.status);
-                            return status === 'confirmed';
-                          });
+                          const eventsForDay = managementEventsByDay.get(key) || [];
                           const isToday = key === todayKey;
-                          const dayBreakdownRows = eventsForDay.length
-                            ? buildDailyBreakdownRows(eventsForDay, true, day, day)
-                            : [] as ReturnType<typeof buildDailyBreakdownRows>;
-                          const dayTotals = summarizeBreakdown(dayBreakdownRows);
                           return (
                             <div
                               key={key}
-                              className={`rounded-xl border p-3 transition-all duration-200 ${
-                                isToday
-                                  ? 'bg-primary-50 border-primary-300 ring-2 ring-primary-400 shadow-lg'
-                                  : 'bg-white border-slate-200 shadow-sm hover:shadow-md'
+                              className={`min-h-[160px] rounded-lg border p-2 ${
+                                isToday ? 'border-primary-400 bg-primary-50/40' : 'border-slate-200 bg-white'
                               }`}
                             >
                               <div className="mb-2 flex items-center justify-between">
-                                <span className={`text-sm font-semibold ${isToday ? 'text-primary-700' : 'text-slate-700'}`}>
+                                <span className={`text-xs font-semibold ${isToday ? 'text-primary-700' : 'text-slate-700'}`}>
                                   {day.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}
                                 </span>
-                                {isToday && <Chip size="sm" color="primary" variant="solid">Today</Chip>}
+                                {eventsForDay.length > 0 && (
+                                  <span className="text-[10px] tabular-nums text-slate-400">{eventsForDay.length}</span>
+                                )}
                               </div>
-                              {eventsForDay.length > 0 && (
-                                <div className="mb-2 flex flex-wrap gap-1 text-[10px] text-slate-600">
-                                  <span className="font-medium text-emerald-700">Conf: {formatCount(dayTotals.conference)}</span>
-                                  <span className="font-medium text-sky-700">Acc: {formatCount(dayTotals.accommodation)}</span>
-                                </div>
-                              )}
-                              <div className="space-y-1.5">
-                                {eventsForDay.map(event => {
-                                  const statusMeta = eventStatuses[event.status as keyof typeof eventStatuses] || {};
-                                  const palette = getEventPalette(event);
-                                  const calendarBgClass = palette?.calendarBg || statusMeta.bgColor || 'bg-slate-100';
-                                  const calendarBorderClass = palette?.calendarBorder || statusMeta.borderColor || 'border-slate-200';
-                                  const calendarTextClass = palette?.calendarText || statusMeta.textColor || 'text-slate-700';
-                                  return (
-                                    <Tooltip
-                                      key={event.id}
-                                      content={
-                                        <div className="max-w-xs space-y-1 rounded-lg bg-white/95 p-2 text-slate-700 shadow-lg backdrop-blur">
-                                          <p className="text-sm font-semibold text-slate-900">{event.eventName}</p>
-                                          <p className="text-xs text-slate-500">{event.organization}</p>
-                                          <p className="text-xs text-slate-500">
-                                            {event.arrivalDate} → {event.departureDate}
-                                          </p>
-                                          <p className="text-xs text-slate-500">Guests: {event.pax}</p>
-                                        </div>
-                                      }
-                                    >
-                                      <div
-                                        className={`cursor-pointer rounded-lg border px-2 py-1.5 text-xs font-semibold shadow-sm backdrop-blur-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md ${calendarBgClass} ${calendarBorderClass} ${calendarTextClass}`}
-                                        onClick={() => openEventForView(event)}
-                                      >
-                                        <p className="truncate leading-tight">{event.organization}</p>
-                                        <p className="truncate text-[11px] font-normal opacity-80">{event.eventName}</p>
-                                      </div>
-                                    </Tooltip>
-                                  );
-                                })}
+                              <div className="space-y-1">
+                                {eventsForDay.length === 0 ? (
+                                  <p className="text-[11px] text-slate-400">No events</p>
+                                ) : (
+                                  eventsForDay.map(renderCalendarEventChip)
+                                )}
                               </div>
                             </div>
                           );
@@ -12806,38 +13910,71 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       </div>
                     )}
                     {eventCalendarView === 'day' && (
-                      <div className="space-y-3">
-                        <div className="rounded-xl border bg-white p-4 shadow-sm">
-                          <h4 className="mb-3 text-lg font-semibold">Events for {calendarDateInputValue}</h4>
-                          {dayEvents.filter((e: any) => {
-                            const status = normalizeStatus(e.status);
-                            return status === 'confirmed';
-                          }).length === 0 ? (
-                            <p className="text-center text-gray-500 py-8">No confirmed events for this day</p>
-                          ) : (
-                            <div className="space-y-2">
-                              {dayEvents.filter((e: any) => {
-                                const status = normalizeStatus(e.status);
-                                return status === 'confirmed';
-                              }).map(event => (
-                                <div
-                                  key={event.id}
-                                  className="flex items-center justify-between rounded-lg border p-3 hover:bg-gray-50 cursor-pointer"
-                                  onClick={() => openEventForView(event)}
-                                >
-                                  <div>
-                                    <p className="font-medium">{event.eventName}</p>
-                                    <p className="text-sm text-gray-600">{event.organization}</p>
-                                  </div>
-                                  <Badge color={event.statusColor as any} variant="flat">
-                                    {eventStatuses[event.status as keyof typeof eventStatuses]?.label || event.status}
-                                  </Badge>
+                      <Table
+                        aria-label="Events for selected day"
+                        removeWrapper
+                        isCompact
+                        classNames={{
+                          base: 'overflow-x-auto',
+                          table: 'w-full',
+                          th: 'bg-slate-50 text-slate-500 text-[11px] font-semibold uppercase tracking-wide h-10 first:rounded-l-lg last:rounded-r-lg',
+                          td: 'py-3 text-sm text-slate-700 align-middle',
+                        }}
+                      >
+                        <TableHeader>
+                          <TableColumn>Event ID</TableColumn>
+                          <TableColumn>Event</TableColumn>
+                          <TableColumn>Type</TableColumn>
+                          <TableColumn>Venue</TableColumn>
+                          <TableColumn>Start</TableColumn>
+                          <TableColumn>End</TableColumn>
+                          <TableColumn>Pax</TableColumn>
+                          <TableColumn>Status</TableColumn>
+                          <TableColumn align="end"> </TableColumn>
+                        </TableHeader>
+                        <TableBody emptyContent="No events on this day.">
+                          {managementDayEvents.map((event: any) => (
+                            <TableRow key={event.id}>
+                              <TableCell>
+                                <span className="whitespace-nowrap font-mono text-xs text-slate-500">{formatEventId(event.id)}</span>
+                              </TableCell>
+                              <TableCell>
+                                <div className="min-w-[160px] max-w-[260px]">
+                                  <p className="font-medium text-slate-900 leading-5">{event.eventName || 'Unnamed Event'}</p>
+                                  <p className="text-xs text-slate-500 mt-0.5">{event.organization || '—'}</p>
                                 </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      </div>
+                              </TableCell>
+                              <TableCell>
+                                <span className="whitespace-nowrap">{eventStayType(event)}</span>
+                              </TableCell>
+                              <TableCell>
+                                <span className="whitespace-nowrap">{event.venueName || '—'}</span>
+                              </TableCell>
+                              <TableCell>
+                                <span className="whitespace-nowrap">{formatEventTableDate(eventStartValue(event)) || '—'}</span>
+                              </TableCell>
+                              <TableCell>
+                                <span className="whitespace-nowrap">{formatEventTableDate(eventEndValue(event)) || '—'}</span>
+                              </TableCell>
+                              <TableCell>
+                                <span className="tabular-nums">{event.pax || event.expectedPax || 0}</span>
+                              </TableCell>
+                              <TableCell>
+                                <Chip size="sm" variant="flat" color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any}>
+                                  {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
+                                </Chip>
+                              </TableCell>
+                              <TableCell>
+                                <div className="flex justify-end">
+                                  <Button size="sm" variant="light" onPress={() => openEventForView(event)}>
+                                    View
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
                     )}
                   </div>
                 )}
@@ -12845,37 +13982,36 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   <div className="space-y-4">
                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                       <div>
-                        <h5 className="text-lg font-semibold">📊 Venue Timeline — {managementGanttTimelineTitle}</h5>
-                        <p className="text-sm text-gray-500">{managementGanttTimelineRangeLabel}</p>
+                        <h5 className="text-base font-semibold text-slate-800">{managementGanttTimelineTitle}</h5>
+                        <p className="text-xs text-slate-500">
+                          {managementGanttTimelineRangeLabel} · daily pax totals at the bottom
+                        </p>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button size="sm" variant="light" onClick={() => handleManagementGanttNavigate(-1)}>◀</Button>
+                      <div className="flex flex-wrap items-center justify-end gap-2">
+                        <Button size="sm" variant="light" onPress={() => handleManagementGanttNavigate(-1)}>‹</Button>
                         <Button
                           size="sm"
-                          variant="light"
-                          onClick={() => {
-                            const today = new Date();
-                            setManagementGanttReferenceDate(getStartOfMonth(today));
-                          }}
+                          variant="bordered"
+                          onPress={() => setManagementGanttReferenceDate(getStartOfMonth(new Date()))}
                         >
                           Today
                         </Button>
-                        <Button size="sm" variant="light" onClick={() => handleManagementGanttNavigate(1)}>▶</Button>
+                        <Button size="sm" variant="light" onPress={() => handleManagementGanttNavigate(1)}>›</Button>
                         <Input
                           size="sm"
                           type="month"
-                          label="Timeline"
+                          aria-label="Timeline month"
                           value={managementGanttMonthInputValue}
                           onChange={(e) => handleManagementGanttMonthInput(e.target.value)}
                           className="w-[150px]"
                         />
                         <Select
                           size="sm"
-                          label="Venue"
+                          aria-label="Venue"
                           selectedKeys={[managementSelectedGanttVenue]}
                           onSelectionChange={(keys) => setManagementSelectedGanttVenue(Array.from(keys)[0] as string)}
                           className="w-48"
-                          items={[{ id: 'all', name: 'All Venues' }, ...managementGanttVenues]}
+                          items={[{ id: 'all', name: 'All venues' }, ...managementGanttVenues]}
                         >
                           {/* @ts-ignore - NextUI Select typing struggles with dynamic items */}
                           {(venue: { id: string; name: string }) => (
@@ -12888,193 +14024,189 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     </div>
 
                     {managementGanttVenuesToRender.length === 0 ? (
-                      <Card className="border border-dashed border-gray-200">
-                        <CardBody className="py-6 text-center text-sm text-gray-500">
-                          No venues available for selection.
-                        </CardBody>
-                      </Card>
+                      <div className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">
+                        No venues in the current Event Master filters.
+                      </div>
                     ) : (
-                      managementGanttVenuesToRender.map(venue => {
-                        const allVenueEvents = getManagedEventsForVenue(venue.id, managementGanttTimelineStart, managementGanttTimelineEnd);
-                        const eventsForVenueTimeline = allVenueEvents.filter((e: any) => {
-                          const status = normalizeStatus(e.status);
-                          return status === 'confirmed';
-                        });
-                        const venueBreakdownRows = buildDailyBreakdownRows(eventsForVenueTimeline, true, managementGanttTimelineStart, managementGanttTimelineEnd);
-                        const breakdownByDate = aggregateBreakdownByDate(venueBreakdownRows);
-                        const breakdownItems = Array.from(breakdownByDate.entries())
-                          .filter(([, totals]) => totals.conference > 0 || totals.accommodation > 0)
-                          .sort((a, b) => new Date(a[0]).getTime() - new Date(b[0]).getTime());
-
-                        const positionedEvents: Array<{
-                          event: any;
-                          statusMeta: (typeof eventStatuses)[keyof typeof eventStatuses];
-                          palette: (typeof eventColorPalette)[number];
-                          leftPercent: number;
-                          widthPercent: number;
-                          overlapIndex: number;
-                          topOffset: number;
-                        }> = [];
-
-                        const levelEndMap = new Map<number, Date>();
-
-                        eventsForVenueTimeline.forEach(event => {
-                          const statusMeta = eventStatuses[event.status as keyof typeof eventStatuses] || {};
-                          const palette = getEventPalette(event);
-                          const rawStart = toStartOfDay(new Date(event.arrivalDate || event.startDate));
-                          const rawEnd = toStartOfDay(new Date(event.departureDate || event.endDate));
-                          const clampedStart = clampDateToRange(rawStart, managementGanttTimelineStart, managementGanttTimelineEnd);
-                          const clampedEnd = clampDateToRange(rawEnd, managementGanttTimelineStart, managementGanttTimelineEnd);
-                          const offsetDays = Math.max(0, Math.round((clampedStart.getTime() - managementGanttTimelineStart.getTime()) / DAY_IN_MS));
-                          const spanDays = Math.max(1, Math.round((clampedEnd.getTime() - clampedStart.getTime()) / DAY_IN_MS) + 1);
-                          const leftPercent = (offsetDays / managementTimelineDayCount) * 100;
-                          const widthPercent = Math.min(100, (spanDays / managementTimelineDayCount) * 100);
-
-                          for (const [level, endDate] of Array.from(levelEndMap.entries())) {
-                            if (endDate.getTime() < clampedStart.getTime()) {
-                              levelEndMap.delete(level);
-                            }
-                          }
-
-                          let overlapIndex = 0;
-                          while (levelEndMap.has(overlapIndex)) {
-                            overlapIndex += 1;
-                          }
-                          levelEndMap.set(overlapIndex, clampedEnd);
-
-                          const topOffset = 8 + overlapIndex * 14;
-
-                          positionedEvents.push({
-                            event,
-                            statusMeta,
-                            palette,
-                            leftPercent,
-                            widthPercent,
-                            overlapIndex,
-                            topOffset
-                          });
-                        });
-
-                        return (
-                          <Card
-                            key={venue.id}
-                            className="border border-transparent bg-gradient-to-br from-white via-slate-50 to-sky-50 shadow-[0_16px_36px_rgba(15,23,42,0.12)]"
-                          >
-                            <CardHeader className="pb-2">
-                              <div className="flex items-center justify-between">
-                                <h5 className="text-sm font-semibold text-slate-800">{venue.name}</h5>
-                                <Chip size="sm" variant="flat" color="primary">
-                                  {eventsForVenueTimeline.length} events
-                                </Chip>
-                              </div>
-                            </CardHeader>
-                            <CardBody className="space-y-4 pt-0">
-                              {breakdownItems.length > 0 && (
-                                <div className="overflow-x-auto text-[11px] text-slate-600">
-                                  <div className="flex min-w-max gap-3">
-                                    {breakdownItems.map(([dateKey, totals]) => {
-                                      const [year, month, day] = dateKey.split('-').map(part => parseInt(part, 10));
-                                      const displayDate = !Number.isNaN(year) && !Number.isNaN(month) && !Number.isNaN(day)
-                                        ? new Date(year, month - 1, day)
-                                        : null;
-                                      return (
-                                        <div
-                                          key={dateKey}
-                                          className="rounded-lg border border-transparent bg-gradient-to-br from-emerald-100/70 via-emerald-50 to-white px-3 py-2 text-emerald-900 shadow-[0_12px_28px_rgba(16,185,129,0.18)]"
-                                        >
-                                          <div className="text-xs font-semibold uppercase tracking-wide">
-                                            {displayDate ? displayDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : dateKey}
-                                          </div>
-                                          <div className="text-[10px] opacity-80">Conf: {formatCount(totals.conference)}</div>
-                                          <div className="text-[10px] opacity-80">Acc: {formatCount(totals.accommodation)}</div>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              )}
-                              <div className="relative h-32 overflow-hidden rounded-2xl border border-transparent bg-gradient-to-r from-slate-900/5 via-sky-200/20 to-slate-50 shadow-inner">
-                                <div className="pointer-events-none absolute inset-0 z-0">
-                                  {managementTimelineDays.map((day, index) => {
-                                    const dayKey = formatDateKey(day);
-                                    const leftPercent = (index / managementTimelineDayCount) * 100;
-                                    const nextLeftPercent = ((index + 1) / managementTimelineDayCount) * 100;
-                                    const widthPercent = Math.max(100 / managementTimelineDayCount, nextLeftPercent - leftPercent);
-                                    return (
-                                      <div
-                                        key={`day-box-${venue.id}-${dayKey}`}
-                                        className="absolute flex h-full flex-col justify-start rounded-xl border border-white/50 bg-white/30 px-1.5 py-1.5 text-[9px] text-slate-600 backdrop-blur-sm shadow-[inset_0_1px_0_rgba(255,255,255,0.5)]"
-                                        style={{ left: `${leftPercent}%`, width: `${widthPercent}%` }}
-                                      >
-                                        <div className="flex items-center justify-between font-semibold uppercase tracking-wide text-slate-500">
-                                          <span>{day.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
-                                          <span>{day.toLocaleDateString(undefined, { weekday: 'short' })}</span>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                                {positionedEvents.length === 0 && (
-                                  <div className="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
-                                    No confirmed events scheduled in this range.
-                                  </div>
-                                )}
-                                {positionedEvents.map(({ event, statusMeta, palette, leftPercent, widthPercent, overlapIndex, topOffset }) => {
-                                  const ganttBgClass = palette?.ganttBg || statusMeta.ganttBg || statusMeta.bgColor || 'bg-blue-200';
-                                  const ganttBorderClass = palette?.ganttBorder || statusMeta.ganttBorder || statusMeta.borderColor || 'border-blue-300';
-                                  const ganttTextClass = palette?.ganttText || statusMeta.ganttText || statusMeta.textColor || 'text-white';
-                                  const barBaseTop = topOffset + 18;
-                                  const isHovered = hoveredGanttEventId === event.id;
-                                  const computedTop = Math.max(34, isHovered ? barBaseTop + 6 : barBaseTop);
-                                  const computedZIndex = isHovered ? 50 : 10 + overlapIndex;
-
+                      <div className="overflow-x-auto rounded-lg border border-slate-200">
+                        <div className="min-w-[760px]">
+                          <div className="flex border-b border-slate-200 bg-slate-50">
+                            <div className="w-40 shrink-0 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              Venue
+                            </div>
+                            <div className="relative flex-1">
+                              <div className="flex">
+                                {managementTimelineDays.map((day) => {
+                                  const isToday = formatDateKey(day) === todayKey;
                                   return (
+                                    <div
+                                      key={`gantt-head-${formatDateKey(day)}`}
+                                      className={`flex-1 py-1.5 text-center ${isToday ? 'text-primary-600' : 'text-slate-400'}`}
+                                    >
+                                      <div className="text-[10px] uppercase">{day.toLocaleDateString(undefined, { weekday: 'narrow' })}</div>
+                                      <div className={`text-[11px] tabular-nums ${isToday ? 'font-semibold' : ''}`}>{day.getDate()}</div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                          {managementGanttVenuesToRender.map((venue) => {
+                            const eventsForVenueTimeline = getManagedEventsForVenue(
+                              venue.id,
+                              managementGanttTimelineStart,
+                              managementGanttTimelineEnd
+                            );
+                            const positionedEvents: Array<{
+                              event: any;
+                              leftPercent: number;
+                              widthPercent: number;
+                              overlapIndex: number;
+                            }> = [];
+                            const levelEndMap = new Map<number, Date>();
+
+                            eventsForVenueTimeline.forEach((event: any) => {
+                              const rawStart = parseEventDate(eventStartValue(event));
+                              const rawEnd = parseEventDate(eventEndValue(event)) || rawStart;
+                              if (!rawStart || !rawEnd) return;
+                              const clampedStart = clampDateToRange(rawStart, managementGanttTimelineStart, managementGanttTimelineEnd);
+                              const clampedEnd = clampDateToRange(rawEnd, managementGanttTimelineStart, managementGanttTimelineEnd);
+                              const offsetDays = Math.max(0, Math.round((clampedStart.getTime() - managementGanttTimelineStart.getTime()) / DAY_IN_MS));
+                              const spanDays = Math.max(1, Math.round((clampedEnd.getTime() - clampedStart.getTime()) / DAY_IN_MS) + 1);
+                              const leftPercent = (offsetDays / managementTimelineDayCount) * 100;
+                              const widthPercent = Math.min(100, (spanDays / managementTimelineDayCount) * 100);
+
+                              for (const [level, endDate] of Array.from(levelEndMap.entries())) {
+                                if (endDate.getTime() < clampedStart.getTime()) {
+                                  levelEndMap.delete(level);
+                                }
+                              }
+
+                              let overlapIndex = 0;
+                              while (levelEndMap.has(overlapIndex)) {
+                                overlapIndex += 1;
+                              }
+                              levelEndMap.set(overlapIndex, clampedEnd);
+
+                              positionedEvents.push({ event, leftPercent, widthPercent, overlapIndex });
+                            });
+
+                            const laneCount = Math.max(1, positionedEvents.reduce((max, row) => Math.max(max, row.overlapIndex + 1), 0));
+                            const trackHeight = 16 + laneCount * 30;
+                            const today = toStartOfDay(new Date());
+                            const todayInRange = today >= managementGanttTimelineStart && today <= managementGanttTimelineEnd;
+                            const todayLeft = todayInRange
+                              ? (Math.round((today.getTime() - managementGanttTimelineStart.getTime()) / DAY_IN_MS) / managementTimelineDayCount) * 100
+                              : null;
+
+                            return (
+                              <div key={venue.id} className="flex border-b border-slate-100 last:border-b-0">
+                                <div className="w-40 shrink-0 px-3 py-3">
+                                  <p className="text-sm font-medium text-slate-800">{venue.name}</p>
+                                  <p className="text-xs text-slate-500">
+                                    {eventsForVenueTimeline.length} event{eventsForVenueTimeline.length === 1 ? '' : 's'}
+                                  </p>
+                                </div>
+                                <div className="relative flex-1 bg-white" style={{ height: trackHeight }}>
+                                  <div className="pointer-events-none absolute inset-0 flex">
+                                    {managementTimelineDays.map((day) => (
+                                      <div
+                                        key={`gantt-grid-${venue.id}-${formatDateKey(day)}`}
+                                        className={`flex-1 border-l border-slate-100 first:border-l-0 ${
+                                          formatDateKey(day) === todayKey ? 'bg-primary-50/50' : ''
+                                        }`}
+                                      />
+                                    ))}
+                                  </div>
+                                  {todayLeft !== null && (
+                                    <div
+                                      className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-primary-500"
+                                      style={{ left: `${todayLeft}%` }}
+                                    />
+                                  )}
+                                  {positionedEvents.length === 0 && (
+                                    <div className="absolute inset-0 flex items-center px-3 text-xs text-slate-400">
+                                      No events in this month
+                                    </div>
+                                  )}
+                                  {positionedEvents.map(({ event, leftPercent, widthPercent, overlapIndex }) => (
                                     <Tooltip
                                       key={event.id}
                                       content={
-                                        <div className="max-w-xs space-y-1 rounded-lg bg-white/95 p-2 text-slate-700 shadow-lg backdrop-blur">
-                                          <p className="text-sm font-semibold text-slate-900">{event.eventName}</p>
-                                          <p className="text-xs text-slate-500">{event.organization}</p>
+                                        <div className="max-w-xs space-y-0.5 p-1 text-slate-700">
+                                          <p className="text-xs font-mono text-slate-400">{formatEventId(event.id)}</p>
+                                          <p className="text-sm font-semibold text-slate-900">{event.eventName || 'Unnamed Event'}</p>
+                                          <p className="text-xs text-slate-500">{event.organization || '—'}</p>
                                           <p className="text-xs text-slate-500">
-                                            {event.arrivalDate} → {event.departureDate}
+                                            {formatEventTableDate(eventStartValue(event)) || '—'} – {formatEventTableDate(eventEndValue(event)) || '—'}
                                           </p>
-                                          <p className="text-xs text-slate-500">Guests: {event.pax}</p>
+                                          <p className="text-xs text-slate-500">
+                                            {eventStayType(event)} · {event.pax || event.expectedPax || 0} pax
+                                          </p>
                                         </div>
                                       }
                                     >
-                                      <div
-                                        className={`absolute flex h-9 cursor-pointer items-center overflow-hidden rounded-xl border px-2.5 shadow-[0_16px_30px_rgba(15,23,42,0.26)] backdrop-blur-sm transition-all duration-200 ${
-                                          ganttBgClass
-                                        } ${ganttBorderClass} ${isHovered ? 'scale-[1.02] shadow-[0_24px_44px_rgba(15,23,42,0.32)]' : ''}`}
+                                      <button
+                                        type="button"
+                                        className={`absolute h-6 overflow-hidden rounded border px-2 text-left text-white ${ganttBarTone(event)}`}
                                         style={{
-                                          left: `${leftPercent}%`,
-                                          width: `${widthPercent}%`,
-                                          top: `${computedTop}px`,
-                                          zIndex: computedZIndex
+                                          left: `calc(${leftPercent}% + 1px)`,
+                                          width: `calc(${widthPercent}% - 2px)`,
+                                          top: 8 + overlapIndex * 30,
+                                          minWidth: 8,
                                         }}
                                         onClick={() => openEventForView(event)}
                                         onMouseEnter={() => setHoveredGanttEventId(event.id)}
                                         onMouseLeave={() => setHoveredGanttEventId(null)}
                                       >
-                                        <span className={`truncate text-xs font-semibold ${ganttTextClass}`}>
-                                          {event.organization}
+                                        <span className="block truncate text-[11px] font-medium leading-6">
+                                          {event.pax || event.expectedPax || 0} · {event.eventName || event.organization || formatEventId(event.id)}
                                         </span>
-                                      </div>
+                                      </button>
                                     </Tooltip>
-                                  );
-                                })}
+                                  ))}
+                                </div>
                               </div>
-                            </CardBody>
-                          </Card>
-                        );
-                      })
+                            );
+                          })}
+                          <div className="flex border-t border-slate-200 bg-slate-50">
+                            <div className="w-40 shrink-0 px-3 py-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Total pax</p>
+                              <p className="text-[11px] text-slate-400">
+                                {managementGanttDailyPax.reduce((sum, value) => sum + value, 0).toLocaleString()} this month
+                              </p>
+                            </div>
+                            <div className="flex flex-1">
+                              {managementGanttDailyPax.map((total, index) => {
+                                const day = managementTimelineDays[index];
+                                const isToday = day ? formatDateKey(day) === todayKey : false;
+                                return (
+                                  <div
+                                    key={`gantt-total-${index}`}
+                                    className={`flex-1 py-2 text-center tabular-nums ${
+                                      isToday ? 'bg-primary-50 font-semibold text-primary-700' : 'text-slate-700'
+                                    }`}
+                                  >
+                                    <span className="text-xs">{total > 0 ? total.toLocaleString() : '—'}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}
                 {managementViewMode === 'function' && (
                   <div>
                     <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
-                      <h5 className="font-semibold text-lg sm:text-xl">📋 Provisional Function Schedule</h5>
+                      <div>
+                        <h5 className="font-semibold text-lg sm:text-xl">📋 Provisional Function Schedule</h5>
+                        <p className="text-xs text-slate-500">
+                          Department duties from the BEO. Print or send so F&B, housekeeping, and reservations can post their work.
+                        </p>
+                      </div>
                       <div className="flex flex-wrap gap-2">
                         <Button 
                           size="sm" 
@@ -13099,13 +14231,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                           color="success" 
                           variant="flat"
                           className="flex-1 sm:flex-none min-w-[120px]"
-                          onPress={() => {
-                            const csv = filteredManagedEvents.map((e: any, i: number) => 
-                              `${i + 1},${e.organization},${e.eventName},${e.arrivalDate},${e.departureDate}`
-                            ).join('\n');
-                            navigator.clipboard.writeText(csv);
-                            alert('Function schedule copied to clipboard!');
-                          }}
+                          onPress={printDepartmentFunctionBriefing}
                         >
                           📧 Send to Departments
                         </Button>
@@ -13121,16 +14247,14 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       </div>
                     </div>
                     
-                    {/* Live Data Status */}
                     <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
                       <div className="flex items-center gap-2">
                         <span className="text-blue-600">📊</span>
                         <span className="text-sm text-blue-800">
-                          <strong>Live Data:</strong> {filteredManagedEvents.length} confirmed events loaded • Last updated: {new Date().toLocaleTimeString()}
+                          <strong>Department sheet:</strong> {filteredManagedEvents.length} event{filteredManagedEvents.length === 1 ? '' : 's'} · complete a BEO on Event Master to fill F&B and housekeeping duties
                         </span>
                       </div>
                     </div>
-                    {/* Function Schedule Table */}
                     <div className="overflow-x-auto">
                       <Table aria-label="Function schedule table" className="min-w-full">
                         <TableHeader>
@@ -13151,12 +14275,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         <TableBody>
                           {filteredManagedEvents.length > 0 ? (
                             filteredManagedEvents.map((event, index) => {
-                              const arrivalDate = new Date(event.arrivalDate);
-                              const departureDate = new Date(event.departureDate);
+                              const arrivalDate = new Date(event.arrivalDate || event.startDate);
+                              const departureDate = new Date(event.departureDate || event.endDate);
                               const dayNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
                               const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
                               
                               const formatDate = (date: Date) => {
+                                if (Number.isNaN(date.getTime())) return '—';
                                 const dayName = dayNames[date.getDay()];
                                 const day = date.getDate();
                                 const month = months[date.getMonth()];
@@ -13172,35 +14297,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                 return `${dayName} ${day}${getDaySuffix(day)} ${month}`;
                               };
                               
-                              const getEventTypeLabel = (type: string) => {
-                                switch (type) {
-                                  case 'conference': return 'RESIDENTIAL CONFERENCE';
-                                  case 'workshop': return 'RESIDENTIAL WORKSHOP';
-                                  case 'training': return 'NON RESIDENTIAL CONFERENCE';
-                                  case 'residential-conference': return 'RESIDENTIAL CONFERENCE';
-                                  case 'non-residential': return 'NON RESIDENTIAL CONFERENCE';
-                                  case 'residential-workshop': return 'RESIDENTIAL WORKSHOP';
-                                  case 'residential': return 'RESIDENTIAL CONFERENCE';
-                                  default: return 'CONFERENCE';
-                                }
-                              };
-                              
-                              const getFoodBeverageServices = (event: any) => {
-                                const services = [];
-                                if (event.duration > 0) services.push('ARRIVAL DINNER');
-                                if (event.duration > 1) {
-                                  services.push('MORNING SNACK', 'LUNCH');
-                                  if (event.duration > 2) services.push('AFTERNOON SNACK', 'DINNER');
-                                }
-                                return services.join(', ');
-                              };
-                              
-                              const getHousekeepingNotes = (event: any) => {
-                                if (event.residential) {
-                                  return `PREPARE ${event.pax} ROOMS`;
-                                }
-                                return 'N/A';
-                              };
+                              const rooms = eventRoomCount(event);
+                              const days = computeEventDurationDays(event);
                               
                               const getStatusBadge = (status: string) => {
                                 const normalized = normalizeStatus(status);
@@ -13235,28 +14333,28 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                   </TableCell>
                                   <TableCell className="text-center">
                                     <Badge color="primary" variant="flat" className="text-xs">
-                                      {getEventTypeLabel(event.eventType)}
+                                      {getProgrammeType(event)}
                                     </Badge>
                                   </TableCell>
-                                  <TableCell className="text-center font-medium">{event.pax}</TableCell>
+                                  <TableCell className="text-center font-medium">{event.pax || event.expectedPax || 0}</TableCell>
                                   <TableCell className="text-center">
-                                    {event.residential ? event.pax : 'N/A'}
+                                    {rooms ?? 'N/A'}
                                   </TableCell>
                                   <TableCell className="text-center">
-                                    {event.residential ? event.duration * event.pax : 'N/A'}
+                                    {rooms ? rooms * days : 'N/A'}
                                   </TableCell>
-                                  <TableCell className="text-center font-medium">{event.duration}</TableCell>
+                                  <TableCell className="text-center font-medium">{days}</TableCell>
                                   <TableCell>
                                     <Badge color="secondary" variant="flat">{event.venueName}</Badge>
                                   </TableCell>
                                   <TableCell className="max-w-xs">
                                     <div className="text-xs text-gray-700">
-                                      {getFoodBeverageServices(event)}
+                                      {functionFbDuties(event)}
                                     </div>
                                   </TableCell>
                                   <TableCell className="max-w-xs">
                                     <div className="text-xs text-gray-700">
-                                      {getHousekeepingNotes(event)}
+                                      {functionHkDuties(event)}
                                     </div>
                                   </TableCell>
                                   <TableCell className="text-center">
@@ -13285,147 +14383,131 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="active" title={`🟢 Active Events (${managementTabCounts.active})`}>
-            <Card className="mt-4">
-              <CardBody className="pt-3">
-                <h3 className="text-base font-semibold text-ghana-black mb-3">Active Events</h3>
-                <Table aria-label="Confirmed events table">
+            <Card className="mt-4 shadow-sm border border-slate-200">
+              <CardBody className="p-4">
+                <h3 className="text-base font-semibold text-slate-800 mb-3">Active Events</h3>
+                <Table
+                  aria-label="Active events table"
+                  removeWrapper
+                  isCompact
+                  classNames={managementTableClassNames}
+                >
                   <TableHeader>
+                    <TableColumn key="eventId">
+                      {renderSortableHeader('Event ID', 'eventId', activeEventsSort, handleActiveEventsSort)}
+                    </TableColumn>
                     <TableColumn key="eventName">
-                      {renderSortableHeader('EVENT', 'eventName', activeEventsSort, handleActiveEventsSort)}
+                      {renderSortableHeader('Event', 'eventName', activeEventsSort, handleActiveEventsSort)}
                     </TableColumn>
-                    <TableColumn key="organization">
-                      {renderSortableHeader('ORGANIZATION', 'organization', activeEventsSort, handleActiveEventsSort)}
-                    </TableColumn>
-                    <TableColumn key="dates">
-                      {renderSortableHeader('DATES', 'dates', activeEventsSort, handleActiveEventsSort)}
+                    <TableColumn key="stayType">
+                      {renderSortableHeader('Type', 'stayType', activeEventsSort, handleActiveEventsSort)}
                     </TableColumn>
                     <TableColumn key="venueName">
-                      {renderSortableHeader('VENUE', 'venueName', activeEventsSort, handleActiveEventsSort)}
+                      {renderSortableHeader('Venue', 'venueName', activeEventsSort, handleActiveEventsSort)}
+                    </TableColumn>
+                    <TableColumn key="startDate">
+                      {renderSortableHeader('Start', 'startDate', activeEventsSort, handleActiveEventsSort)}
+                    </TableColumn>
+                    <TableColumn key="endDate">
+                      {renderSortableHeader('End', 'endDate', activeEventsSort, handleActiveEventsSort)}
                     </TableColumn>
                     <TableColumn key="duration">
-                      {renderSortableHeader('DAYS', 'duration', activeEventsSort, handleActiveEventsSort)}
+                      {renderSortableHeader('Days', 'duration', activeEventsSort, handleActiveEventsSort)}
                     </TableColumn>
                     <TableColumn key="pax">
-                      {renderSortableHeader('PAX', 'pax', activeEventsSort, handleActiveEventsSort)}
+                      {renderSortableHeader('Pax', 'pax', activeEventsSort, handleActiveEventsSort)}
                     </TableColumn>
-                    <TableColumn key="budget">
-                      {renderSortableHeader('BUDGET', 'budget', activeEventsSort, handleActiveEventsSort)}
+                    <TableColumn key="budget" align="end">
+                      {renderSortableHeader('Revenue', 'budget', activeEventsSort, handleActiveEventsSort)}
                     </TableColumn>
                     <TableColumn key="status">
-                      {renderSortableHeader('STATUS', 'status', activeEventsSort, handleActiveEventsSort)}
+                      {renderSortableHeader('Status', 'status', activeEventsSort, handleActiveEventsSort)}
                     </TableColumn>
-                    <TableColumn key="actions">ACTIONS</TableColumn>
+                    <TableColumn key="actions" align="end"> </TableColumn>
                   </TableHeader>
-                  <TableBody>
-                    {paginatedActiveEvents.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={9} className="text-center text-gray-500 py-8">
-                          <div>
-                            <span className="text-4xl">📅</span>
-                            <p className="mt-2">No active confirmed events found</p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      paginatedActiveEvents
-                        .filter((event: any) => {
-                          if (!event || !event.id) {
-                            console.warn('[Active Events] Skipping event with missing id:', event);
-                            return false;
-                          }
-                          return true;
-                        })
-                        .map((event: any) => {
-                          const durationDays = computeEventDurationDays(event);
-                          return (
-                        <TableRow key={event.id}>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">{event.eventName || 'Unnamed Event'}</p>
-                              <p className="text-xs text-gray-500">ID: {formatEventId(event.id)}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>{event.organization || 'N/A'}</TableCell>
-                          <TableCell>
-                            <div className="text-sm">
-                              {(() => {
-                                try {
-                                  const arrival = event.arrivalDate || event.startDate;
-                                  const departure = event.departureDate || event.endDate;
-                                  return (
-                                    <>
-                                      <p>{arrival ? new Date(arrival).toLocaleDateString() : 'N/A'}</p>
-                                      <p className="text-gray-500">to {departure ? new Date(departure).toLocaleDateString() : 'N/A'}</p>
-                                    </>
-                                  );
-                                } catch (e) {
-                                  return (
-                                    <>
-                                      <p>N/A</p>
-                                      <p className="text-gray-500">to N/A</p>
-                                    </>
-                                  );
-                                }
-                              })()}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge color="secondary" variant="flat">{event.venueName || 'N/A'}</Badge>
-                          </TableCell>
-                              <TableCell className="text-center">
-                                <Chip size="sm" variant="flat" color="warning">
-                                  {durationDays} day{durationDays === 1 ? '' : 's'}
+                  <TableBody emptyContent="No active events in this view.">
+                    {paginatedActiveEvents
+                      .filter((event: any) => Boolean(event?.id))
+                      .map((event: any) => {
+                        const durationDays = computeEventDurationDays(event);
+                        return (
+                          <TableRow key={event.id}>
+                            <TableCell>
+                              <span className="whitespace-nowrap font-mono text-xs text-slate-500">
+                                {formatEventId(event.id)}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="min-w-[160px] max-w-[260px]">
+                                <p className="font-medium text-slate-900 leading-5">{event.eventName || 'Unnamed Event'}</p>
+                                <p className="text-xs text-slate-500 mt-0.5">{event.organization || '—'}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap">{eventStayType(event)}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap">{event.venueName || '—'}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap">{formatEventTableDate(eventStartValue(event)) || '—'}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap">{formatEventTableDate(eventEndValue(event)) || '—'}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="tabular-nums text-slate-600">{durationDays}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="tabular-nums text-slate-600">{event.pax || event.expectedPax || 0}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">
+                                {formatCurrency(event.budgetTotal || event.revenue || 0)}
+                              </span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-col gap-1 items-start">
+                                <Chip size="sm" variant="flat" color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any}>
+                                  {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
                                 </Chip>
-                              </TableCell>
-                          <TableCell className="text-center">{event.pax || event.expectedPax || 0}</TableCell>
-                          <TableCell className="font-semibold">{formatCurrency(event.budgetTotal || 0)}</TableCell>
-                          <TableCell>
-                            <div className="flex flex-col gap-1 items-start">
-                              <Chip color={getConfirmedStatusColor(event.eventStatus || event.status || 'confirmed') as any} size="sm" variant="flat">
-                                {getConfirmedStatusLabel(event.eventStatus || event.status || 'confirmed')}
-                              </Chip>
-                              {event.checkedIn && (
-                                <Chip color="success" size="sm" variant="dot">🏨 In-House</Chip>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex gap-2">
-                              <Button
-                                size="sm"
-                                color="primary"
-                                variant="flat"
-                                onPress={() => openEventForEdit(event, true)}
-                              >
-                                View
-                              </Button>
-                              {(event.eventStatus === 'confirmed' || event.status === 'confirmed') && !event.checkedIn &&
-                                !scheduleHasEventComponent(event.dailySchedule || [], event.customParticulars || []) && (
+                                {event.checkedIn && (
+                                  <span className="text-[11px] text-emerald-700">In house</span>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex justify-end gap-1">
+                                <Button size="sm" variant="light" onPress={() => openEventForEdit(event, true)}>
+                                  View
+                                </Button>
                                 <Button
                                   size="sm"
-                                  color="secondary"
-                                  variant="flat"
-                                  onPress={() => checkInEventGroup(event)}
+                                  variant="light"
+                                  onPress={() => {
+                                    const existing = eventInvoices.find((inv) => inv.eventId === event.id);
+                                    if (existing) openEventInvoiceForm(event, existing);
+                                    else openEventInvoiceForm(event);
+                                  }}
                                 >
-                                  🏨 Check In Group
+                                  Invoice
                                 </Button>
-                              )}
-                              {event.eventStatus !== 'completed' && event.eventStatus !== 'billed' && (
-                                <Button
-                                  size="sm"
-                                  color="default"
-                                  variant="flat"
-                                  onPress={() => handleMarkEventAsCompleted(event)}
-                                >
-                                  ✅ Complete
-                                </Button>
-                              )}
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                          );
-                        })
-                    )}
+                                {(event.eventStatus === 'confirmed' || event.status === 'confirmed') && !event.checkedIn &&
+                                  !scheduleHasEventComponent(event.dailySchedule || [], event.customParticulars || []) && (
+                                  <Button size="sm" variant="light" onPress={() => checkInEventGroup(event)}>
+                                    Check in
+                                  </Button>
+                                )}
+                                {event.eventStatus !== 'completed' && event.eventStatus !== 'billed' && (
+                                  <Button size="sm" variant="light" onPress={() => handleMarkEventAsCompleted(event)}>
+                                    Complete
+                                  </Button>
+                                )}
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
                   </TableBody>
                 </Table>
                 {activeEventsPages > 1 && (
@@ -13443,124 +14525,154 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="completed" title={`✅ Completed Events (${managementTabCounts.completed})`}>
-            <Card className="mt-4">
-              <CardBody className="pt-3">
-                <h3 className="text-base font-semibold text-ghana-black mb-3">Completed Events</h3>
-                <Table aria-label="Completed events table">
+            <Card className="mt-4 shadow-sm border border-slate-200">
+              <CardBody className="p-4">
+                <h3 className="text-base font-semibold text-slate-800 mb-3">Completed Events</h3>
+                <Table
+                  aria-label="Completed events table"
+                  removeWrapper
+                  isCompact
+                  classNames={managementTableClassNames}
+                >
                   <TableHeader>
+                    <TableColumn key="eventId">
+                      {renderSortableHeader('Event ID', 'eventId', completedEventsSort, handleCompletedEventsSort)}
+                    </TableColumn>
                     <TableColumn key="eventName">
-                      {renderSortableHeader('EVENT', 'eventName', completedEventsSort, handleCompletedEventsSort)}
+                      {renderSortableHeader('Event', 'eventName', completedEventsSort, handleCompletedEventsSort)}
                     </TableColumn>
-                    <TableColumn key="organization">
-                      {renderSortableHeader('ORGANIZATION', 'organization', completedEventsSort, handleCompletedEventsSort)}
-                    </TableColumn>
-                    <TableColumn key="dates">
-                      {renderSortableHeader('DATES', 'dates', completedEventsSort, handleCompletedEventsSort)}
+                    <TableColumn key="stayType">
+                      {renderSortableHeader('Type', 'stayType', completedEventsSort, handleCompletedEventsSort)}
                     </TableColumn>
                     <TableColumn key="venueName">
-                      {renderSortableHeader('VENUE', 'venueName', completedEventsSort, handleCompletedEventsSort)}
+                      {renderSortableHeader('Venue', 'venueName', completedEventsSort, handleCompletedEventsSort)}
+                    </TableColumn>
+                    <TableColumn key="startDate">
+                      {renderSortableHeader('Start', 'startDate', completedEventsSort, handleCompletedEventsSort)}
+                    </TableColumn>
+                    <TableColumn key="endDate">
+                      {renderSortableHeader('End', 'endDate', completedEventsSort, handleCompletedEventsSort)}
                     </TableColumn>
                     <TableColumn key="duration">
-                      {renderSortableHeader('DAYS', 'duration', completedEventsSort, handleCompletedEventsSort)}
+                      {renderSortableHeader('Days', 'duration', completedEventsSort, handleCompletedEventsSort)}
                     </TableColumn>
                     <TableColumn key="pax">
-                      {renderSortableHeader('PAX', 'pax', completedEventsSort, handleCompletedEventsSort)}
+                      {renderSortableHeader('Pax', 'pax', completedEventsSort, handleCompletedEventsSort)}
                     </TableColumn>
-                    <TableColumn key="budget">
-                      {renderSortableHeader('QUOTE (₵)', 'budget', completedEventsSort, handleCompletedEventsSort)}
+                    <TableColumn key="budget" align="end">
+                      {renderSortableHeader('Quote', 'budget', completedEventsSort, handleCompletedEventsSort)}
                     </TableColumn>
-                    <TableColumn key="actual">
-                      {renderSortableHeader('INVOICE (₵)', 'actual', completedEventsSort, handleCompletedEventsSort)}
+                    <TableColumn key="actual" align="end">
+                      {renderSortableHeader('Invoice', 'actual', completedEventsSort, handleCompletedEventsSort)}
                     </TableColumn>
-                    <TableColumn key="variance">
-                      {renderSortableHeader('VARIANCE (₵)', 'variance', completedEventsSort, handleCompletedEventsSort)}
+                    <TableColumn key="variance" align="end">
+                      {renderSortableHeader('Variance', 'variance', completedEventsSort, handleCompletedEventsSort)}
                     </TableColumn>
                     <TableColumn key="status">
-                      {renderSortableHeader('STATUS', 'status', completedEventsSort, handleCompletedEventsSort)}
+                      {renderSortableHeader('Status', 'status', completedEventsSort, handleCompletedEventsSort)}
                     </TableColumn>
-                    <TableColumn key="actions">ACTIONS</TableColumn>
+                    <TableColumn key="actions" align="end"> </TableColumn>
                   </TableHeader>
-                  <TableBody>
-                    {paginatedCompletedEvents.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={11} className="text-center text-gray-500 py-8">
-                          <div>
-                            <span className="text-4xl">✅</span>
-                            <p className="mt-2">No completed events found</p>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      paginatedCompletedEvents.map((event: any) => {
-                        const durationDays = computeEventDurationDays(event);
-                        return (
+                  <TableBody emptyContent="No completed events in this view.">
+                    {paginatedCompletedEvents.map((event: any) => {
+                      const durationDays = computeEventDurationDays(event);
+                      return (
                         <TableRow key={event.id}>
                           <TableCell>
-                            <div>
-                              <p className="font-medium">{event.eventName}</p>
-                              <p className="text-xs text-gray-500">ID: {formatEventId(event.id)}</p>
-                            </div>
+                            <span className="whitespace-nowrap font-mono text-xs text-slate-500">
+                              {formatEventId(event.id)}
+                            </span>
                           </TableCell>
-                          <TableCell>{event.organization}</TableCell>
                           <TableCell>
-                            <div className="text-sm">
-                              <p>{new Date(event.arrivalDate || event.startDate).toLocaleDateString()}</p>
-                              <p className="text-gray-500">to {new Date(event.departureDate || event.endDate).toLocaleDateString()}</p>
+                            <div className="min-w-[160px] max-w-[260px]">
+                              <p className="font-medium text-slate-900 leading-5">{event.eventName || 'Unnamed Event'}</p>
+                              <p className="text-xs text-slate-500 mt-0.5">{event.organization || '—'}</p>
                             </div>
                           </TableCell>
                           <TableCell>
-                            <Badge color="secondary" variant="flat">{event.venueName}</Badge>
+                            <span className="whitespace-nowrap">{eventStayType(event)}</span>
                           </TableCell>
-                          <TableCell className="text-center">
-                            <Chip size="sm" variant="flat" color="warning">
-                              {durationDays} day{durationDays === 1 ? '' : 's'}
-                            </Chip>
+                          <TableCell>
+                            <span className="whitespace-nowrap">{event.venueName || '—'}</span>
                           </TableCell>
-                          <TableCell className="text-center">{event.pax || event.expectedPax || 0}</TableCell>
-                          <TableCell className="font-semibold">{formatCurrency(event.budgetTotal || event.quoteTotal || 0)}</TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap">{formatEventTableDate(eventStartValue(event)) || '—'}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap">{formatEventTableDate(eventEndValue(event)) || '—'}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="tabular-nums text-slate-600">{durationDays}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="tabular-nums text-slate-600">{event.pax || event.expectedPax || 0}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">
+                              {formatCurrency(event.budgetTotal || event.quoteTotal || 0)}
+                            </span>
+                          </TableCell>
                           <TableCell>
                             {event.invoiceTotal || event.actualTotal ? (
-                              <span className="font-semibold">
+                              <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">
                                 {formatCurrency(event.invoiceTotal || event.actualTotal || 0)}
-                                {event.invoiceCount > 1 && (
-                                  <span className="text-xs text-gray-500 ml-1">({event.invoiceCount} invoices)</span>
-                                )}
+                                {event.invoiceCount > 1 ? (
+                                  <span className="ml-1 text-xs font-normal text-slate-400">({event.invoiceCount})</span>
+                                ) : null}
                               </span>
                             ) : (
-                              <span className="text-gray-400 text-sm">No invoice</span>
+                              <span className="text-slate-400">—</span>
                             )}
                           </TableCell>
                           <TableCell>
                             {event.variance !== undefined ? (
-                              <span className={event.variance >= 0 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'}>
+                              <span className={`whitespace-nowrap tabular-nums font-medium ${event.variance >= 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
                                 {event.variance >= 0 ? '+' : ''}{formatCurrency(event.variance)}
                               </span>
                             ) : (
-                              <span className="text-gray-400 text-sm">—</span>
+                              <span className="text-slate-400">—</span>
                             )}
                           </TableCell>
                           <TableCell>
-                            <Chip color={getConfirmedStatusColor(event.eventStatus) as any} size="sm" variant="flat">
+                            <Chip size="sm" variant="flat" color={getConfirmedStatusColor(event.eventStatus) as any}>
                               {getConfirmedStatusLabel(event.eventStatus)}
                             </Chip>
                           </TableCell>
-                          {/* Invoice column removed – use Invoices tab and Folio for invoice actions */}
                           <TableCell>
-                            <div className="flex gap-2">
+                            <div className="flex justify-end gap-1">
                               <Button
                                 size="sm"
-                                color="secondary"
-                                variant="flat"
-                                onPress={() => handleOpenEventFolio(event)}
+                                variant="light"
+                                onPress={() => {
+                                  const existing = eventInvoices.find((inv) => inv.eventId === event.id);
+                                  if (existing) openEventInvoiceForm(event, existing);
+                                  else openEventInvoiceForm(event);
+                                }}
                               >
-                                📂 Folio
+                                Invoice
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="light"
+                                onPress={() => {
+                                  const existing = eventInvoices.find((inv) => inv.eventId === event.id);
+                                  openReceiptModal('create', undefined, {
+                                    ...event,
+                                    invoiceId: existing?.id,
+                                    balance: existing?.balance ?? event.balance ?? 0,
+                                  });
+                                }}
+                              >
+                                Pay
+                              </Button>
+                              <Button size="sm" variant="light" onPress={() => handleOpenEventFolio(event)}>
+                                Folio
                               </Button>
                             </div>
                           </TableCell>
                         </TableRow>
                       );
-                      })
-                    )}
+                    })}
                   </TableBody>
                 </Table>
                 {completedEventsPages > 1 && (
@@ -13578,24 +14690,26 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="invoices" title={`🧾 Invoices (${managementTabCounts.invoices})`}>
-            <Card className="mt-4">
-              <CardBody className="pt-3">
+            <Card className="mt-4 shadow-sm border border-slate-200">
+              <CardBody className="p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-semibold text-ghana-black">Invoices</h3>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button size="sm" color="primary" variant="flat" onPress={openCreateInvoicePicker}>
-                      ➕ Create Invoice
-                    </Button>
-                    <span className="text-xs text-gray-500">Layout set in Settings → Document Templates</span>
-                  </div>
+                  <h3 className="text-base font-semibold text-slate-800">Invoices</h3>
+                  <Button size="sm" color="primary" variant="solid" onPress={openCreateInvoicePicker}>
+                    New invoice
+                  </Button>
                 </div>
-                <Table aria-label="Event invoices" className="text-sm">
+                <Table
+                  aria-label="Event invoices"
+                  removeWrapper
+                  isCompact
+                  classNames={managementTableClassNames}
+                >
                     <TableHeader>
                       <TableColumn key="invoiceId">
                         {renderSortableHeader('Invoice', 'invoiceId', invoiceSort, handleInvoiceSort)}
                       </TableColumn>
                       <TableColumn key="eventName">
-                        {renderSortableHeader('Event & Client', 'eventName', invoiceSort, handleInvoiceSort)}
+                        {renderSortableHeader('Event', 'eventName', invoiceSort, handleInvoiceSort)}
                       </TableColumn>
                       <TableColumn key="issueDate">
                         {renderSortableHeader('Issued', 'issueDate', invoiceSort, handleInvoiceSort)}
@@ -13603,55 +14717,52 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       <TableColumn key="dueDate">
                         {renderSortableHeader('Due', 'dueDate', invoiceSort, handleInvoiceSort)}
                       </TableColumn>
-                      <TableColumn key="total">
+                      <TableColumn key="total" align="end">
                         {renderSortableHeader('Total', 'total', invoiceSort, handleInvoiceSort)}
                       </TableColumn>
-                      <TableColumn key="balance">
-                        {renderSortableHeader('Outstanding', 'balance', invoiceSort, handleInvoiceSort)}
+                      <TableColumn key="balance" align="end">
+                        {renderSortableHeader('Balance', 'balance', invoiceSort, handleInvoiceSort)}
                       </TableColumn>
                       <TableColumn key="status">
                         {renderSortableHeader('Status', 'status', invoiceSort, handleInvoiceSort)}
                       </TableColumn>
-                      <TableColumn key="actions">Actions</TableColumn>
+                      <TableColumn key="actions" align="end"> </TableColumn>
                     </TableHeader>
-                    <TableBody emptyContent="No invoices recorded yet">
+                    <TableBody emptyContent="No invoices in this view.">
                       {paginatedInvoices.map(invoice => (
                         <TableRow key={invoice.id}>
                           <TableCell>
-                            <div className="font-semibold text-ghana-black">{invoice.id}</div>
-                            <div className="text-xs text-gray-500">{invoice.reference || '—'}</div>
+                            <div className="font-mono text-xs text-slate-700">{getConferenceInvoiceNumber(invoice.id, invoice.eventId) || invoice.id}</div>
                           </TableCell>
                           <TableCell>
-                            <div className="font-medium">{invoice.eventName}</div>
-                            <div className="text-xs text-gray-500">{invoice.clientName}</div>
-                            <div className="text-xs text-blue-600 mt-0.5">📑 From: {invoice.eventId}</div>
+                            <div className="min-w-[160px] max-w-[260px]">
+                              <p className="font-medium text-slate-900 leading-5">{invoice.eventName || '—'}</p>
+                              <p className="text-xs text-slate-500 mt-0.5">{invoice.clientName || '—'}</p>
+                            </div>
                           </TableCell>
-                          <TableCell>{formatDateDisplay(invoice.issueDate)}</TableCell>
-                          <TableCell>{formatDateDisplay(invoice.dueDate)}</TableCell>
-                          <TableCell>{formatCurrency(invoice.total)}</TableCell>
-                          <TableCell>{formatCurrency(invoice.balance)}</TableCell>
                           <TableCell>
-                            <Badge color={invoiceStatusMeta[invoice.status].color} variant="flat" size="sm">
+                            <span className="whitespace-nowrap">{formatDateDisplay(invoice.issueDate)}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap">{formatDateDisplay(invoice.dueDate)}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">{formatCurrency(invoice.total)}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap tabular-nums">{formatCurrency(invoice.balance)}</span>
+                          </TableCell>
+                          <TableCell>
+                            <Chip size="sm" variant="flat" color={invoiceStatusMeta[invoice.status].color as any}>
                               {invoiceStatusMeta[invoice.status].label}
-                            </Badge>
+                            </Chip>
                           </TableCell>
                           <TableCell>
-                            <div className="flex flex-wrap items-center gap-2">
+                            <div className="flex justify-end">
                               <Button
                                 size="sm"
-                                variant="flat"
-                                color="primary"
-                                onPress={() => {
-                                  setSelectedTab('completed');
-                                  openInvoiceFromTable(invoice);
-                                }}
-                              >
-                                ✏️ Edit
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="default"
+                                variant="light"
+                                className="h-7 min-w-0 px-2"
                                 onPress={() => {
                                   const relatedEvent = managedEvents.find((e: any) => e.id === invoice.eventId) || allEvents.find((e: any) => e.id === invoice.eventId);
                                   if (!relatedEvent) {
@@ -13661,15 +14772,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                   handleOpenEventFolio(relatedEvent);
                                 }}
                               >
-                                📂 Folio
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="secondary"
-                                onPress={() => handleDownloadInvoicePdf(invoice)}
-                              >
-                                🖨️ Print
+                                View
                               </Button>
                             </div>
                           </TableCell>
@@ -13692,34 +14795,31 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="receipts" title={`💳 Receipts (${managementTabCounts.receipts})`}>
-            <Card className="mt-4">
-              <CardBody className="pt-3">
+            <Card className="mt-4 shadow-sm border border-slate-200">
+              <CardBody className="p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-semibold text-ghana-black">Receipts</h3>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-gray-500">Layout set in Settings → Document Templates</span>
-                    <Button
-                      size="sm"
-                      color="success"
-                      variant="flat"
-                      onPress={() => openReceiptModal('create')}
-                    >
-                      ➕ Record Receipt
-                    </Button>
-                  </div>
+                  <h3 className="text-base font-semibold text-slate-800">Receipts</h3>
+                  <Button size="sm" color="primary" variant="solid" onPress={openCreateReceiptPicker}>
+                    Record receipt
+                  </Button>
                 </div>
-                <Table aria-label="Confirmed event receipts" className="text-sm">
+                <Table
+                  aria-label="Event receipts"
+                  removeWrapper
+                  isCompact
+                  classNames={managementTableClassNames}
+                >
                     <TableHeader>
                       <TableColumn key="receiptId">
                         {renderSortableHeader('Receipt', 'receiptId', receiptSort, handleReceiptSort)}
                       </TableColumn>
                       <TableColumn key="eventName">
-                        {renderSortableHeader('Event & Client', 'eventName', receiptSort, handleReceiptSort)}
+                        {renderSortableHeader('Event', 'eventName', receiptSort, handleReceiptSort)}
                       </TableColumn>
                       <TableColumn key="date">
                         {renderSortableHeader('Date', 'date', receiptSort, handleReceiptSort)}
                       </TableColumn>
-                      <TableColumn key="amount">
+                      <TableColumn key="amount" align="end">
                         {renderSortableHeader('Amount', 'amount', receiptSort, handleReceiptSort)}
                       </TableColumn>
                       <TableColumn key="method">
@@ -13731,53 +14831,43 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       <TableColumn key="invoiceId">
                         {renderSortableHeader('Invoice', 'invoiceId', receiptSort, handleReceiptSort)}
                       </TableColumn>
-                      <TableColumn key="actions">Actions</TableColumn>
+                      <TableColumn key="actions" align="end"> </TableColumn>
                     </TableHeader>
-                    <TableBody emptyContent="No receipts recorded yet">
+                    <TableBody emptyContent="No receipts in this view.">
                       {paginatedReceipts.map(receipt => (
                         <TableRow key={receipt.id}>
                           <TableCell>
-                            <div className="font-semibold text-ghana-black">{receipt.id}</div>
-                            <div className="text-xs text-gray-500">{receipt.recordedBy}</div>
+                            <div className="font-mono text-xs text-slate-700">{getConferenceReceiptNumber(receipt.id, receipt.eventId) || receipt.id}</div>
+                            <div className="text-xs text-slate-400">{receipt.recordedBy || receipt.id}</div>
                           </TableCell>
                           <TableCell>
-                            <div className="font-medium">{receipt.eventName}</div>
-                            <div className="text-xs text-gray-500">{receipt.clientName}</div>
-                          </TableCell>
-                          <TableCell>{formatDateDisplay(receipt.date)}</TableCell>
-                          <TableCell>{formatCurrency(receipt.amount)}</TableCell>
-                          <TableCell>
-                            <Badge color={receiptMethodColors[receipt.method]} variant="flat" size="sm">
-                              {receipt.method}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>{receipt.reference || '—'}</TableCell>
-                          <TableCell>
-                            {receipt.invoiceId ? (
-                              <Badge color="primary" variant="flat" size="sm">
-                                🧾 {receipt.invoiceId}
-                              </Badge>
-                            ) : (
-                              <span className="text-gray-400">—</span>
-                            )}
+                            <div className="min-w-[160px] max-w-[260px]">
+                              <p className="font-medium text-slate-900 leading-5">{receipt.eventName || '—'}</p>
+                              <p className="text-xs text-slate-500 mt-0.5">{receipt.clientName || '—'}</p>
+                            </div>
                           </TableCell>
                           <TableCell>
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="primary"
-                                onPress={() => openReceiptModal('edit', receipt)}
-                              >
-                                ✏️ Edit
+                            <span className="whitespace-nowrap">{formatDateDisplay(receipt.date)}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">{formatCurrency(receipt.amount)}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap">{paymentMethodLabel(resolveReceiptMethod(receipt.method))}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap text-slate-600">{receipt.reference || '—'}</span>
+                          </TableCell>
+                          <TableCell>
+                            <span className="whitespace-nowrap font-mono text-xs text-slate-500">{getConferenceInvoiceNumber(receipt.invoiceId, receipt.eventId) || receipt.invoiceId || '—'}</span>
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex justify-end gap-1">
+                              <Button size="sm" variant="light" onPress={() => openReceiptModal('edit', receipt)}>
+                                Edit
                               </Button>
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="secondary"
-                                onPress={() => handleDownloadReceiptPdf(receipt)}
-                              >
-                                🖨️ Print
+                              <Button size="sm" variant="light" onPress={() => handleDownloadReceiptPdf(receipt)}>
+                                Print
                               </Button>
                             </div>
                           </TableCell>
@@ -13800,112 +14890,110 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="quotes" title={`📑 Quotes / Proforma (${managementTabCounts.quotes})`}>
-            <Card className="mt-4">
-              <CardBody className="pt-3">
+            <Card className="mt-4 shadow-sm border border-slate-200">
+              <CardBody className="p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-semibold text-ghana-black">Quotes / Proforma</h3>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs text-gray-500">Layout set in Settings → Document Templates</span>
-                    <Button
-                      size="sm"
-                      color="primary"
-                      variant="flat"
-                      onPress={openBlankQuoteModal}
-                    >
-                      ➕ New Quote
-                    </Button>
-                  </div>
+                  <h3 className="text-base font-semibold text-slate-800">Quotes / Proforma</h3>
+                  <Button size="sm" color="primary" variant="solid" onPress={openNewEventModal}>
+                    New quote
+                  </Button>
                 </div>
-                <Table aria-label="Event quotes and proformas" className="text-sm">
+                <Table
+                  aria-label="Event quotes and proformas"
+                  removeWrapper
+                  isCompact
+                  classNames={managementTableClassNames}
+                >
                     <TableHeader>
                       <TableColumn key="quoteNumber">
                         {renderSortableHeader('Quote ID', 'quoteNumber', quoteSort, handleQuoteSort)}
                       </TableColumn>
-                      <TableColumn key="clientName">
-                        {renderSortableHeader('Client Name', 'clientName', quoteSort, handleQuoteSort)}
-                      </TableColumn>
                       <TableColumn key="eventName">
-                        {renderSortableHeader('Event Name', 'eventName', quoteSort, handleQuoteSort)}
+                        {renderSortableHeader('Event', 'eventName', quoteSort, handleQuoteSort)}
                       </TableColumn>
                       <TableColumn key="venueName">
                         {renderSortableHeader('Venue', 'venueName', quoteSort, handleQuoteSort)}
                       </TableColumn>
                       <TableColumn key="checkIn">
-                        {renderSortableHeader('Check-In', 'checkIn', quoteSort, handleQuoteSort)}
+                        {renderSortableHeader('Start', 'checkIn', quoteSort, handleQuoteSort)}
                       </TableColumn>
                       <TableColumn key="checkOut">
-                        {renderSortableHeader('Check-Out', 'checkOut', quoteSort, handleQuoteSort)}
+                        {renderSortableHeader('End', 'checkOut', quoteSort, handleQuoteSort)}
                       </TableColumn>
                       <TableColumn key="pax">
-                        {renderSortableHeader('PAX', 'pax', quoteSort, handleQuoteSort)}
+                        {renderSortableHeader('Pax', 'pax', quoteSort, handleQuoteSort)}
                       </TableColumn>
                       <TableColumn key="issuedOn">
                         {renderSortableHeader('Issued', 'issuedOn', quoteSort, handleQuoteSort)}
                       </TableColumn>
-                      <TableColumn key="amount">
-                        {renderSortableHeader('Amount (₵)', 'amount', quoteSort, handleQuoteSort)}
+                      <TableColumn key="amount" align="end">
+                        {renderSortableHeader('Amount', 'amount', quoteSort, handleQuoteSort)}
                       </TableColumn>
-                      <TableColumn key="actions">Actions</TableColumn>
+                      <TableColumn key="actions" align="end"> </TableColumn>
                     </TableHeader>
-                    <TableBody>
-                      {paginatedQuotes.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={10} className="text-center text-gray-500 py-10">
-                            <div className="flex flex-col items-center gap-2">
-                              <span className="text-3xl">📑</span>
-                              <p className="font-medium">No quotes found</p>
-                              <p className="text-sm">Create a new quote to get started.</p>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        paginatedQuotes.map((quote: QuoteListItem) => {
-                          const hasInvoice = eventInvoices.some(inv => inv.eventId === quote.eventId);
-                          const linkedInvoice = eventInvoices.find(inv => inv.eventId === quote.eventId);
-                          return (
+                    <TableBody emptyContent="No quotes in this view.">
+                      {paginatedQuotes.map((quote: QuoteListItem) => {
+                        const linkedInvoice = eventInvoices.find(inv => inv.eventId === quote.eventId);
+                        return (
                           <TableRow key={quote.id}>
                             <TableCell>
-                              <div className="font-semibold text-ghana-black">{quote.quoteNumber}</div>
-                              <div className="text-xs text-gray-500">{quote.reference || '—'}</div>
-                              {hasInvoice ? (
-                                <Badge color="success" variant="flat" size="sm" className="mt-1">
-                                  🧾 {linkedInvoice?.id}
-                                </Badge>
-                              ) : (
-                                <span className="text-xs text-gray-400 mt-1 block">No invoice yet</span>
-                              )}
+                              <div className="font-mono text-xs text-slate-700">{quote.quoteNumber}</div>
+                              <div className="text-xs text-slate-400">
+                                {linkedInvoice
+                                  ? getConferenceInvoiceNumber(linkedInvoice.id, quote.eventId)
+                                  : 'Proforma'}
+                              </div>
                             </TableCell>
-                            <TableCell>{quote.clientName}</TableCell>
-                            <TableCell>{quote.eventName}</TableCell>
-                            <TableCell>{quote.venueName || 'N/A'}</TableCell>
-                            <TableCell>{quote.checkIn ? formatDateDisplay(quote.checkIn) : '—'}</TableCell>
-                            <TableCell>{quote.checkOut ? formatDateDisplay(quote.checkOut) : '—'}</TableCell>
-                            <TableCell>{quote.pax || 0}</TableCell>
-                            <TableCell>{quote.issuedOn ? formatDateDisplay(quote.issuedOn) : '—'}</TableCell>
-                            <TableCell>{formatCurrency(quote.total)}</TableCell>
                             <TableCell>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="flat"
-                                  color="primary"
-                                  onPress={() => openEventForEdit(quote.rawEvent, true)}
-                                >
-                                  ✏️ Edit
+                              <div className="min-w-[160px] max-w-[260px]">
+                                <p className="font-medium text-slate-900 leading-5">{quote.eventName || '—'}</p>
+                                <p className="text-xs text-slate-500 mt-0.5">{quote.clientName || '—'}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap">{quote.venueName || '—'}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap">{quote.checkIn ? formatEventTableDate(quote.checkIn) || formatDateDisplay(quote.checkIn) : '—'}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap">{quote.checkOut ? formatEventTableDate(quote.checkOut) || formatDateDisplay(quote.checkOut) : '—'}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="tabular-nums text-slate-600">{quote.pax || 0}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap">{quote.issuedOn ? formatDateDisplay(quote.issuedOn) : '—'}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">{formatCurrency(quote.total)}</span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex justify-end gap-1">
+                                <Button size="sm" variant="light" onPress={() => openEventForEdit(quote.rawEvent, true)}>
+                                  Edit
                                 </Button>
                                 <Button
                                   size="sm"
-                                  variant="flat"
-                                  color="secondary"
-                                  onPress={() => handleDownloadQuotePdf(quote.rawEvent)}
+                                  variant="light"
+                                  onPress={() => {
+                                    if (linkedInvoice) {
+                                      openInvoiceDetailEdit(linkedInvoice);
+                                      return;
+                                    }
+                                    openEventInvoiceForm(quote.rawEvent);
+                                  }}
                                 >
-                                  🖨️ Print
+                                  {linkedInvoice ? 'Invoice' : 'To invoice'}
+                                </Button>
+                                <Button size="sm" variant="light" onPress={() => handleDownloadQuotePdf(quote.rawEvent)}>
+                                  Print
                                 </Button>
                               </div>
                             </TableCell>
                           </TableRow>
-                        );})
-                      )}
+                        );
+                      })}
                     </TableBody>
                   </Table>
                   {quotesPages > 1 && (
@@ -13923,93 +15011,86 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             </Card>
           </Tab>
           <Tab key="folios" title={`📂 Folios (${managementTabCounts.folios})`}>
-            <Card className="mt-4">
-              <CardBody className="pt-3">
+            <Card className="mt-4 shadow-sm border border-slate-200">
+              <CardBody className="p-4">
                 <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-base font-semibold text-ghana-black">Folios</h3>
-                  <Button
-                    size="sm"
-                    color="secondary"
-                    variant="flat"
-                    onPress={() => {
-                      const eligible = allEvents.filter(
-                        (e: any) => !eventFolios.some((f) => f.eventId === e.id)
-                      );
-                      if (!eligible.length) {
-                        alert('All events already have folios.');
-                        return;
-                      }
-                      setFolioCreateForm({
-                        eventId: eligible[0]?.id || '',
-                        openingBalance: 0,
-                        note: '',
-                      });
-                      setFolioCreateError('');
-                      setIsFolioCreateModalOpen(true);
-                    }}
-                  >
-                    ➕ Generate Folio
+                  <h3 className="text-base font-semibold text-slate-800">Folios</h3>
+                  <Button size="sm" color="primary" variant="solid" onPress={openCreateFolioPicker}>
+                    New folio
                   </Button>
                 </div>
-                <Table aria-label="Confirmed event folios" className="text-sm">
+                <Table
+                  aria-label="Event folios"
+                  removeWrapper
+                  isCompact
+                  classNames={managementTableClassNames}
+                >
                     <TableHeader>
                       <TableColumn key="folioId">
                         {renderSortableHeader('Folio', 'folioId', folioSort, handleFolioSort)}
                       </TableColumn>
+                      <TableColumn key="createdAt">
+                        {renderSortableHeader('Date', 'createdAt', folioSort, handleFolioSort)}
+                      </TableColumn>
                       <TableColumn key="eventName">
                         {renderSortableHeader('Event', 'eventName', folioSort, handleFolioSort)}
-                      </TableColumn>
-                      <TableColumn key="clientName">
-                        {renderSortableHeader('Client', 'clientName', folioSort, handleFolioSort)}
                       </TableColumn>
                       <TableColumn key="status">
                         {renderSortableHeader('Status', 'status', folioSort, handleFolioSort)}
                       </TableColumn>
-                      <TableColumn key="charges">
+                      <TableColumn key="charges" align="end">
                         {renderSortableHeader('Charges', 'charges', folioSort, handleFolioSort)}
                       </TableColumn>
-                      <TableColumn key="payments">
+                      <TableColumn key="payments" align="end">
                         {renderSortableHeader('Payments', 'payments', folioSort, handleFolioSort)}
                       </TableColumn>
-                      <TableColumn key="balance">
+                      <TableColumn key="balance" align="end">
                         {renderSortableHeader('Balance', 'balance', folioSort, handleFolioSort)}
                       </TableColumn>
                       <TableColumn key="updatedAt">
                         {renderSortableHeader('Updated', 'updatedAt', folioSort, handleFolioSort)}
                       </TableColumn>
-                      <TableColumn key="actions">Actions</TableColumn>
+                      <TableColumn key="actions" align="end"> </TableColumn>
                     </TableHeader>
-                    <TableBody emptyContent="No folios yet">
+                    <TableBody emptyContent="No folios in this view.">
                       {paginatedFolios.map(folio => {
                         const totals = calculateFolioTotals(folio);
                         const balance = getFolioCurrentBalance(folio);
-                        const statusColor = folio.status === 'Open' ? 'warning' : 'success';
                         return (
                           <TableRow key={folio.id}>
                             <TableCell>
-                              <div className="font-semibold text-ghana-black">{folio.id}</div>
-                              <div className="text-xs text-gray-500">{formatDateDisplay(folio.createdAt)}</div>
+                              <span className="whitespace-nowrap font-medium text-slate-900">{formatFolioNumber(folio.id)}</span>
                             </TableCell>
-                            <TableCell>{folio.eventName}</TableCell>
-                            <TableCell>{folio.clientName || '—'}</TableCell>
                             <TableCell>
-                              <Badge color={statusColor} variant="flat" size="sm">
-                                {folio.status}
-                              </Badge>
+                              <span className="whitespace-nowrap text-slate-600">{formatDateDisplay(folio.createdAt)}</span>
                             </TableCell>
-                            <TableCell>{formatCurrency(totals.debits)}</TableCell>
-                            <TableCell>{formatCurrency(totals.credits)}</TableCell>
-                            <TableCell>{formatCurrency(balance)}</TableCell>
-                            <TableCell>{formatDateDisplay(folio.updatedAt)}</TableCell>
                             <TableCell>
-                              <div className="flex flex-wrap items-center gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="flat"
-                                  color="primary"
-                                  onPress={() => openFolioDetails(folio)}
-                                >
-                                  📄 View
+                              <div className="min-w-[160px] max-w-[260px]">
+                                <p className="font-medium text-slate-900 leading-5">{folio.eventName || '—'}</p>
+                                <p className="text-xs text-slate-500 mt-0.5">{folio.clientName || '—'}</p>
+                              </div>
+                            </TableCell>
+                            <TableCell>
+                              <Chip size="sm" variant="flat" color={getFolioSettledStatus(folio) === 'Open' ? 'warning' : 'success'}>
+                                {getFolioSettledStatus(folio) === 'Closed' ? 'Settled' : 'Open'}
+                              </Chip>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap tabular-nums">{formatCurrency(totals.debits)}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap tabular-nums">{formatCurrency(totals.credits)}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap tabular-nums font-medium text-slate-900">{formatCurrency(balance)}</span>
+                            </TableCell>
+                            <TableCell>
+                              <span className="whitespace-nowrap">{formatDateDisplay(folio.updatedAt)}</span>
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex justify-end">
+                                <Button size="sm" variant="light" onPress={() => openFolioDetails(folio)}>
+                                  View
                                 </Button>
                               </div>
                             </TableCell>
@@ -14132,7 +15213,13 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       </div>
       <Tabs 
             selectedKey={selectedTab} 
-            onSelectionChange={(key) => setSelectedTab(key as string)}
+            onSelectionChange={(key) => {
+              if (String(key) === 'reports') {
+                router.push('/events/reports');
+                return;
+              }
+              setSelectedTab(key as string);
+            }}
             className="w-full"
             aria-label="Events and conferences operations"
           >
@@ -14164,6 +15251,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     { key: 'booked', label: 'Booked' },
                     { key: 'setup', label: 'Setup' },
                     { key: 'maintenance', label: 'Maintenance' },
+                    { key: 'inactive', label: 'Inactive' },
                   ]}
                   showDateFilter={false}
                 />
@@ -14206,7 +15294,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                             </TableCell>
                             <TableCell>
                               <Badge color={getStatusColor(venue.status) as any} variant="flat">
-                                {venue.status}
+                                {venue.status === 'inactive' ? 'Inactive' : venue.status}
                               </Badge>
                             </TableCell>
                             <TableCell>
@@ -14233,14 +15321,31 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                 >
                                   Edit
                                 </Button>
-                                <Button
-                                  size="sm"
-                                  color="danger"
-                                  variant="flat"
-                                  onClick={() => handleDeleteVenue(venue)}
-                                >
-                                  Delete
-                                </Button>
+                                {getEventsUsingVenue(venue).length > 0 ? (
+                                  venue.status === 'inactive' ? (
+                                    <Button size="sm" variant="flat" isDisabled>
+                                      In use
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      size="sm"
+                                      color="warning"
+                                      variant="flat"
+                                      onClick={() => handleDeleteVenue(venue)}
+                                    >
+                                      Deactivate
+                                    </Button>
+                                  )
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    color="danger"
+                                    variant="flat"
+                                    onClick={() => handleDeleteVenue(venue)}
+                                  >
+                                    Delete
+                                  </Button>
+                                )}
                               </div>
                             </TableCell>
                           </TableRow>
@@ -14254,227 +15359,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             <Tab key="quoting" title={`💰 Guest Rates (${guestRatesFilteredCount})`}>
               <ConferenceRateManagement onFilteredCountChange={setGuestRatesFilteredCount} />
             </Tab>
-            <Tab key="reports" title={`📊 Reports & Analytics (${filteredReportsCount})`}>
-              <div className="space-y-4 mt-4">
-                <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-                  <div>
-                    <h3 className="text-xl font-semibold text-ghana-black">Reports & Analytics</h3>
-                    <p className="text-sm text-gray-500">
-                      Live reports from events, venues, invoices, receipts, and folios.
-                    </p>
-                  </div>
-                </div>
-
-                <EventsModuleFilters
-                  searchTerm={reportSearch}
-                  onSearchChange={setReportSearch}
-                  searchPlaceholder="Search reports by name or category..."
-                  dateFilterMode={reportsDateFilterMode}
-                  onDateFilterModeChange={setReportsDateFilterMode}
-                  dateFilterSingle={reportsDateFilterSingle}
-                  onDateFilterSingleChange={setReportsDateFilterSingle}
-                  dateFilterFrom={reportsDateFilterFrom}
-                  onDateFilterFromChange={setReportsDateFilterFrom}
-                  dateFilterTo={reportsDateFilterTo}
-                  onDateFilterToChange={setReportsDateFilterTo}
-                />
-
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-                  <Card className="lg:col-span-4 xl:col-span-3 border border-gray-200 h-full">
-                    <CardBody className="p-3 space-y-3">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 px-1">
-                        Report Library
-                      </p>
-                      {filteredReportCatalog.length > 0 ? (
-                        <Accordion
-                          selectionMode="multiple"
-                          defaultExpandedKeys={filteredReportCatalog.map(category => category.key)}
-                          className="w-full"
-                        >
-                          {filteredReportCatalog.map(category => (
-                            <AccordionItem
-                              key={category.key}
-                              aria-label={category.label}
-                              title={
-                                <span className="flex items-center gap-2 text-ghana-black font-semibold">
-                                  <span>{category.icon}</span>
-                                  {category.label}
-                                </span>
-                              }
-                              subtitle={
-                                <span className="text-xs text-gray-500">
-                                  {category.reports.length} report{category.reports.length === 1 ? '' : 's'}
-                                </span>
-                              }
-                            >
-                              <div className="space-y-2">
-                                {category.reports.map(report => (
-                                  <button
-                                    key={report.key}
-                                    type="button"
-                                    onClick={() => handleReportSelection(report.key)}
-                                    className={`w-full text-left px-3 py-2.5 rounded-lg border transition-colors ${
-                                      selectedReport?.key === report.key
-                                        ? 'border-ghana-gold bg-ghana-gold/10 text-ghana-black shadow-sm'
-                                        : 'border-gray-200 hover:border-ghana-gold/60 hover:bg-gray-50'
-                                    }`}
-                                  >
-                                    <p className="text-sm font-semibold">{report.label}</p>
-                                    <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{report.description}</p>
-                                  </button>
-                                ))}
-                              </div>
-                            </AccordionItem>
-                          ))}
-                        </Accordion>
-                      ) : (
-                        <div className="text-sm text-gray-500 px-1 py-6 text-center">
-                          No reports match this keyword — try another search.
-                        </div>
-                      )}
-                    </CardBody>
-                  </Card>
-
-                  <div className="lg:col-span-8 xl:col-span-9 space-y-4">
-                    <Card className="border border-gray-200">
-                      <CardBody className="space-y-4 pt-4">
-                        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                          <div className="space-y-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h4 className="text-lg font-semibold text-ghana-black">
-                                {selectedReport?.label || 'Choose a report'}
-                              </h4>
-                              {selectedReportCategory && (
-                                <Chip size="sm" variant="flat" color="default">
-                                  {selectedReportCategory.icon} {selectedReportCategory.label}
-                                </Chip>
-                              )}
-                            </div>
-                            {selectedReport?.description && (
-                              <p className="text-sm text-gray-500">{selectedReport.description}</p>
-                            )}
-                            <p className="text-xs text-gray-400">
-                              Period:{' '}
-                              {reportFilters.fromDate && reportFilters.toDate
-                                ? `${reportFilters.fromDate} → ${reportFilters.toDate}`
-                                : 'All dates'}
-                              {reportFilters.venue ? ` • Venue: ${reportFilters.venue}` : ''}
-                            </p>
-                          </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {selectedCategoryLinks.map(link => (
-                              <Button
-                                key={link.label}
-                                size="sm"
-                                variant="flat"
-                                color="secondary"
-                                onPress={link.action}
-                                startContent={link.icon}
-                              >
-                                {link.label}
-                              </Button>
-                            ))}
-                            <Button
-                              size="sm"
-                              color="primary"
-                              variant="solid"
-                              startContent="💾"
-                              isDisabled={!selectedReport || activeReportTable.columns.length === 0}
-                              onPress={exportActiveReportPdf}
-                            >
-                              Export PDF
-                            </Button>
-                          </div>
-                        </div>
-
-                        {(selectedReport?.filters.venue || selectedReport?.filters.dateRange) && (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 rounded-xl border border-gray-100 bg-gray-50/80 p-3">
-                            {selectedReport?.filters.venue && (
-                              <Input
-                                label="Venue filter"
-                                placeholder="Filter by venue name"
-                                value={reportFilters.venue}
-                                onValueChange={value => updateReportFilter('venue', value)}
-                                size="sm"
-                              />
-                            )}
-                            {selectedReport?.filters.dateRange && (
-                              <div className="flex items-end">
-                                <p className="text-xs text-gray-500 pb-2">
-                                  Date range is controlled by the filter bar above.
-                                </p>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {selectedCategoryInsights.length > 0 && (
-                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                            {selectedCategoryInsights.map(insight => (
-                              <div
-                                key={insight.label}
-                                className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm"
-                              >
-                                <p className="text-xs uppercase tracking-wide text-gray-500">{insight.label}</p>
-                                <p className="text-xl font-semibold text-ghana-black mt-1">{insight.value}</p>
-                                {insight.helper && (
-                                  <p className="text-xs text-gray-500 mt-0.5">{insight.helper}</p>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                      </CardBody>
-                    </Card>
-
-                    <Card className="border border-gray-200">
-                      <CardBody className="pt-3">
-                        <div className="flex items-center justify-between gap-3 mb-3">
-                          <h4 className="text-base font-semibold text-ghana-black">Report Data</h4>
-                          <Chip size="sm" variant="flat" color="primary">
-                            {activeReportTable.rows.length} row{activeReportTable.rows.length === 1 ? '' : 's'}
-                          </Chip>
-                        </div>
-                        {activeReportTable.columns.length > 0 ? (
-                          <Table aria-label={`${selectedReport?.label || 'Report'} table`}>
-                            <TableHeader>
-                              {activeReportTable.columns.map(column => (
-                                <TableColumn key={column.key}>{column.label.toUpperCase()}</TableColumn>
-                              ))}
-                            </TableHeader>
-                            <TableBody>
-                              {activeReportTable.rows.length === 0 ? (
-                                <TableRow>
-                                  <TableCell
-                                    colSpan={activeReportTable.columns.length}
-                                    className="text-center text-gray-500 py-10"
-                                  >
-                                    <span className="text-3xl block mb-2">📊</span>
-                                    {activeReportTable.emptyMessage || 'No data for the selected filters.'}
-                                  </TableCell>
-                                </TableRow>
-                              ) : (
-                                activeReportTable.rows.map((row, rowIndex) => (
-                                  <TableRow key={`${selectedReport?.key || 'report'}-${rowIndex}`}>
-                                    {activeReportTable.columns.map(column => (
-                                      <TableCell key={column.key}>{row[column.key] ?? '—'}</TableCell>
-                                    ))}
-                                  </TableRow>
-                                ))
-                              )}
-                            </TableBody>
-                          </Table>
-                        ) : (
-                          <div className="text-center text-gray-500 py-10">
-                            Select a report from the library to view live data.
-                          </div>
-                        )}
-                      </CardBody>
-                    </Card>
-                  </div>
-                </div>
-              </div>
+            <Tab key="reports" title="📊 Reports & Analysis">
+              <Card className="mt-4 border border-slate-200">
+                <CardBody className="p-6 space-y-3">
+                  <h3 className="text-lg font-semibold text-slate-900">Reports & Analysis</h3>
+                  <p className="text-sm text-slate-600">Official Events reports live on the Reports & Analysis page.</p>
+                  <Button size="sm" color="primary" onPress={() => router.push('/events/reports')}>
+                    Open reports
+                  </Button>
+                </CardBody>
+              </Card>
             </Tab>
 
             <Tab key="staff" title="👥 Staff Management">
@@ -14482,8 +15376,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 departmentLabel="Events & Conferences"
                 overtimePermissionId="events-conferences.log-overtime"
                 departmentNameHints={['events', 'conference', 'banquet']}
-                emptyLabel="No Events & Conferences staff found in HR records."
-                helperText="Staff sourced from HR records for Events & Conferences departments."
+                alsoStaffNames={customEvents.map((event) => String(event.eventCoordinator || '').trim())}
+                emptyLabel="No Events department in HR and no coordinators assigned on bookings."
+                helperText="HR staff in an Events / Conference / Banquet department, plus coordinators already assigned on bookings. Names come from the HR file — this tab does not invent staff."
               />
             </Tab>
       </Tabs>
@@ -14491,15 +15386,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
 
       <Modal
         isOpen={isEventModalOpen}
-        onClose={() => {
-          setIsEventModalOpen(false);
-          setEditingEvent(null);
-          setIsCreatingEvent(false);
-          setIsAdjustMode(false);
-          setIsViewMode(false);
-          setIsEditingInvoiceDetails(false);
-          setHoveredGanttEventId(null);
+        onOpenChange={(open) => {
+          if (!open) closeEventWorkspace();
         }}
+        onClose={closeEventWorkspace}
         size="5xl"
         scrollBehavior="inside"
       >
@@ -14510,7 +15400,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
               <div>
                 <h3 className="text-lg font-semibold">
                   {isEditingInvoiceDetails
-                    ? 'Edit Invoice Details'
+                    ? (eventInvoices.some((inv) => inv.eventId === editingEvent?.id) ? 'Edit Invoice' : 'Create Invoice')
                     : isCreatingEvent
                       ? 'Create New Event'
                       : isViewMode
@@ -14520,8 +15410,10 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 </h3>
                 <p className="text-sm text-gray-600">
                   {isEditingInvoiceDetails
-                    ? 'Modify invoice-specific details (pax, dates, rates) without affecting the original event'
-                    : 'Complete event booking following Ghanaian business process'
+                    ? (eventInvoices.some((inv) => inv.eventId === editingEvent?.id)
+                      ? 'Same event form — confirm pax, dates and rates, then update the invoice.'
+                      : 'Select a proforma, confirm pax, dates and rates, then issue the invoice.')
+                    : 'Event details, client, schedule and rates'
                   }
                 </p>
               </div>
@@ -14535,6 +15427,30 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 {isEditingInvoiceDetails && <Badge color="primary" variant="flat" className="ml-2 text-xs">✏️ Editable</Badge>}
               </h4>
               <div className="space-y-6">
+              {isEditingInvoiceDetails && !eventInvoices.some((inv) => inv.eventId === editingEvent?.id) && (
+                <Autocomplete
+                  size="sm"
+                  label="Proforma"
+                  placeholder="Select a quote / proforma"
+                  selectedKey={editingEvent?.id || null}
+                  items={getInvoiceableProformas().map((ev) => ({
+                    key: ev.id,
+                    label: getProformaPickerLabel(ev),
+                  }))}
+                  onSelectionChange={(key) => {
+                    if (key == null || String(key) === editingEvent?.id) return;
+                    const event = allEvents.find((ev) => ev.id === String(key));
+                    if (event) openEventInvoiceForm(event);
+                  }}
+                  description="Choose the quote to convert — the event form below stays the same"
+                >
+                  {(item) => (
+                    <AutocompleteItem key={item.key} textValue={item.label}>
+                      {item.label}
+                    </AutocompleteItem>
+                  )}
+                </Autocomplete>
+              )}
               <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
                 <Input
                   label="Event ID"
@@ -14595,6 +15511,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     const guests = frontOfficeGuests || [];
                     const results = q.length >= 2
                       ? guests.filter(g => {
+                          if (g.isActive === false) return false;
                           const org = (g.employerCompany || '').toLowerCase();
                           const name = (g.name || `${g.firstName || ''} ${g.lastName || ''}`).toLowerCase();
                           const phone = (g.companyPhone || g.phone || '').toLowerCase();
@@ -14698,11 +15615,16 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <Select 
                   label="Venue Selection" 
                   placeholder="Select venue" 
-                  selectedKeys={venueKey ? [venueKey] : []} 
-                  onSelectionChange={(keys)=> setVenueKey(Array.from(keys)[0] as string)}
+                  selectedKeys={venueKey ? new Set([venueKey]) : new Set()} 
+                  onSelectionChange={(keys) => {
+                    const value = Array.from(keys)[0];
+                    if (typeof value === 'string' && value) setVenueKey(value);
+                  }}
                   isDisabled={isViewMode && !isEditingInvoiceDetails}
                 >
-                  {(modernVenues || []).map(v => (
+                  {(modernVenues || [])
+                    .filter((v) => v.status !== 'inactive' || v.id === venueKey)
+                    .map((v) => (
                     <SelectItem key={v.id}>{`${v.name} (${v.capacity} pax)`}</SelectItem>
                   ))}
                 </Select>
@@ -15108,7 +16030,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                   ) : (
                     <div className="text-sm text-gray-500">
                       No tax rules configured for {complianceCountry === 'GH' ? 'Ghana' : complianceCountry || 'the selected country'}. 
-                      <span className="block text-xs mt-1">Configure tax rules in Tax Management under Compliance & Reports.</span>
+                      <span className="block text-xs mt-1">Configure tax rules in Compliance → Tax rules.</span>
                     </div>
                   )}
                 </div>
@@ -15223,17 +16145,38 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                     ))}
                   </Select>
                 )}
+                <Select
+                  size="sm"
+                  label="Coordinator"
+                  placeholder="Assign coordinator"
+                  selectedKeys={new Set([resolveCoordinatorValue(eventCoordinator)])}
+                  onSelectionChange={(keys) => {
+                    const selected = Array.from(keys)[0] as string;
+                    setEventCoordinator(resolveCoordinatorValue(selected));
+                  }}
+                  isDisabled={isViewMode}
+                >
+                  {beoCoordinatorOptions.map((option) => (
+                    <SelectItem key={option.key} textValue={option.label}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </Select>
                 <Input
                   size="sm"
                   label="Next Action Required"
                   placeholder="e.g., Send contract, Follow up on deposit"
-                  defaultValue={editingEvent?.nextAction || ''}
+                  value={nextAction}
+                  onValueChange={setNextAction}
+                  isDisabled={isViewMode}
                 />
                 <Input
                   size="sm"
                   label="Follow-up Date"
                   type="date"
-                  defaultValue={editingEvent?.followUpDate || ''}
+                  value={followUpDate}
+                  onValueChange={setFollowUpDate}
+                  isDisabled={isViewMode}
                 />
               </div>
               
@@ -15244,11 +16187,24 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                       <p className="text-sm font-semibold text-ghana-black mb-2">Workflow Actions</p>
                       <div className="flex flex-wrap gap-2">
                         <Button size="sm" color="primary" variant="flat" onPress={handleGenerateQuoteFromEvent}>
-                          📋 Build Quote
+                          Save quote
                         </Button>
                         <Button size="sm" color="secondary" variant="flat" onPress={handleOpenContractFromEvent}>
                           📄 Generate Contract
                         </Button>
+                        {!isCreatingEvent && editingEvent?.id && !eventInvoices.some((inv) => inv.eventId === editingEvent.id) && (
+                          <Button
+                            size="sm"
+                            color="success"
+                            variant="flat"
+                            onPress={() => {
+                              setIsEditingInvoiceDetails(true);
+                              setEventStatus('invoiced');
+                            }}
+                          >
+                            🧾 Create Invoice
+                          </Button>
+                        )}
                       </div>
                     </CardBody>
                   </Card>
@@ -15440,15 +16396,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <Button
                   color="default"
                   variant="flat"
-                  onPress={() => {
-                    setIsEventModalOpen(false);
-                    setEditingEvent(null);
-                    setIsCreatingEvent(false);
-                    setIsViewMode(false);
-                    setIsAdjustMode(false);
-                    setIsEditingInvoiceDetails(false);
-                    setHoveredGanttEventId(null);
-                  }}
+                  onPress={closeEventWorkspace}
                 >
                   Close
                 </Button>
@@ -15466,15 +16414,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <Button
                   color="danger"
                   variant="flat"
-                  onPress={() => {
-                    setIsEventModalOpen(false);
-                    setEditingEvent(null);
-                    setIsCreatingEvent(false);
-                    setIsViewMode(false);
-                    setIsAdjustMode(false);
-                    setIsEditingInvoiceDetails(false);
-                    setHoveredGanttEventId(null);
-                  }}
+                  onPress={closeEventWorkspace}
                 >
                   Cancel
                 </Button>
@@ -15485,14 +16425,14 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 >
                   {eventSubmitting
                     ? (isEditingInvoiceDetails
-                        ? 'Saving Invoice Details...'
+                        ? (eventInvoices.some((inv) => inv.eventId === editingEvent?.id) ? 'Saving Invoice...' : 'Creating Invoice...')
                         : isCreatingEvent
                           ? 'Creating...'
                           : isAdjustMode
                             ? 'Adjusting...'
                             : 'Updating...')
                     : (isEditingInvoiceDetails
-                        ? 'Save Invoice Details'
+                        ? (eventInvoices.some((inv) => inv.eventId === editingEvent?.id) ? 'Save Invoice' : 'Create Invoice')
                         : isCreatingEvent
                           ? 'Create Event'
                           : isAdjustMode
@@ -15566,6 +16506,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <SelectItem key="booked">Booked</SelectItem>
                 <SelectItem key="setup">Setup</SelectItem>
                 <SelectItem key="maintenance">Maintenance</SelectItem>
+                <SelectItem key="inactive">Inactive</SelectItem>
               </Select>
             </div>
             <Textarea
@@ -15583,392 +16524,6 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
             <Button color="primary" onPress={handleVenueSubmit}>
               {editingVenue?.id ? 'Update Venue' : 'Create Venue'}
             </Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-      <Modal
-        isOpen={isQuoteModalOpen}
-        onClose={() => setIsQuoteModalOpen(false)}
-        size="5xl"
-        scrollBehavior="inside"
-      >
-        <ModalContent>
-          <ModalHeader>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">📋</span>
-              <div>
-                <h3 className="text-lg font-semibold">
-                  {editingQuote?.id ? 'Update Quote' : 'Create New Quote'}
-                </h3>
-                <p className="text-sm text-gray-500">
-                  Compile services, taxes, and terms for professional proposals
-                </p>
-              </div>
-            </div>
-          </ModalHeader>
-          <ModalBody>
-            <div className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Input
-                  label="Client Name"
-                  placeholder="Organization or client"
-                  value={editingQuote?.clientName ?? ''}
-                  onChange={(e) =>
-                    setEditingQuote((prev: any) => ({
-                      ...(prev || {}),
-                      clientName: e.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  label="Event Name"
-                  placeholder="Conference or event title"
-                  value={editingQuote?.eventName ?? ''}
-                  onChange={(e) =>
-                    setEditingQuote((prev: any) => ({
-                      ...(prev || {}),
-                      eventName: e.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  label="Start Date"
-                  type="date"
-                  value={editingQuote?.startDate ?? ''}
-                  onChange={(e) =>
-                    setEditingQuote((prev: any) => ({
-                      ...(prev || {}),
-                      startDate: e.target.value,
-                    }))
-                  }
-                />
-                <Input
-                  label="End Date"
-                  type="date"
-                  value={editingQuote?.endDate ?? ''}
-                  onChange={(e) =>
-                    setEditingQuote((prev: any) => ({
-                      ...(prev || {}),
-                      endDate: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">📎 Supporting Documents</label>
-                <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center bg-white">
-                  <div className="text-2xl mb-2">📎</div>
-                  <p className="text-sm text-gray-600 mb-2">
-                    Upload tax exemption certificates, registration documents, or authority letters
-                  </p>
-                  <Button color="primary" variant="flat" size="sm">
-                    📁 Choose Files
-                  </Button>
-                  <p className="text-xs text-gray-500 mt-2">
-                    PDF, JPG, PNG up to 10MB each
-                  </p>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="font-semibold text-lg mb-3">📅 Event Timeline & Services</h4>
-                <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-4">
-                  <p className="text-sm text-gray-600">
-                    <strong>Note:</strong> The system automatically calculates totals and taxes based on the services added.{' '}
-                    For tax-exempt clients, all taxes are automatically set to zero.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <Button color="primary" variant="flat" size="sm" onPress={addQuoteDay}>
-                      ➕ Add Day to Timeline
-                    </Button>
-                    <Button
-                      color="secondary"
-                      variant="flat"
-                      size="sm"
-                      onPress={() => {
-                        setQuoteDays([]);
-                        trackEvent('Events.EventCreated', { action: 'quote_timeline_cleared', quoteId: editingQuote?.id });
-                      }}
-                    >
-                      🧹 Clear Timeline
-                    </Button>
-                  </div>
-                  {quoteDays.length === 0 ? (
-                    <div className="mt-2 text-sm text-gray-500">
-                      No days yet. Click &quot;Add Day to Timeline&quot; to begin.
-                    </div>
-                  ) : (
-                    <div className="space-y-6">
-                      {quoteDays.map((day, dayIdx) => (
-                        <div key={day.id} className="border rounded-md bg-white shadow-sm">
-                          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 px-3 py-2 border-b bg-gray-50">
-                            <div className="flex flex-wrap items-center gap-3">
-                              <Input
-                                size="sm"
-                                label="Label"
-                                value={day.label}
-                                onChange={(e) =>
-                                  setQuoteDays((prev) =>
-                                    prev.map((d, i) =>
-                                      i === dayIdx
-                                        ? {
-                                            ...d,
-                                            label: e.target.value
-                                          }
-                                        : d
-                                    )
-                                  )
-                                }
-                                className="w-40"
-                              />
-                              <Input
-                                size="sm"
-                                type="date"
-                                label="Date"
-                                value={day.date}
-                                onChange={(e) =>
-                                  setQuoteDays((prev) =>
-                                    prev.map((d, i) =>
-                                      i === dayIdx
-                                        ? {
-                                            ...d,
-                                            date: e.target.value
-                                          }
-                                        : d
-                                    )
-                                  )
-                                }
-                                className="w-48"
-                              />
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Button size="sm" color="secondary" variant="flat" onPress={() => addPackageToDay(dayIdx)}>
-                                📦 Add Package
-                              </Button>
-                              <Button size="sm" color="success" variant="flat" onPress={() => addCustomServiceToDay(dayIdx)}>
-                                🍽️ Add Service
-                              </Button>
-                              <Button size="sm" color="danger" variant="flat" onPress={() => removeQuoteDay(dayIdx)}>
-                                🗑️ Remove Day
-                              </Button>
-                            </div>
-                          </div>
-                          <div className="p-3 overflow-x-auto">
-                            <Table aria-label="Services for the day">
-                              <TableHeader>
-                                <TableColumn>Service</TableColumn>
-                                <TableColumn>Qty</TableColumn>
-                                <TableColumn>Unit Price</TableColumn>
-                                <TableColumn>Subtotal</TableColumn>
-                                <TableColumn>Tax</TableColumn>
-                                <TableColumn>Total</TableColumn>
-                                <TableColumn>Actions</TableColumn>
-                              </TableHeader>
-                              <TableBody>
-                                {day.services.length === 0 ? (
-                                  <TableRow>
-                                    <TableCell colSpan={7} className="text-center text-gray-500">
-                                      No services added.
-                                    </TableCell>
-                                  </TableRow>
-                                ) : (
-                                  day.services.map((s, lineIdx) => {
-                                    const c = computeLine(s);
-                                    return (
-                                      <TableRow key={s.id}>
-                                        <TableCell>
-                                          <Input
-                                            size="sm"
-                                            value={s.name}
-                                            onChange={(e) =>
-                                              updateServiceLine(dayIdx, lineIdx, { name: e.target.value })
-                                            }
-                                          />
-                                        </TableCell>
-                                        <TableCell>
-                                          <Input
-                                            size="sm"
-                                            type="number"
-                                            value={String(s.qty)}
-                                            onChange={(e) =>
-                                              updateServiceLine(dayIdx, lineIdx, {
-                                                qty: parseInt(e.target.value || '0', 10) || 0
-                                              })
-                                            }
-                                            className="w-24"
-                                          />
-                                        </TableCell>
-                                        <TableCell>
-                                          <Input
-                                            size="sm"
-                                            type="number"
-                                            value={String(s.unitPrice)}
-                                            onChange={(e) =>
-                                              updateServiceLine(dayIdx, lineIdx, {
-                                                unitPrice: parseFloat(e.target.value || '0') || 0
-                                              })
-                                            }
-                                            className="w-28"
-                                          />
-                                        </TableCell>
-                                        <TableCell>₵{c.subtotal.toFixed(2)}</TableCell>
-                                        <TableCell>₵{c.taxAmount.toFixed(2)}</TableCell>
-                                        <TableCell className="font-semibold">₵{c.total.toFixed(2)}</TableCell>
-                                        <TableCell>
-                                          <Button
-                                            size="sm"
-                                            color="danger"
-                                            variant="light"
-                                            onPress={() => removeServiceLine(dayIdx, lineIdx)}
-                                          >
-                                            Remove
-                                          </Button>
-                                        </TableCell>
-                                      </TableRow>
-                                    );
-                                  })
-                                )}
-                              </TableBody>
-                            </Table>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="p-3 border rounded bg-white">
-                    {(() => {
-                      const t = computeQuoteTotals();
-                      return (
-                        <div className="flex flex-wrap gap-6 text-sm">
-                          <div>
-                            Subtotal: <span className="font-semibold">₵{t.subtotal.toFixed(2)}</span>
-                          </div>
-                          <div>
-                            Tax:{' '}
-                            <span className="font-semibold">
-                              ₵{t.tax.toFixed(2)}
-                            </span>{' '}
-                            {quoteTaxExempt ? <span className="text-green-700">(tax-exempt)</span> : null}
-                          </div>
-                          <div>
-                            Total: <span className="font-bold text-ghana-black">₵{t.total.toFixed(2)}</span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <h4 className="font-semibold text-lg mb-3">📋 Terms &amp; Conditions</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input
-                    label="Deposit Required (%)"
-                    type="number"
-                    placeholder="50"
-                    value={editingQuote?.depositRequired ?? ''}
-                    onChange={(e) =>
-                      setEditingQuote((prev: any) => ({
-                        ...(prev || {}),
-                        depositRequired: Number(e.target.value || 0)
-                      }))
-                    }
-                  />
-                  <Input
-                    label="Payment Terms"
-                    placeholder="e.g., 50% deposit to confirm, balance 7 days before event"
-                    value={editingQuote?.paymentTerms ?? ''}
-                    onChange={(e) =>
-                      setEditingQuote((prev: any) => ({
-                        ...(prev || {}),
-                        paymentTerms: e.target.value
-                      }))
-                    }
-                  />
-                  <Input
-                    label="Cancellation Policy"
-                    placeholder="e.g., Deposit non-refundable if cancelled within 14 days"
-                    value={editingQuote?.cancellationPolicy ?? ''}
-                    onChange={(e) =>
-                      setEditingQuote((prev: any) => ({
-                        ...(prev || {}),
-                        cancellationPolicy: e.target.value
-                      }))
-                    }
-                  />
-                  <Input
-                    label="Guarantee Policy"
-                    placeholder="e.g., Final numbers guaranteed 48 hours before event"
-                    value={editingQuote?.guaranteePolicy ?? ''}
-                    onChange={(e) =>
-                      setEditingQuote((prev: any) => ({
-                        ...(prev || {}),
-                        guaranteePolicy: e.target.value
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-
-              <div>
-                <h4 className="font-semibold text-lg mb-3">📝 Additional Information</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Textarea
-                    label="Special Requirements"
-                    placeholder="Any special requirements, dietary restrictions, or additional notes..."
-                    value={editingQuote?.specialRequirements ?? ''}
-                    onChange={(e) =>
-                      setEditingQuote((prev: any) => ({
-                        ...(prev || {}),
-                        specialRequirements: e.target.value
-                      }))
-                    }
-                  />
-                  <Textarea
-                    label="Setup Requirements"
-                    placeholder="Setup time, special arrangements, or technical requirements..."
-                    value={editingQuote?.setupTime ?? ''}
-                    onChange={(e) =>
-                      setEditingQuote((prev: any) => ({
-                        ...(prev || {}),
-                        setupTime: e.target.value
-                      }))
-                    }
-                  />
-                </div>
-                <div className="mt-4">
-                  <Input
-                    label="Contact Person on Event Day"
-                    placeholder="Name and phone number of main contact person"
-                    value={editingQuote?.contactPerson ?? ''}
-                    onChange={(e) =>
-                      setEditingQuote((prev: any) => ({
-                        ...(prev || {}),
-                        contactPerson: e.target.value
-                      }))
-                    }
-                  />
-                </div>
-              </div>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <div className="flex gap-2">
-              <Button color="secondary" variant="flat" onPress={() => setIsQuoteModalOpen(false)}>
-                Cancel
-              </Button>
-              <Button color="warning" variant="flat" onPress={handleSaveQuoteDraft}>
-                💾 Save Draft
-              </Button>
-              <Button color="success" variant="flat" onPress={() => generatePDFQuote(editingQuote)}>
-                🖨️ Print Proforma
-              </Button>
-              <Button color="primary" onPress={() => sendQuoteToClient(editingQuote)}>
-                📧 Send to Client
-              </Button>
-            </div>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -16035,445 +16590,260 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         onClose={() => setIsBEOModalOpen(false)}
         size="5xl"
         scrollBehavior="inside"
+        classNames={{
+          base: 'max-h-[90vh]',
+          header: 'px-6 py-3 border-b border-slate-200',
+          body: 'px-6 py-4',
+          footer: 'px-6 py-3 border-t border-slate-200',
+        }}
       >
         <ModalContent>
-          <ModalHeader>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">📊</span>
-              <div>
-                <h3 className="text-lg font-semibold">Banquet Event Order & Function Sheet</h3>
-                <p className="text-sm text-gray-500">
-                  Coordinate departments with a detailed operational playbook for this event
-                </p>
+          <ModalHeader className="flex flex-col items-start gap-1.5 pr-8">
+            <h3 className="text-base font-semibold text-ghana-black">Function Sheet</h3>
+            {beoForm ? (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-sm font-medium text-ghana-black">{beoForm.eventInfo.eventName || 'Untitled event'}</span>
+                {beoForm.eventInfo.venueName ? (
+                  <Chip size="sm" color="primary" variant="flat">{beoForm.eventInfo.venueName}</Chip>
+                ) : null}
+                <Chip size="sm" color="success" variant="flat">
+                  {formatEventTableRange(beoForm.eventInfo.arrivalDate, beoForm.eventInfo.departureDate)}
+                </Chip>
+                {beoForm.eventInfo.pax ? (
+                  <Chip size="sm" color="warning" variant="flat">{beoForm.eventInfo.pax} pax</Chip>
+                ) : null}
               </div>
-            </div>
+            ) : (
+              <p className="text-xs font-normal text-slate-500">Operational order for this event</p>
+            )}
           </ModalHeader>
           <ModalBody>
             {beoForm ? (
               <form
                 id="beoForm"
-                className="space-y-6"
                 onSubmit={(e) => {
                   e.preventDefault();
                   handleSaveBeoForm();
                 }}
               >
-                <Card>
-                  <CardHeader>
-                    <h4 className="font-semibold">Event Information</h4>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <Input
-                        label="Event Name"
-                        value={beoForm.eventInfo.eventName}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'eventName', e.target.value)}
-                      />
-                      <Input
-                        label="Organization"
-                        value={beoForm.eventInfo.organization}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'organization', e.target.value)}
-                      />
-                      <Select
-                        label="Event Coordinator"
-                        placeholder="Assign hotel coordinator"
-                        selectedKeys={
-                          beoForm.eventInfo.eventCoordinator
-                            ? [beoForm.eventInfo.eventCoordinator]
-                            : [UNASSIGNED_STAFF]
-                        }
-                        onSelectionChange={(keys) => {
-                          const selected = Array.from(keys)[0] as string;
-                          updateBeoFormSection(
-                            'eventInfo',
-                            'eventCoordinator',
-                            selected === UNASSIGNED_STAFF ? '' : selected || ''
-                          );
-                        }}
-                        items={beoCoordinatorOptions}
-                      >
-                        {(option) => (
-                          <SelectItem key={option.key} textValue={option.label}>
-                            {option.label}
-                          </SelectItem>
-                        )}
-                      </Select>
-                      <Input
-                        label="Contact Person"
-                        value={beoForm.eventInfo.contactPerson}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'contactPerson', e.target.value)}
-                      />
-                      <Input
-                        label="Contact Phone"
-                        value={beoForm.eventInfo.contactPhone}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'contactPhone', e.target.value)}
-                      />
-                      <Input
-                        label="Contact Email"
-                        value={beoForm.eventInfo.contactEmail}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'contactEmail', e.target.value)}
-                      />
-                      <Input
-                        label="Venue"
-                        value={beoForm.eventInfo.venueName}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'venueName', e.target.value)}
-                      />
-                      <Input
-                        label="Arrival Date"
-                        type="date"
-                        value={beoForm.eventInfo.arrivalDate}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'arrivalDate', e.target.value)}
-                      />
-                      <Input
-                        label="Departure Date"
-                        type="date"
-                        value={beoForm.eventInfo.departureDate}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'departureDate', e.target.value)}
-                      />
-                      <Input
-                        label="Duration (Days)"
-                        value={beoForm.eventInfo.duration}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'duration', e.target.value)}
-                      />
-                      <Input
-                        label="Expected Pax"
-                        value={beoForm.eventInfo.pax}
-                        onChange={(e) => updateBeoFormSection('eventInfo', 'pax', e.target.value)}
-                      />
-                    </div>
-                    <Textarea
-                      className="mt-4"
-                      label="Coordinator Notes"
-                      minRows={3}
-                      value={beoForm.eventInfo.notes}
-                      onChange={(e) => updateBeoFormSection('eventInfo', 'notes', e.target.value)}
-                    />
-                  </CardBody>
-                </Card>
-
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  <Card>
-                    <CardHeader>
-                      <h4 className="font-semibold">Room Setup & Venue Details</h4>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <Input
-                          size="sm"
-                          label="Layout"
-                          value={beoForm.room.layout}
-                          onChange={(e) => updateBeoFormSection('room', 'layout', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Tables"
-                          value={beoForm.room.tables}
-                          onChange={(e) => updateBeoFormSection('room', 'tables', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Chairs"
-                          value={beoForm.room.chairs}
-                          onChange={(e) => updateBeoFormSection('room', 'chairs', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Capacity"
-                          value={beoForm.room.capacity}
-                          onChange={(e) => updateBeoFormSection('room', 'capacity', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Registration Table"
-                          value={beoForm.room.registrationTable}
-                          onChange={(e) => updateBeoFormSection('room', 'registrationTable', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Display Table"
-                          value={beoForm.room.displayTable}
-                          onChange={(e) => updateBeoFormSection('room', 'displayTable', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Access"
-                          value={beoForm.room.access}
-                          onChange={(e) => updateBeoFormSection('room', 'access', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Parking"
-                          value={beoForm.room.parking}
-                          onChange={(e) => updateBeoFormSection('room', 'parking', e.target.value)}
-                        />
-                      </div>
-                      <Textarea
-                        className="mt-3"
-                        label="Setup Notes"
-                        minRows={3}
-                        value={beoForm.room.setupNotes}
-                        onChange={(e) => updateBeoFormSection('room', 'setupNotes', e.target.value)}
-                      />
-                    </CardBody>
-                  </Card>
-
-                  <Card>
-                    <CardHeader>
-                      <h4 className="font-semibold">Catering Specifications</h4>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <Input
-                          size="sm"
-                          label="Service Style"
-                          value={beoForm.catering.serviceStyle}
-                          onChange={(e) => updateBeoFormSection('catering', 'serviceStyle', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Meal Type"
-                          value={beoForm.catering.mealType}
-                          onChange={(e) => updateBeoFormSection('catering', 'mealType', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Tea Breaks"
-                          value={beoForm.catering.teaBreaks}
-                          onChange={(e) => updateBeoFormSection('catering', 'teaBreaks', e.target.value)}
-                        />
-                        <Input
-                          size="sm"
-                          label="Special Diet Count"
-                          value={beoForm.catering.specialDietary}
-                          onChange={(e) => updateBeoFormSection('catering', 'specialDietary', e.target.value)}
-                        />
-                        <Textarea
-                          label="Dietary Accommodations"
-                          minRows={2}
-                          value={beoForm.catering.dietaryAccommodations}
-                          onChange={(e) => updateBeoFormSection('catering', 'dietaryAccommodations', e.target.value)}
-                        />
-                        <Textarea
-                          label="Allergies"
-                          minRows={2}
-                          value={beoForm.catering.allergies}
-                          onChange={(e) => updateBeoFormSection('catering', 'allergies', e.target.value)}
-                        />
-                        <Textarea
-                          label="Beverages"
-                          minRows={2}
-                          value={beoForm.catering.beverages}
-                          onChange={(e) => updateBeoFormSection('catering', 'beverages', e.target.value)}
-                        />
-                        <Textarea
-                          label="Snacks"
-                          minRows={2}
-                          value={beoForm.catering.snacks}
-                          onChange={(e) => updateBeoFormSection('catering', 'snacks', e.target.value)}
-                        />
-                      </div>
-                    </CardBody>
-                  </Card>
-                </div>
-
-                <Card>
-                  <CardHeader>
-                    <h4 className="font-semibold">Technical & AV Requirements</h4>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <Input
-                        size="sm"
-                        label="Projector"
-                        value={beoForm.technical.projector}
-                        onChange={(e) => updateBeoFormSection('technical', 'projector', e.target.value)}
-                      />
-                      <Input
-                        size="sm"
-                        label="Screen"
-                        value={beoForm.technical.screen}
-                        onChange={(e) => updateBeoFormSection('technical', 'screen', e.target.value)}
-                      />
-                      <Input
-                        size="sm"
-                        label="Sound System"
-                        value={beoForm.technical.soundSystem}
-                        onChange={(e) => updateBeoFormSection('technical', 'soundSystem', e.target.value)}
-                      />
-                      <Input
-                        size="sm"
-                        label="Microphones"
-                        value={beoForm.technical.microphones}
-                        onChange={(e) => updateBeoFormSection('technical', 'microphones', e.target.value)}
-                      />
-                      <Input
-                        size="sm"
-                        label="Laptop"
-                        value={beoForm.technical.laptop}
-                        onChange={(e) => updateBeoFormSection('technical', 'laptop', e.target.value)}
-                      />
-                      <Input
-                        size="sm"
-                        label="Internet"
-                        value={beoForm.technical.internet}
-                        onChange={(e) => updateBeoFormSection('technical', 'internet', e.target.value)}
-                      />
-                      <Input
-                        size="sm"
-                        label="Lighting"
-                        value={beoForm.technical.lighting}
-                        onChange={(e) => updateBeoFormSection('technical', 'lighting', e.target.value)}
-                      />
-                      <Input
-                        size="sm"
-                        label="Internet Speed"
-                        value={beoForm.technical.internetSpeed}
-                        onChange={(e) => updateBeoFormSection('technical', 'internetSpeed', e.target.value)}
-                      />
-                      <Input
-                        size="sm"
-                        label="Power Requirements"
-                        value={beoForm.technical.powerRequirements}
-                        onChange={(e) => updateBeoFormSection('technical', 'powerRequirements', e.target.value)}
-                      />
-                    </div>
-                    <Textarea
-                      className="mt-3"
-                      label="Technical Notes"
-                      minRows={3}
-                      value={beoForm.technical.notes}
-                      onChange={(e) => updateBeoFormSection('technical', 'notes', e.target.value)}
-                    />
-                  </CardBody>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between w-full">
-                      <h4 className="font-semibold">Event Timeline</h4>
-                      <Button size="sm" color="primary" variant="flat" onPress={handleAddBeoTimeline}>
-                        ➕ Add Timeline Item
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="space-y-3">
-                      {beoForm.timeline.map((item: any, idx: number) => (
-                        <div key={`timeline-${idx}`} className="border border-gray-200 rounded-lg p-3 space-y-3 bg-white">
-                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                            <Input size="sm" label="Time" value={item.time} onChange={(e) => updateBeoTimelineItem(idx, 'time', e.target.value)} />
-                            <Input size="sm" label="Activity" value={item.activity} onChange={(e) => updateBeoTimelineItem(idx, 'activity', e.target.value)} />
-                            <Input size="sm" label="Responsible" value={item.responsible} onChange={(e) => updateBeoTimelineItem(idx, 'responsible', e.target.value)} />
-                            <Input size="sm" label="Duration" value={item.duration} onChange={(e) => updateBeoTimelineItem(idx, 'duration', e.target.value)} />
-                          </div>
-                          <div className="flex justify-end">
-                            <Button size="sm" color="danger" variant="light" onPress={() => handleRemoveBeoTimeline(idx)}>
-                              Remove
-                            </Button>
-                          </div>
+                <Tabs
+                  selectedKey={beoWorkspaceTab}
+                  onSelectionChange={(key) => setBeoWorkspaceTab(String(key))}
+                  variant="underlined"
+                  classNames={{
+                    tabList: 'gap-6 w-full',
+                    cursor: 'w-full bg-primary',
+                    tab: 'h-8 px-0 text-sm',
+                    tabContent: 'group-data-[selected=true]:text-primary',
+                    panel: 'pt-4 min-h-[300px]',
+                  }}
+                >
+                  <Tab key="overview" title="Event">
+                    <div className="space-y-5">
+                      <div>
+                        <p className="mb-2 text-xs font-semibold text-primary">Client</p>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <Input size="sm" label="Event" value={beoForm.eventInfo.eventName} onChange={(e) => updateBeoFormSection('eventInfo', 'eventName', e.target.value)} />
+                          <Input size="sm" label="Organization" value={beoForm.eventInfo.organization} onChange={(e) => updateBeoFormSection('eventInfo', 'organization', e.target.value)} />
+                          <Select
+                            size="sm"
+                            label="Coordinator"
+                            placeholder="Assign coordinator"
+                            selectedKeys={[resolveCoordinatorValue(beoForm.eventInfo.eventCoordinator)]}
+                            onSelectionChange={(keys) => {
+                              const selected = resolveCoordinatorValue(Array.from(keys)[0] as string);
+                              updateBeoFormSection('eventInfo', 'eventCoordinator', selected === UNASSIGNED_STAFF ? '' : selected);
+                            }}
+                            items={beoCoordinatorOptions}
+                          >
+                            {(option) => (
+                              <SelectItem key={option.key} textValue={option.label}>
+                                {option.label}
+                              </SelectItem>
+                            )}
+                          </Select>
+                          <Input size="sm" label="Contact" value={beoForm.eventInfo.contactPerson} onChange={(e) => updateBeoFormSection('eventInfo', 'contactPerson', e.target.value)} />
+                          <Input size="sm" label="Phone" value={beoForm.eventInfo.contactPhone} onChange={(e) => updateBeoFormSection('eventInfo', 'contactPhone', e.target.value)} />
+                          <Input size="sm" label="Email" value={beoForm.eventInfo.contactEmail} onChange={(e) => updateBeoFormSection('eventInfo', 'contactEmail', e.target.value)} />
                         </div>
-                      ))}
+                      </div>
+                      <div>
+                        <p className="mb-2 text-xs font-semibold text-primary">Schedule</p>
+                        <div className="grid grid-cols-2 md:grid-cols-12 gap-3">
+                          <Input className="md:col-span-4" size="sm" label="Venue" value={beoForm.eventInfo.venueName} onChange={(e) => updateBeoFormSection('eventInfo', 'venueName', e.target.value)} />
+                          <Input className="md:col-span-2" size="sm" label="Start" type="date" value={beoForm.eventInfo.arrivalDate} onChange={(e) => updateBeoFormSection('eventInfo', 'arrivalDate', e.target.value)} />
+                          <Input className="md:col-span-2" size="sm" label="End" type="date" value={beoForm.eventInfo.departureDate} onChange={(e) => updateBeoFormSection('eventInfo', 'departureDate', e.target.value)} />
+                          <Input className="md:col-span-2" size="sm" label="Days" value={beoForm.eventInfo.duration} onChange={(e) => updateBeoFormSection('eventInfo', 'duration', e.target.value)} />
+                          <Input className="md:col-span-2" size="sm" label="Pax" value={beoForm.eventInfo.pax} onChange={(e) => updateBeoFormSection('eventInfo', 'pax', e.target.value)} />
+                        </div>
+                      </div>
+                      <Textarea size="sm" label="Coordinator notes" minRows={2} value={beoForm.eventInfo.notes} onChange={(e) => updateBeoFormSection('eventInfo', 'notes', e.target.value)} />
+                      <div>
+                        <div className="mb-2 flex items-center justify-between">
+                          <p className="text-xs font-semibold text-primary">Special instructions</p>
+                          <Button size="sm" variant="light" onPress={handleAddBeoInstruction}>Add</Button>
+                        </div>
+                        <div className="space-y-2">
+                          {beoForm.instructions.map((instruction: string, idx: number) => (
+                            <div key={`instruction-${idx}`} className="flex items-center gap-2">
+                              <Input
+                                className="flex-1"
+                                size="sm"
+                                placeholder={`Instruction ${idx + 1}`}
+                                value={instruction}
+                                onChange={(e) => updateBeoInstruction(idx, e.target.value)}
+                              />
+                              <Button size="sm" variant="light" color="danger" onPress={() => handleRemoveBeoInstruction(idx)}>×</Button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     </div>
-                  </CardBody>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between w-full">
-                      <h4 className="font-semibold">Department Checklist</h4>
-                      <Button size="sm" color="secondary" variant="flat" onPress={handleAddBeoChecklist}>
-                        ➕ Add Department Task
-                      </Button>
+                  </Tab>
+                  <Tab key="setup" title="Setup">
+                    <div className="space-y-5">
+                      <div>
+                        <p className="mb-2 text-xs font-semibold text-primary">Room</p>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          <BeoPick label="Layout" value={beoForm.room.layout} options={BEO_LAYOUTS} onChange={(value) => updateBeoFormSection('room', 'layout', value)} />
+                          <Input size="sm" label="Tables" value={beoForm.room.tables} onChange={(e) => updateBeoFormSection('room', 'tables', e.target.value)} />
+                          <Input size="sm" label="Chairs" value={beoForm.room.chairs} onChange={(e) => updateBeoFormSection('room', 'chairs', e.target.value)} />
+                          <Input size="sm" label="Capacity" value={beoForm.room.capacity} onChange={(e) => updateBeoFormSection('room', 'capacity', e.target.value)} />
+                          <Input size="sm" label="Registration" value={beoForm.room.registrationTable} onChange={(e) => updateBeoFormSection('room', 'registrationTable', e.target.value)} />
+                          <Input size="sm" label="Display" value={beoForm.room.displayTable} onChange={(e) => updateBeoFormSection('room', 'displayTable', e.target.value)} />
+                          <BeoPick label="Access" value={beoForm.room.access} options={BEO_ACCESS} onChange={(value) => updateBeoFormSection('room', 'access', value)} placeholder="Filter access" />
+                          <BeoPick label="Parking" value={beoForm.room.parking} options={BEO_PARKING} onChange={(value) => updateBeoFormSection('room', 'parking', value)} />
+                        </div>
+                        <Textarea className="mt-3" size="sm" label="Setup notes" minRows={2} value={beoForm.room.setupNotes} onChange={(e) => updateBeoFormSection('room', 'setupNotes', e.target.value)} />
+                      </div>
+                      <div>
+                        <p className="mb-2 text-xs font-semibold text-primary">AV / Technical</p>
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                          <Input size="sm" label="Projector" value={beoForm.technical.projector} onChange={(e) => updateBeoFormSection('technical', 'projector', e.target.value)} />
+                          <Input size="sm" label="Screen" value={beoForm.technical.screen} onChange={(e) => updateBeoFormSection('technical', 'screen', e.target.value)} />
+                          <Input size="sm" label="Sound" value={beoForm.technical.soundSystem} onChange={(e) => updateBeoFormSection('technical', 'soundSystem', e.target.value)} />
+                          <Input size="sm" label="Microphones" value={beoForm.technical.microphones} onChange={(e) => updateBeoFormSection('technical', 'microphones', e.target.value)} />
+                          <Input size="sm" label="Laptop" value={beoForm.technical.laptop} onChange={(e) => updateBeoFormSection('technical', 'laptop', e.target.value)} />
+                          <BeoPick label="Internet" value={beoForm.technical.internet} options={BEO_INTERNET} onChange={(value) => updateBeoFormSection('technical', 'internet', value)} />
+                          <BeoPick label="Lighting" value={beoForm.technical.lighting} options={BEO_LIGHTING} onChange={(value) => updateBeoFormSection('technical', 'lighting', value)} />
+                          <Input size="sm" label="Speed" value={beoForm.technical.internetSpeed} onChange={(e) => updateBeoFormSection('technical', 'internetSpeed', e.target.value)} />
+                          <Input size="sm" label="Power" value={beoForm.technical.powerRequirements} onChange={(e) => updateBeoFormSection('technical', 'powerRequirements', e.target.value)} />
+                        </div>
+                        <Textarea className="mt-3" size="sm" label="Technical notes" minRows={2} value={beoForm.technical.notes} onChange={(e) => updateBeoFormSection('technical', 'notes', e.target.value)} />
+                      </div>
                     </div>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="space-y-3">
-                      {beoForm.departmentChecklist.map((task: any, idx: number) => (
-                        <div key={`dept-${idx}`} className="border border-gray-200 rounded-lg p-3 space-y-3 bg-white">
-                          <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                            <Input size="sm" label="Time" value={task.time} onChange={(e) => updateBeoChecklistItem(idx, 'time', e.target.value)} />
-                            <Input size="sm" label="Activity" value={task.activity} onChange={(e) => updateBeoChecklistItem(idx, 'activity', e.target.value)} />
-                            <Input size="sm" label="Department" value={task.department} onChange={(e) => updateBeoChecklistItem(idx, 'department', e.target.value)} />
+                  </Tab>
+                  <Tab key="catering" title="Catering">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <BeoPick label="Service" value={beoForm.catering.serviceStyle} options={BEO_SERVICE_STYLES} onChange={(value) => updateBeoFormSection('catering', 'serviceStyle', value)} />
+                      <BeoPick label="Meal" value={beoForm.catering.mealType} options={BEO_MEAL_TYPES} onChange={(value) => updateBeoFormSection('catering', 'mealType', value)} />
+                      <Input size="sm" label="Tea breaks" value={beoForm.catering.teaBreaks} onChange={(e) => updateBeoFormSection('catering', 'teaBreaks', e.target.value)} />
+                      <Input size="sm" label="Special diets" value={beoForm.catering.specialDietary} onChange={(e) => updateBeoFormSection('catering', 'specialDietary', e.target.value)} />
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+                      <Textarea size="sm" label="Dietary notes" minRows={2} value={beoForm.catering.dietaryAccommodations} onChange={(e) => updateBeoFormSection('catering', 'dietaryAccommodations', e.target.value)} />
+                      <Textarea size="sm" label="Allergies" minRows={2} value={beoForm.catering.allergies} onChange={(e) => updateBeoFormSection('catering', 'allergies', e.target.value)} />
+                      <Textarea size="sm" label="Beverages" minRows={2} value={beoForm.catering.beverages} onChange={(e) => updateBeoFormSection('catering', 'beverages', e.target.value)} />
+                      <Textarea size="sm" label="Snacks" minRows={2} value={beoForm.catering.snacks} onChange={(e) => updateBeoFormSection('catering', 'snacks', e.target.value)} />
+                    </div>
+                  </Tab>
+                  <Tab key="timeline" title="Timeline">
+                    <div className="mb-3 flex items-center justify-between">
+                      <p className="text-xs text-slate-500">{beoForm.timeline.length} line{beoForm.timeline.length === 1 ? '' : 's'}</p>
+                      <Button size="sm" variant="flat" onPress={handleAddBeoTimeline}>Add line</Button>
+                    </div>
+                    {beoForm.timeline.length === 0 ? (
+                      <p className="text-sm text-slate-500 py-10 text-center">No timeline lines yet.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="hidden md:grid grid-cols-12 gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                          <span className="col-span-2">Time</span>
+                          <span className="col-span-4">Activity</span>
+                          <span className="col-span-3">Responsible</span>
+                          <span className="col-span-2">Duration</span>
+                          <span className="col-span-1" />
+                        </div>
+                        {beoForm.timeline.map((item: any, idx: number) => (
+                          <div key={`timeline-${idx}`} className="grid grid-cols-12 gap-2 items-center">
+                            <Input className="col-span-2" size="sm" aria-label="Time" placeholder="Time" value={item.time} onChange={(e) => updateBeoTimelineItem(idx, 'time', e.target.value)} />
+                            <Input className="col-span-4" size="sm" aria-label="Activity" placeholder="Activity" value={item.activity} onChange={(e) => updateBeoTimelineItem(idx, 'activity', e.target.value)} />
+                            <BeoPick className="col-span-3" value={item.responsible} options={beoResponsibleOptions} onChange={(value) => updateBeoTimelineItem(idx, 'responsible', value)} placeholder="Responsible" />
+                            <Input className="col-span-2" size="sm" aria-label="Duration" placeholder="Duration" value={item.duration} onChange={(e) => updateBeoTimelineItem(idx, 'duration', e.target.value)} />
+                            <Button className="col-span-1 min-w-0" size="sm" variant="light" color="danger" onPress={() => handleRemoveBeoTimeline(idx)}>×</Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Tab>
+                  <Tab key="departments" title="Tasks">
+                    <div className="mb-3 flex items-center justify-between">
+                      <p className="text-xs text-slate-500">{beoForm.departmentChecklist.length} task{beoForm.departmentChecklist.length === 1 ? '' : 's'}</p>
+                      <Button size="sm" variant="flat" onPress={handleAddBeoChecklist}>Add task</Button>
+                    </div>
+                    {beoForm.departmentChecklist.length === 0 ? (
+                      <p className="text-sm text-slate-500 py-10 text-center">No department tasks yet.</p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <div className="hidden md:grid grid-cols-12 gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-slate-400">
+                          <span className="col-span-2">Time</span>
+                          <span className="col-span-3">Activity</span>
+                          <span className="col-span-2">Department</span>
+                          <span className="col-span-2">Status</span>
+                          <span className="col-span-2">Duration</span>
+                          <span className="col-span-1" />
+                        </div>
+                        {beoForm.departmentChecklist.map((task: any, idx: number) => (
+                          <div key={`dept-${idx}`} className="grid grid-cols-12 gap-2 items-center">
+                            <Input className="col-span-2" size="sm" aria-label="Time" placeholder="Time" value={task.time} onChange={(e) => updateBeoChecklistItem(idx, 'time', e.target.value)} />
+                            <Input className="col-span-3" size="sm" aria-label="Activity" placeholder="Activity" value={task.activity} onChange={(e) => updateBeoChecklistItem(idx, 'activity', e.target.value)} />
+                            <BeoPick className="col-span-2" value={task.department} options={beoDepartmentOptions} onChange={(value) => updateBeoChecklistItem(idx, 'department', value)} placeholder="Department" />
                             <Select
+                              className="col-span-2"
                               size="sm"
-                              label="Status"
+                              aria-label="Status"
                               selectedKeys={[task.status || 'Pending']}
                               onSelectionChange={(keys) => {
                                 const value = Array.from(keys)[0] as string;
-                                updateBeoChecklistItem(idx, 'status', value);
+                                if (value) updateBeoChecklistItem(idx, 'status', value);
                               }}
                             >
-                              <SelectItem key="Pending">Pending</SelectItem>
-                              <SelectItem key="In Progress">In Progress</SelectItem>
-                              <SelectItem key="Completed">Completed</SelectItem>
+                              <SelectItem key="Pending" startContent={<span className="h-2 w-2 rounded-full bg-warning" />}>Pending</SelectItem>
+                              <SelectItem key="In Progress" startContent={<span className="h-2 w-2 rounded-full bg-primary" />}>In Progress</SelectItem>
+                              <SelectItem key="Completed" startContent={<span className="h-2 w-2 rounded-full bg-success" />}>Completed</SelectItem>
                             </Select>
-                            <Input size="sm" label="Duration" value={task.duration} onChange={(e) => updateBeoChecklistItem(idx, 'duration', e.target.value)} />
+                            <Input className="col-span-2" size="sm" aria-label="Duration" placeholder="Duration" value={task.duration} onChange={(e) => updateBeoChecklistItem(idx, 'duration', e.target.value)} />
+                            <Button className="col-span-1 min-w-0" size="sm" variant="light" color="danger" onPress={() => handleRemoveBeoChecklist(idx)}>×</Button>
                           </div>
-                          <Textarea
-                            label="Notes"
-                            minRows={2}
-                            value={task.notes}
-                            onChange={(e) => updateBeoChecklistItem(idx, 'notes', e.target.value)}
-                          />
-                          <div className="flex justify-end">
-                            <Button size="sm" color="danger" variant="light" onPress={() => handleRemoveBeoChecklist(idx)}>
-                              Remove
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </CardBody>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between w-full">
-                      <h4 className="font-semibold">Special Instructions</h4>
-                      <Button size="sm" color="warning" variant="flat" onPress={handleAddBeoInstruction}>
-                        ➕ Add Instruction
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="space-y-3">
-                      {beoForm.instructions.map((instruction: string, idx: number) => (
-                        <div key={`instruction-${idx}`} className="flex items-start gap-3">
-                          <Input
-                            className="flex-1"
-                            label={`Instruction ${idx + 1}`}
-                            value={instruction}
-                            onChange={(e) => updateBeoInstruction(idx, e.target.value)}
-                          />
-                          <Button size="sm" color="danger" variant="light" onPress={() => handleRemoveBeoInstruction(idx)}>
-                            ✖
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </CardBody>
-                </Card>
+                        ))}
+                      </div>
+                    )}
+                  </Tab>
+                </Tabs>
               </form>
             ) : (
-              <div className="py-12 text-center text-gray-500">No event selected.</div>
+              <div className="py-12 text-center text-slate-500 text-sm">No event selected.</div>
             )}
           </ModalBody>
-          <ModalFooter>
-            <Button color="danger" variant="flat" onPress={() => setIsBEOModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button color="primary" variant="solid" onPress={handleSaveBeoForm} isDisabled={!beoForm}>
-              Save
-            </Button>
-            <Button color="success" variant="flat" onPress={() => exportFunctionSchedulePDF()}>
-              🖨️ Print Function Schedule
-            </Button>
-            <Button color="primary" variant="flat" onPress={() => exportFunctionSheetPDF()}>
-              📋 Function Sheet PDF
-            </Button>
-            <Button color="primary">
-              📧 Send to Departments
-            </Button>
+          <ModalFooter className="justify-between">
+            <div className="flex flex-wrap gap-1">
+              <Button size="sm" variant="light" onPress={() => exportFunctionSchedulePDF()}>
+                Print schedule
+              </Button>
+              <Button size="sm" variant="light" onPress={() => exportFunctionSheetPDF()}>
+                Function sheet
+              </Button>
+              <Button size="sm" variant="light" onPress={handleSendFunctionSheetToDepartments}>
+                Send to departments
+              </Button>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="flat" onPress={() => setIsBEOModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button size="sm" color="primary" onPress={handleSaveBeoForm} isDisabled={!beoForm}>
+                Save
+              </Button>
+            </div>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -16773,659 +17143,305 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         size="4xl"
         scrollBehavior="inside"
       >
-        <ModalContent className="w-[85vw] max-w-[1200px]">
-          <ModalHeader>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">📂</span>
-              <div>
-                <h3 className="text-lg font-semibold">Event Folio</h3>
-                {activeFolio && (
-                  <p className="text-sm text-gray-600">
-                    {activeFolio.eventName} • {activeFolio.clientName}
-                  </p>
-                )}
-              </div>
-            </div>
-          </ModalHeader>
-          <ModalBody className="py-6">
+        <ModalContent className="w-[85vw] max-w-[1100px]">
+          <ModalHeader className="flex flex-col items-stretch gap-3">
             {activeFolio ? (
-              <div className="space-y-6">
-                {/* Folio Summary */}
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <Card className="border-2 border-blue-200 bg-blue-50">
-                    <CardBody className="p-4">
-                      <p className="text-sm text-gray-600 mb-1">Folio ID</p>
-                      <p className="text-lg font-bold text-blue-700">{activeFolio.id}</p>
-                    </CardBody>
-                  </Card>
-                  <Card className="border-2 border-green-200 bg-green-50">
-                    <CardBody className="p-4">
-                      <p className="text-sm text-gray-600 mb-1">Status</p>
-                      <Badge color={activeFolio.status === 'Open' ? 'success' : 'default'} variant="flat" size="lg">
-                        {activeFolio.status}
-                      </Badge>
-                    </CardBody>
-                  </Card>
-                  <Card className="border-2 border-purple-200 bg-purple-50">
-                    <CardBody className="p-4">
-                      <p className="text-sm text-gray-600 mb-1">Total Charges</p>
-                      <p className="text-lg font-bold text-purple-700">
-                        {formatCurrency(activeFolioTotals.debits)}
-                      </p>
-                    </CardBody>
-                  </Card>
-                  <Card className="border-2 border-orange-200 bg-orange-50">
-                    <CardBody className="p-4">
-                      <p className="text-sm text-gray-600 mb-1">Total Payments</p>
-                      <p className="text-lg font-bold text-orange-700">
-                        {formatCurrency(activeFolioTotals.credits)}
-                      </p>
-                    </CardBody>
-                  </Card>
+              <>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Event Folio</p>
+                    <h3 className="text-xl font-semibold text-slate-900">{formatFolioNumber(activeFolio.id)}</h3>
+                    <p className="text-sm text-slate-600">
+                      {activeFolio.eventName}
+                      {activeFolio.clientName ? ` · ${activeFolio.clientName}` : ''}
+                    </p>
+                  </div>
+                  <Badge color={activeFolio.status === 'Open' ? 'success' : 'default'} variant="flat">
+                    {activeFolio.status}
+                  </Badge>
                 </div>
-
-                {/* Current Balance */}
-                {activeFolio && (
-                  <Card className={`border-2 ${activeFolioBalance >= 0 ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}>
-                    <CardBody className="p-6">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm text-gray-600 mb-1">Current Balance</p>
-                          <p className={`text-3xl font-bold ${activeFolioBalance >= 0 ? 'text-red-700' : 'text-green-700'}`}>
-                            {formatCurrency(activeFolioBalance)}
-                          </p>
-                          {activeFolioBalance >= 0 && (
-                            <p className="text-xs text-gray-500 mt-1">Amount owed by client</p>
-                          )}
-                          {activeFolioBalance < 0 && (
-                            <p className="text-xs text-gray-500 mt-1">Credit balance (overpayment)</p>
-                          )}
-                        </div>
-                        {activeFolio.openingBalance !== 0 && (
-                          <div className="text-right">
-                            <p className="text-sm text-gray-600 mb-1">Opening Balance</p>
-                            <p className="text-lg font-semibold text-gray-700">
-                              {formatCurrency(activeFolio.openingBalance)}
-                            </p>
-                          </div>
-                        )}
-                      </div>
-                    </CardBody>
-                  </Card>
+                <div className="grid grid-cols-3 gap-3 text-sm">
+                  <div>
+                    <p className="text-slate-500">Charges</p>
+                    <p className="font-semibold text-slate-900">{formatCurrency(activeFolioTotals.debits)}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Payments</p>
+                    <p className="font-semibold text-slate-900">{formatCurrency(activeFolioTotals.credits)}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">{activeFolioBalance >= 0 ? 'Amount due' : 'Credit'}</p>
+                    <p className={`font-semibold ${activeFolioBalance > 0.01 ? 'text-red-700' : activeFolioBalance < -0.01 ? 'text-emerald-700' : 'text-slate-900'}`}>
+                      {formatCurrency(Math.abs(activeFolioBalance))}
+                    </p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <h3 className="text-lg font-semibold">Event Folio</h3>
+            )}
+          </ModalHeader>
+          <ModalBody className="py-4">
+            {activeFolio ? (
+              <div className="space-y-4">
+                {activeFolioBalance < -0.01 && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    <span>Credit {formatCurrency(Math.abs(activeFolioBalance))} on this account.</span>
+                    <div className="flex gap-2">
+                      <Button size="sm" color="warning" variant="flat" onPress={() => processRefund(activeFolio)}>
+                        Refund
+                      </Button>
+                      <Button size="sm" variant="flat" onPress={() => createCreditNote(activeFolio)}>
+                        Credit note
+                      </Button>
+                    </div>
+                  </div>
                 )}
 
-                {/* Overpayment Actions */}
-                {activeFolioBalance < 0 && (
-                  <Card className="border-2 border-yellow-200 bg-yellow-50">
-                    <CardHeader>
-                      <h4 className="font-semibold text-yellow-800">⚠️ Overpayment Detected</h4>
-                      <p className="text-sm text-yellow-700">
-                        Client has overpaid by {formatCurrency(Math.abs(activeFolioBalance))}
-                      </p>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <p className="text-sm text-yellow-800 font-medium">Choose an action:</p>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            color="warning"
-                            variant="flat"
-                            onPress={() => processRefund(activeFolio)}
-                          >
-                            💸 Process Refund
-                          </Button>
-                          <Button
-                            size="sm"
-                            color="secondary"
-                            variant="flat"
-                            onPress={() => createCreditNote(activeFolio)}
-                          >
-                            📝 Create Credit Note
-                          </Button>
-                          <Button
-                            size="sm"
-                            color="default"
-                            variant="flat"
-                            onPress={() => {
-                              const note = prompt('Add note about this overpayment:', 'Overpayment - Credit balance to be applied to future events');
-                              if (note) {
-                              const lastBalance = activeFolioBalance;
-                                const newEntry: EventFolioEntry = {
-                                  id: genId('FLE'),
-                                  date: new Date().toISOString().split('T')[0],
-                                  description: `Note: ${note}`,
-                                  debit: 0,
-                                  credit: 0,
-                                  balance: lastBalance,
-                                  reference: ''
-                                };
-                                setEventFolios((prev: any) =>
-                                  prev.map((f: any) =>
-                                    f.id === activeFolio.id
-                                      ? { ...f, entries: [...f.entries, newEntry], updatedAt: new Date().toISOString() }
-                                      : f
-                                  )
-                                );
-                                setActiveFolio((prev: any) =>
-                                  prev && prev.id === activeFolio.id
-                                    ? { ...prev, entries: [...prev.entries, newEntry], updatedAt: new Date().toISOString() }
-                                    : prev
-                                );
-                              }
-                            }}
-                          >
-                            📌 Add Note
-                          </Button>
-                        </div>
-                        <div className="mt-3 p-3 bg-white rounded-lg border border-yellow-200">
-                          <p className="text-xs text-yellow-800">
-                            <strong>Options:</strong><br/>
-                            • <strong>Refund:</strong> Process a refund to the client<br/>
-                            • <strong>Credit Note:</strong> Create a credit note for future use<br/>
-                            • <strong>Add Note:</strong> Document the overpayment for reference
-                          </p>
-                        </div>
-                      </div>
-                    </CardBody>
-                  </Card>
-                )}
-
-                {/* Quick Import & Create Section */}
                 {(() => {
-                  if (!activeFolio || !activeFolio.eventId) {
-                    return null;
-                  }
-
-                  const event = allEvents.find(e => e.id === activeFolio.eventId);
                   const invoice = eventInvoices.find((inv: EventInvoice) => inv.eventId === activeFolio.eventId);
-                  const receipts = eventReceipts.filter((rec: EventReceipt) => rec.eventId === activeFolio.eventId);
-
-                  const invoiceExists = activeFolio.entries.some((e: EventFolioEntry) => e.reference === invoice?.id || e.description.includes(`Invoice ${invoice?.id}`));
-                  const existingReceiptRefs = activeFolio.entries.map((e: EventFolioEntry) => e.reference).filter(Boolean);
-                  const newReceipts = receipts.filter((rec: any) => !existingReceiptRefs.includes(rec.id));
-                  const newReceiptsAmount = newReceipts.reduce((sum: number, r: any) => sum + r.amount, 0);
-
-                  // Load Proforma: Create invoice from event and import to folio in one click
-                  const handleLoadProforma = () => {
-                    if (!event) return;
-                    
-                    // Get budget/quote data from event
-                    const budget = getQuoteBudgetSnapshot(event);
-                    const budgetTotal = budget?.total || 0;
-                    const budgetSubtotal = exclusiveFromGross(budgetTotal);
-                    const budgetTax = budgetTotal - budgetSubtotal;
-                    
-                    // Create invoice from proforma
-                    const invoiceId = genId('INV');
-                    const newInvoice: EventInvoice = {
-                      id: invoiceId,
-                      eventId: event.id,
-                      eventName: event.name || activeFolio.eventName,
-                      clientName: event.organization || activeFolio.clientName,
-                      issueDate: new Date().toISOString().split('T')[0],
-                      dueDate: event.departureDate || new Date().toISOString().split('T')[0],
-                      subtotal: budgetSubtotal,
-                      tax: budgetTax,
-                      total: budgetTotal,
-                      balance: budgetTotal,
-                      status: 'Issued',
-                      notes: `Generated from proforma for ${event.name}`
-                    };
-
-                    // Add invoice to state
-                    setEventInvoices((prev: EventInvoice[]) => [...prev, newInvoice]);
-                    
-                    // Auto-import to folio
-                    syncInvoiceToFolio(newInvoice, false);
-                    captureEventInvoiceToAccounting(newInvoice, event);
-                    
-                    trackEvent('Events.EventCreated', { action: 'proforma_loaded', invoiceId, eventId: event.id });
-                  };
-
-                  // Get proforma amount from event budget
-                  const proformaBudget = getQuoteBudgetSnapshot(event);
-                  const proformaAmount = proformaBudget?.total || 0;
-
-                  return event ? (
-                    <Card className="border-2 border-blue-200 bg-gradient-to-br from-blue-50 to-indigo-50">
-                      <CardHeader>
-                        <div className="flex flex-col w-full gap-3">
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <h4 className="font-semibold text-blue-800 flex items-center gap-2">
-                                <span className="text-xl">⚡</span>
-                                Quick Import & Create
-                              </h4>
-                              <p className="text-sm text-blue-600">Create invoices or import charges and payments</p>
-                            </div>
-                            <Badge color="primary" variant="flat" className="text-xs">{event.name}</Badge>
-                          </div>
-                          {/* Proforma and Invoice Amounts Display */}
-                          <div className="flex flex-wrap gap-3 p-3 bg-white/60 rounded-lg border border-blue-100">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-gray-500">📋 Proforma:</span>
-                              <span className="font-semibold text-blue-700">{formatCurrency(proformaAmount)}</span>
-                            </div>
-                            {invoice && (
-                              <>
-                                <div className="border-l border-gray-300 h-5"></div>
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs text-gray-500">🧾 Invoice:</span>
-                                  <span className="font-semibold text-green-700">{formatCurrency(invoice.total)}</span>
-                                </div>
-                                {invoice.total !== proformaAmount && (
-                                  <>
-                                    <div className="border-l border-gray-300 h-5"></div>
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-xs text-gray-500">Δ Difference:</span>
-                                      <span className={`font-semibold ${invoice.total > proformaAmount ? 'text-red-600' : 'text-green-600'}`}>
-                                        {invoice.total > proformaAmount ? '+' : ''}{formatCurrency(invoice.total - proformaAmount)}
-                                      </span>
-                                    </div>
-                                  </>
-                                )}
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      </CardHeader>
-                      <CardBody>
-                        <div className="flex flex-wrap gap-2">
-                          {/* Load Proforma - Creates invoice and imports to folio automatically */}
-                          {!invoice ? (
-                            <Button 
-                              size="sm" 
-                              color="primary" 
-                              variant="solid" 
-                              onPress={handleLoadProforma}
-                              startContent={<span>📋</span>}
-                            >
-                              Load Proforma
-                            </Button>
-                          ) : (
-                            <>
-                              {/* Show Import to Folio status after proforma is loaded */}
-                              <Button 
-                                size="sm" 
-                                color="success" 
-                                variant="flat" 
-                                isDisabled={true}
-                                startContent={<span>✅</span>}
-                              >
-                                Import to Folio (done)
-                              </Button>
-                              {/* Create/Edit Invoice button */}
-                              <Button 
-                                size="sm" 
-                                color="primary" 
-                                variant="solid" 
-                                onPress={() => openInvoiceDetailEdit(invoice)}
-                                startContent={<span>➕</span>}
-                              >
-                                Create/Edit Invoice
-                              </Button>
-                            </>
-                          )}
-                          <Button 
-                            size="sm" 
-                            color="success" 
-                            variant="solid" 
-                            onPress={() => openReceiptModal('create', undefined, { ...event, balance: Math.abs(activeFolioBalance) })}
-                          >
-                            ➕ Record Receipt
-                          </Button>
-                          {newReceipts.length > 0 && (
-                            <Button 
-                              size="sm" 
-                              color="success" 
-                              variant="flat" 
-                              onPress={() => importReceiptsToFolio(activeFolio)}
-                            >
-                              💳 Import {newReceipts.length} Receipts ({formatCurrency(newReceiptsAmount)})
-                            </Button>
-                          )}
-                        </div>
-                      </CardBody>
-                    </Card>
-                  ) : null;
-                })()}
-
-                {/* Add Entry Form */}
-                <Card>
-                  <CardHeader>
-                    <h4 className="font-semibold">Add Entry</h4>
-                  </CardHeader>
-                  <CardBody>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <RadioGroup
-                        label="Entry Type"
-                        orientation="horizontal"
-                        value={folioEntryForm.type}
-                        onValueChange={(value) => {
-                          const newType = value as 'charge' | 'payment';
-                          setFolioEntryForm(prev => ({ 
-                            ...prev, 
-                            type: newType,
-                            // Clear opposite center when switching types
-                            costCenter: newType === 'charge' ? prev.costCenter : '',
-                          revenueCenter: newType === 'payment' ? prev.revenueCenter : '',
-                          method: newType === 'payment' ? (prev.method || 'Cash') : prev.method,
-                          recordedBy: newType === 'payment' ? (prev.recordedBy || 'Events Team') : prev.recordedBy
-                          }));
+                  const event = allEvents.find((ev) => ev.id === activeFolio.eventId);
+                  return (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        size="sm"
+                        color="primary"
+                        variant="flat"
+                        onPress={() => {
+                          setFolioEntryForm((prev) => ({ ...prev, type: 'charge' }));
+                          setFolioComposerOpen(true);
                         }}
                       >
-                        <Radio value="charge">💳 Charge</Radio>
-                        <Radio value="payment">💰 Payment</Radio>
-                      </RadioGroup>
-                      <Input
-                        label="Amount (₵)"
-                        type="number"
-                        placeholder="Enter amount"
-                        value={folioEntryForm.amount > 0 ? String(folioEntryForm.amount) : ''}
-                        onValueChange={(value) => setFolioEntryForm(prev => ({ ...prev, amount: parseFloat(value) || 0 }))}
-                      />
-                      <Input
-                        label="Description"
-                        placeholder="Enter description"
-                        value={folioEntryForm.description}
-                        onValueChange={(value) => setFolioEntryForm(prev => ({ ...prev, description: value }))}
-                        className="md:col-span-2"
-                      />
-                      <Input
-                        label="Reference (Optional)"
-                        placeholder="Invoice ID, Receipt No., etc."
-                        value={folioEntryForm.reference || ''}
-                        onValueChange={(value) => setFolioEntryForm(prev => ({ ...prev, reference: value }))}
-                        className="md:col-span-2"
-                      />
-                      {folioEntryForm.type === 'charge' && (
-                        <Select
-                          label="Cost Center (Optional)"
-                          placeholder="Select cost center for tracking"
-                          selectedKeys={folioEntryForm.costCenter ? [folioEntryForm.costCenter] as any : []}
-                          onSelectionChange={(keys) => {
-                            const selected = Array.from(keys)[0] as string;
-                            setFolioEntryForm(prev => ({ ...prev, costCenter: selected || '' }));
-                          }}
-                          className="md:col-span-2"
-                        >
-                          {costCenters.filter(cc => cc.isActive).map((cc) => (
-                            <SelectItem key={cc.code}>
-                              {cc.code} - {cc.name}
-                            </SelectItem>
-                          ))}
-                        </Select>
-                      )}
-                      {folioEntryForm.type === 'payment' && (
-                        <Select
-                          label="Revenue Center (Optional)"
-                          placeholder="Select revenue center for tracking"
-                          selectedKeys={folioEntryForm.revenueCenter ? [folioEntryForm.revenueCenter] as any : []}
-                          onSelectionChange={(keys) => {
-                            const selected = Array.from(keys)[0] as string;
-                            setFolioEntryForm(prev => ({ ...prev, revenueCenter: selected || '' }));
-                          }}
-                          className="md:col-span-2"
-                        >
-                          {revenueCenters.filter(rc => rc.isActive).map((rc) => (
-                            <SelectItem key={rc.code}>
-                              {rc.code} - {rc.name}
-                            </SelectItem>
-                          ))}
-                        </Select>
-                      )}
-                      {folioEntryForm.type === 'payment' && (
+                        Add charge
+                      </Button>
+                      <Button
+                        size="sm"
+                        color="success"
+                        variant="flat"
+                        onPress={() =>
+                          openReceiptModal('create', undefined, {
+                            ...(event || {}),
+                            balance: Math.abs(activeFolioBalance),
+                          })
+                        }
+                      >
+                        Record payment
+                      </Button>
+                      <Button size="sm" variant="flat" onPress={handlePrintEventFolio}>
+                        Print
+                      </Button>
+                      {invoice && (
                         <>
-                          <Select
-                            label="Payment Method"
-                            selectedKeys={folioEntryForm.method ? [folioEntryForm.method] as any : ['Cash']}
-                            onSelectionChange={(keys) => {
-                              const selected = Array.from(keys)[0] as ReceiptMethod;
-                              setFolioEntryForm(prev => ({ ...prev, method: selected || 'Cash' }));
-                            }}
-                          >
-                            {receiptMethods.map(method => (
-                              <SelectItem key={method}>{method}</SelectItem>
-                            ))}
-                          </Select>
-                          <Input
-                            label="Received / Recorded By"
-                            placeholder="Events Team"
-                            value={folioEntryForm.recordedBy || ''}
-                            onValueChange={(value) => setFolioEntryForm(prev => ({ ...prev, recordedBy: value }))}
-                          />
+                          <Button size="sm" color="primary" variant="solid" onPress={() => openInvoiceDetailEdit(invoice)}>
+                            Edit
+                          </Button>
+                          <Button size="sm" variant="flat" onPress={() => handleDownloadInvoicePdf(invoice)}>
+                            Print invoice
+                          </Button>
+                          {Number(invoice.balance || 0) > 0 && (
+                            <Button size="sm" color="warning" variant="flat" onPress={() => openReceiptFromInvoice(invoice)}>
+                              Pay
+                            </Button>
+                          )}
                         </>
                       )}
                     </div>
-                    <div className="flex justify-end mt-4">
+                  );
+                })()}
+
+                {folioComposerOpen && (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-3 flex items-center justify-between">
+                      <p className="text-sm font-medium text-slate-800">Add charge</p>
+                      <Button size="sm" variant="light" onPress={() => setFolioComposerOpen(false)}>
+                        Cancel
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                      <Input
+                        label="Amount"
+                        type="number"
+                        placeholder="0.00"
+                        value={folioEntryForm.amount > 0 ? String(folioEntryForm.amount) : ''}
+                        onValueChange={(value) => setFolioEntryForm((prev) => ({ ...prev, amount: parseFloat(value) || 0 }))}
+                        startContent={<span className="text-slate-400">₵</span>}
+                      />
+                      <Input
+                        label="Description"
+                        placeholder="Extra hours, equipment, late change"
+                        value={folioEntryForm.description}
+                        onValueChange={(value) => setFolioEntryForm((prev) => ({ ...prev, description: value }))}
+                        className="md:col-span-2"
+                      />
+                    </div>
+                    <div className="mt-3 flex justify-end">
                       <Button
+                        size="sm"
                         color="primary"
                         onPress={handleAddFolioEntry}
                         isDisabled={!folioEntryForm.description.trim() || folioEntryForm.amount <= 0}
                       >
-                        ➕ Add Entry
+                        Post charge
                       </Button>
                     </div>
-                  </CardBody>
-                </Card>
+                  </div>
+                )}
 
-                {/* Entries Table */}
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between w-full">
-                      <h4 className="font-semibold">Folio Entries</h4>
-                      {activeFolio.entries.length > 5 && (
-                        <Input
-                          size="sm"
-                          placeholder="Search entries..."
-                          value={folioEntrySearch}
-                          onValueChange={setFolioEntrySearch}
-                          startContent={<span className="text-gray-400">🔍</span>}
-                          className="max-w-xs"
-                          variant="flat"
-                        />
-                      )}
+                <div>
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <h4 className="text-sm font-semibold text-slate-800">Account</h4>
+                    {activeFolio.entries.length > 5 && (
+                      <Input
+                        size="sm"
+                        placeholder="Search entries"
+                        value={folioEntrySearch}
+                        onValueChange={setFolioEntrySearch}
+                        className="max-w-xs"
+                        variant="bordered"
+                      />
+                    )}
+                  </div>
+                  {activeFolio.entries.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-slate-200 py-10 text-center text-sm text-slate-500">
+                      No charges or payments on this folio yet.
                     </div>
-                  </CardHeader>
-                  <CardBody>
-                    {activeFolio.entries.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <span className="text-4xl">📋</span>
-                        <p className="mt-2">No entries yet. Add charges or payments above.</p>
-                      </div>
-                    ) : filteredFolioEntries.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <span className="text-4xl">🔍</span>
-                        <p className="mt-2">No entries match your search.</p>
-                        <Button
-                          size="sm"
-                          color="default"
-                          variant="flat"
-                          className="mt-2"
-                          onPress={() => setFolioEntrySearch('')}
-                        >
-                          Clear Search
+                  ) : filteredFolioEntries.length === 0 ? (
+                    <div className="rounded-lg border border-slate-200 py-8 text-center text-sm text-slate-500">
+                      No entries match the search.
+                      <div className="mt-2">
+                        <Button size="sm" variant="flat" onPress={() => setFolioEntrySearch('')}>
+                          Clear search
                         </Button>
                       </div>
-                    ) : (
-                      <Table aria-label="Folio entries">
-                        <TableHeader>
-                          <TableColumn>DATE</TableColumn>
-                          <TableColumn>DESCRIPTION</TableColumn>
-                          <TableColumn>REFERENCE</TableColumn>
-                          <TableColumn>CENTER</TableColumn>
-                          <TableColumn className="text-right">CHARGE</TableColumn>
-                          <TableColumn className="text-right">PAYMENT</TableColumn>
-                          <TableColumn className="text-right">BALANCE</TableColumn>
-                          <TableColumn className="text-center">ACTIONS</TableColumn>
-                        </TableHeader>
-                        <TableBody>
-                          <React.Fragment>
-                            {activeFolio.openingBalance !== 0 && (
-                              <TableRow>
+                    </div>
+                  ) : (
+                    <Table aria-label="Folio account" removeWrapper>
+                      <TableHeader>
+                        <TableColumn>DATE</TableColumn>
+                        <TableColumn>DESCRIPTION</TableColumn>
+                        <TableColumn>REFERENCE</TableColumn>
+                        <TableColumn className="text-right">CHARGE</TableColumn>
+                        <TableColumn className="text-right">PAYMENT</TableColumn>
+                        <TableColumn className="text-right">BALANCE</TableColumn>
+                        <TableColumn className="text-center"> </TableColumn>
+                      </TableHeader>
+                      <TableBody>
+                        <React.Fragment>
+                          {activeFolio.openingBalance !== 0 && (
+                            <TableRow>
+                              <TableCell>
+                                {new Date(activeFolio.createdAt).toLocaleDateString()}
+                              </TableCell>
+                              <TableCell className="font-medium">Opening balance</TableCell>
+                              <TableCell className="text-slate-400">—</TableCell>
+                              <TableCell className="text-right">
+                                {activeFolio.openingBalance > 0 ? formatCurrency(activeFolio.openingBalance) : '—'}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {activeFolio.openingBalance < 0 ? formatCurrency(Math.abs(activeFolio.openingBalance)) : '—'}
+                              </TableCell>
+                              <TableCell className="text-right font-semibold">
+                                {formatCurrency(activeFolio.openingBalance)}
+                              </TableCell>
+                              <TableCell />
+                            </TableRow>
+                          )}
+                          {filteredFolioEntries.map((entry: EventFolioEntry) => {
+                            const linkedInvoice = entry.reference
+                              ? eventInvoices.find((inv) => inv.id === entry.reference)
+                              : null;
+                            const linkedReceipt = entry.reference
+                              ? eventReceipts.find((rcpt) => rcpt.id === entry.reference)
+                              : null;
+                            const line = formatFolioEntryCopy(entry);
+
+                            return (
+                              <TableRow key={entry.id}>
                                 <TableCell>
-                                  {new Date(activeFolio.createdAt).toLocaleDateString()}
+                                  {entry.date ? new Date(entry.date).toLocaleDateString() : '—'}
                                 </TableCell>
-                                <TableCell className="font-medium">Opening Balance</TableCell>
-                                <TableCell>—</TableCell>
-                                <TableCell>
-                                  <span className="text-gray-400">—</span>
+                                <TableCell>{line.description}</TableCell>
+                                <TableCell className="text-slate-600">{line.reference}</TableCell>
+                                <TableCell className="text-right">
+                                  {entry.debit > 0 ? formatCurrency(entry.debit) : '—'}
                                 </TableCell>
                                 <TableCell className="text-right">
-                                  {activeFolio.openingBalance > 0 ? formatCurrency(activeFolio.openingBalance) : '—'}
+                                  {entry.credit > 0 ? formatCurrency(entry.credit) : '—'}
                                 </TableCell>
-                                <TableCell className="text-right">
-                                  {activeFolio.openingBalance < 0 ? formatCurrency(Math.abs(activeFolio.openingBalance)) : '—'}
+                                <TableCell className={`text-right font-semibold ${entry.balance > 0.01 ? 'text-red-700' : entry.balance < -0.01 ? 'text-emerald-700' : 'text-slate-900'}`}>
+                                  {formatCurrency(entry.balance)}
                                 </TableCell>
-                                <TableCell className={`text-right font-semibold ${activeFolio.openingBalance >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                  {formatCurrency(activeFolio.openingBalance)}
-                                </TableCell>
-                                <TableCell className="text-center">
-                                  <span className="text-gray-400 text-xs">—</span>
+                                <TableCell>
+                                  <div className="flex items-center justify-end gap-1">
+                                    {linkedInvoice && (
+                                      <Tooltip content="Open invoice">
+                                        <Button
+                                          size="sm"
+                                          variant="light"
+                                          className="min-w-8 h-8"
+                                          onPress={() => handleEditInvoiceFromFolio(linkedInvoice)}
+                                        >
+                                          Edit
+                                        </Button>
+                                      </Tooltip>
+                                    )}
+                                    {linkedReceipt && (
+                                      <Tooltip content="Open receipt">
+                                        <Button
+                                          size="sm"
+                                          variant="light"
+                                          className="min-w-8 h-8"
+                                          onPress={() => handleEditReceiptFromFolio(linkedReceipt)}
+                                        >
+                                          Receipt
+                                        </Button>
+                                      </Tooltip>
+                                    )}
+                                    <Tooltip content="Reverse this line">
+                                      <Button
+                                        size="sm"
+                                        color="warning"
+                                        variant="light"
+                                        isIconOnly
+                                        className="min-w-8 h-8"
+                                        onPress={() => reverseFolioEntry(activeFolio, entry)}
+                                      >
+                                        ↻
+                                      </Button>
+                                    </Tooltip>
+                                    <Tooltip content="Remove this line">
+                                      <Button
+                                        size="sm"
+                                        color="danger"
+                                        variant="light"
+                                        isIconOnly
+                                        className="min-w-8 h-8"
+                                        onPress={() => deleteFolioEntry(activeFolio, entry.id)}
+                                      >
+                                        ✖
+                                      </Button>
+                                    </Tooltip>
+                                  </div>
                                 </TableCell>
                               </TableRow>
-                            )}
-                            {filteredFolioEntries.map((entry: EventFolioEntry) => {
-                              const costCenter = entry.costCenter ? costCenters.find(cc => cc.code === entry.costCenter) : null;
-                              const revenueCenter = entry.revenueCenter ? revenueCenters.find(rc => rc.code === entry.revenueCenter) : null;
-                              const center = costCenter || revenueCenter;
-                              const linkedInvoice = entry.reference
-                                ? eventInvoices.find(inv => inv.id === entry.reference)
-                                : null;
-                              const linkedReceipt = entry.reference
-                                ? eventReceipts.find(rcpt => rcpt.id === entry.reference)
-                                : null;
-                              
-                              return (
-                                <TableRow key={entry.id}>
-                                  <TableCell>
-                                    {new Date(entry.date).toLocaleDateString()}
-                                  </TableCell>
-                                  <TableCell>{entry.description}</TableCell>
-                                  <TableCell>
-                                    {entry.reference ? (
-                                      <Badge color="secondary" variant="flat" size="sm">
-                                        {entry.reference}
-                                      </Badge>
-                                    ) : (
-                                      <span className="text-gray-400">—</span>
-                                    )}
-                                  </TableCell>
-                                  <TableCell>
-                                    {center ? (
-                                      <Badge 
-                                        color={costCenter ? 'warning' : 'success'} 
-                                        variant="flat" 
-                                        size="sm"
-                                      >
-                                        {center.code}
-                                      </Badge>
-                                    ) : (
-                                      <span className="text-gray-400">—</span>
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="text-right">
-                                    {entry.debit > 0 ? (
-                                      <span className="text-red-600 font-semibold">{formatCurrency(entry.debit)}</span>
-                                    ) : (
-                                      <span className="text-gray-400">—</span>
-                                    )}
-                                  </TableCell>
-                                  <TableCell className="text-right">
-                                    {entry.credit > 0 ? (
-                                      <span className="text-green-600 font-semibold">{formatCurrency(entry.credit)}</span>
-                                    ) : (
-                                      <span className="text-gray-400">—</span>
-                                    )}
-                                  </TableCell>
-                                  <TableCell className={`text-right font-semibold ${entry.balance >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                    {formatCurrency(entry.balance)}
-                                  </TableCell>
-                                  <TableCell className="text-center">
-                                    <div className="flex items-center justify-center gap-1">
-                                      {linkedInvoice && (
-                                        <Tooltip content={`Open event form for invoice ${linkedInvoice.id}`}>
-                                          <Button
-                                            size="sm"
-                                            color="primary"
-                                            variant="light"
-                                            isIconOnly
-                                            className="min-w-8 h-8"
-                                            onPress={() => handleEditInvoiceFromFolio(linkedInvoice)}
-                                          >
-                                            🧾
-                                          </Button>
-                                        </Tooltip>
-                                      )}
-                                      {linkedReceipt && (
-                                        <Tooltip content={`Edit receipt ${linkedReceipt.id}`}>
-                                          <Button
-                                            size="sm"
-                                            color="success"
-                                            variant="light"
-                                            isIconOnly
-                                            className="min-w-8 h-8"
-                                            onPress={() => handleEditReceiptFromFolio(linkedReceipt)}
-                                          >
-                                            💳
-                                          </Button>
-                                        </Tooltip>
-                                      )}
-                                      <Tooltip content="Reverse Entry (Create opposite entry)">
-                                        <Button
-                                          size="sm"
-                                          color="warning"
-                                          variant="light"
-                                          isIconOnly
-                                          onPress={() => reverseFolioEntry(activeFolio, entry)}
-                                          className="min-w-8 h-8"
-                                        >
-                                          ↻
-                                        </Button>
-                                      </Tooltip>
-                                      <Tooltip content="Delete Entry">
-                                        <Button
-                                          size="sm"
-                                          color="danger"
-                                          variant="light"
-                                          isIconOnly
-                                          onPress={() => deleteFolioEntry(activeFolio, entry.id)}
-                                          className="min-w-8 h-8"
-                                        >
-                                          ✖
-                                        </Button>
-                                      </Tooltip>
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              );
-                            })}
-                          </React.Fragment>
-                        </TableBody>
-                      </Table>
-                    )}
-                  </CardBody>
-                </Card>
+                            );
+                          })}
+                        </React.Fragment>
+                      </TableBody>
+                    </Table>
+                  )}
+                </div>
               </div>
             ) : (
-              <div className="py-12 text-center text-gray-500">
-                <span className="text-4xl">📂</span>
-                <p className="mt-2">No folio selected</p>
+              <div className="py-10 text-center text-sm text-slate-500">
+                No folio selected
               </div>
             )}
           </ModalBody>
           <ModalFooter>
-                <Button
-              color="primary"
-              onPress={handleUpdateFolio}
-              isDisabled={!activeFolio}
-            >
-              Update Folio
-                </Button>
             <Button color="default" variant="flat" onPress={closeFolioModal}>
               Close
-                </Button>
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -17725,181 +17741,310 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       {/* Event Receipt Modal */}
       <Modal
         isOpen={isReceiptModalOpen}
-        onClose={() => setIsReceiptModalOpen(false)}
-        size="3xl"
+        onOpenChange={(open) => {
+          if (!open) closeReceiptWorkspace();
+        }}
+        onClose={closeReceiptWorkspace}
+        size="2xl"
         scrollBehavior="inside"
+        classNames={{
+          base: 'max-h-[90vh]',
+          header: 'px-5 py-3 border-b border-slate-100',
+          body: 'px-5 py-4',
+          footer: 'px-5 py-3 border-t border-slate-100',
+        }}
       >
         <ModalContent>
+          {(() => {
+            const selectedInvoice = eventInvoices.find((inv) => inv.id === receiptForm.invoiceId);
+            const outstanding = Number(selectedInvoice?.balance || 0);
+            const invoiceTotal = Number(selectedInvoice?.total || 0);
+            const paidSoFar = Math.max(0, invoiceTotal - outstanding);
+            const receiptAmount = Number(receiptForm.amount || 0);
+            const invoiceQuery = receiptInvoiceQuery.trim().toLowerCase();
+            const invoiceItems = (() => {
+              if (receiptInvoiceLocked) {
+                return selectedInvoice
+                  ? [{ key: selectedInvoice.id, label: getInvoiceReceiptLabel(selectedInvoice) }]
+                  : [];
+              }
+              const unpaid = eventInvoices
+                .filter((inv) => Number(inv.balance || 0) > 0.01)
+                .sort((a, b) => Number(b.balance || 0) - Number(a.balance || 0));
+              const matches = invoiceQuery.length < 2
+                ? []
+                : unpaid.filter((inv) => {
+                    const haystack = [
+                      getConferenceInvoiceNumber(inv.id, inv.eventId),
+                      inv.eventName,
+                      inv.clientName,
+                      inv.id,
+                    ].join(' ').toLowerCase();
+                    return haystack.includes(invoiceQuery);
+                  }).slice(0, 20);
+              if (selectedInvoice && !matches.some((inv) => inv.id === selectedInvoice.id)) {
+                return [selectedInvoice, ...matches].map((inv) => ({ key: inv.id, label: getInvoiceReceiptLabel(inv) }));
+              }
+              return matches.map((inv) => ({ key: inv.id, label: getInvoiceReceiptLabel(inv) }));
+            })();
+            const linkedReceipts = selectedInvoice
+              ? eventReceipts.filter((rcpt) => rcpt.invoiceId === selectedInvoice.id)
+              : [];
+            const invoicePaid = !!selectedInvoice && outstanding <= 0;
+            const afterThisReceipt = Math.max(0, outstanding - receiptAmount);
+            const applyInvoiceSelection = (invoiceId: string) => {
+              const invoice = eventInvoices.find((inv) => inv.id === invoiceId);
+              if (!invoice) return;
+              const event = allEvents.find((ev) => ev.id === invoice.eventId);
+              setReceiptForm((prev) => ({
+                ...prev,
+                eventId: invoice.eventId,
+                eventName: invoice.eventName || getEventDisplayName(event),
+                clientName: invoice.clientName || getEventClientName(event),
+                invoiceId: invoice.id,
+                amount: Number(invoice.balance || 0),
+              }));
+              setReceiptErrors((prev) => {
+                const next = { ...prev };
+                delete next.invoiceId;
+                delete next.eventId;
+                delete next.clientName;
+                return next;
+              });
+            };
+            return (
+              <>
           <ModalHeader>
-            <div className="flex items-center gap-2">
-              <span className="text-2xl">💳</span>
-              <div>
-                <h3 className="text-lg font-semibold">
-                  {receiptModalMode === 'edit' ? 'Edit Receipt' : 'Record Receipt'}
-                </h3>
-                <p className="text-sm text-gray-500">
-                  {receiptForm.eventName || 'Event Receipt'}
-                </p>
-              </div>
+            <div>
+              <h3 className="text-lg font-semibold text-ghana-black">
+                {receiptModalMode === 'edit' ? 'Edit Receipt' : 'Record Receipt'}
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {receiptModalMode === 'edit'
+                  ? 'Update this payment against the selected invoice.'
+                  : receiptInvoiceLocked
+                    ? 'Payment against this invoice.'
+                    : 'Search the unpaid invoice. Do not browse the full invoice book.'}
+              </p>
             </div>
           </ModalHeader>
-          <ModalBody className="py-6">
+          <ModalBody>
             <div className="space-y-4">
-              <Select
-                label="Select Event"
-                placeholder="Choose an event"
-                selectedKeys={receiptForm.eventId ? [receiptForm.eventId] : []}
-                onSelectionChange={(keys) => {
-                  const eventId = Array.from(keys)[0] as string;
-                  if (eventId) {
-                    const selectedEvent = allEvents.find(e => e.id === eventId);
-                    if (selectedEvent) {
-                      setReceiptForm(prev => ({
-                        ...prev,
-                        eventId: eventId,
-                        eventName: getEventDisplayName(selectedEvent),
-                        clientName: getEventClientName(selectedEvent)
-                      }));
-                    }
-                  }
+              {receiptInvoiceLocked && selectedInvoice ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <p className="text-xs text-slate-500">Invoice</p>
+                  <p className="font-semibold text-slate-900">
+                    {getConferenceInvoiceNumber(selectedInvoice.id, selectedInvoice.eventId) || 'Invoice'}
+                  </p>
+                  <p className="text-sm text-slate-600">
+                    {receiptForm.eventName || selectedInvoice.eventName || 'Event'}
+                    {receiptForm.clientName || selectedInvoice.clientName
+                      ? ` · ${receiptForm.clientName || selectedInvoice.clientName}`
+                      : ''}
+                  </p>
+                </div>
+              ) : (
+              <Autocomplete
+                size="sm"
+                label="Invoice"
+                placeholder="Type invoice number, event, or client"
+                selectedKey={receiptForm.invoiceId || null}
+                items={invoiceItems}
+                menuTrigger="input"
+                inputValue={receiptInvoiceQuery}
+                isInvalid={!!receiptErrors.invoiceId || !!receiptErrors.clientName}
+                errorMessage={receiptErrors.invoiceId || receiptErrors.clientName}
+                description={invoiceQuery.length < 2 ? 'Type at least 2 characters to find an unpaid invoice' : 'Unpaid invoices matching your search'}
+                onInputChange={setReceiptInvoiceQuery}
+                onSelectionChange={(key) => {
+                  if (key == null) return;
+                  applyInvoiceSelection(String(key));
                 }}
-                isInvalid={!!receiptErrors.eventId}
-                errorMessage={receiptErrors.eventId}
               >
-                {eventOptions.map(option => (
-                  <SelectItem key={option.id} textValue={option.label}>
-                    <div className="flex flex-col">
-                      <span className="font-medium">{option.label}</span>
-                      <span className="text-xs text-gray-500">{option.client}</span>
-                    </div>
-                  </SelectItem>
-                ))}
-              </Select>
-              <Input
-                label="Event Name"
-                value={receiptForm.eventName || ''}
-                isReadOnly
-                variant="flat"
-                description="Auto-filled from selected event"
-              />
-              <Input
-                label="Client Name"
-                value={receiptForm.clientName || ''}
-                onValueChange={(value) => setReceiptForm(prev => ({ ...prev, clientName: value }))}
-                isInvalid={!!receiptErrors.clientName}
-                errorMessage={receiptErrors.clientName}
-                description="Can be edited if different from event client"
-              />
-              <div className="grid grid-cols-2 gap-4">
+                {(item) => (
+                  <AutocompleteItem key={item.key} textValue={item.label}>
+                    {item.label}
+                  </AutocompleteItem>
+                )}
+              </Autocomplete>
+              )}
+
+              {selectedInvoice && (
+                <>
+                  {!receiptInvoiceLocked && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Chip size="sm" color="primary" variant="flat">{receiptForm.eventName || selectedInvoice.eventName || 'Event'}</Chip>
+                    <Chip size="sm" color="secondary" variant="flat">{receiptForm.clientName || selectedInvoice.clientName || 'Client'}</Chip>
+                    {linkedReceipts.length > 0 && (
+                      <Chip size="sm" variant="flat">
+                        {linkedReceipts.length} receipt{linkedReceipts.length === 1 ? '' : 's'}
+                      </Chip>
+                    )}
+                  </div>
+                  )}
+                  <Card className="bg-blue-50 border border-blue-200 shadow-none">
+                    <CardBody className="py-3">
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
+                        <div>
+                          <div className="text-gray-500">Invoice</div>
+                          <div className="font-semibold">{getConferenceInvoiceNumber(selectedInvoice.id, selectedInvoice.eventId) || 'Invoice'}</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Invoice total</div>
+                          <div className="font-medium">{formatCurrency(invoiceTotal)}</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Balance due</div>
+                          <div className={`font-bold ${invoicePaid ? 'text-green-700' : 'text-orange-600'}`}>
+                            {formatCurrency(outstanding)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">After this receipt</div>
+                          <div className="font-bold text-green-700">{formatCurrency(afterThisReceipt)}</div>
+                        </div>
+                      </div>
+                    </CardBody>
+                  </Card>
+                </>
+              )}
+              {invoicePaid && receiptModalMode === 'create' && (
+                <p className="text-xs text-success">
+                  This invoice is already settled{linkedReceipts[0] ? ` (${linkedReceipts[0].id})` : ''}. Enter an amount only if you are recording an additional payment.
+                </p>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Input
-                  label="Receipt Date"
+                  size="sm"
+                  label="Amount received *"
+                  type="number"
+                  placeholder="0.00"
+                  value={receiptForm.amount?.toString() ?? ''}
+                  onValueChange={(value) => setReceiptForm(prev => ({ ...prev, amount: parseFloat(value) || 0 }))}
+                  isInvalid={!!receiptErrors.amount}
+                  errorMessage={receiptErrors.amount}
+                  description={selectedInvoice ? `Balance due ${formatCurrency(outstanding)}` : 'Enter amount received'}
+                  startContent={<span className="text-slate-400 text-xs">₵</span>}
+                  endContent={
+                    selectedInvoice && outstanding > 0 ? (
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        onPress={() => setReceiptForm((prev) => ({ ...prev, amount: outstanding }))}
+                      >
+                        Fill
+                      </Button>
+                    ) : undefined
+                  }
+                />
+                <Input
+                  size="sm"
+                  label="Receipt date"
                   type="date"
                   value={receiptForm.date || ''}
                   onValueChange={(value) => setReceiptForm(prev => ({ ...prev, date: value }))}
                   isInvalid={!!receiptErrors.date}
                   errorMessage={receiptErrors.date}
                 />
-                <Input
-                  label="Amount (₵)"
-                  type="number"
-                  value={receiptForm.amount?.toString() || '0'}
-                  onValueChange={(value) => setReceiptForm(prev => ({ ...prev, amount: parseFloat(value) || 0 }))}
-                  isInvalid={!!receiptErrors.amount}
-                  errorMessage={receiptErrors.amount}
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-4">
                 <Select
-                  label="Payment Method"
-                  selectedKeys={receiptForm.method ? [receiptForm.method] : []}
+                  size="sm"
+                  label="Payment method"
+                  selectedKeys={[resolveReceiptMethod(receiptForm.method)]}
                   onSelectionChange={(keys) => {
-                    const method = Array.from(keys)[0] as ReceiptMethod;
-                    setReceiptForm(prev => ({ ...prev, method: method || 'Cash' }));
+                    const method = resolveReceiptMethod(Array.from(keys)[0] as string);
+                    setReceiptForm(prev => ({
+                      ...prev,
+                      method,
+                      ...(method !== 'Cheque' ? { checkNumber: '' } : {}),
+                    }));
                   }}
                 >
                   {receiptMethods.map(method => (
-                    <SelectItem key={method}>{method}</SelectItem>
+                    <SelectItem key={method} textValue={receiptMethodLabels[method]}>
+                      {receiptMethodLabels[method]}
+                    </SelectItem>
                   ))}
                 </Select>
+                <Autocomplete
+                  size="sm"
+                  label="Recorded by"
+                  placeholder="Pick staff"
+                  selectedKey={receiptForm.recordedBy || null}
+                  inputValue={receiptForm.recordedBy || ''}
+                  allowsCustomValue
+                  items={withCurrentOption(
+                    eventStaffOptions.map((option) => option.label),
+                    receiptForm.recordedBy || ''
+                  ).map((name) => ({ key: name, label: name }))}
+                  onSelectionChange={(key) => {
+                    if (key != null) setReceiptForm((prev) => ({ ...prev, recordedBy: String(key) }));
+                  }}
+                  onInputChange={(value) => setReceiptForm((prev) => ({ ...prev, recordedBy: value }))}
+                >
+                  {(item) => (
+                    <AutocompleteItem key={item.key} textValue={item.label}>
+                      {item.label}
+                    </AutocompleteItem>
+                  )}
+                </Autocomplete>
+                {receiptForm.method === 'Cheque' && (
+                  <Input
+                    size="sm"
+                    label="Cheque number *"
+                    value={receiptForm.checkNumber || ''}
+                    onValueChange={(value) => setReceiptForm(prev => ({ ...prev, checkNumber: value }))}
+                    isInvalid={!!receiptErrors.checkNumber}
+                    errorMessage={receiptErrors.checkNumber}
+                  />
+                )}
                 <Input
-                  label="Reference"
+                  size="sm"
+                  label="Reference / transaction ID"
                   value={receiptForm.reference || ''}
                   onValueChange={(value) => setReceiptForm(prev => ({ ...prev, reference: value }))}
-                  placeholder="Transaction reference"
+                  placeholder="Bank ref, MoMo txn…"
+                  className={receiptForm.method === 'Cheque' ? '' : 'sm:col-span-2'}
+                />
+                <Input
+                  size="sm"
+                  label="Notes (optional)"
+                  placeholder="Internal note"
+                  value={receiptForm.notes || ''}
+                  onValueChange={(value) => setReceiptForm(prev => ({ ...prev, notes: value }))}
+                  className="sm:col-span-2"
                 />
               </div>
-              <Select
-                label="Link to Invoice (Optional)"
-                placeholder="Select an invoice to link this receipt to"
-                selectedKeys={receiptForm.invoiceId ? [receiptForm.invoiceId] : []}
-                onSelectionChange={(keys) => {
-                  const invoiceId = Array.from(keys)[0] as string;
-                  if (invoiceId === 'none') {
-                    setReceiptForm(prev => ({ ...prev, invoiceId: '' }));
-                  } else {
-                    setReceiptForm(prev => ({ ...prev, invoiceId: invoiceId || '' }));
-                  }
-                }}
-                description="Link this receipt to an invoice to automatically update invoice balance"
-              >
-                <SelectItem key="none" textValue="None">
-                  <span className="text-gray-500">No invoice link</span>
-                </SelectItem>
-                {(() => {
-                  const items: React.ReactElement[] = [];
-                  if (!receiptForm.eventId) {
-                    items.push(
-                      <SelectItem key="no-event" isDisabled>
-                        Select an event first
-                      </SelectItem>
-                    );
-                  } else {
-                    const filteredInvoices = eventInvoices.filter(inv => inv.eventId === receiptForm.eventId);
-                    if (filteredInvoices.length === 0) {
-                      items.push(
-                        <SelectItem key="no-invoices" isDisabled>
-                          No invoices found for this event
-                        </SelectItem>
-                      );
-                    } else {
-                      items.push(...filteredInvoices.map(invoice => (
-                        <SelectItem key={invoice.id} textValue={invoice.id}>
-                          <div className="flex flex-col">
-                            <span className="font-medium">{invoice.id}</span>
-                            <span className="text-xs text-gray-500">
-                              {formatCurrency(invoice.balance)} outstanding • {formatDateDisplay(invoice.dueDate)}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      )));
-                    }
-                  }
-                  return items as any;
-                })() as any}
-              </Select>
-              <Input
-                label="Recorded By"
-                value={receiptForm.recordedBy || ''}
-                onValueChange={(value) => setReceiptForm(prev => ({ ...prev, recordedBy: value }))}
-                placeholder="Name of person recording receipt"
-              />
-              <Textarea
-                label="Notes"
-                value={receiptForm.notes || ''}
-                onValueChange={(value) => setReceiptForm(prev => ({ ...prev, notes: value }))}
-                placeholder="Additional notes or comments"
-                minRows={3}
-              />
+              {selectedInvoice && receiptAmount > outstanding && outstanding > 0 && (
+                <p className="text-xs text-warning">Amount is above the outstanding balance of {formatCurrency(outstanding)}.</p>
+              )}
+              {receiptModalMode !== 'edit' && (
+                <Checkbox
+                  size="sm"
+                  isSelected={receiptPrintAfterSave}
+                  onValueChange={setReceiptPrintAfterSave}
+                >
+                  Print receipt after posting
+                </Checkbox>
+              )}
             </div>
           </ModalBody>
           <ModalFooter>
-            <Button color="default" variant="flat" onPress={() => setIsReceiptModalOpen(false)}>
+            <Button size="sm" variant="flat" onPress={closeReceiptWorkspace}>
               Cancel
             </Button>
-            <Button color="success" onPress={handleReceiptSave}>
-              {receiptModalMode === 'edit' ? 'Update Receipt' : 'Record Receipt'}
+            <Button
+              size="sm"
+              color="primary"
+              onPress={handleReceiptSave}
+              isDisabled={receiptModalMode === 'create' && receiptAmount <= 0}
+            >
+              {receiptModalMode === 'edit' ? 'Save Changes' : 'Post Receipt'}
             </Button>
           </ModalFooter>
+              </>
+            );
+          })()}
         </ModalContent>
       </Modal>
 
@@ -17909,56 +18054,136 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
           setIsFolioCreateModalOpen(false);
           setFolioCreateError('');
         }}
-        size="md"
+        size="2xl"
+        scrollBehavior="inside"
+        classNames={{
+          base: 'max-h-[90vh]',
+          header: 'px-5 py-3 border-b border-slate-100',
+          body: 'px-5 py-4',
+          footer: 'px-5 py-3 border-t border-slate-100',
+        }}
       >
         <ModalContent>
-          <ModalHeader>Generate Folio</ModalHeader>
-          <ModalBody className="space-y-4">
-            <Select
-              label="Event"
-              placeholder="Select event"
-              selectedKeys={folioCreateForm.eventId ? [folioCreateForm.eventId] : []}
-              onSelectionChange={(keys) => {
-                const value = Array.from(keys)[0] as string | undefined;
-                if (!value) return;
-                setFolioCreateForm((prev) => ({ ...prev, eventId: value }));
-              }}
-            >
-              {allEvents
-                .filter((ev) => !eventFolios.some((f) => f.eventId === ev.id))
-                .map((ev) => (
-                  <SelectItem key={ev.id} textValue={getEventDisplayName(ev)}>
-                    {getEventDisplayName(ev)} • {getEventClientName(ev)}
-                  </SelectItem>
-                ))}
-            </Select>
-            <Input
-              label="Opening Balance (₵)"
-              type="number"
-              value={String(folioCreateForm.openingBalance ?? 0)}
-              onValueChange={(value) =>
-                setFolioCreateForm((prev) => ({
-                  ...prev,
-                  openingBalance: parseFloat(value) || 0,
-                }))
-              }
-            />
-            <Input
-              label="Note (optional)"
-              placeholder="Opening balance note"
-              value={folioCreateForm.note || ''}
-              onValueChange={(value) => setFolioCreateForm((prev) => ({ ...prev, note: value }))}
-            />
-            {folioCreateError && <p className="text-sm text-danger">{folioCreateError}</p>}
+          {(() => {
+            const selectedEvent = allEvents.find((ev) => ev.id === folioCreateForm.eventId);
+            const linkedInvoice = selectedEvent
+              ? eventInvoices.find((inv) => inv.eventId === selectedEvent.id)
+              : undefined;
+            const linkedReceipts = selectedEvent
+              ? eventReceipts.filter((rcpt) => rcpt.eventId === selectedEvent.id)
+              : [];
+            const existingFolio = selectedEvent
+              ? eventFolios.find((f) => f.eventId === selectedEvent.id)
+              : undefined;
+            const eventItems = getFolioCandidateEvents().map((ev) => ({
+              key: ev.id,
+              label: getFolioEventLabel(ev),
+            }));
+            if (selectedEvent && !eventItems.some((item) => item.key === selectedEvent.id)) {
+              eventItems.unshift({ key: selectedEvent.id, label: getFolioEventLabel(selectedEvent) });
+            }
+            return (
+              <>
+          <ModalHeader>
+            <div>
+              <h3 className="text-lg font-semibold text-ghana-black">New Folio</h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Select the event. The folio posts any existing invoice and receipts, then opens the ledger.
+              </p>
+            </div>
+          </ModalHeader>
+          <ModalBody>
+            <div className="space-y-4">
+              <Autocomplete
+                size="sm"
+                label="Event"
+                placeholder="Type to filter events"
+                selectedKey={folioCreateForm.eventId || null}
+                items={eventItems}
+                isInvalid={!!folioCreateError}
+                errorMessage={folioCreateError}
+                description="Pick an event. Existing folios open the ledger instead of creating a second one."
+                onSelectionChange={(key) => {
+                  if (key == null) return;
+                  setFolioCreateForm((prev) => ({ ...prev, eventId: String(key) }));
+                  setFolioCreateError('');
+                }}
+              >
+                {(item) => (
+                  <AutocompleteItem key={item.key} textValue={item.label}>
+                    {item.label}
+                  </AutocompleteItem>
+                )}
+              </Autocomplete>
+
+              {selectedEvent && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Chip size="sm" color="primary" variant="flat">{getEventDisplayName(selectedEvent)}</Chip>
+                  <Chip size="sm" color="secondary" variant="flat">{getEventClientName(selectedEvent)}</Chip>
+                  {existingFolio ? (
+                    <Chip size="sm" color="success" variant="flat">{existingFolio.id}</Chip>
+                  ) : linkedInvoice ? (
+                    <>
+                      <Chip size="sm" color="success" variant="flat">{linkedInvoice.id}</Chip>
+                      <Chip size="sm" color="warning" variant="flat">Due {formatCurrency(Number(linkedInvoice.balance || 0))}</Chip>
+                    </>
+                  ) : (
+                    <Chip size="sm" variant="flat">No invoice yet</Chip>
+                  )}
+                  {linkedReceipts.length > 0 && (
+                    <Chip size="sm" color="success" variant="flat">{linkedReceipts.length} receipt{linkedReceipts.length === 1 ? '' : 's'}</Chip>
+                  )}
+                </div>
+              )}
+
+              {existingFolio ? (
+                <p className="text-xs text-slate-500">
+                  This event already has a folio. Open it to add charges or payments.
+                </p>
+              ) : linkedInvoice ? (
+                <p className="text-xs text-slate-500">
+                  Invoice {linkedInvoice.id} ({formatCurrency(Number(linkedInvoice.total || 0))}) and its receipts will post onto this folio.
+                </p>
+              ) : selectedEvent ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <Input
+                    size="sm"
+                    label="Opening balance"
+                    type="number"
+                    value={String(folioCreateForm.openingBalance ?? 0)}
+                    onValueChange={(value) =>
+                      setFolioCreateForm((prev) => ({
+                        ...prev,
+                        openingBalance: parseFloat(value) || 0,
+                      }))
+                    }
+                    description="Optional — skip if charges will come later"
+                    startContent={<span className="text-slate-400 text-xs">₵</span>}
+                  />
+                  <Input
+                    size="sm"
+                    label="Note"
+                    placeholder="Opening balance note"
+                    value={folioCreateForm.note || ''}
+                    onValueChange={(value) => setFolioCreateForm((prev) => ({ ...prev, note: value }))}
+                  />
+                </div>
+              ) : (
+                <p className="text-xs text-slate-500">Select an event to create or open its folio.</p>
+              )}
+            </div>
           </ModalBody>
           <ModalFooter>
-            <Button variant="flat" onPress={() => setIsFolioCreateModalOpen(false)}>
+            <Button size="sm" variant="flat" onPress={() => setIsFolioCreateModalOpen(false)}>
               Cancel
             </Button>
-            <Button color="primary" onPress={handleCreateFolio}>
-              Create Folio
+            <Button size="sm" color="primary" onPress={handleCreateFolio} isDisabled={!folioCreateForm.eventId}>
+              {existingFolio ? 'Open Folio' : 'Create Folio'}
             </Button>
           </ModalFooter>
+              </>
+            );
+          })()}
         </ModalContent>
       </Modal>
 
@@ -17968,29 +18193,30 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
         size="md"
       >
         <ModalContent>
-          <ModalHeader>Create Invoice</ModalHeader>
+          <ModalHeader>Select Proforma</ModalHeader>
           <ModalBody className="space-y-4">
             <p className="text-sm text-gray-600">
-              Select an event without an invoice. Totals will be prefilled from the event.
+              Choose the quote / proforma to convert. The same event form opens so you can edit the details and issue the invoice.
             </p>
-            <Select
-              label="Event"
-              placeholder="Select event"
-              selectedKeys={invoiceCreateEventId ? [invoiceCreateEventId] : []}
-              onSelectionChange={(keys) => {
-                const value = Array.from(keys)[0] as string | undefined;
-                if (!value) return;
-                setInvoiceCreateEventId(value);
+            <Autocomplete
+              label="Proforma"
+              placeholder="Type to filter quotes"
+              selectedKey={invoiceCreateEventId || null}
+              items={getInvoiceableProformas().map((ev) => ({
+                key: ev.id,
+                label: getProformaPickerLabel(ev),
+              }))}
+              onSelectionChange={(key) => {
+                if (key == null) return;
+                setInvoiceCreateEventId(String(key));
               }}
             >
-              {allEvents
-                .filter((ev) => !eventInvoices.some((inv) => inv.eventId === ev.id))
-                .map((ev) => (
-                  <SelectItem key={ev.id} textValue={getEventDisplayName(ev)}>
-                    {getEventDisplayName(ev)} • {formatCurrency(Number(ev.revenue || ev.budgetTotal || 0))}
-                  </SelectItem>
-                ))}
-            </Select>
+              {(item) => (
+                <AutocompleteItem key={item.key} textValue={item.label}>
+                  {item.label}
+                </AutocompleteItem>
+              )}
+            </Autocomplete>
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" onPress={() => setIsInvoiceEventPickerOpen(false)}>

@@ -24,12 +24,22 @@ export interface DepartmentStaffMember {
  * it. `departmentNameHints`/`excludeNameHints` match DepartmentStaffTab's own
  * props exactly.
  */
-export function useDepartmentStaff(departmentNameHints: string[], excludeNameHints: string[] = [], enabled = true) {
+export function useDepartmentStaff(
+  departmentNameHints: string[],
+  excludeNameHints: string[] = [],
+  enabled = true,
+  alsoStaffNames: string[] = [],
+) {
   const [staff, setStaff] = useState<DepartmentStaffMember[]>([]);
 
   useEffect(() => {
     if (!enabled) return;
     const headers = hrHeaders();
+    const assignedNames = new Set(
+      alsoStaffNames
+        .map((name) => String(name || '').trim().toLowerCase())
+        .filter((name) => name && name !== 'unassigned')
+    );
     Promise.all([
       fetch('/api/hr/employees', { headers }).then((r) => (r.ok ? r.json() : { employees: [] })),
       fetch('/api/hr/departments', { headers }).then((r) => (r.ok ? r.json() : { departments: [] })),
@@ -51,10 +61,13 @@ export function useDepartmentStaff(departmentNameHints: string[], excludeNameHin
       const employees = (empData.employees || []) as any[];
       setStaff(
         employees
-          .filter((e) => matchingDeptIds.has(e.departmentId))
+          .filter((e) => {
+            const fullName = `${e.firstName || ''} ${e.lastName || ''}`.trim().toLowerCase();
+            return matchingDeptIds.has(e.departmentId) || assignedNames.has(fullName);
+          })
           .map((e) => ({
             id: e.id,
-            name: `${e.firstName} ${e.lastName}`,
+            name: `${e.firstName} ${e.lastName}`.trim(),
             position: posById.get(e.positionId) || 'Unassigned',
             department: deptById.get(e.departmentId) || 'Unknown',
             employmentType: e.employmentType,
@@ -63,7 +76,7 @@ export function useDepartmentStaff(departmentNameHints: string[], excludeNameHin
       );
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [departmentNameHints.join(','), excludeNameHints.join(','), enabled]);
+  }, [departmentNameHints.join(','), excludeNameHints.join(','), alsoStaffNames.join(','), enabled]);
 
   return staff;
 }

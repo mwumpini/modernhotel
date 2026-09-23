@@ -845,7 +845,7 @@ export default function TaxRateBuilder() {
               <SelectItem key="purchases">Purchases</SelectItem>
               <SelectItem key="custom">Unrestricted</SelectItem>
             </Select>
-            <p className="text-xs text-gray-500 mt-1">Payroll rates (PAYE, SSNIT, Tier 2/3) live under Income Taxes, not here.</p>
+            <p className="text-xs text-gray-500 mt-1">Payroll rates (PAYE, SSNIT, Tier 2/3) live under Payroll tax, not here.</p>
           </div>
           <div>
             <span className="text-sm font-medium text-gray-700">Search rules</span>
@@ -1621,7 +1621,7 @@ export default function TaxRateBuilder() {
                   <p className="text-sm py-1.5 text-gray-700">{centreLabel(formData.domain)}</p>
                   {formData.domain === 'payroll' && (
                     <div className="text-xs text-amber-600 mt-1">
-                      Existing payroll rates (PAYE, SSNIT, Tier 2/3) are edited under Income Taxes, not here. Only use
+                      Existing payroll rates (PAYE, SSNIT, Tier 2/3) are edited under Payroll tax, not here. Only use
                       Payroll here to add a genuinely new statutory rule — it won't appear in this screen's list
                       afterward, so note its name/GL code before saving.
                     </div>

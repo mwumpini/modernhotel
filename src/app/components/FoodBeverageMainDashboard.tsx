@@ -41,7 +41,6 @@ import FoodBeverageRestaurantBar from './FoodBeverageRestaurantBar';
 import { openKitchenDisplay } from '../lib/fb/api';
 import FoodBeverageMenuInventory from './FoodBeverageMenuInventory';
 import FoodBeverageStaffReports from './FoodBeverageStaffReports';
-import FoodBeverageAnalyticsDashboard from './FoodBeverageAnalyticsDashboard';
 
 // Info Icon Component with Tooltip
 const InfoIcon = ({ description }: { description: string }) => {
@@ -105,6 +104,11 @@ export default function FoodBeverageMainDashboard() {
   useEffect(() => {
     try {
       const tab = localStorage.getItem('fb.tab');
+      if (tab === 'analytics') {
+        localStorage.removeItem('fb.tab');
+        router.push('/fb/reports');
+        return;
+      }
       if (tab) {
         setSelectedTab(tab);
         localStorage.removeItem('fb.tab');
@@ -154,7 +158,7 @@ export default function FoodBeverageMainDashboard() {
       category: 'Staff & Performance',
       items: [
         { title: 'Staff Reports', icon: '👥', description: 'Employee performance tracking', status: 'active', count: 8 },
-        { title: 'Analytics Dashboard', icon: '📊', description: 'Sales and performance insights', status: 'active', count: 0 },
+        { title: 'Reports & Analysis', icon: '📊', description: 'Outlet sales, kitchen stock and performance', status: 'active', count: 0 },
         { title: 'Shift Management', icon: '⏰', description: 'Staff scheduling and time tracking', status: 'active', count: 3 },
         { title: 'Performance Metrics', icon: '🎯', description: 'KPI tracking and optimization', status: 'active', count: 100 },
       ]
@@ -172,7 +176,6 @@ export default function FoodBeverageMainDashboard() {
       category: 'Financial Operations',
       items: [
         { title: 'Sales Tracking', icon: '💰', description: 'Real-time sales monitoring', status: 'active', count: todayOrders.length },
-        { title: 'Revenue Analytics', icon: '📈', description: 'Financial performance insights', status: 'active', count: 0 },
         { title: 'Payment Processing', icon: '💳', description: 'Multiple payment methods', status: 'active', count: 4 },
         { title: 'Invoice Management', icon: '🧾', description: 'Billing and receipt generation', status: 'active', count: 0 },
       ]
@@ -498,8 +501,8 @@ export default function FoodBeverageMainDashboard() {
                                 setSelectedTab('menu');
                               } else if (item.title.includes('Staff Reports')) {
                                 setSelectedTab('staff');
-                              } else if (item.title.includes('Analytics Dashboard')) {
-                                setSelectedTab('analytics');
+                              } else if (item.title.includes('Reports & Analysis')) {
+                                router.push('/fb/reports');
                               }
                             }}
                           >
@@ -542,10 +545,6 @@ export default function FoodBeverageMainDashboard() {
 
             <Tab key="staff" title="👥 Staff Reports">
               <FoodBeverageStaffReports />
-            </Tab>
-
-            <Tab key="analytics" title="📊 Analytics Dashboard">
-              <FoodBeverageAnalyticsDashboard />
             </Tab>
           </Tabs>
         </CardBody>

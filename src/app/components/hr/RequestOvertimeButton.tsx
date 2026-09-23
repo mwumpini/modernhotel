@@ -9,6 +9,8 @@ import {
 import { useEmployeeStore } from '../../lib/hr/employeeStore';
 import { useLeaveAttendanceStore } from '../../lib/hr/leaveAttendanceStore';
 import { useSettingsStore } from '../../lib/settings/store';
+import type { DepartmentStaffMember } from '../../lib/hr/useDepartmentStaff';
+import { todayKey } from '../../lib/hr/leaveDates';
 
 interface OvertimeRow {
   rowId: string;
@@ -53,10 +55,13 @@ export default function RequestOvertimeButton({
   departmentLabel,
   permissionId,
   departmentNameHints = [],
+  staff,
 }: {
   departmentLabel: string;
   permissionId: string;
   departmentNameHints?: string[];
+  /** When set, the picker is this department list only — no fallback to the whole hotel. */
+  staff?: DepartmentStaffMember[];
 }) {
   const canLog = useSettingsStore((s) => s.hasPermission(permissionId));
   const { data: session } = useSession();
@@ -69,28 +74,37 @@ export default function RequestOvertimeButton({
   const hydrateAttendance = useLeaveAttendanceStore((s) => s.hydrateFromApi);
 
   const [isOpen, setIsOpen] = React.useState(false);
-  const [date, setDate] = React.useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = React.useState(() => todayKey());
   const [rows, setRows] = React.useState<OvertimeRow[]>([emptyRow()]);
   const [notes, setNotes] = React.useState('');
   const [saving, setSaving] = React.useState(false);
 
   const scopedEmployees = React.useMemo(() => {
     const active = employees.filter((e) => e.status === 'active');
+    if (staff?.length) {
+      const allowed = new Set(staff.map((row) => row.id));
+      return active.filter((employee) => allowed.has(employee.id));
+    }
     if (departmentNameHints.length === 0) return active;
     const matchingDeptIds = new Set(
       departments.filter((d) => departmentNameHints.some((h) => d.name.toLowerCase().includes(h))).map((d) => d.id)
     );
-    if (matchingDeptIds.size === 0) return active;
-    const scoped = active.filter((e) => matchingDeptIds.has(e.departmentId));
-    return scoped.length > 0 ? scoped : active;
-  }, [employees, departments, departmentNameHints]);
+    if (matchingDeptIds.size === 0) return [];
+    return active.filter((e) => matchingDeptIds.has(e.departmentId));
+  }, [employees, departments, departmentNameHints, staff]);
 
-  if (!canLog) return null;
+  if (!canLog) {
+    return (
+      <p className="text-sm text-slate-500">
+        You do not have permission to submit overtime from {departmentLabel}.
+      </p>
+    );
+  }
 
   const handleOpen = () => {
     void hydrateEmployees();
     void hydrateAttendance();
-    setDate(new Date().toISOString().slice(0, 10));
+    setDate(todayKey());
     setRows([emptyRow()]);
     setNotes('');
     setIsOpen(true);
@@ -172,9 +186,12 @@ export default function RequestOvertimeButton({
                             selectedKeys={row.employeeId ? [row.employeeId] : []}
                             onSelectionChange={(k) => selectEmployee(row.rowId, Array.from(k)[0] as string)}
                           >
-                            {scopedEmployees.map((e) => (
-                              <SelectItem key={e.id}>{e.firstName} {e.lastName}</SelectItem>
-                            ))}
+                            {scopedEmployees.length === 0 ? (
+                              <SelectItem key="none" textValue="No department staff" isDisabled>No department staff</SelectItem>
+                            ) : scopedEmployees.map((e) => {
+                              const name = `${e.firstName} ${e.lastName}`.trim();
+                              return <SelectItem key={e.id} textValue={name}>{name}</SelectItem>;
+                            })}
                           </Select>
                         </TableCell>
                         <TableCell className="w-[13%]">
@@ -190,7 +207,9 @@ export default function RequestOvertimeButton({
                           <Input size="sm" type="number" startContent="₵" value={String(row.rate)} onChange={(e) => updateRow(row.rowId, { rate: parseFloat(e.target.value) || 0 })} />
                         </TableCell>
                         <TableCell className="w-[13%] text-right font-semibold">
-                          ₵{cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {row.rate > 0
+                            ? `₵${cost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : '—'}
                         </TableCell>
                         <TableCell className="w-[10%]">
                           <Button size="sm" color="danger" variant="flat" onPress={() => removeRow(row.rowId)} isDisabled={rows.length === 1}>🗑️</Button>
@@ -206,7 +225,9 @@ export default function RequestOvertimeButton({
               <div className="flex justify-between">
                 <span className="text-lg font-bold">Estimated Total Cost:</span>
                 <span className="text-lg font-bold">
-                  ₵{totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  {totalCost > 0
+                    ? `₵${totalCost.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                    : '—'}
                 </span>
               </div>
             </div>

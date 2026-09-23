@@ -806,14 +806,14 @@ export default function EmployeeRecordsPanel() {
               aria-label="Department"
               items={[{ id: 'all', name: 'All Departments' }, ...departments.map((d) => ({ id: d.id, name: d.name }))]}
             >
-              {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
+              {(item: any) => <SelectItem key={item.id} textValue={item.name}>{item.name}</SelectItem>}
             </Select>
             <Select size="sm" selectedKeys={[statusFilter]} onSelectionChange={(k) => setStatusFilter(Array.from(k)[0] as string)} className="w-40" variant="bordered" aria-label="Status">
-              <SelectItem key="all">All Status</SelectItem>
-              <SelectItem key="active">Active</SelectItem>
-              <SelectItem key="inactive">Inactive</SelectItem>
-              <SelectItem key="on_leave">On Leave</SelectItem>
-              <SelectItem key="terminated">Terminated</SelectItem>
+              <SelectItem key="all" textValue="All Status">All Status</SelectItem>
+              <SelectItem key="active" textValue="Active">Active</SelectItem>
+              <SelectItem key="inactive" textValue="Inactive">Inactive</SelectItem>
+              <SelectItem key="on_leave" textValue="On Leave">On Leave</SelectItem>
+              <SelectItem key="terminated" textValue="Terminated">Terminated</SelectItem>
             </Select>
             <Button variant="flat" onPress={() => setShowColumns(true)}>Columns</Button>
             <Button color="primary" onPress={openCreate}>+ Add Employee</Button>
@@ -847,59 +847,17 @@ export default function EmployeeRecordsPanel() {
                 const dept = getDepartment(e.departmentId);
                 const pos = getPosition(e.positionId);
                 const salary = (e as any).salary ?? (e as any).baseSalary ?? 0;
-                const basicSalary = (e as any).basicSalary ?? salary;
-                const allowances = (e as any).allowances ?? 0;
-                const grossPay = basicSalary + allowances;
                 
-                // Get latest payroll record for this employee to fetch actual deductions
+                // Latest paid payroll line only — no estimated PAYE/SSNIT on the roster.
                 const latestPayrollRecord = payrollRecords
                   .filter(r => r.employeeId === e.id && r.status === 'paid')
                   .sort((a, b) => (b.paidAt?.getTime() || 0) - (a.paidAt?.getTime() || 0))[0];
                 
-                // Calculate or fetch deduction amounts
                 const fmtCurrency = (n: number) => new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS', minimumFractionDigits: 2 }).format(n || 0);
-
-                // Tier 1's base is basic salary only (allowances/bonus/overtime excluded),
-                // so the pre-run estimate uses basicSalary and the live employee rate from
-                // Settings → Tax Rate Builder rather than a hardcoded percentage. Computed
-                // before the income tax estimate below, which needs it (Tier 1 is pre-tax).
-                const ssnitEnrolled = (e as any).ssnitEnrolled === true;
-                const ssnitAmount = latestPayrollRecord?.deductions?.socialSecurity || 0;
-                const ssnitDisplayAmount = ssnitEnrolled
-                  ? (ssnitAmount > 0 ? ssnitAmount : (basicSalary * ((tier1Rule?.rate ?? 5.5) / 100)))
-                  : 0;
-
-                // Income tax (PAYE) estimate: same "use the real live rule, not a guessed flat
-                // rate" standard as the SSNIT/Tier2 estimates -- previously a flat 10% of gross
-                // regardless of income level. Runs the same live PAYE rule through the same
-                // compliance engine used everywhere else, on taxable pay net of the pre-tax
-                // Tier 1 contribution.
-                const incomeTaxEnrolled = (e as any).payeEnrolled !== false;
-                const incomeTaxAmount = latestPayrollRecord?.deductions?.tax || 0;
-                const payeTaxableEstimate = Math.max(0, grossPay - ssnitDisplayAmount);
-                const payeEstimate = useComplianceStore
-                  .getState()
-                  .calculateTax(payeTaxableEstimate, 'PAYE', { domain: 'payroll', operation: 'internal' })
-                  .taxes.reduce((s, t) => s + t.amount, 0);
-                const incomeTaxDisplayAmount = incomeTaxEnrolled
-                  ? (incomeTaxAmount > 0 ? incomeTaxAmount : payeEstimate)
-                  : 0;
-
-                // Tier 2 is its own separate, fully-employer-funded rule (0% employee rate
-                // by default) — deductions.pension carries the real amount from the payroll
-                // engine once a record exists (see PayrollBuilderPanel.tsx).
-                const tier2Enrolled = (e as any).tier2Enrolled === true;
-                const tier2Amount = latestPayrollRecord?.deductions?.pension || 0;
-                const tier2DisplayAmount = tier2Enrolled
-                  ? (tier2Amount > 0 ? tier2Amount : (basicSalary * ((tier2Rule?.rate ?? 0) / 100)))
-                  : 0;
-
-                // Tier 3 — a real, employee-elected voluntary deduction. Before any payroll
-                // run exists there's no historical record, so estimate from the employee's
-                // own configured contribution rate instead of guessing a flat percentage.
-                const tier3Enrolled = (e as any).tier3Enrolled === true;
-                const tier3Pct = Number((e as any).tier3ContributionPct || 0);
-                const tier3DisplayAmount = tier3Enrolled ? grossPay * (tier3Pct / 100) : 0;
+                const paidAmount = (value?: number) =>
+                  latestPayrollRecord ? fmtCurrency(Number(value || 0)) : '—';
+                const storedBenefit = (value?: number) =>
+                  Number(value || 0) > 0 ? fmtCurrency(Number(value)) : '—';
                 
                 return (
                   <TableRow key={e.id}>
@@ -913,14 +871,14 @@ export default function EmployeeRecordsPanel() {
                     <TableCell className={visibleColumns.has('type') ? '' : 'hidden'}>{e.employmentType}</TableCell>
                     <TableCell className={visibleColumns.has('secondEmployment') ? '' : 'hidden'}>{(e as any).secondEmployment ? 'Y' : 'N'}</TableCell>
                     <TableCell className={visibleColumns.has('basicSalary') ? '' : 'hidden'}>{(e as any).basicSalary ?? salary}</TableCell>
-                    <TableCell className={visibleColumns.has('socialSecurity') ? '' : 'hidden'}>{fmtCurrency(ssnitDisplayAmount)}</TableCell>
-                    <TableCell className={visibleColumns.has('tier2') ? '' : 'hidden'}>{fmtCurrency(tier2DisplayAmount)}</TableCell>
-                    <TableCell className={visibleColumns.has('tier3') ? '' : 'hidden'}>{fmtCurrency(tier3DisplayAmount)}</TableCell>
+                    <TableCell className={visibleColumns.has('socialSecurity') ? '' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.socialSecurity)}</TableCell>
+                    <TableCell className={visibleColumns.has('tier2') ? '' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.pension)}</TableCell>
+                    <TableCell className={visibleColumns.has('tier3') ? '' : 'hidden'}>{paidAmount((latestPayrollRecord as any)?.deductions?.tier3)}</TableCell>
                     <TableCell className={visibleColumns.has('allowances') ? '' : 'hidden'}>{(e as any).allowances ?? 0}</TableCell>
-                    <TableCell className={visibleColumns.has('vehicleBenefit') ? '' : 'hidden'}>{fmtCurrency((e as any).vehicleBenefit ?? 0)}</TableCell>
-                    <TableCell className={visibleColumns.has('housingBenefit') ? '' : 'hidden'}>{fmtCurrency((e as any).housingBenefit ?? 0)}</TableCell>
-                    <TableCell className={visibleColumns.has('otherNonCash') ? '' : 'hidden'}>{fmtCurrency((e as any).otherNonCashBenefits ?? 0)}</TableCell>
-                    <TableCell className={visibleColumns.has('incomeTax') ? '' : 'hidden'}>{fmtCurrency(incomeTaxDisplayAmount)}</TableCell>
+                    <TableCell className={visibleColumns.has('vehicleBenefit') ? '' : 'hidden'}>{storedBenefit((e as any).vehicleBenefit)}</TableCell>
+                    <TableCell className={visibleColumns.has('housingBenefit') ? '' : 'hidden'}>{storedBenefit((e as any).housingBenefit)}</TableCell>
+                    <TableCell className={visibleColumns.has('otherNonCash') ? '' : 'hidden'}>{storedBenefit((e as any).otherNonCashBenefits)}</TableCell>
+                    <TableCell className={visibleColumns.has('incomeTax') ? '' : 'hidden'}>{paidAmount(latestPayrollRecord?.deductions?.tax)}</TableCell>
                     <TableCell className={visibleColumns.has('actions') ? '' : 'hidden'}>
                       <Button size="sm" variant="flat" onPress={() => openEdit(e.id)}>Edit</Button>
                     </TableCell>
@@ -1369,6 +1327,36 @@ export default function EmployeeRecordsPanel() {
                         <div className="text-sm font-medium mb-2">Performance Log</div>
                         <div className="flex gap-4 mb-3 text-sm">
                           <div>Last 90 days net: <span className={`font-semibold ${last90.net > 0 ? 'text-green-700' : last90.net < 0 ? 'text-red-600' : ''}`}>{fmtScore(last90.net)}</span></div>
+                          <div>Good: <span className="font-semibold">{last90.positives}</span></div>
+                          <div>Concerns: <span className="font-semibold">{last90.negatives}</span></div>
+                        </div>
+                        {recent.length > 0 ? (
+                          <div className="space-y-1 text-xs text-gray-700">
+                            {recent.map((e) => (
+                              <div key={e.id} className="flex items-center gap-2 border-b border-gray-100 py-1">
+                                <ScoreChip score={e.score} />
+                                <span className="text-gray-500 w-24 shrink-0">{new Date(e.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', timeZone: 'UTC' })}</span>
+                                <span className="w-32 shrink-0">{categoryLabel(e.category)}</span>
+                                <span className="truncate" title={e.note}>{e.note}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500">Nothing recorded yet. Add entries under Employee Management → Performance Log.</div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {step === 3 && isEditing && editingId && (() => {
+                    const mine = performanceLog.filter((e) => e.employeeId === editingId && e.status === 'active');
+                    const last90 = summarize(mine, lastDaysFrom(90));
+                    const recent = [...mine].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5);
+                    return (
+                      <div>
+                        <div className="text-sm font-medium mb-2">Performance Log</div>
+                        <div className="flex gap-4 mb-3 text-sm">
+                          <div>Last 90 days net: <span className={`font-semibold ${last90.net > 0 ? 'text-green-700' : last90.net < 0 ? 'text-red-600' : ''}`}>{last90.net > 0 ? `+${last90.net}` : last90.net}</span></div>
                           <div>Good: <span className="font-semibold">{last90.positives}</span></div>
                           <div>Concerns: <span className="font-semibold">{last90.negatives}</span></div>
                         </div>

@@ -13,7 +13,6 @@ import {
   ModalContent,
   ModalFooter,
   ModalHeader,
-  Progress,
   Tab,
   Tabs,
   Table,
@@ -25,7 +24,6 @@ import {
   useDisclosure,
 } from '@heroui/react';
 import { useComplianceStore } from '@/app/lib/compliance/store';
-import { useComplianceSummary } from '@/app/hooks/useCalculateTax';
 import { useFilingSnapshots } from '@/app/hooks/useFilingSnapshots';
 import { getCountryDisplayName } from '@/app/lib/compliance/config';
 import {
@@ -49,7 +47,6 @@ export default function ComplianceReports() {
     () => reportingRulesAll.filter((r) => r.countryCode === country && r.isActive !== false),
     [reportingRulesAll, country]
   );
-  const summary = useComplianceSummary();
   const filingSnapshots = useFilingSnapshots();
   const [viewTab, setViewTab] = useState<'schedule' | 'reference'>('schedule');
   const [selectedRule, setSelectedRule] = useState<(typeof reportingRulesAll)[number] | null>(null);
@@ -144,61 +141,14 @@ export default function ComplianceReports() {
         <ComplianceHospitalityReference countryCode={country} />
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card className="border-0 shadow-lg">
-              <CardBody className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm text-gray-600">Compliance Score</p>
-                    <p className="text-2xl font-bold text-ghana-green">{summary.complianceScore}%</p>
-                  </div>
-                  <Progress
-                    value={summary.complianceScore}
-                    className="w-16"
-                    color={
-                      summary.complianceScore >= 80 ? 'success' : summary.complianceScore >= 60 ? 'warning' : 'danger'
-                    }
-                  />
-                </div>
-              </CardBody>
-            </Card>
-
-            <Card className="border-0 shadow-lg">
-              <CardBody className="p-4">
-                <div className="text-center">
-                  <p className="text-sm text-gray-600">Active Rules</p>
-                  <p className="text-2xl font-bold text-ghana-black">{summary.activeTaxRules}</p>
-                </div>
-              </CardBody>
-            </Card>
-
-            <Card className="border-0 shadow-lg">
-              <CardBody className="p-4">
-                <div className="text-center">
-                  <p className="text-sm text-gray-600">Filing schedules</p>
-                  <p className="text-2xl font-bold text-ghana-black">{summary.activeReportingSchedules}</p>
-                </div>
-              </CardBody>
-            </Card>
-
-            <Card className="border-0 shadow-lg">
-              <CardBody className="p-4">
-                <div className="text-center">
-                  <p className="text-sm text-gray-600">Submitted</p>
-                  <p className="text-2xl font-bold text-ghana-green">{summary.submittedReports}</p>
-                </div>
-              </CardBody>
-            </Card>
-          </div>
-
-          <Card className="border-0 shadow-lg">
+          <Card className="border border-slate-200 shadow-sm">
             <CardHeader>
               <h2 className="text-xl font-bold text-ghana-black">Active reporting requirements</h2>
             </CardHeader>
             <CardBody>
               {reportingRules.length === 0 ? (
                 <p className="text-sm text-gray-600 py-4 text-center">
-                  No filing schedules for {countryLabel}. Check Compliance → Tax Management country sync or reload data.
+                  No filing schedules for {countryLabel}. Check Compliance → Tax rules country sync or reload data.
                 </p>
               ) : (
                 <Table aria-label="Reporting requirements table">

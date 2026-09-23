@@ -236,7 +236,7 @@ export default function PayrollBuilderPanel() {
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between w-full">
-          <h4 className="font-semibold">Universal Payroll Builder (PAYE)</h4>
+          <h4 className="font-semibold">Income tax &amp; payroll</h4>
           <div className="flex gap-2">
             <Select selectedKeys={[selectedTemplate]} onSelectionChange={(k) => setSelectedTemplate(Array.from(k)[0] as string)} className="w-48" variant="bordered">
               {templateOptions.map((t) => (

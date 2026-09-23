@@ -19,7 +19,6 @@ import { useSupplierStore } from '../lib/inventory/supplierStore';
 
 // Import specialized Stores/Inventory components - lazy load heavy components
 const InventorySupplyChainDashboard = lazy(() => import('./InventorySupplyChainDashboard'));
-import InventoryAnalyticsDashboard from './InventoryAnalyticsDashboard';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
@@ -183,10 +182,9 @@ export default function StoresMainDashboard() {
     {
       category: 'Compliance & Reporting',
       items: [
-        { title: 'Inventory Reports', icon: '📊', description: 'Stock level and value reports', status: 'active', count: 0 },
+        { title: 'Reports & Analysis', icon: '📊', description: 'Stock, movements and procurement on file', status: 'active', count: 0 },
         { title: 'Ghana Compliance', icon: '🔒', description: 'Import/export regulations', status: 'active', count: 0 },
         { title: 'VAT Management', icon: '🧾', description: 'Tax compliance and reporting', status: 'active', count: 0 },
-        { title: 'Analytics Dashboard', icon: '📈', description: 'Performance insights', status: 'active', count: 0 },
       ]
     }
   ];
@@ -287,6 +285,13 @@ export default function StoresMainDashboard() {
         <div className="flex items-center gap-2">
           <Badge color="success" variant="flat">Reorder System</Badge>
           <Badge color="primary" variant="flat">Suppliers Active</Badge>
+          <Button
+            variant="bordered"
+            className="border-blue-600 text-blue-700 font-semibold"
+            onPress={() => router.push('/inventory/reports')}
+          >
+            📊 Reports & Analysis
+          </Button>
           <CustomizeViewControl
             sections={STORES_DASHBOARD_SECTIONS}
             isHidden={isHidden}
@@ -495,8 +500,8 @@ export default function StoresMainDashboard() {
                             className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
                             onClick={() => {
                               // Handle navigation based on item type
-                              if (item.title.includes('Analytics Dashboard')) {
-                                setSelectedTab('analytics');
+                              if (item.title.includes('Reports & Analysis')) {
+                                router.push('/inventory/reports');
                               } else {
                                 setSelectedTab('inventory');
                               }
@@ -537,17 +542,11 @@ export default function StoresMainDashboard() {
               </Suspense>
             </Tab>
 
-            <Tab key="analytics" title="📈 Analytics Dashboard">
-              <InventoryAnalyticsDashboard />
-            </Tab>
-
             <Tab key="staff" title="👥 Staff Management">
               <DepartmentStaffTab
                 departmentLabel="Inventory & Stores"
                 overtimePermissionId="inventory.log-overtime"
                 departmentNameHints={['stores', 'inventory', 'warehouse']}
-                emptyLabel="No Inventory & Stores staff found in HR records."
-                helperText="Staff sourced from HR records for Inventory & Stores departments."
               />
             </Tab>
           </Tabs>

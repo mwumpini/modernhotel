@@ -19,6 +19,7 @@ import {
   Input,
 } from '@heroui/react';
 import { frontOfficeStore } from '../lib/frontoffice/store';
+import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
 import { checkNightAuditDiscrepancies, computeDailyRevenue } from '../lib/frontoffice/nightAuditChecks';
 import type { NightAuditRun } from '../lib/frontoffice/nightAudit';
@@ -34,7 +35,7 @@ export default function FrontofficeNightAudit() {
   // Only recordManualRun is used here — the run history itself now lives in
   // Reports & Analysis (Financial & Auditing → Night Audit History), which
   // reads from the same server log this writes to.
-  const { recordManualRun } = useNightAuditLog();
+  const { refresh } = useNightAuditLog();
 
   // Starts null (matching SSR, which has no client-persisted state to read) and
   // is only ever set from an effect, so the businessDate this component paints
@@ -66,8 +67,45 @@ export default function FrontofficeNightAudit() {
           (r.status === 'confirmed' || r.status === 'pending'),
       )
     : [];
+  const [serverRevenue, setServerRevenue] = React.useState<{
+    roomCharges: number;
+    otherCharges: number;
+    taxTotal: number;
+    totalCharges: number;
+    totalPayments: number;
+    paymentsByMethod: { cash: number; card: number; mobileMoney: number; other: number };
+  } | null>(null);
+
+  React.useEffect(() => {
+    if (!businessDate) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch(`/api/frontoffice/day-ledger?date=${businessDate}`, {
+          headers: { 'x-tenant-subdomain': getClientTenantSubdomain() },
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        const ledger = data.ledger;
+        if (!cancelled && ledger) {
+          setServerRevenue({
+            roomCharges: ledger.chargesByCategory?.room || 0,
+            otherCharges: (ledger.chargesByCategory?.fb || 0) + (ledger.chargesByCategory?.other || 0),
+            taxTotal: ledger.taxTotal || 0,
+            totalCharges: ledger.folioChargesTotal || 0,
+            totalPayments: ledger.folioPaymentsTotal || 0,
+            paymentsByMethod: ledger.paymentsByMethod || { cash: 0, card: 0, mobileMoney: 0, other: 0 },
+          });
+        }
+      } catch {}
+    };
+    void load();
+    return () => { cancelled = true; };
+  }, [businessDate, tick]);
+
   const discrepancies = businessDate ? checkNightAuditDiscrepancies(frontOfficeStore as any, businessDate) : [];
-  const revenue = businessDate ? computeDailyRevenue(frontOfficeStore as any, businessDate) : null;
+  const clientRevenue = businessDate ? computeDailyRevenue(frontOfficeStore as any, businessDate) : null;
+  const revenue = serverRevenue || clientRevenue;
 
   const [wakeUpReservationId, setWakeUpReservationId] = React.useState('');
   const [wakeUpTime, setWakeUpTime] = React.useState('06:00');
@@ -81,18 +119,12 @@ export default function FrontofficeNightAudit() {
     setWakeUpNotes('');
   };
 
-  const runAudit = () => {
+  const runAudit = async () => {
     setRunning(true);
     try {
-      const result = frontOfficeStore.executeNightAudit();
+      const result = await frontOfficeStore.executeNightAudit();
       setLastRun(result);
-      void recordManualRun({
-        businessDate: result.businessDate,
-        roomChargesPosted: result.roomChargesPosted,
-        noShowsMarked: result.noShowsProcessed,
-        status: result.status,
-        errors: result.error ? [result.error] : undefined,
-      });
+      void refresh();
     } finally {
       setRunning(false);
     }
