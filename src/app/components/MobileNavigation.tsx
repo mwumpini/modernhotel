@@ -14,6 +14,8 @@ import {
   DrawerFooter,
   useDisclosure
 } from "@heroui/react";
+import { useComplianceStore } from '@/app/lib/compliance/store';
+import { getComplianceTabLabels } from '@/app/lib/compliance/tabLabels';
 
 interface MobileNavigationProps {
   onLogout: () => void;
@@ -23,6 +25,8 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [isMobile, setIsMobile] = useState(false);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set(['dashboard']));
+  const complianceCountry = useComplianceStore((s) => s.country);
+  const complianceTabLabels = getComplianceTabLabels(complianceCountry);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -115,24 +119,16 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       key: 'accounting',
       title: '🧾 Accounting & Finance',
       icon: '🧾',
-      items: [
-        { title: 'Chart of Accounts', href: '/accounting/coa', badge: 'Ghana GAAP' },
-        { title: 'Bank, Cash & Receivables', href: '/accounting/banking', badge: 'Mobile Money' },
-        // Receivables embedded in dashboard; omit standalone entry for now
-        { title: 'Accounts Payable', href: '/accounting/ap', badge: 'Vendor' },
-        { title: 'Inventory & Fixed Assets', href: '/accounting/inventory', badge: 'COGS' },
-        { title: 'Financial Reports', href: '/accounting/reports', badge: 'Compliance' },
-        { title: 'Audit & Controls', href: '/accounting/audit', badge: 'Logs' },
-      ]
+      items: []
     },
     {
       key: 'compliance',
       title: '⚖️ Compliance & Reports',
       icon: '⚖️',
       items: [
-        { title: 'Tax Management', href: '/', badge: 'Rules', complianceTab: 'tax' },
-        { title: 'Income Taxes', href: '/', badge: 'Payroll', complianceTab: 'payroll' },
-        { title: 'Reports & Filing', href: '/', badge: 'VAT', complianceTab: 'reports' },
+        { title: complianceTabLabels.tax, href: '/', badge: 'Rates', complianceTab: 'tax' },
+        { title: complianceTabLabels.payroll, href: '/', badge: 'Payroll', complianceTab: 'payroll' },
+        { title: complianceTabLabels.reports, href: '/', badge: 'Filing', complianceTab: 'reports' },
       ]
     },
     {

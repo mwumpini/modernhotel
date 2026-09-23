@@ -4,7 +4,6 @@ import React, { Suspense, lazy } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button, Accordion, AccordionItem, Badge, Avatar } from "@heroui/react";
 import { useSession } from 'next-auth/react';
-import { isLeanAccountingUI } from '../lib/accounting/tenantAccountingConfig';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useSettingsStore } from '../lib/settings/store';
 
@@ -46,21 +45,8 @@ const FoodBeverageRestaurantBar = lazy(() => import('./FoodBeverageRestaurantBar
 const FoodBeverageKitchen = lazy(() => import('./FoodBeverageKitchen'));
 const FoodBeverageMenuInventory = lazy(() => import('./FoodBeverageMenuInventory'));
 const FoodBeverageStaffReports = lazy(() => import('./FoodBeverageStaffReports'));
-const FoodBeverageAnalyticsDashboard = lazy(() => import('./FoodBeverageAnalyticsDashboard'));
-const HousekeepingAnalyticsDashboard = lazy(() => import('./HousekeepingAnalyticsDashboard'));
-const InventoryAnalyticsDashboard = lazy(() => import('./InventoryAnalyticsDashboard'));
-const SecurityAnalyticsDashboard = lazy(() => import('./SecurityAnalyticsDashboard'));
-const HRAnalyticsDashboard = lazy(() => import('./HRAnalyticsDashboard'));
 const DepartmentActivityLog = lazy(() => import('./DepartmentActivityLog').then(module => ({ default: module.default })));
 const FrontOfficeReportsAnalysis = lazy(() => import('./FrontOfficeReportsAnalysis'));
-
-// Lazy load accounting components
-const ChartOfAccountsPage = lazy(() => import('./accounting/ChartOfAccounts'));
-const BankCashManagementPage = lazy(() => import('./accounting/BankCashReceivables'));
-const AccountsPayablePage = lazy(() => import('./accounting/AccountsPayable'));
-const InventoryFixedAssetsPage = lazy(() => import('./accounting/InventoryFixedAssets'));
-const FinancialReportsPage = lazy(() => import('./accounting/FinancialReports'));
-const AuditControlsPage = lazy(() => import('./accounting/AuditControls'));
 
 interface NavigationProps {
   onLogout: () => void;
@@ -134,7 +120,6 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
   const [hasMounted, setHasMounted] = React.useState(false);
   React.useEffect(() => { setHasMounted(true); }, []);
-  const leanMode = isLeanAccountingUI();
   // Re-render the menu (and re-evaluate hasModuleAccess) whenever the real session role
   // or the editable role/permission list changes.
   useSettingsStore(s => s.sessionRoleId);
@@ -251,20 +236,25 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'events-conferences',
       title: '🎪 Events & Conferences',
       icon: '🎪',
-      items: []
+      items: [
+        { title: '📈 Reports & Analysis', href: '/events/reports' },
+      ]
     },
     {
       key: 'restaurant',
       title: '🍽️ Restaurant & Bar',
       icon: '🍽️',
-      items: []
+      items: [
+        { title: '📈 Reports & Analysis', href: '/fb/reports' },
+      ]
     },
     {
       key: 'kitchen',
       title: '👨‍🍳 Kitchen',
       icon: '👨‍🍳',
       items: [
-        { title: 'Kitchen Display', href: '#' }
+        { title: 'Kitchen Display', href: '#' },
+        { title: '📈 Reports & Analysis', href: '/kitchen/reports' },
       ]
     },
     {
@@ -273,7 +263,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '🛏️',
       items: [
         { title: '🏠 Main Dashboard', href: '/housekeeping' },
-        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '📈 Reports & Analysis', href: '/housekeeping/reports' },
         { title: '👁️ View Activities', href: '#' },
       ]
     },
@@ -281,7 +271,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'inventory',
       title: `📦 Inventory & Stores${getUnreadCount('inventory') ? ` (${getUnreadCount('inventory')})` : ''}`,
       icon: '📦',
-      items: []
+      items: [
+        { title: '🏠 Main Dashboard', href: '#' },
+        { title: '📈 Reports & Analysis', href: '/inventory/reports' },
+      ]
     },
     {
       key: 'security',
@@ -289,7 +282,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '🚨',
       items: [
         { title: '📊 Operations', href: '#' },
-        { title: '📈 Reports & Analysis', href: '#' },
+        { title: '📈 Reports & Analysis', href: '/security/reports' },
         { title: '👁️ View Activities', href: '#' },
       ]
     },
@@ -297,7 +290,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'hr',
       title: `👥 HR & Payroll${getUnreadCount('hr') ? ` (${getUnreadCount('hr')})` : ''}`,
       icon: '👥',
-      items: []
+      items: [
+        { title: '🏠 Main Dashboard', href: '#' },
+        { title: '📈 Reports & Analysis', href: '/hr/reports' },
+      ]
     },
     {
       key: 'accounting',
@@ -305,13 +301,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '🧾',
       items: [
         { title: 'Accounting Management', href: '#' },
-        ...(leanMode ? [] : [{ title: 'Chart of Accounts', href: '#' }]),
-        ...(leanMode ? [] : [{ title: 'Bank & Cash Management', href: '#' }]),
-        { title: 'Accounts Payable', href: '#' },
-        { title: 'Accounts Receivable', href: '#' },
-        ...(leanMode ? [] : [{ title: 'Financial Reports', href: '#' }]),
-        ...(leanMode ? [] : [{ title: 'Audit & Controls', href: '#' }])
-      ].filter(Boolean as any)
+        { title: '📈 Reports & Analysis', href: '#' },
+      ]
     },
     {
       key: 'compliance',
@@ -386,7 +377,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
     // Handle Restaurant & Bar sub-items
     } else if (sectionKey === 'restaurant' && itemTitle) {
       if (itemTitle === '📈 Reports & Analysis') {
-        setActiveSection('fb-analytics');
+        window.location.assign('/fb/reports');
+        return;
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('fb-preferences');
       } else {
@@ -397,6 +389,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
       if (itemTitle === 'Kitchen Display') {
         window.location.assign('/kitchen-display');
         return;
+      } else if (itemTitle === '📈 Reports & Analysis') {
+        window.location.assign('/kitchen/reports');
+        return;
       } else {
         setActiveSection('kitchen');
       }
@@ -405,7 +400,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
       if (itemTitle === '📊 Operations') {
         setActiveSection('housekeeping');
       } else if (itemTitle === '📈 Reports & Analysis') {
-        setActiveSection('housekeeping-analytics');
+        window.location.assign('/housekeeping/reports');
+        return;
       } else if (itemTitle === '👁️ View Activities') {
         setActiveSection('housekeeping-activities');
       } else if (itemTitle === '⚙️ User Preferences') {
@@ -418,7 +414,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
       if (itemTitle === '📊 Operations') {
         setActiveSection('security');
       } else if (itemTitle === '📈 Reports & Analysis') {
-        setActiveSection('security-analytics');
+        window.location.assign('/security/reports');
+        return;
       } else if (itemTitle === '👁️ View Activities') {
         setActiveSection('security-activities');
       } else if (itemTitle === '⚙️ User Preferences') {
@@ -428,10 +425,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
       }
     // Handle Inventory sub-items
     } else if (sectionKey === 'inventory' && itemTitle) {
-      if (itemTitle === '📊 Operations') {
+      if (itemTitle === '📊 Operations' || itemTitle === '🏠 Main Dashboard') {
         setActiveSection('inventory');
       } else if (itemTitle === '📈 Reports & Analysis') {
-        setActiveSection('inventory-analytics');
+        window.location.assign('/inventory/reports');
+        return;
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('inventory-preferences');
       } else {
@@ -439,52 +437,48 @@ export default function Navigation({ onLogout }: NavigationProps) {
       }
     // Handle HR sub-items
     } else if (sectionKey === 'hr' && itemTitle) {
-      if (itemTitle === '📊 Operations') {
+      if (itemTitle === '📊 Operations' || itemTitle === '🏠 Main Dashboard') {
         setActiveSection('hr');
       } else if (itemTitle === '📈 Reports & Analysis') {
-        setActiveSection('hr-analytics');
+        window.location.assign('/hr/reports');
+        return;
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('hr-preferences');
       } else {
         setActiveSection('hr');
       }
+    } else if (sectionKey === 'events-conferences' && itemTitle) {
+      if (itemTitle === '📈 Reports & Analysis') {
+        window.location.assign('/events/reports');
+        return;
+      } else {
+        setActiveSection('events-conferences');
+      }
     } else if (sectionKey === 'compliance') {
       setActiveSection('compliance');
     } else if (sectionKey === 'accounting' && itemTitle) {
-      if (itemTitle === 'Accounting Management') {
-        setActiveSection('accounting-management');
-      } else if (itemTitle === 'Chart of Accounts') {
-        setActiveSection('chart-of-accounts');
-      } else if (itemTitle === 'Bank & Cash Management') {
-        setActiveSection('bank-cash-management');
-      } else if (itemTitle === 'Accounts Payable') {
-        setActiveSection('accounts-payable');
-      } else if (itemTitle === 'Accounts Receivable') {
-        try { localStorage.setItem('accounting.tab', 'receivables'); } catch {}
-        setActiveSection('accounting-management');
-        return;
-      } else if (itemTitle === 'Inventory & Fixed Assets') {
-        setActiveSection('inventory-fixed-assets');
-      } else if (itemTitle === 'Financial Reports') {
-        setActiveSection('financial-reports');
-      } else if (itemTitle === 'Audit & Controls') {
-        setActiveSection('audit-controls');
-      } else if (itemTitle === 'View Activities') {
+      if (itemTitle === 'View Activities') {
         setActiveSection('accounting-activities');
+      } else if (itemTitle === '📈 Reports & Analysis') {
+        try { localStorage.setItem('accounting.tab', 'reports'); } catch {}
+        setActiveSection('accounting-management');
+        try { window.dispatchEvent(new Event('accounting-navigate')); } catch {}
       } else {
-        setActiveSection('accounting');
+        setActiveSection('accounting-management');
       }
     } else if (sectionKey === 'housekeeping' && itemTitle) {
       if (itemTitle === 'Analytics Dashboard') {
-        setActiveSection('housekeeping-analytics');
+        window.location.assign('/housekeeping/reports');
+        return;
       } else if (itemTitle === 'View Activities') {
         setActiveSection('housekeeping-activities');
       } else {
         setActiveSection('housekeeping');
       }
     } else if (sectionKey === 'inventory' && itemTitle) {
-      if (itemTitle === 'Analytics Dashboard') {
-        setActiveSection('inventory-analytics');
+      if (itemTitle === 'Analytics Dashboard' || itemTitle === '📈 Reports & Analysis') {
+        window.location.assign('/inventory/reports');
+        return;
       } else if (itemTitle === 'View Activities') {
         setActiveSection('inventory-activities');
       } else {
@@ -528,6 +522,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <Suspense fallback={<div className="p-6 text-center">Loading Events & Conferences...</div>}><EventsConferencesMainDashboard /></Suspense>;
       case 'events-conferences-standalone':
         return <Suspense fallback={<div className="p-6 text-center">Loading Events & Conferences...</div>}><EventsConferencesMainDashboard /></Suspense>;
+      case 'events-conferences-analytics':
+        if (typeof window !== 'undefined') {
+          window.location.replace('/events/reports');
+        }
+        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
 
       case 'check-ins':
         return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
@@ -559,7 +558,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'housekeeping':
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Dashboard...</div>}><HousekeepingMainDashboard /></Suspense>;
       case 'housekeeping-analytics':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Analytics...</div>}><HousekeepingAnalyticsDashboard /></Suspense>;
+        if (typeof window !== 'undefined') {
+          window.location.replace('/housekeeping/reports');
+        }
+        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
       case 'housekeeping-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Activities...</div>}><DepartmentActivityLog area="housekeeping" title="Housekeeping - View Activities" /></Suspense>;
       // ── Restaurant & Bar (front-of-house: POS, tables, menu, bar) ───────────
@@ -582,7 +584,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'fb-staff-reports':
         return <Suspense fallback={<div className="p-6 text-center">Loading Staff Reports...</div>}><FoodBeverageStaffReports /></Suspense>;
       case 'fb-analytics':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar Analytics...</div>}><FoodBeverageAnalyticsDashboard /></Suspense>;
+        if (typeof window !== 'undefined') {
+          window.location.replace('/fb/reports');
+        }
+        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
       // ── Kitchen (ticket fulfillment) — its own top-level dashboard, no longer
       // nested inside Restaurant & Bar's tabs. Embeds the live KDS as its first tab.
       case 'fb-kitchen':
@@ -591,29 +596,29 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'security':
         return <Suspense fallback={<div className="p-6 text-center">Loading Security Dashboard...</div>}><SecurityMainDashboard /></Suspense>;
       case 'security-analytics':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Security Analytics...</div>}><SecurityAnalyticsDashboard /></Suspense>;
+        if (typeof window !== 'undefined') {
+          window.location.replace('/security/reports');
+        }
+        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
       case 'security-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Security Activities...</div>}><DepartmentActivityLog area="security" title="Security - View Activities" /></Suspense>;
       case 'hr':
         return <Suspense fallback={<div className="p-6 text-center">Loading HR Dashboard...</div>}><HRMainDashboard /></Suspense>;
       case 'hr-analytics':
-        return <Suspense fallback={<div className="p-6 text-center">Loading HR Analytics...</div>}><HRAnalyticsDashboard /></Suspense>;
+        if (typeof window !== 'undefined') {
+          window.location.replace('/hr/reports');
+        }
+        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
       case 'hr-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading HR Activities...</div>}><DepartmentActivityLog area="hr" title="HR & Payroll - View Activities" /></Suspense>;
       case 'accounting':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;
       case 'chart-of-accounts':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Chart of Accounts...</div>}><ChartOfAccountsPage /></Suspense>;
       case 'bank-cash-management':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Bank & Cash Management...</div>}><BankCashManagementPage /></Suspense>;
       case 'accounts-payable':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Accounts Payable...</div>}><AccountsPayablePage /></Suspense>;
       case 'inventory-fixed-assets':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Inventory & Fixed Assets...</div>}><InventoryFixedAssetsPage /></Suspense>;
       case 'financial-reports':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Financial Reports...</div>}><FinancialReportsPage /></Suspense>;
       case 'audit-controls':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Audit Controls...</div>}><AuditControlsPage /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;
       case 'accounting-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Activities...</div>}><DepartmentActivityLog area="accounting" title="Accounting - View Activities" /></Suspense>;
       case 'settings':
@@ -623,7 +628,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'inventory':
         return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}><StoresMainDashboard /></Suspense>;
       case 'inventory-analytics':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Analytics...</div>}><InventoryAnalyticsDashboard /></Suspense>;
+        if (typeof window !== 'undefined') {
+          window.location.replace('/inventory/reports');
+        }
+        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
       case 'inventory-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Inventory Activities...</div>}><DepartmentActivityLog area="inventory" title="Inventory - View Activities" /></Suspense>;
       case 'dashboard':

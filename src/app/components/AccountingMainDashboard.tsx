@@ -1,16 +1,13 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Card,
   CardBody,
   CardHeader,
   Button,
-  Badge,
   Tabs,
   Tab,
-  Chip,
-  Tooltip
 } from "@heroui/react";
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useAccountingStore } from '../lib/accounting/store';
@@ -32,6 +29,7 @@ import BooksTaxes from './accounting/BooksTaxes';
 import AccountsReceivable from './accounting/AccountsReceivable';
 import InventoryFixedAssets from './accounting/InventoryFixedAssets';
 import FinancialReports from './accounting/FinancialReports';
+import JournalRegister from './accounting/JournalRegister';
 import AuditControls from './accounting/AuditControls';
 import CostRevenueCenters from './accounting/CostRevenueCenters';
 import DeptNotices from './DeptNotices';
@@ -39,11 +37,9 @@ import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
-import DepartmentStaffTab from './hr/DepartmentStaffTab';
 
-// Hideable summary/widget cards on this dashboard — the "Operations Overview"
-// tabs (Chart of Accounts, Bank & Cash, etc.) are core navigation, not
-// clutter, so they're deliberately not included here.
+// Hideable summary cards. The cycle tabs (chart, bank, receivables, payables,
+// assets, statements, taxes, audit) stay visible.
 const ACCOUNTING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'cashBank', label: 'Cash & Bank Position' },
   { id: 'profitability', label: 'Profitability' },
@@ -54,61 +50,10 @@ const ACCOUNTING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'notices', label: 'Accounting Notices' },
 ];
 
-// Info Icon Component with Tooltip
-const InfoIcon = ({ description }: { description: string }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    timeoutRef.current = setTimeout(() => {
-      setShowTooltip(true);
-    }, 2000); // 2 second delay
-  };
-
-  const handleMouseLeave = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    setShowTooltip(false);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  return (
-    <Tooltip
-      content={description}
-      isOpen={showTooltip}
-      onOpenChange={setShowTooltip}
-      placement="top"
-      showArrow
-      color="primary"
-      delay={0}
-    >
-      <div
-        className="inline-flex items-center justify-center w-4 h-4 mr-2 text-xs text-blue-500 bg-blue-100 rounded-full cursor-help hover:bg-blue-200 transition-colors"
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        title={description}
-      >
-        ℹ
-      </div>
-    </Tooltip>
-  );
-};
-
 export default function AccountingMainDashboard() {
-  const [selectedTab, setSelectedTab] = useState('overview');
   const leanMode = isLeanAccountingUI();
   const countryCode = getTenantAccountingCountryCode();
+  const [selectedTab, setSelectedTab] = useState('receivables');
 
   const {
     invoices,
@@ -266,68 +211,18 @@ export default function AccountingMainDashboard() {
     () => payments.filter(p => (p.createdAt || '').slice(0, 10) === todayStr).length,
     [payments, todayStr]
   );
-  const pendingReconciliations = useMemo(
-    () => bankAccounts.length,
-    [bankAccounts]
-  );
-
-  // Operational items following the uniform pattern
-  const operationalItems = [
-    {
-      category: 'Financial Management',
-      items: [
-        { title: 'Chart of Accounts', icon: '📊', description: 'Complete account structure and GL codes', status: 'active', count: activeAccounts },
-        { title: 'Bank & Cash', icon: '💰', description: 'Bank accounts and cash management', status: 'active', count: bankAccounts.length },
-        { title: 'Financial Reports', icon: '📈', description: 'P&L, Balance Sheet, Cash Flow', status: 'active', count: 0 },
-        { title: 'Audit Controls', icon: '🔍', description: 'Internal controls and audit trails', status: 'active', count: 0 },
-      ]
-    },
-    {
-      category: 'Accounts & Transactions',
-      items: [
-        { title: 'Accounts Receivable', icon: '📝', description: 'Customer invoices and payments', status: 'active', count: pendingInvoices },
-        { title: 'Accounts Payable', icon: '🧾', description: 'Vendor bills and payments', status: 'active', count: overduePayments },
-        { title: 'PPE & Assets', icon: '🏗️', description: 'Property, plant & equipment and capital allowance', status: 'active', count: 0 },
-        { title: 'Trial Balance', icon: '⚖️', description: 'Account balances in financial reports', status: 'active', count: 0 },
-      ]
-    },
-    {
-      category: 'Compliance & Reporting',
-      items: [
-        { title: 'Tax Compliance', icon: '📋', description: 'Statutory filing schedules', status: 'active', count: activeSchedules },
-        { title: 'Filings Submitted', icon: '🔒', description: 'Returns filed with authority', status: 'active', count: submittedFilings },
-        { title: 'Filings Pending', icon: '📊', description: 'Returns awaiting submission', status: 'active', count: pendingFilings },
-        { title: 'Performance Analytics', icon: '📈', description: 'Financial performance metrics', status: 'active', count: 0 },
-      ]
-    },
-    {
-      category: 'Operations & Activities',
-      items: [
-        { title: 'Daily Transactions', icon: '🔄', description: 'Journal entries and postings', status: 'active', count: transactionsToday },
-        { title: 'Invoice Generation', icon: '📄', description: 'Customer and vendor invoices', status: 'active', count: invoicesGeneratedToday },
-        { title: 'Payment Processing', icon: '💳', description: 'Payment receipts and disbursements', status: 'active', count: paymentsReceivedToday },
-        { title: 'Bank Reconciliation', icon: '✅', description: 'Statement vs cashbook (GL)', status: 'active', count: pendingReconciliations },
-      ]
-    }
-  ];
-
-  // Tabs hidden entirely when leanMode is on (see the `!leanMode && <Tab .../>` guards below) —
-  // navigating to one of these while lean would land on a blank panel, so fall back to Overview.
+  // Tabs hidden entirely when leanMode is on (see the `!leanMode && <Tab .../>` guards below).
   const LEAN_HIDDEN_TABS = new Set(['accounts', 'banking', 'assets', 'reports', 'audit', 'cost-centers']);
-  const goToTab = (key: string) => setSelectedTab(leanMode && LEAN_HIDDEN_TABS.has(key) ? 'overview' : key);
+  const goToTab = (key: string) => setSelectedTab(leanMode && LEAN_HIDDEN_TABS.has(key) ? 'receivables' : key);
 
   const handleQuickAction = (action: string) => {
     trackEvent('accounting.quick_action', { action });
     switch (action) {
-      case 'new_transaction':
-        // Journal-entry creation lives in Financial Reports, not Bank Reconciliation.
-        goToTab('reports');
-        break;
       case 'generate_invoice':
         goToTab('receivables');
         break;
       case 'process_payment':
-        // "Record payment receipt" — receiving cash from a customer is an AR receipt.
+        // Receiving cash from a customer is an AR receipt.
         goToTab('receivables');
         break;
       case 'run_reports':
@@ -501,17 +396,7 @@ export default function AccountingMainDashboard() {
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button
-                color="success"
-                variant="solid"
-                className="bg-green-600 hover:bg-green-700"
-                onClick={() => handleQuickAction('run_reports')}
-              >
-                📊 Generate Reports
-              </Button>
-              <HideCardButton onHide={() => hide('todayOps')} label="Today's Financial Operations" />
-            </div>
+            <HideCardButton onHide={() => hide('todayOps')} label="Today's Financial Operations" />
           </div>
           )}
 
@@ -526,19 +411,7 @@ export default function AccountingMainDashboard() {
               <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
             </CardHeader>
             <CardBody>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {!leanMode && (
-                <Button
-                  color="success"
-                  variant="flat"
-                  className="h-24 flex flex-col items-center justify-center gap-2 p-4"
-                  onClick={() => handleQuickAction('new_transaction')}
-                >
-                  <span className="text-2xl">➕</span>
-                  <span className="font-medium">New Transaction</span>
-                  <span className="text-xs text-center opacity-80">Create new journal entry</span>
-                </Button>
-                )}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <Button
                   color="warning"
                   variant="flat"
@@ -577,7 +450,7 @@ export default function AccountingMainDashboard() {
           {/* Main Operations Interface - Following Uniform Pattern */}
           <Card className="border-0 shadow-lg">
             <CardHeader className="pb-3">
-              <h3 className="text-xl font-semibold text-ghana-black">📊 Operations Overview</h3>
+              <h3 className="text-xl font-semibold text-ghana-black">Accounting</h3>
             </CardHeader>
             <CardBody>
               <Tabs 
@@ -586,101 +459,6 @@ export default function AccountingMainDashboard() {
                 className="w-full"
                 aria-label="Accounting operations"
               >
-                <Tab key="overview" title="📊 Overview">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-4">
-                    {operationalItems.map((category, categoryIndex) => (
-                      <Card key={categoryIndex} className="border border-gray-200 shadow-md">
-                        <CardHeader className="pb-3">
-                          <h4 className="text-lg font-semibold text-ghana-black">{category.category}</h4>
-                        </CardHeader>
-                        <CardBody className="pt-0">
-                          <div className="space-y-3">
-                            {category.items.map((item, itemIndex) => (
-                              <div 
-                                key={itemIndex}
-                                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
-                                onClick={() => {
-                                  // Handle navigation based on item type
-                                  if (item.title.includes('Chart of Accounts')) {
-                                    goToTab('accounts');
-                                  } else if (item.title.includes('Bank & Cash')) {
-                                    goToTab('banking');
-                                  } else if (item.title.includes('Financial Reports')) {
-                                    goToTab('reports');
-                                  } else if (item.title.includes('Audit Controls')) {
-                                    goToTab('audit');
-                                  } else if (item.title.includes('Accounts Receivable')) {
-                                    goToTab('receivables');
-                                  } else if (item.title.includes('Accounts Payable')) {
-                                    goToTab('payables');
-                                  } else if (item.title.includes('PPE & Assets')) {
-                                    goToTab('assets');
-                                  } else if (item.title.includes('Trial Balance')) {
-                                    goToTab('reports');
-                                  } else if (item.title.includes('Bank Reconciliation')) {
-                                    // Reconciliation lives under Bank & Cash's own tab now, not a top-level tab.
-                                    try { localStorage.setItem('accounting.banking.subtab', 'reconciliation'); } catch {}
-                                    goToTab('banking');
-                                  } else if (
-                                    item.title.includes('Tax Compliance') ||
-                                    item.title.includes('Filings Submitted') ||
-                                    item.title.includes('Filings Pending')
-                                  ) {
-                                    goToTab('taxes');
-                                  } else if (item.title.includes('Performance Analytics')) {
-                                    goToTab('reports');
-                                  } else if (item.title.includes('Daily Transactions')) {
-                                    goToTab('reports');
-                                  } else if (item.title.includes('Invoice Generation')) {
-                                    goToTab('receivables');
-                                  } else if (item.title.includes('Payment Processing')) {
-                                    goToTab('payables');
-                                  }
-                                }}
-                              >
-                                <div className="flex items-center space-x-3">
-                                  <span className="text-xl">{item.icon}</span>
-                                  <div>
-                                    <div className="flex items-center">
-                                      <InfoIcon description={item.description} />
-                                      <p className="font-medium text-ghana-black">{item.title}</p>
-                                    </div>
-                                  </div>
-                                </div>
-                                <div className="flex items-center space-x-2">
-                                  <Badge 
-                                    color={item.status === 'active' ? 'success' : 'default'}
-                                    variant="flat"
-                                  >
-                                    {item.status}
-                                  </Badge>
-                                  <Chip size="sm" variant="flat" color="primary">
-                                    {Number.isFinite(item.count) ? item.count : 0}
-                                  </Chip>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </CardBody>
-                      </Card>
-                    ))}
-                  </div>
-                </Tab>
-
-                {!leanMode && (
-                <Tab key="accounts" title="📊 Chart of Accounts">
-                  <ChartOfAccounts />
-                </Tab>
-                )}
-
-                {!leanMode && (
-                  <Tab key="banking" title="💰 Bank & Cash">
-                    <BankCashReceivables />
-                  </Tab>
-                )}
-
-                {/* Removed focused Sales Invoices and Bills tabs to streamline to A/R and A/P only */}
-
                 <Tab key="receivables" title="📝 Accounts Receivable">
                   <div className="p-6">
                   <AccountsReceivable />
@@ -692,20 +470,14 @@ export default function AccountingMainDashboard() {
                 </Tab>
 
                 {!leanMode && (
+                  <Tab key="banking" title="💰 Bank & Cash">
+                    <BankCashReceivables />
+                  </Tab>
+                )}
+
+                {!leanMode && (
                 <Tab key="assets" title="🏗️ PPE & Assets">
                   <InventoryFixedAssets />
-                </Tab>
-                )}
-
-                {!leanMode && (
-                <Tab key="cost-centers" title="🏷️ Cost & Revenue Centers">
-                  <CostRevenueCenters />
-                </Tab>
-                )}
-
-                {!leanMode && (
-                <Tab key="reports" title="📈 Financial Reports">
-                  <FinancialReports />
                 </Tab>
                 )}
 
@@ -715,21 +487,33 @@ export default function AccountingMainDashboard() {
                   </div>
                 </Tab>
 
+                <Tab key="journal" title="📒 Journal">
+                  <JournalRegister />
+                </Tab>
+
+                {!leanMode && (
+                <Tab key="reports" title="📈 Reports & Analysis">
+                  <FinancialReports />
+                </Tab>
+                )}
+
                 {!leanMode && (
                 <Tab key="audit" title="🔍 Audit Controls">
                   <AuditControls />
                 </Tab>
                 )}
 
-                <Tab key="staff" title="👥 Staff Management">
-                  <DepartmentStaffTab
-                    departmentLabel="Accounting & Finance"
-                    overtimePermissionId="accounting.log-overtime"
-                    departmentNameHints={['accounting', 'finance']}
-                    emptyLabel="No Accounting & Finance staff found in HR records."
-                    helperText="Staff sourced from HR records for Accounting & Finance departments."
-                  />
+                {!leanMode && (
+                <Tab key="accounts" title="📊 Chart of Accounts">
+                  <ChartOfAccounts />
                 </Tab>
+                )}
+
+                {!leanMode && (
+                <Tab key="cost-centers" title="🏷️ Cost & Revenue Centers">
+                  <CostRevenueCenters />
+                </Tab>
+                )}
               </Tabs>
 
       {/* Recent Activities & Notices */}
