@@ -1,28 +1,22 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { 
   Card, 
   CardBody, 
   CardHeader, 
-  Button, 
-  Badge, 
   Tabs, 
   Tab, 
-  Chip,
-  Tooltip
 } from "@heroui/react";
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
-import { useSettingsStore } from '../lib/settings/store';
-import { trackEvent } from '../lib/analytics/trackEvent';
-import { useRouter } from 'next/navigation';
 import OfflineIndicator from './OfflineIndicator';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
@@ -32,7 +26,6 @@ const HOUSEKEEPING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'occupiedRooms', label: 'Occupied Rooms' },
   { id: 'maintenance', label: 'Maintenance & Cleaning' },
   { id: 'todayOps', label: "Today's Operations" },
-  { id: 'quickActions', label: 'Quick Actions' },
   { id: 'recentActivities', label: 'Recent Activities' },
   { id: 'notices', label: 'Housekeeping Notices' },
 ];
@@ -40,103 +33,79 @@ const HOUSEKEEPING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
 // Import specialized components
 import RoomStatusGrid from './housekeeping/RoomStatusGrid';
 import TaskManagementPanel from './housekeeping/TaskManagementPanel';
-import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import MaintenancePanel from './housekeeping/MaintenancePanel';
+import RoomInspectionPanel from './housekeeping/RoomInspectionPanel';
+import HousekeepingInventoryPanel from './housekeeping/HousekeepingInventoryPanel';
+import HousekeepingRequisitionsPanel from './housekeeping/HousekeepingRequisitionsPanel';
+import HousekeepingReportsAnalysis from './HousekeepingReportsAnalysis';
+import DepartmentStaffTab from './hr/DepartmentStaffTab';
+import RoomResponsibilitiesPanel from './housekeeping/RoomResponsibilitiesPanel';
 
-// Info Icon Component with Tooltip
-const InfoIcon = ({ description }: { description: string }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+const HK_TABS = ['rooms', 'tasks', 'maintenance', 'inspections', 'inventory', 'requisitions', 'staff', 'reports'] as const;
 
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    timeoutRef.current = setTimeout(() => {
-      setShowTooltip(true);
-    }, 2000); // 2 second delay
-  };
-
-  const handleMouseLeave = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    setShowTooltip(false);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  return (
-    <Tooltip
-      content={description}
-      isOpen={showTooltip}
-      onOpenChange={setShowTooltip}
-      placement="top"
-      showArrow
-      color="primary"
-      delay={0}
-    >
-      <div
-        className="inline-flex items-center justify-center w-4 h-4 mr-2 text-xs text-blue-500 bg-blue-100 rounded-full cursor-help hover:bg-blue-200 transition-colors"
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        title={description}
-      >
-        ℹ
-      </div>
-    </Tooltip>
-  );
+const HK_TAB_ALIASES: Record<string, string> = {
+  overview: 'rooms',
+  supplies: 'inventory',
+  analytics: 'reports',
 };
 
-export default function HousekeepingMainDashboard() {
-  const [tick, setTick] = useState(0);
-  const [selectedTab, setSelectedTab] = useState('overview');
+function resolveHkTab(value: string | null | undefined): string {
+  if (!value) return 'rooms';
+  const key = value.trim().toLowerCase();
+  if ((HK_TABS as readonly string[]).includes(key)) return key;
+  return HK_TAB_ALIASES[key] || 'rooms';
+}
+
+export default function HousekeepingMainDashboard({
+  initialTab = 'rooms',
+  fullPage = false,
+}: {
+  initialTab?: string;
+  fullPage?: boolean;
+} = {}) {
+  const [, setTick] = useState(0);
+  const [selectedTab, setSelectedTab] = useState(() => resolveHkTab(initialTab));
   const searchParams = useSearchParams();
-  const router = useRouter();
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.housekeeping', HOUSEKEEPING_DASHBOARD_SECTIONS);
 
-  // Get stores
-  const settings = useSettingsStore();
   const reservations = frontOfficeStore.reservations;
-  const rooms = frontOfficeStore.rooms;
-  
+
   useEffect(() => {
     const unsubscribe = housekeepingStore.subscribe(() => setTick(t => t + 1));
-    // Pulls in real persisted tasks/maintenance/staff/room-status history —
-    // setTick above re-renders once this resolves and notifies listeners.
     housekeepingStore.hydrateFromApi();
     return unsubscribe;
   }, []);
 
-  // Handle URL query parameter for direct tab navigation
+  useEffect(() => {
+    const apply = () => {
+      try {
+        const stored = localStorage.getItem('hk.tab');
+        if (!stored) return;
+        setSelectedTab(resolveHkTab(stored));
+        localStorage.removeItem('hk.tab');
+      } catch {
+        /* ignore */
+      }
+    };
+    apply();
+    window.addEventListener('hk-navigate', apply);
+    return () => window.removeEventListener('hk-navigate', apply);
+  }, []);
+
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam && ['rooms', 'tasks', 'staff', 'maintenance', 'inspections', 'supplies'].includes(tabParam)) {
-      setSelectedTab(tabParam);
-    }
+    if (tabParam) setSelectedTab(resolveHkTab(tabParam));
   }, [searchParams]);
 
   // Get data from stores
   const allRooms = housekeepingStore.getAllRooms();
-  const stats = housekeepingStore.getDailyStats();
-  const staff = housekeepingStore.getAllStaff();
   const pendingTasks = housekeepingStore.getTasksByStatus('pending');
-  const inProgressTasks = housekeepingStore.getTasksByStatus('in-progress');
-  const maintenanceRequests = housekeepingStore.getMaintenanceRequests();
 
-  // Calculate key metrics
   const availableRooms = allRooms.filter(r => r.status === 'clean' || r.status === 'inspected').length;
   const dirtyRooms = allRooms.filter(r => r.status === 'dirty').length;
   const occupiedRooms = allRooms.filter(r => r.status === 'occupied').length;
   const maintenanceRooms = allRooms.filter(r => r.status === 'maintenance' || r.status === 'out-of-order').length;
-  const activeStaff = staff.filter(s => s.active).length;
   const totalRooms = allRooms.length;
 
   // Today's operations
@@ -144,159 +113,14 @@ export default function HousekeepingMainDashboard() {
   const checkingOutToday = reservations.filter(r => r.status === 'checked-in' && r.departure.slice(0,10) === todayIso).length;
   const todayCheckIns = reservations.filter(r => (r.status === 'confirmed' || r.status === 'pending') && r.arrival.slice(0,10) === todayIso).length;
 
-  // Operational items following front desk pattern
-  const operationalItems = [
-    {
-      category: 'Room Operations',
-      items: [
-        { title: 'Room Management', icon: '🏠', description: 'Monitor and update room statuses', status: 'active', count: totalRooms },
-        { title: 'Task Management', icon: '🧹', description: 'Create and assign cleaning tasks', status: 'active', count: pendingTasks.length + inProgressTasks.length },
-        { title: 'Staff Management', icon: '👥', description: 'Manage housekeeping staff', status: 'active', count: activeStaff },
-        { title: 'Maintenance', icon: '🔧', description: 'Track maintenance requests', status: 'active', count: maintenanceRequests.filter(m => m.status !== 'completed').length },
-      ]
-    },
-    {
-      category: 'Quality Control',
-      items: [
-        { title: 'Room Inspections', icon: '✅', description: 'Conduct quality inspections', status: 'active', count: stats.inspectionsCompleted },
-        { title: 'Performance Metrics', icon: '📊', description: 'Staff efficiency tracking', status: 'active', count: activeStaff },
-        { title: 'Daily Schedules', icon: '📋', description: 'Staff work schedules', status: 'active', count: staff.length },
-        { title: 'Quality Standards', icon: '🎯', description: 'Maintain service standards', status: 'active', count: 0 },
-      ]
-    },
-    {
-      // Cleaning-supplies inventory isn't tracked anywhere yet — no Prisma model exists
-      // for it (a separate, larger fix). Honest zeros rather than fabricated stock counts.
-      category: 'Inventory & Supplies',
-      items: [
-        { title: 'Supply Management', icon: '📦', description: 'Manage cleaning supplies', status: 'active', count: 0 },
-        { title: 'Stock Monitoring', icon: '🔄', description: 'Track inventory levels', status: 'active', count: 0 },
-        { title: 'Purchase Orders', icon: '📝', description: 'Order new supplies', status: 'active', count: 0 },
-        { title: 'Cost Control', icon: '💰', description: 'Monitor supply costs', status: 'active', count: 0 },
-      ]
-    },
-    {
-      category: 'Communication & Reports',
-      items: [
-        { title: 'Staff Communication', icon: '📱', description: 'Team coordination tools', status: 'active', count: activeStaff },
-        { title: 'Reports & Analysis', icon: '📊', description: 'Room status, tasks, inspections and maintenance', status: 'active', count: 0 },
-        { title: 'Notifications', icon: '🔔', description: 'Alert system', status: 'active', count: 0 },
-      ]
-    }
-  ];
-
-  // Quick action handlers
-  const handleQuickAction = (action: string) => {
-    trackEvent('HK.TaskCreated', { action });
-    
-    switch (action) {
-      case 'create-task':
-        setSelectedTab('tasks');
-        const url = new URL(window.location.href);
-        url.searchParams.set('tab', 'tasks');
-        window.history.replaceState({}, '', url.toString());
-        break;
-      case 'assign-tasks':
-        setSelectedTab('staff');
-        const url2 = new URL(window.location.href);
-        url2.searchParams.set('tab', 'staff');
-        window.history.replaceState({}, '', url2.toString());
-        break;
-      case 'room-inspection':
-        setSelectedTab('inspections');
-        const url3 = new URL(window.location.href);
-        url3.searchParams.set('tab', 'inspections');
-        window.history.replaceState({}, '', url3.toString());
-        break;
-      case 'maintenance-request':
-        setSelectedTab('maintenance');
-        const url4 = new URL(window.location.href);
-        url4.searchParams.set('tab', 'maintenance');
-        window.history.replaceState({}, '', url4.toString());
-        break;
-      case 'supply-check':
-        setSelectedTab('supplies');
-        const url5 = new URL(window.location.href);
-        url5.searchParams.set('tab', 'supplies');
-        window.history.replaceState({}, '', url5.toString());
-        break;
-    }
-  };
-
-  const quickActions = [
-    { 
-      title: 'Create Task', 
-      icon: '🧹', 
-      color: 'primary', 
-      action: 'create-task',
-      description: 'Create new cleaning tasks'
-    },
-    { 
-      title: 'Assign Tasks', 
-      icon: '👥', 
-      color: 'secondary', 
-      action: 'assign-tasks',
-      description: 'Assign tasks to staff members'
-    },
-    { 
-      title: 'Room Inspection', 
-      icon: '🔍', 
-      color: 'success', 
-      action: 'room-inspection',
-      description: 'Conduct room quality inspections'
-    },
-    { 
-      title: 'Maintenance Request', 
-      icon: '🔧', 
-      color: 'warning', 
-      action: 'maintenance-request',
-      description: 'Report maintenance issues'
-    },
-    { 
-      title: 'Supply Check', 
-      icon: '📦', 
-      color: 'default', 
-      action: 'supply-check',
-      description: 'Check supplies and inventory'
-    }
-  ];
-
-  const kpis = [
-    { 
-      label: 'Tasks Completed', 
-      value: stats.tasksCompleted, 
-      target: 50, 
-      color: 'success',
-      icon: '✅'
-    },
-    { 
-      label: 'Inspections', 
-      value: stats.inspectionsCompleted, 
-      target: 20, 
-      color: 'primary',
-      icon: '🔍'
-    },
-    { 
-      label: 'Avg Task Time', 
-      value: `${stats.averageTaskTime}m`, 
-      target: 30, 
-      color: 'secondary',
-      icon: '⏱️'
-    },
-    { 
-      label: 'Quality Score', 
-      value: `${stats.averageInspectionScore}%`, 
-      target: 90, 
-      color: 'warning',
-      icon: '📊'
-    }
-  ];
 
   return (
-    <div className="p-6">
+    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
+      {!fullPage && (
+        <>
       <DeptMessenger from="housekeeping" mode="drawer" />
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🛏️ Housekeeping & Maintenance Operations</h2>
+        <h2 className="text-2xl font-bold text-ghana-black">🛏️ Housekeeping & Maintenance</h2>
         <div className="flex items-center gap-2">
           <CustomizeViewControl
             sections={HOUSEKEEPING_DASHBOARD_SECTIONS}
@@ -305,20 +129,27 @@ export default function HousekeepingMainDashboard() {
             showAll={showAll}
             hiddenCount={hiddenCount}
           />
+          <ModuleExpandButton
+            href={selectedTab === 'reports' ? '/housekeeping/reports' : '/housekeeping/ops'}
+            label={selectedTab === 'reports' ? 'Open reports full page' : 'Open housekeeping full page'}
+          />
           <OfflineIndicator />
         </div>
       </div>
+        </>
+      )}
 
       {/* Room Status Overview - Following Front Desk Pattern */}
+      {!fullPage && (
       <div className="mb-8">
+        {(!isHidden('availableRooms') || !isHidden('occupiedRooms') || !isHidden('maintenance')) && (
+        <>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xl font-semibold text-ghana-black flex items-center gap-2">
             🏠 Room Status Overview ({totalRooms} Rooms)
           </h3>
         </div>
 
-        {/* Status Cards - Matching Front Desk Design */}
-        {(!isHidden('availableRooms') || !isHidden('occupiedRooms') || !isHidden('maintenance')) && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
           {/* Available Rooms */}
           {!isHidden('availableRooms') && (
@@ -410,6 +241,7 @@ export default function HousekeepingMainDashboard() {
           </Card>
           )}
         </div>
+        </>
         )}
 
         {/* Today's Operations - Matching Front Desk */}
@@ -435,170 +267,70 @@ export default function HousekeepingMainDashboard() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              color="success"
-              variant="solid"
-              className="bg-green-600 hover:bg-green-700"
-              onClick={() => setSelectedTab('rooms')}
-            >
-              🏢 View Full Status
-            </Button>
-            <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
-          </div>
+          <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
         </div>
         )}
       </div>
-
-      {/* Quick Actions */}
-      {!isHidden('quickActions') && (
-      <Card className="border-0 shadow-lg mb-6">
-        <CardHeader className="pb-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🚀</span>
-            <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
-          </div>
-          <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
-        </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            {quickActions.map((action) => (
-              <Button
-                key={action.action}
-                color={action.color as any}
-                variant="flat"
-                className="h-24 flex flex-col items-center justify-center gap-2 p-4"
-                onClick={() => handleQuickAction(action.action)}
-              >
-                <span className="text-2xl">{action.icon}</span>
-                <span className="font-medium">{action.title}</span>
-                <span className="text-xs text-center opacity-80">{action.description}</span>
-              </Button>
-            ))}
-          </div>
-        </CardBody>
-      </Card>
       )}
 
-      {/* Main Operations Interface - Following Front Desk Pattern */}
       <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <h3 className="text-xl font-semibold text-ghana-black">📊 Operations Overview</h3>
-        </CardHeader>
+        {fullPage && (
+          <CardHeader className="pb-3">
+            <h3 className="text-xl font-semibold text-ghana-black">Housekeeping</h3>
+          </CardHeader>
+        )}
         <CardBody>
-          <Tabs 
-            selectedKey={selectedTab} 
-            onSelectionChange={(key) => {
-              setSelectedTab(key as string);
-              // Update URL without page reload
-              const url = new URL(window.location.href);
-              if (key === 'overview') {
-                url.searchParams.delete('tab');
-              } else {
-                url.searchParams.set('tab', key as string);
-              }
-              window.history.replaceState({}, '', url.toString());
-            }}
+          <Tabs
+            selectedKey={selectedTab}
+            onSelectionChange={(key) => setSelectedTab(String(key))}
             className="w-full"
             aria-label="Housekeeping operations"
           >
-            <Tab key="overview" title="📊 Overview">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-4">
-                {operationalItems.map((category, categoryIndex) => (
-                  <Card key={categoryIndex} className="border border-gray-200 shadow-md">
-                    <CardHeader className="pb-3">
-                      <h4 className="text-lg font-semibold text-ghana-black">{category.category}</h4>
-                    </CardHeader>
-                    <CardBody className="pt-0">
-                      <div className="space-y-3">
-                        {category.items.map((item, itemIndex) => (
-                          <div 
-                            key={itemIndex}
-                            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
-                            onClick={() => {
-                              // Handle navigation based on item type
-                              if (item.title.includes('Room Management')) {
-                                setSelectedTab('rooms');
-                              } else if (item.title.includes('Task Management')) {
-                                setSelectedTab('tasks');
-                              } else if (item.title.includes('Staff Management')) {
-                                setSelectedTab('staff');
-                              } else if (item.title.includes('Maintenance')) {
-                                setSelectedTab('maintenance');
-                              } else if (item.title.includes('Room Inspections')) {
-                                setSelectedTab('inspections');
-                              } else if (item.title.includes('Supply Management')) {
-                                setSelectedTab('supplies');
-                              } else if (item.title.includes('Reports & Analysis')) {
-                                router.push('/housekeeping/reports');
-                              }
-                            }}
-                          >
-                            <div className="flex items-center space-x-3">
-                              <span className="text-xl">{item.icon}</span>
-                              <div>
-                                <div className="flex items-center">
-                                  <InfoIcon description={item.description} />
-                                  <p className="font-medium text-ghana-black">{item.title}</p>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <Badge 
-                                color={item.status === 'active' ? 'success' : 'default'}
-                                variant="flat"
-                              >
-                                {item.status}
-                              </Badge>
-                              <Chip size="sm" variant="flat" color="primary">
-                                {item.count}
-                              </Chip>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardBody>
-                  </Card>
-                ))}
-              </div>
+            <Tab key="rooms" title="🏠 Rooms">
+              {selectedTab === 'rooms' && <div className="pt-4"><RoomStatusGrid /></div>}
             </Tab>
-
-            <Tab key="rooms" title="🏠 Room Management">
-              <RoomStatusGrid />
+            <Tab key="tasks" title="🧹 Tasks">
+              {selectedTab === 'tasks' && <div className="pt-4"><TaskManagementPanel /></div>}
             </Tab>
-
-            <Tab key="tasks" title="🧹 Task Management">
-              <TaskManagementPanel />
-            </Tab>
-
-            <Tab key="staff" title="👥 Staff Management">
-              <DepartmentStaffTab
-                departmentLabel="Housekeeping"
-                overtimePermissionId="housekeeping.log-overtime"
-                departmentNameHints={['housekeeping', 'maintenance']}
-              />
-            </Tab>
-
             <Tab key="maintenance" title="🔧 Maintenance">
-              <MaintenancePanel />
+              {selectedTab === 'maintenance' && <div className="pt-4"><MaintenancePanel /></div>}
             </Tab>
-            <Tab key="inspections" title="🔍 Room Inspections">
-              <div className="p-4">
-                <p className="text-gray-600">Room Inspection Panel - Coming Soon</p>
-              </div>
+            <Tab key="inspections" title="🔍 Inspections">
+              {selectedTab === 'inspections' && <div className="pt-4"><RoomInspectionPanel /></div>}
             </Tab>
-
-            <Tab key="supplies" title="📦 Supplies & Inventory">
-              <div className="p-4">
-                <p className="text-gray-600">Supply Management Panel - Coming Soon</p>
-              </div>
+            <Tab key="inventory" title="📦 Inventory">
+              {selectedTab === 'inventory' && <div className="pt-4"><HousekeepingInventoryPanel /></div>}
+            </Tab>
+            <Tab key="requisitions" title="📝 Requisitions">
+              {selectedTab === 'requisitions' && <div className="pt-4"><HousekeepingRequisitionsPanel /></div>}
+            </Tab>
+            <Tab key="staff" title="👥 Staff Management">
+              {selectedTab === 'staff' && (
+                <DepartmentStaffTab
+                  departmentLabel="Housekeeping"
+                  overtimePermissionId="housekeeping.log-overtime"
+                  departmentNameHints={['housekeeping', 'house keeping', 'hk', 'maintenance']}
+                  helperText="HR staff in a Housekeeping or Maintenance department. Weekly shifts and overtime sit here; hiring and payroll stay in HR. Names come from the HR file — this tab does not invent staff."
+                  extraTabs={[
+                    {
+                      key: 'rooms',
+                      title: '🛏️ Responsible for',
+                      render: (hkStaff) => <RoomResponsibilitiesPanel staff={hkStaff} />,
+                    },
+                  ]}
+                />
+              )}
+            </Tab>
+            <Tab key="reports" title="📈 Reports & Analysis">
+              {selectedTab === 'reports' && <div className="pt-4"><HousekeepingReportsAnalysis embedded /></div>}
             </Tab>
           </Tabs>
         </CardBody>
       </Card>
 
+
       {/* Bottom section: directly under Operations Overview */}
-      {(!isHidden('recentActivities') || !isHidden('notices')) && (
+      {!fullPage && (!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {!isHidden('recentActivities') && (

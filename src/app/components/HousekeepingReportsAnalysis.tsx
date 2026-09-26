@@ -14,6 +14,7 @@ import { housekeepingStore } from '../lib/housekeeping/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob } from '../lib/frontoffice/reportExportFormat';
+import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import type { HousekeepingTask, MaintenanceRequest, RoomInspection } from '../lib/housekeeping/types';
 
 function labelize(key: string): string {
@@ -44,24 +45,51 @@ function formatWhen(iso?: string) {
 }
 
 function taskDay(task: HousekeepingTask) {
-  return dayOf(task.completedAt || task.startedAt || task.assignedAt);
+  return dayOf(task.completedAt || task.startedAt || task.assignedAt || task.createdAt);
 }
 
-function taskInRange(task: HousekeepingTask, startDate: string, endDate: string) {
-  const day = taskDay(task);
-  return day ? inDateRange(day, startDate, endDate) : true;
+function suppliesLabel(task: HousekeepingTask) {
+  const used = task.suppliesUsed || [];
+  if (!used.length) return '—';
+  return used.map((line) => `${line.itemName} ×${line.quantity}`).join(', ');
 }
 
-const RANGE_REPORT_KEYS = new Set(['tasks', 'inspections', 'maintenance']);
-const NO_DATE_REPORT_KEYS = new Set(['rooms', 'staff']);
+function staffName(id?: string, name?: string) {
+  if (name) return name;
+  if (!id) return 'Unassigned';
+  return housekeepingStore.getAllStaff().find((member) => member.id === id)?.name || id;
+}
+
+const RANGE_REPORT_KEYS = new Set([
+  'room-work', 'room-history', 'tasks', 'attendants', 'usage', 'usage-items', 'inspections', 'maintenance',
+]);
+const NO_DATE_REPORT_KEYS = new Set(['rooms', 'onhand']);
 
 const REPORT_GROUPS = {
   rooms: {
     title: 'Rooms',
-    description: 'Floor status and cleaning tasks.',
+    description: 'What happened in each room.',
     reports: [
-      ['rooms', 'Room Status'],
-      ['tasks', 'Tasks'],
+      ['room-work', 'Room work'],
+      ['room-history', 'Room history'],
+      ['rooms', 'Room status'],
+    ],
+  },
+  work: {
+    title: 'Work',
+    description: 'Task history and who did it.',
+    reports: [
+      ['tasks', 'Task history'],
+      ['attendants', 'Who did the work'],
+    ],
+  },
+  supplies: {
+    title: 'Supplies',
+    description: 'What rooms used, and what is still on hand.',
+    reports: [
+      ['usage', 'Usage by room'],
+      ['usage-items', 'Usage by item'],
+      ['onhand', 'On hand'],
     ],
   },
   quality: {
@@ -75,14 +103,7 @@ const REPORT_GROUPS = {
     title: 'Maintenance',
     description: 'Work orders and recorded cost.',
     reports: [
-      ['maintenance', 'Work Orders'],
-    ],
-  },
-  staff: {
-    title: 'Staff',
-    description: 'Housekeeping roster and today\'s throughput.',
-    reports: [
-      ['staff', 'Staff'],
+      ['maintenance', 'Work orders'],
     ],
   },
 } as const;
@@ -107,16 +128,58 @@ const EMPTY_REPORT_FILTERS: ReportFilters = {
 };
 
 const REPORT_DESCRIPTIONS: Record<string, string> = {
+  'room-work': 'One row per room: tasks done, last clean, open work, and supplies used.',
+  'room-history': 'Every status change, task, inspection and work order, newest first.',
   rooms: 'Current housekeeping condition of every configured room.',
-  tasks: 'Cleaning and turnover tasks for the selected period.',
+  tasks: 'Every cleaning and turnover task, including supplies taken off inventory.',
+  attendants: 'Tasks, rooms and supplies grouped by the person the work was assigned to.',
+  usage: 'Each supply a finished task took from housekeeping stock, room by room.',
+  'usage-items': 'How much of each item rooms have used.',
+  onhand: 'Soap, towels and the rest currently sitting in housekeeping.',
   inspections: 'Recorded room inspections, scores and follow-up.',
   maintenance: 'Maintenance work orders, status and recorded cost.',
-  staff: 'Active roster, today\'s completed tasks and stored efficiency.',
+};
+
+const EMPTY_REPORT_COPY: Record<string, string> = {
+  'room-work': 'No rooms are on file yet.',
+  'room-history': 'No room activity in this period.',
+  tasks: 'No tasks in this period.',
+  attendants: 'No assigned work in this period.',
+  usage: 'No supplies have been recorded on finished tasks in this period. Marking a task completed and entering what the room used fills this table.',
+  'usage-items': 'No supply usage in this period.',
+  onhand: 'Nothing is on hand. Stock appears here after Stores marks a housekeeping requisition Ready.',
+  inspections: 'No inspections in this period.',
+  maintenance: 'No work orders in this period.',
+  rooms: 'No rooms are on file yet.',
 };
 
 type ReportColumnDefinition = { key: string; label: string; defaultVisible?: boolean };
 
 const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
+  'room-work': [
+    { key: 'roomNumber', label: 'Room' },
+    { key: 'roomType', label: 'Room type' },
+    { key: 'status', label: 'Status' },
+    { key: 'tasks', label: 'Tasks' },
+    { key: 'completed', label: 'Completed' },
+    { key: 'open', label: 'Still open' },
+    { key: 'lastCleaned', label: 'Last cleaned' },
+    { key: 'lastType', label: 'Last type' },
+    { key: 'assignedTo', label: 'Last attendant' },
+    { key: 'inspections', label: 'Inspections' },
+    { key: 'avgScore', label: 'Avg score' },
+    { key: 'openMaintenance', label: 'Open maintenance' },
+    { key: 'suppliesUsed', label: 'Supplies used' },
+  ],
+  'room-history': [
+    { key: 'when', label: 'When' },
+    { key: 'roomNumber', label: 'Room' },
+    { key: 'event', label: 'What' },
+    { key: 'detail', label: 'Detail' },
+    { key: 'assignedTo', label: 'Who' },
+    { key: 'suppliesUsed', label: 'Supplies' },
+    { key: 'status', label: 'Result' },
+  ],
   rooms: [
     { key: 'roomNumber', label: 'Room' },
     { key: 'roomType', label: 'Room type' },
@@ -137,6 +200,39 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
     { key: 'actualMinutes', label: 'Actual min' },
     { key: 'startedAt', label: 'Started', defaultVisible: false },
     { key: 'completedAt', label: 'Completed' },
+    { key: 'suppliesUsed', label: 'Supplies used' },
+  ],
+  attendants: [
+    { key: 'name', label: 'Person' },
+    { key: 'tasks', label: 'Tasks' },
+    { key: 'completed', label: 'Completed' },
+    { key: 'open', label: 'Still open' },
+    { key: 'rooms', label: 'Rooms' },
+    { key: 'minutes', label: 'Minutes' },
+    { key: 'supplies', label: 'Supplies used' },
+  ],
+  usage: [
+    { key: 'when', label: 'When' },
+    { key: 'roomNumber', label: 'Room' },
+    { key: 'taskType', label: 'Task' },
+    { key: 'itemName', label: 'Item' },
+    { key: 'quantity', label: 'Quantity' },
+    { key: 'assignedTo', label: 'Attendant' },
+    { key: 'taskId', label: 'Task id', defaultVisible: false },
+  ],
+  'usage-items': [
+    { key: 'itemName', label: 'Item' },
+    { key: 'quantity', label: 'Quantity used' },
+    { key: 'rooms', label: 'Rooms' },
+    { key: 'tasks', label: 'Tasks' },
+    { key: 'lastUsed', label: 'Last used' },
+  ],
+  onhand: [
+    { key: 'name', label: 'Item' },
+    { key: 'code', label: 'Code' },
+    { key: 'category', label: 'Category' },
+    { key: 'onHand', label: 'On hand' },
+    { key: 'unit', label: 'Unit' },
   ],
   inspections: [
     { key: 'id', label: 'Inspection' },
@@ -161,23 +257,15 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
     { key: 'completedAt', label: 'Completed', defaultVisible: false },
     { key: 'description', label: 'Description' },
   ],
-  staff: [
-    { key: 'name', label: 'Name' },
-    { key: 'role', label: 'Role' },
-    { key: 'active', label: 'Active' },
-    { key: 'completedToday', label: 'Completed today' },
-    { key: 'dailyTarget', label: 'Daily target' },
-    { key: 'efficiency', label: 'Efficiency' },
-    { key: 'currentTasks', label: 'Open tasks' },
-  ],
 };
 
-export default function HousekeepingReportsAnalysis() {
+export default function HousekeepingReportsAnalysis({ embedded = false }: { embedded?: boolean } = {}) {
   const [selectedTab, setSelectedTab] = useState<ReportGroupKey>('rooms');
-  const [selectedReport, setSelectedReport] = useState('rooms');
+  const [selectedReport, setSelectedReport] = useState('room-work');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
-  const [reportDateMode, setReportDateMode] = useState<'today' | 'specific' | 'range'>('today');
+  const [reportDateMode, setReportDateMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
+  const [stockRows, setStockRows] = useState<{ code: string; name: string; category: string; unit: string; onHand: number }[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const { isOpen, onOpen, onClose } = useDisclosure();
   const [reportNotes, setReportNotes] = useState('');
@@ -212,8 +300,29 @@ export default function HousekeepingReportsAnalysis() {
     }
   }, []);
 
+  const loadStock = () => {
+    fetch('/api/inventory/stock-levels?department=housekeeping', {
+      headers: { 'x-tenant-subdomain': getClientTenantSubdomain() },
+      cache: 'no-store',
+    })
+      .then((response) => (response.ok ? response.json() : { items: [] }))
+      .then((data) => {
+        setStockRows(
+          (data.items || []).map((item: any) => ({
+            code: item.code || '—',
+            name: item.name || '—',
+            category: item.category || '—',
+            unit: item.unit || '—',
+            onHand: Number(item.onHand || 0),
+          })),
+        );
+      })
+      .catch(() => setStockRows([]));
+  };
+
   useEffect(() => {
     housekeepingStore.hydrateFromApi();
+    loadStock();
     const unsub = housekeepingStore.subscribe(() => setStoreTick((tick) => tick + 1));
     return unsub;
   }, []);
@@ -243,14 +352,105 @@ export default function HousekeepingReportsAnalysis() {
   };
 
   const handleRefresh = () => {
+    loadStock();
     housekeepingStore.hydrateFromApi().then(() => {
       setRefreshVersion((version) => version + 1);
       setGeneratedAt(new Date().toLocaleString('en-GH'));
     });
   };
 
+  const inPeriod = (day: string) => reportDateMode === 'all' || (day ? inDateRange(day, startDate, endDate) : true);
+
+  const tasksInPeriod = () => housekeepingStore.getAllTasks().filter((task) => inPeriod(taskDay(task)));
+  const inspectionsInPeriod = () => housekeepingStore.getAllInspections().filter((row: RoomInspection) => inPeriod(dayOf(row.inspectionDate)));
+  const maintenanceInPeriod = () => housekeepingStore.getAllMaintenanceRequests().filter((row: MaintenanceRequest) => inPeriod(dayOf(row.reportedAt)));
+
   const getCurrentReportData = () => {
+    const tasks = tasksInPeriod();
+    const inspections = inspectionsInPeriod();
+    const maintenance = maintenanceInPeriod();
+    const done = (status: string) => status === 'completed' || status === 'verified';
+
     switch (selectedReport) {
+      case 'room-work':
+        return housekeepingStore.getAllRooms()
+          .slice()
+          .sort((a, b) => a.roomNumber.localeCompare(b.roomNumber, undefined, { numeric: true }))
+          .map((room) => {
+            const roomTasks = tasks.filter((task) => task.roomNumber === room.roomNumber);
+            const completed = roomTasks.filter((task) => done(task.status));
+            const last = [...completed].sort((a, b) => (b.completedAt || '').localeCompare(a.completedAt || ''))[0];
+            const latest = [...roomTasks].sort((a, b) => (b.completedAt || b.startedAt || b.assignedAt || b.createdAt || '').localeCompare(a.completedAt || a.startedAt || a.assignedAt || a.createdAt || ''))[0];
+            const roomInspections = inspections.filter((row) => row.roomNumber === room.roomNumber);
+            const scores = roomInspections.map((row) => Number(row.score || 0)).filter((value) => value > 0);
+            const openMaint = maintenance.filter((row) => row.roomNumber === room.roomNumber && !done(row.status));
+            return {
+              roomNumber: room.roomNumber,
+              roomType: roomTypeName(room.roomTypeId),
+              status: room.status,
+              tasks: roomTasks.length,
+              completed: completed.length,
+              open: roomTasks.length - completed.length,
+              lastCleaned: last?.completedAt ? formatWhen(last.completedAt) : '—',
+              lastType: latest?.taskType || '—',
+              assignedTo: latest ? staffName(latest.assignedTo, latest.assignedName) : '—',
+              inspections: roomInspections.length,
+              avgScore: scores.length ? Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length) : '—',
+              openMaintenance: openMaint.length,
+              suppliesUsed: roomTasks.some((task) => (task.suppliesUsed || []).length)
+                ? roomTasks.map(suppliesLabel).filter((label) => label !== '—').join('; ')
+                : '—',
+            };
+          });
+      case 'room-history': {
+        const events = [
+          ...housekeepingStore.getStatusHistory()
+            .filter((row) => inPeriod(dayOf(row.timestamp)))
+            .map((row) => ({
+              sort: row.timestamp,
+              when: formatWhen(row.timestamp),
+              roomNumber: row.roomNumber,
+              event: 'Status',
+              detail: `${row.previousStatus} → ${row.status}${row.reason ? ` · ${row.reason}` : ''}`,
+              assignedTo: row.changedBy || '—',
+              suppliesUsed: '—',
+              status: row.status,
+            })),
+          ...tasks.map((task) => ({
+            sort: task.completedAt || task.startedAt || task.assignedAt || '',
+            when: formatWhen(task.completedAt || task.startedAt || task.assignedAt || task.createdAt),
+            roomNumber: task.roomNumber,
+            event: 'Task',
+            detail: `${task.taskType} · ${task.priority}`,
+            assignedTo: staffName(task.assignedTo, task.assignedName),
+            suppliesUsed: suppliesLabel(task),
+            status: task.status,
+          })),
+          ...inspections.map((row) => ({
+            sort: row.inspectionDate,
+            when: formatWhen(row.inspectionDate),
+            roomNumber: row.roomNumber,
+            event: 'Inspection',
+            detail: `Score ${row.score}`,
+            assignedTo: row.inspectorName || '—',
+            suppliesUsed: '—',
+            status: row.status,
+          })),
+          ...maintenance.map((row) => ({
+            sort: row.reportedAt,
+            when: formatWhen(row.reportedAt),
+            roomNumber: row.roomNumber,
+            event: 'Maintenance',
+            detail: `${row.category} · ${row.description || '—'}`,
+            assignedTo: row.reportedBy || '—',
+            suppliesUsed: '—',
+            status: row.status,
+          })),
+        ];
+        return events
+          .sort((a, b) => b.sort.localeCompare(a.sort))
+          .map(({ sort: _sort, ...row }) => row);
+      }
       case 'rooms':
         return housekeepingStore.getAllRooms().map((room) => ({
           roomNumber: room.roomNumber,
@@ -262,64 +462,105 @@ export default function HousekeepingReportsAnalysis() {
           notes: room.notes || '—',
         }));
       case 'tasks':
-        return housekeepingStore.getAllTasks()
-          .filter((task) => taskInRange(task, startDate, endDate))
-          .map((task) => ({
-            id: task.id,
-            roomNumber: task.roomNumber,
-            taskType: task.taskType,
-            priority: task.priority,
-            status: task.status,
-            assignedTo: task.assignedTo || 'Unassigned',
-            estimatedMinutes: task.estimatedMinutes,
-            actualMinutes: task.actualMinutes ?? null,
-            startedAt: formatWhen(task.startedAt),
-            completedAt: formatWhen(task.completedAt),
+        return tasks.map((task) => ({
+          id: task.id,
+          roomNumber: task.roomNumber,
+          taskType: task.taskType,
+          priority: task.priority,
+          status: task.status,
+          assignedTo: staffName(task.assignedTo, task.assignedName),
+          estimatedMinutes: task.estimatedMinutes,
+          actualMinutes: task.actualMinutes ?? null,
+          startedAt: formatWhen(task.startedAt),
+          completedAt: formatWhen(task.completedAt),
+          suppliesUsed: suppliesLabel(task),
+        }));
+      case 'attendants': {
+        const grouped = new Map<string, { name: string; tasks: HousekeepingTask[] }>();
+        tasks.forEach((task) => {
+          const key = task.assignedTo || task.assignedName || 'unassigned';
+          const current = grouped.get(key) || { name: key === 'unassigned' ? 'Unassigned' : staffName(task.assignedTo, task.assignedName), tasks: [] };
+          current.tasks.push(task);
+          grouped.set(key, current);
+        });
+        return Array.from(grouped.values()).map(({ name, tasks: rows }) => ({
+          name,
+          tasks: rows.length,
+          completed: rows.filter((task) => done(task.status)).length,
+          open: rows.filter((task) => !done(task.status)).length,
+          rooms: new Set(rows.map((task) => task.roomNumber)).size,
+          minutes: rows.reduce((sum, task) => sum + Number(task.actualMinutes || task.estimatedMinutes || 0), 0),
+          supplies: rows.reduce((sum, task) => sum + (task.suppliesUsed || []).reduce((qty, line) => qty + Number(line.quantity || 0), 0), 0),
+        }));
+      }
+      case 'usage':
+        return tasks.flatMap((task) => (task.suppliesUsed || []).map((line) => ({
+          when: formatWhen(task.completedAt || task.startedAt || task.createdAt),
+          roomNumber: task.roomNumber,
+          taskType: task.taskType,
+          itemName: line.itemName,
+          quantity: line.quantity,
+          assignedTo: staffName(task.assignedTo, task.assignedName),
+          taskId: task.id,
+          sort: task.completedAt || task.startedAt || '',
+        })))
+          .sort((a, b) => b.sort.localeCompare(a.sort))
+          .map(({ sort: _sort, ...row }) => row);
+      case 'usage-items': {
+        const byItem = new Map<string, { quantity: number; rooms: Set<string>; tasks: number; lastUsed: string }>();
+        tasks.forEach((task) => {
+          (task.suppliesUsed || []).forEach((line) => {
+            const current = byItem.get(line.itemName) || { quantity: 0, rooms: new Set<string>(), tasks: 0, lastUsed: '' };
+            current.quantity += Number(line.quantity || 0);
+            current.rooms.add(task.roomNumber);
+            current.tasks += 1;
+            const when = task.completedAt || task.startedAt || '';
+            if (when > current.lastUsed) current.lastUsed = when;
+            byItem.set(line.itemName, current);
+          });
+        });
+        return Array.from(byItem.entries()).map(([itemName, row]) => ({
+          itemName,
+          quantity: row.quantity,
+          rooms: row.rooms.size,
+          tasks: row.tasks,
+          lastUsed: formatWhen(row.lastUsed),
+        }));
+      }
+      case 'onhand':
+        return stockRows
+          .filter((row) => row.onHand > 0)
+          .map((row) => ({
+            name: row.name,
+            code: row.code,
+            category: row.category,
+            onHand: row.onHand,
+            unit: row.unit,
           }));
       case 'inspections':
-        return housekeepingStore.getAllInspections()
-          .filter((row: RoomInspection) => {
-            const day = dayOf(row.inspectionDate);
-            return day ? inDateRange(day, startDate, endDate) : true;
-          })
-          .map((row) => ({
-            id: row.id,
-            roomNumber: row.roomNumber,
-            inspectorName: row.inspectorName,
-            inspectionDate: formatWhen(row.inspectionDate),
-            status: row.status,
-            score: row.score,
-            followUpRequired: row.followUpRequired,
-            notes: row.notes || '—',
-          }));
+        return inspections.map((row) => ({
+          id: row.id,
+          roomNumber: row.roomNumber,
+          inspectorName: row.inspectorName,
+          inspectionDate: formatWhen(row.inspectionDate),
+          status: row.status,
+          score: row.score,
+          followUpRequired: row.followUpRequired,
+          notes: row.notes || '—',
+        }));
       case 'maintenance':
-        return housekeepingStore.getAllMaintenanceRequests()
-          .filter((row: MaintenanceRequest) => {
-            const day = dayOf(row.reportedAt);
-            return day ? inDateRange(day, startDate, endDate) : true;
-          })
-          .map((row) => ({
-            id: row.id,
-            roomNumber: row.roomNumber,
-            category: row.category,
-            priority: row.priority,
-            status: row.status,
-            reportedBy: row.reportedBy || '—',
-            reportedAt: formatWhen(row.reportedAt),
-            assignedTo: row.assignedTo || 'Unassigned',
-            cost: row.actualCost ?? row.estimatedCost ?? null,
-            completedAt: formatWhen(row.completedAt),
-            description: row.description || '—',
-          }));
-      case 'staff':
-        return housekeepingStore.getAllStaff().map((member) => ({
-          name: member.name,
-          role: member.role,
-          active: member.active,
-          completedToday: member.completedToday,
-          dailyTarget: member.dailyTarget,
-          efficiency: member.efficiency,
-          currentTasks: member.currentTasks?.length || 0,
+        return maintenance.map((row) => ({
+          id: row.id,
+          roomNumber: row.roomNumber,
+          category: row.category,
+          priority: row.priority,
+          status: row.status,
+          reportedBy: row.reportedBy || '—',
+          reportedAt: formatWhen(row.reportedAt),
+          assignedTo: row.assignedTo ? staffName(row.assignedTo) : 'Unassigned',
+          cost: row.actualCost ?? row.estimatedCost ?? null,
+          completedAt: formatWhen(row.completedAt),
+          description: row.description || '—',
         }));
       default:
         return [];
@@ -425,12 +666,52 @@ export default function HousekeepingReportsAnalysis() {
         { label: 'Recorded cost', value: money(cost), hint: 'Actual, else estimate' },
       ];
     }
-    if (selectedReport === 'staff') {
+    if (selectedReport === 'room-work') {
       return [
-        { label: 'Staff', value: count.toLocaleString(), hint: 'On the roster' },
-        { label: 'Active', value: rows.filter((row) => row.active).length.toLocaleString(), hint: 'On duty file' },
-        { label: 'Completed today', value: rows.reduce((sum, row) => sum + Number(row.completedToday || 0), 0).toLocaleString(), hint: 'Stored throughput' },
-        { label: 'Open tasks', value: rows.reduce((sum, row) => sum + Number(row.currentTasks || 0), 0).toLocaleString(), hint: 'Currently assigned' },
+        { label: 'Rooms', value: count.toLocaleString(), hint: 'On the floor' },
+        { label: 'With work', value: rows.filter((row) => Number(row.tasks) > 0).length.toLocaleString(), hint: 'Had a task in the period' },
+        { label: 'Completed', value: rows.reduce((sum, row) => sum + Number(row.completed || 0), 0).toLocaleString(), hint: 'Tasks finished' },
+        { label: 'Still open', value: rows.reduce((sum, row) => sum + Number(row.open || 0), 0).toLocaleString(), hint: 'Not finished' },
+      ];
+    }
+    if (selectedReport === 'room-history') {
+      return [
+        { label: 'Events', value: count.toLocaleString(), hint: 'In the period' },
+        { label: 'Rooms', value: new Set(rows.map((row) => row.roomNumber)).size.toLocaleString(), hint: 'Touched' },
+        { label: 'Tasks', value: rows.filter((row) => row.event === 'Task').length.toLocaleString(), hint: 'Cleaning and turnover' },
+        { label: 'Status changes', value: rows.filter((row) => row.event === 'Status').length.toLocaleString(), hint: 'Room condition log' },
+      ];
+    }
+    if (selectedReport === 'attendants') {
+      return [
+        { label: 'People', value: count.toLocaleString(), hint: 'With work in the period' },
+        { label: 'Tasks', value: rows.reduce((sum, row) => sum + Number(row.tasks || 0), 0).toLocaleString(), hint: 'Assigned' },
+        { label: 'Completed', value: rows.reduce((sum, row) => sum + Number(row.completed || 0), 0).toLocaleString(), hint: 'Finished' },
+        { label: 'Supplies', value: rows.reduce((sum, row) => sum + Number(row.supplies || 0), 0).toLocaleString(), hint: 'Units used' },
+      ];
+    }
+    if (selectedReport === 'usage') {
+      return [
+        { label: 'Lines', value: count.toLocaleString(), hint: 'One row per item a room used' },
+        { label: 'Quantity', value: rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0).toLocaleString(), hint: 'Units used' },
+        { label: 'Rooms', value: new Set(rows.map((row) => row.roomNumber).filter(Boolean)).size.toLocaleString(), hint: 'Where it was used' },
+        { label: 'Tasks', value: new Set(rows.map((row) => row.taskId)).size.toLocaleString(), hint: 'That recorded usage' },
+      ];
+    }
+    if (selectedReport === 'usage-items') {
+      return [
+        { label: 'Items', value: count.toLocaleString(), hint: 'Used in the period' },
+        { label: 'Quantity', value: rows.reduce((sum, row) => sum + Number(row.quantity || 0), 0).toLocaleString(), hint: 'Units used' },
+        { label: 'Tasks', value: rows.reduce((sum, row) => sum + Number(row.tasks || 0), 0).toLocaleString(), hint: 'That recorded the item' },
+        { label: 'Rooms', value: rows.reduce((sum, row) => sum + Number(row.rooms || 0), 0).toLocaleString(), hint: 'Room uses, counted per item' },
+      ];
+    }
+    if (selectedReport === 'onhand') {
+      return [
+        { label: 'Items', value: count.toLocaleString(), hint: 'With stock' },
+        { label: 'Units', value: rows.reduce((sum, row) => sum + Number(row.onHand || 0), 0).toLocaleString(), hint: 'On hand' },
+        { label: 'Categories', value: new Set(rows.map((row) => row.category)).size.toLocaleString(), hint: 'In housekeeping' },
+        { label: 'Source', value: 'Ready requisitions', hint: 'Stores marks them Ready' },
       ];
     }
     return [
@@ -440,7 +721,7 @@ export default function HousekeepingReportsAnalysis() {
       { label: 'Status', value: 'Current', hint: generatedAt ? `Refreshed ${generatedAt}` : 'Preparing report' },
     ];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedReport, startDate, endDate, reportDateMode, generatedAt, refreshVersion, mounted, filters, storeTick]);
+  }, [selectedReport, startDate, endDate, reportDateMode, generatedAt, refreshVersion, mounted, filters, storeTick, stockRows]);
 
   const hiddenKpiLabels = hiddenKpisByReport[selectedReport] || [];
   const visibleReportKpis = reportKpis.filter((kpi) => !hiddenKpiLabels.includes(kpi.label));
@@ -522,7 +803,7 @@ export default function HousekeepingReportsAnalysis() {
           <p className="text-gray-500">
             {activeFilterCount > 0
               ? 'No records match the active filters. Clear or adjust the filters to continue.'
-              : 'No data available for the selected report and date.'}
+              : (EMPTY_REPORT_COPY[selectedReport] || 'No data available for the selected report and date.')}
           </p>
         </div>
       );
@@ -558,7 +839,7 @@ export default function HousekeepingReportsAnalysis() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50/70 p-4 md:p-6">
+    <div className={embedded ? 'p-2' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
       <div className="mx-auto max-w-[1600px] space-y-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -568,7 +849,7 @@ export default function HousekeepingReportsAnalysis() {
             </div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-950">Reports & Analysis</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Room status, tasks, inspections and maintenance from one workspace.
+              Room-by-room history, who did the work, and the supplies each task took off housekeeping stock.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -624,7 +905,7 @@ export default function HousekeepingReportsAnalysis() {
                     <CalendarDays size={14} /> Reporting period
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {(['today', 'specific', 'range'] as const).map((mode) => (
+                    {(['all', 'today', 'specific', 'range'] as const).map((mode) => (
                       <button
                         key={mode}
                         type="button"
@@ -645,7 +926,7 @@ export default function HousekeepingReportsAnalysis() {
                             : 'border-slate-200 bg-white text-slate-600 hover:border-blue-400'
                         }`}
                       >
-                        {mode === 'today' ? 'Today' : mode === 'specific' ? 'Specific date' : 'Date range'}
+                        {mode === 'all' ? 'All history' : mode === 'today' ? 'Today' : mode === 'specific' ? 'Specific date' : 'Date range'}
                       </button>
                     ))}
                     {reportDateMode === 'specific' && (
@@ -781,7 +1062,7 @@ export default function HousekeepingReportsAnalysis() {
             </div>
             <div className="flex items-center gap-3">
               <div className="text-left text-xs text-slate-500 sm:text-right">
-                <div>{NO_DATE_REPORT_KEYS.has(selectedReport) ? 'Current snapshot' : startDate === endDate ? startDate : `${startDate} – ${endDate}`}</div>
+                <div>{NO_DATE_REPORT_KEYS.has(selectedReport) ? 'Current snapshot' : reportDateMode === 'all' ? 'All history' : startDate === endDate ? startDate : `${startDate} – ${endDate}`}</div>
                 <div>Generated {generatedAt ?? '…'} by {currentUserLabel}</div>
               </div>
               {Array.isArray(reportData) && availableColumns.length > 0 && (

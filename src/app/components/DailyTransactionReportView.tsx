@@ -22,6 +22,17 @@ function money(n: number) {
   return `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+/** A stay-day charge is stored as YYYY-MM-DD. Parsing that as UTC midnight paints a clock time the posting never had. */
+function formatWhen(value: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [year, month, day] = value.split('-').map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString('en-GH');
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString('en-GH');
+}
+
 function uniqueSorted(values: (string | undefined)[]): string[] {
   return Array.from(new Set(values.filter((v): v is string => !!v))).sort();
 }
@@ -87,7 +98,7 @@ export default function DailyTransactionReportView({
   ].filter(([key]) => !visibleColumns || visibleColumns.includes(key));
 
   const renderCell = (row: TransactionRow, key: string) => {
-    if (key === 'timestamp') return new Date(row.timestamp).toLocaleString('en-GH');
+    if (key === 'timestamp') return formatWhen(row.timestamp);
     if (key === 'amount') return money(row.amount);
     if (key === 'paymentMethod') return row.transactionType === 'payment' ? row.paymentMethod : '—';
     if (key === 'transactionType') {

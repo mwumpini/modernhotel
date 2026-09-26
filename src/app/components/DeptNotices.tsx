@@ -5,14 +5,22 @@ import { Card, CardBody, CardHeader, Button } from "@heroui/react";
 import { announcementStore, DepartmentKey } from '../lib/analytics/announcementStore';
 import { useSettingsStore } from '../lib/settings/store';
 
+interface PinnedAlert {
+  id: string;
+  message: string;
+  level: 'urgent' | 'normal';
+}
+
 interface DeptNoticesProps {
   dept: DepartmentKey;
   title?: string;
   defaultTab?: 'all'|'alerts'|'broadcasts'|'mentions';
   dockBottom?: boolean;
+  /** System alerts shown on the Alerts tab, such as expiring staff documents. */
+  pinnedAlerts?: PinnedAlert[];
 }
 
-export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultTab = 'all', dockBottom = false }: DeptNoticesProps) {
+export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultTab = 'all', dockBottom = false, pinnedAlerts = [] }: DeptNoticesProps) {
   const [messages, setMessages] = React.useState(() => announcementStore.getForDepartment(dept));
   const [filter, setFilter] = React.useState<'all'|'urgent'|'unread'>('all');
   const [tab, setTab] = React.useState<'all'|'alerts'|'broadcasts'|'mentions'>(defaultTab);
@@ -102,6 +110,14 @@ export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultT
     return true;
   });
 
+  const pinnedVisible = (tab === 'all' || tab === 'alerts')
+    ? pinnedAlerts.filter((alert) => {
+        if (filter === 'urgent' && alert.level !== 'urgent') return false;
+        if (search && !alert.message.toLowerCase().includes(search.toLowerCase())) return false;
+        return true;
+      })
+    : [];
+
   const panelBody = (
     <Card className="border-0 shadow-md">
       <CardHeader className="pb-1 flex items-center justify-between">
@@ -129,6 +145,12 @@ export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultT
           <input type="date" className="border border-gray-300 rounded px-2 h-8 text-sm" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
           <input placeholder="Search notices..." className="flex-1 border border-gray-300 rounded px-2 h-8 text-sm" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
+        {pinnedVisible.map((alert) => (
+          <div key={alert.id} className={`p-3 rounded ${levelStyles(alert.level)} flex items-start gap-3`}>
+            <span className={`h-3 w-3 rounded-full ${dotColor(alert.level)} mt-1`}></span>
+            <div className="text-sm text-ghana-black">{alert.message}</div>
+          </div>
+        ))}
         {byTab.map(m => (
           <div key={m.id} className={`p-3 rounded ${levelStyles(m.level)} flex items-start gap-3`}>
             <span className={`h-3 w-3 rounded-full ${dotColor(m.level)} mt-1`}></span>
@@ -146,7 +168,7 @@ export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultT
             </div>
           </div>
         ))}
-        {byTab.length === 0 && <div className="text-gray-500">No notices</div>}
+        {byTab.length === 0 && pinnedVisible.length === 0 && <div className="text-gray-500">No notices</div>}
 
         {toast && (
           <div className="fixed bottom-4 right-4 z-50 bg-red-600 text-white text-sm px-4 py-2 rounded shadow-lg">

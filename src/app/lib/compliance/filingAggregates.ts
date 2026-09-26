@@ -62,18 +62,34 @@ function invoiceTaxSum(
     }, 0);
 }
 
+function tier1EmployerOf(period: PayrollPeriod): number {
+  try {
+    const notes = period.notes ? JSON.parse(period.notes) : {};
+    if (typeof notes.tier1Employer === 'number') return notes.tier1Employer;
+    if (typeof notes.employerContribution === 'number') return notes.employerContribution;
+  } catch {
+    return 0;
+  }
+  return 0;
+}
+
 function payrollTotalsForPeriod(
   records: PayrollRecord[],
   periods: PayrollPeriod[],
   period: string
 ): { paye: number; ssnit: number; gross: number; count: number } {
-  const periodIds = periods
-    .filter((p) => periodFromDate(p.endDate) === period || periodFromDate(p.startDate) === period)
-    .map((p) => p.id);
+  const matched = periods.filter((p) => {
+    const match = /(\d{4})-(\d{2})/.exec(p.periodNumber || '');
+    if (match) return `${match[1]}-${match[2]}` === period;
+    return periodFromDate(p.endDate) === period;
+  });
+  const periodIds = matched.map((p) => p.id);
   const rows = records.filter((r) => periodIds.includes(r.payrollPeriodId));
+  const employeeSsnit = rows.reduce((s, r) => s + (r.deductions?.socialSecurity ?? 0), 0);
+  const employerSsnit = matched.reduce((s, p) => s + tier1EmployerOf(p), 0);
   return {
     paye: rows.reduce((s, r) => s + (r.deductions?.tax ?? 0), 0),
-    ssnit: rows.reduce((s, r) => s + (r.deductions?.socialSecurity ?? 0), 0),
+    ssnit: employeeSsnit + employerSsnit,
     gross: rows.reduce((s, r) => s + r.grossPay, 0),
     count: rows.length,
   };
@@ -129,6 +145,15 @@ export function buildFilingSnapshot(
       detail = pick.source !== 'none' ? `NHIL for ${period}` : detail;
       break;
     }
+    case 'GETFund': {
+      const ledger = ledgerNetForGl(journalEntries, period, TAX_LIABILITY_GL.GETFUND.code);
+      const inv = invoiceTaxSum(invoices, period, 'getfund');
+      const pick = pickAmount(ledger, inv, 0);
+      suggestedAmount = pick.amount;
+      source = pick.source;
+      detail = pick.source !== 'none' ? `GETFund for ${period}` : detail;
+      break;
+    }
     case 'Tourism': {
       const ledger = ledgerNetForGl(journalEntries, period, TAX_LIABILITY_GL.TOURISM.code);
       const inv = invoiceTaxSum(invoices, period, 'tourism');
@@ -140,7 +165,7 @@ export function buildFilingSnapshot(
     }
     case 'PAYE': {
       const ledger = ledgerNetForGl(journalEntries, period, TAX_LIABILITY_GL.PAYE.code);
-      const pick = pickAmount(ledger, 0, pr.paye);
+      const pick = pr.count > 0 ? { amount: pr.paye, source: 'payroll' as const } : pickAmount(ledger, 0, 0);
       suggestedAmount = pick.amount;
       source = pick.source;
       detail =
@@ -153,12 +178,12 @@ export function buildFilingSnapshot(
     }
     case 'SSNIT': {
       const ledger = ledgerNetForGl(journalEntries, period, TAX_LIABILITY_GL.SSNIT.code);
-      const pick = pickAmount(ledger, 0, pr.ssnit);
+      const pick = pr.count > 0 ? { amount: pr.ssnit, source: 'payroll' as const } : pickAmount(ledger, 0, 0);
       suggestedAmount = pick.amount;
       source = pick.source;
       detail =
         pick.source === 'payroll'
-          ? `SSNIT from ${pr.count} payroll record(s) (${period})`
+          ? `SSNIT Tier 1 (employee + employer) from ${pr.count} payroll record(s) (${period})`
           : pick.source === 'ledger'
             ? `SSNIT payable GL (${period})`
             : detail;

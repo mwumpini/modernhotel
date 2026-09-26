@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
   Chip,
-  Tabs, Tab, Spinner, Alert, Progress, Pagination
+  Spinner, Alert, Progress, Pagination
 } from "@heroui/react";
 import { useAccountingStore } from '@/app/lib/accounting/store';
 import { downloadCSV } from '@/app/lib/accounting/helpers/exportHelpers';
@@ -17,7 +18,6 @@ export default function AuditControlsPage() {
     error
   } = useAccountingStore();
 
-  const [selectedTab, setSelectedTab] = useState("audit-trail");
   const [searchTerm, setSearchTerm] = useState('');
   const [filterAction, setFilterAction] = useState<string>('all');
   const [filterTable, setFilterTable] = useState<string>('all');
@@ -71,10 +71,10 @@ export default function AuditControlsPage() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">🔍 Audit & Controls</h1>
-        <p className="text-gray-600 mt-2">
-          Monitor system activities, audit trails, and internal controls
-        </p>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-3xl font-bold text-gray-900">🔍 Audit & Controls</h1>
+          <HeadingInfo label="About audit and controls">Monitor system activities, audit trails, and internal controls</HeadingInfo>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -164,15 +164,8 @@ export default function AuditControlsPage() {
         </Alert>
       )}
 
-      {/* Main Content Tabs */}
       <Card>
         <CardBody className="p-0">
-          <Tabs
-            selectedKey={selectedTab}
-            onSelectionChange={(key) => setSelectedTab(key as string)}
-            className="w-full"
-          >
-            <Tab key="audit-trail" title="📋 Audit Trail">
               <div className="p-6">
                 <div className="flex justify-between items-center mb-4">
                   <h3 className="text-lg font-semibold">
@@ -266,28 +259,6 @@ export default function AuditControlsPage() {
                   </div>
                 )}
               </div>
-            </Tab>
-
-            <Tab key="controls" title="🛡️ Internal Controls">
-              <div className="p-6">
-                <h3 className="text-lg font-semibold mb-4">Internal Controls</h3>
-                <ul className="list-disc pl-6 text-sm text-gray-700 space-y-2">
-                  <li>User actions are logged in the Audit Trail with timestamp and user ID.</li>
-                  <li>Journal postings and voids generate immutable audit entries.</li>
-                  <li>Bank reconciliations and period closes are recorded with user and time.</li>
-                </ul>
-              </div>
-            </Tab>
-
-            <Tab key="compliance" title="📋 Compliance">
-              <div className="p-6">
-                <h3 className="text-lg font-semibold mb-4">Compliance Reports</h3>
-                <Alert color="primary">
-                  For VAT, NHIL, GETFund, and Tourism Levy returns, use the Compliance module under ⚖️ Compliance & Reports. Accounting journal entries integrate via tax GL codes.
-                </Alert>
-              </div>
-            </Tab>
-          </Tabs>
         </CardBody>
       </Card>
     </div>

@@ -43,8 +43,12 @@ export async function GET(request: NextRequest) {
       select: { financialSettings: true },
     })
     const fs = (settings?.financialSettings as Record<string, any>) || {}
-    const result: Record<string, boolean | number> = {}
+    const result: Record<string, boolean | number | string> = {}
     for (const key of FIELDS) result[key] = key in fs ? fs[key] : DEFAULTS[key]
+    if (fs.roundToNearest != null && fs.roundToNearest !== '') result.roundToNearest = Number(fs.roundToNearest) || 0
+    if (fs.roundingRule === 'nearest' || fs.roundingRule === 'up' || fs.roundingRule === 'down') {
+      result.roundingRule = fs.roundingRule
+    }
     return NextResponse.json(result)
   } catch (error) {
     console.error('[settings/approval-thresholds][GET] error', error)
@@ -65,12 +69,18 @@ export async function POST(request: NextRequest) {
     if (!ctx) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })
 
     const body = await request.json()
-    const patch: Record<string, boolean | number> = {}
+    const patch: Record<string, boolean | number | string> = {}
     for (const key of FIELDS) {
       const val = body[key]
       if (key.startsWith('require') ? typeof val === 'boolean' : typeof val === 'number') {
         patch[key] = val
       }
+    }
+    if (body.roundToNearest != null && body.roundToNearest !== '') {
+      patch.roundToNearest = Math.max(0, Number(body.roundToNearest) || 0)
+    }
+    if (body.roundingRule === 'nearest' || body.roundingRule === 'up' || body.roundingRule === 'down') {
+      patch.roundingRule = body.roundingRule
     }
 
     const existing = await prisma.systemSettings.findUnique({ where: { tenantId: ctx.tenantId } })

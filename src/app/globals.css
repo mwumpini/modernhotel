@@ -9,17 +9,17 @@
 :root {
   color-scheme: light;
 
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #eef1f4;
+  --foreground: #1c1917;
   --card-background: #ffffff;
   --card-border: #e5e7eb;
-  --text-primary: #171717;
-  --text-secondary: #6b7280;
-  --text-muted: #9ca3af;
-  --surface: #f9fafb;
+  --text-primary: #1c1917;
+  --text-secondary: #57534e;
+  --text-muted: #78716c;
+  --surface: #eef1f4;
   --surface-elevated: #ffffff;
   --input-background: #ffffff;
-  --input-border: #d1d5db;
+  --input-border: #d6d3d1;
 
   /* Ghana-inspired color palette */
   --ghana-gold: #FCD116;
@@ -40,19 +40,19 @@
 .dark {
   color-scheme: dark;
 
-  --background: #0a0a0a;
-  --foreground: #ededed;
-  --card-background: #1a1a1a;
-  --card-border: #374151;
-  --text-primary: #ededed;
-  --text-secondary: #9ca3af;
-  --text-muted: #6b7280;
-  --surface: #111111;
-  --surface-elevated: #1a1a1a;
-  --input-background: #262626;
-  --input-border: #4b5563;
-  --accent: #FCD116;
-  --accent-foreground: #000000;
+  --background: #12151c;
+  --foreground: #f4f6f8;
+  --card-background: #262d3a;
+  --card-border: #3c4658;
+  --text-primary: #f7f8fa;
+  --text-secondary: #d5dde6;
+  --text-muted: #b7c2ce;
+  --surface: #1a1f29;
+  --surface-elevated: #262d3a;
+  --input-background: #313a4a;
+  --input-border: #4a5568;
+  --accent: #3dbe86;
+  --accent-foreground: #06281a;
 }
 
 [data-theme="auto"] {
@@ -63,19 +63,19 @@
   [data-theme="auto"] {
     color-scheme: dark;
 
-    --background: #0a0a0a;
-    --foreground: #ededed;
-    --card-background: #1a1a1a;
-    --card-border: #374151;
-    --text-primary: #ededed;
-    --text-secondary: #9ca3af;
-    --text-muted: #6b7280;
-    --surface: #111111;
-    --surface-elevated: #1a1a1a;
-    --input-background: #262626;
-    --input-border: #4b5563;
-    --accent: #FCD116;
-    --accent-foreground: #000000;
+    --background: #12151c;
+    --foreground: #f4f6f8;
+    --card-background: #262d3a;
+    --card-border: #3c4658;
+    --text-primary: #f7f8fa;
+    --text-secondary: #d5dde6;
+    --text-muted: #b7c2ce;
+    --surface: #1a1f29;
+    --surface-elevated: #262d3a;
+    --input-background: #313a4a;
+    --input-border: #4a5568;
+    --accent: #3dbe86;
+    --accent-foreground: #06281a;
   }
 }
 
@@ -91,17 +91,60 @@
   --font-mono: var(--font-geist-mono);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 12px;
+html {
+  font-size: 15px;
   transition: background-color 0.3s ease, color 0.3s ease;
 }
 
-html {
+html[data-font-size="small"] {
+  font-size: 13px;
+}
+
+html[data-font-size="large"] {
+  font-size: 17px;
+}
+
+html[data-font-size="xlarge"] {
+  font-size: 19px;
+}
+
+/* Screen titles were a mix of text-2xl and text-3xl, so some pages looked
+   much larger than others. One size, the same as the panel headings. */
+.flex-1 h1.text-2xl,
+.flex-1 h1.text-3xl,
+.flex-1 h1.sm\:text-3xl,
+.flex-1 h2.text-2xl,
+.flex-1 h2.sm\:text-2xl {
+  font-size: 1.25rem;
+  line-height: 1.35;
+  font-weight: 600;
+}
+
+body {
+  background: var(--page-background, var(--background));
+  color: var(--foreground);
+  font-family: var(--font-source), "Source Sans 3", sans-serif;
   transition: background-color 0.3s ease, color 0.3s ease;
-  font-size: 12px;
+}
+
+html[data-font="nunito"] body {
+  font-family: var(--font-nunito), "Nunito Sans", sans-serif;
+}
+
+html[data-font="geist"] body {
+  font-family: var(--font-geist-sans), sans-serif;
+}
+
+html[data-font="serif"] body {
+  font-family: var(--font-literata), Literata, Georgia, serif;
+}
+
+/* The main pane only. Sidebar rows stay on the theme surface. */
+.flex-1.bg-gray-50,
+.dark .flex-1.bg-gray-50,
+[data-theme="dark"] .flex-1.bg-gray-50 {
+  background-color: var(--page-background, var(--surface));
+  color: var(--foreground);
 }
 
 /* HeroUI cards and shared surfaces */
@@ -155,13 +198,102 @@ html {
   color: var(--text-primary);
 }
 
+/* Slate text is written for a white page. On a dark page those shades
+   (especially 900/800) turn into near-black letters. */
+.dark .text-slate-950,
+.dark .text-slate-900,
+.dark .text-slate-800,
+.dark .text-slate-700,
+[data-theme="dark"] .text-slate-950,
+[data-theme="dark"] .text-slate-900,
+[data-theme="dark"] .text-slate-800,
+[data-theme="dark"] .text-slate-700 {
+  color: var(--text-primary);
+}
+
+.dark .text-slate-600,
+.dark .text-slate-500,
+.dark .text-slate-400,
+[data-theme="dark"] .text-slate-600,
+[data-theme="dark"] .text-slate-500,
+[data-theme="dark"] .text-slate-400 {
+  color: var(--text-secondary);
+}
+
+.dark .border-slate-100,
+.dark .border-slate-200,
+.dark .border-slate-300,
+[data-theme="dark"] .border-slate-100,
+[data-theme="dark"] .border-slate-200,
+[data-theme="dark"] .border-slate-300 {
+  border-color: var(--card-border);
+}
+
+/* Opacity utilities such as bg-slate-50/70 do not match bg-slate-50, so report
+   pages stayed light while their cards went dark and the title washed out. */
+.dark [class~="bg-slate-50/70"],
+.dark [class~="bg-slate-50/80"],
+.dark [class~="bg-slate-50/60"],
+.dark [class~="bg-slate-50/50"],
+.dark [class~="bg-slate-50/40"],
+.dark [class~="bg-slate-100/90"],
+.dark [class~="bg-gray-50/80"],
+.dark [class~="bg-gray-50/70"],
+.dark [class~="bg-gray-50/60"],
+[data-theme="dark"] [class~="bg-slate-50/70"],
+[data-theme="dark"] [class~="bg-slate-50/80"],
+[data-theme="dark"] [class~="bg-slate-50/60"],
+[data-theme="dark"] [class~="bg-slate-50/50"],
+[data-theme="dark"] [class~="bg-slate-50/40"],
+[data-theme="dark"] [class~="bg-slate-100/90"],
+[data-theme="dark"] [class~="bg-gray-50/80"],
+[data-theme="dark"] [class~="bg-gray-50/70"],
+[data-theme="dark"] [class~="bg-gray-50/60"] {
+  background-color: var(--surface);
+}
+
 .dark .bg-white,
+[data-theme="dark"] .bg-white {
+  background-color: var(--surface-elevated);
+}
+
 .dark .bg-gray-50,
 .dark .bg-gray-100,
-[data-theme="dark"] .bg-white,
+.dark .bg-slate-50,
+.dark .bg-slate-100,
 [data-theme="dark"] .bg-gray-50,
-[data-theme="dark"] .bg-gray-100 {
-  background-color: var(--surface-elevated);
+[data-theme="dark"] .bg-gray-100,
+[data-theme="dark"] .bg-slate-50,
+[data-theme="dark"] .bg-slate-100 {
+  background-color: var(--surface);
+  color: var(--text-primary);
+}
+
+.dark nav.bg-white,
+[data-theme="dark"] nav.bg-white {
+  background-color: #12151c;
+}
+
+.dark nav .bg-gray-50,
+[data-theme="dark"] nav .bg-gray-50 {
+  background-color: #1c2330;
+}
+
+/* Sidebar hovers were a light gray card plus a gold strip, so the open
+   section and the item under the pointer turned pale on the dark nav. */
+.dark nav .hover\:bg-gray-100:hover,
+[data-theme="dark"] nav .hover\:bg-gray-100:hover {
+  background-color: #1c2330;
+}
+
+.dark nav .hover\:bg-ghana-gold\/20:hover,
+[data-theme="dark"] nav .hover\:bg-ghana-gold\/20:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+}
+
+.dark .hover\:text-ghana-green:hover,
+[data-theme="dark"] .hover\:text-ghana-green:hover {
+  color: #7dcea0;
 }
 
 .dark .bg-gradient-to-br.from-gray-50,
@@ -191,22 +323,95 @@ html {
   color: var(--text-primary);
 }
 
+.dark .hover\:bg-gray-50:hover,
 .dark .hover\:bg-gray-100:hover,
-[data-theme="dark"] .hover\:bg-gray-100:hover {
-  background-color: color-mix(in srgb, var(--surface-elevated) 80%, white 20%);
+.dark .hover\:bg-slate-50:hover,
+.dark .hover\:bg-white:hover,
+[data-theme="dark"] .hover\:bg-gray-50:hover,
+[data-theme="dark"] .hover\:bg-gray-100:hover,
+[data-theme="dark"] .hover\:bg-slate-50:hover,
+[data-theme="dark"] .hover\:bg-white:hover {
+  background-color: color-mix(in srgb, var(--surface-elevated) 72%, white 28%);
 }
 
 .dark .bg-blue-50,
 .dark .bg-green-50,
 .dark .bg-yellow-50,
 .dark .bg-red-50,
-.dark .bg-gray-50,
 [data-theme="dark"] .bg-blue-50,
 [data-theme="dark"] .bg-green-50,
 [data-theme="dark"] .bg-yellow-50,
-[data-theme="dark"] .bg-red-50,
-[data-theme="dark"] .bg-gray-50 {
+[data-theme="dark"] .bg-red-50 {
   background-color: color-mix(in srgb, var(--surface-elevated) 85%, currentColor 15%);
+}
+
+/* Status tiles use bg-*-100, which stayed pale while the labels were lightened
+   for dark mode. Keep a dark tint of the same hue so the words stay readable. */
+.dark .bg-green-100,
+[data-theme="dark"] .bg-green-100 {
+  background-color: #1a3326;
+}
+.dark .bg-yellow-100,
+[data-theme="dark"] .bg-yellow-100 {
+  background-color: #3a3216;
+}
+.dark .bg-blue-100,
+[data-theme="dark"] .bg-blue-100 {
+  background-color: #1a2a3d;
+}
+.dark .bg-purple-100,
+[data-theme="dark"] .bg-purple-100 {
+  background-color: #2c2236;
+}
+.dark .bg-red-100,
+[data-theme="dark"] .bg-red-100 {
+  background-color: #3a1e1e;
+}
+.dark .bg-orange-100,
+[data-theme="dark"] .bg-orange-100 {
+  background-color: #3a2a16;
+}
+
+.dark .border-green-300,
+[data-theme="dark"] .border-green-300 {
+  border-color: #2f6a48;
+}
+.dark .border-yellow-300,
+[data-theme="dark"] .border-yellow-300 {
+  border-color: #6b5a22;
+}
+.dark .border-blue-300,
+[data-theme="dark"] .border-blue-300 {
+  border-color: #2d4d73;
+}
+.dark .border-purple-300,
+[data-theme="dark"] .border-purple-300 {
+  border-color: #5a4570;
+}
+.dark .border-red-300,
+[data-theme="dark"] .border-red-300 {
+  border-color: #7a3a3a;
+}
+.dark .border-orange-300,
+[data-theme="dark"] .border-orange-300 {
+  border-color: #7a5522;
+}
+
+/* Brand green is #006B3F, which disappears on the dark page. Back links and
+   other green labels use a lighter green, and the flat chip stays visible. */
+.dark .text-ghana-green,
+[data-theme="dark"] .text-ghana-green {
+  color: #7dcea0;
+}
+
+.dark button.text-ghana-green,
+[data-theme="dark"] button.text-ghana-green {
+  background-color: color-mix(in srgb, #3dbe86 18%, transparent);
+}
+
+.dark [role="tab"][aria-selected="false"] [data-slot="tabContent"],
+[data-theme="dark"] [role="tab"][aria-selected="false"] [data-slot="tabContent"] {
+  color: var(--text-secondary);
 }
 
 .dark .border-blue-200,
@@ -229,15 +434,19 @@ html {
    the darkened background while keeping the color's meaning (info/success/
    warning/danger) intact, rather than flattening everything to plain gray. */
 .dark .text-blue-700,
+.dark .text-blue-800,
 .dark .text-blue-900,
 [data-theme="dark"] .text-blue-700,
+[data-theme="dark"] .text-blue-800,
 [data-theme="dark"] .text-blue-900 {
   color: #93c5fd;
 }
 
 .dark .text-green-700,
+.dark .text-green-800,
 .dark .text-green-900,
 [data-theme="dark"] .text-green-700,
+[data-theme="dark"] .text-green-800,
 [data-theme="dark"] .text-green-900 {
   color: #86efac;
 }
@@ -281,6 +490,25 @@ html {
   [data-theme="auto"] .text-gray-800,
   [data-theme="auto"] .text-ghana-black {
     color: var(--text-primary);
+  }
+
+  [data-theme="auto"] .text-slate-950,
+  [data-theme="auto"] .text-slate-900,
+  [data-theme="auto"] .text-slate-800,
+  [data-theme="auto"] .text-slate-700 {
+    color: var(--text-primary);
+  }
+
+  [data-theme="auto"] .text-slate-600,
+  [data-theme="auto"] .text-slate-500,
+  [data-theme="auto"] .text-slate-400 {
+    color: var(--text-secondary);
+  }
+
+  [data-theme="auto"] .border-slate-100,
+  [data-theme="auto"] .border-slate-200,
+  [data-theme="auto"] .border-slate-300 {
+    border-color: var(--card-border);
   }
 
   [data-theme="auto"] .bg-white,
@@ -343,4 +571,13 @@ html {
   #report-print-area th {
     white-space: normal !important;
   }
+}
+
+/* Kitchen display — gentler than Tailwind's pulse (which drops to 50% every 2s). */
+@keyframes kds-blink-slow {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.78; }
+}
+.kds-blink-slow {
+  animation: kds-blink-slow 3.4s ease-in-out infinite;
 }

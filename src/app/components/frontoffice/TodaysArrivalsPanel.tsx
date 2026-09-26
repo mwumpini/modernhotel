@@ -16,6 +16,7 @@ type Props = {
 export default function TodaysArrivalsPanel({ onCheckIn, onNoShow, compact }: Props) {
   const [tick, setTick] = React.useState(0);
   const noShowEnabled = useSettingsStore((s) => !!s.roomManagement.noShowPolicyEnabled);
+  const noShowCutoffHour = useSettingsStore((s) => s.roomManagement.noShowCutoffHour ?? 23);
 
   // Starts null (matching SSR) and is only ever set from an effect, so this
   // component's first render can't diverge from the server-rendered HTML —
@@ -91,8 +92,8 @@ export default function TodaysArrivalsPanel({ onCheckIn, onNoShow, compact }: Pr
                         color="danger"
                         variant="flat"
                         onPress={() => onNoShow(r)}
-                        isDisabled={!noShowEnabled}
-                        title={noShowEnabled ? 'Mark as no-show' : 'Enable no-show policy in Settings'}
+                        isDisabled={!noShowEnabled || !canMarkNoShow(r, businessDate, { cutoffHour: noShowCutoffHour })}
+                        title={!noShowEnabled ? 'Enable no-show policy in Operational Policies' : !canMarkNoShow(r, businessDate, { cutoffHour: noShowCutoffHour }) ? `No-show opens at ${String(noShowCutoffHour).padStart(2, '0')}:00` : 'Mark as no-show'}
                       >
                         No-show
                       </Button>

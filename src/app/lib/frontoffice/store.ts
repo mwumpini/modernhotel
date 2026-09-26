@@ -17,13 +17,12 @@ import { trackEvent } from '../analytics/trackEvent';
 import { logAudit } from '../analytics/auditLogStore';
 import * as folioHelpers from './helpers/folio';
 import { housekeepingStore } from '../housekeeping/store';
-import { useSettingsStore } from '../settings/store';
+import { autoAssignRoomsEnabled, useSettingsStore } from '../settings/store';
 import * as apiHelpers from './helpers/api';
 import * as seedHelpers from './helpers/seed';
 import * as invoiceHelpers from './helpers/invoice';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import {
-  folioAmountFromGrossDerived,
   isValidRateBreakdown,
   quoteFromBreakdown,
   resolveNightlyGross,
@@ -32,11 +31,20 @@ import {
 } from './helpers/rates';
 import { isCorporateGuest } from './helpers/guests';
 import { postFirstNightAtCheckIn } from './roomCharges';
+import { nextCalendarDate, previousCalendarDate, roundCents } from './folioLedger';
+import { isLateCheckoutNow } from './lateCheckout';
+import { depositBlocksConfirm, planEarlyCheckout, requiredDeposit } from './operationalPolicies';
 import { type NightAuditResult } from './nightAudit';
 import { postNoShowPenaltyToLedger } from '../accounting/simpleFlow';
 import { DEMO_BILLING_PERSONS, isDemoFixturesEnabled } from '../demo';
 import { notifyError } from '../notifications/notify';
 import { genId } from './helpers/ids';
+
+function localStayDate(now = new Date()) {
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
 
 class FrontOfficeStore {
   reservations: Reservation[] = [];
@@ -57,6 +65,8 @@ class FrontOfficeStore {
   // this was confirmed as the root cause of hundreds of duplicate GuestFolio
   // rows per reservation in production data.
   private hydrationComplete: boolean = false;
+  /** True only after day-ledger has supplied the stored business date. */
+  private businessDateSynced = false;
   private hydratedNightAuditState: boolean = false;
   private lastRefreshFromApiAt: number = 0;
   // Serializes API writes so a reservation's POST always lands before its PATCH.
@@ -398,6 +408,7 @@ class FrontOfficeStore {
             byId.set(f.id, serverCount >= localCount ? f : (local as Folio));
           });
           this.folios = Array.from(byId.values());
+          try { useSettingsStore.getState().reconcileNumberFloor('folio', this.folios.map((f) => f.id)); } catch {}
           this.notify();
         }
       }
@@ -406,7 +417,11 @@ class FrontOfficeStore {
       const res = await fetch('/api/frontoffice/day-ledger', { headers: { 'x-tenant-subdomain': t } });
       if (res.ok) {
         const data = await res.json();
-        if (typeof data.currentBusinessDate === 'string') this.businessDate = data.currentBusinessDate;
+        if (typeof data.currentBusinessDate === 'string') {
+          this.businessDate = data.currentBusinessDate;
+          this.businessDateSynced = true;
+          this.persistNightAuditState();
+        }
       }
     } catch (e) { console.warn('FO: business date sync failed', e); }
     // Reached only once the reservations/guests/folios fetches above have all
@@ -540,7 +555,10 @@ class FrontOfficeStore {
 
   createGuest(g: Omit<GuestProfile,'id'|'serialNumber'>) {
     const settings = useSettingsStore.getState();
-    const serialNumber = settings.getNextClientNumber();
+    const serialNumber = settings.getNextModuleNumber(
+      'frontOffice',
+      isCorporateGuest(g) ? 'corporateGuest' : 'personalGuest',
+    );
     const guest: GuestProfile = { 
       ...g, 
       id: genId('G'),
@@ -591,6 +609,11 @@ class FrontOfficeStore {
     return this.businessDate;
   }
 
+  /** The automatic close must not use the clock date before the server date has loaded. */
+  hasServerBusinessDate(): boolean {
+    return this.businessDateSynced;
+  }
+
   // Deferred to after mount (see subscribe()), not read synchronously in the
   // constructor — the constructor also runs during SSR, and a stored
   // businessDate that has drifted from the server's default "today" would
@@ -619,7 +642,7 @@ class FrontOfficeStore {
       const raw = localStorage.getItem('fo.nightAudit');
       if (!raw) return;
       const parsed = JSON.parse(raw);
-      if (parsed.businessDate) this.businessDate = parsed.businessDate;
+      if (parsed.businessDate && !this.businessDateSynced) this.businessDate = parsed.businessDate;
       if (Array.isArray(parsed.nightAuditHistory)) this.nightAuditHistory = parsed.nightAuditHistory;
       if (parsed.lastNightAuditAt) this.lastNightAuditAt = parsed.lastNightAuditAt;
       if (Array.isArray(parsed.wakeUpCalls)) this.wakeUpCalls = parsed.wakeUpCalls;
@@ -709,6 +732,7 @@ class FrontOfficeStore {
         folioPaymentsTotal: r.folioPaymentsTotal || 0,
         status: r.status === 'failed' ? 'failed' : 'completed',
         error: Array.isArray(r.errors) && r.errors.length ? r.errors.join('; ') : undefined,
+        daysClosed: Array.isArray(r.daysClosed) ? r.daysClosed : undefined,
       };
       if (r.nextBusinessDate) this.businessDate = r.nextBusinessDate;
       this.lastNightAuditAt = run.completedAt;
@@ -827,6 +851,11 @@ class FrontOfficeStore {
       children: r.children || 0
     };
     this.ensureReservationRates(reservation);
+    const quotedStay = this.getReservationQuote(reservation).grandTotal;
+    const depositPaid = reservation.deposit?.amount || 0;
+    if (depositBlocksConfirm(depositPaid, requiredDeposit(quotedStay, settings.roomManagement), settings.roomManagement)) {
+      reservation.status = 'pending';
+    }
 
     this.reservations.unshift(reservation); 
     this.notify(); 
@@ -865,26 +894,68 @@ class FrontOfficeStore {
         if (diffHrs < (policy.freeCancellationHours ?? 0)) {
           // Late cancellation → post penalty according to fee type
           const folio = this.getOrCreateFolio(id);
-          const nightlyGross = (res.rateBreakdown && res.rateBreakdown[0]?.total) ? res.rateBreakdown[0].total : 0;
+          const breakdown = res.rateBreakdown || [];
+          const nightlyNet = breakdown[0]?.base ?? 0;
+          const nightlyGross = breakdown[0]?.total ?? nightlyNet;
+          const stayNet = breakdown.reduce((s, d) => s + (d.base || 0), 0);
+          const stayGross = breakdown.reduce((s, d) => s + (d.total || 0), 0);
           let penalty = 0;
+          let quotedTax: number | undefined;
           switch (policy.lateCancellationFeeType) {
-            case 'first_night': penalty = folioAmountFromGrossDerived(nightlyGross); break;
+            case 'first_night':
+              penalty = nightlyNet;
+              quotedTax = res.taxExempt ? 0 : roundCents(Math.max(0, nightlyGross - nightlyNet));
+              break;
             case 'percent_reservation': {
-              const remainingGross = (res.rateBreakdown || []).reduce((s, d) => s + (d.total || 0), 0);
-              penalty = folioAmountFromGrossDerived(Math.max(0, (policy.lateCancellationFeeValue || 0) / 100 * remainingGross));
+              const penaltyGross = Math.max(0, ((policy.lateCancellationFeeValue || 0) / 100) * stayGross);
+              const ratio = stayGross > 0 ? penaltyGross / stayGross : 0;
+              penalty = roundCents(stayNet * ratio);
+              quotedTax = res.taxExempt ? 0 : roundCents(Math.max(0, penaltyGross - penalty));
               break;
             }
             case 'flat': penalty = Math.max(0, policy.lateCancellationFeeValue || 0); break;
             default: penalty = 0;
           }
           if (penalty > 0) {
-            this.addFolioCharge(folio.id, { id: genId('C'), description: 'Cancellation Penalty', amount: penalty });
+            this.addFolioCharge(folio.id, {
+              id: genId('C'),
+              description: 'Cancellation Penalty',
+              amount: penalty,
+              ...(quotedTax != null ? { tax: quotedTax } : {}),
+              category: 'room',
+            });
           }
         }
       }
     } catch {}
   }
-  assignRoom(id: string, roomId: string) { this.reservations = this.reservations.map(r => r.id === id ? { ...r, roomId } : r); this.notify(); this.persistReservationPatch(id, { roomId }); }
+  assignRoom(id: string, roomId: string, options?: { keepRate?: boolean }) {
+    const stay = this.reservations.find((r) => r.id === id);
+    const previous = stay?.roomId && stay.roomId !== 'TBD' ? stay.roomId : '';
+    const moving = !!previous && previous !== roomId && !!roomId && roomId !== 'TBD';
+    const keepRate = options?.keepRate !== false;
+    const today = localStayDate();
+    const nextTypeId = this.rooms.find((room) => room.id === roomId)?.roomTypeId;
+    this.reservations = this.reservations.map((r) => {
+      if (r.id !== id) return r;
+      if (!moving) return { ...r, roomId };
+      const repriced = !keepRate && nextTypeId
+        ? new Map(this.calculateRateBreakdown(nextTypeId, r.arrival, r.departure, undefined, undefined, r.taxExempt).map((night) => [night.date.slice(0, 10), night]))
+        : null;
+      const rateBreakdown = (r.rateBreakdown || []).map((night) => {
+        const date = night.date.slice(0, 10);
+        if (date < today) return { ...night, roomId: night.roomId || previous };
+        const next = repriced?.get(date);
+        return next ? { ...night, roomId, base: next.base, total: next.total } : { ...night, roomId };
+      });
+      return { ...r, roomId, roomTypeId: nextTypeId || r.roomTypeId, rateBreakdown };
+    });
+    this.notify();
+    const next = this.reservations.find((r) => r.id === id);
+    this.persistReservationPatch(id, moving
+      ? { roomId, roomTypeId: next?.roomTypeId, rateBreakdown: next?.rateBreakdown }
+      : { roomId });
+  }
 
   // Date-range availability against the hydrated in-memory reservations. Mirrors
   // the server-authoritative check so the UI never assigns a room that already
@@ -945,8 +1016,7 @@ class FrontOfficeStore {
 
     // Auto-assign a room if none is assigned yet so Check-Ins view reflects immediately
     let assignedRoomId = (res?.roomId && res.roomId !== 'TBD') ? res.roomId : undefined;
-    const settings = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
-    const shouldAutoAssign = settings?.roomSettings?.autoAssignRooms !== false;
+    const shouldAutoAssign = autoAssignRoomsEnabled();
     try {
       if (!assignedRoomId && res && shouldAutoAssign) {
         assignedRoomId = this.pickOptimalRoomNumber(res);
@@ -1001,27 +1071,25 @@ class FrontOfficeStore {
   private applyEarlyCheckoutAdjustments(reservationId: string) {
     const res = this.reservations.find(r => r.id === reservationId);
     const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
-    const policyEnabled = !!settingsState?.roomManagement?.earlyCheckoutPolicyEnabled;
-    if (!policyEnabled || !res) return;
+    const policy = settingsState?.roomManagement;
+    if (!policy?.earlyCheckoutPolicyEnabled || !res) return;
 
     const folio = this.getOrCreateFolio(reservationId);
-    const todayISO = new Date().toISOString().slice(0, 10);
-    const kept: any[] = [];
-    const removed: any[] = [];
-    for (const ch of folio.charges) {
-      const isRoom = (ch.description || '').toLowerCase().includes('room');
-      const dateOnly = (ch.date || '').slice(0, 10);
-      if (isRoom && dateOnly && dateOnly > todayISO) {
-        removed.push(ch);
-        continue;
-      }
-      kept.push(ch);
-    }
-    if (removed.length > 0) {
-      folio.charges = kept;
+    const plan = planEarlyCheckout(folio.charges || [], policy);
+    if (plan.remove.length > 0) {
+      folio.charges = plan.keep;
       this.updateFolioBalances(folio);
-      try { trackEvent('FO.Folio.RoomChargesRemovedEarlyCheckout' as any, { reservationId, removed: removed.length }); } catch {}
-      try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: reservationId, details: `Removed ${removed.length} future room charge(s) due to early checkout`, severity: 'medium' }); } catch {}
+      try { trackEvent('FO.Folio.RoomChargesRemovedEarlyCheckout' as any, { reservationId, removed: plan.remove.length }); } catch {}
+      const note = policy.earlyCheckoutNote ? ` ${policy.earlyCheckoutNote}` : '';
+      try { logAudit({ area: 'frontdesk', action: 'update', entity: 'Folio', entityId: reservationId, details: `Removed ${plan.remove.length} unused room charge(s) due to early checkout.${note}`, severity: 'medium' }); } catch {}
+    }
+    if (plan.penalty > 0) {
+      this.addFolioCharge(folio.id, {
+        id: genId('C'),
+        description: 'Early Checkout Penalty',
+        amount: plan.penalty,
+        category: 'room',
+      });
     }
   }
 
@@ -1144,9 +1212,13 @@ class FrontOfficeStore {
   // Allocate a single corporate/company receipt across multiple reservations' folios
   postCorporateReceipt(payer: string, reservationIds: string[], totalAmount: number, reference?: string, processedBy?: string) { return folioHelpers.postCorporateReceipt(this as any, payer, reservationIds, totalAmount, reference, processedBy); }
 
+  postCompanyReceipt(payer: string, allocations: Array<{ reservationId: string; amount: number }>, reference: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', processedBy?: string) {
+    return folioHelpers.postCompanyReceipt(this as any, payer, allocations, reference, method, processedBy);
+  }
+
   private getTaxRates() { return folioHelpers.getTaxRates(this as any); }
 
-  addCharge(reservationId: string, description: string, amount: number, forceExempt?: boolean) { folioHelpers.addCharge(this as any, reservationId, description, amount, forceExempt); }
+  addCharge(reservationId: string, description: string, amount: number, forceExempt?: boolean, taxCategory?: string) { folioHelpers.addCharge(this as any, reservationId, description, amount, forceExempt, taxCategory); }
 
   addPayment(reservationId: string, method: 'Cash'|'Card'|'Mobile Money'|'Credit'|'Corporate Account'|'Bank Transfer'|'Check', amount: number, options?: { invoiceId?: string; creditApplied?: number; notes?: string; processedBy?: string; ref?: string; }) {
     return folioHelpers.addPayment(this as any, reservationId, method, amount, options);
@@ -1216,8 +1288,6 @@ class FrontOfficeStore {
       processedBy: processedBy || 'Front Desk'
     });
 
-    guest.creditBalance = Math.max(0, (guest.creditBalance || 0) - amount);
-    guest.lastCreditUpdate = new Date().toISOString();
     try { this.persistGuests?.(); } catch {}
     
     return true;
@@ -1234,6 +1304,16 @@ class FrontOfficeStore {
     if (!res) return;
     res.deposit = { amount, method, date: new Date().toISOString() };
     res.isGuaranteed = amount > 0;
+    const rm = useSettingsStore.getState().roomManagement;
+    const stayTotal = this.getReservationQuote(res).grandTotal;
+    if (
+      res.status === 'pending' &&
+      rm?.depositPolicyEnabled &&
+      rm.requireDepositToConfirm &&
+      !depositBlocksConfirm(amount, requiredDeposit(stayTotal, rm), rm)
+    ) {
+      res.status = 'confirmed';
+    }
     this.addPayment(reservationId, method, amount);
     this.updateReservation(res);
   }
@@ -1286,8 +1366,6 @@ class FrontOfficeStore {
 
   // Weekday/weekend rate calculator with per-night seasonal rate-plan overrides.
   calculateRateBreakdown(roomTypeId: string, arrival: string, departure: string, base?: number, priceType?: string, taxExempt?: boolean) {
-    const start = new Date(arrival);
-    const end = new Date(departure);
     const nightly: { date: string; base: number; total: number }[] = [];
     const settings = useSettingsStore.getState();
     const cfgRoomTypes = settings.roomManagement.roomTypes || [];
@@ -1322,8 +1400,10 @@ class FrontOfficeStore {
       return season ? season.multiplier : 1;
     };
 
-    for (const d = new Date(start); d < end; d.setDate(d.getDate() + 1)) {
-      const dateStr = d.toISOString().slice(0, 10);
+    const startDate = String(arrival || '').slice(0, 10);
+    const endDate = String(departure || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return nightly;
+    for (let dateStr = startDate; dateStr < endDate && nightly.length < 3660; dateStr = nextCalendarDate(dateStr)) {
       const seasonMult = seasonalMultiplierFor(dateStr);
       const rawBase = hasExplicitBase
         ? (base as number)
@@ -1571,22 +1651,29 @@ class FrontOfficeStore {
       try {
         const settingsState = (() => { try { return useSettingsStore.getState(); } catch { return undefined as any; } })();
         const rm = settingsState?.roomManagement;
-        if (rm?.lateCheckoutFeeEnabled) {
-          const outHour = new Date().getHours();
-          const stdHour = Number(rm.standardCheckOutHour ?? 11);
-          const grace = Number(rm.lateCheckoutGraceMinutes ?? 0);
-          const crossed = outHour > stdHour || (outHour === stdHour && new Date().getMinutes() > grace);
-          if (crossed) {
+        if (isLateCheckoutNow(rm) && !reservation.waiveLateCheckoutFee) {
             const folio = this.getOrCreateFolio(reservationId);
-            const nightlyGross = (reservation.rateBreakdown && reservation.rateBreakdown[0]?.total) ? reservation.rateBreakdown[0].total : 0;
+            const night = reservation.rateBreakdown?.[0];
+            const nightlyNet = night?.base ?? 0;
+            const nightlyGross = night?.total ?? nightlyNet;
             let fee = 0;
+            let quotedTax: number | undefined;
             if ((rm.lateCheckoutFeeType || 'flat') === 'percent_of_nightly') {
-              fee = folioAmountFromGrossDerived(Math.max(0, (rm.lateCheckoutFeeValue || 0) / 100 * nightlyGross));
+              const penaltyGross = Math.max(0, ((rm.lateCheckoutFeeValue || 0) / 100) * nightlyGross);
+              const ratio = nightlyGross > 0 ? penaltyGross / nightlyGross : 0;
+              fee = roundCents(nightlyNet * ratio);
+              quotedTax = reservation.taxExempt ? 0 : roundCents(Math.max(0, penaltyGross - fee));
             } else {
               fee = Math.max(0, rm.lateCheckoutFeeValue || 0);
             }
-            if (fee > 0) this.addFolioCharge(folio.id, { id: genId('C'), description: 'Late Checkout Fee', amount: fee });
-          }
+            if (fee > 0) {
+              this.addFolioCharge(folio.id, {
+                id: genId('C'),
+                description: 'Late Checkout Fee',
+                amount: fee,
+                ...(quotedTax != null ? { tax: quotedTax } : {}),
+              });
+            }
         }
       } catch {}
 
@@ -1594,6 +1681,40 @@ class FrontOfficeStore {
       return reservation;
     }
     return null;
+  }
+
+  // Per-guest waiver. Front office checkout still runs; the late fee is skipped.
+  setLateCheckoutWaiver(reservationId: string, waive: boolean) {
+    if (!useSettingsStore.getState().hasPermission('frontdesk.waive-late-checkout')) return false;
+    const reservation = this.reservations.find(r => r.id === reservationId);
+    if (!reservation || reservation.status !== 'checked-in') return false;
+    reservation.waiveLateCheckoutFee = waive;
+    reservation.updatedAt = new Date().toISOString();
+    this.notify();
+    this.persistReservationPatch(reservationId, { waiveLateCheckoutFee: waive });
+    return true;
+  }
+
+  // Marks a company-billed stay as still with the guest, or presented for the company to pay.
+  // The balance stays on this stay. It is not copied onto another guest.
+  setCompanyBillStatus(reservationId: string, status: 'waiting_on_guest' | 'with_company') {
+    const reservation = this.reservations.find(r => r.id === reservationId);
+    if (!reservation) return false;
+    reservation.companyBillStatus = status;
+    reservation.updatedAt = new Date().toISOString();
+    this.notify();
+    this.persistReservationPatch(reservationId, { companyBillStatus: status });
+    try {
+      logAudit({
+        area: 'frontdesk',
+        action: 'update',
+        entity: 'Reservation',
+        entityId: reservationId,
+        details: status === 'with_company' ? 'Bill presented to the company' : 'Bill is still with the guest',
+        severity: 'low',
+      });
+    } catch {}
+    return true;
   }
 
   // Mark No-Show per policy — folio penalty, direct GL, close folio (not checkout).
@@ -1617,13 +1738,22 @@ class FrontOfficeStore {
       const breakdown = res.rateBreakdown?.length
         ? res.rateBreakdown
         : this.calculateRateBreakdown(res.roomTypeId, res.arrival, res.departure, undefined, undefined, res.taxExempt);
-      const nightlyGross = breakdown[0]?.total ?? 0;
+      const nightlyNet = breakdown[0]?.base ?? 0;
+      const nightlyGross = breakdown[0]?.total ?? nightlyNet;
+      const stayNet = breakdown.reduce((s, d) => s + (d.base || 0), 0);
+      const stayGross = breakdown.reduce((s, d) => s + (d.total || 0), 0);
       let charge = 0;
+      let quotedTax: number | undefined;
       switch (rm.noShowChargeType) {
-        case 'first_night': charge = folioAmountFromGrossDerived(nightlyGross, res.taxExempt); break;
+        case 'first_night':
+          charge = nightlyNet;
+          quotedTax = res.taxExempt ? 0 : roundCents(Math.max(0, nightlyGross - nightlyNet));
+          break;
         case 'percent_reservation': {
-          const totalGross = breakdown.reduce((s, d) => s + (d.total || 0), 0);
-          charge = folioAmountFromGrossDerived(Math.max(0, (rm.noShowChargeValue || 0) / 100 * totalGross), res.taxExempt);
+          const penaltyGross = Math.max(0, ((rm.noShowChargeValue || 0) / 100) * stayGross);
+          const ratio = stayGross > 0 ? penaltyGross / stayGross : 0;
+          charge = roundCents(stayNet * ratio);
+          quotedTax = res.taxExempt ? 0 : roundCents(Math.max(0, penaltyGross - charge));
           break;
         }
         case 'flat': charge = Math.max(0, rm.noShowChargeValue || 0); break;
@@ -1641,6 +1771,7 @@ class FrontOfficeStore {
         id: chargeId,
         description: 'No-Show Charge',
         amount: charge,
+        ...(quotedTax != null ? { tax: quotedTax } : {}),
         category: 'room',
         date: this.businessDate,
       });
@@ -1688,24 +1819,34 @@ class FrontOfficeStore {
   // Re-attempt GL posts for every reservation currently stuck in 'gl_pending'.
   retryAllPendingGlPosts() { return invoiceHelpers.retryAllPendingGlPosts(this as any); }
 
+  // Keep a night's room when the stay dates are rebuilt. New nights stay with the current room.
+  private withNightRooms<T extends { date: string }>(reservation: Reservation, breakdown: T[]) {
+    const previous = new Map((reservation.rateBreakdown || []).map((night) => [night.date.slice(0, 10), night.roomId]));
+    return breakdown.map((night) => {
+      const roomId = previous.get(night.date.slice(0, 10));
+      return roomId ? { ...night, roomId } : night;
+    });
+  }
+
   // Extend stay for a reservation
   extendStay(reservationId: string, additionalNights: number) {
     const reservation = this.reservations.find(r => r.id === reservationId);
     if (reservation) {
-      const currentDeparture = new Date(reservation.departure);
-      currentDeparture.setDate(currentDeparture.getDate() + additionalNights);
-      reservation.departure = currentDeparture.toISOString().split('T')[0];
+      let departure = reservation.departure.slice(0, 10);
+      const extra = Math.max(0, Math.floor(additionalNights));
+      for (let i = 0; i < extra; i++) departure = nextCalendarDate(departure);
+      reservation.departure = departure;
       reservation.updatedAt = new Date().toISOString();
-      reservation.rateBreakdown = this.calculateRateBreakdown(
+      reservation.rateBreakdown = this.withNightRooms(reservation, this.calculateRateBreakdown(
         reservation.roomTypeId,
         reservation.arrival,
         reservation.departure,
         undefined,
         undefined,
         reservation.taxExempt
-      );
+      ));
       this.notify();
-      this.persistReservationPatch(reservationId, { departure: reservation.departure });
+      this.persistReservationPatch(reservationId, { departure: reservation.departure, rateBreakdown: reservation.rateBreakdown });
 
       trackEvent('FO.Reservation.Updated', {
         reservationId: reservationId,
@@ -1718,6 +1859,37 @@ class FrontOfficeStore {
       return reservation;
     }
     return null;
+  }
+
+  // Move the departure date earlier. The caller voids room charges for nights that come off.
+  shortenStay(reservationId: string, nights: number) {
+    const reservation = this.reservations.find(r => r.id === reservationId);
+    if (!reservation) return null;
+    let departure = reservation.departure.slice(0, 10);
+    const drop = Math.max(0, Math.floor(nights));
+    if (drop === 0) return reservation;
+    for (let i = 0; i < drop; i++) departure = previousCalendarDate(departure);
+    if (departure <= reservation.arrival.slice(0, 10)) return null;
+    reservation.departure = departure;
+    reservation.updatedAt = new Date().toISOString();
+    reservation.rateBreakdown = this.withNightRooms(reservation, this.calculateRateBreakdown(
+      reservation.roomTypeId,
+      reservation.arrival,
+      reservation.departure,
+      undefined,
+      undefined,
+      reservation.taxExempt
+    ));
+    this.notify();
+    this.persistReservationPatch(reservationId, { departure: reservation.departure, rateBreakdown: reservation.rateBreakdown });
+    trackEvent('FO.Reservation.Updated', {
+      reservationId,
+      guestName: reservation.guestName,
+      action: 'shorten_stay',
+      nights: drop,
+      newDeparture: reservation.departure,
+    });
+    return reservation;
   }
 }
 

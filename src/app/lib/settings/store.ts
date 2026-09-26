@@ -2,6 +2,7 @@
 
 import { create } from 'zustand';
 import { getClientTenantSubdomain } from '../api/clientTenant';
+import { pickOperationalPolicy } from '../frontoffice/operationalPolicies';
 import type { BlockTemplate } from '../print/blocks';
 import type { PrintType } from '../print/templates';
 
@@ -43,9 +44,7 @@ function postRoomManagement(rm: RoomManagementSettings, tenant: string) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': tenant },
     body: JSON.stringify({
-      noShowPolicyEnabled: rm.noShowPolicyEnabled,
-      noShowChargeType: rm.noShowChargeType,
-      noShowChargeValue: rm.noShowChargeValue,
+      ...pickOperationalPolicy(rm as unknown as Record<string, unknown>),
       roomTypes: rm.roomTypes,
       rooms: rm.rooms,
       ratePlans: rm.ratePlans,
@@ -100,8 +99,23 @@ function syncApprovalThresholdsToApi(fs: SystemSettings['financialSettings']) {
       paymentApprovalThreshold: fs.paymentApprovalThreshold,
       requireApprovalForOvertime: fs.requireApprovalForOvertime,
       overtimeApprovalThreshold: fs.overtimeApprovalThreshold,
+      roundToNearest: fs.roundToNearest,
+      roundingRule: fs.roundingRule,
     }),
   }).catch((e) => console.warn('[Settings] Failed to sync approval thresholds:', e));
+}
+
+// Security rules are enforced on the server (password checks, two-factor, expiry).
+// localStorage alone cannot do that, so the same object is mirrored here.
+function syncSecurityToApi(security: SystemSettings['security']) {
+  if (typeof window === 'undefined') return;
+  const t = getClientTenantSubdomain();
+  if (!t) return;
+  fetch('/api/settings/security', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': t },
+    body: JSON.stringify(security),
+  }).catch((e) => console.warn('[Settings] Failed to sync security policy:', e));
 }
 
 // Shared across every loadSettings() call within one page load (it's triggered
@@ -221,7 +235,7 @@ async function createUserViaApi(input: { email: string; name: string; password: 
  * as success since there's nothing server-side to reject). Returns an error
  * message on failure (duplicate email, or the last-administrator guard), null
  * on success/no-op. */
-async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; currentPassword?: string; profile?: Partial<User['profile']>; preferences?: { theme?: string } }): Promise<string | null> {
+async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; currentPassword?: string; profile?: Partial<User['profile']>; preferences?: { theme?: string; backgroundLight?: string; backgroundDark?: string; font?: string; fontSize?: string } }): Promise<string | null> {
   const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
   if (!t) return null;
   try {
@@ -520,15 +534,23 @@ export interface ModuleNumberingSettings {
   frontOffice: {
     folio: NumberingPattern;
     housekeepingTicket: NumberingPattern;
+    serviceCharge: NumberingPattern;
+    corporateGuest: NumberingPattern;
+    personalGuest: NumberingPattern;
   };
   foodBeverage: {
     order: NumberingPattern;
     kitchenOrderTicket: NumberingPattern;
+    barOrderTicket: NumberingPattern;
   };
   inventory: {
+    stockItem: NumberingPattern;
+    purchaseOrder: NumberingPattern;
     requisition: NumberingPattern;
     stockTransfer: NumberingPattern;
+    goodsIssue: NumberingPattern;
     goodsReceipt: NumberingPattern;
+    stockCount: NumberingPattern;
   };
   accounting: {
     creditNote: NumberingPattern;
@@ -674,6 +696,14 @@ export interface User {
 
 export interface UserPreferences {
   theme: 'light' | 'dark' | 'auto';
+  /** Page color behind the cards when the light theme is on. Empty follows the default. */
+  backgroundLight?: string;
+  /** Page color behind the cards when the dark theme is on. Empty follows the default. */
+  backgroundDark?: string;
+  /** App typeface. Source Sans is the default. */
+  font?: 'source' | 'nunito' | 'geist' | 'serif';
+  /** Root text size. Medium is 15px, the same size the app uses when nothing is chosen. */
+  fontSize?: 'small' | 'medium' | 'large' | 'xlarge';
   language: string;
   timezone: string;
   dateFormat: string;
@@ -816,6 +846,8 @@ export interface SystemSettings {
   
   // System-wide Numbering grouped by modules
   moduleNumbering: ModuleNumberingSettings;
+  /** 3 once stock formats have been moved to the short PrefixNumber default. */
+  numberingDefaultsVersion: number;
   
   // Integration Settings
   integrations: {
@@ -1137,6 +1169,7 @@ export interface RoomManagementSettings {
   earlyCheckoutPenaltyPercent?: number; // applies when refundType is percent_penalty
   earlyCheckoutCutoffHour?: number; // e.g., 11 means 11:00 local time same-day rule
   earlyCheckoutAdvancedEnabled?: boolean;
+  earlyCheckoutNote?: string;
 
   // Standard times
   standardCheckInHour?: number; // 0-23
@@ -1267,6 +1300,8 @@ export interface RoomManagementSettings {
     requiresApproval: boolean;
     maxDiscountPercent: number;
     taxIncluded: boolean;
+    /** Compliance sales category passed to the tax engine. Omitted charges keep the keyword match. */
+    taxCategory?: 'FOOD' | 'EVENT' | 'HOTEL' | 'SERVICE';
             unit: 'per_item' | 'per_hour' | 'per_day' | 'per_person' | 'per_order' | 'per_session' | 'per_trip' | 'fixed';
     seasonalPricing: Array<{
       id: string;
@@ -1438,7 +1473,7 @@ interface SettingsStore extends SystemSettings {
    *  (e.g. pulled from the server on hydration) — never lowers it. These counters
    *  only ever live in this browser's localStorage, so a second browser/session/
    *  storage reset can otherwise hand out a number already used elsewhere. */
-  reconcileNumberFloor: (series: 'reservation' | 'client' | 'invoice', existingIds: (string | undefined)[]) => void;
+  reconcileNumberFloor: (series: 'reservation' | 'client' | 'invoice' | 'folio', existingIds: (string | undefined)[]) => void;
   /** Generic generator for any of the 16 moduleNumbering series (folio, KOT, requisition,
    *  work order, incident report, employee ID, etc.) — the single source every real call
    *  site should use instead of minting its own Date.now()/array-length-based id. */
@@ -1451,6 +1486,8 @@ interface SettingsStore extends SystemSettings {
     category: C,
     series: keyof ModuleNumberingSettings[C]
   ) => string;
+  /** One-time move of the old dashed defaults onto PrefixNumber (INV100001). */
+  adoptSimpleNumberDefaults: () => void;
 
   // Authorization
   /** setSessionRole syncs sessionRoleId (declared on SystemSettings) from the NextAuth session — e.g. 'admin', 'manager', 'staff', 'night_manager'. */
@@ -1610,17 +1647,69 @@ const defaultGhanaCompliance: CountryCompliance = {
 /** Shared formatter for every document-numbering series in the app — substitutes
  *  {YEAR}/{NUMBER}/{PREFIX}/{SUFFIX} tokens so editing a series' Prefix/Suffix field in
  *  Settings actually changes the numbers it produces, not just its Format field. */
-function formatDocumentNumber(
+const SIMPLE_NUMBER_FORMAT = '{PREFIX}{NUMBER}';
+const SIMPLE_NUMBER_START = 100001;
+const LEGACY_NUMBER_FORMATS = new Set([
+  '{PREFIX}-{YEAR}-{NUMBER}',
+  '{PREFIX}-{NUMBER}',
+  '{PREFIX}/{YEAR}/{NUMBER}',
+  '{YEAR}-{PREFIX}-{NUMBER}',
+  'RCP-{YEAR}-{NUMBER}',
+]);
+
+function numberWidth(format: string, padLength: number): number {
+  if (format.includes('{YY}')) return 5;
+  if (format === SIMPLE_NUMBER_FORMAT) return 6;
+  return padLength;
+}
+
+/** Pull the sequence out of an id that was issued by this series. Other ids that
+ *  merely end in digits (timestamps, A-INV-969230) do not move the counter. */
+export function sequenceOf(
+  id: string,
+  pattern: { prefix?: string; numberFormat?: string },
+): number | null {
+  const prefix = (pattern.prefix || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const format = pattern.numberFormat || SIMPLE_NUMBER_FORMAT;
+  let source: string;
+  if (format === SIMPLE_NUMBER_FORMAT) source = `^${prefix}(\\d+)$`;
+  else if (format === '{PREFIX}{YY}{NUMBER}') source = `^${prefix}\\d{2}(\\d+)$`;
+  else if (format === '{PREFIX}-{NUMBER}') source = `^${prefix}-(\\d+)$`;
+  else if (format === '{PREFIX}-{YEAR}-{NUMBER}') source = `^${prefix}-\\d{4}-(\\d+)$`;
+  else if (format === '{YEAR}-{PREFIX}-{NUMBER}') source = `^\\d{4}-${prefix}-(\\d+)$`;
+  else if (format === '{PREFIX}/{YEAR}/{NUMBER}') source = `^${prefix}/\\d{4}/(\\d+)$`;
+  else return null;
+  const match = new RegExp(source).exec(id);
+  if (!match) return null;
+  const n = parseInt(match[1], 10);
+  return Number.isNaN(n) ? null : n;
+}
+
+function highestSequence(ids: (string | undefined)[], pattern: { prefix?: string; numberFormat?: string }): number {
+  let max = 0;
+  for (const id of ids) {
+    if (!id) continue;
+    const n = sequenceOf(id, pattern);
+    if (n != null && n > max) max = n;
+  }
+  return max;
+}
+
+export function formatDocumentNumber(
   pattern: { prefix?: string; suffix?: string; nextNumber: number; numberFormat: string },
   padLength = 4
 ): string {
   const year = new Date().getFullYear();
-  const padded = pattern.nextNumber.toString().padStart(padLength, '0');
-  return (pattern.numberFormat || '{PREFIX}-{NUMBER}')
-    .replace('{YEAR}', year.toString())
-    .replace('{NUMBER}', padded)
-    .replace('{PREFIX}', pattern.prefix || '')
-    .replace('{SUFFIX}', pattern.suffix || '');
+  const format = pattern.numberFormat || SIMPLE_NUMBER_FORMAT;
+  const raw = Number(pattern.nextNumber);
+  const n = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 1;
+  const padded = n.toString().padStart(numberWidth(format, padLength), '0');
+  return format
+    .replaceAll('{YEAR}', year.toString())
+    .replaceAll('{YY}', year.toString().slice(-2))
+    .replaceAll('{NUMBER}', padded)
+    .replaceAll('{PREFIX}', pattern.prefix || '')
+    .replaceAll('{SUFFIX}', pattern.suffix || '');
 }
 
 // Default roles
@@ -1690,6 +1779,10 @@ const defaultRoles: UserRole[] = [
     updatedAt: new Date().toISOString(),
   },
 ];
+
+function simpleSeries(prefix: string): NumberingPattern {
+  return { prefix, suffix: '', nextNumber: SIMPLE_NUMBER_START, numberFormat: SIMPLE_NUMBER_FORMAT };
+}
 
 const defaultSettings: SystemSettings = {
   initialSetupCompleted: false,
@@ -1923,11 +2016,13 @@ const defaultSettings: SystemSettings = {
   },
   
   // Business Entity Settings with Defaults
+  numberingDefaultsVersion: 3,
+
   invoiceSettings: {
     prefix: 'INV',
     suffix: '',
-    nextNumber: 1001,
-    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}',
+    nextNumber: SIMPLE_NUMBER_START,
+    numberFormat: SIMPLE_NUMBER_FORMAT,
     defaultPaymentTerms: 30,
     latePaymentPenalty: 5.0,
     earlyPaymentDiscount: 2.0,
@@ -1943,8 +2038,8 @@ const defaultSettings: SystemSettings = {
   receiptSettings: {
     prefix: 'RCP',
     suffix: '',
-    nextNumber: 1,
-    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}',
+    nextNumber: SIMPLE_NUMBER_START,
+    numberFormat: SIMPLE_NUMBER_FORMAT,
     businessName: 'Demo Hotel Ltd',
     tagline: 'Excellence in Hospitality',
     showTaxBreakdown: true,
@@ -1962,8 +2057,8 @@ const defaultSettings: SystemSettings = {
   purchaseOrderSettings: {
     prefix: 'PO',
     suffix: '',
-    nextNumber: 1001,
-    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}',
+    nextNumber: SIMPLE_NUMBER_START,
+    numberFormat: SIMPLE_NUMBER_FORMAT,
     requireApproval: true,
     approvalThreshold: 10000,
     approvers: ['admin_001'],
@@ -1979,8 +2074,8 @@ const defaultSettings: SystemSettings = {
   proformaInvoiceSettings: {
     prefix: 'PRO',
     suffix: '',
-    nextNumber: 1001,
-    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}',
+    nextNumber: SIMPLE_NUMBER_START,
+    numberFormat: SIMPLE_NUMBER_FORMAT,
     validityDays: 30,
     showValidityPeriod: true,
     showTaxBreakdown: true,
@@ -2009,8 +2104,8 @@ const defaultSettings: SystemSettings = {
   clientSettings: {
     prefix: 'C',
     suffix: '',
-    nextNumber: 1,
-    numberFormat: '{PREFIX}{NUMBER}',
+    nextNumber: SIMPLE_NUMBER_START,
+    numberFormat: SIMPLE_NUMBER_FORMAT,
     defaultCategories: ['Individual', 'Business', 'VIP', 'Corporate', 'Travel Agent'],
     allowCustomCategories: true,
     allowCredit: true,
@@ -2025,8 +2120,8 @@ const defaultSettings: SystemSettings = {
   reservationSettings: {
     prefix: 'RES',
     suffix: '',
-    nextNumber: 1,
-    numberFormat: '{PREFIX}-{YEAR}-{NUMBER}'
+    nextNumber: SIMPLE_NUMBER_START,
+    numberFormat: SIMPLE_NUMBER_FORMAT,
   },
   
   documentTemplates: {
@@ -2160,37 +2255,45 @@ const defaultSettings: SystemSettings = {
   // Module-scoped numbering defaults (additional to existing invoice/receipt/reservation/client)
   moduleNumbering: {
     frontOffice: {
-      folio: { prefix: 'FOL', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-      housekeepingTicket: { prefix: 'HK', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+      folio: simpleSeries('FOL'),
+      housekeepingTicket: simpleSeries('HK'),
+      serviceCharge: simpleSeries('SC'),
+      corporateGuest: simpleSeries('C'),
+      personalGuest: simpleSeries('P'),
     },
     foodBeverage: {
-      order: { prefix: 'ORD', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
-      kitchenOrderTicket: { prefix: 'KOT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+      order: simpleSeries('ORD'),
+      kitchenOrderTicket: simpleSeries('KOT'),
+      barOrderTicket: simpleSeries('BOT'),
     },
     inventory: {
-      requisition: { prefix: 'REQ', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-      stockTransfer: { prefix: 'ST', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
-      goodsReceipt: { prefix: 'GRN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      stockItem: simpleSeries('ITM'),
+      purchaseOrder: simpleSeries('PO'),
+      requisition: simpleSeries('REQ'),
+      stockTransfer: simpleSeries('ST'),
+      goodsIssue: simpleSeries('ISS'),
+      goodsReceipt: simpleSeries('GRN'),
+      stockCount: simpleSeries('CNT'),
     },
     accounting: {
-      creditNote: { prefix: 'CN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-      debitNote: { prefix: 'DN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      creditNote: simpleSeries('CN'),
+      debitNote: simpleSeries('DN'),
     },
     events: {
-      eventBooking: { prefix: 'EVT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-      quotation: { prefix: 'QT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      eventBooking: simpleSeries('EVT'),
+      quotation: simpleSeries('QT'),
     },
     maintenance: {
-      workOrder: { prefix: 'WO', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-      inspection: { prefix: 'INSP', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+      workOrder: simpleSeries('WO'),
+      inspection: simpleSeries('INSP'),
     },
     security: {
-      incidentReport: { prefix: 'INC', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-      accessPass: { prefix: 'PASS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+      incidentReport: simpleSeries('INC'),
+      accessPass: simpleSeries('PASS'),
     },
     hr: {
-      employeeId: { prefix: 'EMP', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}{NUMBER}' },
-      timesheet: { prefix: 'TS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+      employeeId: simpleSeries('EMP'),
+      timesheet: simpleSeries('TS'),
     },
   },
 
@@ -2445,7 +2548,7 @@ const defaultSettings: SystemSettings = {
 };
 
 const DEFAULT_PRINTING: SettingsStore['printing'] = {
-  receipt: 'simple-receipt', invoice: 'corporate-invoice', proforma: 'conference-proforma-grid', 'payment-voucher': '',
+  receipt: 'simple-receipt', invoice: 'corporate-invoice', proforma: 'conference-proforma-grid', 'payment-voucher': 'builtin-payment-voucher-standard',
   'accommodation-proforma': 'builtin-accommodation-proforma-standard',
   'accommodation-invoice': 'builtin-accommodation-invoice-standard',
   'accommodation-receipt': 'builtin-accommodation-receipt-standard',
@@ -2493,17 +2596,26 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
   
   updateNestedSetting: (path, value) => {
     const keys = path.split('.');
-    const current = { ...get() };
-    let target: any = current;
-    
-    for (let i = 0; i < keys.length - 1; i++) {
-      target = target[keys[i]];
+    const rootKey = keys[0];
+    const nextRoot = { ...(get() as any)[rootKey] };
+    let cursor: any = nextRoot;
+    for (let i = 1; i < keys.length - 1; i++) {
+      cursor[keys[i]] = { ...cursor[keys[i]] };
+      cursor = cursor[keys[i]];
     }
-    
-    target[keys[keys.length - 1]] = value;
-    set(current);
+    cursor[keys[keys.length - 1]] = value;
+    set({ [rootKey]: nextRoot } as any);
     get().saveSettings();
     get().publish();
+    if (path.startsWith('roomManagement.')) {
+      syncRoomManagementToApi(get().roomManagement);
+    }
+    if (path === 'financialSettings.roundToNearest' || path === 'financialSettings.roundingRule') {
+      syncApprovalThresholdsToApi(get().financialSettings);
+    }
+    if (path.startsWith('security.')) {
+      syncSecurityToApi(get().security);
+    }
   },
   
   loadSettings: () => {
@@ -2517,6 +2629,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         // replace the real Set with whatever JSON.stringify turned it into (`{}`),
         // permanently breaking publish() until the browser's storage is cleared.
         delete (parsed as any).subscribers;
+        if (parsed.numberingDefaultsVersion == null) parsed.numberingDefaultsVersion = 0;
         set(parsed);
 
         // Self-heal: `set(parsed)` above replaces `printing` wholesale (Zustand's
@@ -2660,6 +2773,26 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           })
           .catch((e) => console.warn('[Settings] Failed to hydrate approval thresholds:', e));
 
+        fetch('/api/settings/security', { headers: { 'x-tenant-subdomain': t } })
+          .then((res) => (res.ok ? res.json() : null))
+          .then((data) => {
+            if (!data?.policy) return;
+            if (data.configured) {
+              const current = get().security;
+              set({
+                security: {
+                  ...current,
+                  ...data.policy,
+                  passwordPolicy: { ...current.passwordPolicy, ...data.policy.passwordPolicy },
+                  loginAttempts: { ...current.loginAttempts, ...(data.policy.loginAttempts || {}) },
+                },
+              });
+              return;
+            }
+            syncSecurityToApi(get().security);
+          })
+          .catch((e) => console.warn('[Settings] Failed to hydrate security policy:', e));
+
         // Pull the real, NextAuth-authenticated accounts (see /api/users) and
         // replace this file's local demo `users` entirely — those ids ('admin_001'
         // etc.) never correspond to a real account, so once real ones are
@@ -2726,6 +2859,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       console.error('Error loading settings:', error);
     } finally {
       set({ hydrated: true });
+      try { get().adoptSimpleNumberDefaults(); } catch (e) { console.warn('[Settings] numbering defaults', e); }
     }
   },
 
@@ -3767,29 +3901,101 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     return result;
   },
 
-  reconcileNumberFloor: (series, existingIds) => {
-    let maxUsed = 0;
-    for (const id of existingIds) {
-      if (!id) continue;
-      const m = /(\d+)$/.exec(id);
-      if (!m) continue;
-      const n = parseInt(m[1], 10);
-      if (!Number.isNaN(n) && n > maxUsed) maxUsed = n;
-    }
-    const floor = maxUsed + 1;
+  adoptSimpleNumberDefaults: () => {
     const state = get();
-    if (series === 'reservation' && floor > state.reservationSettings.nextNumber) {
-      state.updateReservationSettings({ nextNumber: floor });
-    } else if (series === 'client' && floor > state.clientSettings.nextNumber) {
-      state.updateClientSettings({ nextNumber: floor });
-    } else if (series === 'invoice' && floor > state.invoiceSettings.nextNumber) {
-      state.updateInvoiceSettings({ nextNumber: floor });
+    if (state.numberingDefaultsVersion >= 3) return;
+    const simplify = (saved: NumberingPattern | undefined, fallback: NumberingPattern): NumberingPattern => {
+      const base = { ...fallback, ...(saved || {}) };
+      if (LEGACY_NUMBER_FORMATS.has(base.numberFormat)) {
+        return { ...base, numberFormat: SIMPLE_NUMBER_FORMAT, nextNumber: SIMPLE_NUMBER_START };
+      }
+      if (base.numberFormat === SIMPLE_NUMBER_FORMAT && (base.nextNumber || 1) < SIMPLE_NUMBER_START) {
+        return { ...base, nextNumber: SIMPLE_NUMBER_START };
+      }
+      return base;
+    };
+    const modules: ModuleNumberingSettings = {} as ModuleNumberingSettings;
+    for (const category of Object.keys(defaultSettings.moduleNumbering) as (keyof ModuleNumberingSettings)[]) {
+      const savedCat = (state.moduleNumbering as any)?.[category] || {};
+      const fallbackCat = defaultSettings.moduleNumbering[category] as any;
+      const nextCat: any = {};
+      for (const series of Object.keys(fallbackCat)) {
+        nextCat[series] = simplify(savedCat[series], fallbackCat[series]);
+      }
+      (modules as any)[category] = nextCat;
+    }
+    set({
+      numberingDefaultsVersion: 3,
+      invoiceSettings: { ...state.invoiceSettings, ...simplify(state.invoiceSettings, defaultSettings.invoiceSettings) },
+      receiptSettings: { ...state.receiptSettings, ...simplify(state.receiptSettings, defaultSettings.receiptSettings) } as any,
+      purchaseOrderSettings: { ...state.purchaseOrderSettings, ...simplify(state.purchaseOrderSettings, defaultSettings.purchaseOrderSettings) },
+      proformaInvoiceSettings: { ...state.proformaInvoiceSettings, ...simplify(state.proformaInvoiceSettings, defaultSettings.proformaInvoiceSettings) },
+      clientSettings: { ...state.clientSettings, ...simplify(state.clientSettings, defaultSettings.clientSettings) },
+      reservationSettings: { ...state.reservationSettings, ...simplify(state.reservationSettings, defaultSettings.reservationSettings) },
+      moduleNumbering: modules,
+    });
+    get().saveSettings();
+  },
+
+  reconcileNumberFloor: (series, existingIds) => {
+    const raiseModule = (category: string, seriesName: string) => {
+      const current = get();
+      const pattern = (current.moduleNumbering as any)?.[category]?.[seriesName]
+        || (defaultSettings.moduleNumbering as any)?.[category]?.[seriesName];
+      if (!pattern) return;
+      const floor = highestSequence(existingIds, pattern) + 1;
+      if (floor <= (pattern.nextNumber || 1)) return;
+      set({
+        moduleNumbering: {
+          ...current.moduleNumbering,
+          [category]: {
+            ...(current.moduleNumbering as any)[category],
+            [seriesName]: { ...pattern, nextNumber: floor },
+          },
+        } as any,
+      });
+      get().saveSettings();
+    };
+    const state = get();
+    if (series === 'reservation') {
+      const floor = highestSequence(existingIds, state.reservationSettings) + 1;
+      if (floor > state.reservationSettings.nextNumber) state.updateReservationSettings({ nextNumber: floor });
+    } else if (series === 'client') {
+      const floor = highestSequence(existingIds, state.clientSettings) + 1;
+      if (floor > state.clientSettings.nextNumber) state.updateClientSettings({ nextNumber: floor });
+      raiseModule('frontOffice', 'corporateGuest');
+      raiseModule('frontOffice', 'personalGuest');
+    } else if (series === 'invoice') {
+      const floor = highestSequence(existingIds, state.invoiceSettings) + 1;
+      if (floor > state.invoiceSettings.nextNumber) state.updateInvoiceSettings({ nextNumber: floor });
+    } else if (series === 'folio') {
+      raiseModule('frontOffice', 'folio');
     }
   },
 
   getNextModuleNumber: (category, series) => {
     const state = get();
-    const pattern = (state.moduleNumbering as any)?.[category]?.[series];
+    let pattern = (state.moduleNumbering as any)?.[category]?.[series]
+      || (defaultSettings.moduleNumbering as any)?.[category]?.[series];
+    // Seed series added after a tenant already saved numbering (e.g. inventory.stockItem)
+    if (!pattern && category === 'inventory' && series === 'stockItem') {
+      pattern = { prefix: 'ITM', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' };
+    }
+    if (!pattern && category === 'inventory' && series === 'purchaseOrder') {
+      pattern = { prefix: 'PO', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' };
+    }
+    if (!pattern && category === 'inventory' && series === 'goodsIssue') {
+      pattern = { prefix: 'ISS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' };
+    }
+    if (!pattern && category === 'inventory' && series === 'stockTransfer') {
+      pattern = { prefix: 'ST', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' };
+    }
+    if (!pattern && category === 'inventory' && series === 'stockCount') {
+      pattern = { prefix: 'CNT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' };
+    }
+    if (!pattern && category === 'frontOffice' && series === 'serviceCharge') {
+      pattern = { prefix: 'SC', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' };
+    }
     if (!pattern) return `${category.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-6)}`;
     const result = formatDocumentNumber(pattern, 4);
     const nextModuleNumbering = {
@@ -3806,7 +4012,26 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
   peekNextModuleNumber: (category, series) => {
     const state = get();
-    const pattern = (state.moduleNumbering as any)?.[category]?.[series];
+    let pattern = (state.moduleNumbering as any)?.[category]?.[series]
+      || (defaultSettings.moduleNumbering as any)?.[category]?.[series];
+    if (!pattern && category === 'inventory' && series === 'stockItem') {
+      pattern = { prefix: 'ITM', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' };
+    }
+    if (!pattern && category === 'inventory' && series === 'purchaseOrder') {
+      pattern = { prefix: 'PO', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' };
+    }
+    if (!pattern && category === 'inventory' && series === 'goodsIssue') {
+      pattern = { prefix: 'ISS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' };
+    }
+    if (!pattern && category === 'inventory' && series === 'stockTransfer') {
+      pattern = { prefix: 'ST', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' };
+    }
+    if (!pattern && category === 'inventory' && series === 'stockCount') {
+      pattern = { prefix: 'CNT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' };
+    }
+    if (!pattern && category === 'frontOffice' && series === 'serviceCharge') {
+      pattern = { prefix: 'SC', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' };
+    }
     if (!pattern) return `${category.slice(0, 3).toUpperCase()}-${Date.now().toString().slice(-6)}`;
     return formatDocumentNumber(pattern, 4);
   },
@@ -4071,6 +4296,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     ]
   }
 }));
+
+/** Rooms & Pricing → auto-assign. Off means check-in keeps a TBD room until someone picks one. */
+export function autoAssignRoomsEnabled(): boolean {
+  return useSettingsStore.getState().roomSettings?.autoAssignRooms !== false;
+}
 
 // Settings load from localStorage on the client only — NOT called here at
 // module-evaluation time. Doing it here used to run synchronously the moment

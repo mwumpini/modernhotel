@@ -20,8 +20,9 @@ import NumberingSettingsPanel from './settings/NumberingSettingsPanel';
 import DocumentTemplatesPanel from './settings/DocumentTemplatesPanel';
 import AuditLogPanel from './settings/AuditLogPanel';
 import ApprovalThresholdsPanel from './settings/ApprovalThresholdsPanel';
+import ModulesPanel from './settings/ModulesPanel';
 
-const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'security', 'approvals', 'audit'] as const;
+const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'security', 'approvals', 'modules', 'audit'] as const;
 type SettingsTab = (typeof VALID_TABS)[number];
 
 function resolveInitialTab(searchParams: URLSearchParams): SettingsTab {
@@ -97,13 +98,8 @@ export default function SystemSettingsMainDashboard() {
         </Card>
       )}
 
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-ghana-black">System Settings</h2>
-          <p className="text-sm text-gray-600 mt-1">
-            Users, rooms & pricing, document numbering, and security
-          </p>
-        </div>
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-ghana-black">⚙️ System Settings</h2>
         <div className="flex flex-wrap gap-2 items-center">
           <Badge variant="flat" color="primary">{userCount} users</Badge>
           <Badge variant="flat" color="secondary">{roleCount} roles</Badge>
@@ -169,7 +165,7 @@ export default function SystemSettingsMainDashboard() {
                 <div className="flex items-center justify-between p-4 border rounded-lg">
                   <div>
                     <h4 className="font-medium">Two-Factor Authentication</h4>
-                    <p className="text-sm text-gray-600">Require 2FA for all users</p>
+                    <p className="text-sm text-gray-600">Sign-in asks every staff member for a code from an authenticator app</p>
                   </div>
                   <Switch
                     isSelected={settings.security.twoFactorAuth}
@@ -254,6 +250,10 @@ export default function SystemSettingsMainDashboard() {
 
             <Tab key="approvals" title="Approvals">
               <ApprovalThresholdsPanel />
+            </Tab>
+
+            <Tab key="modules" title="Modules">
+              <ModulesPanel />
             </Tab>
 
             <Tab key="audit" title="Audit Log">

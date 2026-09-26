@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
+import { pickOperationalPolicy } from '@/app/lib/frontoffice/operationalPolicies'
 
 /**
  * Server-side mirror of the client-only settings/store.ts `roomManagement` slice.
@@ -37,10 +38,11 @@ export async function GET(request: NextRequest) {
       select: { roomSettings: true },
     })
     const rs = (settings?.roomSettings as Record<string, any>) || {}
-    const policy: NoShowPolicy = {
+    const policy = {
       noShowPolicyEnabled: rs.noShowPolicyEnabled ?? DEFAULT_POLICY.noShowPolicyEnabled,
       noShowChargeType: rs.noShowChargeType ?? DEFAULT_POLICY.noShowChargeType,
       noShowChargeValue: rs.noShowChargeValue ?? DEFAULT_POLICY.noShowChargeValue,
+      ...pickOperationalPolicy(rs),
     }
     const roomConfig = Object.fromEntries(ROOM_CONFIG_ARRAY_KEYS.map((k) => [k, Array.isArray(rs[k]) ? rs[k] : []]))
     return NextResponse.json({ policy, ...roomConfig })
@@ -74,11 +76,7 @@ export async function POST(request: NextRequest) {
       canManageRoomConfig = perm.ok
     }
 
-    const patch: Record<string, any> = {
-      ...(typeof body.noShowPolicyEnabled === 'boolean' ? { noShowPolicyEnabled: body.noShowPolicyEnabled } : {}),
-      ...(typeof body.noShowChargeType === 'string' ? { noShowChargeType: body.noShowChargeType } : {}),
-      ...(typeof body.noShowChargeValue === 'number' ? { noShowChargeValue: body.noShowChargeValue } : {}),
-    }
+    const patch: Record<string, any> = pickOperationalPolicy(body)
     if (canManageRoomConfig) {
       for (const k of ROOM_CONFIG_ARRAY_KEYS) {
         if (Array.isArray(body[k])) patch[k] = body[k]

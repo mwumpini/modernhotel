@@ -193,6 +193,12 @@ export interface PrintData {
   paymentTerms?: string;
   bankDetails?: PrintBankDetails;
   signatures?: PrintSignature[];
+  /** Staff member who attended the guest. Fills the Attendant signature line. */
+  attendantName?: string;
+  /** Person preparing the document. Fills the User signature line when the
+   *  template asks for it. renderPrint fills this from the signed-in user
+   *  when a caller does not. */
+  userName?: string;
   /** Payment Voucher lines — debit/credit rather than qty/price. When present, the
    *  line-items-table block renders these columns instead of `items`. */
   debitCreditLines?: PrintDebitCreditLine[];
@@ -224,17 +230,22 @@ function cssBase() {
     .doc-title { margin:12px 0 8px; font-size:20px; font-weight:700; }
     .grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; font-size:12px; }
     .box { border:1px solid var(--border); padding:8px; border-radius:6px; }
-    table { width:100%; border-collapse:collapse; margin-top:12px; font-size:12px; }
-    th, td { border:1px solid var(--border); padding:8px; }
+    table { width:100%; border-collapse:separate; border-spacing:0; border:1px solid var(--border); margin-top:12px; font-size:12px; }
+    th, td { border:none; padding:8px; }
+    th + th, td + td { border-left:1px solid var(--border); }
+    tr + tr th, tr + tr td { border-top:1px solid var(--border); }
     th { background:#f7f7f7; text-align:left; }
     .right { text-align:right; }
-    .totals { width:50%; margin-left:auto; }
-    .totals td { border:none; }
-    .totals .label { color:var(--muted); }
-    .totals .value { text-align:right; font-weight:600; }
-    .grand { font-size:14px; border-top:2px solid var(--border); padding-top:6px; }
+    .bill-grid { width:max-content; min-width:50%; max-width:100%; margin-left:auto; border:1px solid var(--border); box-sizing:border-box; }
+    .bill-grid table { width:100%; margin:0; border:none; }
+    .bill-grid .lbl { white-space:nowrap; }
+    .bill-grid .amt { white-space:nowrap; min-width:11em; text-align:right; font-weight:600; }
     .footer { margin-top:16px; font-size:11px; color:var(--muted); }
     .badge { padding:2px 6px; border:1px solid var(--border); border-radius:4px; font-size:11px; }
+    .sign-row { display:flex; justify-content:space-between; align-items:flex-start; gap:32px; width:100%; margin-top:16px; }
+    .sign-slot { flex:1 1 140px; max-width:240px; }
+    .sign-line { border-bottom:1px solid #000; height:28px; }
+    @page { size: A4; margin: 12mm; }
     @media print { body { padding:0; } .no-print { display:none !important; } }
   </style>`;
 }
@@ -301,16 +312,18 @@ function itemsTable(items: PrintLineItem[], currency: string) {
 function totalsTable(data: PrintData, currency: string) {
   const { preTaxLines, taxLines, grand, payments, balance } = computeTotalsBreakdown(data);
   const lines = [...preTaxLines, ...taxLines];
-  const rows = lines.map(([label, val]) => `<tr><td class="label">${label}</td><td class="value">${money(val, currency)}</td></tr>`).join('');
-  return `
-  <table class="totals">
-    <tbody>
-      ${rows}
-      <tr><td class="label grand">Grand Total</td><td class="value grand">${money(grand, currency)}</td></tr>
-      <tr><td class="label">Payments</td><td class="value">${money(payments, currency)}</td></tr>
-      <tr><td class="label">Balance</td><td class="value">${money(balance, currency)}</td></tr>
-    </tbody>
-  </table>`;
+  const grid = [
+    ...lines.map(([label, val], i) => ({ label, value: money(val, currency), bold: i === 0 })),
+    { label: 'Grand Total', value: money(grand, currency), bold: true },
+    { label: 'Payments', value: money(payments, currency), bold: false },
+    { label: 'Balance', value: money(balance, currency), bold: true },
+  ];
+  const body = grid.map((row, i) => {
+    const weight = row.bold ? 'font-weight:700;' : '';
+    const bottom = i === grid.length - 1 ? '' : 'border-bottom:1px solid var(--border);';
+    return `<tr><td class="lbl" style="border:none;${bottom}border-right:1px solid var(--border);${weight}padding:4px 10px;text-align:left;">${row.label}</td><td class="amt" style="border:none;${bottom}${weight}padding:4px 12px;">${row.value}</td></tr>`;
+  }).join('');
+  return `<div class="bill-grid"><table style="border-collapse:separate;border-spacing:0;"><tbody>${body}</tbody></table></div>`;
 }
 
 function baseDoc(p: PrintData, title: string) {
@@ -339,8 +352,7 @@ function variantTopClassInvoice(p: PrintData) {
   <style>
     .brandbar { display:flex; align-items:center; gap:16px; margin-top:8px; }
     .watermark { position:fixed; inset:0; pointer-events:none; opacity:.03; font-size:96px; font-weight:800; display:flex; align-items:center; justify-content:center; }
-    .signatures { display:grid; grid-template-columns: 1fr 1fr; gap:24px; margin-top:24px; }
-    .sigbox { border-top:1px solid var(--border); padding-top:6px; text-align:center; font-size:12px; }
+    .sign-row { margin-top:24px; }
     .badges { display:flex; gap:6px; margin-top:6px; }
   </style>
   </head><body>
@@ -356,9 +368,9 @@ function variantTopClassInvoice(p: PrintData) {
     ${itemsTable(p.items, currency)}
     ${totalsTable(p, currency)}
     ${p.footerNotes && p.footerNotes.length ? `<div class="footer">${p.footerNotes.map(n => `<div>${n}</div>`).join('')}</div>` : ''}
-    <div class="signatures">
-      <div class="sigbox">Guest Signature</div>
-      <div class="sigbox">Cashier Signature</div>
+    <div class="sign-row">
+      <div class="sign-slot"><div>Guest Signature:</div><div class="sign-line"></div></div>
+      <div class="sign-slot"><div>Cashier Signature:</div><div class="sign-line"></div></div>
     </div>
     <script>window.print()</script>
   </body></html>`;

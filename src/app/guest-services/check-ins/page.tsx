@@ -1,7 +1,6 @@
 "use client";
 
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
-import PageLayout from '../../components/PageLayout';
 import { 
   Card, 
   CardBody, 
@@ -11,17 +10,9 @@ import {
   Tab,
   Pagination
 } from "@heroui/react";
-import dynamic from 'next/dynamic';
-import { useSearchParams, useRouter } from 'next/navigation';
-import FrontOfficeBackButton from '../../components/FrontOfficeBackButton';
+import { useSearchParams } from 'next/navigation';
 import CustomizeViewControl, { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
-
-// Lazy sections to keep the page responsive
-const CheckOutsPage = dynamic(() => import('../check-outs/page'), { ssr: false });
-const InvoicesPaymentsPage = dynamic(() => import('../client-services/invoices-payments/page'), { ssr: false });
-const ServiceChargesPage = dynamic(() => import('../service-charges/page'), { ssr: false });
-const ReservationsBookingsManager = dynamic(() => import('../../components/ReservationsBookingsManager'), { ssr: false });
 
 // --- Check-ins section (existing logic) ---
 import {
@@ -48,6 +39,7 @@ import { resolveGuestAddress } from '../../lib/frontoffice/helpers/guests';
 import { getFolioDisplayTotals } from '../../lib/frontoffice/helpers/folio';
 import { calculateStayNights } from '../../lib/frontoffice/helpers/rates';
 import { postRoomChargeForDate, isRoomLine } from '../../lib/frontoffice/roomCharges';
+import { nextCalendarDate } from '../../lib/frontoffice/folioLedger';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import type { Reservation } from '../../lib/frontoffice/types';
 import { formatMoney } from '../../lib/format/currency';
@@ -107,7 +99,7 @@ const CHECKINS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'netBalance', label: 'Net Balance' },
 ];
 
-function CheckInsSection() {
+export function CheckInsSection() {
   const currentUserName = useCurrentUserName();
   const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
     useDashboardVisibility('dashboard.hidden.checkins', CHECKINS_DASHBOARD_SECTIONS);
@@ -274,10 +266,10 @@ function CheckInsSection() {
 
     if (nights > 0) {
       // Post room charge(s) for the newly added night(s) immediately so the folio is up to date
+      let nightDate = oldDeparture.slice(0, 10);
       for (let i = 0; i < nights; i++) {
-        const d = new Date(oldDeparture);
-        d.setDate(d.getDate() + i);
-        postRoomChargeForDate(frontOfficeStore as any, guest.id, d.toISOString().slice(0, 10));
+        postRoomChargeForDate(frontOfficeStore as any, guest.id, nightDate);
+        nightDate = nextCalendarDate(nightDate);
       }
     } else if (nights < 0) {
       // Void any room charge(s) that were already posted for the now-removed night(s)
@@ -462,27 +454,27 @@ function CheckInsSection() {
         />
       </div>
       {hiddenStatsCount < CHECKINS_DASHBOARD_SECTIONS.length && (
-      <div className="grid grid-cols-1 md:grid-cols-7 gap-4">
+      <div className="grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-7">
         {!isHidden('totalGuests') && (
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Guests</p><p className="text-2xl font-bold text-ghana-black">{filteredGuests.length}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('totalGuests')} label="Total Guests" /><div className="text-2xl">👥</div></div></div></CardBody></Card>
+        <Card className="border border-gray-200 shadow-none"><CardBody className="px-2 py-1.5"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Guests</p><p className="text-base font-semibold tabular-nums text-ghana-black">{filteredGuests.length}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('totalGuests')} label="Total Guests" /><div className="text-sm leading-none">👥</div></div></div></CardBody></Card>
         )}
         {!isHidden('avgRate') && (
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Avg Rate/Night</p><p className="text-2xl font-bold text-ghana-black">₵{filteredGuests.length > 0 ? formatMoney(totalRoomRevenue / filteredGuests.length) : '0.00'}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('avgRate')} label="Avg Rate/Night" /><div className="text-2xl">💰</div></div></div></CardBody></Card>
+        <Card className="border border-gray-200 shadow-none"><CardBody className="px-2 py-1.5"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Avg Rate/Night</p><p className="text-base font-semibold tabular-nums text-ghana-black">₵{filteredGuests.length > 0 ? formatMoney(totalRoomRevenue / filteredGuests.length) : '0.00'}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('avgRate')} label="Avg Rate/Night" /><div className="text-sm leading-none">💰</div></div></div></CardBody></Card>
         )}
         {!isHidden('roomTotal') && (
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Room Total</p><p className="text-2xl font-bold text-purple-600">₵{totalRoomAmount.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('roomTotal')} label="Room Total" /><div className="text-2xl">🏨</div></div></div></CardBody></Card>
+        <Card className="border border-gray-200 shadow-none"><CardBody className="px-2 py-1.5"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Room Total</p><p className="text-base font-semibold tabular-nums text-purple-600">₵{totalRoomAmount.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('roomTotal')} label="Room Total" /><div className="text-sm leading-none">🏨</div></div></div></CardBody></Card>
         )}
         {!isHidden('serviceCharges') && (
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Service Charges</p><p className="text-2xl font-bold text-orange-600">₵{totalServiceCharges.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('serviceCharges')} label="Service Charges" /><div className="text-2xl">🏊</div></div></div></CardBody></Card>
+        <Card className="border border-gray-200 shadow-none"><CardBody className="px-2 py-1.5"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Service Charges</p><p className="text-base font-semibold tabular-nums text-orange-600">₵{totalServiceCharges.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('serviceCharges')} label="Service Charges" /><div className="text-sm leading-none">🏊</div></div></div></CardBody></Card>
         )}
         {!isHidden('totalAmount') && (
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Amount</p><p className="text-2xl font-bold text-blue-600">₵{totalCharges.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('totalAmount')} label="Total Amount" /><div className="text-2xl">📊</div></div></div></CardBody></Card>
+        <Card className="border border-gray-200 shadow-none"><CardBody className="px-2 py-1.5"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Amount</p><p className="text-base font-semibold tabular-nums text-blue-600">₵{totalCharges.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('totalAmount')} label="Total Amount" /><div className="text-sm leading-none">📊</div></div></div></CardBody></Card>
         )}
         {!isHidden('totalPayments') && (
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Payments</p><p className="text-2xl font-bold text-green-600">₵{totalPayments.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('totalPayments')} label="Total Payments" /><div className="text-2xl">💳</div></div></div></CardBody></Card>
+        <Card className="border border-gray-200 shadow-none"><CardBody className="px-2 py-1.5"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Total Payments</p><p className="text-base font-semibold tabular-nums text-green-600">₵{totalPayments.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('totalPayments')} label="Total Payments" /><div className="text-sm leading-none">💳</div></div></div></CardBody></Card>
         )}
         {!isHidden('netBalance') && (
-        <Card className="border-0 shadow-lg"><CardBody className="p-4"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Net Balance</p><p className={`text-2xl font-bold ${totalOutstanding > 0 ? 'text-red-600' : totalOutstanding < 0 ? 'text-green-600' : 'text-gray-500'}`}>₵{totalOutstanding.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('netBalance')} label="Net Balance" /><div className="text-2xl">⚖️</div></div></div></CardBody></Card>
+        <Card className="border border-gray-200 shadow-none"><CardBody className="px-2 py-1.5"><div className="flex items-center justify-between"><div><p className="text-sm text-gray-600">Net Balance</p><p className={`text-base font-semibold tabular-nums ${totalOutstanding > 0 ? 'text-red-600' : totalOutstanding < 0 ? 'text-green-600' : 'text-gray-500'}`}>₵{totalOutstanding.toLocaleString()}</p></div><div className="flex flex-col items-end gap-1"><HideCardButton onHide={() => hide('netBalance')} label="Net Balance" /><div className="text-sm leading-none">⚖️</div></div></div></CardBody></Card>
         )}
         </div>
         )}
@@ -1202,48 +1194,34 @@ function CheckInsSection() {
   );
 }
 
-// --- Unified Page Wrapper ---
-function CheckInsPageInner() {
+const FO_TAB_FROM_QUERY: Record<string, string> = {
+  reservations: 'reservations',
+  checkins: 'desk',
+  checkouts: 'desk',
+  desk: 'desk',
+  servicecharges: 'servicecharges',
+  billing: 'billing',
+};
+
+function CheckInsRedirect() {
   const params = useSearchParams();
-  const initialTab = params.get('tab') || 'reservations';
-  const [selectedTab, setSelectedTab] = useState(initialTab);
-  const router = useRouter();
-
-  return (
-    <PageLayout>
-      <div className="p-6">
-        <div className="mb-6">
-          <FrontOfficeBackButton />
-          <h1 className="text-3xl font-bold text-ghana-black">🏨 Front Office Operations</h1>
-          <p className="text-gray-600 mt-2">Reservations, check-ins, check-outs, service charges, and guest billing — all in one place</p>
-                      </div>
-
-        <Tabs selectedKey={selectedTab} onSelectionChange={(key) => setSelectedTab(key as string)} className="w-full">
-          <Tab key="reservations" title="📅 Reservations & Bookings Management">
-            <Card className="border-0 shadow-lg"><CardBody><Suspense fallback={<div className="p-6 text-center">Loading Reservations & Bookings...</div>}><ReservationsBookingsManager /></Suspense></CardBody></Card>
-          </Tab>
-          <Tab key="checkins" title="🏠 Check-Ins Management">
-            <CheckInsSection />
-          </Tab>
-          <Tab key="checkouts" title="🚪 Check-outs">
-            <div className="pt-2"><CheckOutsPage /></div>
-          </Tab>
-          <Tab key="servicecharges" title="🏊 Service Charges">
-            <div className="pt-2"><ServiceChargesPage /></div>
-          </Tab>
-          <Tab key="billing" title="💳 Invoices & Payments">
-            <div className="pt-2"><InvoicesPaymentsPage /></div>
-          </Tab>
-        </Tabs>
-      </div>
-    </PageLayout>
-  );
+  useEffect(() => {
+    const raw = params.get('tab') || 'reservations';
+    try {
+      localStorage.setItem('nav.section', 'frontdesk');
+      localStorage.setItem('fo.tab', FO_TAB_FROM_QUERY[raw] || 'reservations');
+    } catch {
+      /* ignore */
+    }
+    window.location.replace('/');
+  }, [params]);
+  return <div className="p-6 text-center">Opening Front Office...</div>;
 }
 
 export default function CheckInsPage() {
   return (
-    <Suspense fallback={null}>
-      <CheckInsPageInner />
+    <Suspense fallback={<div className="p-6 text-center">Opening Front Office...</div>}>
+      <CheckInsRedirect />
     </Suspense>
   );
 }

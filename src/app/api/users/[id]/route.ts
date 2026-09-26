@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission, requireAnyPermission } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
+import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy'
+import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 
 const USER_SELECT = {
   id: true,
@@ -82,9 +84,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (typeof body.role === 'string' && body.role.trim()) data.role = body.role.trim()
     if (typeof body.isActive === 'boolean') data.isActive = body.isActive
     if (typeof body.password === 'string' && body.password) {
-      if (body.password.length < 6) {
-        return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
-      }
+      const { policy } = await readTenantSecurity(ctx.tenantId)
+      const passwordError = passwordPolicyError(body.password, policy.passwordPolicy)
+      if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 })
       data.password = await bcrypt.hash(body.password, 10)
     }
     if (body.profile && typeof body.profile === 'object') {
@@ -94,6 +96,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (body.preferences && typeof body.preferences === 'object') {
       const existingPreferences = (target.preferences as Record<string, unknown>) || {}
       data.preferences = { ...existingPreferences, ...body.preferences }
+    }
+    if (typeof body.password === 'string' && body.password) {
+      const existingPreferences = (data.preferences as Record<string, unknown>) || (target.preferences as Record<string, unknown>) || {}
+      data.preferences = { ...existingPreferences, passwordChangedAt: new Date().toISOString() }
     }
 
     // Reassigning away from 'admin' or deactivating could strip the tenant's

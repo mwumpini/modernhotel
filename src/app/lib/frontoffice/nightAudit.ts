@@ -10,6 +10,8 @@
 import { trackEvent } from '../analytics/trackEvent';
 import { logAudit } from '../analytics/auditLogStore';
 import { postRoomChargeForDate } from './roomCharges';
+import { noShowCutoffReached } from './operationalPolicies';
+import { useSettingsStore } from '../settings/store';
 import { getZonedClockParts } from './propertyTime';
 import { resolvePropertyTimezone } from './propertyTimeClient';
 import type { Reservation } from './types';
@@ -47,6 +49,7 @@ export type NightAuditRun = {
   folioPaymentsTotal: number;
   status: 'completed' | 'failed';
   error?: string;
+  daysClosed?: string[];
 };
 
 export type NightAuditResult = NightAuditRun;
@@ -106,10 +109,13 @@ export function runNightAudit(store: StoreLike): NightAuditResult {
     }
 
     // Step 6 — Process no-shows (expected arrivals who never checked in)
+    const cutoffHour = useSettingsStore.getState().roomManagement?.noShowCutoffHour ?? 23;
+    const now = new Date();
     const expected = store.reservations.filter(
       (r) =>
         r.arrival.slice(0, 10) === businessDate &&
-        (r.status === 'confirmed' || r.status === 'pending'),
+        (r.status === 'confirmed' || r.status === 'pending') &&
+        noShowCutoffReached(r.arrival, cutoffHour, now),
     );
     for (const r of expected) {
       store.markNoShow(r.id);
@@ -165,14 +171,16 @@ export function hasCompletedNightAuditForDate(
 
 const AUTO_RUN_STORAGE_KEY = 'fo.nightAudit.lastAutoRunDate';
 
-/** Whether property local time is in the 1:00am auto-run window (1:00–1:02). */
+/**
+ * Property local time when the open app may close the day by itself.
+ * Tonight's test (25 Sep 2026) uses the whole 1:00 hour so the desk can open
+ * the app and sign in. The standing window is 1:00–1:02; put `minute < 3` back
+ * after that test is checked.
+ */
 export function isNightAuditScheduleWindow(now = new Date(), timeZone?: string): boolean {
   const tz = timeZone || resolvePropertyTimezone();
-  const { hour, minute } = getZonedClockParts(now, tz);
-  // Production window: 1:00–1:02 property local time.
-  // To test before go-live: temporarily change hour/minute below to match the
-  // current property clock, verify scheduler logs in the browser console, then restore.
-  return hour === 1 && minute < 3;
+  const { hour } = getZonedClockParts(now, tz);
+  return hour === 1;
 }
 
 /** Prevent duplicate auto-runs within the same calendar day. */

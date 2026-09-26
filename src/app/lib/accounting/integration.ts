@@ -22,65 +22,14 @@
  */
 
 import { useAccountingStore } from './store';
+import { useSettingsStore } from '../settings/store';
 import { nextNumberFromLabels } from '../events/documentNumbers';
 import { computeStackedTaxLines, getEffectiveTaxConfigs } from './taxFromConfig';
 import { logAccountingProcess, logAccountingProcessError } from './accountingProcessLog';
 import { assertPeriodNotClosed } from './periodClose';
 import { hasReversalForEntry, postJournalEntryReversal } from './journalReversal';
-
-// GL Account Codes for Ghana Hotel Chart of Accounts — leaf (postable) codes only,
-// cross-checked against GHANA_CHART_OF_ACCOUNTS in models.ts. '1100'/'1200'/'2000'
-// look plausible but are category HEADER rows, not postable accounts.
-const GL_ACCOUNTS = {
-  // Assets
-  CASH: '1110',
-  BANK: '1120',
-  ACCOUNTS_RECEIVABLE: '1210',
-
-  // Liabilities
-  // 2200 is the "Accounts Payable" category HEADER (see GHANA_CHART_OF_ACCOUNTS in
-  // models.ts) -- its only declared children are 2210/2220 (payroll withholdings),
-  // not trade payables. 2205 is the actual postable leaf for supplier invoices/payments.
-  ACCOUNTS_PAYABLE: '2205',
-  DEFERRED_REVENUE: '2400',
-
-  // Revenue
-  ROOM_REVENUE: '4100',
-  FB_REVENUE: '4200',
-  // 4300 is the "Other Revenue" category HEADER (see GHANA_CHART_OF_ACCOUNTS in models.ts) —
-  // its children 4320/4330 are the actual postable leaves. Posting straight to 4300 (its only
-  // child used to be 4310 Gain on Disposal, which doesn't fit conference/misc revenue at all)
-  // is exactly the "category header accounts posted directly" issue Financial Reports flags.
-  CONFERENCE_REVENUE: '4320',
-  SERVICE_CHARGES: '4400',
-  OTHER_REVENUE: '4330',
-  ROUNDING_ADJUSTMENT: '4900',
-};
-
-// Revenue Center Codes
-const REVENUE_CENTERS = {
-  ROOM: 'RM',
-  RESTAURANT: 'REST',
-  BAR: 'BAR',
-  ROOM_SERVICE: 'RS',
-  CONFERENCE: 'CF',
-  SERVICE_CHARGES: 'SC',
-};
-
-// Payment method to GL mapping. Single source shared with the folio checkout
-// flow (simpleFlow.ts) and the AR/AP subledger bridge (invoicePostingBridge.ts);
-// covers the departmental, folio, and manual-invoice payment vocabularies.
-const PAYMENT_GL_MAP: Record<string, string> = {
-  'Cash': GL_ACCOUNTS.CASH,
-  'Card': GL_ACCOUNTS.BANK,
-  'Mobile Money': GL_ACCOUNTS.BANK,
-  'Bank Transfer': GL_ACCOUNTS.BANK,
-  'Bank': GL_ACCOUNTS.BANK,
-  'Cheque': GL_ACCOUNTS.BANK,
-  'Check': GL_ACCOUNTS.BANK,
-  'Credit': GL_ACCOUNTS.BANK,
-  'Corporate Account': GL_ACCOUNTS.BANK,
-};
+import { GL_ACCOUNTS, REVENUE_CENTERS, PAYMENT_GL_MAP } from './glAccounts';
+import { mirrorGlCashToCashbook } from './cashbookMirror';
 
 export type DepartmentSource = 'front_office' | 'restaurant' | 'bar' | 'room_service' | 'conference' | 'spa' | 'other';
 
@@ -663,7 +612,9 @@ export function convertProformaToInvoice(proformaId: string): { invoiceId: strin
       isProforma: false,
       status: 'Posted',
       updatedAt: now,
-      invoiceNumber: (proforma as any).invoiceNumber?.replace('PRO-', 'INV-') || `INV-${Date.now()}`,
+      invoiceNumber: String((proforma as any).invoiceNumber || '').startsWith('PRO-')
+        ? String((proforma as any).invoiceNumber).replace(/^PRO-/, 'INV-')
+        : useSettingsStore.getState().getNextInvoiceNumber(),
     } as any);
     
     // Record to Revenue Center
@@ -933,6 +884,15 @@ export function capturePayment(
     
     store.addJournalEntry(journalEntry as any);
     store.updatePayment(receiptId, { journalEntryId });
+    mirrorGlCashToCashbook(() => useAccountingStore.getState(), {
+      glCode: cashGLAccount,
+      amount: transaction.amount,
+      direction: 'in',
+      date: transactionDate,
+      reference: receiptNumber,
+      description: `${transaction.paymentMethod} received — ${transaction.customerName}`,
+      journalEntryId,
+    });
     console.log(`[Accounting Integration] Posted Payment Journal Entry: ${journalEntry.entryNumber}`);
     
     // 4. Add Audit Trail
@@ -1179,5 +1139,5 @@ export async function retireOrphanConferenceInvoices(liveEventIds: string[]): Pr
 /**
  * Export GL Account codes for use in other modules
  */
-export { GL_ACCOUNTS, REVENUE_CENTERS, PAYMENT_GL_MAP };
+export { GL_ACCOUNTS, REVENUE_CENTERS, PAYMENT_GL_MAP } from './glAccounts';
 

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from './HeadingInfo';
 import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Tabs, Tab } from "@heroui/react";
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import DepartmentRequisitionModal from './inventory/DepartmentRequisitionModal';
@@ -47,9 +48,10 @@ interface Requisition {
   items: { itemName: string; quantity: number }[];
 }
 
-export default function FoodBeverageMenuInventory() {
+export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 'inventory' | 'requisitions' }) {
   const [selectedTab, setSelectedTab] = useState('menu');
   const [isNewMenuItemModalOpen, setIsNewMenuItemModalOpen] = useState(false);
+  const [viewingMenuId, setViewingMenuId] = useState<string | null>(null);
   const [isNewInventoryItemModalOpen, setIsNewInventoryItemModalOpen] = useState(false);
   const [isNewRequisitionModalOpen, setIsNewRequisitionModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -160,6 +162,7 @@ export default function FoodBeverageMenuInventory() {
   };
 
   const [requisitions, setRequisitions] = useState<Requisition[]>([]);
+  const [requisitionStatusFilter, setRequisitionStatusFilter] = useState('all');
   const reloadRequisitions = () => {
     fetch('/api/inventory/requisitions?department=restaurant', { headers: fbHeaders() })
       .then((r) => (r.ok ? r.json() : { requisitions: [] }))
@@ -226,13 +229,19 @@ export default function FoodBeverageMenuInventory() {
     ? inventoryItems
     : inventoryItems.filter(item => (selectedInventoryStatus === 'active' ? item.isActive : !item.isActive));
 
+  const embedded = Boolean(panel);
+  const openMenuItem = viewingMenuId ? menuItems.find((item) => item.id === viewingMenuId) ?? null : null;
+
   return (
-    <div className="p-6">
+    <div className={embedded ? 'p-2' : 'p-6'}>
       {/* Header */}
+      {!embedded && (
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-ghana-black">🍽️ Restaurant & Bar - Menu & Inventory</h2>
-          <p className="text-gray-600">Manage menu items, inventory items, and stock requisitions to Stores</p>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-2xl font-bold text-ghana-black">🍽️ Restaurant & Bar - Menu & Inventory</h2>
+            <HeadingInfo label="About menu and inventory">Manage menu items, inventory items, and stock requisitions to Stores</HeadingInfo>
+          </div>
         </div>
         <div className="flex gap-3">
           <Button
@@ -258,8 +267,10 @@ export default function FoodBeverageMenuInventory() {
           </Button>
         </div>
       </div>
+      )}
 
       {/* Stats Overview */}
+      {!embedded && (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <Card className="border-0 shadow-lg">
           <CardBody className="p-6">
@@ -300,17 +311,27 @@ export default function FoodBeverageMenuInventory() {
           </CardBody>
         </Card>
       </div>
+      )}
 
       {/* Main Content Tabs */}
       <Card className="border-0 shadow-lg">
         <CardBody className="p-0">
           <Tabs 
-            selectedKey={selectedTab} 
-            onSelectionChange={(key) => setSelectedTab(key as string)}
+            selectedKey={panel || selectedTab} 
+            onSelectionChange={(key) => { if (!embedded) setSelectedTab(key as string); }}
             className="w-full"
+            classNames={embedded ? { tabList: 'hidden', panel: 'p-0' } : undefined}
           >
+            {(!embedded || panel === 'menu') && (
             <Tab key="menu" title="🍽️ Menu Management">
               <div className="p-6">
+                {embedded && (
+                  <div className="flex justify-end mb-4">
+                    <Button color="primary" className="bg-ghana-green text-white" onClick={() => setIsNewMenuItemModalOpen(true)}>
+                      + Add Menu Item
+                    </Button>
+                  </div>
+                )}
                 <div className="flex items-center justify-between mb-4">
                   <Select
                     label="Filter by Category"
@@ -375,28 +396,25 @@ export default function FoodBeverageMenuInventory() {
                           </div>
                         )}
 
-                        <div className="flex gap-2">
-                          <Button size="sm" color="secondary" variant="flat" onPress={() => toggleMenuItemAvailability(item)}>
-                            {item.available ? 'Mark Unavailable' : 'Mark Available'}
-                          </Button>
-                          <Button
-                            size="sm"
-                            color={item.usedCount > 0 ? 'warning' : 'danger'}
-                            variant="flat"
-                            onPress={() => handleRemoveMenuItem(item)}
-                          >
-                            {item.usedCount > 0 ? (item.available ? 'Deactivate' : 'Already inactive') : 'Delete'}
-                          </Button>
-                        </div>
+                        <Button size="sm" variant="flat" onPress={() => setViewingMenuId(item.id)}>View</Button>
                       </CardBody>
                     </Card>
                   ))}
                 </div>
               </div>
             </Tab>
+            )}
 
+            {(!embedded || panel === 'inventory') && (
             <Tab key="inventory" title="📦 Inventory Management">
               <div className="p-6">
+                {embedded && (
+                  <div className="flex justify-end mb-4">
+                    <Button color="secondary" className="bg-ghana-gold text-white" onClick={() => setIsNewInventoryItemModalOpen(true)}>
+                      + Add Inventory Item
+                    </Button>
+                  </div>
+                )}
                 <div className="flex items-center justify-between mb-4">
                   <Select
                     label="Filter by Status"
@@ -455,13 +473,32 @@ export default function FoodBeverageMenuInventory() {
                 </Table>
               </div>
             </Tab>
+            )}
 
+            {(!embedded || panel === 'requisitions') && (
             <Tab key="requisitions" title="📝 Requisitions">
               <div className="p-6">
                 <p className="text-xs text-gray-500 mb-3">
                   Request stock from Stores — Restaurant & Bar doesn't manage suppliers or purchase orders directly. Stores approves it, then marks it <strong>Ready</strong> once it's pulled and staged for pickup (that's also when it lands in your Inventory Management on-hand); until then it's still just approved and you're waiting on it.
                 </p>
-                <div className="flex justify-end mb-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <Select
+                    aria-label="Filter requisitions by status"
+                    label="Status"
+                    size="sm"
+                    className="w-44"
+                    selectedKeys={[requisitionStatusFilter]}
+                    onSelectionChange={(keys) => {
+                      const next = Array.from(keys)[0] as string;
+                      if (next) setRequisitionStatusFilter(next);
+                    }}
+                  >
+                    <SelectItem key="all">All statuses</SelectItem>
+                    <SelectItem key="pending">Pending</SelectItem>
+                    <SelectItem key="approved">Approved</SelectItem>
+                    <SelectItem key="ready">Ready</SelectItem>
+                    <SelectItem key="rejected">Rejected</SelectItem>
+                  </Select>
                   <Button color="success" className="bg-blue-500 text-white" onClick={() => setIsNewRequisitionModalOpen(true)}>
                     + Request Stock
                   </Button>
@@ -474,15 +511,20 @@ export default function FoodBeverageMenuInventory() {
                     <TableColumn>REQUESTED DATE</TableColumn>
                     <TableColumn>STATUS</TableColumn>
                   </TableHeader>
-                  <TableBody>
-                    {requisitions.map((req) => (
+                  <TableBody emptyContent={requisitions.length === 0 ? 'No requisitions yet — request stock from Stores using the button above.' : 'No requisitions match this status.'}>
+                    {[...(requisitionStatusFilter === 'all' ? requisitions : requisitions.filter((req) => req.status === requisitionStatusFilter))]
+                      .sort((a, b) => b.requestedDate.getTime() - a.requestedDate.getTime())
+                      .map((req) => (
                       <TableRow key={req.id}>
                         <TableCell className="font-medium">{req.requisitionNumber}</TableCell>
                         <TableCell>
-                          <div className="text-sm">
-                            {req.items.length} items
-                            <p className="text-gray-500 text-xs">
-                              {req.items.map(item => `${item.itemName} (${item.quantity})`).join(', ')}
+                          <div className="text-sm max-w-xs">
+                            <p className="font-medium">
+                              {req.items.length} {req.items.length === 1 ? 'item' : 'items'}
+                            </p>
+                            <p className="text-gray-500 text-xs" title={req.items.map(item => `${item.itemName} (${item.quantity})`).join(', ')}>
+                              {req.items.slice(0, 2).map(item => `${item.itemName} (${item.quantity})`).join(', ')}
+                              {req.items.length > 2 ? ` +${req.items.length - 2} more` : ''}
                             </p>
                           </div>
                         </TableCell>
@@ -504,6 +546,7 @@ export default function FoodBeverageMenuInventory() {
                 )}
               </div>
             </Tab>
+            )}
           </Tabs>
         </CardBody>
       </Card>
@@ -576,6 +619,45 @@ export default function FoodBeverageMenuInventory() {
             <Button color="primary" className="bg-ghana-green text-white" onPress={submitInventoryItem} isDisabled={!inventoryForm.name}>
               Add Inventory Item
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={!!openMenuItem} onClose={() => setViewingMenuId(null)} size="lg">
+        <ModalContent>
+          <ModalHeader>{openMenuItem?.name}</ModalHeader>
+          <ModalBody>
+            {openMenuItem && (
+              <div className="space-y-2 text-sm">
+                <p><span className="text-gray-500">Status</span> · {openMenuItem.available ? 'Available' : 'Unavailable'}</p>
+                <p><span className="text-gray-500">Price</span> · ₵{openMenuItem.price.toFixed(2)}</p>
+                <p><span className="text-gray-500">Cost</span> · ₵{openMenuItem.cost.toFixed(2)}</p>
+                <p><span className="text-gray-500">Margin</span> · {openMenuItem.profitMargin.toFixed(1)}%</p>
+                <p><span className="text-gray-500">Prep</span> · {openMenuItem.preparationTime} min</p>
+                <p><span className="text-gray-500">Orders</span> · {openMenuItem.usedCount}</p>
+                {openMenuItem.description && <p>{openMenuItem.description}</p>}
+                {openMenuItem.allergens.length > 0 && openMenuItem.allergens[0] !== 'None' && (
+                  <p><span className="text-gray-500">Allergens</span> · {openMenuItem.allergens.join(', ')}</p>
+                )}
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            {openMenuItem && (
+              <Button color="secondary" variant="flat" onPress={() => toggleMenuItemAvailability(openMenuItem)}>
+                {openMenuItem.available ? 'Mark Unavailable' : 'Mark Available'}
+              </Button>
+            )}
+            {openMenuItem && (
+              <Button
+                color={openMenuItem.usedCount > 0 ? 'warning' : 'danger'}
+                variant="flat"
+                onPress={() => handleRemoveMenuItem(openMenuItem)}
+              >
+                {openMenuItem.usedCount > 0 ? (openMenuItem.available ? 'Deactivate' : 'Already inactive') : 'Delete'}
+              </Button>
+            )}
+            <Button variant="light" onPress={() => setViewingMenuId(null)}>Close</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

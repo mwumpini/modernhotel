@@ -50,7 +50,7 @@ interface EmployeeStore {
   selectedEmployee: Employee | null;
 
   // Employee Management
-  addEmployee: (employee: Omit<Employee, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  addEmployee: (employee: Omit<Employee, 'id' | 'createdAt' | 'updatedAt'>) => Employee;
   updateEmployee: (id: string, updates: Partial<Employee>) => void;
   deleteEmployee: (id: string) => void;
   getEmployee: (id: string) => Employee | undefined;
@@ -122,6 +122,7 @@ export const useEmployeeStore = create<EmployeeStore>((set, get) => ({
       employees: [...state.employees, newEmployee]
     }));
     syncEmployeeToApi(newEmployee);
+    return newEmployee;
   },
 
   updateEmployee: (id, updates) => {

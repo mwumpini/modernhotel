@@ -423,7 +423,8 @@ export default function EmployeeRecordsPanel() {
         if (before.departmentId !== form.departmentId) diffs.push({ field: 'departmentId', prev: before.departmentId, next: form.departmentId, type: 'department_change' });
         if (before.positionId !== form.positionId) diffs.push({ field: 'positionId', prev: before.positionId, next: form.positionId, type: 'position_change' });
         const prevSalary = (before as any).salary ?? (before as any).baseSalary;
-        if (prevSalary !== Number(form.salary)) diffs.push({ field: 'salary', prev: prevSalary, next: Number(form.salary), type: 'salary_change' });
+        const nextSalary = form.compensationType === 'monthly' ? Number((Number(form.basicSalary || 0) + Number(form.allowances || 0)).toFixed(2)) : 0;
+        if (prevSalary !== nextSalary) diffs.push({ field: 'salary', prev: prevSalary, next: nextSalary, type: 'salary_change' });
         if (before.status !== form.status) diffs.push({ field: 'status', prev: before.status, next: form.status, type: 'status_change' });
 
         diffs.forEach((d) =>
@@ -444,9 +445,14 @@ export default function EmployeeRecordsPanel() {
       return;
     } else {
       console.log('[HR][Records] addEmployee', { form });
-      useSettingsStore.getState().getNextModuleNumber('hr', 'employeeId');
+      const hrSettings = useSettingsStore.getState();
+      const peekedStaffNo = hrSettings.peekNextModuleNumber('hr', 'employeeId');
+      const typedStaffNo = form.employeeNumber.trim();
+      const employeeNumber = !typedStaffNo || typedStaffNo === peekedStaffNo
+        ? hrSettings.getNextModuleNumber('hr', 'employeeId')
+        : typedStaffNo;
       const created = addEmployee({
-        employeeNumber: form.employeeNumber,
+        employeeNumber,
         firstName: form.firstName,
         lastName: form.lastName,
         email: form.email,

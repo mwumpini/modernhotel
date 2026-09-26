@@ -39,16 +39,18 @@ export default function BenefitsManagementPanel() {
   };
 
   const doEnroll = () => {
+    const pkg = packages.find((p) => p.id === enrForm.benefitsPackageId);
+    if (!enrForm.employeeId || !pkg) return;
     enrollEmployee({
       employeeId: enrForm.employeeId,
-      benefitsPackageId: enrForm.benefitsPackageId,
+      benefitsPackageId: pkg.id,
       enrollmentDate: new Date(enrForm.enrollmentDate),
       effectiveDate: new Date(enrForm.enrollmentDate),
-      status: enrForm.status,
-      dependents: Number(enrForm.dependents),
-      totalCost: Number(enrForm.cost) || 0,
-      employeeContribution: Number(enrForm.employeeContribution) || 0,
-      employerContribution: Number(enrForm.employerContribution) || 0
+      status: 'active',
+      dependents: Number(enrForm.dependents) || 0,
+      totalCost: Number(pkg.cost) || 0,
+      employeeContribution: Number(pkg.employeeContribution) || 0,
+      employerContribution: Number(pkg.employerContribution) || 0
     } as any);
   };
 
@@ -100,11 +102,11 @@ export default function BenefitsManagementPanel() {
               <CardHeader className="justify-between">
                 <div className="font-medium">Enrollments</div>
                 <div className="flex items-center gap-2">
-                  <Select size="sm" selectedKeys={[enrForm.employeeId]} onSelectionChange={(k) => setEnrForm({ ...enrForm, employeeId: Array.from(k)[0] as string })} className="w-48" variant="bordered" aria-label="Employee">
-                    {employees.map((e) => <SelectItem key={e.id}>{e.firstName} {e.lastName}</SelectItem>)}
+                  <Select size="sm" placeholder="Employee" selectedKeys={enrForm.employeeId ? [enrForm.employeeId] : []} onSelectionChange={(k) => setEnrForm({ ...enrForm, employeeId: (Array.from(k)[0] as string) || '' })} className="w-48" variant="bordered" aria-label="Employee">
+                    {employees.map((e) => <SelectItem key={e.id} textValue={`${e.firstName} ${e.lastName}`}>{e.firstName} {e.lastName}</SelectItem>)}
                   </Select>
-                  <Select size="sm" selectedKeys={[enrForm.benefitsPackageId]} onSelectionChange={(k) => setEnrForm({ ...enrForm, benefitsPackageId: Array.from(k)[0] as string })} className="w-48" variant="bordered" aria-label="Package">
-                    {packages.map((p) => <SelectItem key={p.id}>{p.name}</SelectItem>)}
+                  <Select size="sm" placeholder="Package" selectedKeys={enrForm.benefitsPackageId ? [enrForm.benefitsPackageId] : []} onSelectionChange={(k) => setEnrForm({ ...enrForm, benefitsPackageId: (Array.from(k)[0] as string) || '' })} className="w-48" variant="bordered" aria-label="Package">
+                    {packages.map((p) => <SelectItem key={p.id} textValue={p.name}>{p.name}</SelectItem>)}
                   </Select>
                 <Button size="sm" color="primary" onPress={doEnroll} isDisabled={!enrForm.employeeId || !enrForm.benefitsPackageId}>Enroll</Button>
                 </div>

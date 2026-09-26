@@ -20,7 +20,9 @@ export interface HousekeepingTask {
   priority: TaskPriority;
   status: TaskStatus;
   assignedTo?: string;
+  assignedName?: string;
   assignedAt?: string;
+  createdAt?: string;
   startedAt?: string;
   completedAt?: string;
   verifiedAt?: string;
@@ -31,6 +33,10 @@ export interface HousekeepingTask {
   completedItems: string[];
   issues?: string[];
   photos?: string[];
+  /** Supplies taken from housekeeping stock when the task was finished. */
+  suppliesUsed?: { itemId: string; itemName: string; quantity: number }[];
+  /** True once those supplies have been issued, so finishing again does not deduct twice. */
+  suppliesIssued?: boolean;
 }
 
 export interface RoomInspection {

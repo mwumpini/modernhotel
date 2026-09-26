@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Literata, Nunito_Sans, Source_Sans_3 } from "next/font/google";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/app/lib/auth/auth";
 import Providers from "./components/Providers";
@@ -12,6 +12,21 @@ const geistSans = Geist({
 
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
+  subsets: ["latin"],
+});
+
+const sourceSans = Source_Sans_3({
+  variable: "--font-source",
+  subsets: ["latin"],
+});
+
+const nunitoSans = Nunito_Sans({
+  variable: "--font-nunito",
+  subsets: ["latin"],
+});
+
+const literata = Literata({
+  variable: "--font-literata",
   subsets: ["latin"],
 });
 
@@ -45,16 +60,16 @@ export default async function RootLayout({
   }
 
   return (
-    <html lang="en" data-theme="light" suppressHydrationWarning>
+    <html lang="en" data-theme="light" data-font="source" suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t='light';var r=localStorage.getItem('system.currentUser');if(r){var u=JSON.parse(r);if(u&&u.preferences&&u.preferences.theme)t=u.preferences.theme;}document.documentElement.setAttribute('data-theme',t);var d=t==='dark'||(t==='auto'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);document.documentElement.classList.toggle('light',!d);document.documentElement.style.colorScheme=d?'dark':'light';}catch(e){}})();`,
+            __html: `(function(){try{var t='light',f='source',s='medium',bg='';var r=localStorage.getItem('system.currentUser');if(r){var p=(JSON.parse(r)||{}).preferences||{};if(p.theme==='light'||p.theme==='dark'||p.theme==='auto')t=p.theme;if(p.font==='source'||p.font==='nunito'||p.font==='geist'||p.font==='serif')f=p.font;if(p.fontSize==='small'||p.fontSize==='medium'||p.fontSize==='large'||p.fontSize==='xlarge')s=p.fontSize;var d=t==='dark'||(t==='auto'&&window.matchMedia('(prefers-color-scheme: dark)').matches);bg=d?p.backgroundDark:p.backgroundLight;}else{var d=false;}var root=document.documentElement;root.setAttribute('data-theme',t);root.setAttribute('data-font',f);root.setAttribute('data-font-size',s);root.classList.toggle('dark',d);root.classList.toggle('light',!d);root.style.colorScheme=d?'dark':'light';if(bg&&/^#[0-9a-fA-F]{6}$/.test(bg)){root.style.setProperty('--page-background',bg);root.setAttribute('data-bg','custom');}}catch(e){}})();`,
           }}
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${sourceSans.variable} ${nunitoSans.variable} ${literata.variable} antialiased`}
       >
         <Providers session={session}>
           {children}

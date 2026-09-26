@@ -12,6 +12,24 @@ export default function LoginForm() {
   const [rememberMe, setRememberMe] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [needsCode, setNeedsCode] = useState(false);
+  const [enrollSecret, setEnrollSecret] = useState('');
+  const [code, setCode] = useState('');
+
+  const finishSignIn = async (otp?: string) => {
+    const result = await signIn('credentials', {
+      email,
+      password,
+      tenantId,
+      otp: otp || '',
+      redirect: false,
+    });
+    if (result?.error) {
+      setError(otp ? 'That code is not valid. Try the current 6-digit code.' : 'Invalid credentials. Please try again.');
+      return;
+    }
+    setClientTenantSubdomain(tenantId.trim().toLowerCase());
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -19,18 +37,31 @@ export default function LoginForm() {
     setIsLoading(true);
 
     try {
-      const result = await signIn('credentials', {
-        email,
-        password,
-        tenantId,
-        redirect: false,
-      });
-
-      if (result?.error) {
-        setError('Invalid credentials. Please try again.');
-      } else {
-        setClientTenantSubdomain(tenantId.trim().toLowerCase());
+      if (needsCode) {
+        await finishSignIn(code);
+        return;
       }
+
+      const challenge = await fetch('/api/auth/challenge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, tenantId }),
+      });
+      const data = await challenge.json().catch(() => ({}));
+      if (data?.expired) {
+        setError(data.error || 'This password has expired. An administrator must set a new one.');
+        return;
+      }
+      if (!challenge.ok) {
+        setError(data?.error || 'Invalid credentials. Please try again.');
+        return;
+      }
+      if (data?.required) {
+        setNeedsCode(true);
+        setEnrollSecret(data.enroll ? String(data.secret || '') : '');
+        return;
+      }
+      await finishSignIn();
     } catch {
       setError('An error occurred. Please try again.');
     } finally {
@@ -99,6 +130,35 @@ export default function LoginForm() {
                 inputWrapper: "border-ghana-green focus-within:border-ghana-gold"
               }}
             />
+
+            {needsCode && (
+              <>
+                {enrollSecret && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-md p-3">
+                    <p className="text-sm text-ghana-black">
+                      Add this key to an authenticator app, then enter the 6-digit code it shows.
+                    </p>
+                    <p className="mt-2 font-mono text-sm break-all text-ghana-black">{enrollSecret}</p>
+                  </div>
+                )}
+                <Input
+                  type="text"
+                  label="Authentication code"
+                  placeholder="6-digit code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  required
+                  variant="bordered"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  classNames={{
+                    input: "text-ghana-black",
+                    label: "text-ghana-black font-medium",
+                    inputWrapper: "border-ghana-green focus-within:border-ghana-gold"
+                  }}
+                />
+              </>
+            )}
           </div>
 
           {error && (
@@ -133,7 +193,7 @@ export default function LoginForm() {
             isLoading={isLoading}
             disabled={isLoading}
           >
-            {isLoading ? 'Signing In...' : 'Sign In'}
+            {isLoading ? 'Signing In...' : needsCode ? 'Verify code' : 'Sign In'}
           </Button>
 
           <div className="text-center">

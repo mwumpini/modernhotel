@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/app/lib/database/client'
-import { runTenantNightAudit } from '@/app/lib/frontoffice/nightAuditServer'
+import { catchUpTenantNightAudit } from '@/app/lib/frontoffice/nightAuditServer'
 
 /**
  * Server-side Night Audit — Vercel Cron (01:00) or Bearer CRON_SECRET.
@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
 
     for (const tenant of tenants) {
       try {
-        const run = await runTenantNightAudit({
+        const run = await catchUpTenantNightAudit({
           tenantId: tenant.id,
           source: 'cron',
           runBy: 'night-audit-cron',
@@ -38,6 +38,7 @@ export async function GET(request: NextRequest) {
           skipped: run.skipped,
           businessDate: run.businessDate,
           nextBusinessDate: run.nextBusinessDate,
+          daysClosed: run.daysClosed,
           roomChargesPosted: run.roomChargesPosted,
           noShowsMarked: run.noShowsMarked,
           folioChargesTotal: run.folioChargesTotal,

@@ -41,6 +41,11 @@ export async function tryScheduledNightAudit(now = new Date()): Promise<AutoNigh
     return { action: 'skipped', reason: 'auto_run_disabled' };
   }
 
+  if (!frontOfficeStore.hasServerBusinessDate()) {
+    logScheduler(`${stamp} — skipped — business date not loaded yet`);
+    return { action: 'skipped', reason: 'business_date_not_loaded' };
+  }
+
   const businessDate = frontOfficeStore.getBusinessDate();
   if (hasCompletedNightAuditForDate(frontOfficeStore, businessDate)) {
     logScheduler(`${stamp} — already run, skipping (business date ${businessDate})`);

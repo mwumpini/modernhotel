@@ -124,9 +124,13 @@ export function taxConfigsFromGhanaTemplate(): TaxConfig[] {
                   : 'Other';
     // NHIL, GETFund and Tourism are non-creditable — businesses cannot claim input tax
     // relief on them. They appear on sales invoices but are a cost (not recoverable) on purchases.
+    // WITHHOLDING_VAT is the purchase-side VAT withholding (account 2170). It is applied
+    // by purchaseWht.ts, not by the guest sales stack — leaving it as type Other put 7%
+    // onto checkout journals and then scaled the real levies down to fit the folio tax.
     const nonCreditable = type === 'NHIL' || type === 'GETFund' || type === 'Tourism';
-    const applyOnPurchases = !nonCreditable && type !== 'Withholding';
-    const applyOnSales = type !== 'Withholding';
+    const purchaseVatWithholding = key === 'WITHHOLDING_VAT';
+    const applyOnPurchases = !nonCreditable && type !== 'Withholding' && !purchaseVatWithholding;
+    const applyOnSales = type !== 'Withholding' && !purchaseVatWithholding;
     return {
       id: String(index + 1),
       code: tax.code,
@@ -145,9 +149,17 @@ export function taxConfigsFromGhanaTemplate(): TaxConfig[] {
   });
 }
 
+/** Purchase-side VAT withholding (2170). Applied by purchaseWht.ts, never the sales or input stack. */
+function isPurchaseWithholding(c: TaxConfig): boolean {
+  const code = (c.code || '').toUpperCase();
+  const gl = (c.glAccountCode || '').trim();
+  const name = (c.name || '').toLowerCase();
+  return code.includes('WITHHOLDING') || gl === '2170' || name.includes('withholding');
+}
+
 function passesContextFilters(c: TaxConfig, context: TaxStackContext): boolean {
   if (!c.isActive || c.rate <= 0) return false;
-  if (c.type === 'Withholding') return false;
+  if (c.type === 'Withholding' || isPurchaseWithholding(c)) return false;
   if (context === 'purchase') {
     if (c.applyOnPurchases === false) return false;
     if (!c.isRecoverable) return false;

@@ -1,23 +1,18 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Card, 
   CardBody, 
   CardHeader, 
   Button, 
-  Badge, 
   Tabs, 
   Tab, 
-  Chip,
-  Tooltip
 } from "@heroui/react";
-import { trackEvent } from '../lib/analytics/trackEvent';
-import { useRouter } from 'next/navigation';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
-import ExpiryAlertsCard from './hr/ExpiryAlertsCard';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 
 // Hideable summary/widget cards on this dashboard — the "Operations Overview"
@@ -27,37 +22,34 @@ const HR_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'onLeave', label: 'On Leave' },
   { id: 'payrollStatus', label: 'Payroll Status' },
   { id: 'todayOps', label: "Today's Operations" },
-  { id: 'expiryAlerts', label: 'Expiring Documents' },
   { id: 'quickActions', label: 'Quick Actions' },
   { id: 'recentActivities', label: 'Recent Activities' },
   { id: 'notices', label: 'HR Notices' },
 ];
 
 // Import specialized HR components
-import EmployeeManagementDashboard from './hr/EmployeeManagementDashboard';
 import EmployeeRecordsPanel from './hr/EmployeeRecordsPanel';
 import NewHiresPanel from './hr/NewHiresPanel';
 import EmployeeChangesPanel from './hr/EmployeeChangesPanel';
 import PerformanceReviewsPanel from './hr/PerformanceReviewsPanel';
 import PerformanceLogPanel from './hr/PerformanceLogPanel';
 import DepartmentsPositionsPanel from './hr/DepartmentsPositionsPanel';
-import LeaveAttendanceDashboard from './hr/LeaveAttendanceDashboard';
 import LeaveManagementPanel from './hr/LeaveManagementPanel';
 import TimeTrackingPanel from './hr/TimeTrackingPanel';
 import ShiftSchedulingPanel from './hr/ShiftSchedulingPanel';
 import OvertimeManagementPanel from './hr/OvertimeManagementPanel';
-import ComplianceDashboard from './hr/ComplianceDashboard';
 import TaxCompliancePanel from './hr/TaxCompliancePanel';
 import TrainingProgramsPanel from './hr/TrainingProgramsPanel';
 import LaborCompliancePanel from './hr/LaborCompliancePanel';
 import ComplianceReportsPanel from './hr/ComplianceReportsPanel';
-import PayrollManagementDashboard from './hr/PayrollManagementDashboard';
 import PayrollProcessingPanel from './hr/PayrollProcessingPanel';
 import PayslipGenerationPanel from './hr/PayslipGenerationPanel';
 import BenefitsManagementPanel from './hr/BenefitsManagementPanel';
 import SalaryAnalyticsPanel from './hr/SalaryAnalyticsPanel';
+import HRReportsAnalysis from './HRReportsAnalysis';
 import RecentActivities from './RecentActivities';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
+import { getExpiryAlerts } from '../lib/hr/expiryAlerts';
 import { usePayrollStore } from '../lib/hr/payrollStore';
 import { useLeaveAttendanceStore } from '../lib/hr/leaveAttendanceStore';
 import { useTrainingStore } from '../lib/hr/trainingStore';
@@ -65,86 +57,141 @@ import { usePerformanceStore } from '../lib/hr/performanceStore';
 import { useEmployeeChangesStore } from '../lib/hr/employeeChangesStore';
 import { useBenefitsStore } from '../lib/hr/benefitsStore';
 import { useOnboardingStore } from '../lib/hr/onboardingStore';
-import { computeLaborCompliance } from '../lib/hr/laborCompliance';
 
-// Info Icon Component with Tooltip
-const InfoIcon = ({ description }: { description: string }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+type HrBook = 'employees' | 'leave' | 'time' | 'payroll' | 'benefits' | 'performance' | 'training' | 'compliance' | 'departments' | 'reports';
 
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    timeoutRef.current = setTimeout(() => {
-      setShowTooltip(true);
-    }, 2000); // 2 second delay
-  };
-
-  const handleMouseLeave = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    setShowTooltip(false);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  return (
-    <Tooltip
-      content={description}
-      isOpen={showTooltip}
-      onOpenChange={setShowTooltip}
-      placement="top"
-      showArrow
-      color="primary"
-      delay={0}
-    >
-      <div
-        className="inline-flex items-center justify-center w-4 h-4 mr-2 text-xs text-blue-500 bg-blue-100 rounded-full cursor-help hover:bg-blue-200 transition-colors"
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        title={description}
-      >
-        ℹ
-      </div>
-    </Tooltip>
-  );
+const DEFAULT_PANEL: Record<HrBook, string> = {
+  employees: 'records',
+  leave: 'leave',
+  time: 'attendance',
+  payroll: 'payroll',
+  benefits: 'benefits',
+  performance: 'reviews',
+  training: 'training',
+  compliance: 'tax',
+  departments: 'departments',
+  reports: 'reports',
 };
 
-export default function HRMainDashboard() {
-  const [selectedTab, setSelectedTab] = useState('overview');
+const HR_TARGETS: Record<string, { book: HrBook; panel: string }> = {
+  overview: { book: 'employees', panel: 'records' },
+  employees: { book: 'employees', panel: 'records' },
+  records: { book: 'employees', panel: 'records' },
+  hires: { book: 'employees', panel: 'hires' },
+  'new-hires': { book: 'employees', panel: 'hires' },
+  newhires: { book: 'employees', panel: 'hires' },
+  changes: { book: 'employees', panel: 'changes' },
+  leave: { book: 'leave', panel: 'leave' },
+  time: { book: 'time', panel: 'attendance' },
+  attendance: { book: 'time', panel: 'attendance' },
+  shifts: { book: 'time', panel: 'shifts' },
+  overtime: { book: 'time', panel: 'overtime' },
+  payroll: { book: 'payroll', panel: 'payroll' },
+  payslips: { book: 'payroll', panel: 'payslips' },
+  salary: { book: 'payroll', panel: 'salary' },
+  benefits: { book: 'benefits', panel: 'benefits' },
+  reviews: { book: 'performance', panel: 'reviews' },
+  performance: { book: 'performance', panel: 'reviews' },
+  'performance-log': { book: 'performance', panel: 'log' },
+  training: { book: 'training', panel: 'training' },
+  tax: { book: 'compliance', panel: 'tax' },
+  compliance: { book: 'compliance', panel: 'tax' },
+  labor: { book: 'compliance', panel: 'labor' },
+  'compliance-reports': { book: 'compliance', panel: 'reports' },
+  departments: { book: 'departments', panel: 'departments' },
+  reports: { book: 'reports', panel: 'reports' },
+  analytics: { book: 'reports', panel: 'reports' },
+};
+
+function resolveHrTarget(value: string | null | undefined) {
+  if (!value) return { book: 'employees' as HrBook, panel: 'records' };
+  return HR_TARGETS[value.trim().toLowerCase()] || { book: 'employees' as HrBook, panel: 'records' };
+}
+
+function SectionTabs({
+  label,
+  selected,
+  onChange,
+  tabs,
+}: {
+  label: string;
+  selected: string;
+  onChange: (key: string) => void;
+  tabs: { key: string; title: string }[];
+}) {
+  return (
+    <Tabs
+      selectedKey={selected}
+      onSelectionChange={(key) => onChange(String(key))}
+      variant="underlined"
+      className="w-full"
+      aria-label={label}
+    >
+      {tabs.map((tab) => (
+        <Tab key={tab.key} title={tab.title} />
+      ))}
+    </Tabs>
+  );
+}
+
+export default function HRMainDashboard({
+  initialTab = 'records',
+  fullPage = false,
+}: {
+  initialTab?: string;
+  fullPage?: boolean;
+} = {}) {
+  const initialTarget = resolveHrTarget(initialTab);
+  const [book, setBook] = useState<HrBook>(initialTarget.book);
+  const [panel, setPanel] = useState(initialTarget.panel);
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.hr', HR_DASHBOARD_SECTIONS);
-  const [employeeView, setEmployeeView] = useState<'dashboard' | 'records' | 'newHires' | 'changes' | 'reviews' | 'log' | 'departments'>('dashboard');
-  const [leaveView, setLeaveView] = useState<'dashboard' | 'leave' | 'time' | 'shifts' | 'overtime'>('dashboard');
-  const [complianceView, setComplianceView] = useState<'dashboard' | 'tax' | 'training' | 'labor' | 'reports'>('dashboard');
-  const [payrollView, setPayrollView] = useState<'dashboard' | 'processing' | 'payslips' | 'benefits' | 'analytics'>('dashboard');
-  const router = useRouter();
+
+  useEffect(() => {
+    const apply = () => {
+      try {
+        const stored = localStorage.getItem('hr.tab');
+        if (!stored) return;
+        const next = resolveHrTarget(stored);
+        setBook(next.book);
+        setPanel(next.panel);
+        localStorage.removeItem('hr.tab');
+      } catch {
+        /* ignore */
+      }
+    };
+    apply();
+    window.addEventListener('hr-navigate', apply);
+    return () => window.removeEventListener('hr-navigate', apply);
+  }, []);
 
   // Real HR data — hydrated from the DB on mount below.
   const employees = useEmployeeStore((s) => s.employees);
+  const [docsReady, setDocsReady] = useState(false);
+  useEffect(() => setDocsReady(true), []);
+  const documentAlerts = React.useMemo(() => {
+    if (!docsReady) return [];
+    return getExpiryAlerts(employees).map((alert) => {
+      const when = alert.daysLeft < 0
+        ? `${-alert.daysLeft} day${alert.daysLeft === -1 ? '' : 's'} overdue`
+        : alert.daysLeft === 0
+          ? 'due today'
+          : `due in ${alert.daysLeft} day${alert.daysLeft === 1 ? '' : 's'}`;
+      return {
+        id: `${alert.employeeId}-${alert.kind}`,
+        level: (alert.daysLeft < 0 ? 'urgent' : 'normal') as 'urgent' | 'normal',
+        message: `${alert.name} — ${alert.kind} ${when}`,
+      };
+    });
+  }, [docsReady, employees]);
   const hydrateEmployees = useEmployeeStore((s) => s.hydrateFromApi);
   const payrollPeriods = usePayrollStore((s) => s.payrollPeriods);
   const payrollRecords = usePayrollStore((s) => s.payrollRecords);
   const hydratePayroll = usePayrollStore((s) => s.hydrateFromApi);
   const leaveRequests = useLeaveAttendanceStore((s) => s.leaveRequests);
-  const shifts = useLeaveAttendanceStore((s) => s.shifts);
-  const attendances = useLeaveAttendanceStore((s) => s.attendances);
   const hydrateLeave = useLeaveAttendanceStore((s) => s.hydrateFromApi);
-  const employeeChanges = useEmployeeChangesStore((s) => s.changes);
   const hydrateEmployeeChanges = useEmployeeChangesStore((s) => s.hydrateFromApi);
-  const benefitsEnrollments = useBenefitsStore((s) => s.enrollments);
   const hydrateBenefits = useBenefitsStore((s) => s.hydrateFromApi);
-  const trainingPrograms = useTrainingStore((s) => s.programs);
-  const trainingEnrollments = useTrainingStore((s) => s.enrollments);
   const hydrateTraining = useTrainingStore((s) => s.hydrateFromApi);
-  const performanceReviewsList = usePerformanceStore((s) => s.reviews);
   const hydratePerformance = usePerformanceStore((s) => s.hydrateFromApi);
   const hydrateOnboarding = useOnboardingStore((s) => s.hydrateFromApi);
 
@@ -166,7 +213,6 @@ export default function HRMainDashboard() {
     return date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth();
   };
 
-  const totalEmployees = employees.length;
   const activeEmployees = employees.filter((e) => e.status === 'active').length;
   const onLeaveEmployees = employees.filter((e) => e.status === 'on_leave').length;
   const fullTimeCount = employees.filter((e) => e.employmentType === 'full_time').length;
@@ -192,134 +238,25 @@ export default function HRMainDashboard() {
 
   const pendingLeaveRequests = leaveRequests.filter((r) => r.status === 'pending').length;
 
-  const performanceReviews = performanceReviewsList.length;
-  const pendingReviews = performanceReviewsList.filter((r: any) => r.status !== 'completed' && r.status !== 'acknowledged').length;
-  const completedReviews = performanceReviews - pendingReviews;
-
-  const { checklist: complianceChecklist, score: laborCompliance } = computeLaborCompliance(employees, trainingPrograms, trainingEnrollments);
-  const tinCheck = complianceChecklist.find((c) => c.id === 'tin');
-  const taxCompliance = tinCheck && tinCheck.total > 0 ? Math.round((tinCheck.compliant / tinCheck.total) * 100) : 100;
-
   const newHiresToday = employees.filter((e) => e.hireDate && new Date(e.hireDate).toISOString().slice(0, 10) === today).length;
   const payrollProcessedToday = payrollRecords.filter((r) => r.createdAt && new Date(r.createdAt).toISOString().slice(0, 10) === today).length;
 
-  const activeBenefitsEnrollments = benefitsEnrollments.filter((e) => e.status === 'active').length;
-  const overtimeRecordsCount = attendances.filter((a) => (a.overtimeHours || 0) > 0).length;
-
-  // Operational items following the uniform pattern
-  const operationalItems = [
-    {
-      category: 'Employee Management',
-      items: [
-        { title: 'Employee Records', icon: '👥', description: 'Complete employee database and profiles', status: 'active', count: totalEmployees },
-        { title: 'New Hires', icon: '📝', description: 'Onboarding and recruitment management', status: 'active', count: newHiresToday },
-        { title: 'Employee Changes', icon: '🔄', description: 'Promotions, transfers, and updates', status: 'active', count: employeeChanges.length },
-        { title: 'Performance Reviews', icon: '📊', description: 'Employee evaluation and feedback', status: 'active', count: pendingReviews },
-      ]
-    },
-    {
-      category: 'Payroll & Benefits',
-      items: [
-        { title: 'Payroll Processing', icon: '💰', description: 'Salary calculation and payment', status: 'active', count: payrollProcessedToday },
-        { title: 'Payslip Generation', icon: '🧾', description: 'Employee payment documentation', status: 'active', count: 0 },
-        { title: 'Benefits Management', icon: '💳', description: 'Health, insurance, and perks', status: 'active', count: activeBenefitsEnrollments },
-        { title: 'Reports & Analysis', icon: '📊', description: 'Employees, payroll and time records on file', status: 'active', count: 0 },
-      ]
-    },
-    {
-      category: 'Leave & Attendance',
-      items: [
-        { title: 'Leave Management', icon: '🌴', description: 'Vacation and time-off requests', status: 'active', count: pendingLeaveRequests },
-        { title: 'Time Tracking', icon: '⏰', description: 'Work hours and attendance monitoring', status: 'active', count: activeEmployees },
-        { title: 'Shift Scheduling', icon: '📅', description: 'Work schedule management', status: 'active', count: shifts.length },
-        { title: 'Overtime Management', icon: '🚨', description: 'Extra hours tracking and approval', status: 'active', count: overtimeRecordsCount },
-      ]
-    },
-    {
-      category: 'Compliance & Training',
-      items: [
-        { title: 'Tax Compliance', icon: '📋', description: 'PAYE, SSNIT, and tax reporting', status: 'active', count: taxCompliance },
-        { title: 'Training Programs', icon: '🎓', description: 'Employee development and skills', status: 'active', count: trainingPrograms.length },
-        { title: 'Labor Compliance', icon: '🔒', description: 'Ghana labor law adherence', status: 'active', count: laborCompliance },
-        { title: 'Compliance Reports', icon: '📊', description: 'Regulatory reporting and audits', status: 'active', count: 0 },
-      ]
-    }
-  ];
-
-  // Quick action handlers
-  const handleQuickAction = (action: string) => {
-    trackEvent('HR.QuickAction', { action });
-    
-    switch (action) {
-      case 'new-hire':
-        setSelectedTab('employees');
-        setEmployeeView('records');
-        break;
-      case 'run-payroll':
-        setSelectedTab('payroll');
-        break;
-      case 'leave-request':
-        setSelectedTab('leave');
-        break;
-      case 'performance-review':
-        setSelectedTab('performance');
-        break;
-      case 'compliance-report':
-        setSelectedTab('compliance');
-        break;
-    }
+  const openBook = (value: string) => {
+    const next = resolveHrTarget(value);
+    setBook(next.book);
+    setPanel(next.panel);
   };
 
-  const quickActions = [
-    { 
-      title: 'New Hire', 
-      icon: '➕', 
-      color: 'primary', 
-      action: 'new-hire',
-      description: 'Add new employee'
-    },
-    { 
-      title: 'Run Payroll', 
-      icon: '💸', 
-      color: 'secondary', 
-      action: 'run-payroll',
-      description: 'Process monthly payroll'
-    },
-    { 
-      title: 'Leave Request', 
-      icon: '🌴', 
-      color: 'success', 
-      action: 'leave-request',
-      description: 'Approve leave requests'
-    },
-    { 
-      title: 'Performance Review', 
-      icon: '📊', 
-      color: 'warning', 
-      action: 'performance-review',
-      description: 'Conduct reviews'
-    },
-    { 
-      title: 'Compliance Report', 
-      icon: '📋', 
-      color: 'default', 
-      action: 'compliance-report',
-      description: 'Generate reports'
-    }
-  ];
-
   return (
-    <div className="p-6">
+    <>
+    {!fullPage && <DeptMessenger from="hr" mode="drawer" />}
+    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
+      <div>
+      {!fullPage && (
+      <>
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">👥 HR & Payroll</h2>
         <div className="flex items-center gap-2">
-          <Button
-            variant="bordered"
-            className="border-blue-600 text-blue-700 font-semibold"
-            onPress={() => router.push('/hr/reports')}
-          >
-            📊 Reports & Analysis
-          </Button>
           <CustomizeViewControl
             sections={HR_DASHBOARD_SECTIONS}
             isHidden={isHidden}
@@ -327,16 +264,14 @@ export default function HRMainDashboard() {
             showAll={showAll}
             hiddenCount={hiddenCount}
           />
+          <ModuleExpandButton
+            href={book === 'reports' ? '/hr/reports' : '/hr/ops'}
+            label={book === 'reports' ? 'Open reports full page' : 'Open HR & payroll full page'}
+          />
         </div>
       </div>
 
-      {/* Employee Status Overview - Following Uniform Pattern */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-semibold text-ghana-black flex items-center gap-2">
-            📊 Employee Status Overview ({totalEmployees} Total Employees)
-          </h3>
-        </div>
+      <div className="mb-6">
 
         {/* Status Cards - Matching Uniform Design */}
         {(!isHidden('activeEmployees') || !isHidden('onLeave') || !isHidden('payrollStatus')) && (
@@ -456,25 +391,11 @@ export default function HRMainDashboard() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              color="success"
-              variant="solid"
-              className="bg-green-600 hover:bg-green-700"
-              onClick={() => setSelectedTab('employees')}
-            >
-              👥 Manage Employees
-            </Button>
-            <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
-          </div>
+          <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
         </div>
         )}
       </div>
 
-      {/* Expiring contracts, permits, health certificates, probation */}
-      {!isHidden('expiryAlerts') && <ExpiryAlertsCard onHide={() => hide('expiryAlerts')} />}
-
-      {/* Quick Actions */}
       {!isHidden('quickActions') && (
       <Card className="border-0 shadow-lg mb-6">
         <CardHeader className="pb-3 flex items-center justify-between">
@@ -485,245 +406,160 @@ export default function HRMainDashboard() {
           <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
         </CardHeader>
         <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            {quickActions.map((action) => (
-              <Button
-                key={action.action}
-                color={action.color as any}
-                variant="flat"
-                className="h-24 flex flex-col items-center justify-center gap-2 p-4"
-                onClick={() => handleQuickAction(action.action)}
-              >
-                <span className="text-2xl">{action.icon}</span>
-                <span className="font-medium">{action.title}</span>
-                <span className="text-xs text-center opacity-80">{action.description}</span>
-              </Button>
-            ))}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Button color="primary" variant="flat" className="h-24 flex flex-col items-center justify-center gap-2 p-4" onClick={() => openBook('records')}>
+              <span className="text-2xl">👥</span>
+              <span className="font-medium">Employees</span>
+              <span className="text-xs text-center opacity-80">Open the staff file</span>
+            </Button>
+            <Button color="warning" variant="flat" className="h-24 flex flex-col items-center justify-center gap-2 p-4" onClick={() => openBook('leave')}>
+              <span className="text-2xl">🌴</span>
+              <span className="font-medium">Leave</span>
+              <span className="text-xs text-center opacity-80">Review time-off requests</span>
+            </Button>
+            <Button color="secondary" variant="flat" className="h-24 flex flex-col items-center justify-center gap-2 p-4" onClick={() => openBook('payroll')}>
+              <span className="text-2xl">💰</span>
+              <span className="font-medium">Run Payroll</span>
+              <span className="text-xs text-center opacity-80">Prepare this month’s pay</span>
+            </Button>
           </div>
         </CardBody>
       </Card>
       )}
+      </>
+      )}
 
-      {/* Main Operations Interface - Following Uniform Pattern */}
       <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <h3 className="text-xl font-semibold text-ghana-black">📊 Operations Overview</h3>
-        </CardHeader>
+        {fullPage && (
+          <CardHeader className="pb-3">
+            <h3 className="text-xl font-semibold text-ghana-black">HR & Payroll</h3>
+          </CardHeader>
+        )}
         <CardBody>
-          <Tabs 
-            selectedKey={selectedTab} 
-            onSelectionChange={(key) => setSelectedTab(key as string)}
+          <Tabs
+            selectedKey={book}
+            onSelectionChange={(key) => {
+              const next = String(key) as HrBook;
+              setBook(next);
+              setPanel(DEFAULT_PANEL[next]);
+            }}
             className="w-full"
             aria-label="HR operations"
           >
-            <Tab key="overview" title="📊 Overview">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-4">
-                {operationalItems.map((category, categoryIndex) => (
-                  <Card key={categoryIndex} className="border border-gray-200 shadow-md">
-                    <CardHeader className="pb-3">
-                      <h4 className="text-lg font-semibold text-ghana-black">{category.category}</h4>
-                    </CardHeader>
-                    <CardBody className="pt-0">
-                      <div className="space-y-3">
-                        {category.items.map((item, itemIndex) => (
-                          <div 
-                            key={itemIndex}
-                            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
-                            onClick={() => {
-                              // Handle navigation based on item type
-                              if (item.title.includes('Employee Records')) {
-                                setSelectedTab('employees');
-                                setEmployeeView('records');
-                              } else if (item.title.includes('New Hires')) {
-                                setSelectedTab('employees');
-                                setEmployeeView('newHires');
-                              } else if (item.title.includes('Employee Changes')) {
-                                setSelectedTab('employees');
-                                setEmployeeView('changes');
-                              } else if (item.title.includes('Performance Reviews')) {
-                                setSelectedTab('employees');
-                                setEmployeeView('reviews');
-                              } else if (item.title.includes('Payroll Processing')) {
-                                setSelectedTab('payroll');
-                                setPayrollView('processing');
-                              } else if (item.title.includes('Payslip')) {
-                                setSelectedTab('payroll');
-                                setPayrollView('payslips');
-                              } else if (item.title.includes('Benefits Management')) {
-                                setSelectedTab('payroll');
-                                setPayrollView('benefits');
-                              } else if (item.title.includes('Reports & Analysis')) {
-                                router.push('/hr/reports');
-                              } else if (item.title.includes('Leave Management') || item.title.includes('Time Tracking')) {
-                                setSelectedTab('leave');
-                              } else if (item.title.includes('Compliance Reports')) {
-                                setSelectedTab('compliance');
-                                setComplianceView('reports');
-                              } else if (item.title.includes('Tax Compliance') || item.title.includes('Labor Compliance')) {
-                                setSelectedTab('compliance');
-                              }
-                            }}
-                          >
-                            <div className="flex items-center space-x-3">
-                              <span className="text-xl">{item.icon}</span>
-                              <div>
-                                <div className="flex items-center">
-                                  <InfoIcon description={item.description} />
-                                  <p className="font-medium text-ghana-black">{item.title}</p>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <Badge 
-                                color={item.status === 'active' ? 'success' : 'default'}
-                                variant="flat"
-                              >
-                                {item.status}
-                              </Badge>
-                              <Chip size="sm" variant="flat" color="primary">
-                                {item.count}
-                              </Chip>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardBody>
-                  </Card>
-                ))}
-              </div>
-            </Tab>
-
-            <Tab key="employees" title="👥 Employee Management">
-              <div className="p-6 space-y-4">
-                {employeeView !== 'dashboard' && (
-                  <div className="flex items-center justify-between">
-                    <Button variant="flat" onPress={() => setEmployeeView('dashboard')}>← Back to Employee Dashboard</Button>
-                  </div>
-                )}
-                {employeeView === 'dashboard' && (
-                  <EmployeeManagementDashboard onSelect={(k) => setEmployeeView(k)} />
-                )}
-                {employeeView === 'records' && <EmployeeRecordsPanel />}
-                {employeeView === 'newHires' && <NewHiresPanel />}
-                {employeeView === 'changes' && <EmployeeChangesPanel />}
-                {employeeView === 'reviews' && <PerformanceReviewsPanel />}
-                {employeeView === 'log' && <PerformanceLogPanel />}
-                {employeeView === 'departments' && <DepartmentsPositionsPanel />}
-              </div>
-            </Tab>
-
-            <Tab key="payroll" title="💰 Payroll Management">
-              <div className="p-6 space-y-4">
-                {payrollView !== 'dashboard' && (
-                  <div className="flex items-center justify-between">
-                    <Button variant="flat" onPress={() => setPayrollView('dashboard')}>← Back to Payroll Dashboard</Button>
-                  </div>
-                )}
-                {payrollView === 'dashboard' && (
-                  <PayrollManagementDashboard onSelect={(k) => setPayrollView(k)} />
-                )}
-                {payrollView === 'processing' && <PayrollProcessingPanel />}
-                {payrollView === 'payslips' && <PayslipGenerationPanel />}
-                {payrollView === 'benefits' && <BenefitsManagementPanel />}
-                {payrollView === 'analytics' && <SalaryAnalyticsPanel />}
-              </div>
-            </Tab>
-
-            <Tab key="leave" title="🌴 Leave Management">
-              <div className="p-6 space-y-4">
-                {leaveView !== 'dashboard' && (
-                  <div className="flex items-center justify-between">
-                    <Button variant="flat" onPress={() => setLeaveView('dashboard')}>← Back to Leave & Attendance</Button>
-                  </div>
-                )}
-                {leaveView === 'dashboard' && (
-                  <LeaveAttendanceDashboard onSelect={(k) => setLeaveView(k)} />
-                )}
-                {leaveView === 'leave' && <LeaveManagementPanel />}
-                {leaveView === 'time' && <TimeTrackingPanel />}
-                {leaveView === 'shifts' && <ShiftSchedulingPanel />}
-                {leaveView === 'overtime' && <OvertimeManagementPanel />}
-              </div>
-            </Tab>
-
-            <Tab key="performance" title="📊 Performance Management">
-              <div className="p-6">
-                <h4 className="text-lg font-semibold text-ghana-black mb-4">Performance Management Dashboard</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Review Status</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        <div className="flex justify-between">
-                          <span>Total Reviews:</span>
-                          <Badge color="primary">{performanceReviews}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Pending:</span>
-                          <Badge color="warning">{pendingReviews}</Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span>Completed:</span>
-                          <Badge color="success">{completedReviews}</Badge>
-                        </div>
-                      </div>
-                    </CardBody>
-                  </Card>
-                  <Card className="border border-gray-200">
-                    <CardHeader>
-                      <h5 className="font-medium">Quick Actions</h5>
-                    </CardHeader>
-                    <CardBody>
-                      <div className="space-y-3">
-                        {/* Performance Reviews is the only real performance screen in HR --
-                            there's no separate goal-setting or reporting UI, so all three
-                            actions open it (goals live on each review record; the review
-                            table itself is the report). */}
-                        <Button color="primary" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('reviews'); }}>
-                          📊 New Performance Review
-                        </Button>
-                        <Button color="warning" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('log'); }}>
-                          📝 Record Performance Entry (good or bad)
-                        </Button>
-                        <Button color="secondary" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('reviews'); }}>
-                          🎯 Set Goals
-                        </Button>
-                        <Button color="success" variant="flat" className="w-full" onPress={() => { setSelectedTab('employees'); setEmployeeView('reviews'); }}>
-                          📈 Performance Reports
-                        </Button>
-                      </div>
-                    </CardBody>
-                  </Card>
+            <Tab key="employees" title="👥 Employees">
+              {book === 'employees' && (
+                <div className="pt-4 space-y-4">
+                  <SectionTabs
+                    label="Employee sections"
+                    selected={panel}
+                    onChange={setPanel}
+                    tabs={[
+                      { key: 'records', title: 'Records' },
+                      { key: 'hires', title: 'New Hires' },
+                      { key: 'changes', title: 'Changes' },
+                    ]}
+                  />
+                  {panel === 'records' && <EmployeeRecordsPanel />}
+                  {panel === 'hires' && <NewHiresPanel />}
+                  {panel === 'changes' && <EmployeeChangesPanel />}
                 </div>
-              </div>
+              )}
             </Tab>
-
-            <Tab key="compliance" title="📋 Compliance & Training">
-              <div className="p-6 space-y-4">
-                {complianceView !== 'dashboard' && (
-                  <div className="flex items-center justify-between">
-                    <Button variant="flat" onPress={() => setComplianceView('dashboard')}>← Back to Compliance & Training</Button>
-                  </div>
-                )}
-                {complianceView === 'dashboard' && (
-                  <ComplianceDashboard onSelect={(k) => setComplianceView(k)} />
-                )}
-                {complianceView === 'tax' && <TaxCompliancePanel />}
-                {complianceView === 'training' && <TrainingProgramsPanel />}
-                {complianceView === 'labor' && <LaborCompliancePanel />}
-                {complianceView === 'reports' && <ComplianceReportsPanel />}
-              </div>
+            <Tab key="leave" title="🌴 Leave">
+              {book === 'leave' && <div className="pt-4"><LeaveManagementPanel /></div>}
+            </Tab>
+            <Tab key="time" title="⏰ Time">
+              {book === 'time' && (
+                <div className="pt-4 space-y-4">
+                  <SectionTabs
+                    label="Time sections"
+                    selected={panel}
+                    onChange={setPanel}
+                    tabs={[
+                      { key: 'attendance', title: 'Attendance' },
+                      { key: 'shifts', title: 'Shifts' },
+                      { key: 'overtime', title: 'Overtime' },
+                    ]}
+                  />
+                  {panel === 'attendance' && <TimeTrackingPanel />}
+                  {panel === 'shifts' && <ShiftSchedulingPanel />}
+                  {panel === 'overtime' && <OvertimeManagementPanel />}
+                </div>
+              )}
+            </Tab>
+            <Tab key="payroll" title="💰 Payroll">
+              {book === 'payroll' && (
+                <div className="pt-4 space-y-4">
+                  <SectionTabs
+                    label="Payroll sections"
+                    selected={panel}
+                    onChange={setPanel}
+                    tabs={[
+                      { key: 'payroll', title: 'Payroll' },
+                      { key: 'payslips', title: 'Payslips' },
+                      { key: 'salary', title: 'Salary' },
+                    ]}
+                  />
+                  {panel === 'payroll' && <PayrollProcessingPanel />}
+                  {panel === 'payslips' && <PayslipGenerationPanel />}
+                  {panel === 'salary' && <SalaryAnalyticsPanel />}
+                </div>
+              )}
+            </Tab>
+            <Tab key="benefits" title="💳 Benefits">
+              {book === 'benefits' && <div className="pt-4"><BenefitsManagementPanel /></div>}
+            </Tab>
+            <Tab key="performance" title="📊 Performance">
+              {book === 'performance' && (
+                <div className="pt-4 space-y-4">
+                  <SectionTabs
+                    label="Performance sections"
+                    selected={panel}
+                    onChange={setPanel}
+                    tabs={[
+                      { key: 'reviews', title: 'Reviews' },
+                      { key: 'log', title: 'Log' },
+                    ]}
+                  />
+                  {panel === 'reviews' && <PerformanceReviewsPanel />}
+                  {panel === 'log' && <PerformanceLogPanel />}
+                </div>
+              )}
+            </Tab>
+            <Tab key="training" title="🎓 Training">
+              {book === 'training' && <div className="pt-4"><TrainingProgramsPanel /></div>}
+            </Tab>
+            <Tab key="compliance" title="📋 Compliance">
+              {book === 'compliance' && (
+                <div className="pt-4 space-y-4">
+                  <SectionTabs
+                    label="Compliance sections"
+                    selected={panel}
+                    onChange={setPanel}
+                    tabs={[
+                      { key: 'tax', title: 'Tax' },
+                      { key: 'labor', title: 'Labor' },
+                      { key: 'reports', title: 'Filings' },
+                    ]}
+                  />
+                  {panel === 'tax' && <TaxCompliancePanel />}
+                  {panel === 'labor' && <LaborCompliancePanel />}
+                  {panel === 'reports' && <ComplianceReportsPanel />}
+                </div>
+              )}
+            </Tab>
+            <Tab key="departments" title="🏢 Departments">
+              {book === 'departments' && <div className="pt-4"><DepartmentsPositionsPanel /></div>}
+            </Tab>
+            <Tab key="reports" title="📈 Reports & Analysis">
+              {book === 'reports' && <div className="pt-4"><HRReportsAnalysis embedded /></div>}
             </Tab>
           </Tabs>
         </CardBody>
       </Card>
 
-      <DeptMessenger from="hr" mode="drawer" />
-
       {/* Recent Activities & Notices */}
-      {(!isHidden('recentActivities') || !isHidden('notices')) && (
+      {!fullPage && (!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Recent Activities */}
@@ -747,13 +583,15 @@ export default function HRMainDashboard() {
               <HideCardButton onHide={() => hide('notices')} label="HR Notices" />
             </CardHeader>
             <CardBody>
-              <DeptNotices dept="hr" title="" defaultTab="alerts" />
+              <DeptNotices dept="hr" title="" defaultTab="alerts" pinnedAlerts={documentAlerts} />
             </CardBody>
           </Card>
           )}
         </div>
       </div>
       )}
+      </div>
     </div>
+    </>
   );
 }

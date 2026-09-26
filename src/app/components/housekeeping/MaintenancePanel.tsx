@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import { 
   Card, 
   CardBody, 
@@ -213,8 +214,10 @@ export default function MaintenancePanel() {
       {/* Header and Actions */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-ghana-black">🔧 Maintenance Management</h2>
-          <p className="text-gray-600">Track and manage maintenance requests and repairs</p>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-xl font-semibold text-ghana-black">🔧 Maintenance Management</h2>
+            <HeadingInfo label="About maintenance">Track and manage maintenance requests and repairs</HeadingInfo>
+          </div>
         </div>
         <Button 
           color="primary" 

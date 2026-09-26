@@ -15,17 +15,34 @@ import { useAccountingStore } from '../lib/accounting/store';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useCalculateTax } from '../hooks/useCalculateTax';
 import { openHtmlPrintWindow } from '../lib/print/engine';
-import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
+import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, RequisitionItem, StockTransfer, StockTransferItem, StockCount, StockCountItem, GoodsIssue, GoodsReceiptNote, GRNItem, SupplierInvoice, InvoiceItem, QualityCheck } from '../lib/inventory/models';
 import { BusinessPartner } from '../lib/accounting/models';
 import { useRouter } from 'next/navigation';
-import { GL_ACCOUNTS } from '../lib/accounting/integration';
+import { GL_ACCOUNTS } from '../lib/accounting/glAccounts';
 
 // Supplier interface removed - using imported Supplier from models.ts
 // PurchaseOrder interface removed - using imported PurchaseOrder from models.ts
 
-export default function InventorySupplyChainDashboard() {
+export default function InventorySupplyChainDashboard({
+  embedded = false,
+  initialTab,
+}: {
+  embedded?: boolean;
+  /** Deep-link into a section when opened as a full page (`/inventory?tab=transfers`). */
+  initialTab?: string | null;
+}) {
   const router = useRouter();
-  const [selectedTab, setSelectedTab] = useState('overview');
+  const resolveTab = (raw?: string | null) => {
+    const key = String(raw || '').toLowerCase();
+    const allowed = [
+      'inventory', 'suppliers', 'requisitions', 'purchase-orders',
+      'transfers', 'goods-issue', 'supplier-invoices', 'stock-operations', 'recon',
+    ];
+    if (key === 'recon') return 'stock-operations';
+    if (key === 'items') return 'inventory';
+    return allowed.includes(key) ? key : 'inventory';
+  };
+  const [selectedTab, setSelectedTab] = useState(() => resolveTab(initialTab));
   const settings = useSettingsStore();
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
@@ -39,16 +56,18 @@ export default function InventorySupplyChainDashboard() {
   const {
     stockItems,
     stockMovements,
-    getLowStockItems,
-    getOutOfStockItems,
-    getOverstockItems,
-    getTotalInventoryValue,
+    stockTransfers,
+    stockCounts,
+    goodsIssues,
     addStockItem,
     updateStockItem,
     deleteStockItem,
     selectStockItem,
     updateStockLevel,
     addStockMovement,
+    upsertStockTransfer,
+    upsertStockCount,
+    upsertGoodsIssue,
     hydrateFromApi: hydrateStockFromApi
   } = useStockStore();
 
@@ -59,7 +78,6 @@ export default function InventorySupplyChainDashboard() {
     addSupplier,
     updateSupplier,
     deleteSupplier,
-    getActiveSuppliers,
     selectSupplier,
     generateNextSupplierCode,
     createPurchaseOrder,
@@ -83,7 +101,7 @@ export default function InventorySupplyChainDashboard() {
     approveRequisition,
     markRequisitionReady,
     rejectRequisition,
-    convertRequisitionToPO,
+    convertRequisitionToPOs,
     getRequisitionsByStatus,
     selectRequisition,
     hydrateRequisitionsFromApi,
@@ -101,6 +119,7 @@ export default function InventorySupplyChainDashboard() {
     createSupplierInvoice,
     updateSupplierInvoice,
     hydrateInvoicesFromApi,
+    generateNextInvoiceNumber,
     getSupplierInvoice,
     getInvoicesByPO,
     getInvoicesByStatus,
@@ -312,21 +331,12 @@ export default function InventorySupplyChainDashboard() {
     return filteredItems.slice(start, start + rowsPerPage);
   }, [filteredItems, page]);
 
-  // Calculate summary metrics for inventory management
-  const stockItemsTotal = stockItems.length;
-  const lowStockItems = getLowStockItems();
-  const outOfStockItems = getOutOfStockItems();
-  const overstockItems = getOverstockItems();
-  const lowStockCount = lowStockItems.length;
-  const outOfStockCount = outOfStockItems.length;
-  const overstockCount = overstockItems.length;
-  const totalValue = getTotalInventoryValue();
-
   // Handle form operations
   const handleAddItem = () => {
     setEditingItem(null);
+    const nextCode = settings.getNextModuleNumber('inventory', 'stockItem');
     setFormData({
-      itemCode: '',
+      itemCode: nextCode,
       name: '',
       description: '',
       category: 'food',
@@ -358,12 +368,32 @@ export default function InventorySupplyChainDashboard() {
   };
 
   const handleSaveItem = () => {
+    if (!String(formData.itemCode || '').trim() || !String(formData.name || '').trim()) {
+      alert('Item code and name are required.');
+      return;
+    }
+    if (!String(formData.unit || '').trim()) {
+      alert('Unit is required (e.g. pcs, kg).');
+      return;
+    }
+    const payload = {
+      ...formData,
+      description: formData.description || '',
+      subcategory: formData.subcategory || '',
+      location: formData.location || 'Main Store',
+      minimumStock: formData.minimumStock ?? formData.reorderPoint ?? 0,
+      maximumStock: formData.maximumStock || Math.max(Number(formData.currentStock || 0) * 2, 100),
+      reorderPoint: formData.reorderPoint ?? 0,
+      isActive: formData.isActive !== false,
+      isPerishable: !!formData.isPerishable,
+      isSerialized: !!formData.isSerialized,
+    };
     if (editingItem) {
-      updateStockItem(editingItem.id, formData as Partial<StockItem>);
+      updateStockItem(editingItem.id, payload as Partial<StockItem>);
       trackEvent('Stores.Issued', { action: 'update_item', itemCode: editingItem.itemCode });
     } else {
       addStockItem({
-        ...formData,
+        ...payload,
         supplierId: formData.supplierId || undefined,
         supplierName: formData.supplierName || undefined,
         id: '',
@@ -406,6 +436,10 @@ export default function InventorySupplyChainDashboard() {
     };
     return colors[category] || 'default';
   };
+
+  const STOCK_CATEGORIES = [
+    'food', 'beverage', 'cleaning', 'maintenance', 'office', 'linens', 'amenities', 'electronics', 'furniture', 'other',
+  ] as const;
 
   // Using suppliers and purchase orders from store - no local array needed
 
@@ -505,11 +539,49 @@ export default function InventorySupplyChainDashboard() {
   // silently auto-dismiss (the action then looks like it "does nothing" when clicked).
   const [reqActionModal, setReqActionModal] = useState<{ type: 'approve' | 'reject' | 'ready' | 'convert' | 'delete'; requisitionId: string; requisitionNumber: string } | null>(null);
   const [reqRejectReason, setReqRejectReason] = useState('');
+  /** Line id → supplier id for Convert-to-PO (supports multi-vendor split). */
+  const [reqConvertSuppliers, setReqConvertSuppliers] = useState<Record<string, string>>({});
   const openReqAction = (type: 'approve' | 'reject' | 'ready' | 'convert' | 'delete', req: Requisition) => {
     setReqRejectReason('');
+    if (type === 'convert') {
+      const defaults: Record<string, string> = {};
+      for (const item of req.requestedItems) {
+        const vendors = (() => {
+          const stock = stockItems.find((s) => s.id === item.itemId || s.itemCode === item.itemCode);
+          const ids = new Set<string>();
+          if (stock?.supplierId) ids.add(stock.supplierId);
+          if (item.preferredSupplierId) ids.add(item.preferredSupplierId);
+          const category = (stock?.category || '').toLowerCase();
+          for (const s of mergedSuppliers.filter((x) => x.isActive)) {
+            if (category) {
+              const cats = (s.categories || []).map((c) => c.toLowerCase());
+              if (cats.some((c) => c === category || c.includes(category) || category.includes(c))) ids.add(s.id);
+            }
+          }
+          for (const po of supplierStorePurchaseOrders) {
+            if (po.items.some((i) => i.itemId === item.itemId || i.itemCode === item.itemCode)) {
+              ids.add(po.supplierId);
+            }
+          }
+          return mergedSuppliers.filter((s) => s.isActive && ids.has(s.id));
+        })();
+        const fromLine = item.preferredSupplierId && vendors.some((v) => v.id === item.preferredSupplierId)
+          ? item.preferredSupplierId
+          : undefined;
+        const fromStock = stockItems.find((s) => s.id === item.itemId || s.itemCode === item.itemCode)?.supplierId;
+        const sid = fromLine || (fromStock && vendors.some((v) => v.id === fromStock) ? fromStock : undefined) || vendors[0]?.id;
+        if (sid) defaults[item.id] = sid;
+      }
+      setReqConvertSuppliers(defaults);
+    } else {
+      setReqConvertSuppliers({});
+    }
     setReqActionModal({ type, requisitionId: req.id, requisitionNumber: req.requisitionNumber });
   };
-  const closeReqAction = () => setReqActionModal(null);
+  const closeReqAction = () => {
+    setReqActionModal(null);
+    setReqConvertSuppliers({});
+  };
   const confirmReqAction = () => {
     if (!reqActionModal) return;
     const { type, requisitionId, requisitionNumber } = reqActionModal;
@@ -523,16 +595,30 @@ export default function InventorySupplyChainDashboard() {
       rejectRequisition(requisitionId, currentUserName, reqRejectReason || undefined);
       trackEvent('Stores.Issued', { action: 'reject_requisition', requisitionNumber });
     } else if (type === 'convert') {
-      const supplier = mergedSuppliers.find(s => s.isActive);
-      if (!supplier) {
-        alert('Please add a supplier first before converting to PO');
-      } else {
-        const newPO = convertRequisitionToPO(requisitionId, supplier.id);
-        if (newPO) {
-          trackEvent('Stores.Issued', { action: 'convert_requisition_to_po', requisitionNumber, poNumber: newPO.poNumber });
-          setSelectedTab('purchase-orders');
-        }
+      const req = supplierStoreRequisitions.find((r) => r.id === requisitionId);
+      const missing = (req?.requestedItems || []).filter((i) => !reqConvertSuppliers[i.id]);
+      if (missing.length > 0) {
+        alert('Assign a supplier to every line before converting.');
+        return;
       }
+      const activeIds = new Set(mergedSuppliers.filter((s) => s.isActive).map((s) => s.id));
+      const invalid = Object.values(reqConvertSuppliers).some((id) => !activeIds.has(id));
+      if (invalid || Object.keys(reqConvertSuppliers).length === 0) {
+        alert('Please add/select active suppliers before converting to PO.');
+        return;
+      }
+      const newPOs = convertRequisitionToPOs(requisitionId, reqConvertSuppliers);
+      if (newPOs.length === 0) {
+        alert('Could not create purchase orders — check suppliers and try again.');
+        return;
+      }
+      trackEvent('Stores.Issued', {
+        action: 'convert_requisition_to_po',
+        requisitionNumber,
+        poNumbers: newPOs.map((p) => p.poNumber),
+        poCount: newPOs.length,
+      });
+      setSelectedTab('purchase-orders');
     } else if (type === 'delete') {
       deleteRequisition(requisitionId);
       trackEvent('Stores.Issued', { action: 'delete_requisition', requisitionNumber });
@@ -542,155 +628,11 @@ export default function InventorySupplyChainDashboard() {
   };
   const requisitionRowsPerPage = 10;
 
-  // Calculate metrics for overview
-  const overviewTotalItems = stockItems.length;
-  const activeSuppliersOverview = getActiveSuppliers().length;
-  const pendingPOs = supplierStorePurchaseOrders.filter(po => po.status === 'sent' || po.status === 'confirmed' || po.status === 'in-transit').length;
-
-  // Alert click handlers - navigate to inventory tab with filters
-  const handleLowStockClick = () => {
-    setSelectedTab('inventory');
-    setFilterStatus('low-stock');
-  };
-
-  const handleOutOfStockClick = () => {
-    setSelectedTab('inventory');
-    setFilterStatus('out-of-stock');
-  };
-
-  const handleOverstockClick = () => {
-    setSelectedTab('inventory');
-    setFilterStatus('overstock');
-  };
-
-  const renderOverview = () => (
-    <div className="space-y-6">
-    </div>
-  );
+  // Empty placeholder removed — Overview tab no longer used.
 
   const renderInventoryManagement = () => {
     return (
     <div className="space-y-6">
-        {/* Stock Alert Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card 
-            className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer border-l-4 border-l-orange-500"
-            isPressable
-            onPress={handleLowStockClick}
-          >
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-2xl">⚠️</span>
-                    <p className="text-sm font-medium text-gray-600">Low Stock Alerts</p>
-                  </div>
-                  <p className="text-3xl font-bold text-orange-600">{lowStockCount}</p>
-                  <div className="flex items-center gap-2 mt-2">
-                    <Chip size="sm" color="success" variant="flat">active</Chip>
-                    <p className="text-xs text-gray-500">Click to view items</p>
-                  </div>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card 
-            className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer border-l-4 border-l-red-500"
-            isPressable
-            onPress={handleOutOfStockClick}
-          >
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-2xl">❌</span>
-                    <p className="text-sm font-medium text-gray-600">Out of Stock</p>
-                  </div>
-                  <p className="text-3xl font-bold text-red-600">{outOfStockCount}</p>
-                  <div className="flex items-center gap-2 mt-2">
-                    <Chip size="sm" color="success" variant="flat">active</Chip>
-                    <p className="text-xs text-gray-500">Click to view items</p>
-                  </div>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card 
-            className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer border-l-4 border-l-yellow-500"
-            isPressable
-            onPress={handleOverstockClick}
-          >
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-2xl">📈</span>
-                    <p className="text-sm font-medium text-gray-600">Overstock Items</p>
-                  </div>
-                  <p className="text-3xl font-bold text-yellow-600">{overstockCount}</p>
-                  <div className="flex items-center gap-2 mt-2">
-                    <Chip size="sm" color="success" variant="flat">active</Chip>
-                    <p className="text-xs text-gray-500">Click to view items</p>
-                  </div>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
-
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Items</p>
-                  <p className="text-2xl font-bold text-ghana-black">{stockItemsTotal}</p>
-                </div>
-                <div className="text-3xl">📦</div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Low Stock Items</p>
-                  <p className="text-2xl font-bold text-red-600">{lowStockCount}</p>
-                </div>
-                <div className="text-3xl">⚠️</div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Inventory Value</p>
-                  <p className="text-2xl font-bold text-green-600">₵{totalValue.toLocaleString()}</p>
-                </div>
-                <div className="text-3xl">💰</div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Categories</p>
-                  <p className="text-2xl font-bold text-blue-600">{categories.length}</p>
-                </div>
-                <div className="text-3xl">📊</div>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
-
         {/* Filters and Search */}
         <Card className="border-0 shadow-lg">
           <CardBody>
@@ -749,7 +691,7 @@ export default function InventorySupplyChainDashboard() {
       <Card className="border-0 shadow-lg">
         <CardHeader className="pb-3">
             <div className="flex items-center justify-between w-full">
-              <h3 className="text-xl font-semibold text-ghana-black">📦 Stock Items ({filteredItems?.length || 0})</h3>
+              <h3 className="text-xl font-semibold text-ghana-black">📦 Stock Items</h3>
             <Button
               color="primary"
               className="bg-ghana-green text-white"
@@ -762,96 +704,95 @@ export default function InventorySupplyChainDashboard() {
           </div>
         </CardHeader>
         <CardBody>
-            <Table aria-label="Stock items table">
+            <Table aria-label="Stock items table" classNames={{ table: "min-w-[960px]", th: "whitespace-nowrap" }}>
             <TableHeader>
-                <TableColumn>ITEM CODE</TableColumn>
-                <TableColumn>NAME</TableColumn>
-                <TableColumn>CATEGORY</TableColumn>
-                <TableColumn>UNIT</TableColumn>
-                <TableColumn className="text-right">CURRENT STOCK</TableColumn>
-                <TableColumn className="text-right">REORDER POINT</TableColumn>
-                <TableColumn className="text-right">UNIT COST</TableColumn>
-                <TableColumn className="text-right">STOCK VALUE</TableColumn>
-                <TableColumn>LOCATION</TableColumn>
-                <TableColumn>STATUS</TableColumn>
-                <TableColumn>ACTIONS</TableColumn>
+                <TableColumn className="w-[110px]">CODE</TableColumn>
+                <TableColumn className="min-w-[200px]">ITEM</TableColumn>
+                <TableColumn className="w-[110px]">CATEGORY</TableColumn>
+                <TableColumn className="w-[70px]">UNIT</TableColumn>
+                <TableColumn className="w-[120px] text-right">ON HAND</TableColumn>
+                <TableColumn className="w-[80px] text-right">REORDER</TableColumn>
+                <TableColumn className="w-[100px] text-right">UNIT COST</TableColumn>
+                <TableColumn className="min-w-[120px]">LOCATION</TableColumn>
+                <TableColumn className="w-[100px]">STATUS</TableColumn>
+                <TableColumn className="w-[70px]">ACTIONS</TableColumn>
             </TableHeader>
               <TableBody emptyContent="No stock items found.">
                 {paginatedItems.map((item) => {
                   const stockStatus = getStockStatus(item);
-                  const stockValue = item.currentStock * item.unitCost;
-                  const stockPercentage = (item.currentStock / item.maximumStock) * 100;
-                  
+                  const onHand = Number(item.currentStock || 0);
+                  const maxStock = Number(item.maximumStock || 0);
+                  const reorder = Number(item.reorderPoint || 0);
+                  const barMax = maxStock > 0 ? maxStock : Math.max(reorder * 2, onHand, 1);
+                  const stockPercentage = Math.min(100, (onHand / barMax) * 100);
+                  const stockColor =
+                    onHand <= reorder ? 'danger' :
+                    onHand <= reorder * 1.5 ? 'warning' :
+                    'success';
+                  const stockText =
+                    stockColor === 'danger' ? 'text-red-600' :
+                    stockColor === 'warning' ? 'text-orange-600' :
+                    'text-green-600';
                   return (
                 <TableRow key={item.id}>
                       <TableCell>
-                        <span className="font-mono font-semibold">{item.itemCode}</span>
+                        <span className="font-mono text-sm font-semibold text-blue-700 whitespace-nowrap" title={item.itemCode}>
+                          {item.itemCode}
+                        </span>
                       </TableCell>
                       <TableCell>
-                        <div>
-                          <div className="font-semibold">{item.name}</div>
-                          {item.description && (
-                            <div className="text-xs text-gray-500 truncate max-w-xs">{item.description}</div>
-                          )}
+                        <div className="min-w-0 max-w-[260px]">
+                          <div className="font-semibold text-ghana-black truncate" title={item.name}>{item.name}</div>
+                          {item.description ? (
+                            <div className="text-xs text-gray-500 truncate" title={item.description}>{item.description}</div>
+                          ) : null}
                         </div>
                       </TableCell>
                   <TableCell>
-                    <Chip 
-                          color={getCategoryColor(item.category)} 
-                      size="sm" 
+                    <Chip
+                          color={getCategoryColor(item.category)}
+                      size="sm"
                       variant="flat"
+                      className="capitalize"
                     >
                       {item.category}
                     </Chip>
                   </TableCell>
                   <TableCell>
-                        <span className="font-mono text-sm">{item.unit}</span>
+                        <span className="text-sm font-medium whitespace-nowrap">{item.unit || '—'}</span>
                       </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex flex-col items-end">
-                    <div className={`font-semibold ${
-                      item.currentStock <= item.reorderPoint ? 'text-red-600' :
-                      item.currentStock <= item.reorderPoint * 1.5 ? 'text-orange-600' :
-                      'text-green-600'
-                    }`}>
-                            {item.currentStock.toLocaleString()}
+                      <TableCell>
+                        <div className="flex flex-col items-end gap-0.5">
+                          <div className={`font-semibold tabular-nums ${stockText}`}>
+                            {onHand.toLocaleString()}
                           </div>
-                          <Progress 
-                            value={stockPercentage} 
-                            size="sm" 
-                            color={
-                              item.currentStock <= item.reorderPoint ? 'danger' :
-                              item.currentStock <= item.reorderPoint * 1.5 ? 'warning' :
-                              'success'
-                            }
-                            className="w-16 mt-1"
+                          <Progress
+                            aria-label={`${item.name} stock level`}
+                            value={stockPercentage}
+                            size="sm"
+                            color={stockColor}
+                            className="w-16"
                           />
-                          <div className="text-xs text-gray-500 mt-1">
-                            Max: {item.maximumStock}
-                          </div>
+                          {maxStock > 0 && (
+                            <div className="text-[10px] text-gray-500 tabular-nums">Max {maxStock.toLocaleString()}</div>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
-                        <span className="font-medium">{item.reorderPoint}</span>
+                        <span className="font-medium text-slate-700 tabular-nums">{reorder}</span>
                       </TableCell>
                       <TableCell className="text-right">
-                        <span className="font-semibold">₵{item.unitCost.toLocaleString()}</span>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className="font-semibold text-blue-600">
-                          ₵{stockValue.toLocaleString()}
-                        </span>
+                        <span className="font-semibold text-blue-600 tabular-nums whitespace-nowrap">₵{Number(item.unitCost || 0).toLocaleString()}</span>
                       </TableCell>
                       <TableCell>
-                        <div className="text-sm">
-                          <div>{item.location}</div>
-                          {item.binLocation && (
-                            <div className="text-xs text-gray-500">Bin: {item.binLocation}</div>
-                          )}
-                    </div>
+                        <div className="text-sm truncate max-w-[140px]" title={item.location || undefined}>{item.location || '—'}</div>
+                        {item.binLocation && (
+                          <div className="text-xs text-gray-500 truncate">Bin: {item.binLocation}</div>
+                        )}
                   </TableCell>
                   <TableCell>
-                    <Badge 
+                    <div className="flex flex-col gap-1 items-start">
+                    <Badge
                           color={stockStatus.color as any}
                       size="sm"
                           variant="flat"
@@ -859,44 +800,23 @@ export default function InventorySupplyChainDashboard() {
                           {stockStatus.label}
                     </Badge>
                         {item.isPerishable && (
-                          <Chip size="sm" variant="flat" color="warning" className="ml-1 mt-1">
+                          <Chip size="sm" variant="flat" color="warning">
                             🍃 Perishable
                           </Chip>
                         )}
+                    </div>
                   </TableCell>
                   <TableCell>
-                    <div className="flex gap-2">
-                          <Tooltip content="View Details">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="primary"
-                              onClick={() => handleViewItem(item)}
-                            >
-                              👁️
-                            </Button>
-                          </Tooltip>
-                          <Tooltip content="Edit">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="warning"
-                              onClick={() => handleEditItem(item)}
-                            >
-                              ✏️
+                    <Tooltip content="Review — then edit or delete">
+                      <Button
+                        size="sm"
+                        variant="flat"
+                        color="primary"
+                        onClick={() => handleViewItem(item)}
+                      >
+                        👁️
                       </Button>
-                          </Tooltip>
-                          <Tooltip content="Delete">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="danger"
-                              onClick={() => handleDeleteItem(item.id)}
-                            >
-                              🗑️
-                      </Button>
-                          </Tooltip>
-                    </div>
+                    </Tooltip>
                   </TableCell>
                 </TableRow>
                   );
@@ -948,6 +868,39 @@ export default function InventorySupplyChainDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Parent Stores shell / quick actions can jump straight into an ops tab.
+  useEffect(() => {
+    const apply = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      if (detail.tab) {
+        const tab = String(detail.tab);
+        if (tab === 'reports') {
+          router.push('/inventory/reports');
+          return;
+        }
+        if (['inventory', 'suppliers', 'requisitions', 'purchase-orders', 'transfers', 'goods-issue', 'supplier-invoices', 'stock-operations', 'recon'].includes(tab)) {
+          setSelectedTab(tab === 'recon' ? 'stock-operations' : tab);
+        }
+      }
+      if (detail.stockOp) {
+        const op = String(detail.stockOp);
+        // Ops that live on the main strip now
+        if (op === 'stock-transfers' || op === 'transfers') {
+          setSelectedTab('transfers');
+        } else if (op === 'goods-issue') {
+          setSelectedTab('goods-issue');
+        } else if (op === 'supplier-invoices') {
+          setSelectedTab('supplier-invoices');
+        } else {
+          setSelectedTab('stock-operations');
+          setStockOpSubTab(op);
+        }
+      }
+    };
+    window.addEventListener('inv-ops-navigate', apply);
+    return () => window.removeEventListener('inv-ops-navigate', apply);
+  }, [router]);
+
   // Merge suppliers from both stores, prioritizing inventory store data
   const mergedSuppliers = useMemo(() => {
     // Use a Map to ensure unique suppliers by ID
@@ -994,6 +947,45 @@ export default function InventorySupplyChainDashboard() {
     
     return uniqueSuppliers;
   }, [supplierStoreSuppliers, accountingSuppliers]);
+
+  /** Vendors allowed for a stock line: item's linked supplier, category matches, past PO vendors. */
+  const getVendorsForStockItem = useCallback((stock?: StockItem | null, itemId?: string, itemCode?: string) => {
+    const active = mergedSuppliers.filter((s) => s.isActive);
+    if (!stock && !itemId && !itemCode) return active;
+
+    const ids = new Set<string>();
+    if (stock?.supplierId) ids.add(stock.supplierId);
+
+    const category = (stock?.category || '').toLowerCase();
+    if (category) {
+      for (const s of active) {
+        const cats = (s.categories || []).map((c) => c.toLowerCase());
+        if (cats.some((c) => c === category || c.includes(category) || category.includes(c))) {
+          ids.add(s.id);
+        }
+      }
+    }
+
+    const matchId = itemId || stock?.id;
+    const matchCode = (itemCode || stock?.itemCode || '').toLowerCase();
+    for (const po of supplierStorePurchaseOrders) {
+      const hit = po.items.some(
+        (i) => (matchId && i.itemId === matchId) || (matchCode && i.itemCode.toLowerCase() === matchCode)
+      );
+      if (hit && po.supplierId) ids.add(po.supplierId);
+    }
+
+    const filtered = active.filter((s) => ids.has(s.id));
+    // If the product has at least one known vendor, only show those — never the full list.
+    if (filtered.length > 0) return filtered;
+    // No vendor on item / category / history: empty list so the user links a supplier on the item first.
+    return [];
+  }, [mergedSuppliers, supplierStorePurchaseOrders]);
+
+  const getVendorsForRequisitionLine = useCallback((line: Pick<RequisitionItem, 'itemId' | 'itemCode'>) => {
+    const stock = stockItems.find((s) => s.id === line.itemId || s.itemCode === line.itemCode);
+    return getVendorsForStockItem(stock, line.itemId, line.itemCode);
+  }, [stockItems, getVendorsForStockItem]);
 
   // Supplier filter and search logic
   const supplierCategories = useMemo(() => {
@@ -1043,23 +1035,6 @@ export default function InventorySupplyChainDashboard() {
     return filteredSuppliers.slice(start, start + supplierRowsPerPage);
   }, [filteredSuppliers, supplierPage]);
 
-  // Calculate supplier metrics
-  const totalSuppliers = mergedSuppliers.length;
-  const activeSuppliersCount = mergedSuppliers.filter(s => s.isActive).length;
-  const totalCreditLimit = useMemo(() => 
-    mergedSuppliers.reduce((sum, s) => sum + s.creditLimit, 0), 
-    [mergedSuppliers]
-  );
-  const totalCurrentBalance = useMemo(() => 
-    mergedSuppliers.reduce((sum, s) => sum + s.currentBalance, 0), 
-    [mergedSuppliers]
-  );
-  const averageRating = useMemo(() => {
-    if (mergedSuppliers.length === 0) return 0;
-    const sum = mergedSuppliers.reduce((acc, s) => acc + s.rating, 0);
-    return sum / mergedSuppliers.length;
-  }, [mergedSuppliers]);
-
   // Supplier handlers
   const handleAddSupplier = () => {
     setEditingSupplier(null);
@@ -1105,6 +1080,10 @@ export default function InventorySupplyChainDashboard() {
   };
 
   const handleSaveSupplier = () => {
+    if (!String(supplierFormData.name || '').trim()) {
+      alert('Supplier name is required.');
+      return;
+    }
     if (editingSupplier) {
       // Update in inventory store
       const updatedSupplier = { ...editingSupplier, ...supplierFormData, updatedAt: new Date() } as Supplier;
@@ -1161,9 +1140,7 @@ export default function InventorySupplyChainDashboard() {
 
   // Purchase Order handlers
   const generatePONumber = () => {
-    const year = new Date().getFullYear();
-    const count = supplierStorePurchaseOrders.length + 1;
-    return `PO-${year}-${String(count).padStart(3, '0')}`;
+    return settings.getNextModuleNumber('inventory', 'purchaseOrder');
   };
 
   const handleAddPO = () => {
@@ -1679,12 +1656,17 @@ export default function InventorySupplyChainDashboard() {
     const item = stockItems.find(i => i.itemCode === itemCode);
     if (item) {
       const currentItems = [...(requisitionFormData.requestedItems || [])];
+      const preferredSupplier = item.supplierId
+        ? mergedSuppliers.find((s) => s.id === item.supplierId)
+        : undefined;
       currentItems[itemIndex] = {
         ...currentItems[itemIndex],
         itemId: item.id,
         itemCode: item.itemCode,
         itemName: item.name,
-        estimatedPrice: item.unitCost
+        estimatedPrice: item.unitCost,
+        preferredSupplierId: preferredSupplier?.id || item.supplierId,
+        preferredSupplierName: preferredSupplier?.name || item.supplierName,
       };
       currentItems[itemIndex].totalCost = currentItems[itemIndex].quantity * currentItems[itemIndex].estimatedPrice;
       setRequisitionFormData({ ...requisitionFormData, requestedItems: currentItems } as typeof requisitionFormData);
@@ -1847,57 +1829,6 @@ export default function InventorySupplyChainDashboard() {
   const renderSupplierManagement = () => {
     return (
       <div className="space-y-6">
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Suppliers</p>
-                  <p className="text-2xl font-bold text-ghana-black">{totalSuppliers}</p>
-                </div>
-                <div className="text-3xl">🤝</div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Active Suppliers</p>
-                  <p className="text-2xl font-bold text-green-600">{activeSuppliersCount}</p>
-                </div>
-                <div className="text-3xl">✅</div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Total Credit Limit</p>
-                  <p className="text-2xl font-bold text-blue-600">₵{totalCreditLimit.toLocaleString()}</p>
-                </div>
-                <div className="text-3xl">💳</div>
-              </div>
-            </CardBody>
-          </Card>
-          
-          <Card className="border-0 shadow-lg">
-            <CardBody className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Average Rating</p>
-                  <p className="text-2xl font-bold text-yellow-600">{averageRating.toFixed(1)} ⭐</p>
-                </div>
-                <div className="text-3xl">⭐</div>
-              </div>
-            </CardBody>
-          </Card>
-        </div>
-
         {/* Filters and Search */}
         <Card className="border-0 shadow-lg">
           <CardBody>
@@ -1952,7 +1883,7 @@ export default function InventorySupplyChainDashboard() {
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between w-full">
-              <h3 className="text-xl font-semibold text-ghana-black">🤝 Suppliers ({filteredSuppliers.length})</h3>
+              <h3 className="text-xl font-semibold text-ghana-black">🤝 Suppliers</h3>
               <Button
                 color="primary"
                 className="bg-blue-500 text-white"
@@ -1968,163 +1899,123 @@ export default function InventorySupplyChainDashboard() {
             <Table aria-label="Suppliers table">
               <TableHeader>
                 <TableColumn>CODE</TableColumn>
-                <TableColumn>SUPPLIER NAME</TableColumn>
+                <TableColumn>SUPPLIER</TableColumn>
                 <TableColumn>CONTACT</TableColumn>
-                <TableColumn>LOCATION</TableColumn>
-                <TableColumn>CATEGORIES</TableColumn>
-                <TableColumn>RATING</TableColumn>
-                <TableColumn className="text-right">CREDIT LIMIT</TableColumn>
-                <TableColumn className="text-right">BALANCE</TableColumn>
-                <TableColumn>PAYMENT TERMS</TableColumn>
-                <TableColumn>PERFORMANCE</TableColumn>
+                <TableColumn>ADDRESS</TableColumn>
+                <TableColumn>SUPPLIES</TableColumn>
+                <TableColumn>TERMS</TableColumn>
                 <TableColumn>STATUS</TableColumn>
                 <TableColumn>ACTIONS</TableColumn>
               </TableHeader>
               <TableBody emptyContent="No suppliers found.">
-                {paginatedSuppliers.map((supplier) => {
-                  const creditUsagePercent = supplier.creditLimit > 0 
-                    ? (supplier.currentBalance / supplier.creditLimit) * 100 
-                    : 0;
-                  const onTimeDeliveryPercent = supplier.performance.onTimeDelivery;
-                  
-                  return (
-                    <TableRow key={supplier.id}>
-                      <TableCell>
-                        <div>
-                          <span className="font-mono font-semibold">{supplier.code}</span>
-                          {accountingSuppliers.some(bp => bp.id === supplier.id || bp.code === supplier.code) && (
-                            <Tooltip content="Linked to Accounting">
-                              <Badge color="success" size="sm" variant="flat" className="ml-2">
-                                💼
-                              </Badge>
-                            </Tooltip>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div>
-                          <div className="font-semibold">{supplier.name}</div>
-                          <div className="text-xs text-gray-500">{supplier.email}</div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-sm">
-                          <div className="font-medium">{supplier.contactPerson}</div>
-                          <div className="text-gray-500">{supplier.phone}</div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-sm">
-                          <div>{supplier.city}</div>
-                          <div className="text-xs text-gray-500">{supplier.country}</div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-1">
-                          {supplier.categories.slice(0, 2).map((category) => (
-                            <Chip key={category} color="primary" size="sm" variant="flat">
-                              {category}
-                            </Chip>
-                          ))}
-                          {supplier.categories.length > 2 && (
-                            <Chip size="sm" variant="flat" color="default">
-                              +{supplier.categories.length - 2}
-                            </Chip>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center space-x-2">
-                          <span className="font-semibold">{supplier.rating.toFixed(1)}</span>
-                          <div className="flex">
-                            {[...Array(5)].map((_, i) => (
-                              <span 
-                                key={i} 
-                                className={`text-sm ${i < Math.floor(supplier.rating) ? 'text-yellow-500' : 'text-gray-300'}`}
-                              >
-                                ★
-                              </span>
+                {paginatedSuppliers.map((supplier) => (
+                  <TableRow key={supplier.id}>
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-semibold text-blue-700">{supplier.code}</span>
+                        {accountingSuppliers.some(bp => bp.id === supplier.id || bp.code === supplier.code) && (
+                          <Tooltip content="Linked to Accounting">
+                            <Badge color="success" size="sm" variant="flat">💼</Badge>
+                          </Tooltip>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-semibold text-ghana-black">{supplier.name}</div>
+                      {supplier.email && (
+                        <div className="text-xs text-gray-500 truncate max-w-[160px]">{supplier.email}</div>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm font-medium">{supplier.contactPerson || '—'}</div>
+                      <div className="text-xs text-gray-500">{supplier.phone || supplier.email || ''}</div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="text-sm max-w-[180px]">
+                        {supplier.address ? (
+                          <>
+                            <div className="truncate" title={supplier.address}>{supplier.address}</div>
+                            {(supplier.city || supplier.country) && (
+                              <div className="text-xs text-gray-500">
+                                {[supplier.city, supplier.country].filter(Boolean).join(', ')}
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-gray-400">{supplier.city || '—'}</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex flex-wrap gap-1 max-w-[160px]">
+                        {(supplier.categories || []).length > 0 ? (
+                          <>
+                            {supplier.categories.slice(0, 2).map((category) => (
+                              <Chip key={category} color="primary" size="sm" variant="flat">
+                                {category}
+                              </Chip>
                             ))}
-                          </div>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex flex-col items-end">
-                          <span className="font-semibold">₵{supplier.creditLimit.toLocaleString()}</span>
-                          <Progress 
-                            value={creditUsagePercent} 
-                            size="sm" 
-                            color={creditUsagePercent > 80 ? 'danger' : creditUsagePercent > 60 ? 'warning' : 'success'}
-                            className="w-16 mt-1"
-                          />
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <span className={`font-semibold ${
-                          supplier.currentBalance > supplier.creditLimit * 0.8 ? 'text-red-600' :
-                          supplier.currentBalance > supplier.creditLimit * 0.6 ? 'text-orange-600' :
-                          'text-green-600'
-                        }`}>
-                          ₵{supplier.currentBalance.toLocaleString()}
-                        </span>
-                      </TableCell>
-                      <TableCell>
-                        <Chip size="sm" variant="flat" color="secondary">
-                          {supplier.paymentTerms.toUpperCase()}
-                        </Chip>
-                      </TableCell>
-                      <TableCell>
-                        <div className="text-xs">
-                          <div>On-Time: {onTimeDeliveryPercent}%</div>
-                          <div>Orders: {supplier.performance.totalOrders}</div>
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge 
-                          color={supplier.isActive ? 'success' : 'default'}
-                          size="sm"
-                          variant="flat"
-                        >
-                          {supplier.isActive ? 'Active' : 'Inactive'}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Tooltip content="View Details">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="primary"
-                              onClick={() => handleViewSupplier(supplier)}
-                            >
-                              👁️
-                            </Button>
-                          </Tooltip>
-                          <Tooltip content="Edit">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="warning"
-                              onClick={() => handleEditSupplier(supplier)}
-                            >
-                              ✏️
-                            </Button>
-                          </Tooltip>
-                          <Tooltip content="Delete">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="danger"
-                              onClick={() => handleDeleteSupplier(supplier.id)}
-                            >
-                              🗑️
-                            </Button>
-                          </Tooltip>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
+                            {supplier.categories.length > 2 && (
+                              <Chip size="sm" variant="flat" color="secondary">
+                                +{supplier.categories.length - 2}
+                              </Chip>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-gray-400 text-sm">—</span>
+                        )}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <Chip size="sm" variant="flat" color="secondary">
+                        {(supplier.paymentTerms || 'net30').toUpperCase()}
+                      </Chip>
+                    </TableCell>
+                    <TableCell>
+                      <Badge
+                        color={supplier.isActive ? 'success' : 'default'}
+                        size="sm"
+                        variant="flat"
+                      >
+                        {supplier.isActive ? 'Active' : 'Inactive'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <div className="flex gap-2">
+                        <Tooltip content="View Details">
+                          <Button
+                            size="sm"
+                            variant="flat"
+                            color="primary"
+                            onClick={() => handleViewSupplier(supplier)}
+                          >
+                            👁️
+                          </Button>
+                        </Tooltip>
+                        <Tooltip content="Edit">
+                          <Button
+                            size="sm"
+                            variant="flat"
+                            color="warning"
+                            onClick={() => handleEditSupplier(supplier)}
+                          >
+                            ✏️
+                          </Button>
+                        </Tooltip>
+                        <Tooltip content="Delete">
+                          <Button
+                            size="sm"
+                            variant="flat"
+                            color="danger"
+                            onClick={() => handleDeleteSupplier(supplier.id)}
+                          >
+                            🗑️
+                          </Button>
+                        </Tooltip>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
               </TableBody>
             </Table>
             
@@ -2186,16 +2077,16 @@ export default function InventorySupplyChainDashboard() {
             </Select>
           </div>
 
-          <Table aria-label="Purchase orders table">
+          <Table aria-label="Purchase orders table" classNames={{ table: "min-w-[900px]", th: "whitespace-nowrap" }}>
             <TableHeader>
-              <TableColumn>PO Number</TableColumn>
-              <TableColumn>Supplier</TableColumn>
-              <TableColumn>Order Date</TableColumn>
-              <TableColumn>Expected Delivery</TableColumn>
-              <TableColumn>Priority</TableColumn>
-              <TableColumn className="text-right">Total Amount</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              <TableColumn className="w-[130px]">PO Number</TableColumn>
+              <TableColumn className="min-w-[160px]">Supplier</TableColumn>
+              <TableColumn className="w-[110px]">Order Date</TableColumn>
+              <TableColumn className="w-[120px]">Expected</TableColumn>
+              <TableColumn className="w-[90px]">Priority</TableColumn>
+              <TableColumn className="w-[130px] text-right">Amount</TableColumn>
+              <TableColumn className="w-[110px]">Status</TableColumn>
+              <TableColumn className="w-[70px]">Actions</TableColumn>
             </TableHeader>
             <TableBody emptyContent="No purchase orders found.">
               {paginatedPOs.map((po) => {
@@ -2223,139 +2114,46 @@ export default function InventorySupplyChainDashboard() {
 
                 return (
                   <TableRow key={po.id}>
-                    <TableCell className="font-mono font-semibold">{po.poNumber}</TableCell>
-                    <TableCell className="font-semibold">{po.supplierName}</TableCell>
-                    <TableCell>{po.orderDate instanceof Date ? po.orderDate.toLocaleDateString() : new Date(po.orderDate).toLocaleDateString()}</TableCell>
                     <TableCell>
+                      <span className="font-mono text-sm font-semibold whitespace-nowrap">{po.poNumber}</span>
+                    </TableCell>
+                    <TableCell>
+                      <div className="font-semibold truncate max-w-[200px]" title={po.supplierName}>{po.supplierName}</div>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {po.orderDate instanceof Date ? po.orderDate.toLocaleDateString() : new Date(po.orderDate).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
                       {po.expectedDeliveryDate instanceof Date 
                         ? po.expectedDeliveryDate.toLocaleDateString() 
                         : new Date(po.expectedDeliveryDate).toLocaleDateString()}
                     </TableCell>
                     <TableCell>
-                      <Badge color={getPriorityColor(po.priority)} size="sm" variant="flat">
+                      <Badge color={getPriorityColor(po.priority)} size="sm" variant="flat" className="capitalize">
                         {po.priority}
                       </Badge>
                     </TableCell>
-                    <TableCell>
-                      <div className="text-right">
-                        <div className="font-semibold">₵{po.finalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                        <div className="text-sm text-gray-500">
-                          Base: ₵{po.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                        </div>
-                        {po.taxAmount !== 0 && (
-                          <div className="text-xs text-gray-400">
-                            {po.taxAmount < 0 ? 'Withheld' : 'Tax'}: {po.taxAmount < 0 ? '-' : ''}₵{Math.abs(po.taxAmount).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                          </div>
-                        )}
-                      </div>
+                    <TableCell className="text-right">
+                      <span className="font-semibold tabular-nums whitespace-nowrap">
+                        ₵{Number(po.finalAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
                     </TableCell>
                     <TableCell>
-                      <Badge color={getStatusColor(po.status)} size="sm">
+                      <Badge color={getStatusColor(po.status)} size="sm" className="capitalize whitespace-nowrap">
                         {po.status.replace('-', ' ')}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
-                        <Tooltip content="View Details">
-                          <Button 
-                            size="sm" 
-                            variant="flat" 
-                            color="primary"
-                            onPress={() => handleViewPO(po)}
-                          >
-                            👁️
-                          </Button>
-                        </Tooltip>
-                        {po.status === 'draft' && (
-                          <>
-                            <Tooltip content="Edit">
-                              <Button 
-                                size="sm" 
-                                variant="flat" 
-                                color="secondary"
-                                onPress={() => handleEditPO(po)}
-                              >
-                                ✏️
-                              </Button>
-                            </Tooltip>
-                            <Tooltip content="Send to Supplier">
-                              <Button 
-                                size="sm" 
-                                variant="flat" 
-                                color="success"
-                                onPress={() => {
-                                  sendPurchaseOrder(po.id);
-                                  trackEvent('Stores.Issued', { action: 'send_po', poNumber: po.poNumber });
-                                }}
-                              >
-                                📤
-                              </Button>
-                            </Tooltip>
-                          </>
-                        )}
-                        {po.status === 'sent' && (
-                          <Tooltip content="Mark as Confirmed">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="success"
-                              onPress={() => {
-                                confirmPurchaseOrder(po.id, po.supplierId);
-                                trackEvent('Stores.Issued', { action: 'confirm_po', poNumber: po.poNumber });
-                              }}
-                            >
-                              ✓
-                            </Button>
-                          </Tooltip>
-                        )}
-                        {(po.status === 'confirmed' || po.status === 'sent') && (
-                          <Tooltip content="Mark In Transit">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="warning"
-                              onPress={() => {
-                                markInTransit(po.id);
-                                trackEvent('Stores.Issued', { action: 'mark_in_transit_po', poNumber: po.poNumber });
-                              }}
-                            >
-                              🚚
-                            </Button>
-                          </Tooltip>
-                        )}
-                        {(po.status === 'in-transit' || po.status === 'confirmed') && (
-                          <Tooltip content="Mark Delivered">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="success"
-                              onPress={() => {
-                                markDelivered(po.id, new Date());
-                                trackEvent('Stores.Issued', { action: 'mark_delivered_po', poNumber: po.poNumber });
-                              }}
-                            >
-                              ✅
-                            </Button>
-                          </Tooltip>
-                        )}
-                        {(po.status === 'draft' || po.status === 'sent' || po.status === 'confirmed') && (
-                          <Tooltip content="Cancel">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="danger"
-                              onPress={() => {
-                                if (confirm('Are you sure you want to cancel this purchase order?')) {
-                                  cancelPurchaseOrder(po.id, 'Cancelled by user');
-                                  trackEvent('Stores.Issued', { action: 'cancel_po', poNumber: po.poNumber });
-                                }
-                              }}
-                            >
-                              ❌
-                            </Button>
-                          </Tooltip>
-                        )}
-                      </div>
+                      <Tooltip content="Review — then send, confirm, or edit">
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="primary"
+                          onPress={() => handleViewPO(po)}
+                        >
+                          👁️
+                        </Button>
+                      </Tooltip>
                     </TableCell>
                   </TableRow>
                 );
@@ -2463,90 +2261,16 @@ export default function InventorySupplyChainDashboard() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
-                        <Tooltip content="View Details">
-                          <Button 
-                            size="sm" 
-                            variant="flat" 
-                            color="primary"
-                            onPress={() => handleViewRequisition(req)}
-                          >
-                            👁️
-                          </Button>
-                        </Tooltip>
-                        {(req.status === 'pending' || canEditProcessedRequisitions) && req.status !== 'converted-to-po' && (
-                          <Tooltip content="Edit">
-                            <Button
-                              size="sm"
-                              variant="flat"
-                              color="secondary"
-                              onPress={() => handleEditRequisition(req)}
-                            >
-                              ✏️
-                            </Button>
-                          </Tooltip>
-                        )}
-                        {req.status === 'pending' && canActOnRequisitions && (
-                          <>
-                            <Tooltip content="Approve">
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="success"
-                                onPress={() => openReqAction('approve', req)}
-                              >
-                                ✓
-                              </Button>
-                            </Tooltip>
-                            <Tooltip content="Reject">
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="danger"
-                                onPress={() => openReqAction('reject', req)}
-                              >
-                                ❌
-                              </Button>
-                            </Tooltip>
-                          </>
-                        )}
-                        {req.status === 'approved' && canActOnRequisitions && (
-                          <>
-                            <Tooltip content="Mark Ready for Pickup">
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="success"
-                                onPress={() => openReqAction('ready', req)}
-                              >
-                                📦 Ready
-                              </Button>
-                            </Tooltip>
-                            <Tooltip content="Convert to Purchase Order">
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="primary"
-                                onPress={() => openReqAction('convert', req)}
-                              >
-                                📋 Convert to PO
-                              </Button>
-                            </Tooltip>
-                          </>
-                        )}
-                        {(req.status === 'pending' || canEditProcessedRequisitions) && req.status !== 'converted-to-po' && (
-                          <Tooltip content="Delete">
-                            <Button
-                              size="sm"
-                              variant="flat"
-                              color="danger"
-                              onPress={() => openReqAction('delete', req)}
-                            >
-                              🗑️
-                            </Button>
-                          </Tooltip>
-                        )}
-                      </div>
+                      <Tooltip content="Review — then approve, reject, or edit">
+                        <Button 
+                          size="sm" 
+                          variant="flat" 
+                          color="primary"
+                          onPress={() => handleViewRequisition(req)}
+                        >
+                          👁️
+                        </Button>
+                      </Tooltip>
                     </TableCell>
                   </TableRow>
                 );
@@ -2594,6 +2318,108 @@ export default function InventorySupplyChainDashboard() {
   const [invoiceFormData, setInvoiceFormData] = useState<Partial<SupplierInvoice> & { items?: InvoiceItem[] }>({
     items: []
   });
+  const [matchResult, setMatchResult] = useState<{ matched: boolean; discrepancies: string[] } | null>(null);
+
+  const handleInvoicePOChange = (poId: string) => {
+    const po = supplierStorePurchaseOrders.find((p) => p.id === poId);
+    if (!po) return;
+    setSelectedPOForInvoice(po);
+    const grn = goodsReceiptNotes.find(
+      (g) => g.poId === po.id && (g.status === 'approved' || g.status === 'completed' || g.status === 'pending')
+    );
+    const items: InvoiceItem[] = po.items.map((item) => {
+      const grnItem = grn?.items.find((gi) => gi.poItemId === item.id || gi.itemId === item.itemId);
+      const qty = grnItem?.acceptedQuantity ?? grnItem?.receivedQuantity ?? item.quantity;
+      const unitPrice = item.unitCost;
+      return {
+        id: `${Date.now()}-${item.id}`,
+        poItemId: item.id,
+        grnItemId: grnItem?.id,
+        itemId: item.itemId,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        quantity: qty,
+        unitPrice,
+        totalPrice: qty * unitPrice,
+      };
+    });
+    const subtotal = items.reduce((sum, i) => sum + i.totalPrice, 0);
+    const taxAmount = Number(po.taxAmount || 0);
+    const shippingAmount = Number(po.shippingAmount || 0);
+    const discountAmount = Number(po.discountAmount || 0);
+    setInvoiceFormData({
+      supplierId: po.supplierId,
+      supplierName: po.supplierName,
+      poId: po.id,
+      poNumber: po.poNumber,
+      grnId: grn?.id,
+      grnNumber: grn?.grnNumber,
+      invoiceDate: new Date(),
+      dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      items,
+      subtotal,
+      taxAmount,
+      shippingAmount,
+      discountAmount,
+      totalAmount: subtotal + taxAmount + shippingAmount - discountAmount,
+      currency: po.currency || 'GHS',
+      status: 'pending',
+      notes: '',
+    });
+  };
+
+  const handleSaveInvoice = () => {
+    if (!invoiceFormData.poId || !invoiceFormData.supplierId) {
+      alert('Select a purchase order first.');
+      return;
+    }
+    if (!invoiceFormData.items || invoiceFormData.items.length === 0) {
+      alert('Invoice needs at least one line item.');
+      return;
+    }
+    const created = createSupplierInvoice({
+      supplierId: invoiceFormData.supplierId!,
+      supplierName: invoiceFormData.supplierName || '',
+      poId: invoiceFormData.poId!,
+      poNumber: invoiceFormData.poNumber || '',
+      grnId: invoiceFormData.grnId,
+      grnNumber: invoiceFormData.grnNumber,
+      invoiceDate: invoiceFormData.invoiceDate instanceof Date
+        ? invoiceFormData.invoiceDate
+        : new Date(invoiceFormData.invoiceDate || Date.now()),
+      dueDate: invoiceFormData.dueDate instanceof Date
+        ? invoiceFormData.dueDate
+        : new Date(invoiceFormData.dueDate || Date.now() + 30 * 24 * 60 * 60 * 1000),
+      items: invoiceFormData.items,
+      subtotal: Number(invoiceFormData.subtotal || 0),
+      taxAmount: Number(invoiceFormData.taxAmount || 0),
+      shippingAmount: Number(invoiceFormData.shippingAmount || 0),
+      discountAmount: Number(invoiceFormData.discountAmount || 0),
+      totalAmount: Number(invoiceFormData.totalAmount || 0),
+      currency: invoiceFormData.currency || 'GHS',
+      status: 'pending',
+      notes: invoiceFormData.notes,
+      matchingStatus: {
+        isQuantityMatched: false,
+        isPriceMatched: false,
+        isTermsMatched: false,
+        discrepancies: [],
+      },
+    });
+    trackEvent('Stores.Issued', { action: 'create_invoice', poNumber: created.poNumber, invoiceNumber: created.invoiceNumber });
+    onInvoiceModalClose();
+    setInvoiceFormData({ items: [] });
+    setSelectedPOForInvoice(null);
+    setEditingInvoice(null);
+  };
+
+  const handleRunThreeWayMatch = () => {
+    if (!viewingInvoice) return;
+    const result = performThreeWayMatch(viewingInvoice.id, currentUserName);
+    setMatchResult(result);
+    const refreshed = getSupplierInvoice(viewingInvoice.id);
+    if (refreshed) setViewingInvoice(refreshed);
+  };
 
   // Stock Operations State
   const [stockOpSubTab, setStockOpSubTab] = useState('goods-receipt');
@@ -2605,10 +2431,23 @@ export default function InventorySupplyChainDashboard() {
   // Goods Receipt State
   const { isOpen: isGoodsReceiptOpen, onOpen: onGoodsReceiptOpen, onClose: onGoodsReceiptClose } = useDisclosure();
   const [selectedPOForReceipt, setSelectedPOForReceipt] = useState<PurchaseOrder | null>(null);
-  const [receiptItems, setReceiptItems] = useState<Array<{ itemId: string; itemCode: string; itemName: string; orderedQty: number; receivedQty: number; unitCost: number; batchNumber?: string; expiryDate?: Date; notes?: string }>>([]);
+  const [receiptItems, setReceiptItems] = useState<Array<{
+    itemId: string;
+    itemCode: string;
+    itemName: string;
+    orderedQty: number;
+    alreadyReceived: number;
+    receiveNow: number;
+    unitCost: number;
+    batchNumber?: string;
+    expiryDate?: Date;
+    notes?: string;
+  }>>([]);
 
   // Goods Issue State
   const { isOpen: isGoodsIssueOpen, onOpen: onGoodsIssueOpen, onClose: onGoodsIssueClose } = useDisclosure();
+  const { isOpen: isGoodsIssueViewOpen, onOpen: onGoodsIssueViewOpen, onClose: onGoodsIssueViewClose } = useDisclosure();
+  const [viewingGoodsIssue, setViewingGoodsIssue] = useState<GoodsIssue | null>(null);
   const [issueFormData, setIssueFormData] = useState<{ department: string; issuedTo: string; items: Array<{ itemId: string; itemCode: string; itemName: string; quantity: number; unitCost: number; reason?: string }>; notes?: string }>({
     department: '',
     issuedTo: '',
@@ -2616,6 +2455,7 @@ export default function InventorySupplyChainDashboard() {
     notes: ''
   });
 
+  // Temporary form state for transfers/counts (documents live in stockStore)
   // Stock Transfer State
   const { isOpen: isStockTransferOpen, onOpen: onStockTransferOpen, onClose: onStockTransferClose } = useDisclosure();
   const { isOpen: isStockTransferViewOpen, onOpen: onStockTransferViewOpen, onClose: onStockTransferViewClose } = useDisclosure();
@@ -2646,66 +2486,62 @@ export default function InventorySupplyChainDashboard() {
     createdBy: currentUserName
   });
 
-  // Temporary storage for transfers and counts (until we add to store)
-  const [stockTransfers, setStockTransfers] = useState<StockTransfer[]>([]);
-  const [stockCounts, setStockCounts] = useState<StockCount[]>([]);
-
   // Goods Receipt Handlers
   const handleOpenGoodsReceipt = (po: PurchaseOrder) => {
     setSelectedPOForReceipt(po);
-    setReceiptItems(po.items.map(item => ({
-      itemId: item.itemId,
-      itemCode: item.itemCode,
-      itemName: item.itemName,
-      orderedQty: item.quantity,
-      receivedQty: item.receivedQuantity || 0,
-      unitCost: item.unitCost,
-      notes: ''
-    })));
+    setReceiptItems(po.items.map((item) => {
+      const already = item.receivedQuantity || 0;
+      const remaining = Math.max(0, item.quantity - already);
+      return {
+        itemId: item.itemId,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        orderedQty: item.quantity,
+        alreadyReceived: already,
+        receiveNow: remaining,
+        unitCost: item.unitCost,
+        notes: ''
+      };
+    }));
     onGoodsReceiptOpen();
   };
 
   const handleReceiveGoods = () => {
     if (!selectedPOForReceipt) return;
-    
-    // Validate that we have items to receive
-    const itemsToReceive = receiptItems.filter(item => item.receivedQty > 0);
+
+    const itemsToReceive = receiptItems.filter((item) => item.receiveNow > 0);
     if (itemsToReceive.length === 0) {
-      alert('No items to receive. Please enter quantities.');
+      alert('Enter a Receive Now quantity for at least one line.');
       return;
     }
 
-    const po = supplierStorePurchaseOrders.find(p => p.id === selectedPOForReceipt.id);
+    const po = supplierStorePurchaseOrders.find((p) => p.id === selectedPOForReceipt.id);
     if (!po) {
       alert('Purchase Order not found');
       return;
     }
 
-    // Create GRN Items
-    const grnItems: GRNItem[] = receiptItems
-      .filter(item => item.receivedQty > 0)
-      .map(receiptItem => {
-        const poItem = po.items.find(i => i.itemId === receiptItem.itemId);
-        return {
-          id: Date.now().toString() + Math.random(),
-          poItemId: poItem?.id || '',
-          itemId: receiptItem.itemId,
-          itemCode: receiptItem.itemCode,
-          itemName: receiptItem.itemName,
-          orderedQuantity: receiptItem.orderedQty,
-          receivedQuantity: receiptItem.receivedQty,
-          acceptedQuantity: receiptItem.receivedQty, // Initially accept all, can be adjusted in quality check
-          rejectedQuantity: 0,
-          unitCost: receiptItem.unitCost,
-          totalValue: receiptItem.receivedQty * receiptItem.unitCost,
-          batchNumber: receiptItem.batchNumber,
-          expiryDate: receiptItem.expiryDate,
-          qualityStatus: 'pending' as const,
-          notes: receiptItem.notes
-        };
-      });
+    const grnItems: GRNItem[] = itemsToReceive.map((receiptItem) => {
+      const poItem = po.items.find((i) => i.itemId === receiptItem.itemId);
+      return {
+        id: Date.now().toString() + Math.random(),
+        poItemId: poItem?.id || '',
+        itemId: receiptItem.itemId,
+        itemCode: receiptItem.itemCode,
+        itemName: receiptItem.itemName,
+        orderedQuantity: receiptItem.orderedQty,
+        receivedQuantity: receiptItem.receiveNow,
+        acceptedQuantity: receiptItem.receiveNow,
+        rejectedQuantity: 0,
+        unitCost: receiptItem.unitCost,
+        totalValue: receiptItem.receiveNow * receiptItem.unitCost,
+        batchNumber: receiptItem.batchNumber,
+        expiryDate: receiptItem.expiryDate,
+        qualityStatus: 'pending' as const,
+        notes: receiptItem.notes
+      };
+    });
 
-    // Create GRN
     const grn = createGRN({
       poId: selectedPOForReceipt.id,
       poNumber: selectedPOForReceipt.poNumber,
@@ -2720,54 +2556,128 @@ export default function InventorySupplyChainDashboard() {
       notes: `Received goods for PO ${selectedPOForReceipt.poNumber}`
     });
 
-    // Update PO item received quantities and stock
-    receiptItems.forEach(receiptItem => {
-      const poItem = po.items.find(i => i.itemId === receiptItem.itemId);
-      if (poItem && receiptItem.receivedQty > 0) {
-        const currentReceived = poItem.receivedQuantity || 0;
-        const additionalQty = receiptItem.receivedQty - currentReceived;
-        if (additionalQty > 0) {
-          poItem.receivedQuantity = receiptItem.receivedQty;
-          
-          // Update stock level (blend the received cost into a weighted-average unitCost)
-          updateStockLevel(receiptItem.itemId, additionalQty, 'add', receiptItem.unitCost);
-          
-          // Create stock movement with GRN reference
-          addStockMovement({
-            itemId: receiptItem.itemId,
-            itemCode: receiptItem.itemCode,
-            itemName: receiptItem.itemName,
-            movementType: 'in',
-            quantity: additionalQty,
-            unitCost: receiptItem.unitCost,
-            totalValue: additionalQty * receiptItem.unitCost,
-            toLocation: stockItems.find(i => i.id === receiptItem.itemId)?.location || '',
-            referenceType: 'purchase',
-            referenceId: grn.id,
-            referenceNumber: grn.grnNumber,
-            batchNumber: receiptItem.batchNumber,
-            expiryDate: receiptItem.expiryDate,
-            performedBy: currentUserName,
-            notes: receiptItem.notes || `Received from ${selectedPOForReceipt.poNumber} - GRN ${grn.grnNumber}`
-          });
-        }
-      }
+    itemsToReceive.forEach((receiptItem) => {
+      const poItem = po.items.find((i) => i.itemId === receiptItem.itemId);
+      if (!poItem || receiptItem.receiveNow <= 0) return;
+      const additionalQty = receiptItem.receiveNow;
+      poItem.receivedQuantity = (poItem.receivedQuantity || 0) + additionalQty;
+
+      updateStockLevel(receiptItem.itemId, additionalQty, 'add', receiptItem.unitCost);
+
+      addStockMovement({
+        itemId: receiptItem.itemId,
+        itemCode: receiptItem.itemCode,
+        itemName: receiptItem.itemName,
+        movementType: 'in',
+        quantity: additionalQty,
+        unitCost: receiptItem.unitCost,
+        totalValue: additionalQty * receiptItem.unitCost,
+        toLocation: stockItems.find((i) => i.id === receiptItem.itemId)?.location || '',
+        referenceType: 'purchase',
+        referenceId: grn.id,
+        referenceNumber: grn.grnNumber,
+        batchNumber: receiptItem.batchNumber,
+        expiryDate: receiptItem.expiryDate,
+        performedBy: currentUserName,
+        notes: receiptItem.notes || `Received from ${selectedPOForReceipt.poNumber} - GRN ${grn.grnNumber}`
+      });
     });
 
-    // Update PO status
-    const allReceived = po.items.every(item => (item.receivedQuantity || 0) >= item.quantity);
+    const allReceived = po.items.every((item) => (item.receivedQuantity || 0) >= item.quantity);
     if (allReceived) {
       updatePurchaseOrder(po.id, { status: 'delivered', actualDeliveryDate: new Date() });
     } else {
       updatePurchaseOrder(po.id, { status: 'in-transit' });
     }
-    
-    alert(`Goods Receipt Note ${grn.grnNumber} created successfully!`);
+
     onGoodsReceiptClose();
     trackEvent('Stores.Issued', { action: 'goods_receipt', poNumber: selectedPOForReceipt.poNumber, grnNumber: grn.grnNumber });
   };
 
+  const openQualityCheck = (grn: GoodsReceiptNote) => {
+    setSelectedGRNForQC(grn);
+    setQualityCheckFormData({
+      grnId: grn.id,
+      grnNumber: grn.grnNumber,
+      poId: grn.poId,
+      poNumber: grn.poNumber,
+      supplierId: grn.supplierId,
+      supplierName: grn.supplierName,
+      checkedBy: currentUserName,
+      checkedDate: new Date(),
+      items: grn.items.map((item: GRNItem) => ({
+        id: Date.now().toString() + Math.random(),
+        grnItemId: item.id,
+        itemId: item.itemId,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        receivedQuantity: item.receivedQuantity,
+        checkedQuantity: item.receivedQuantity,
+        passedQuantity: item.receivedQuantity,
+        failedQuantity: 0,
+        qualityStatus: 'passed' as const
+      }))
+    });
+    onQualityCheckOpen();
+  };
+
+  const handleSubmitQualityCheck = () => {
+    if (!selectedGRNForQC || !qualityCheckFormData.items?.length) {
+      alert('Nothing to check.');
+      return;
+    }
+    const items = qualityCheckFormData.items.map((item: any) => {
+      const failed = Math.max(0, Number(item.failedQuantity) || 0);
+      const passed = Math.max(0, (Number(item.checkedQuantity) || 0) - failed);
+      return {
+        ...item,
+        passedQuantity: passed,
+        failedQuantity: failed,
+        qualityStatus: (failed === 0 ? 'passed' : passed === 0 ? 'failed' : 'failed') as 'passed' | 'failed'
+      };
+    });
+    const failedCount = items.filter((i: any) => i.failedQuantity > 0).length;
+    const passedCount = items.length - failedCount;
+    const overallStatus = failedCount === 0 ? 'passed' : passedCount === 0 ? 'failed' : 'partial';
+
+    const check = createQualityCheck({
+      grnId: selectedGRNForQC.id,
+      grnNumber: selectedGRNForQC.grnNumber,
+      poId: selectedGRNForQC.poId,
+      poNumber: selectedGRNForQC.poNumber,
+      supplierId: selectedGRNForQC.supplierId,
+      supplierName: selectedGRNForQC.supplierName,
+      checkedBy: currentUserName,
+      checkedDate: new Date(),
+      items,
+      overallStatus: overallStatus as 'passed' | 'failed' | 'partial',
+      passedItems: passedCount,
+      failedItems: failedCount,
+      totalItems: items.length,
+      notes: qualityCheckFormData.notes
+    });
+    completeQualityCheck(check.id, currentUserName);
+    const refreshed = getGRN(selectedGRNForQC.id);
+    setViewingGRN(refreshed || {
+      ...selectedGRNForQC,
+      status: overallStatus === 'passed' ? 'quality-check' : 'rejected',
+      qualityStatus: overallStatus as 'passed' | 'failed' | 'partial'
+    });
+    onQualityCheckClose();
+    onGRNViewOpen();
+    trackEvent('Stores.Issued', { action: 'quality_check', grnNumber: selectedGRNForQC.grnNumber });
+  };
+
   // Goods Issue Handlers
+  const [issueSearchTerm, setIssueSearchTerm] = useState('');
+  const [issueItemSearchTerms, setIssueItemSearchTerms] = useState<Record<number, string>>({});
+
+  const handleOpenGoodsIssue = () => {
+    setIssueFormData({ department: '', issuedTo: currentUserName, items: [], notes: '' });
+    setIssueItemSearchTerms({});
+    onGoodsIssueOpen();
+  };
+
   const handleAddIssueItem = () => {
     setIssueFormData({
       ...issueFormData,
@@ -2775,10 +2685,20 @@ export default function InventorySupplyChainDashboard() {
         itemId: '',
         itemCode: '',
         itemName: '',
-        quantity: 0,
+        quantity: 1,
         unitCost: 0
       }]
     });
+  };
+
+  const getFilteredIssueItems = (index: number) => {
+    const searchTerm = (issueItemSearchTerms[index] || '').toLowerCase();
+    const list = stockItems.filter((i) => i.isActive !== false && i.currentStock > 0);
+    if (!searchTerm) return list.slice(0, 20);
+    return list.filter((item) =>
+      item.itemCode.toLowerCase().includes(searchTerm) ||
+      item.name.toLowerCase().includes(searchTerm)
+    ).slice(0, 20);
   };
 
   const handleIssueGoods = () => {
@@ -2786,61 +2706,141 @@ export default function InventorySupplyChainDashboard() {
       alert('Please fill all required fields and add at least one item');
       return;
     }
-
-    issueFormData.items.forEach(item => {
-      if (item.quantity > 0 && item.itemId) {
-        const stockItem = stockItems.find(i => i.id === item.itemId);
-        if (!stockItem) {
-          alert(`Item ${item.itemCode} not found`);
-          return;
-        }
-        
-        if (stockItem.currentStock < item.quantity) {
-          alert(`Insufficient stock for ${item.itemName}. Available: ${stockItem.currentStock}`);
-          return;
-        }
-
-        // Update stock level
-        updateStockLevel(item.itemId, item.quantity, 'remove');
-        
-        // Create stock movement
-        addStockMovement({
-          itemId: item.itemId,
-          itemCode: item.itemCode,
-          itemName: item.itemName,
-          movementType: 'out',
-          quantity: item.quantity,
-          unitCost: item.unitCost || stockItem.unitCost,
-          totalValue: item.quantity * (item.unitCost || stockItem.unitCost),
-          fromLocation: stockItem.location,
-          referenceType: 'sale',
-          referenceId: Date.now().toString(),
-          referenceNumber: `ISSUE-${Date.now()}`,
-          reason: item.reason || `Issued to ${issueFormData.department}`,
-          performedBy: currentUserName,
-          notes: `Issued to ${issueFormData.issuedTo} - ${issueFormData.department}. ${issueFormData.notes || ''}`
-        });
+    const lines = issueFormData.items.filter((i) => i.itemId && i.quantity > 0);
+    if (lines.length === 0) {
+      alert('Add at least one item with a quantity.');
+      return;
+    }
+    for (const item of lines) {
+      const stockItem = stockItems.find((i) => i.id === item.itemId);
+      if (!stockItem) {
+        alert(`Item ${item.itemCode} not found`);
+        return;
       }
+      if (stockItem.currentStock < item.quantity) {
+        alert(`Insufficient stock for ${item.itemName}. Available: ${stockItem.currentStock}`);
+        return;
+      }
+    }
+
+    const issueNumber = settings.getNextModuleNumber('inventory', 'goodsIssue');
+    const issueId = Date.now().toString();
+    const issueItems = lines.map((item) => ({
+      id: `${issueId}-${item.itemId}`,
+      itemId: item.itemId,
+      itemCode: item.itemCode,
+      itemName: item.itemName,
+      quantity: item.quantity,
+      unitCost: item.unitCost || stockItems.find((i) => i.id === item.itemId)?.unitCost || 0,
+      totalValue: item.quantity * (item.unitCost || stockItems.find((i) => i.id === item.itemId)?.unitCost || 0),
+      reason: item.reason,
+    }));
+
+    lines.forEach((item) => {
+      const stockItem = stockItems.find((i) => i.id === item.itemId)!;
+      updateStockLevel(item.itemId, item.quantity, 'remove');
+      addStockMovement({
+        itemId: item.itemId,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        movementType: 'out',
+        quantity: item.quantity,
+        unitCost: item.unitCost || stockItem.unitCost,
+        totalValue: item.quantity * (item.unitCost || stockItem.unitCost),
+        fromLocation: stockItem.location,
+        referenceType: 'adjustment',
+        referenceId: issueId,
+        referenceNumber: issueNumber,
+        reason: item.reason || `Issued to ${issueFormData.department}`,
+        performedBy: currentUserName,
+        notes: `Issued to ${issueFormData.issuedTo} — ${issueFormData.department}.${issueFormData.notes ? ` ${issueFormData.notes}` : ''}`,
+      });
     });
 
-    alert('Goods issued successfully!');
+    upsertGoodsIssue({
+      id: issueId,
+      issueNumber,
+      department: issueFormData.department,
+      issuedTo: issueFormData.issuedTo,
+      issueDate: new Date(),
+      status: 'issued',
+      totalItems: issueItems.length,
+      totalValue: issueItems.reduce((sum, i) => sum + i.totalValue, 0),
+      items: issueItems,
+      notes: issueFormData.notes,
+      issuedBy: currentUserName,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
     onGoodsIssueClose();
     setIssueFormData({ department: '', issuedTo: '', items: [], notes: '' });
-    trackEvent('Stores.Issued', { action: 'goods_issue', department: issueFormData.department });
+    setIssueItemSearchTerms({});
+    trackEvent('Stores.Issued', { action: 'goods_issue', department: issueFormData.department, issueNumber });
   };
 
   // Stock Transfer Handlers
   const generateTransferNumber = () => {
-    const year = new Date().getFullYear();
-    const count = stockTransfers.length + 1;
-    return `TRF-${year}-${String(count).padStart(3, '0')}`;
+    return settings.getNextModuleNumber('inventory', 'stockTransfer');
+  };
+
+  const applyTransferStock = (transferData: StockTransfer) => {
+    for (const item of transferData.items) {
+      const stockItem = stockItems.find((i) => i.id === item.itemId);
+      if (!stockItem) continue;
+      if (stockItem.location !== transferData.fromLocation) {
+        alert(`${item.itemName} is not at ${transferData.fromLocation} (currently ${stockItem.location || 'unassigned'}).`);
+        return false;
+      }
+      if (stockItem.currentStock < item.quantity) {
+        alert(`Insufficient stock for ${item.itemName} at ${transferData.fromLocation}. Available: ${stockItem.currentStock}, requested: ${item.quantity}`);
+        return false;
+      }
+      // Single-location SKU model: relocate the item. Qty stays on hand (still hotel stock).
+      // Do NOT remove qty — that was wiping on-hand on every delivery.
+      updateStockItem(item.itemId, { location: transferData.toLocation });
+      addStockMovement({
+        itemId: item.itemId,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        movementType: 'transfer',
+        quantity: item.quantity,
+        unitCost: item.unitCost,
+        totalValue: item.totalValue,
+        fromLocation: transferData.fromLocation,
+        toLocation: transferData.toLocation,
+        referenceType: 'transfer',
+        referenceId: transferData.id,
+        referenceNumber: transferData.transferNumber,
+        performedBy: transferData.createdBy,
+        notes: item.notes || `Transferred from ${transferData.fromLocation} to ${transferData.toLocation}`,
+      });
+    }
+    return true;
+  };
+
+  const [transferItemSearchTerms, setTransferItemSearchTerms] = useState<Record<number, string>>({});
+
+  const getFilteredTransferItems = (index: number) => {
+    const searchTerm = (transferItemSearchTerms[index] || '').toLowerCase();
+    const from = stockTransferFormData.fromLocation;
+    const list = stockItems.filter((i) =>
+      i.isActive !== false &&
+      i.currentStock > 0 &&
+      (!from || i.location === from)
+    );
+    if (!searchTerm) return list.slice(0, 20);
+    return list.filter((item) =>
+      item.itemCode.toLowerCase().includes(searchTerm) ||
+      item.name.toLowerCase().includes(searchTerm)
+    ).slice(0, 20);
   };
 
   const handleAddStockTransfer = () => {
     setEditingStockTransfer(null);
-    const transferNumber = generateTransferNumber();
+    setTransferItemSearchTerms({});
     setStockTransferFormData({
-      transferNumber,
+      transferNumber: settings.peekNextModuleNumber('inventory', 'stockTransfer'),
       fromLocation: '',
       toLocation: '',
       transferDate: new Date(),
@@ -2860,92 +2860,64 @@ export default function InventorySupplyChainDashboard() {
       alert('Please fill all required fields and add at least one item');
       return;
     }
+    if (stockTransferFormData.fromLocation === stockTransferFormData.toLocation) {
+      alert('From and To locations must be different.');
+      return;
+    }
+    const lines = stockTransferFormData.items.filter((i) => i.itemId && i.quantity > 0);
+    if (lines.length === 0) {
+      alert('Add at least one item with a quantity.');
+      return;
+    }
 
     const transferData: StockTransfer = {
       id: editingStockTransfer?.id || Date.now().toString(),
-      transferNumber: stockTransferFormData.transferNumber || generateTransferNumber(),
+      transferNumber: editingStockTransfer
+        ? (stockTransferFormData.transferNumber || editingStockTransfer.transferNumber)
+        : generateTransferNumber(),
       fromLocation: stockTransferFormData.fromLocation,
       toLocation: stockTransferFormData.toLocation,
       transferDate: stockTransferFormData.transferDate || new Date(),
       expectedDeliveryDate: stockTransferFormData.expectedDeliveryDate || new Date(),
       status: stockTransferFormData.status || 'pending',
       priority: stockTransferFormData.priority || 'medium',
-      totalItems: stockTransferFormData.items.length,
-      totalValue: stockTransferFormData.items.reduce((sum, item) => sum + item.totalValue, 0),
-      items: stockTransferFormData.items,
+      totalItems: lines.length,
+      totalValue: lines.reduce((sum, item) => sum + item.totalValue, 0),
+      items: lines,
       notes: stockTransferFormData.notes,
       createdBy: stockTransferFormData.createdBy || currentUserName,
       createdAt: editingStockTransfer?.createdAt || new Date(),
       updatedAt: new Date()
     };
 
-    // Execute transfers and update stock
     if (transferData.status === 'delivered') {
-      transferData.items.forEach(item => {
-        const stockItem = stockItems.find(i => i.id === item.itemId);
-        if (stockItem) {
-          // Remove from source location — refuse the transfer if the source doesn't
-          // actually have enough stock, instead of silently clamping to zero and still
-          // crediting the full quantity to the destination (which fabricates inventory).
-          if (stockItem.location === transferData.fromLocation) {
-            if (stockItem.currentStock < item.quantity) {
-              alert(`Insufficient stock for ${item.itemName} at ${transferData.fromLocation}. Available: ${stockItem.currentStock}, requested: ${item.quantity}`);
-              return;
-            }
-            updateStockLevel(item.itemId, item.quantity, 'remove');
-          }
-
-          // Add to destination (or update location)
-          if (stockItem.location === transferData.toLocation) {
-            updateStockLevel(item.itemId, item.quantity, 'add');
-          } else {
-            // Transfer to different location - create new item record or update location
-            updateStockItem(item.itemId, { location: transferData.toLocation });
-          }
-
-          // Create stock movement
-          addStockMovement({
-            itemId: item.itemId,
-            itemCode: item.itemCode,
-            itemName: item.itemName,
-            movementType: 'transfer',
-            quantity: item.quantity,
-            unitCost: item.unitCost,
-            totalValue: item.totalValue,
-            fromLocation: transferData.fromLocation,
-            toLocation: transferData.toLocation,
-            referenceType: 'transfer',
-            referenceId: transferData.id,
-            referenceNumber: transferData.transferNumber,
-            performedBy: transferData.createdBy,
-            notes: item.notes || `Transferred from ${transferData.fromLocation} to ${transferData.toLocation}`
-          });
-        }
-      });
+      if (!applyTransferStock(transferData)) return;
+      transferData.actualDeliveryDate = new Date();
     }
 
-    if (editingStockTransfer) {
-      setStockTransfers(stockTransfers.map(t => t.id === transferData.id ? transferData : t));
-    } else {
-      setStockTransfers([...stockTransfers, transferData]);
-    }
-
+    upsertStockTransfer(transferData);
     onStockTransferClose();
     trackEvent('Stores.Issued', { action: editingStockTransfer ? 'update_stock_transfer' : 'create_stock_transfer', transferNumber: transferData.transferNumber });
   };
 
-  // Stock Count Handlers
-  const generateCountNumber = () => {
-    const year = new Date().getFullYear();
-    const count = stockCounts.length + 1;
-    return `CNT-${year}-${String(count).padStart(3, '0')}`;
+  const handleTransferStatusChange = (transfer: StockTransfer, status: StockTransfer['status']) => {
+    let updated: StockTransfer = { ...transfer, status, updatedAt: new Date() };
+    if (status === 'delivered' && transfer.status !== 'delivered') {
+      if (!applyTransferStock(updated)) return;
+      updated = { ...updated, actualDeliveryDate: new Date() };
+    }
+    upsertStockTransfer(updated);
+    setViewingStockTransfer(updated);
+    trackEvent('Stores.Issued', { action: 'update_stock_transfer_status', transferNumber: transfer.transferNumber, status });
   };
+
+  // Stock Count Handlers
+  const generateCountNumber = () => settings.getNextModuleNumber('inventory', 'stockCount');
 
   const handleAddStockCount = () => {
     setEditingStockCount(null);
-    const countNumber = generateCountNumber();
     setStockCountFormData({
-      countNumber,
+      countNumber: settings.peekNextModuleNumber('inventory', 'stockCount'),
       countType: 'full',
       location: '',
       startDate: new Date(),
@@ -2959,6 +2931,41 @@ export default function InventorySupplyChainDashboard() {
       createdBy: currentUserName
     });
     onStockCountOpen();
+  };
+
+  const handleSaveStockCount = () => {
+    if (!stockCountFormData.location || !stockCountFormData.items || stockCountFormData.items.length === 0) {
+      alert('Select a location so items can load for counting.');
+      return;
+    }
+    const countData: StockCount = {
+      id: editingStockCount?.id || Date.now().toString(),
+      countNumber: editingStockCount
+        ? (stockCountFormData.countNumber || editingStockCount.countNumber)
+        : generateCountNumber(),
+      countType: stockCountFormData.countType || 'full',
+      location: stockCountFormData.location,
+      startDate: stockCountFormData.startDate || new Date(),
+      status: 'in-progress',
+      totalItems: stockCountFormData.items.length,
+      countedItems: stockCountFormData.items.filter((i) => i.countedQuantity >= 0).length,
+      varianceItems: stockCountFormData.items.filter((i) => i.variance !== 0).length,
+      totalValue: stockCountFormData.items.reduce((sum, i) => sum + (i.expectedQuantity * i.unitCost), 0),
+      varianceValue: stockCountFormData.items.reduce((sum, i) => sum + Math.abs(i.varianceValue), 0),
+      items: stockCountFormData.items,
+      notes: stockCountFormData.notes,
+      createdBy: stockCountFormData.createdBy || currentUserName,
+      createdAt: editingStockCount?.createdAt || new Date(),
+      updatedAt: new Date()
+    };
+    if (editingStockCount) {
+      upsertStockCount(countData);
+      setViewingStockCount(countData);
+    } else {
+      upsertStockCount(countData);
+    }
+    onStockCountClose();
+    trackEvent('Stores.Issued', { action: editingStockCount ? 'update_stock_count' : 'create_stock_count', countNumber: countData.countNumber });
   };
 
   const handleCompleteStockCount = (count: StockCount) => {
@@ -3007,8 +3014,8 @@ export default function InventorySupplyChainDashboard() {
       updatedAt: new Date()
     };
 
-    setStockCounts(stockCounts.map(c => c.id === updatedCount.id ? updatedCount : c));
-    alert('Stock count completed and adjustments applied!');
+    upsertStockCount(updatedCount);
+    setViewingStockCount(updatedCount);
     trackEvent('Stores.Issued', { action: 'complete_stock_count', countNumber: count.countNumber });
   };
 
@@ -3021,12 +3028,12 @@ export default function InventorySupplyChainDashboard() {
     return Array.from(locSet);
   }, [stockItems]);
 
-  const departments = ['F&B', 'Housekeeping', 'Maintenance', 'Front Office', 'Accounting', 'Other'];
+  const departments = ['Kitchen', 'Restaurant & Bar', 'Housekeeping', 'Maintenance', 'Front Office', 'Accounting', 'Other'];
 
   // Render GRN Management Function
   const renderGRNManagement = () => {
-    const filteredGRNs = goodsReceiptNotes.filter(grn => {
-      const matchesSearch = grnSearchTerm === '' || 
+    const filteredGRNs = goodsReceiptNotes.filter((grn) => {
+      const matchesSearch = grnSearchTerm === '' ||
         grn.grnNumber.toLowerCase().includes(grnSearchTerm.toLowerCase()) ||
         grn.poNumber.toLowerCase().includes(grnSearchTerm.toLowerCase()) ||
         grn.supplierName.toLowerCase().includes(grnSearchTerm.toLowerCase());
@@ -3034,24 +3041,22 @@ export default function InventorySupplyChainDashboard() {
       return matchesSearch && matchesStatus;
     });
 
-    const totalGRNPages = Math.ceil(filteredGRNs.length / grnRowsPerPage);
-    const paginatedGRNs = filteredGRNs.slice((grnPage - 1) * grnRowsPerPage, grnPage * grnRowsPerPage);
-
     return (
       <div className="space-y-6">
         <Card className="border-0 shadow-lg">
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between w-full">
-              <h3 className="text-xl font-semibold text-ghana-black">📥 Goods Receipt Notes (GRN)</h3>
-              <Badge color="primary" variant="flat">
-                {goodsReceiptNotes.length} GRNs
-              </Badge>
+              <div>
+                <h3 className="text-xl font-semibold text-ghana-black">📋 GRN & Quality</h3>
+                <p className="text-sm text-gray-500">Review receipts, run QC, then approve — actions in View</p>
+              </div>
+              <Badge color="primary" variant="flat">{filteredGRNs.length} GRNs</Badge>
             </div>
           </CardHeader>
           <CardBody>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <Input
-                placeholder="Search GRN, PO number or supplier..."
+                placeholder="Search GRN, PO, or supplier..."
                 value={grnSearchTerm}
                 onChange={(e) => setGRNSearchTerm(e.target.value)}
                 startContent={<span className="text-gray-400">🔍</span>}
@@ -3063,164 +3068,73 @@ export default function InventorySupplyChainDashboard() {
                 onSelectionChange={(keys) => setGRNFilterStatus(Array.from(keys)[0] as string)}
               >
                 <SelectItem key="all">All Status</SelectItem>
-                <SelectItem key="pending">Pending</SelectItem>
-                <SelectItem key="quality-check">Quality Check</SelectItem>
+                <SelectItem key="pending">Pending QC</SelectItem>
+                <SelectItem key="quality-check">Ready to Approve</SelectItem>
                 <SelectItem key="approved">Approved</SelectItem>
                 <SelectItem key="rejected">Rejected</SelectItem>
                 <SelectItem key="completed">Completed</SelectItem>
               </Select>
             </div>
 
-            <Table>
+            <Table aria-label="Goods receipt notes" classNames={{ th: 'whitespace-nowrap' }}>
               <TableHeader>
-                <TableColumn>GRN Number</TableColumn>
-                <TableColumn>PO Number</TableColumn>
+                <TableColumn className="w-[130px]">GRN #</TableColumn>
+                <TableColumn className="w-[120px]">PO #</TableColumn>
                 <TableColumn>Supplier</TableColumn>
-                <TableColumn>Receipt Date</TableColumn>
-                <TableColumn>Items</TableColumn>
-                <TableColumn>Total Value</TableColumn>
-                <TableColumn>Quality Status</TableColumn>
-                <TableColumn>Status</TableColumn>
-                <TableColumn>Actions</TableColumn>
+                <TableColumn className="w-[110px]">Date</TableColumn>
+                <TableColumn className="w-[70px]">Lines</TableColumn>
+                <TableColumn className="w-[120px] text-right">Value</TableColumn>
+                <TableColumn className="w-[110px]">Status</TableColumn>
+                <TableColumn className="w-[70px]">Actions</TableColumn>
               </TableHeader>
-              <TableBody emptyContent="No GRNs found.">
-                {paginatedGRNs.map((grn: GoodsReceiptNote) => (
+              <TableBody emptyContent="No GRNs yet. Receive goods from a PO first.">
+                {filteredGRNs.map((grn: GoodsReceiptNote) => (
                   <TableRow key={grn.id}>
-                    <TableCell className="font-mono font-semibold">{grn.grnNumber}</TableCell>
-                    <TableCell className="font-mono">{grn.poNumber}</TableCell>
-                    <TableCell>{grn.supplierName}</TableCell>
-                    <TableCell>{grn.receiptDate instanceof Date ? grn.receiptDate.toLocaleDateString() : new Date(grn.receiptDate).toLocaleDateString()}</TableCell>
-                    <TableCell>{grn.totalItems} items</TableCell>
-                    <TableCell className="font-semibold">₵{grn.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                     <TableCell>
-                      {grn.qualityStatus ? (
-                        <Badge 
-                          color={grn.qualityStatus === 'passed' ? 'success' : grn.qualityStatus === 'partial' ? 'warning' : 'danger'} 
-                          variant="flat"
-                        >
-                          {grn.qualityStatus}
-                        </Badge>
-                      ) : (
-                        <Badge color="default" variant="flat">Pending</Badge>
-                      )}
+                      <span className="font-mono text-sm font-semibold whitespace-nowrap">{grn.grnNumber}</span>
+                    </TableCell>
+                    <TableCell className="font-mono text-sm whitespace-nowrap">{grn.poNumber}</TableCell>
+                    <TableCell className="truncate max-w-[160px]" title={grn.supplierName}>{grn.supplierName}</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {grn.receiptDate instanceof Date ? grn.receiptDate.toLocaleDateString() : new Date(grn.receiptDate).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>{grn.totalItems}</TableCell>
+                    <TableCell className="text-right tabular-nums font-semibold whitespace-nowrap">
+                      ₵{grn.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </TableCell>
                     <TableCell>
-                      <Badge 
+                      <Badge
                         color={
-                          grn.status === 'completed' ? 'success' :
-                          grn.status === 'approved' ? 'primary' :
-                          grn.status === 'quality-check' ? 'warning' :
-                          grn.status === 'rejected' ? 'danger' : 'default'
-                        } 
+                          grn.status === 'completed' || grn.status === 'approved' ? 'success' :
+                          grn.status === 'quality-check' ? 'primary' :
+                          grn.status === 'rejected' ? 'danger' : 'warning'
+                        }
+                        size="sm"
                         variant="flat"
+                        className="capitalize"
                       >
-                        {grn.status.replace('-', ' ')}
+                        {grn.status === 'quality-check' ? 'QC done' : grn.status.replace('-', ' ')}
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
-                        <Tooltip content="View Details">
-                          <Button 
-                            size="sm" 
-                            variant="flat" 
-                            color="primary"
-                            onPress={() => {
-                              setViewingGRN(grn);
-                              onGRNViewOpen();
-                            }}
-                          >
-                            👁️
-                          </Button>
-                        </Tooltip>
-                        {grn.status === 'pending' && (
-                          <Tooltip content="Perform Quality Check">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="warning"
-                              onPress={() => {
-                                setSelectedGRNForQC(grn);
-                                setQualityCheckFormData({
-                                  grnId: grn.id,
-                                  grnNumber: grn.grnNumber,
-                                  poId: grn.poId,
-                                  poNumber: grn.poNumber,
-                                  supplierId: grn.supplierId,
-                                  supplierName: grn.supplierName,
-                                  checkedBy: currentUserName,
-                                  checkedDate: new Date(),
-                                  items: grn.items.map((item: GRNItem) => ({
-                                    id: Date.now().toString() + Math.random(),
-                                    grnItemId: item.id,
-                                    itemId: item.itemId,
-                                    itemCode: item.itemCode,
-                                    itemName: item.itemName,
-                                    receivedQuantity: item.receivedQuantity,
-                                    checkedQuantity: item.receivedQuantity,
-                                    passedQuantity: item.receivedQuantity,
-                                    failedQuantity: 0,
-                                    qualityStatus: 'pending' as const
-                                  }))
-                                });
-                                onQualityCheckOpen();
-                              }}
-                            >
-                              🔍 QC
-                            </Button>
-                          </Tooltip>
-                        )}
-                        {grn.status === 'quality-check' && (
-                          <>
-                            <Tooltip content="Approve GRN">
-                              <Button 
-                                size="sm" 
-                                variant="flat" 
-                                color="success"
-                                onPress={() => {
-                                  if (confirm('Approve this GRN?')) {
-                                    approveGRN(grn.id, currentUserName);
-                                    trackEvent('Stores.Issued', { action: 'approve_grn', grnNumber: grn.grnNumber });
-                                  }
-                                }}
-                              >
-                                ✓
-                              </Button>
-                            </Tooltip>
-                            <Tooltip content="Reject GRN">
-                              <Button 
-                                size="sm" 
-                                variant="flat" 
-                                color="danger"
-                                onPress={() => {
-                                  const reason = prompt('Enter rejection reason:');
-                                  if (reason) {
-                                    rejectGRN(grn.id, currentUserName, reason);
-                                    trackEvent('Stores.Issued', { action: 'reject_grn', grnNumber: grn.grnNumber });
-                                  }
-                                }}
-                              >
-                                ✗
-                              </Button>
-                            </Tooltip>
-                          </>
-                        )}
-                      </div>
+                      <Tooltip content="Review — then QC / approve">
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="primary"
+                          onPress={() => {
+                            setViewingGRN(grn);
+                            onGRNViewOpen();
+                          }}
+                        >
+                          👁️
+                        </Button>
+                      </Tooltip>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-
-            {totalGRNPages > 1 && (
-              <div className="flex justify-center mt-4">
-                <Pagination
-                  total={totalGRNPages}
-                  page={grnPage}
-                  onChange={setGRNPage}
-                  showControls
-                />
-              </div>
-            )}
           </CardBody>
         </Card>
       </div>
@@ -3440,296 +3354,129 @@ export default function InventorySupplyChainDashboard() {
     );
   };
 
-  // Render Stock Operations Function
+  // Render Stock Operations Function — receive + recon only
   const renderStockOperations = () => {
     // Get POs ready for receipt (confirmed or in-transit)
     const posForReceipt = supplierStorePurchaseOrders.filter(po => 
       po.status === 'confirmed' || po.status === 'in-transit'
     );
-    
-    // Get today's receipts and issues
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const todayReceipts = stockMovements.filter(m => {
-      const mDate = new Date(m.createdAt);
-      mDate.setHours(0, 0, 0, 0);
-      return mDate.getTime() === today.getTime() && m.movementType === 'in';
-    });
-    const todayIssues = stockMovements.filter(m => {
-      const mDate = new Date(m.createdAt);
-      mDate.setHours(0, 0, 0, 0);
-      return mDate.getTime() === today.getTime() && m.movementType === 'out';
-    });
 
     return (
       <div className="space-y-6">
-        {/* Sub-tabs for Stock Operations */}
         <Tabs
           selectedKey={stockOpSubTab}
           onSelectionChange={(key) => setStockOpSubTab(key as string)}
         >
           <Tab key="goods-receipt" title="📥 Goods Receipt" />
-          <Tab key="grn-management" title="📋 GRN & Quality Check" />
-          <Tab key="supplier-invoices" title="🧾 Supplier Invoices" />
-          <Tab key="goods-issue" title="📤 Goods Issue" />
-          <Tab key="stock-transfers" title="🔄 Stock Transfers" />
-          <Tab key="stock-counts" title="🔍 Stock Counts" />
+          <Tab key="grn-management" title="📋 GRN & Quality" />
+          <Tab key="stock-counts" title="🔍 Stock Count" />
         </Tabs>
 
-        {/* GRN list / detail / quality-check flow, once a PO has been received
-            into a GRN below -- kept as its own sub-tab since a GRN can sit in
-            'pending' status (awaiting QC) for a while before being approved. */}
         {stockOpSubTab === 'grn-management' && renderGRNManagement()}
 
-        {/* Supplier invoice three-way-match / approve / reject / pay workflow --
-            fully built (see approveInvoice/rejectInvoice/markInvoicePaid/
-            performThreeWayMatch above) but never mounted anywhere. */}
-        {stockOpSubTab === 'supplier-invoices' && renderInvoiceManagement()}
-
-        {/* Goods Receipt Tab */}
         {stockOpSubTab === 'goods-receipt' && (
           <div className="space-y-6">
             <Card className="border-0 shadow-lg">
-              <CardHeader className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-xl font-bold">Goods Receipt</h3>
-                  <p className="text-sm text-gray-500">Receive goods from Purchase Orders</p>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between w-full">
+                  <div>
+                    <h3 className="text-xl font-semibold text-ghana-black">📥 Goods Receipt</h3>
+                    <p className="text-sm text-gray-500">Receive against confirmed / in-transit POs — creates a GRN</p>
+                  </div>
+                  <Badge color="primary" variant="flat">{posForReceipt.length} ready</Badge>
                 </div>
-                <Badge color="primary" variant="flat">
-                  {posForReceipt.length} POs Ready
-                </Badge>
               </CardHeader>
               <CardBody>
-                <div className="space-y-4">
+                <div className="mb-6">
                   <Input
-                    placeholder="Та Search PO by number..."
+                    placeholder="Search PO # or supplier..."
                     value={poSearchTerm}
                     onChange={(e) => setPOSearchTerm(e.target.value)}
-                    startContent={<span>🔍</span>}
+                    startContent={<span className="text-gray-400">🔍</span>}
                   />
-                  {posForReceipt.length > 0 ? (
-                    <div className="max-h-[520px] overflow-y-auto">
-                      <Table>
-                        <TableHeader>
-                          <TableColumn>PO Number</TableColumn>
-                          <TableColumn>Supplier</TableColumn>
-                          <TableColumn>Order Date</TableColumn>
-                          <TableColumn>Expected Delivery</TableColumn>
-                          <TableColumn>Items</TableColumn>
-                          <TableColumn>Status</TableColumn>
-                          <TableColumn>Actions</TableColumn>
-                        </TableHeader>
-                        <TableBody>
-                          {posForReceipt
-                            .filter(po =>
-                              po.poNumber.toLowerCase().includes(poSearchTerm.toLowerCase()) ||
-                              po.supplierName.toLowerCase().includes(poSearchTerm.toLowerCase())
-                            )
-                            .map(po => (
-                              <TableRow key={po.id}>
-                                <TableCell className="font-mono font-semibold">{po.poNumber}</TableCell>
-                                <TableCell>{po.supplierName}</TableCell>
-                                <TableCell>{po.orderDate instanceof Date ? po.orderDate.toLocaleDateString() : new Date(po.orderDate).toLocaleDateString()}</TableCell>
-                                <TableCell>{po.expectedDeliveryDate instanceof Date ? po.expectedDeliveryDate.toLocaleDateString() : new Date(po.expectedDeliveryDate).toLocaleDateString()}</TableCell>
-                                <TableCell>{po.items.length} items</TableCell>
-                                <TableCell>
-                                  <Badge color={po.status === 'confirmed' ? 'warning' : 'primary'} variant="flat">
-                                    {po.status}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell>
-                                  <Button
-                                    size="sm"
-                                    color="primary"
-                                    onPress={() => handleOpenGoodsReceipt(po)}
-                                  >
-                                    Receive Goods
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                        </TableBody>
-                      </Table>
-                    </div>
-                  ) : (
-                    <div className="text-center py-8 text-gray-500">
-                      No Purchase Orders ready for receipt
-                    </div>
-                  )}
                 </div>
+                <Table aria-label="POs ready for receipt" classNames={{ th: 'whitespace-nowrap' }}>
+                  <TableHeader>
+                    <TableColumn className="w-[130px]">PO #</TableColumn>
+                    <TableColumn>Supplier</TableColumn>
+                    <TableColumn className="w-[110px]">Ordered</TableColumn>
+                    <TableColumn className="w-[110px]">Expected</TableColumn>
+                    <TableColumn className="w-[70px]">Lines</TableColumn>
+                    <TableColumn className="w-[100px]">Status</TableColumn>
+                    <TableColumn className="w-[70px]">Actions</TableColumn>
+                  </TableHeader>
+                  <TableBody emptyContent="No POs ready. Confirm a purchase order first.">
+                    {posForReceipt
+                      .filter((po) =>
+                        po.poNumber.toLowerCase().includes(poSearchTerm.toLowerCase()) ||
+                        po.supplierName.toLowerCase().includes(poSearchTerm.toLowerCase())
+                      )
+                      .map((po) => (
+                        <TableRow key={po.id}>
+                          <TableCell>
+                            <span className="font-mono text-sm font-semibold whitespace-nowrap">{po.poNumber}</span>
+                          </TableCell>
+                          <TableCell className="truncate max-w-[160px]" title={po.supplierName}>{po.supplierName}</TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {po.orderDate instanceof Date ? po.orderDate.toLocaleDateString() : new Date(po.orderDate).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {po.expectedDeliveryDate instanceof Date ? po.expectedDeliveryDate.toLocaleDateString() : new Date(po.expectedDeliveryDate).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>{po.items.length}</TableCell>
+                          <TableCell>
+                            <Badge color={po.status === 'confirmed' ? 'warning' : 'primary'} size="sm" variant="flat" className="capitalize">
+                              {po.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Tooltip content="Receive this shipment">
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                color="success"
+                                className="bg-ghana-green text-white"
+                                onPress={() => handleOpenGoodsReceipt(po)}
+                              >
+                                📥
+                              </Button>
+                            </Tooltip>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
               </CardBody>
             </Card>
           </div>
         )}
 
-        {/* Goods Issue Tab */}
-        {stockOpSubTab === 'goods-issue' && (
+        {stockOpSubTab === 'stock-counts' && (
           <div className="space-y-6">
             <Card className="border-0 shadow-lg">
-              <CardHeader className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-xl font-bold">Goods Issue</h3>
-                  <p className="text-sm text-gray-500">Issue stock to departments</p>
-                </div>
-                <div className="flex gap-2">
-                  <Badge color="success" variant="flat">
-                    {todayIssues.length} Issues Today
-                  </Badge>
-                  <Button color="primary" onPress={onGoodsIssueOpen}>
-                    + New Issue
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between w-full">
+                  <div>
+                    <h3 className="text-xl font-semibold text-ghana-black">🔍 Stock Count</h3>
+                    <p className="text-sm text-gray-500">Physical vs book — post variances on Complete</p>
+                  </div>
+                  <Button color="primary" className="bg-ghana-gold text-white" variant="flat" onPress={handleAddStockCount}>
+                    + New Count
                   </Button>
                 </div>
               </CardHeader>
               <CardBody>
-                <div className="text-center py-8 text-gray-500">
-                  Issue history will be displayed here
-                </div>
-              </CardBody>
-            </Card>
-          </div>
-        )}
-
-        {/* Stock Transfers Tab */}
-        {stockOpSubTab === 'stock-transfers' && (
-          <div className="space-y-6">
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-xl font-bold">Stock Transfers</h3>
-                  <p className="text-sm text-gray-500">Transfer stock between locations</p>
-                </div>
-                <Button color="primary" onPress={handleAddStockTransfer}>
-                  + New Transfer
-                </Button>
-              </CardHeader>
-              <CardBody>
-                <div className="flex gap-4 mb-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                   <Input
-                    placeholder="Search transfers..."
-                    value={stockTransferSearchTerm}
-                    onChange={(e) => setStockTransferSearchTerm(e.target.value)}
-                    startContent={<span>🔍</span>}
-                    className="flex-1"
-                  />
-                  <Select
-                    selectedKeys={stockTransferFilterStatus ? [stockTransferFilterStatus] : ['all']}
-                    onSelectionChange={(keys) => setStockTransferFilterStatus(Array.from(keys)[0] as string)}
-                    className="w-40"
-                  >
-                    <SelectItem key="all">All Status</SelectItem>
-                    <SelectItem key="pending">Pending</SelectItem>
-                    <SelectItem key="in-transit">In Transit</SelectItem>
-                    <SelectItem key="delivered">Delivered</SelectItem>
-                    <SelectItem key="cancelled">Cancelled</SelectItem>
-                  </Select>
-                </div>
-                {stockTransfers.length > 0 ? (
-                  <div className="max-h-[520px] overflow-y-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableColumn>Transfer #</TableColumn>
-                        <TableColumn>From Location</TableColumn>
-                        <TableColumn>To Location</TableColumn>
-                        <TableColumn>Transfer Date</TableColumn>
-                        <TableColumn>Items</TableColumn>
-                        <TableColumn>Status</TableColumn>
-                        <TableColumn>Actions</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {stockTransfers
-                          .filter(t =>
-                            (stockTransferSearchTerm === '' || t.transferNumber.toLowerCase().includes(stockTransferSearchTerm.toLowerCase())) &&
-                            (stockTransferFilterStatus === 'all' || t.status === stockTransferFilterStatus)
-                          )
-                          .map(transfer => (
-                            <TableRow key={transfer.id}>
-                              <TableCell className="font-mono font-semibold">{transfer.transferNumber}</TableCell>
-                              <TableCell>{transfer.fromLocation}</TableCell>
-                              <TableCell>{transfer.toLocation}</TableCell>
-                              <TableCell>{transfer.transferDate instanceof Date ? transfer.transferDate.toLocaleDateString() : new Date(transfer.transferDate).toLocaleDateString()}</TableCell>
-                              <TableCell>{transfer.items.length} items</TableCell>
-                              <TableCell>
-                                <Badge
-                                  color={
-                                    transfer.status === 'delivered' ? 'success' :
-                                    transfer.status === 'in-transit' ? 'warning' :
-                                    transfer.status === 'cancelled' ? 'danger' : 'default'
-                                  }
-                                  variant="flat"
-                                >
-                                  {transfer.status}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="flat"
-                                    color="primary"
-                                    onPress={() => {
-                                      setViewingStockTransfer(transfer);
-                                      onStockTransferViewOpen();
-                                    }}
-                                  >
-                                    View
-                                  </Button>
-                                  {transfer.status === 'pending' && (
-                                    <Button
-                                      size="sm"
-                                      variant="flat"
-                                      color="success"
-                                      onPress={() => {
-                                        setEditingStockTransfer(transfer);
-                                        setStockTransferFormData({ ...transfer, items: transfer.items });
-                                        onStockTransferOpen();
-                                      }}
-                                    >
-                                      Edit
-                                    </Button>
-                                  )}
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    No stock transfers found. Create a new transfer to get started.
-                  </div>
-                )}
-              </CardBody>
-            </Card>
-          </div>
-        )}
-
-        {/* Stock Counts Tab */}
-        {stockOpSubTab === 'stock-counts' && (
-          <div className="space-y-6">
-            <Card className="border-0 shadow-lg">
-              <CardHeader className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-xl font-bold">Stock Counts</h3>
-                  <p className="text-sm text-gray-500">Physical inventory verification</p>
-                </div>
-                <Button color="primary" onPress={handleAddStockCount}>
-                  + New Stock Count
-                </Button>
-              </CardHeader>
-              <CardBody>
-                <div className="flex gap-4 mb-4">
-                  <Input
-                    placeholder="Search counts..."
+                    placeholder="Search count # or location..."
                     value={stockCountSearchTerm}
                     onChange={(e) => setStockCountSearchTerm(e.target.value)}
-                    startContent={<span>🔍</span>}
-                    className="flex-1"
+                    startContent={<span className="text-gray-400">🔍</span>}
+                    className="md:col-span-2"
                   />
                   <Select
-                    selectedKeys={stockCountFilterStatus ? [stockCountFilterStatus] : ['all']}
+                    selectedKeys={[stockCountFilterStatus]}
                     onSelectionChange={(keys) => setStockCountFilterStatus(Array.from(keys)[0] as string)}
-                    className="w-40"
                   >
                     <SelectItem key="all">All Status</SelectItem>
                     <SelectItem key="planned">Planned</SelectItem>
@@ -3738,86 +3485,74 @@ export default function InventorySupplyChainDashboard() {
                     <SelectItem key="cancelled">Cancelled</SelectItem>
                   </Select>
                 </div>
-                {stockCounts.length > 0 ? (
-                  <div className="max-h-[520px] overflow-y-auto">
-                    <Table>
-                      <TableHeader>
-                        <TableColumn>Count #</TableColumn>
-                        <TableColumn>Type</TableColumn>
-                        <TableColumn>Location</TableColumn>
-                        <TableColumn>Start Date</TableColumn>
-                        <TableColumn>Items</TableColumn>
-                        <TableColumn>Status</TableColumn>
-                        <TableColumn>Actions</TableColumn>
-                      </TableHeader>
-                      <TableBody>
-                        {stockCounts
-                          .filter(c =>
-                            (stockCountSearchTerm === '' || c.countNumber.toLowerCase().includes(stockCountSearchTerm.toLowerCase())) &&
-                            (stockCountFilterStatus === 'all' || c.status === stockCountFilterStatus)
-                          )
-                          .map(count => (
-                            <TableRow key={count.id}>
-                              <TableCell className="font-mono font-semibold">{count.countNumber}</TableCell>
-                              <TableCell>
-                                <Chip size="sm" variant="flat">
-                                  {count.countType}
-                                </Chip>
-                              </TableCell>
-                              <TableCell>{count.location}</TableCell>
-                              <TableCell>{count.startDate instanceof Date ? count.startDate.toLocaleDateString() : new Date(count.startDate).toLocaleDateString()}</TableCell>
-                              <TableCell>{count.items.length} items</TableCell>
-                              <TableCell>
-                                <Badge
-                                  color={
-                                    count.status === 'completed' ? 'success' :
-                                    count.status === 'in-progress' ? 'warning' :
-                                    count.status === 'cancelled' ? 'danger' : 'default'
-                                  }
-                                  variant="flat"
-                                >
-                                  {count.status}
-                                </Badge>
-                              </TableCell>
-                              <TableCell>
-                                <div className="flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="flat"
-                                    color="primary"
-                                    onPress={() => {
-                                      setViewingStockCount(count);
-                                      onStockCountViewOpen();
-                                    }}
-                                  >
-                                    View
-                                  </Button>
-                                  {count.status === 'in-progress' && (
-                                    <Button
-                                      size="sm"
-                                      variant="flat"
-                                      color="success"
-                                      onPress={() => {
-                                        if (confirm('Complete this stock count? This will apply adjustments to stock levels.')) {
-                                          handleCompleteStockCount(count);
-                                        }
-                                      }}
-                                    >
-                                      Complete
-                                    </Button>
-                                  )}
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          ))}
-                      </TableBody>
-                    </Table>
-                  </div>
-                ) : (
-                  <div className="text-center py-8 text-gray-500">
-                    No stock counts found. Create a new count to get started.
-                  </div>
-                )}
+                <Table aria-label="Stock counts" classNames={{ th: 'whitespace-nowrap' }}>
+                  <TableHeader>
+                    <TableColumn className="w-[130px]">Count #</TableColumn>
+                    <TableColumn className="w-[90px]">Type</TableColumn>
+                    <TableColumn>Location</TableColumn>
+                    <TableColumn className="w-[110px]">Started</TableColumn>
+                    <TableColumn className="w-[70px]">Lines</TableColumn>
+                    <TableColumn className="w-[70px]">Δ</TableColumn>
+                    <TableColumn className="w-[110px]">Status</TableColumn>
+                    <TableColumn className="w-[70px]">Actions</TableColumn>
+                  </TableHeader>
+                  <TableBody emptyContent="No counts yet. Create one to reconcile a location.">
+                    {stockCounts
+                      .filter((c) =>
+                        (stockCountSearchTerm === '' ||
+                          c.countNumber.toLowerCase().includes(stockCountSearchTerm.toLowerCase()) ||
+                          c.location.toLowerCase().includes(stockCountSearchTerm.toLowerCase())) &&
+                        (stockCountFilterStatus === 'all' || c.status === stockCountFilterStatus)
+                      )
+                      .map((count) => (
+                        <TableRow key={count.id}>
+                          <TableCell>
+                            <span className="font-mono text-sm font-semibold whitespace-nowrap">{count.countNumber}</span>
+                          </TableCell>
+                          <TableCell>
+                            <Chip size="sm" variant="flat" className="capitalize">{count.countType}</Chip>
+                          </TableCell>
+                          <TableCell className="truncate max-w-[140px]" title={count.location}>{count.location}</TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {count.startDate instanceof Date ? count.startDate.toLocaleDateString() : new Date(count.startDate).toLocaleDateString()}
+                          </TableCell>
+                          <TableCell>{count.items.length}</TableCell>
+                          <TableCell className={count.varianceItems > 0 ? 'font-semibold text-orange-600' : ''}>
+                            {count.varianceItems}
+                          </TableCell>
+                          <TableCell>
+                            <Badge
+                              color={
+                                count.status === 'completed' ? 'success' :
+                                count.status === 'in-progress' ? 'warning' :
+                                count.status === 'cancelled' ? 'danger' : 'default'
+                              }
+                              size="sm"
+                              variant="flat"
+                              className="capitalize"
+                            >
+                              {count.status}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Tooltip content="Review — then edit or complete">
+                              <Button
+                                size="sm"
+                                variant="flat"
+                                color="primary"
+                                onPress={() => {
+                                  setViewingStockCount(count);
+                                  onStockCountViewOpen();
+                                }}
+                              >
+                                👁️
+                              </Button>
+                            </Tooltip>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                  </TableBody>
+                </Table>
               </CardBody>
             </Card>
           </div>
@@ -3826,47 +3561,246 @@ export default function InventorySupplyChainDashboard() {
     );
   };
 
-  return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-ghana-black">📦 Inventory & Supply Chain Management</h1>
-          <p className="text-gray-600">Complete inventory control with Ghana import/export compliance</p>
-        </div>
-        <div className="flex items-center space-x-2">
-          <Badge color="success">System Online</Badge>
-          <Badge color="primary">SaaS Ready</Badge>
-        </div>
+  const renderStockTransfers = () => {
+    const filtered = stockTransfers.filter((t) =>
+      (stockTransferSearchTerm === '' ||
+        t.transferNumber.toLowerCase().includes(stockTransferSearchTerm.toLowerCase()) ||
+        t.fromLocation.toLowerCase().includes(stockTransferSearchTerm.toLowerCase()) ||
+        t.toLocation.toLowerCase().includes(stockTransferSearchTerm.toLowerCase())) &&
+      (stockTransferFilterStatus === 'all' || t.status === stockTransferFilterStatus)
+    );
+
+    return (
+      <div className="space-y-6">
+        <Card className="border-0 shadow-lg">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between w-full">
+              <div>
+                <h3 className="text-xl font-semibold text-ghana-black">🔄 Stock Transfers</h3>
+                <p className="text-sm text-gray-500">Move stock between locations</p>
+              </div>
+              <Button color="primary" className="bg-ghana-green text-white" variant="flat" onPress={handleAddStockTransfer}>
+                + New Transfer
+              </Button>
+            </div>
+          </CardHeader>
+          <CardBody>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+              <Input
+                placeholder="Search transfer # or location..."
+                value={stockTransferSearchTerm}
+                onChange={(e) => setStockTransferSearchTerm(e.target.value)}
+                startContent={<span className="text-gray-400">🔍</span>}
+                className="md:col-span-2"
+              />
+              <Select
+                placeholder="Filter by Status"
+                selectedKeys={[stockTransferFilterStatus]}
+                onSelectionChange={(keys) => setStockTransferFilterStatus(Array.from(keys)[0] as string)}
+              >
+                <SelectItem key="all">All Status</SelectItem>
+                <SelectItem key="pending">Pending</SelectItem>
+                <SelectItem key="in-transit">In Transit</SelectItem>
+                <SelectItem key="delivered">Delivered</SelectItem>
+                <SelectItem key="cancelled">Cancelled</SelectItem>
+              </Select>
+            </div>
+            <Table aria-label="Stock transfers" classNames={{ th: "whitespace-nowrap" }}>
+              <TableHeader>
+                <TableColumn className="w-[130px]">Transfer #</TableColumn>
+                <TableColumn>From</TableColumn>
+                <TableColumn>To</TableColumn>
+                <TableColumn className="w-[110px]">Date</TableColumn>
+                <TableColumn className="w-[70px]">Items</TableColumn>
+                <TableColumn className="w-[100px]">Status</TableColumn>
+                <TableColumn className="w-[70px]">Actions</TableColumn>
+              </TableHeader>
+              <TableBody emptyContent="No stock transfers yet. Create one to move stock between locations.">
+                {filtered.map((transfer) => (
+                  <TableRow key={transfer.id}>
+                    <TableCell>
+                      <span className="font-mono text-sm font-semibold whitespace-nowrap">{transfer.transferNumber}</span>
+                    </TableCell>
+                    <TableCell className="truncate max-w-[140px]" title={transfer.fromLocation}>{transfer.fromLocation}</TableCell>
+                    <TableCell className="truncate max-w-[140px]" title={transfer.toLocation}>{transfer.toLocation}</TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {transfer.transferDate instanceof Date ? transfer.transferDate.toLocaleDateString() : new Date(transfer.transferDate).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>{transfer.items.length}</TableCell>
+                    <TableCell>
+                      <Badge
+                        color={
+                          transfer.status === 'delivered' ? 'success' :
+                          transfer.status === 'in-transit' ? 'warning' :
+                          transfer.status === 'cancelled' ? 'danger' : 'default'
+                        }
+                        size="sm"
+                        variant="flat"
+                        className="capitalize"
+                      >
+                        {transfer.status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip content="Review — then edit or complete">
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="primary"
+                          onPress={() => {
+                            setViewingStockTransfer(transfer);
+                            onStockTransferViewOpen();
+                          }}
+                        >
+                          👁️
+                        </Button>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardBody>
+        </Card>
       </div>
+    );
+  };
+
+  const renderGoodsIssue = () => {
+    const filtered = goodsIssues.filter((row) =>
+      issueSearchTerm === '' ||
+      row.issueNumber.toLowerCase().includes(issueSearchTerm.toLowerCase()) ||
+      row.department.toLowerCase().includes(issueSearchTerm.toLowerCase()) ||
+      row.issuedTo.toLowerCase().includes(issueSearchTerm.toLowerCase())
+    );
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayCount = goodsIssues.filter((r) => {
+      const d = new Date(r.issueDate);
+      d.setHours(0, 0, 0, 0);
+      return d.getTime() === today.getTime();
+    }).length;
+
+    return (
+      <div className="space-y-6">
+        <Card className="border-0 shadow-lg">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between w-full">
+              <div>
+                <h3 className="text-xl font-semibold text-ghana-black">📤 Goods Issue</h3>
+                <p className="text-sm text-gray-500">Issue stock from Stores to a department or person</p>
+              </div>
+              <div className="flex gap-2 items-center">
+                <Badge color="success" variant="flat">{todayCount} today</Badge>
+                <Button color="primary" className="bg-ghana-gold text-white" variant="flat" onPress={handleOpenGoodsIssue}>
+                  + New Issue
+                </Button>
+              </div>
+            </div>
+          </CardHeader>
+          <CardBody>
+            <div className="mb-6">
+              <Input
+                placeholder="Search issue #, department, or person..."
+                value={issueSearchTerm}
+                onChange={(e) => setIssueSearchTerm(e.target.value)}
+                startContent={<span className="text-gray-400">🔍</span>}
+              />
+            </div>
+            <Table aria-label="Goods issues" classNames={{ th: 'whitespace-nowrap' }}>
+              <TableHeader>
+                <TableColumn className="w-[130px]">Issue #</TableColumn>
+                <TableColumn className="w-[110px]">Date</TableColumn>
+                <TableColumn>Department</TableColumn>
+                <TableColumn>Issued To</TableColumn>
+                <TableColumn className="w-[70px]">Lines</TableColumn>
+                <TableColumn className="w-[120px] text-right">Value</TableColumn>
+                <TableColumn className="w-[70px]">Actions</TableColumn>
+              </TableHeader>
+              <TableBody emptyContent="No issues yet. Create one to send stock to a department.">
+                {filtered.map((row) => (
+                  <TableRow key={row.id}>
+                    <TableCell>
+                      <span className="font-mono text-sm font-semibold whitespace-nowrap">{row.issueNumber}</span>
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">
+                      {row.issueDate instanceof Date ? row.issueDate.toLocaleDateString() : new Date(row.issueDate).toLocaleDateString()}
+                    </TableCell>
+                    <TableCell>{row.department}</TableCell>
+                    <TableCell>{row.issuedTo}</TableCell>
+                    <TableCell>{row.totalItems}</TableCell>
+                    <TableCell className="text-right tabular-nums font-semibold whitespace-nowrap">
+                      ₵{row.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </TableCell>
+                    <TableCell>
+                      <Tooltip content="View issue">
+                        <Button
+                          size="sm"
+                          variant="flat"
+                          color="primary"
+                          onPress={() => {
+                            setViewingGoodsIssue(row);
+                            onGoodsIssueViewOpen();
+                          }}
+                        >
+                          👁️
+                        </Button>
+                      </Tooltip>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardBody>
+        </Card>
+      </div>
+    );
+  };
+
+  return (
+    <div className={embedded ? 'pt-2' : 'p-6'}>
+      {!embedded && (
+        <div className="mb-6">
+          <h1 className="text-2xl font-bold text-ghana-black">Stock & Supply</h1>
+          <p className="text-gray-600 text-sm">
+            Items, suppliers, requisitions, POs, transfers, issues — then receive & reconcile.
+          </p>
+        </div>
+      )}
 
       <Tabs 
         selectedKey={selectedTab} 
         onSelectionChange={(key) => {
-          if (String(key) === 'reports') {
-            router.push('/inventory/reports');
-            return;
+          const tab = String(key);
+          setSelectedTab(tab);
+          // Keep recon sub-tab on a receive-related default when opening Recon
+          if (tab === 'stock-operations' && !['goods-receipt', 'grn-management', 'stock-counts'].includes(stockOpSubTab)) {
+            setStockOpSubTab('goods-receipt');
           }
-          setSelectedTab(key as string);
         }}
         className="w-full"
+        aria-label="Stock and supply sections"
       >
-        <Tab key="overview" title="📊 Overview" />
-        <Tab key="inventory" title="📦 Inventory Management" />
-        <Tab key="suppliers" title="🏢 Supplier Management" />
+        <Tab key="inventory" title="📦 Items" />
+        <Tab key="suppliers" title="🏢 Suppliers" />
         <Tab key="requisitions" title="📝 Requisitions" />
         <Tab key="purchase-orders" title="📋 Purchase Orders" />
-        <Tab key="stock-operations" title="🔄 Stock Operations" />
-        <Tab key="reports" title="📊 Reports & Analysis" />
+        <Tab key="transfers" title="🔄 Transfers" />
+        <Tab key="goods-issue" title="📤 Issues" />
+        <Tab key="supplier-invoices" title="🧾 Invoices" />
+        <Tab key="stock-operations" title="✅ Receive & Recon" />
       </Tabs>
 
       <div className="mt-6">
-        {selectedTab === 'overview' && renderOverview()}
         {selectedTab === 'inventory' && renderInventoryManagement()}
         {selectedTab === 'suppliers' && renderSupplierManagement()}
         {selectedTab === 'requisitions' && renderRequisitions()}
         {selectedTab === 'purchase-orders' && renderPurchaseOrders()}
+        {selectedTab === 'transfers' && renderStockTransfers()}
+        {selectedTab === 'goods-issue' && renderGoodsIssue()}
+        {selectedTab === 'supplier-invoices' && renderInvoiceManagement()}
         {selectedTab === 'stock-operations' && renderStockOperations()}
-        {selectedTab === 'reports' && <div className="p-6 text-center">Opening Reports & Analysis...</div>}
       </div>
       
       {/* Modals for Inventory Management - rendered outside conditional to avoid hook issues */}
@@ -3879,48 +3813,66 @@ export default function InventorySupplyChainDashboard() {
                 {editingItem ? 'Edit Stock Item' : 'Add Stock Item'}
               </ModalHeader>
               <ModalBody>
+                <p className="text-sm text-slate-500 -mt-1 mb-2">
+                  Stock on the shelf. Receiving and issues change on-hand later — you set the starting qty here.
+                </p>
                 <div className="grid grid-cols-2 gap-4">
                   <Input
                     label="Item Code"
                     value={formData.itemCode || ''}
-                    onChange={(e) => setFormData({ ...formData, itemCode: e.target.value })}
-                    placeholder="e.g., F001"
+                    isReadOnly
                     isRequired
+                    description={
+                      editingItem
+                        ? 'Locked — assigned when the item was created'
+                        : 'Auto from Settings → Document Numbering → Stock Item'
+                    }
+                    classNames={{ input: 'font-mono font-semibold' }}
                   />
                   <Input
                     label="Item Name"
                     value={formData.name || ''}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="Enter item name"
+                    placeholder="e.g. Bath Soap"
                     isRequired
-                  />
-                  <Textarea
-                    label="Description"
-                    value={formData.description || ''}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    placeholder="Enter description"
-                    className="col-span-2"
+                    classNames={{ input: 'font-medium' }}
                   />
                   <Select
                     label="Category"
-                    selectedKeys={formData.category ? [formData.category] : []}
+                    selectedKeys={formData.category ? [formData.category] : ['other']}
                     onSelectionChange={(keys) => setFormData({ ...formData, category: Array.from(keys)[0] as any })}
+                    isRequired
                   >
-                    {categories.map(cat => (
-                      <SelectItem key={cat}>{cat}</SelectItem>
+                    {STOCK_CATEGORIES.map((cat) => (
+                      <SelectItem key={cat} textValue={cat}>
+                        <span className="capitalize">{cat}</span>
+                      </SelectItem>
+                    ))}
+                  </Select>
+                  <Select
+                    label="Preferred Supplier"
+                    placeholder="Who supplies this item?"
+                    selectedKeys={formData.supplierId ? [formData.supplierId] : []}
+                    onSelectionChange={(keys) => {
+                      const sid = Array.from(keys)[0] as string | undefined;
+                      const supplier = mergedSuppliers.find((s) => s.id === sid);
+                      setFormData({
+                        ...formData,
+                        supplierId: supplier?.id,
+                        supplierName: supplier?.name,
+                      });
+                    }}
+                    description="Used to filter vendors on requisitions"
+                  >
+                    {mergedSuppliers.filter((s) => s.isActive).map((s) => (
+                      <SelectItem key={s.id}>{s.name}</SelectItem>
                     ))}
                   </Select>
                   <Input
-                    label="Subcategory"
-                    value={formData.subcategory || ''}
-                    onChange={(e) => setFormData({ ...formData, subcategory: e.target.value })}
-                    placeholder="Enter subcategory"
-                  />
-                  <Input
-                    label="Unit of Measure"
+                    label="Unit"
                     value={formData.unit || ''}
                     onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                    placeholder="e.g., kg, pieces, bottles"
+                    placeholder="e.g. pcs, kg, bottles"
                     isRequired
                   />
                   <Input
@@ -3931,80 +3883,72 @@ export default function InventorySupplyChainDashboard() {
                     isRequired
                   />
                   <Input
-                    label="Selling Price (₵)"
-                    type="number"
-                    value={formData.sellingPrice?.toString() || ''}
-                    onChange={(e) => setFormData({ ...formData, sellingPrice: parseFloat(e.target.value) || undefined })}
-                  />
-                  <Input
-                    label="Current Stock"
+                    label="On Hand (starting qty)"
                     type="number"
                     value={formData.currentStock?.toString() || '0'}
-                    onChange={(e) => setFormData({ ...formData, currentStock: parseFloat(e.target.value) || 0 })}
-                    isRequired
-                  />
-                  <Input
-                    label="Minimum Stock"
-                    type="number"
-                    value={formData.minimumStock?.toString() || '0'}
-                    onChange={(e) => setFormData({ ...formData, minimumStock: parseFloat(e.target.value) || 0 })}
-                    isRequired
-                  />
-                  <Input
-                    label="Maximum Stock"
-                    type="number"
-                    value={formData.maximumStock?.toString() || '0'}
-                    onChange={(e) => setFormData({ ...formData, maximumStock: parseFloat(e.target.value) || 0 })}
-                    isRequired
+                    onChange={(e) => {
+                      const currentStock = parseFloat(e.target.value) || 0;
+                      setFormData({
+                        ...formData,
+                        currentStock,
+                        // Keep min/max sensible defaults if still blank
+                        minimumStock: formData.minimumStock || 0,
+                        maximumStock: formData.maximumStock || Math.max(currentStock * 2, 100),
+                      });
+                    }}
+                    description={editingItem ? 'Prefer receive / issue to change stock' : 'Opening balance'}
                   />
                   <Input
                     label="Reorder Point"
                     type="number"
                     value={formData.reorderPoint?.toString() || '0'}
-                    onChange={(e) => setFormData({ ...formData, reorderPoint: parseFloat(e.target.value) || 0 })}
-                    isRequired
+                    onChange={(e) => {
+                      const reorderPoint = parseFloat(e.target.value) || 0;
+                      setFormData({
+                        ...formData,
+                        reorderPoint,
+                        minimumStock: formData.minimumStock || reorderPoint,
+                      });
+                    }}
+                    description="Alert when on hand falls to this"
                   />
                   <Input
                     label="Location"
                     value={formData.location || ''}
                     onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                    placeholder="e.g., Kitchen Store"
-                    isRequired
+                    placeholder="e.g. Main Store"
                   />
-                  <Input
-                    label="Bin Location"
-                    value={formData.binLocation || ''}
-                    onChange={(e) => setFormData({ ...formData, binLocation: e.target.value })}
-                    placeholder="e.g., A1-B2"
+                  <Textarea
+                    label="Description (optional)"
+                    value={formData.description || ''}
+                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                    placeholder="Short note"
+                    className="col-span-2"
+                    minRows={2}
                   />
-                  <div className="col-span-2 flex gap-4">
+                  <div className="col-span-2 flex flex-wrap gap-3">
                     <Chip
-                      color={formData.isActive ? 'success' : 'default'}
-                      onClick={() => setFormData({ ...formData, isActive: !formData.isActive })}
+                      color={formData.isActive !== false ? 'success' : 'warning'}
+                      variant="flat"
+                      onClick={() => setFormData({ ...formData, isActive: !(formData.isActive !== false) })}
                       className="cursor-pointer"
                     >
-                      {formData.isActive ? '✓ Active' : 'Inactive'}
+                      {formData.isActive !== false ? '✓ Active — in the stock file' : 'Inactive — hidden from day-to-day'}
                     </Chip>
                     <Chip
                       color={formData.isPerishable ? 'warning' : 'default'}
+                      variant="flat"
                       onClick={() => setFormData({ ...formData, isPerishable: !formData.isPerishable })}
                       className="cursor-pointer"
                     >
-                      {formData.isPerishable ? '✓ Perishable' : 'Non-Perishable'}
-                    </Chip>
-                    <Chip
-                      color={formData.isSerialized ? 'primary' : 'default'}
-                      onClick={() => setFormData({ ...formData, isSerialized: !formData.isSerialized })}
-                      className="cursor-pointer"
-                    >
-                      {formData.isSerialized ? '✓ Serialized' : 'Not Serialized'}
+                      {formData.isPerishable ? '🍃 Perishable' : 'Not perishable'}
                     </Chip>
                   </div>
                 </div>
               </ModalBody>
               <ModalFooter>
                 <Button variant="bordered" onPress={onClose}>Cancel</Button>
-                <Button color="primary" onPress={handleSaveItem}>
+                <Button color="primary" className="bg-ghana-green text-white" onPress={handleSaveItem}>
                   {editingItem ? 'Update' : 'Add'} Item
                 </Button>
               </ModalFooter>
@@ -4100,14 +4044,22 @@ export default function InventorySupplyChainDashboard() {
                   </div>
                 )}
               </ModalBody>
-              <ModalFooter>
+              <ModalFooter className="flex flex-wrap gap-2">
                 <Button variant="bordered" onPress={() => setViewOpen(false)}>Close</Button>
                 {viewingItem && (
-                  <Button color="primary" onPress={() => {
+                  <Button color="warning" variant="flat" onPress={() => {
                     setViewOpen(false);
                     handleEditItem(viewingItem);
                   }}>
-                    Edit
+                    ✏️ Edit
+                  </Button>
+                )}
+                {viewingItem && (
+                  <Button color="danger" variant="flat" onPress={() => {
+                    setViewOpen(false);
+                    handleDeleteItem(viewingItem.id);
+                  }}>
+                    🗑️ Delete
                   </Button>
                 )}
               </ModalFooter>
@@ -4126,6 +4078,9 @@ export default function InventorySupplyChainDashboard() {
                 {editingSupplier ? 'Edit Supplier' : 'Add Supplier'}
               </ModalHeader>
               <ModalBody>
+                <p className="text-sm text-slate-500 -mt-1 mb-2">
+                  Who you buy from. Rating and balance stay on View / Accounting.
+                </p>
                 <div className="grid grid-cols-2 gap-4">
                   <Input
                     label="Supplier Code"
@@ -4133,22 +4088,28 @@ export default function InventorySupplyChainDashboard() {
                     onChange={(e) => setSupplierFormData({ ...supplierFormData, code: e.target.value })}
                     placeholder="Auto-generated"
                     isDisabled={!editingSupplier}
-                    description={editingSupplier ? "Code can be edited" : "Code is auto-generated"}
+                    description={editingSupplier ? 'Code can be edited' : 'Auto-generated'}
                     isRequired
                   />
                   <Input
                     label="Supplier Name"
                     value={supplierFormData.name || ''}
                     onChange={(e) => setSupplierFormData({ ...supplierFormData, name: e.target.value })}
-                    placeholder="Enter supplier name"
+                    placeholder="e.g. Accra Fresh Foods Ltd"
                     isRequired
+                    classNames={{ input: 'font-medium' }}
                   />
                   <Input
                     label="Contact Person"
                     value={supplierFormData.contactPerson || ''}
                     onChange={(e) => setSupplierFormData({ ...supplierFormData, contactPerson: e.target.value })}
-                    placeholder="Contact person name"
-                    isRequired
+                    placeholder="Who we call"
+                  />
+                  <Input
+                    label="Phone"
+                    value={supplierFormData.phone || ''}
+                    onChange={(e) => setSupplierFormData({ ...supplierFormData, phone: e.target.value })}
+                    placeholder="+233 XX XXX XXXX"
                   />
                   <Input
                     label="Email"
@@ -4156,51 +4117,35 @@ export default function InventorySupplyChainDashboard() {
                     value={supplierFormData.email || ''}
                     onChange={(e) => setSupplierFormData({ ...supplierFormData, email: e.target.value })}
                     placeholder="supplier@email.com"
-                    isRequired
-                  />
-                  <Input
-                    label="Phone"
-                    value={supplierFormData.phone || ''}
-                    onChange={(e) => setSupplierFormData({ ...supplierFormData, phone: e.target.value })}
-                    placeholder="+233 XX XXX XXXX"
-                    isRequired
-                  />
-                  <Input
-                    label="Tax ID"
-                    value={supplierFormData.taxId || ''}
-                    onChange={(e) => setSupplierFormData({ ...supplierFormData, taxId: e.target.value })}
-                    placeholder="e.g., GH123456789"
+                    className="col-span-2"
                   />
                   <Textarea
                     label="Address"
                     value={supplierFormData.address || ''}
                     onChange={(e) => setSupplierFormData({ ...supplierFormData, address: e.target.value })}
-                    placeholder="Street address"
+                    placeholder="Street / building"
                     className="col-span-2"
-                    isRequired
+                    minRows={2}
                   />
                   <Input
                     label="City"
                     value={supplierFormData.city || ''}
                     onChange={(e) => setSupplierFormData({ ...supplierFormData, city: e.target.value })}
-                    placeholder="City"
-                    isRequired
+                    placeholder="e.g. Accra"
                   />
                   <Input
-                    label="Country"
-                    value={supplierFormData.country || 'Ghana'}
-                    onChange={(e) => setSupplierFormData({ ...supplierFormData, country: e.target.value })}
-                    placeholder="Country"
-                  />
-                  <Input
-                    label="Postal Code"
-                    value={supplierFormData.postalCode || ''}
-                    onChange={(e) => setSupplierFormData({ ...supplierFormData, postalCode: e.target.value })}
-                    placeholder="Postal code"
+                    label="Category — what they’re into"
+                    value={supplierFormData.categories?.join(', ') || ''}
+                    onChange={(e) => setSupplierFormData({
+                      ...supplierFormData,
+                      categories: e.target.value.split(',').map(c => c.trim()).filter(Boolean),
+                    })}
+                    placeholder="e.g. food, cleaning, linens"
+                    description="Separate with commas — shows as chips in the table"
                   />
                   <Select
                     label="Payment Terms"
-                    selectedKeys={supplierFormData.paymentTerms ? [supplierFormData.paymentTerms] : []}
+                    selectedKeys={supplierFormData.paymentTerms ? [supplierFormData.paymentTerms] : ['net30']}
                     onSelectionChange={(keys) => setSupplierFormData({ ...supplierFormData, paymentTerms: Array.from(keys)[0] as any })}
                   >
                     <SelectItem key="immediate">Immediate</SelectItem>
@@ -4213,46 +4158,30 @@ export default function InventorySupplyChainDashboard() {
                     type="number"
                     value={supplierFormData.creditLimit?.toString() || '0'}
                     onChange={(e) => setSupplierFormData({ ...supplierFormData, creditLimit: parseFloat(e.target.value) || 0 })}
-                    isRequired
+                    description="Optional"
                   />
                   <Input
-                    label="Rating (1-5)"
-                    type="number"
-                    min={0}
-                    max={5}
-                    step={0.1}
-                    value={supplierFormData.rating?.toString() || '0'}
-                    onChange={(e) => setSupplierFormData({ ...supplierFormData, rating: parseFloat(e.target.value) || 0 })}
-                  />
-                  <Input
-                    label="Current Balance (₵)"
-                    type="number"
-                    value={supplierFormData.currentBalance?.toString() || '0'}
-                    onChange={(e) => setSupplierFormData({ ...supplierFormData, currentBalance: parseFloat(e.target.value) || 0 })}
-                  />
-                  <Input
-                    label="Categories (comma separated)"
-                    value={supplierFormData.categories?.join(', ') || ''}
-                    onChange={(e) => setSupplierFormData({ 
-                      ...supplierFormData, 
-                      categories: e.target.value.split(',').map(c => c.trim()).filter(c => c) 
-                    })}
-                    placeholder="e.g., food, beverage, cleaning"
+                    label="Tax ID / TIN"
+                    value={supplierFormData.taxId || ''}
+                    onChange={(e) => setSupplierFormData({ ...supplierFormData, taxId: e.target.value })}
+                    placeholder="e.g. GH123456789"
+                    className="col-span-2"
                   />
                   <div className="col-span-2">
                     <Chip
-                      color={supplierFormData.isActive ? 'success' : 'default'}
-                      onClick={() => setSupplierFormData({ ...supplierFormData, isActive: !supplierFormData.isActive })}
+                      color={supplierFormData.isActive !== false ? 'success' : 'warning'}
+                      variant="flat"
+                      onClick={() => setSupplierFormData({ ...supplierFormData, isActive: !(supplierFormData.isActive !== false) })}
                       className="cursor-pointer"
                     >
-                      {supplierFormData.isActive ? '✓ Active' : 'Inactive'}
+                      {supplierFormData.isActive !== false ? '✓ Active — ready to buy from' : 'Inactive — paused'}
                     </Chip>
                   </div>
                 </div>
               </ModalBody>
               <ModalFooter>
                 <Button variant="bordered" onPress={onSupplierModalClose}>Cancel</Button>
-                <Button color="primary" onPress={handleSaveSupplier}>
+                <Button color="primary" className="bg-blue-500" onPress={handleSaveSupplier}>
                   {editingSupplier ? 'Update' : 'Add'} Supplier
                 </Button>
               </ModalFooter>
@@ -4445,8 +4374,9 @@ export default function InventorySupplyChainDashboard() {
                 <Input
                   label="PO Number"
                   value={poFormData.poNumber || ''}
-                  isDisabled
-                  description="Auto-generated"
+                  isReadOnly
+                  description="Auto from Settings → Document Numbering → Purchase Order"
+                  classNames={{ input: 'font-mono font-semibold' }}
                 />
                 <Select
                   label="Supplier"
@@ -4776,7 +4706,10 @@ export default function InventorySupplyChainDashboard() {
       <Modal isOpen={isPOViewOpen} onClose={onPOViewClose} size="4xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
-            Purchase Order Details - {viewingPO?.poNumber}
+            Purchase Order Details — {viewingPO?.poNumber}
+            <span className="block text-sm font-normal text-slate-500 mt-1">
+              Review the order, then send, confirm, or edit from here.
+            </span>
           </ModalHeader>
           <ModalBody>
             {viewingPO && (
@@ -4920,14 +4853,61 @@ export default function InventorySupplyChainDashboard() {
               </div>
             )}
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter className="flex flex-wrap gap-2">
             <Button variant="bordered" onPress={onPOViewClose}>Close</Button>
             {viewingPO && viewingPO.status === 'draft' && (
-              <Button color="primary" onPress={() => {
+              <Button color="warning" variant="flat" onPress={() => {
                 onPOViewClose();
                 handleEditPO(viewingPO);
               }}>
-                Edit
+                ✏️ Edit
+              </Button>
+            )}
+            {viewingPO && viewingPO.status === 'draft' && (
+              <Button color="success" onPress={() => {
+                sendPurchaseOrder(viewingPO.id);
+                trackEvent('Stores.Issued', { action: 'send_po', poNumber: viewingPO.poNumber });
+                setViewingPO({ ...viewingPO, status: 'sent' });
+              }}>
+                📤 Send to Supplier
+              </Button>
+            )}
+            {viewingPO && viewingPO.status === 'sent' && (
+              <Button color="success" onPress={() => {
+                confirmPurchaseOrder(viewingPO.id, viewingPO.supplierId);
+                trackEvent('Stores.Issued', { action: 'confirm_po', poNumber: viewingPO.poNumber });
+                setViewingPO({ ...viewingPO, status: 'confirmed' });
+              }}>
+                ✓ Confirm
+              </Button>
+            )}
+            {viewingPO && (viewingPO.status === 'confirmed' || viewingPO.status === 'sent') && (
+              <Button color="warning" variant="flat" onPress={() => {
+                markInTransit(viewingPO.id);
+                trackEvent('Stores.Issued', { action: 'mark_in_transit_po', poNumber: viewingPO.poNumber });
+                setViewingPO({ ...viewingPO, status: 'in-transit' });
+              }}>
+                🚚 Mark In Transit
+              </Button>
+            )}
+            {viewingPO && (viewingPO.status === 'in-transit' || viewingPO.status === 'confirmed') && (
+              <Button color="success" onPress={() => {
+                markDelivered(viewingPO.id, new Date());
+                trackEvent('Stores.Issued', { action: 'mark_delivered_po', poNumber: viewingPO.poNumber });
+                setViewingPO({ ...viewingPO, status: 'delivered' });
+              }}>
+                ✅ Mark Delivered
+              </Button>
+            )}
+            {viewingPO && (viewingPO.status === 'draft' || viewingPO.status === 'sent' || viewingPO.status === 'confirmed') && (
+              <Button color="danger" variant="flat" onPress={() => {
+                if (confirm('Are you sure you want to cancel this purchase order?')) {
+                  cancelPurchaseOrder(viewingPO.id, 'Cancelled by user');
+                  trackEvent('Stores.Issued', { action: 'cancel_po', poNumber: viewingPO.poNumber });
+                  setViewingPO({ ...viewingPO, status: 'cancelled' });
+                }
+              }}>
+                ❌ Cancel
               </Button>
             )}
           </ModalFooter>
@@ -4980,10 +4960,14 @@ export default function InventorySupplyChainDashboard() {
                     + Add Item
                   </Button>
                 </div>
+                <p className="text-xs text-slate-500 mb-3">
+                  Optional preferred supplier per line — filtered to vendors linked to that product (item supplier, matching category, or past POs).
+                </p>
                 {(requisitionFormData.requestedItems || []).length > 0 ? (
                   <Table aria-label="Requested items" className="[&_thead]:hidden">
                     <TableHeader>
                       <TableColumn>Item</TableColumn>
+                      <TableColumn>Supplier</TableColumn>
                       <TableColumn>Quantity</TableColumn>
                       <TableColumn>Price</TableColumn>
                       <TableColumn>Total</TableColumn>
@@ -4994,7 +4978,7 @@ export default function InventorySupplyChainDashboard() {
                         const filteredItems = getFilteredItemsForIndex(index);
                         return (
                           <TableRow key={item.id}>
-                            <TableCell className="w-[40%]">
+                            <TableCell className="w-[32%]">
                               <Autocomplete
                                 placeholder="🔍 Search item by code or name..."
                                 selectedKey={item.itemCode || undefined}
@@ -5009,7 +4993,9 @@ export default function InventorySupplyChainDashboard() {
                                       itemCode: '',
                                       itemName: '',
                                       estimatedPrice: 0,
-                                      totalCost: 0
+                                      totalCost: 0,
+                                      preferredSupplierId: undefined,
+                                      preferredSupplierName: undefined,
                                     });
                                     setItemSearchTerms((prev: Record<number, string>) => {
                                       const updated = { ...prev };
@@ -5050,7 +5036,40 @@ export default function InventorySupplyChainDashboard() {
                                 </>
                               </Autocomplete>
                             </TableCell>
-                            <TableCell className="w-[15%]">
+                            <TableCell className="w-[22%]">
+                              {(() => {
+                                const vendors = getVendorsForRequisitionLine(item);
+                                const selectedOk = item.preferredSupplierId && vendors.some((v) => v.id === item.preferredSupplierId);
+                                return (
+                                  <Select
+                                    placeholder={item.itemId ? (vendors.length ? 'Preferred vendor' : 'No vendor for item') : 'Pick item first'}
+                                    size="sm"
+                                    isDisabled={!item.itemId || vendors.length === 0}
+                                    selectedKeys={selectedOk ? [item.preferredSupplierId!] : []}
+                                    onSelectionChange={(keys) => {
+                                      const sid = Array.from(keys)[0] as string;
+                                      const supplier = vendors.find((s) => s.id === sid);
+                                      handleUpdateRequisitionItem(item.id, {
+                                        preferredSupplierId: supplier?.id,
+                                        preferredSupplierName: supplier?.name,
+                                      });
+                                    }}
+                                    description={
+                                      !item.itemId
+                                        ? undefined
+                                        : vendors.length === 0
+                                          ? 'Link a supplier on the item (or category)'
+                                          : undefined
+                                    }
+                                  >
+                                    {vendors.map((s) => (
+                                      <SelectItem key={s.id}>{s.name}</SelectItem>
+                                    ))}
+                                  </Select>
+                                );
+                              })()}
+                            </TableCell>
+                            <TableCell className="w-[12%]">
                               <Input
                                 type="number"
                                 value={String(item.quantity)}
@@ -5062,7 +5081,7 @@ export default function InventorySupplyChainDashboard() {
                                 placeholder="Qty"
                               />
                             </TableCell>
-                            <TableCell className="w-[20%]">
+                            <TableCell className="w-[14%]">
                               <Input
                                 type="number"
                                 value={String(item.estimatedPrice)}
@@ -5139,7 +5158,10 @@ export default function InventorySupplyChainDashboard() {
       <Modal isOpen={isRequisitionViewOpen} onClose={onRequisitionViewClose} size="4xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
-            Requisition Details - {viewingRequisition?.requisitionNumber}
+            Requisition Details — {viewingRequisition?.requisitionNumber}
+            <span className="block text-sm font-normal text-slate-500 mt-1">
+              Review the lines below, then approve or reject from here.
+            </span>
           </ModalHeader>
           <ModalBody>
             {viewingRequisition && (
@@ -5219,6 +5241,7 @@ export default function InventorySupplyChainDashboard() {
                     <TableHeader>
                       <TableColumn>Item Code</TableColumn>
                       <TableColumn>Item Name</TableColumn>
+                      <TableColumn>Preferred Supplier</TableColumn>
                       <TableColumn>Quantity</TableColumn>
                       <TableColumn>Estimated Price</TableColumn>
                       <TableColumn className="text-right">Total</TableColumn>
@@ -5228,6 +5251,9 @@ export default function InventorySupplyChainDashboard() {
                         <TableRow key={item.id}>
                           <TableCell className="font-mono">{item.itemCode}</TableCell>
                           <TableCell>{item.itemName}</TableCell>
+                          <TableCell className="text-sm">
+                            {item.preferredSupplierName || '—'}
+                          </TableCell>
                           <TableCell>{item.quantity}</TableCell>
                           <TableCell>₵{item.estimatedPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                           <TableCell className="text-right font-semibold">
@@ -5262,28 +5288,28 @@ export default function InventorySupplyChainDashboard() {
               </div>
             )}
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter className="flex flex-wrap gap-2">
             <Button variant="bordered" onPress={onRequisitionViewClose}>Close</Button>
             {viewingRequisition && (viewingRequisition.status === 'pending' || canEditProcessedRequisitions) && viewingRequisition.status !== 'converted-to-po' && (
-              <Button color="secondary" variant="flat" onPress={() => {
+              <Button color="warning" variant="flat" onPress={() => {
                 onRequisitionViewClose();
                 handleEditRequisition(viewingRequisition);
               }}>
-                Edit
+                ✏️ Edit
               </Button>
             )}
             {viewingRequisition && (viewingRequisition.status === 'pending' || canEditProcessedRequisitions) && viewingRequisition.status !== 'converted-to-po' && (
               <Button color="danger" variant="flat" onPress={() => openReqAction('delete', viewingRequisition)}>
-                Delete
+                🗑️ Delete
               </Button>
             )}
             {viewingRequisition && viewingRequisition.status === 'pending' && canActOnRequisitions && (
               <>
                 <Button color="success" onPress={() => openReqAction('approve', viewingRequisition)}>
-                  Approve
+                  ✓ Approve
                 </Button>
                 <Button color="danger" variant="flat" onPress={() => openReqAction('reject', viewingRequisition)}>
-                  Reject
+                  ❌ Reject
                 </Button>
               </>
             )}
@@ -5293,7 +5319,7 @@ export default function InventorySupplyChainDashboard() {
                   📦 Mark Ready
                 </Button>
                 <Button color="primary" onPress={() => openReqAction('convert', viewingRequisition)}>
-                  Convert to PO
+                  📋 Convert to PO
                 </Button>
               </>
             )}
@@ -5302,13 +5328,13 @@ export default function InventorySupplyChainDashboard() {
       </Modal>
 
       {/* Requisition Approve/Reject/Ready/Convert/Delete confirmation — see reqActionModal above */}
-      <Modal isOpen={!!reqActionModal} onClose={closeReqAction} size="md">
+      <Modal isOpen={!!reqActionModal} onClose={closeReqAction} size={reqActionModal?.type === 'convert' ? '3xl' : 'md'}>
         <ModalContent>
           <ModalHeader>
             {reqActionModal?.type === 'approve' && 'Approve Requisition'}
             {reqActionModal?.type === 'ready' && 'Mark Ready for Pickup'}
             {reqActionModal?.type === 'reject' && 'Reject Requisition'}
-            {reqActionModal?.type === 'convert' && 'Convert to Purchase Order'}
+            {reqActionModal?.type === 'convert' && 'Convert to Purchase Order(s)'}
             {reqActionModal?.type === 'delete' && 'Delete Requisition'}
           </ModalHeader>
           <ModalBody>
@@ -5336,12 +5362,70 @@ export default function InventorySupplyChainDashboard() {
                 />
               </div>
             )}
-            {reqActionModal?.type === 'convert' && (
-              <p>
-                Convert requisition <strong>{reqActionModal.requisitionNumber}</strong> to a Purchase Order with{' '}
-                <strong>{mergedSuppliers.find(s => s.isActive)?.name || 'the first active supplier'}</strong>?
-              </p>
-            )}
+            {reqActionModal?.type === 'convert' && (() => {
+              const req = supplierStoreRequisitions.find((r) => r.id === reqActionModal.requisitionId);
+              const lines = req?.requestedItems || [];
+              const groupCounts = new Map<string, number>();
+              for (const item of lines) {
+                const sid = reqConvertSuppliers[item.id];
+                if (!sid) continue;
+                groupCounts.set(sid, (groupCounts.get(sid) || 0) + 1);
+              }
+              return (
+                <div className="space-y-4">
+                  <p className="text-sm text-slate-600">
+                    Assign a supplier per line. Lines to the same vendor become <strong>one PO</strong>;
+                    different vendors (fish vs biscuits) become <strong>separate POs</strong>.
+                  </p>
+                  <div className="space-y-3 max-h-[360px] overflow-y-auto">
+                    {lines.map((item) => {
+                      const vendors = getVendorsForRequisitionLine(item);
+                      const selectedOk = reqConvertSuppliers[item.id] && vendors.some((v) => v.id === reqConvertSuppliers[item.id]);
+                      return (
+                        <div key={item.id} className="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-2 items-center border rounded-lg p-3">
+                          <div>
+                            <div className="font-mono text-sm font-semibold">{item.itemCode}</div>
+                            <div className="text-sm">{item.itemName} · qty {item.quantity}</div>
+                            {vendors.length === 0 && (
+                              <div className="text-xs text-amber-700 mt-1">No vendor linked to this product — set one on the item first.</div>
+                            )}
+                          </div>
+                          <Select
+                            label="Supplier"
+                            size="sm"
+                            isDisabled={vendors.length === 0}
+                            selectedKeys={selectedOk ? [reqConvertSuppliers[item.id]] : []}
+                            onSelectionChange={(keys) => {
+                              const sid = Array.from(keys)[0] as string;
+                              if (!sid) return;
+                              setReqConvertSuppliers((prev) => ({ ...prev, [item.id]: sid }));
+                            }}
+                            isRequired
+                            placeholder={vendors.length ? 'Select vendor' : 'No vendors'}
+                          >
+                            {vendors.map((s) => (
+                              <SelectItem key={s.id}>{s.name}</SelectItem>
+                            ))}
+                          </Select>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {groupCounts.size > 0 && (
+                    <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm">
+                      <div className="font-semibold mb-1">Will create {groupCounts.size} purchase order{groupCounts.size === 1 ? '' : 's'}:</div>
+                      <ul className="list-disc pl-5 space-y-0.5">
+                        {[...groupCounts.entries()].map(([sid, count]) => (
+                          <li key={sid}>
+                            {mergedSuppliers.find((s) => s.id === sid)?.name || sid} — {count} line{count === 1 ? '' : 's'}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             {reqActionModal?.type === 'delete' && (
               <p>
                 Permanently delete requisition <strong>{reqActionModal.requisitionNumber}</strong>? This cannot be
@@ -5358,7 +5442,7 @@ export default function InventorySupplyChainDashboard() {
               {reqActionModal?.type === 'approve' && 'Approve'}
               {reqActionModal?.type === 'ready' && 'Mark Ready'}
               {reqActionModal?.type === 'reject' && 'Reject'}
-              {reqActionModal?.type === 'convert' && 'Convert'}
+              {reqActionModal?.type === 'convert' && `Create ${new Set(Object.values(reqConvertSuppliers)).size || 0} PO(s)`}
               {reqActionModal?.type === 'delete' && 'Delete'}
             </Button>
           </ModalFooter>
@@ -5370,10 +5454,10 @@ export default function InventorySupplyChainDashboard() {
       <Modal isOpen={isGoodsReceiptOpen} onClose={onGoodsReceiptClose} size="4xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
-            <div>
-              <div className="text-xl font-semibold">Receive Goods</div>
-              <div className="text-sm text-gray-500 font-mono">{selectedPOForReceipt?.poNumber}</div>
-            </div>
+            Receive Goods
+            <span className="block text-sm font-normal text-slate-500 mt-1 font-mono">
+              {selectedPOForReceipt?.poNumber} · GRN # assigned on save
+            </span>
           </ModalHeader>
           <ModalBody>
             {selectedPOForReceipt && (
@@ -5392,50 +5476,49 @@ export default function InventorySupplyChainDashboard() {
                 <Divider />
 
                 <div>
-                  <h4 className="font-semibold mb-2">Items to Receive</h4>
-                  <Table className="[&_thead]:hidden">
+                  <h4 className="font-semibold mb-2">This shipment</h4>
+                  <Table>
                     <TableHeader>
                       <TableColumn>Item</TableColumn>
                       <TableColumn>Ordered</TableColumn>
-                      <TableColumn>Received</TableColumn>
+                      <TableColumn>Already</TableColumn>
                       <TableColumn>Receive Now</TableColumn>
-                      <TableColumn>Batch/Expiry</TableColumn>
+                      <TableColumn>Batch / Expiry</TableColumn>
                     </TableHeader>
                     <TableBody>
                       {receiptItems.map((item, index) => {
-                        const remainingQty = item.orderedQty - item.receivedQty;
+                        const remaining = Math.max(0, item.orderedQty - item.alreadyReceived);
                         return (
                           <TableRow key={item.itemId}>
-                            <TableCell className="w-[30%]">
-                              <div>
-                                <div className="font-semibold">{item.itemCode}</div>
-                                <div className="text-sm text-gray-500">{item.itemName}</div>
-                              </div>
+                            <TableCell>
+                              <div className="font-mono text-sm font-semibold">{item.itemCode}</div>
+                              <div className="text-sm text-gray-500">{item.itemName}</div>
                             </TableCell>
-                            <TableCell className="w-[15%]">
-                              <div className="text-sm">{item.orderedQty}</div>
+                            <TableCell>
+                              <div>{item.orderedQty}</div>
                               <div className="text-xs text-gray-500">₵{item.unitCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
                             </TableCell>
-                            <TableCell className="w-[15%]">
-                              <div className="text-sm text-gray-500">Already: {item.receivedQty}</div>
-                              <div className="text-xs text-gray-400">Remaining: {remainingQty}</div>
+                            <TableCell>
+                              <div className="text-sm">{item.alreadyReceived}</div>
+                              <div className="text-xs text-gray-400">left {remaining}</div>
                             </TableCell>
-                            <TableCell className="w-[20%]">
+                            <TableCell>
                               <Input
                                 type="number"
-                                value={String(item.receivedQty || '')}
+                                value={String(item.receiveNow)}
                                 onChange={(e) => {
-                                  const newQty = parseInt(e.target.value) || 0;
+                                  const newQty = Math.min(Math.max(0, parseInt(e.target.value) || 0), remaining);
                                   const updatedItems = [...receiptItems];
-                                  updatedItems[index] = { ...item, receivedQty: Math.min(newQty, item.orderedQty) };
+                                  updatedItems[index] = { ...item, receiveNow: newQty };
                                   setReceiptItems(updatedItems);
                                 }}
                                 min={0}
-                                max={item.orderedQty}
+                                max={remaining}
                                 size="sm"
+                                isDisabled={remaining === 0}
                               />
                             </TableCell>
-                            <TableCell className="w-[20%]">
+                            <TableCell>
                               <Input
                                 placeholder="Batch #"
                                 value={item.batchNumber || ''}
@@ -5445,11 +5528,10 @@ export default function InventorySupplyChainDashboard() {
                                   setReceiptItems(updatedItems);
                                 }}
                                 size="sm"
-                                className="mb-2"
+                                className="mb-1"
                               />
                               <Input
                                 type="date"
-                                placeholder="Expiry Date"
                                 value={item.expiryDate ? (item.expiryDate instanceof Date ? item.expiryDate.toISOString().split('T')[0] : new Date(item.expiryDate).toISOString().split('T')[0]) : ''}
                                 onChange={(e) => {
                                   const updatedItems = [...receiptItems];
@@ -5470,9 +5552,282 @@ export default function InventorySupplyChainDashboard() {
           </ModalBody>
           <ModalFooter>
             <Button variant="bordered" onPress={onGoodsReceiptClose}>Cancel</Button>
-            <Button color="primary" onPress={handleReceiveGoods}>
-              Receive Goods
+            <Button color="primary" className="bg-ghana-green text-white" onPress={handleReceiveGoods}>
+              Receive & Create GRN
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* GRN View Modal */}
+      <Modal isOpen={isGRNViewOpen} onClose={onGRNViewClose} size="4xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>
+            <div>
+              <div className="text-xl font-semibold">GRN Details</div>
+              <div className="text-sm text-gray-500 font-mono">{viewingGRN?.grnNumber}</div>
+            </div>
+          </ModalHeader>
+          <ModalBody>
+            {viewingGRN && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">PO</div>
+                    <div className="font-mono font-semibold">{viewingGRN.poNumber}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Supplier</div>
+                    <div className="font-semibold">{viewingGRN.supplierName}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Receipt Date</div>
+                    <div>{viewingGRN.receiptDate instanceof Date ? viewingGRN.receiptDate.toLocaleDateString() : new Date(viewingGRN.receiptDate).toLocaleDateString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Status</div>
+                    <Badge
+                      color={
+                        viewingGRN.status === 'approved' || viewingGRN.status === 'completed' ? 'success' :
+                        viewingGRN.status === 'quality-check' ? 'primary' :
+                        viewingGRN.status === 'rejected' ? 'danger' : 'warning'
+                      }
+                      variant="flat"
+                      className="capitalize"
+                    >
+                      {viewingGRN.status.replace('-', ' ')}
+                    </Badge>
+                    {viewingGRN.qualityStatus && (
+                      <span className="ml-2 text-sm text-slate-500">QC: {viewingGRN.qualityStatus}</span>
+                    )}
+                  </div>
+                </div>
+                <Divider />
+                <Table>
+                  <TableHeader>
+                    <TableColumn>Item</TableColumn>
+                    <TableColumn>Ordered</TableColumn>
+                    <TableColumn>Received</TableColumn>
+                    <TableColumn className="text-right">Value</TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {viewingGRN.items.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell>
+                          <div className="font-mono text-sm">{item.itemCode}</div>
+                          <div className="text-sm text-gray-500">{item.itemName}</div>
+                        </TableCell>
+                        <TableCell>{item.orderedQuantity}</TableCell>
+                        <TableCell>{item.receivedQuantity}</TableCell>
+                        <TableCell className="text-right font-semibold">
+                          ₵{item.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="flex justify-between bg-gray-50 p-3 rounded-lg">
+                  <span className="font-semibold">Total</span>
+                  <span className="font-semibold">
+                    ₵{viewingGRN.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter className="flex flex-wrap gap-2">
+            <Button variant="bordered" onPress={onGRNViewClose}>Close</Button>
+            {viewingGRN?.status === 'pending' && (
+              <Button
+                color="warning"
+                onPress={() => {
+                  onGRNViewClose();
+                  openQualityCheck(viewingGRN);
+                }}
+              >
+                🔍 Quality Check
+              </Button>
+            )}
+            {viewingGRN?.status === 'quality-check' && (
+              <>
+                <Button
+                  color="success"
+                  onPress={() => {
+                    if (confirm('Approve this GRN? Posts inventory & AP.')) {
+                      approveGRN(viewingGRN.id, currentUserName);
+                      setViewingGRN(getGRN(viewingGRN.id) || { ...viewingGRN, status: 'approved' });
+                      trackEvent('Stores.Issued', { action: 'approve_grn', grnNumber: viewingGRN.grnNumber });
+                    }
+                  }}
+                >
+                  ✓ Approve
+                </Button>
+                <Button
+                  color="danger"
+                  variant="flat"
+                  onPress={() => {
+                    const reason = prompt('Enter rejection reason:');
+                    if (reason) {
+                      rejectGRN(viewingGRN.id, currentUserName, reason);
+                      setViewingGRN(getGRN(viewingGRN.id) || { ...viewingGRN, status: 'rejected' });
+                      trackEvent('Stores.Issued', { action: 'reject_grn', grnNumber: viewingGRN.grnNumber });
+                    }
+                  }}
+                >
+                  ✗ Reject
+                </Button>
+              </>
+            )}
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Quality Check Modal */}
+      <Modal isOpen={isQualityCheckOpen} onClose={onQualityCheckClose} size="4xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>
+            Quality Check
+            <span className="block text-sm font-normal text-slate-500 mt-1 font-mono">
+              {selectedGRNForQC?.grnNumber}
+            </span>
+          </ModalHeader>
+          <ModalBody>
+            {selectedGRNForQC && (
+              <div className="space-y-4">
+                <p className="text-sm text-slate-500">
+                  Mark failed qty per line. Zero failed = pass. Completing QC unlocks Approve on the GRN.
+                </p>
+                <Table>
+                  <TableHeader>
+                    <TableColumn>Item</TableColumn>
+                    <TableColumn>Received</TableColumn>
+                    <TableColumn>Failed Qty</TableColumn>
+                    <TableColumn>Reason</TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {(qualityCheckFormData.items || []).map((item: any, index: number) => (
+                      <TableRow key={item.id || index}>
+                        <TableCell>
+                          <div className="font-mono text-sm">{item.itemCode}</div>
+                          <div className="text-sm text-gray-500">{item.itemName}</div>
+                        </TableCell>
+                        <TableCell>{item.receivedQuantity}</TableCell>
+                        <TableCell>
+                          <Input
+                            type="number"
+                            size="sm"
+                            min={0}
+                            max={item.receivedQuantity}
+                            value={String(item.failedQuantity || 0)}
+                            onChange={(e) => {
+                              const failed = Math.min(Math.max(0, parseInt(e.target.value) || 0), item.receivedQuantity);
+                              const items = [...(qualityCheckFormData.items || [])];
+                              items[index] = { ...item, failedQuantity: failed, checkedQuantity: item.receivedQuantity };
+                              setQualityCheckFormData({ ...qualityCheckFormData, items });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <Input
+                            size="sm"
+                            placeholder="If failed…"
+                            value={item.failureReason || ''}
+                            onChange={(e) => {
+                              const items = [...(qualityCheckFormData.items || [])];
+                              items[index] = { ...item, failureReason: e.target.value };
+                              setQualityCheckFormData({ ...qualityCheckFormData, items });
+                            }}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <Textarea
+                  label="Notes"
+                  value={qualityCheckFormData.notes || ''}
+                  onChange={(e) => setQualityCheckFormData({ ...qualityCheckFormData, notes: e.target.value })}
+                />
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="bordered" onPress={onQualityCheckClose}>Cancel</Button>
+            <Button color="primary" className="bg-ghana-gold text-white" onPress={handleSubmitQualityCheck}>
+              Submit QC
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Goods Issue View Modal */}
+      <Modal isOpen={isGoodsIssueViewOpen} onClose={onGoodsIssueViewClose} size="3xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>
+            <div>
+              <div className="text-xl font-semibold">Goods Issue</div>
+              <div className="text-sm text-gray-500 font-mono">{viewingGoodsIssue?.issueNumber}</div>
+            </div>
+          </ModalHeader>
+          <ModalBody>
+            {viewingGoodsIssue && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Department</div>
+                    <div className="font-semibold">{viewingGoodsIssue.department}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Issued To</div>
+                    <div className="font-semibold">{viewingGoodsIssue.issuedTo}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Date</div>
+                    <div>{viewingGoodsIssue.issueDate instanceof Date ? viewingGoodsIssue.issueDate.toLocaleDateString() : new Date(viewingGoodsIssue.issueDate).toLocaleDateString()}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">By</div>
+                    <div>{viewingGoodsIssue.issuedBy}</div>
+                  </div>
+                </div>
+                <Divider />
+                <Table>
+                  <TableHeader>
+                    <TableColumn>Item</TableColumn>
+                    <TableColumn>Qty</TableColumn>
+                    <TableColumn className="text-right">Value</TableColumn>
+                    <TableColumn>Reason</TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {viewingGoodsIssue.items.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell>
+                          <div className="font-mono text-sm">{item.itemCode}</div>
+                          <div className="text-sm text-gray-500">{item.itemName}</div>
+                        </TableCell>
+                        <TableCell>{item.quantity}</TableCell>
+                        <TableCell className="text-right font-semibold">
+                          ₵{item.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-sm text-slate-600">{item.reason || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="flex justify-between bg-gray-50 p-3 rounded-lg">
+                  <span className="font-semibold">Total</span>
+                  <span className="font-semibold">
+                    ₵{viewingGoodsIssue.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </span>
+                </div>
+                {viewingGoodsIssue.notes && (
+                  <p className="text-sm text-slate-600">{viewingGoodsIssue.notes}</p>
+                )}
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="bordered" onPress={onGoodsIssueViewClose}>Close</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -5481,7 +5836,10 @@ export default function InventorySupplyChainDashboard() {
       <Modal isOpen={isGoodsIssueOpen} onClose={onGoodsIssueClose} size="4xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
-            <div className="text-xl font-semibold">Issue Goods</div>
+            Issue Goods
+            <span className="block text-sm font-normal text-slate-500 mt-1">
+              Pull stock from Stores for a department or person. Number assigned on save.
+            </span>
           </ModalHeader>
           <ModalBody>
             <div className="space-y-4">
@@ -5502,7 +5860,7 @@ export default function InventorySupplyChainDashboard() {
                   label="Issued To"
                   value={issueFormData.issuedTo}
                   onChange={(e) => setIssueFormData({ ...issueFormData, issuedTo: e.target.value })}
-                  placeholder="Person name or ID"
+                  placeholder="Person name"
                   isRequired
                 />
               </div>
@@ -5526,6 +5884,7 @@ export default function InventorySupplyChainDashboard() {
                     </TableHeader>
                     <TableBody>
                       {issueFormData.items.map((item, index) => {
+                        const filtered = getFilteredIssueItems(index);
                         return (
                           <TableRow key={index}>
                             <TableCell className="w-[40%]">
@@ -5541,24 +5900,38 @@ export default function InventorySupplyChainDashboard() {
                                         itemId: selectedItem.id,
                                         itemCode: selectedItem.itemCode,
                                         itemName: selectedItem.name,
-                                        quantity: item.quantity,
+                                        quantity: item.quantity || 1,
                                         unitCost: selectedItem.unitCost,
                                         reason: item.reason
                                       };
                                       setIssueFormData({ ...issueFormData, items: updatedItems });
+                                      setIssueItemSearchTerms((prev) => {
+                                        const next = { ...prev };
+                                        delete next[index];
+                                        return next;
+                                      });
                                     }
                                   }
                                 }}
-                                inputValue={item.itemCode ? `${item.itemCode} - ${item.itemName}` : ''}
+                                onInputChange={(value) => {
+                                  setIssueItemSearchTerms((prev) => ({ ...prev, [index]: value }));
+                                }}
+                                inputValue={
+                                  issueItemSearchTerms[index] !== undefined
+                                    ? issueItemSearchTerms[index]
+                                    : item.itemCode
+                                      ? `${item.itemCode} - ${item.itemName}`
+                                      : ''
+                                }
                                 size="sm"
                                 allowsCustomValue={false}
                               >
                                 <>
-                                  {stockItems.slice(0, 20).map((stockItem: StockItem) => (
+                                  {filtered.map((stockItem: StockItem) => (
                                     <AutocompleteItem key={stockItem.itemCode} textValue={`${stockItem.itemCode} ${stockItem.name}`}>
                                       <div className="flex flex-col">
                                         <span className="font-semibold">{stockItem.itemCode}</span>
-                                        <span className="text-sm text-gray-500">Available: {stockItem.currentStock} {stockItem.unit}</span>
+                                        <span className="text-sm text-gray-500">{stockItem.name} · {stockItem.currentStock} {stockItem.unit}</span>
                                       </div>
                                     </AutocompleteItem>
                                   ))}
@@ -5611,7 +5984,7 @@ export default function InventorySupplyChainDashboard() {
                   </Table>
                 ) : (
                   <div className="text-center py-8 text-gray-500">
-                    No items added. Click "Add Item" to add items to issue.
+                    No items yet — add lines to issue.
                   </div>
                 )}
               </div>
@@ -5626,7 +5999,7 @@ export default function InventorySupplyChainDashboard() {
           </ModalBody>
           <ModalFooter>
             <Button variant="bordered" onPress={onGoodsIssueClose}>Cancel</Button>
-            <Button color="primary" onPress={handleIssueGoods}>
+            <Button color="primary" className="bg-ghana-gold text-white" onPress={handleIssueGoods}>
               Issue Goods
             </Button>
           </ModalFooter>
@@ -5637,13 +6010,31 @@ export default function InventorySupplyChainDashboard() {
       <Modal isOpen={isStockTransferOpen} onClose={onStockTransferClose} size="4xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
-            <div className="text-xl font-semibold">
-              {editingStockTransfer ? 'Edit' : 'Create'} Stock Transfer
-            </div>
+            {editingStockTransfer ? 'Edit Stock Transfer' : 'Create Stock Transfer'}
           </ModalHeader>
           <ModalBody>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label="Transfer #"
+                  value={stockTransferFormData.transferNumber || ''}
+                  isReadOnly
+                  description="Auto from Settings → Document Numbering → Stock Transfer"
+                  classNames={{ input: 'font-mono font-semibold' }}
+                />
+                <Select
+                  label="Priority"
+                  selectedKeys={stockTransferFormData.priority ? [stockTransferFormData.priority] : ['medium']}
+                  onSelectionChange={(keys) => setStockTransferFormData({ 
+                    ...stockTransferFormData, 
+                    priority: Array.from(keys)[0] as 'low' | 'medium' | 'high' | 'urgent'
+                  })}
+                >
+                  <SelectItem key="low">Low</SelectItem>
+                  <SelectItem key="medium">Medium</SelectItem>
+                  <SelectItem key="high">High</SelectItem>
+                  <SelectItem key="urgent">Urgent</SelectItem>
+                </Select>
                 <Select
                   label="From Location"
                   selectedKeys={stockTransferFormData.fromLocation ? [stockTransferFormData.fromLocation] : []}
@@ -5705,59 +6096,38 @@ export default function InventorySupplyChainDashboard() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <Select
-                  label="Priority"
-                  selectedKeys={stockTransferFormData.priority ? [stockTransferFormData.priority] : ['medium']}
-                  onSelectionChange={(keys) => setStockTransferFormData({ 
-                    ...stockTransferFormData, 
-                    priority: Array.from(keys)[0] as 'low' | 'medium' | 'high' | 'urgent'
-                  })}
-                >
-                  <SelectItem key="low">Low</SelectItem>
-                  <SelectItem key="medium">Medium</SelectItem>
-                  <SelectItem key="high">High</SelectItem>
-                  <SelectItem key="urgent">Urgent</SelectItem>
-                </Select>
-                <Select
-                  label="Status"
-                  selectedKeys={stockTransferFormData.status ? [stockTransferFormData.status] : ['pending']}
-                  onSelectionChange={(keys) => setStockTransferFormData({ 
-                    ...stockTransferFormData, 
-                    status: Array.from(keys)[0] as 'pending' | 'in-transit' | 'delivered' | 'cancelled'
-                  })}
-                >
-                  <SelectItem key="pending">Pending</SelectItem>
-                  <SelectItem key="in-transit">In Transit</SelectItem>
-                  <SelectItem key="delivered">Delivered</SelectItem>
-                  <SelectItem key="cancelled">Cancelled</SelectItem>
-                </Select>
-              </div>
-
               <Divider />
 
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="font-semibold">Transfer Items</h4>
-                  <Button size="sm" color="primary" onPress={() => {
-                    const newItem: StockTransferItem = {
-                      id: Date.now().toString(),
-                      itemId: '',
-                      itemCode: '',
-                      itemName: '',
-                      quantity: 0,
-                      unitCost: 0,
-                      totalValue: 0,
-                      transferredQuantity: 0
-                    };
-                    setStockTransferFormData({
-                      ...stockTransferFormData,
-                      items: [...(stockTransferFormData.items || []), newItem]
-                    });
-                  }}>
+                  <Button
+                    size="sm"
+                    color="primary"
+                    isDisabled={!stockTransferFormData.fromLocation}
+                    onPress={() => {
+                      const newItem: StockTransferItem = {
+                        id: Date.now().toString(),
+                        itemId: '',
+                        itemCode: '',
+                        itemName: '',
+                        quantity: 1,
+                        unitCost: 0,
+                        totalValue: 0,
+                        transferredQuantity: 0
+                      };
+                      setStockTransferFormData({
+                        ...stockTransferFormData,
+                        items: [...(stockTransferFormData.items || []), newItem]
+                      });
+                    }}
+                  >
                     + Add Item
                   </Button>
                 </div>
+                {!stockTransferFormData.fromLocation && (
+                  <p className="text-sm text-amber-600 mb-2">Select a From location before adding items.</p>
+                )}
                 {stockTransferFormData.items && stockTransferFormData.items.length > 0 ? (
                   <Table className="[&_thead]:hidden">
                     <TableHeader>
@@ -5768,11 +6138,13 @@ export default function InventorySupplyChainDashboard() {
                       <TableColumn>Action</TableColumn>
                     </TableHeader>
                     <TableBody>
-                      {stockTransferFormData.items.map((item, index) => (
+                      {stockTransferFormData.items.map((item, index) => {
+                        const filtered = getFilteredTransferItems(index);
+                        return (
                         <TableRow key={item.id}>
                           <TableCell className="w-[40%]">
                             <Autocomplete
-                              placeholder="🔍 Search item..."
+                              placeholder="🔍 Search item at from location..."
                               selectedKey={item.itemCode || undefined}
                               onSelectionChange={(key) => {
                                 if (key && stockTransferFormData.fromLocation) {
@@ -5781,34 +6153,47 @@ export default function InventorySupplyChainDashboard() {
                                   );
                                   if (selectedItem) {
                                     const updatedItems = [...(stockTransferFormData.items || [])];
+                                    const qty = item.quantity || 1;
                                     updatedItems[index] = {
                                       ...item,
                                       itemId: selectedItem.id,
                                       itemCode: selectedItem.itemCode,
                                       itemName: selectedItem.name,
-                                      unitCost: selectedItem.unitCost
+                                      unitCost: selectedItem.unitCost,
+                                      quantity: qty,
+                                      totalValue: qty * selectedItem.unitCost
                                     };
-                                    updatedItems[index].totalValue = updatedItems[index].quantity * updatedItems[index].unitCost;
                                     setStockTransferFormData({ ...stockTransferFormData, items: updatedItems });
+                                    setTransferItemSearchTerms((prev) => {
+                                      const next = { ...prev };
+                                      delete next[index];
+                                      return next;
+                                    });
                                   }
                                 }
                               }}
-                              inputValue={item.itemCode ? `${item.itemCode} - ${item.itemName}` : ''}
+                              onInputChange={(value) => {
+                                setTransferItemSearchTerms((prev) => ({ ...prev, [index]: value }));
+                              }}
+                              inputValue={
+                                transferItemSearchTerms[index] !== undefined
+                                  ? transferItemSearchTerms[index]
+                                  : item.itemCode
+                                    ? `${item.itemCode} - ${item.itemName}`
+                                    : ''
+                              }
                               size="sm"
                               allowsCustomValue={false}
                             >
                               <>
-                                {stockItems
-                                  .filter(i => stockTransferFormData.fromLocation ? i.location === stockTransferFormData.fromLocation : true)
-                                  .slice(0, 20)
-                                  .map((stockItem: StockItem) => (
-                                    <AutocompleteItem key={stockItem.itemCode} textValue={`${stockItem.itemCode} ${stockItem.name}`}>
-                                      <div className="flex flex-col">
-                                        <span className="font-semibold">{stockItem.itemCode}</span>
-                                        <span className="text-sm text-gray-500">Available: {stockItem.currentStock} {stockItem.unit}</span>
-                                      </div>
-                                    </AutocompleteItem>
-                                  ))}
+                                {filtered.map((stockItem: StockItem) => (
+                                  <AutocompleteItem key={stockItem.itemCode} textValue={`${stockItem.itemCode} ${stockItem.name}`}>
+                                    <div className="flex flex-col">
+                                      <span className="font-semibold">{stockItem.itemCode}</span>
+                                      <span className="text-sm text-gray-500">{stockItem.name} · {stockItem.currentStock} {stockItem.unit}</span>
+                                    </div>
+                                  </AutocompleteItem>
+                                ))}
                               </>
                             </Autocomplete>
                           </TableCell>
@@ -5858,12 +6243,13 @@ export default function InventorySupplyChainDashboard() {
                             </Button>
                           </TableCell>
                         </TableRow>
-                      ))}
+                        );
+                      })}
                     </TableBody>
                   </Table>
                 ) : (
                   <div className="text-center py-8 text-gray-500">
-                    No items added. Click "Add Item" to add items to transfer.
+                    No items yet — select From location, then add lines.
                   </div>
                 )}
               </div>
@@ -5878,7 +6264,7 @@ export default function InventorySupplyChainDashboard() {
           </ModalBody>
           <ModalFooter>
             <Button variant="bordered" onPress={onStockTransferClose}>Cancel</Button>
-            <Button color="primary" onPress={handleSaveStockTransfer}>
+            <Button color="primary" className="bg-ghana-green text-white" onPress={handleSaveStockTransfer}>
               {editingStockTransfer ? 'Update' : 'Create'} Transfer
             </Button>
           </ModalFooter>
@@ -5889,18 +6275,23 @@ export default function InventorySupplyChainDashboard() {
       <Modal isOpen={isStockCountOpen} onClose={onStockCountClose} size="4xl" scrollBehavior="inside">
         <ModalContent>
           <ModalHeader>
-            <div className="text-xl font-semibold">
-              {editingStockCount ? 'Edit' : 'Create'} Stock Count
-            </div>
+            {editingStockCount ? 'Edit Stock Count' : 'Create Stock Count'}
           </ModalHeader>
           <ModalBody>
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
+                <Input
+                  label="Count #"
+                  value={stockCountFormData.countNumber || ''}
+                  isReadOnly
+                  description="Auto from Settings → Document Numbering → Stock Count"
+                  classNames={{ input: 'font-mono font-semibold' }}
+                />
                 <Select
                   label="Count Type"
                   selectedKeys={stockCountFormData.countType ? [stockCountFormData.countType] : ['full']}
-                  onSelectionChange={(keys) => setStockCountFormData({ 
-                    ...stockCountFormData, 
+                  onSelectionChange={(keys) => setStockCountFormData({
+                    ...stockCountFormData,
                     countType: Array.from(keys)[0] as 'full' | 'cycle' | 'spot' | 'random'
                   })}
                 >
@@ -5914,12 +6305,12 @@ export default function InventorySupplyChainDashboard() {
                   selectedKeys={stockCountFormData.location ? [stockCountFormData.location] : []}
                   onSelectionChange={(keys) => {
                     const selectedLocation = Array.from(keys)[0] as string;
-                    setStockCountFormData({ 
-                      ...stockCountFormData, 
+                    setStockCountFormData({
+                      ...stockCountFormData,
                       location: selectedLocation,
                       items: stockItems
-                        .filter(i => i.location === selectedLocation)
-                        .map(item => ({
+                        .filter((i) => i.location === selectedLocation)
+                        .map((item) => ({
                           id: Date.now().toString() + Math.random(),
                           itemId: item.id,
                           itemCode: item.itemCode,
@@ -5935,65 +6326,60 @@ export default function InventorySupplyChainDashboard() {
                   isRequired
                 >
                   <>
-                    {availableLocations.map(loc => (
+                    {availableLocations.map((loc) => (
                       <SelectItem key={loc}>{loc}</SelectItem>
                     ))}
                   </>
                 </Select>
+                <Input
+                  label="Start Date"
+                  type="date"
+                  value={stockCountFormData.startDate instanceof Date
+                    ? stockCountFormData.startDate.toISOString().split('T')[0]
+                    : stockCountFormData.startDate
+                      ? new Date(stockCountFormData.startDate).toISOString().split('T')[0]
+                      : new Date().toISOString().split('T')[0]}
+                  onChange={(e) => setStockCountFormData({
+                    ...stockCountFormData,
+                    startDate: new Date(e.target.value)
+                  })}
+                />
               </div>
 
-              <Input
-                label="Start Date"
-                type="date"
-                value={stockCountFormData.startDate instanceof Date 
-                  ? stockCountFormData.startDate.toISOString().split('T')[0]
-                  : stockCountFormData.startDate 
-                    ? new Date(stockCountFormData.startDate).toISOString().split('T')[0]
-                    : new Date().toISOString().split('T')[0]}
-                onChange={(e) => setStockCountFormData({ 
-                  ...stockCountFormData, 
-                  startDate: new Date(e.target.value) 
-                })}
-              />
-
-              {stockCountFormData.items && stockCountFormData.items.length > 0 && (
+              {stockCountFormData.items && stockCountFormData.items.length > 0 ? (
                 <>
                   <Divider />
                   <div>
-                    <h4 className="font-semibold mb-2">Count Items</h4>
-                    <Table className="[&_thead]:hidden">
+                    <h4 className="font-semibold mb-2">Count lines ({stockCountFormData.items.length})</h4>
+                    <Table>
                       <TableHeader>
                         <TableColumn>Item</TableColumn>
-                        <TableColumn>Expected</TableColumn>
+                        <TableColumn>Book</TableColumn>
                         <TableColumn>Counted</TableColumn>
-                        <TableColumn>Variance</TableColumn>
-                        <TableColumn>Variance Value</TableColumn>
+                        <TableColumn>Δ</TableColumn>
+                        <TableColumn className="text-right">Δ Value</TableColumn>
                       </TableHeader>
                       <TableBody>
                         {stockCountFormData.items.map((item) => (
                           <TableRow key={item.id}>
-                            <TableCell className="w-[30%]">
-                              <div>
-                                <div className="font-semibold">{item.itemCode}</div>
-                                <div className="text-sm text-gray-500">{item.itemName}</div>
-                              </div>
+                            <TableCell>
+                              <div className="font-mono text-sm font-semibold">{item.itemCode}</div>
+                              <div className="text-sm text-gray-500">{item.itemName}</div>
                             </TableCell>
-                            <TableCell className="w-[20%]">
-                              <div className="font-semibold">{item.expectedQuantity}</div>
-                            </TableCell>
-                            <TableCell className="w-[20%]">
+                            <TableCell className="font-semibold">{item.expectedQuantity}</TableCell>
+                            <TableCell>
                               <Input
                                 type="number"
                                 value={String(item.countedQuantity)}
                                 onChange={(e) => {
                                   const counted = parseInt(e.target.value) || 0;
                                   const variance = counted - item.expectedQuantity;
-                                  const updatedItems = (stockCountFormData.items || []).map(i =>
+                                  const updatedItems = (stockCountFormData.items || []).map((i) =>
                                     i.id === item.id
                                       ? {
                                           ...i,
                                           countedQuantity: counted,
-                                          variance: variance,
+                                          variance,
                                           varianceValue: Math.abs(variance * i.unitCost)
                                         }
                                       : i
@@ -6004,15 +6390,13 @@ export default function InventorySupplyChainDashboard() {
                                 min="0"
                               />
                             </TableCell>
-                            <TableCell className="w-[15%]">
+                            <TableCell>
                               <div className={`font-semibold ${item.variance > 0 ? 'text-green-600' : item.variance < 0 ? 'text-red-600' : 'text-gray-600'}`}>
                                 {item.variance > 0 ? '+' : ''}{item.variance}
                               </div>
                             </TableCell>
-                            <TableCell className="w-[15%]">
-                              <div className={`text-right font-semibold ${item.varianceValue > 0 ? 'text-orange-600' : 'text-gray-600'}`}>
-                                {item.varianceValue > 0 ? '₵' : ''}{item.varianceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                              </div>
+                            <TableCell className="text-right font-semibold">
+                              {item.varianceValue > 0 ? `₵${item.varianceValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
                             </TableCell>
                           </TableRow>
                         ))}
@@ -6020,6 +6404,8 @@ export default function InventorySupplyChainDashboard() {
                     </Table>
                   </div>
                 </>
+              ) : (
+                <p className="text-sm text-amber-600">Select a location to load items for counting.</p>
               )}
 
               <Textarea
@@ -6032,38 +6418,8 @@ export default function InventorySupplyChainDashboard() {
           </ModalBody>
           <ModalFooter>
             <Button variant="bordered" onPress={onStockCountClose}>Cancel</Button>
-            <Button color="primary" onPress={() => {
-              if (!stockCountFormData.location || !stockCountFormData.items || stockCountFormData.items.length === 0) {
-                alert('Please select a location and ensure items are loaded');
-                return;
-              }
-              const countData: StockCount = {
-                id: editingStockCount?.id || Date.now().toString(),
-                countNumber: stockCountFormData.countNumber || generateCountNumber(),
-                countType: stockCountFormData.countType || 'full',
-                location: stockCountFormData.location,
-                startDate: stockCountFormData.startDate || new Date(),
-                status: 'in-progress',
-                totalItems: stockCountFormData.items.length,
-                countedItems: stockCountFormData.items.filter(i => i.countedQuantity >= 0).length,
-                varianceItems: stockCountFormData.items.filter(i => i.variance !== 0).length,
-                totalValue: stockCountFormData.items.reduce((sum, i) => sum + (i.expectedQuantity * i.unitCost), 0),
-                varianceValue: stockCountFormData.items.reduce((sum, i) => sum + Math.abs(i.varianceValue), 0),
-                items: stockCountFormData.items,
-                notes: stockCountFormData.notes,
-                createdBy: stockCountFormData.createdBy || currentUserName,
-                createdAt: editingStockCount?.createdAt || new Date(),
-                updatedAt: new Date()
-              };
-              if (editingStockCount) {
-                setStockCounts(stockCounts.map(c => c.id === countData.id ? countData : c));
-              } else {
-                setStockCounts([...stockCounts, countData]);
-              }
-              onStockCountClose();
-              trackEvent('Stores.Issued', { action: editingStockCount ? 'update_stock_count' : 'create_stock_count', countNumber: countData.countNumber });
-            }}>
-              {editingStockCount ? 'Update' : 'Create'} Count
+            <Button color="primary" className="bg-ghana-gold text-white" onPress={handleSaveStockCount}>
+              {editingStockCount ? 'Update' : 'Save'} Count
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -6143,8 +6499,38 @@ export default function InventorySupplyChainDashboard() {
               </div>
             )}
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter className="flex flex-wrap gap-2">
             <Button variant="bordered" onPress={onStockTransferViewClose}>Close</Button>
+            {viewingStockTransfer?.status === 'pending' && (
+              <Button
+                color="warning"
+                variant="flat"
+                onPress={() => {
+                  onStockTransferViewClose();
+                  setEditingStockTransfer(viewingStockTransfer);
+                  setStockTransferFormData({ ...viewingStockTransfer, items: viewingStockTransfer.items });
+                  setTransferItemSearchTerms({});
+                  onStockTransferOpen();
+                }}
+              >
+                ✏️ Edit
+              </Button>
+            )}
+            {viewingStockTransfer?.status === 'pending' && (
+              <Button color="warning" onPress={() => handleTransferStatusChange(viewingStockTransfer, 'in-transit')}>
+                🚚 Mark In Transit
+              </Button>
+            )}
+            {viewingStockTransfer && (viewingStockTransfer.status === 'pending' || viewingStockTransfer.status === 'in-transit') && (
+              <Button color="success" onPress={() => handleTransferStatusChange(viewingStockTransfer, 'delivered')}>
+                ✅ Mark Delivered
+              </Button>
+            )}
+            {viewingStockTransfer && (viewingStockTransfer.status === 'pending' || viewingStockTransfer.status === 'in-transit') && (
+              <Button color="danger" variant="flat" onPress={() => handleTransferStatusChange(viewingStockTransfer, 'cancelled')}>
+                ❌ Cancel
+              </Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -6243,21 +6629,446 @@ export default function InventorySupplyChainDashboard() {
               </div>
             )}
           </ModalBody>
-          <ModalFooter>
+          <ModalFooter className="flex flex-wrap gap-2">
             <Button variant="bordered" onPress={onStockCountViewClose}>Close</Button>
+            {viewingStockCount && viewingStockCount.status === 'in-progress' && (
+              <Button
+                color="warning"
+                variant="flat"
+                onPress={() => {
+                  onStockCountViewClose();
+                  setEditingStockCount(viewingStockCount);
+                  setStockCountFormData({ ...viewingStockCount, items: viewingStockCount.items });
+                  onStockCountOpen();
+                }}
+              >
+                ✏️ Edit Counts
+              </Button>
+            )}
             {viewingStockCount && viewingStockCount.status === 'in-progress' && (
               <Button
                 color="success"
                 onPress={() => {
-                  if (confirm('Complete this stock count? This will apply adjustments to stock levels.')) {
+                  if (confirm('Complete this stock count? Variances will adjust on-hand stock.')) {
                     handleCompleteStockCount(viewingStockCount);
-                    onStockCountViewClose();
                   }
                 }}
               >
-                Complete Count
+                ✅ Complete & Post
               </Button>
             )}
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Supplier Invoice — Create */}
+      <Modal
+        isOpen={isInvoiceModalOpen}
+        onClose={() => {
+          onInvoiceModalClose();
+          setInvoiceFormData({ items: [] });
+          setSelectedPOForInvoice(null);
+        }}
+        size="4xl"
+        scrollBehavior="inside"
+      >
+        <ModalContent>
+          <ModalHeader>
+            {editingInvoice ? 'Edit Supplier Invoice' : 'Create Supplier Invoice'}
+          </ModalHeader>
+          <ModalBody>
+            <p className="text-sm text-slate-500 -mt-1 mb-2">
+              Pick a PO — lines fill from the order (and GRN qty when one exists). Then save for three-way match.
+            </p>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Select
+                  label="Purchase Order"
+                  placeholder="Select PO"
+                  selectedKeys={invoiceFormData.poId ? [invoiceFormData.poId] : []}
+                  onSelectionChange={(keys) => {
+                    const id = Array.from(keys)[0] as string;
+                    if (id) handleInvoicePOChange(id);
+                  }}
+                  isRequired
+                >
+                  {supplierStorePurchaseOrders
+                    .filter((po) => ['confirmed', 'in-transit', 'delivered', 'closed'].includes(po.status))
+                    .map((po) => (
+                      <SelectItem key={po.id} textValue={`${po.poNumber} — ${po.supplierName}`}>
+                        {po.poNumber} — {po.supplierName}
+                      </SelectItem>
+                    ))}
+                </Select>
+                <Input
+                  label="Invoice #"
+                  value={generateNextInvoiceNumber()}
+                  isReadOnly
+                  description="Assigned on save"
+                  classNames={{ input: 'font-mono font-semibold' }}
+                />
+                <Input
+                  label="Supplier"
+                  value={invoiceFormData.supplierName || ''}
+                  isReadOnly
+                />
+                <Input
+                  label="Linked GRN"
+                  value={invoiceFormData.grnNumber || 'None yet'}
+                  isReadOnly
+                />
+                <Input
+                  label="Invoice Date"
+                  type="date"
+                  value={
+                    invoiceFormData.invoiceDate instanceof Date
+                      ? invoiceFormData.invoiceDate.toISOString().split('T')[0]
+                      : invoiceFormData.invoiceDate
+                        ? new Date(invoiceFormData.invoiceDate).toISOString().split('T')[0]
+                        : new Date().toISOString().split('T')[0]
+                  }
+                  onChange={(e) =>
+                    setInvoiceFormData({ ...invoiceFormData, invoiceDate: new Date(e.target.value) })
+                  }
+                  isRequired
+                />
+                <Input
+                  label="Due Date"
+                  type="date"
+                  value={
+                    invoiceFormData.dueDate instanceof Date
+                      ? invoiceFormData.dueDate.toISOString().split('T')[0]
+                      : invoiceFormData.dueDate
+                        ? new Date(invoiceFormData.dueDate).toISOString().split('T')[0]
+                        : ''
+                  }
+                  onChange={(e) =>
+                    setInvoiceFormData({ ...invoiceFormData, dueDate: new Date(e.target.value) })
+                  }
+                  isRequired
+                />
+              </div>
+
+              {(invoiceFormData.items || []).length > 0 && (
+                <>
+                  <Divider />
+                  <Table aria-label="Invoice lines">
+                    <TableHeader>
+                      <TableColumn>Item</TableColumn>
+                      <TableColumn className="text-right">Qty</TableColumn>
+                      <TableColumn className="text-right">Unit Price</TableColumn>
+                      <TableColumn className="text-right">Total</TableColumn>
+                    </TableHeader>
+                    <TableBody>
+                      {(invoiceFormData.items || []).map((item, index) => (
+                        <TableRow key={item.id}>
+                          <TableCell>
+                            <div className="font-mono text-sm font-semibold">{item.itemCode}</div>
+                            <div className="text-xs text-gray-500">{item.itemName}</div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <Input
+                              type="number"
+                              size="sm"
+                              className="max-w-[100px] ml-auto"
+                              value={String(item.quantity)}
+                              onChange={(e) => {
+                                const quantity = parseFloat(e.target.value) || 0;
+                                const items = [...(invoiceFormData.items || [])];
+                                items[index] = {
+                                  ...item,
+                                  quantity,
+                                  totalPrice: quantity * item.unitPrice,
+                                };
+                                const subtotal = items.reduce((s, i) => s + i.totalPrice, 0);
+                                const taxAmount = Number(invoiceFormData.taxAmount || 0);
+                                const shippingAmount = Number(invoiceFormData.shippingAmount || 0);
+                                const discountAmount = Number(invoiceFormData.discountAmount || 0);
+                                setInvoiceFormData({
+                                  ...invoiceFormData,
+                                  items,
+                                  subtotal,
+                                  totalAmount: subtotal + taxAmount + shippingAmount - discountAmount,
+                                });
+                              }}
+                            />
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            ₵{Number(item.unitPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </TableCell>
+                          <TableCell className="text-right font-semibold tabular-nums">
+                            ₵{Number(item.totalPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                  <div className="bg-gray-50 p-4 rounded-lg space-y-1 text-sm">
+                    <div className="flex justify-between">
+                      <span>Subtotal</span>
+                      <span className="tabular-nums">₵{Number(invoiceFormData.subtotal || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Tax</span>
+                      <span className="tabular-nums">₵{Number(invoiceFormData.taxAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="flex justify-between font-bold text-base pt-1 border-t">
+                      <span>Total</span>
+                      <span className="tabular-nums">₵{Number(invoiceFormData.totalAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <Textarea
+                label="Notes"
+                value={invoiceFormData.notes || ''}
+                onChange={(e) => setInvoiceFormData({ ...invoiceFormData, notes: e.target.value })}
+                minRows={2}
+              />
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              variant="bordered"
+              onPress={() => {
+                onInvoiceModalClose();
+                setInvoiceFormData({ items: [] });
+                setSelectedPOForInvoice(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button color="primary" className="bg-ghana-gold text-white" onPress={handleSaveInvoice}>
+              Save Invoice
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Supplier Invoice — View */}
+      <Modal isOpen={isInvoiceViewOpen} onClose={onInvoiceViewClose} size="4xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>
+            Invoice Details — {viewingInvoice?.invoiceNumber}
+            <span className="block text-sm font-normal text-slate-500 mt-1">
+              Review, then match / approve / pay from here.
+            </span>
+          </ModalHeader>
+          <ModalBody>
+            {viewingInvoice && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Invoice #</div>
+                    <div className="font-mono font-semibold">{viewingInvoice.invoiceNumber}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Status</div>
+                    <Badge
+                      color={
+                        viewingInvoice.status === 'paid' ? 'success' :
+                        viewingInvoice.status === 'approved' ? 'primary' :
+                        viewingInvoice.status === 'matched' ? 'warning' :
+                        viewingInvoice.status === 'rejected' || viewingInvoice.status === 'cancelled' ? 'danger' : 'default'
+                      }
+                      variant="flat"
+                    >
+                      {viewingInvoice.status}
+                    </Badge>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Supplier</div>
+                    <div className="font-semibold">{viewingInvoice.supplierName}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">PO</div>
+                    <div className="font-mono">{viewingInvoice.poNumber}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">GRN</div>
+                    <div className="font-mono">{viewingInvoice.grnNumber || '—'}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500 mb-1">Total</div>
+                    <div className="font-semibold tabular-nums">
+                      ₵{Number(viewingInvoice.totalAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                </div>
+                <Divider />
+                <Table aria-label="Invoice items">
+                  <TableHeader>
+                    <TableColumn>Item</TableColumn>
+                    <TableColumn className="text-right">Qty</TableColumn>
+                    <TableColumn className="text-right">Unit Price</TableColumn>
+                    <TableColumn className="text-right">Total</TableColumn>
+                  </TableHeader>
+                  <TableBody>
+                    {viewingInvoice.items.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell>
+                          <div className="font-mono text-sm">{item.itemCode}</div>
+                          <div className="text-xs text-gray-500">{item.itemName}</div>
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">{item.quantity}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          ₵{Number(item.unitPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                        <TableCell className="text-right font-semibold tabular-nums">
+                          ₵{Number(item.totalPrice).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                {viewingInvoice.matchingStatus?.discrepancies?.length > 0 && (
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm">
+                    <div className="font-semibold mb-1">Match notes</div>
+                    <ul className="list-disc pl-5 space-y-0.5 text-amber-900">
+                      {viewingInvoice.matchingStatus.discrepancies.map((d, i) => (
+                        <li key={i}>{d}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter className="flex flex-wrap gap-2">
+            <Button variant="bordered" onPress={onInvoiceViewClose}>Close</Button>
+            {viewingInvoice?.status === 'pending' && (
+              <Button
+                color="warning"
+                variant="flat"
+                onPress={() => {
+                  onInvoiceViewClose();
+                  setMatchResult(null);
+                  onThreeWayMatchOpen();
+                }}
+              >
+                🔗 3-Way Match
+              </Button>
+            )}
+            {viewingInvoice?.status === 'matched' && (
+              <>
+                <Button
+                  color="success"
+                  onPress={() => {
+                    if (confirm('Approve this invoice for payment?')) {
+                      approveInvoice(viewingInvoice.id, currentUserName);
+                      trackEvent('Stores.Issued', { action: 'approve_invoice', invoiceNumber: viewingInvoice.invoiceNumber });
+                      setViewingInvoice({ ...viewingInvoice, status: 'approved' });
+                    }
+                  }}
+                >
+                  ✓ Approve
+                </Button>
+                <Button
+                  color="danger"
+                  variant="flat"
+                  onPress={() => {
+                    const reason = prompt('Enter rejection reason:');
+                    if (reason) {
+                      rejectInvoice(viewingInvoice.id, currentUserName, reason);
+                      trackEvent('Stores.Issued', { action: 'reject_invoice', invoiceNumber: viewingInvoice.invoiceNumber });
+                      setViewingInvoice({ ...viewingInvoice, status: 'rejected' });
+                    }
+                  }}
+                >
+                  ✗ Reject
+                </Button>
+              </>
+            )}
+            {viewingInvoice?.status === 'approved' && (
+              <Button
+                color="success"
+                onPress={() => {
+                  const method = prompt('Enter payment method (e.g., Bank Transfer, Check, Cash):');
+                  const ref = prompt('Enter payment reference:');
+                  if (method && ref) {
+                    markInvoicePaid(viewingInvoice.id, currentUserName, method, ref);
+                    trackEvent('Stores.Issued', { action: 'mark_invoice_paid', invoiceNumber: viewingInvoice.invoiceNumber });
+                    setViewingInvoice({ ...viewingInvoice, status: 'paid' });
+                  }
+                }}
+              >
+                💰 Mark Paid
+              </Button>
+            )}
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* Supplier Invoice — 3-Way Match */}
+      <Modal
+        isOpen={isThreeWayMatchOpen}
+        onClose={() => {
+          onThreeWayMatchClose();
+          setMatchResult(null);
+        }}
+        size="lg"
+      >
+        <ModalContent>
+          <ModalHeader>Three-Way Match — {viewingInvoice?.invoiceNumber}</ModalHeader>
+          <ModalBody>
+            <p className="text-sm text-slate-600 mb-3">
+              Compares invoice lines to the PO and approved GRN (qty, price, totals).
+            </p>
+            {viewingInvoice && (
+              <div className="grid grid-cols-3 gap-3 text-sm mb-4">
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-gray-500">PO</div>
+                  <div className="font-mono font-semibold">{viewingInvoice.poNumber}</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-gray-500">GRN</div>
+                  <div className="font-mono font-semibold">{viewingInvoice.grnNumber || '—'}</div>
+                </div>
+                <div className="bg-slate-50 rounded-lg p-3">
+                  <div className="text-xs text-gray-500">Invoice total</div>
+                  <div className="font-semibold tabular-nums">
+                    ₵{Number(viewingInvoice.totalAmount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+              </div>
+            )}
+            {matchResult && (
+              <div
+                className={`rounded-lg p-3 text-sm border ${
+                  matchResult.matched
+                    ? 'bg-green-50 border-green-200 text-green-900'
+                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                }`}
+              >
+                <div className="font-semibold mb-1">
+                  {matchResult.matched ? '✓ Matched' : '⚠ Discrepancies found'}
+                </div>
+                {matchResult.discrepancies.length > 0 ? (
+                  <ul className="list-disc pl-5 space-y-0.5">
+                    {matchResult.discrepancies.map((d, i) => (
+                      <li key={i}>{d}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p>PO, GRN, and invoice line up.</p>
+                )}
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              variant="bordered"
+              onPress={() => {
+                onThreeWayMatchClose();
+                setMatchResult(null);
+              }}
+            >
+              Close
+            </Button>
+            <Button color="warning" onPress={handleRunThreeWayMatch}>
+              Run Match
+            </Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

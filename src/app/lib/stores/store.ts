@@ -13,6 +13,7 @@ import {
   StockMovementType
 } from './types';
 import { trackEvent } from '../analytics/trackEvent';
+import { useSettingsStore } from '../settings/store';
 
 class StoresStore {
   private items: Map<string, InventoryItem> = new Map();
@@ -292,7 +293,7 @@ class StoresStore {
   }): PurchaseOrder {
     const po: PurchaseOrder = {
       id: `PO-${Date.now().toString().slice(-6)}`,
-      poNumber: `PO-${Date.now().toString().slice(-6)}`,
+      poNumber: useSettingsStore.getState().getNextModuleNumber('inventory', 'purchaseOrder'),
       supplierId: data.supplierId,
       supplierName: data.supplierName,
       orderDate: new Date().toISOString(),

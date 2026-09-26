@@ -65,6 +65,7 @@ model Tenant {
   roomStatusLogs         RoomStatusLog[]
   maintenanceRequests    MaintenanceRequest[]
   housekeepingStaff      HousekeepingStaff[]
+  housekeepingRoomResponsibilities HousekeepingRoomResponsibility[]
   purchaseOrders         PurchaseOrder[]
   purchaseOrderItems     PurchaseOrderItem[]
   requisitions           Requisition[]
@@ -75,6 +76,12 @@ model Tenant {
   qualityCheckItems      QualityCheckItem[]
   supplierInvoices       SupplierInvoice[]
   supplierInvoiceItems   SupplierInvoiceItem[]
+  stockTransfers         StockTransfer[]
+  stockTransferItems     StockTransferItem[]
+  stockCounts            StockCount[]
+  stockCountItems        StockCountItem[]
+  goodsIssues            GoodsIssue[]
+  goodsIssueItems        GoodsIssueItem[]
   inventoryAlertAcks     InventoryAlertAcknowledgment[]
   complianceReports      ComplianceReport[]
   complianceTaxRules     ComplianceTaxRule[]
@@ -1365,6 +1372,29 @@ model HousekeepingStaff {
   @@map("housekeeping_staff")
 }
 
+// Who is responsible for which rooms on which shift. Not permanent — reassign
+// when someone resigns, swaps shifts, or coverage changes. Same rooms may be
+// covered by different staff on different shifts (e.g. morning vs evening).
+model HousekeepingRoomResponsibility {
+  id        String   @id @default(cuid())
+  tenantId  String
+  label     String?  // optional nickname e.g. "Wing A"
+  staffId   String   // HR employee id (Staff Management source of truth)
+  staffName String
+  shift     String   // morning | afternoon | evening | night
+  rooms     Json     // string[] of room numbers
+  isActive  Boolean  @default(true)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, shift])
+  @@index([tenantId, staffId])
+  @@map("housekeeping_room_responsibilities")
+}
+
 model MaintenanceRequest {
   id           String    @id @default(cuid())
   tenantId     String
@@ -1492,16 +1522,18 @@ model Requisition {
 }
 
 model RequisitionItem {
-  id             String  @id @default(cuid())
-  tenantId       String
-  requisitionId  String
-  itemId         String
-  itemCode       String
-  itemName       String
-  quantity       Decimal
-  estimatedPrice Decimal
-  totalCost      Decimal
-  notes          String?
+  id                    String  @id @default(cuid())
+  tenantId              String
+  requisitionId         String
+  itemId                String
+  itemCode              String
+  itemName              String
+  quantity              Decimal
+  estimatedPrice        Decimal
+  totalCost             Decimal
+  preferredSupplierId   String?
+  preferredSupplierName String?
+  notes                 String?
 
   tenant      Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   requisition Requisition @relation(fields: [requisitionId], references: [id], onDelete: Cascade)
@@ -1562,6 +1594,147 @@ model GRNItem {
 
   @@index([tenantId, grnId])
   @@map("grn_items")
+}
+
+model StockTransfer {
+  id                   String    @id @default(cuid())
+  tenantId             String
+  transferNumber       String
+  fromLocation         String
+  toLocation           String
+  transferDate         DateTime  @default(now())
+  expectedDeliveryDate DateTime?
+  actualDeliveryDate   DateTime?
+  status               String    @default("pending") // pending|in-transit|delivered|cancelled
+  priority             String    @default("medium") // low|medium|high|urgent
+  totalItems           Int       @default(0)
+  totalValue           Decimal   @default(0)
+  notes                String?
+  createdBy            String
+  approvedBy           String?
+  approvedAt           DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  tenant Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  StockTransferItem[]
+
+  @@unique([tenantId, transferNumber])
+  @@index([tenantId, status])
+  @@map("stock_transfers")
+}
+
+model StockTransferItem {
+  id                   String  @id @default(cuid())
+  tenantId             String
+  transferId           String
+  itemId               String
+  itemCode             String
+  itemName             String
+  quantity             Decimal
+  unitCost             Decimal
+  totalValue           Decimal
+  transferredQuantity  Decimal @default(0)
+  notes                String?
+
+  tenant   Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  transfer StockTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, transferId])
+  @@map("stock_transfer_items")
+}
+
+model StockCount {
+  id             String    @id @default(cuid())
+  tenantId       String
+  countNumber    String
+  countType      String    @default("full") // full|cycle|spot|random
+  location       String
+  startDate      DateTime  @default(now())
+  endDate        DateTime?
+  status         String    @default("planned") // planned|in-progress|completed|cancelled
+  totalItems     Int       @default(0)
+  countedItems   Int       @default(0)
+  varianceItems  Int       @default(0)
+  totalValue     Decimal   @default(0)
+  varianceValue  Decimal   @default(0)
+  notes          String?
+  createdBy      String
+  performedBy    String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  StockCountItem[]
+
+  @@unique([tenantId, countNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, location])
+  @@map("stock_counts")
+}
+
+model StockCountItem {
+  id                String  @id @default(cuid())
+  tenantId          String
+  countId           String
+  itemId            String
+  itemCode          String
+  itemName          String
+  expectedQuantity  Decimal
+  countedQuantity   Decimal
+  variance          Decimal
+  unitCost          Decimal
+  varianceValue     Decimal
+  notes             String?
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  count  StockCount @relation(fields: [countId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, countId])
+  @@map("stock_count_items")
+}
+
+model GoodsIssue {
+  id          String    @id @default(cuid())
+  tenantId    String
+  issueNumber String
+  department  String
+  issuedTo    String
+  issueDate   DateTime  @default(now())
+  status      String    @default("issued") // issued|cancelled
+  totalItems  Int       @default(0)
+  totalValue  Decimal   @default(0)
+  notes       String?
+  issuedBy    String
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  tenant Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items  GoodsIssueItem[]
+
+  @@unique([tenantId, issueNumber])
+  @@index([tenantId, status])
+  @@index([tenantId, department])
+  @@map("goods_issues")
+}
+
+model GoodsIssueItem {
+  id        String  @id @default(cuid())
+  tenantId  String
+  issueId   String
+  itemId    String
+  itemCode  String
+  itemName  String
+  quantity  Decimal
+  unitCost  Decimal
+  totalValue Decimal
+  reason    String?
+
+  tenant Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  issue  GoodsIssue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, issueId])
+  @@map("goods_issue_items")
 }
 
 model QualityCheck {

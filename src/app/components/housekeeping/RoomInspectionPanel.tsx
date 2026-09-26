@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import { 
   Card, 
   CardBody, 
@@ -209,8 +210,10 @@ export default function RoomInspectionPanel() {
       {/* Header and Actions */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-ghana-black">🔍 Room Inspections</h2>
-          <p className="text-gray-600">Conduct quality control inspections and track room standards</p>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-xl font-semibold text-ghana-black">🔍 Room Inspections</h2>
+            <HeadingInfo label="About inspections">Conduct quality control inspections and track room standards</HeadingInfo>
+          </div>
         </div>
         <Button 
           color="primary" 

@@ -30,8 +30,14 @@ export function filterFinanceArInvoices(invoices: Invoice[]): Invoice[] {
   return invoices.filter(isFinanceArInvoice);
 }
 
+/** Net receivables, including customer credits, so the headline matches the balance column and GL 1210. */
 export function totalFinanceReceivables(invoices: Invoice[]): number {
-  return filterFinanceArInvoices(invoices).reduce((s, i) => s + invoiceOpenBalance(i), 0);
+  return roundMoney2(
+    filterFinanceArInvoices(invoices).reduce(
+      (s, i) => s + ((i.total || 0) - (i.paidAmount || 0)),
+      0,
+    ),
+  );
 }
 
 export interface FinanceAgingBucket {
@@ -113,7 +119,7 @@ export function computeCustomerAgingFromInvoices(
       const customerInvoices = sales.filter((i) => i.businessPartnerId === customerId);
       const totalInvoiced = customerInvoices.reduce((s, i) => s + (i.total || 0), 0);
       const totalPaid = customerInvoices.reduce((s, i) => s + (i.paidAmount || 0), 0);
-      const balance = customerInvoices.reduce((s, i) => s + invoiceOpenBalance(i), 0);
+      const balance = +((totalInvoiced - totalPaid).toFixed(2));
 
       let current = 0;
       let days30 = 0;

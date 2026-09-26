@@ -258,14 +258,7 @@ export const useComplianceStore = create<ComplianceState>((set, get) => ({
     // opposite of "fully compliant", not a reason to show 100%.
     if (filings.length === 0) return 0;
 
-    const submittedReports = filings.filter((r) => r.status === 'submitted' || r.status === 'approved').length;
-    const pendingReports = filings.filter((r) => r.status === 'pending').length;
-
-    let score = (submittedReports / filings.length) * 80;
-    if (pendingReports > 0) {
-      score += (pendingReports / filings.length) * 20;
-    }
-
-    return Math.round(score);
+    const filed = filings.filter((r) => r.status === 'submitted' || r.status === 'approved').length;
+    return Math.round((filed / filings.length) * 100);
   },
 }));

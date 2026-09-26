@@ -97,6 +97,8 @@ export default function ComplianceReports() {
         return '🧾';
       case 'NHIL':
         return '🏥';
+      case 'GETFund':
+        return '🎓';
       case 'Tourism':
         return '🏖️';
       case 'SSNIT':

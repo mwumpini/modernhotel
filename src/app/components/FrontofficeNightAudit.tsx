@@ -2,46 +2,58 @@
 
 import React from 'react';
 import {
+  Button,
   Card,
   CardBody,
-  CardHeader,
-  Button,
-  Table,
-  TableHeader,
-  TableColumn,
-  TableBody,
-  TableRow,
-  TableCell,
   Chip,
-  Divider,
+  Input,
   Select,
   SelectItem,
-  Input,
+  Table,
+  TableBody,
+  TableCell,
+  TableColumn,
+  TableHeader,
+  TableRow,
 } from '@heroui/react';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
 import { checkNightAuditDiscrepancies, computeDailyRevenue } from '../lib/frontoffice/nightAuditChecks';
 import type { NightAuditRun } from '../lib/frontoffice/nightAudit';
+import { findMainFolio } from '../lib/frontoffice/helpers/folio';
+import { isPostedRoomCharge } from '../lib/frontoffice/folioLedger';
+import { resolveRateForDate } from '../lib/frontoffice/roomCharges';
+import { useSettingsStore } from '../lib/settings/store';
+import { dayOf, money, shortDay } from '../lib/frontoffice/stayWorksheet';
+import { getZonedClockParts } from '../lib/frontoffice/propertyTime';
+import { resolvePropertyTimezone } from '../lib/frontoffice/propertyTimeClient';
+import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
+import type { Reservation } from '../lib/frontoffice/types';
 
-function money(n: number) {
-  return `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+type Tonight = { label: string; color: 'success' | 'warning' | 'danger' | 'primary' | 'default' };
+
+function tonightPlan(stay: Reservation, businessDate: string): Tonight {
+  const arrival = dayOf(stay.arrival);
+  const departure = dayOf(stay.departure);
+  if (!stay.roomId || stay.roomId === 'TBD') return { label: 'No room', color: 'warning' };
+  if (departure < businessDate) return { label: 'Past departure', color: 'danger' };
+  if (businessDate < arrival || businessDate >= departure) return { label: 'Not tonight', color: 'default' };
+  if (resolveRateForDate(frontOfficeStore as any, stay, businessDate) <= 0) return { label: 'No rate', color: 'warning' };
+  const folio = findMainFolio(frontOfficeStore.folios, stay.id);
+  const posted = (folio?.charges || []).some(
+    (charge) => isPostedRoomCharge(charge) && dayOf(charge.date) === businessDate,
+  );
+  return posted ? { label: 'Posted', color: 'success' } : { label: 'Will post', color: 'primary' };
 }
 
 export default function FrontofficeNightAudit() {
   const [tick, setTick] = React.useState(0);
   const [lastRun, setLastRun] = React.useState<NightAuditRun | null>(null);
   const [running, setRunning] = React.useState(false);
-  // Only recordManualRun is used here — the run history itself now lives in
-  // Reports & Analysis (Financial & Auditing → Night Audit History), which
-  // reads from the same server log this writes to.
   const { refresh } = useNightAuditLog();
+  const canRun = useSettingsStore((s) => s.hasPermission('frontdesk.night-audit'));
 
-  // Starts null (matching SSR, which has no client-persisted state to read) and
-  // is only ever set from an effect, so the businessDate this component paints
-  // on its first render can never diverge from the server-rendered HTML —
-  // regardless of whether some unrelated store elsewhere has already loaded a
-  // persisted value into frontOfficeStore by the time this component hydrates.
   const [businessDate, setBusinessDate] = React.useState<string | null>(null);
   const [lastNightAuditAt, setLastNightAuditAt] = React.useState<string | undefined>(undefined);
 
@@ -51,20 +63,16 @@ export default function FrontofficeNightAudit() {
       setLastNightAuditAt(frontOfficeStore.lastNightAuditAt);
     };
     sync();
-    const u1 = frontOfficeStore.subscribe(() => { setTick((t) => t + 1); sync(); });
-    return () => {
-      u1();
-    };
+    const unsubscribe = frontOfficeStore.subscribe(() => { setTick((t) => t + 1); sync(); });
+    return () => { unsubscribe(); };
   }, []);
 
   void tick;
 
   const inHouse = frontOfficeStore.reservations.filter((r) => r.status === 'checked-in');
-  const expectedArrivals = businessDate
+  const noShowCandidates = businessDate
     ? frontOfficeStore.reservations.filter(
-        (r) =>
-          r.arrival.slice(0, 10) === businessDate &&
-          (r.status === 'confirmed' || r.status === 'pending'),
+        (r) => (r.status === 'confirmed' || r.status === 'pending') && dayOf(r.arrival) <= businessDate,
       )
     : [];
   const [serverRevenue, setServerRevenue] = React.useState<{
@@ -97,7 +105,9 @@ export default function FrontofficeNightAudit() {
             paymentsByMethod: ledger.paymentsByMethod || { cash: 0, card: 0, mobileMoney: 0, other: 0 },
           });
         }
-      } catch {}
+      } catch {
+        /* the on-screen totals fall back to the open folios */
+      }
     };
     void load();
     return () => { cancelled = true; };
@@ -106,6 +116,7 @@ export default function FrontofficeNightAudit() {
   const discrepancies = businessDate ? checkNightAuditDiscrepancies(frontOfficeStore as any, businessDate) : [];
   const clientRevenue = businessDate ? computeDailyRevenue(frontOfficeStore as any, businessDate) : null;
   const revenue = serverRevenue || clientRevenue;
+  const willPost = businessDate ? inHouse.filter((stay) => tonightPlan(stay, businessDate).label === 'Will post').length : 0;
 
   const [wakeUpReservationId, setWakeUpReservationId] = React.useState('');
   const [wakeUpTime, setWakeUpTime] = React.useState('06:00');
@@ -130,186 +141,218 @@ export default function FrontofficeNightAudit() {
     }
   };
 
+  const calendarDate = getZonedClockParts(new Date(), resolvePropertyTimezone()).date;
+  const behind = Boolean(businessDate && businessDate < calendarDate);
+  const dateLabel = businessDate ? shortDay(businessDate) : '…';
+  const closedDays = lastRun?.daysClosed?.filter(Boolean) ?? [];
+  const closedLabel = closedDays.length > 1
+    ? `${shortDay(closedDays[0])} to ${shortDay(closedDays[closedDays.length - 1])}`
+    : lastRun ? shortDay(lastRun.businessDate) : '';
+
   return (
-    <Card className="border-0 shadow-lg">
-      <CardHeader className="pb-2 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="max-w-2xl">
           <h3 className="text-lg font-semibold text-ghana-black">Night Audit</h3>
-          <p className="text-xs text-gray-500 mt-1">
-            Business date: <strong>{businessDate ?? '…'}</strong>
-            {lastNightAuditAt && (
-              <> · Last run: {new Date(lastNightAuditAt).toLocaleString()}</>
-            )}
-            {' '}· Auto-runs nightly at 1:00am
+          <p className="mt-1 text-sm text-gray-600">
+            Business date <strong className="text-ghana-black">{dateLabel}</strong>.
+            Closing it posts one room night for each guest still in house, marks arrivals who never checked in as no-show, then opens the next day.
+            {behind ? ' This date is behind the calendar, so one run closes each missed day and leaves today open.' : ''}
+          </p>
+          <p className="mt-1 text-xs text-gray-500">
+            {lastNightAuditAt ? `Last run ${new Date(lastNightAuditAt).toLocaleString()}. ` : ''}
+            Also runs by itself at 1:00 AM. History is under Reports &amp; Analysis.
           </p>
         </div>
         <Button
           className="bg-ghana-green text-white"
           variant="flat"
-          size="sm"
           isLoading={running}
+          isDisabled={!canRun || !businessDate}
           onPress={runAudit}
         >
-          Run Night Audit
+          {behind ? `Catch up to ${shortDay(calendarDate)}` : `Close ${dateLabel}`}
         </Button>
-      </CardHeader>
-      <CardBody className="space-y-6">
-        <div className="grid grid-cols-3 gap-3">
-          <div className="rounded-lg bg-blue-50 p-3 border border-blue-100">
-            <div className="text-xs text-blue-700">In-house</div>
-            <div className="text-xl font-bold text-blue-900">{inHouse.length}</div>
-          </div>
-          <div className="rounded-lg bg-amber-50 p-3 border border-amber-100">
-            <div className="text-xs text-amber-700">Expected arrivals (no-show candidates)</div>
-            <div className="text-xl font-bold text-amber-900">{expectedArrivals.length}</div>
-          </div>
-          <div className={`rounded-lg p-3 border ${discrepancies.length > 0 ? 'bg-red-50 border-red-100' : 'bg-gray-50 border-gray-200'}`}>
-            <div className={`text-xs ${discrepancies.length > 0 ? 'text-red-700' : 'text-gray-500'}`}>Discrepancies</div>
-            <div className={`text-xl font-bold ${discrepancies.length > 0 ? 'text-red-900' : 'text-gray-700'}`}>{discrepancies.length}</div>
-          </div>
-        </div>
+      </div>
 
-        {discrepancies.length > 0 && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4">
-            <h4 className="text-sm font-semibold text-red-800 mb-2">Rate &amp; discrepancy checks — fix before running</h4>
-            <ul className="text-sm text-red-800 space-y-1">
-              {discrepancies.map((d, i) => (
-                <li key={`${d.reservationId}-${i}`}>
-                  <span className="font-medium">{d.guestName}</span>
-                  {d.roomId && <span> — Room {d.roomId}</span>}: {d.message}
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        {([
+          ['In house', String(inHouse.length), 'text-blue-700'],
+          ['Will post tonight', String(willPost), 'text-purple-700'],
+          ['No-show if still out', String(noShowCandidates.length), 'text-orange-700'],
+          ['Needs a look', String(discrepancies.length), discrepancies.length > 0 ? 'text-red-700' : 'text-green-700'],
+        ] as const).map(([label, value, tone]) => (
+          <Card key={label} className="border border-gray-200 shadow-none">
+            <CardBody className="px-2 py-1.5 text-center">
+              <div className={`text-base font-semibold tabular-nums ${tone}`}>{value}</div>
+              <div className="text-xs leading-tight text-gray-500">{label}</div>
+            </CardBody>
+          </Card>
+        ))}
+      </div>
+
+      {discrepancies.length > 0 && (
+        <Card className="border border-red-200 bg-red-50 shadow-none">
+          <CardBody className="px-3 py-2">
+            <h4 className="text-sm font-semibold text-red-800">These stays will not get a room charge tonight</h4>
+            <ul className="mt-1 space-y-1 text-sm text-red-800">
+              {discrepancies.map((item, index) => (
+                <li key={`${item.reservationId}-${index}`}>
+                  <span className="font-medium">{item.guestName}</span>
+                  {item.roomId ? ` · Room ${item.roomId}` : ''}: {item.message}
                 </li>
               ))}
             </ul>
+          </CardBody>
+        </Card>
+      )}
+
+      {lastRun && (
+        <Card className="border border-gray-200 shadow-none">
+          <CardBody className="flex flex-wrap items-center gap-2 px-3 py-2">
+            <span className="text-sm font-semibold text-ghana-black">Closed {closedLabel}</span>
+            <Chip size="sm" color={lastRun.status === 'completed' ? 'success' : 'danger'} variant="flat">{lastRun.status}</Chip>
+            <Chip size="sm" variant="flat">{lastRun.roomChargesPosted} room charge{lastRun.roomChargesPosted === 1 ? '' : 's'}</Chip>
+            <Chip size="sm" variant="flat">{lastRun.noShowsProcessed} no-show{lastRun.noShowsProcessed === 1 ? '' : 's'}</Chip>
+            {closedDays.length <= 1 && (
+              <>
+                <Chip size="sm" variant="flat">Charges {money(lastRun.folioChargesTotal)}</Chip>
+                <Chip size="sm" variant="flat">Payments {money(lastRun.folioPaymentsTotal)}</Chip>
+              </>
+            )}
+            {lastRun.error && <p className="w-full text-xs text-red-600">{lastRun.error}</p>}
+          </CardBody>
+        </Card>
+      )}
+
+      <Card className="border-0 shadow-lg">
+        <CardBody className="px-3 py-3">
+          <h4 className="text-sm font-semibold text-ghana-black">Posted today · {dateLabel}</h4>
+          <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-2 sm:grid-cols-4">
+            {([
+              ['Room', revenue?.roomCharges],
+              ['Other', revenue?.otherCharges],
+              ['Tax', revenue?.taxTotal],
+              ['Charges', revenue?.totalCharges],
+              ['Cash', revenue?.paymentsByMethod.cash],
+              ['Card', revenue?.paymentsByMethod.card],
+              ['Mobile money', revenue?.paymentsByMethod.mobileMoney],
+              ['Payments', revenue?.totalPayments],
+            ] as const).map(([label, amount]) => (
+              <div key={label}>
+                <div className="text-xs text-gray-500">{label}</div>
+                <div className={`tabular-nums font-semibold ${label === 'Charges' || label === 'Payments' ? 'text-ghana-black' : 'text-gray-700'}`}>{money(amount ?? 0)}</div>
+              </div>
+            ))}
           </div>
-        )}
+        </CardBody>
+      </Card>
 
-        {lastRun && (
-          <div className="rounded-lg border border-gray-200 p-4 bg-gray-50">
-            <h4 className="text-sm font-semibold mb-2">Last run — closed {lastRun.businessDate}</h4>
-            <div className="flex flex-wrap gap-2 text-sm">
-              <Chip size="sm" color={lastRun.status === 'completed' ? 'success' : 'danger'} variant="flat">
-                {lastRun.status}
-              </Chip>
-              <Chip size="sm" variant="flat">{lastRun.roomChargesPosted} room charge(s)</Chip>
-              <Chip size="sm" variant="flat">{lastRun.noShowsProcessed} no-show(s)</Chip>
-              <Chip size="sm" variant="flat">Folio charges ₵{lastRun.folioChargesTotal.toLocaleString()}</Chip>
-              <Chip size="sm" variant="flat">Payments ₵{lastRun.folioPaymentsTotal.toLocaleString()}</Chip>
-            </div>
-            {lastRun.error && <p className="text-xs text-red-600 mt-2">{lastRun.error}</p>}
-          </div>
-        )}
-
-        <Divider />
-
-        <div>
-          <h4 className="text-sm font-semibold text-ghana-black mb-2">Daily Revenue — {businessDate ?? '…'}</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
-              <div className="text-xs text-gray-500">Room Charges</div>
-              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.roomCharges ?? 0)}</div>
-            </div>
-            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
-              <div className="text-xs text-gray-500">Other Charges</div>
-              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.otherCharges ?? 0)}</div>
-            </div>
-            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
-              <div className="text-xs text-gray-500">Tax</div>
-              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.taxTotal ?? 0)}</div>
-            </div>
-            <div className="rounded-lg bg-green-50 p-3 border border-green-100">
-              <div className="text-xs text-green-700">Total Charges</div>
-              <div className="text-lg font-semibold text-green-900">{money(revenue?.totalCharges ?? 0)}</div>
-            </div>
-            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
-              <div className="text-xs text-gray-500">Cash</div>
-              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.paymentsByMethod.cash ?? 0)}</div>
-            </div>
-            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
-              <div className="text-xs text-gray-500">Card</div>
-              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.paymentsByMethod.card ?? 0)}</div>
-            </div>
-            <div className="rounded-lg bg-gray-50 p-3 border border-gray-200">
-              <div className="text-xs text-gray-500">Mobile Money</div>
-              <div className="text-lg font-semibold text-ghana-black">{money(revenue?.paymentsByMethod.mobileMoney ?? 0)}</div>
-            </div>
-            <div className="rounded-lg bg-blue-50 p-3 border border-blue-100">
-              <div className="text-xs text-blue-700">Total Payments</div>
-              <div className="text-lg font-semibold text-blue-900">{money(revenue?.totalPayments ?? 0)}</div>
-            </div>
-          </div>
-        </div>
-
-        <Divider />
-
-        <div>
-          <h4 className="text-sm font-semibold text-ghana-black mb-2">Checked-in reservations</h4>
-          <Table aria-label="Checked-in">
+      <Card className="border-0 shadow-lg">
+        <CardBody className="px-2 py-3">
+          <h4 className="mb-2 px-1 text-sm font-semibold text-ghana-black">In house</h4>
+          <Table aria-label="In house for night audit" removeWrapper classNames={worksheetTableClassNames}>
             <TableHeader>
-              <TableColumn>Reservation</TableColumn>
+              <TableColumn className="w-[8.5rem]">ID</TableColumn>
               <TableColumn>Guest</TableColumn>
-              <TableColumn>Room type</TableColumn>
+              <TableColumn className="w-[4.5rem]">Room</TableColumn>
+              <TableColumn className="w-[6.5rem]">Check-out</TableColumn>
+              <TableColumn className="w-[8rem]">Tonight</TableColumn>
             </TableHeader>
-            <TableBody emptyContent="No in-house guests">
-              {inHouse.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell>{r.id}</TableCell>
-                  <TableCell>{r.guestName}</TableCell>
-                  <TableCell>{frontOfficeStore.roomTypes.find((rt) => rt.id === r.roomTypeId)?.name}</TableCell>
-                </TableRow>
-              ))}
+            <TableBody emptyContent="No guests are in house.">
+              {inHouse.map((stay) => {
+                const plan: Tonight = businessDate ? tonightPlan(stay, businessDate) : { label: '…', color: 'default' };
+                const room = stay.roomId && stay.roomId !== 'TBD' ? stay.roomId : '';
+                return (
+                  <TableRow key={stay.id}>
+                    <TableCell className="text-gray-600">{stay.resId || stay.id}</TableCell>
+                    <TableCell className="font-semibold text-ghana-black">{stay.guestName}</TableCell>
+                    <TableCell>
+                      {room ? <Chip size="sm" variant="flat" color="success">{room}</Chip> : <span className="text-gray-400">Unassigned</span>}
+                    </TableCell>
+                    <TableCell>{shortDay(stay.departure)}</TableCell>
+                    <TableCell><Chip size="sm" variant="flat" color={plan.color}>{plan.label}</Chip></TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
-        </div>
+        </CardBody>
+      </Card>
 
-        <Divider />
+      {noShowCandidates.length > 0 && (
+        <Card className="border-0 shadow-lg">
+          <CardBody className="px-2 py-3">
+            <h4 className="mb-1 px-1 text-sm font-semibold text-ghana-black">Still not checked in</h4>
+            <p className="mb-2 px-1 text-xs text-gray-500">Closing the day marks these arrivals as no-show. Check them in first if they are here.</p>
+            <Table aria-label="No-show candidates" removeWrapper classNames={worksheetTableClassNames}>
+              <TableHeader>
+                <TableColumn className="w-[8.5rem]">ID</TableColumn>
+                <TableColumn>Guest</TableColumn>
+                <TableColumn className="w-[6.5rem]">Arrival</TableColumn>
+                <TableColumn className="w-[7rem]">Status</TableColumn>
+              </TableHeader>
+              <TableBody>
+                {noShowCandidates.map((stay) => (
+                  <TableRow key={stay.id}>
+                    <TableCell className="text-gray-600">{stay.resId || stay.id}</TableCell>
+                    <TableCell className="font-semibold text-ghana-black">{stay.guestName}</TableCell>
+                    <TableCell>{shortDay(stay.arrival)}</TableCell>
+                    <TableCell><Chip size="sm" variant="flat" color="warning">{stay.status}</Chip></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </CardBody>
+        </Card>
+      )}
 
-        <div>
-          <h4 className="text-sm font-semibold text-ghana-black mb-2">Wake-up calls — {businessDate ?? '…'}</h4>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+      <Card className="border-0 shadow-lg">
+        <CardBody className="px-2 py-3">
+          <h4 className="mb-2 px-1 text-sm font-semibold text-ghana-black">Wake-up calls · {dateLabel}</h4>
+          <div className="mb-3 grid grid-cols-1 items-end gap-2 md:grid-cols-[minmax(0,1.4fr)_8rem_minmax(0,1fr)_auto]">
             <Select
-              label="Guest"
-              placeholder="Select in-house guest"
+              aria-label="Guest"
+              placeholder="In-house guest"
               selectedKeys={wakeUpReservationId ? [wakeUpReservationId] : []}
-              onSelectionChange={(k) => setWakeUpReservationId(Array.from(k as Set<string>)[0] || '')}
+              onSelectionChange={(keys) => setWakeUpReservationId(Array.from(keys as Set<string>)[0] || '')}
             >
-              {inHouse.map((r) => (
-                <SelectItem key={r.id}>{`${r.guestName} — Room ${r.roomId || 'TBD'}`}</SelectItem>
+              {inHouse.map((stay) => (
+                <SelectItem key={stay.id}>{`${stay.guestName}${stay.roomId && stay.roomId !== 'TBD' ? ` · ${stay.roomId}` : ''}`}</SelectItem>
               ))}
             </Select>
-            <Input type="time" label="Time" value={wakeUpTime} onChange={(e) => setWakeUpTime(e.target.value)} />
-            <Input label="Notes" placeholder="e.g. Early flight" value={wakeUpNotes} onChange={(e) => setWakeUpNotes(e.target.value)} />
-            <div className="flex items-end">
-              <Button className="bg-ghana-green text-white w-full" variant="flat" onPress={scheduleWakeUpCall} isDisabled={!wakeUpReservationId}>
-                Schedule
-              </Button>
-            </div>
+            <Input aria-label="Time" type="time" value={wakeUpTime} onChange={(event) => setWakeUpTime(event.target.value)} />
+            <Input aria-label="Notes" placeholder="Notes" value={wakeUpNotes} onChange={(event) => setWakeUpNotes(event.target.value)} />
+            <Button className="bg-ghana-green text-white" variant="flat" onPress={scheduleWakeUpCall} isDisabled={!wakeUpReservationId}>
+              Schedule
+            </Button>
           </div>
-          <Table aria-label="Wake-up calls">
+          <Table aria-label="Wake-up calls" removeWrapper classNames={worksheetTableClassNames}>
             <TableHeader>
               <TableColumn>Guest</TableColumn>
-              <TableColumn>Room</TableColumn>
-              <TableColumn>Time</TableColumn>
+              <TableColumn className="w-[4.5rem]">Room</TableColumn>
+              <TableColumn className="w-[5rem]">Time</TableColumn>
               <TableColumn>Notes</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              <TableColumn className="w-[7rem]">Status</TableColumn>
+              <TableColumn className="w-[9rem]"> </TableColumn>
             </TableHeader>
-            <TableBody emptyContent="No wake-up calls scheduled">
-              {todaysWakeUpCalls.map((c) => (
-                <TableRow key={c.id}>
-                  <TableCell>{c.guestName}</TableCell>
-                  <TableCell>{c.roomNumber}</TableCell>
-                  <TableCell>{c.time}</TableCell>
-                  <TableCell className="max-w-[160px] truncate">{c.notes || '—'}</TableCell>
+            <TableBody emptyContent="No wake-up calls for this date.">
+              {todaysWakeUpCalls.map((call) => (
+                <TableRow key={call.id}>
+                  <TableCell className="font-semibold text-ghana-black">{call.guestName}</TableCell>
+                  <TableCell>{call.roomNumber || '—'}</TableCell>
+                  <TableCell>{call.time}</TableCell>
+                  <TableCell className="truncate">{call.notes || '—'}</TableCell>
                   <TableCell>
-                    <Chip size="sm" variant="flat" color={c.status === 'completed' ? 'success' : c.status === 'cancelled' ? 'default' : 'warning'}>
-                      {c.status}
+                    <Chip size="sm" variant="flat" color={call.status === 'completed' ? 'success' : call.status === 'cancelled' ? 'default' : 'warning'}>
+                      {call.status}
                     </Chip>
                   </TableCell>
                   <TableCell>
-                    {c.status === 'scheduled' && (
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="flat" color="success" onPress={() => frontOfficeStore.completeWakeUpCall(c.id)}>Done</Button>
-                        <Button size="sm" variant="flat" onPress={() => frontOfficeStore.cancelWakeUpCall(c.id)}>Cancel</Button>
+                    {call.status === 'scheduled' && (
+                      <div className="flex gap-1">
+                        <Button size="sm" variant="flat" color="success" onPress={() => frontOfficeStore.completeWakeUpCall(call.id)}>Done</Button>
+                        <Button size="sm" variant="flat" onPress={() => frontOfficeStore.cancelWakeUpCall(call.id)}>Cancel</Button>
                       </div>
                     )}
                   </TableCell>
@@ -317,12 +360,8 @@ export default function FrontofficeNightAudit() {
               ))}
             </TableBody>
           </Table>
-        </div>
-
-        <p className="text-xs text-gray-500">
-          Running closes {businessDate ?? 'today'}: posts room charges, processes no-shows, then opens the next day. Full run history is in Reports &amp; Analysis → Financial &amp; Auditing → Night Audit History.
-        </p>
-      </CardBody>
-    </Card>
+        </CardBody>
+      </Card>
+    </div>
   );
 }

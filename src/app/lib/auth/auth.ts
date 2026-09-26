@@ -3,6 +3,9 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/app/lib/database/client'
 import { createAuditLog } from '@/app/lib/api/tenant'
+import { verifyTotp } from '@/app/lib/auth/totp'
+import { passwordExpired } from '@/app/lib/settings/passwordPolicy'
+import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 
 // Extend the built-in session types
 declare module 'next-auth' {
@@ -61,7 +64,8 @@ export const authOptions: NextAuthOptions = {
       credentials: {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
-        tenantId: { label: 'Tenant ID', type: 'text' }
+        tenantId: { label: 'Tenant ID', type: 'text' },
+        otp: { label: 'Authentication code', type: 'text' },
       },
       async authorize(credentials, req) {
         try {
@@ -83,6 +87,22 @@ export const authOptions: NextAuthOptions = {
 
           const passwordValid = await bcrypt.compare(credentials.password, user.password)
           if (!passwordValid) return null
+
+          const { policy } = await readTenantSecurity(tenant.id)
+          const prefs = (user.preferences && typeof user.preferences === 'object' ? user.preferences : {}) as Record<string, unknown>
+          if (passwordExpired(typeof prefs.passwordChangedAt === 'string' ? prefs.passwordChangedAt : undefined, policy.passwordPolicy.expiryDays)) {
+            return null
+          }
+          if (policy.twoFactorAuth) {
+            const secret = typeof prefs.twoFactorSecret === 'string' ? prefs.twoFactorSecret : ''
+            if (!secret || !verifyTotp(secret, String(credentials.otp || ''))) return null
+            if (prefs.twoFactorConfirmed !== true) {
+              await prisma.user.update({
+                where: { id: user.id },
+                data: { preferences: { ...prefs, twoFactorSecret: secret, twoFactorConfirmed: true } },
+              })
+            }
+          }
 
           await prisma.user.update({
             where: { id: user.id },

@@ -90,6 +90,18 @@ export const monthYearOf = (period: Pick<PayrollPeriod, 'periodNumber'>) => {
 export const approvedOvertimeFor = (employeeId: string, month: number, year: number) =>
   useLeaveAttendanceStore.getState().getApprovedOvertimeHours(employeeId, new Date(year, month - 1, 1), new Date(year, month, 0));
 
+/** Labour Act cap is 40 hours a week. A monthly salary with no hourly rate on file
+ * converts as basic × 12 / (40 × 52), so approved overtime still has a wage to multiply. */
+export const STANDARD_MONTHLY_HOURS = (40 * 52) / 12;
+
+export function impliedHourlyRate(basicSalary: number, statedHourly?: number) {
+  const stated = Number(statedHourly || 0);
+  if (stated > 0) return stated;
+  const basic = Number(basicSalary || 0);
+  if (basic <= 0) return 0;
+  return Math.round((basic / STANDARD_MONTHLY_HOURS) * 100) / 100;
+}
+
 interface CalcContext {
   builder: UniversalPayrollBuilder;
   runtimeId: string;
@@ -114,21 +126,30 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
 
   // Create or update employee profile for the run
   const eid = emp.id || emp.employeeNumber || `EMP-${Math.floor(Math.random() * 10000)}`;
-  if (!(builder as any).employeeProfiles.get(eid)) {
+  const basicForRate = Number((emp as any).basicSalary ?? (emp as any).salary ?? 0);
+  const hourly = impliedHourlyRate(basicForRate, (emp as any).hourlyRate);
+  const profiles = (builder as any).employeeProfiles as Map<string, any>;
+  if (!profiles.get(eid)) {
     builder.createEmployee({
       id: eid,
       employeeId: emp.employeeNumber || eid,
       firstName: emp.firstName, lastName: emp.lastName, email: emp.email,
-      employment: { type: emp.employmentType || 'full_time', department: emp.departmentId, position: emp.positionId, salary: Number((emp as any).basicSalary ?? (emp as any).salary ?? 0), currency: ((builder as any).payrollConfigs.get(runtimeId)?.currency || 'GHS'), hourlyRate: Number((emp as any).hourlyRate || 0) },
-      taxInfo: { filingStatus: (emp as any).taxWithholding?.filingStatus || 'single', allowances: Number((emp as any).taxWithholding?.allowances || 0) },
+      employment: { type: emp.employmentType || 'full_time', department: emp.departmentId, position: emp.positionId, salary: basicForRate, currency: ((builder as any).payrollConfigs.get(runtimeId)?.currency || 'GHS'), hourlyRate: hourly },
+      taxInfo: { filingStatus: (emp as any).taxWithholding?.filingStatus || 'single', allowances: Number((emp as any).taxWithholding?.allowances || 0), additionalWithholding: Number((emp as any).taxWithholding?.additionalWithholding || 0) },
     });
+  } else {
+    const existing = profiles.get(eid);
+    existing.employment.salary = basicForRate;
+    existing.employment.hourlyRate = hourly;
   }
 
-  // Inject allowances & benefits as earnings
+  // Pay comes from the staff file. Drop template placeholders (a flat transport line, a second
+  // basic) so they are not added on top of the recorded salary.
   const runtimeConfig = JSON.parse(JSON.stringify(baseCfg));
-  runtimeConfig.earnings = (runtimeConfig.earnings || []).filter((c: any) => !['ALLOWANCE', 'VEHICLE_BENEFIT', 'HOUSING_BENEFIT', 'OTHER_NON_CASH', 'BONUS'].includes(c.code));
+  runtimeConfig.earnings = (runtimeConfig.earnings || []).filter((c: any) => !['BASIC', 'ALLOWANCE', 'TRANSPORT', 'VEHICLE_BENEFIT', 'HOUSING_BENEFIT', 'OTHER_NON_CASH', 'BONUS'].includes(c.code));
   const allowances = Number(adj.allowances ?? (emp as any).allowances ?? 0);
-  if (allowances > 0) runtimeConfig.earnings.push({ name: 'Allowance', code: 'ALLOWANCE', calculationType: 'fixed', amount: allowances, taxable: false });
+  // A flat cash allowance is PAYE-taxable unless it reimburses a documented expense.
+  if (allowances > 0) runtimeConfig.earnings.push({ name: 'Allowance', code: 'ALLOWANCE', calculationType: 'fixed', amount: allowances, taxable: true });
   const vehicle = Number((emp as any).vehicleBenefit || 0);
   if (vehicle > 0) runtimeConfig.earnings.push({ name: 'Vehicle Benefit', code: 'VEHICLE_BENEFIT', calculationType: 'fixed', amount: vehicle, taxable: true });
   const housing = Number((emp as any).housingBenefit || 0);
@@ -178,10 +199,14 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
   const overtimePay = calc.earnings.items.find((i: any) => i.component?.code === 'OVERTIME')?.amount || 0;
   const bonusPaid = calc.earnings.items.find((i: any) => i.component?.code === 'BONUS')?.amount || 0;
   const ssnitEmployee = calc.taxes.items.filter((t: any) => t.type === 'social').reduce((s: number, t: any) => s + (t.amount || 0), 0);
+  const tier1Employer = tier1Rule ? (calc.taxes.items.find((t: any) => t.ruleId === tier1Rule.id)?.employerAmount || 0) : 0;
+  const tier2Employer = tier2Rule ? (calc.taxes.items.find((t: any) => t.ruleId === tier2Rule.id)?.employerAmount || 0) : 0;
 
   return {
     calc,
     employerContribution: calc.taxes.employer || 0,
+    tier1Employer,
+    tier2Employer,
     ssnitEmployee,
     deductionsSum,
     fields: {
@@ -216,6 +241,11 @@ function calculateStaff(ctx: CalcContext, emp: any, defaultOvertimeHours: number
   };
 }
 
+/** One employee's month, without saving. Shared by the payroll run and by corrections of a saved month. */
+export function calculateEmployeeMonth(ctx: CalcContext, emp: any, overtimeHours: number, adjustments: StaffAdjustments = {}) {
+  return calculateStaff(ctx, emp, overtimeHours, adjustments);
+}
+
 /** Processes payroll for every active employee for one month: calculates each person's pay,
  * saves the period and its records (awaiting approval) and files the PAYE/SSNIT hints. Nothing
  * is approved, paid or posted to the ledger here — approving a month posts it. */
@@ -245,7 +275,7 @@ export function runMonthlyPayroll(input: MonthlyRunInput): MonthlyRunResult {
   } as any);
 
   const ctx: CalcContext = { builder, runtimeId, month, year };
-  const totals = { gross: 0, net: 0, tax: 0, ssnit: 0, employerTax: 0, deductions: 0 };
+  const totals = { gross: 0, net: 0, tax: 0, ssnit: 0, employerTax: 0, tier1Employer: 0, tier2Employer: 0, deductions: 0 };
   activeEmployees.forEach((emp: any) => {
     const eid = emp.id || emp.employeeNumber;
     const r = calculateStaff(ctx, emp, Number(overtimeOverrides?.[eid] ?? approvedOvertimeFor(eid, month, year)));
@@ -254,6 +284,8 @@ export function runMonthlyPayroll(input: MonthlyRunInput): MonthlyRunResult {
     totals.tax += r.calc.taxes.employee;
     totals.ssnit += r.ssnitEmployee;
     totals.employerTax += r.employerContribution;
+    totals.tier1Employer += r.tier1Employer;
+    totals.tier2Employer += r.tier2Employer;
     totals.deductions += r.deductionsSum;
     createPayrollRecord({
       payrollPeriodId: period.id,
@@ -274,14 +306,18 @@ export function runMonthlyPayroll(input: MonthlyRunInput): MonthlyRunResult {
     processedBy: userName,
     // The employer's share of the contributions isn't on any employee record, so keep it with the
     // month: the ledger entry built at approval needs it.
-    notes: JSON.stringify({ employerContribution: Math.round(totals.employerTax * 100) / 100 }),
+    notes: JSON.stringify({
+      employerContribution: Math.round(totals.employerTax * 100) / 100,
+      tier1Employer: Math.round(totals.tier1Employer * 100) / 100,
+      tier2Employer: Math.round(totals.tier2Employer * 100) / 100,
+    }),
   } as any);
 
   syncPayrollRunToComplianceFiling({
     countryCode: complianceCountry,
     period: `${year}-${String(month).padStart(2, '0')}`,
     payeTotal: totals.tax,
-    ssnitTotal: totals.ssnit,
+    ssnitTotal: Math.round((totals.ssnit + totals.tier1Employer) * 100) / 100,
     employeeCount: activeEmployees.length,
   });
 
@@ -324,35 +360,60 @@ export function recalculateStaffLine(input: EditLineInput): EditLineResult {
   const records = usePayrollStore.getState().payrollRecords.filter((x) => x.payrollPeriodId === period.id);
   const sum = (pick: (x: PayrollRecord) => number) => records.reduce((s, x) => s + pick(x), 0);
   const tax = sum((x) => x.deductions.tax);
-  const ssnit = sum((x) => x.deductions.socialSecurity);
+  const ssnitEmployee = sum((x) => x.deductions.socialSecurity);
+  const split = readEmployerSplit(period);
   updatePayrollPeriod(period.id, {
     totalGrossPay: sum((x) => x.grossPay),
     totalNetPay: sum((x) => x.netPay),
     totalTaxes: tax,
     totalDeductions: sum((x) => x.deductions.socialSecurity + x.deductions.pension + (x.deductions.tier3 || 0) + x.deductions.healthInsurance + x.deductions.other),
   } as any);
-  syncPayrollRunToComplianceFiling({ countryCode: complianceCountry, period: `${my.year}-${String(my.month).padStart(2, '0')}`, payeTotal: tax, ssnitTotal: ssnit, employeeCount: records.length });
+  syncPayrollRunToComplianceFiling({
+    countryCode: complianceCountry,
+    period: `${my.year}-${String(my.month).padStart(2, '0')}`,
+    payeTotal: tax,
+    ssnitTotal: Math.round((ssnitEmployee + split.tier1) * 100) / 100,
+    employeeCount: records.length,
+  });
   return { ok: true, before: record.netPay, after: r.fields.netPay };
 }
 
-/** The ledger entry for an approved month, built from its final figures. Salary expense and the
- * employer's statutory cost are debited; PAYE, SSNIT and the accrued net pay owed to staff are
- * credited. The accrued amount is a residual (gross − PAYE − employee SSNIT) so the entry
- * balances exactly even if some employee has other deductions not itemised here.
+function readEmployerSplit(period: Pick<PayrollPeriod, 'notes'>) {
+  const empty = { total: 0, tier1: 0, tier2: 0 };
+  try {
+    const n = period.notes ? JSON.parse(period.notes) : {};
+    const total = typeof n.employerContribution === 'number' ? n.employerContribution : 0;
+    if (typeof n.tier1Employer === 'number' || typeof n.tier2Employer === 'number') {
+      return { total, tier1: Number(n.tier1Employer || 0), tier2: Number(n.tier2Employer || 0) };
+    }
+    // Older runs stored one employer figure. It was posted entirely to Tier 1.
+    return { total, tier1: total, tier2: 0 };
+  } catch {
+    return empty;
+  }
+}
+
+/** The ledger entry for an approved month. Salary expense and the employer's statutory cost
+ * are debited. PAYE, Tier 1, Tier 2, Tier 3, other withholdings, and the actual net pay are
+ * credited separately so the amount owed to staff matches the payslips.
  * Returns undefined for a month with nothing to post. */
 export function buildPayrollJournal(period: PayrollPeriod, records: PayrollRecord[]): JournalEntry | undefined {
   const round2 = (n: number) => Math.round(n * 100) / 100;
-  const gross = records.reduce((s, r) => s + r.grossPay, 0);
-  if (gross <= 0) return undefined;
-  const paye = records.reduce((s, r) => s + r.deductions.tax, 0);
-  const ssnitEmployee = records.reduce((s, r) => s + r.deductions.socialSecurity, 0);
-  const employer = round2(readEmployerContribution(period) ?? 0);
-  const grossExpense = round2(gross);
-  const payeAmount = round2(paye);
-  const ssnitPayable = round2(ssnitEmployee + employer);
-  const accruedNetPay = round2(gross - paye - ssnitEmployee);
+  const sum = (pick: (r: PayrollRecord) => number) => records.reduce((s, r) => s + (pick(r) || 0), 0);
+  const grossExpense = round2(sum((r) => r.grossPay));
+  if (grossExpense <= 0) return undefined;
+  const payeAmount = round2(sum((r) => r.deductions.tax));
+  const tier1Employee = round2(sum((r) => r.deductions.socialSecurity));
+  const tier2Employee = round2(sum((r) => r.deductions.pension));
+  const tier3Amount = round2(sum((r) => r.deductions.tier3 || 0));
+  const otherAmount = round2(sum((r) => r.deductions.other + (r.deductions.healthInsurance || 0)));
+  const accruedNetPay = round2(sum((r) => r.netPay));
+  const split = readEmployerSplit(period);
+  const employer = round2(split.total);
+  const tier1Payable = round2(tier1Employee + split.tier1);
+  const tier2Payable = round2(tier2Employee + split.tier2);
   const totalDebit = round2(grossExpense + employer);
-  const totalCredit = round2(payeAmount + ssnitPayable + accruedNetPay);
+  const totalCredit = round2(payeAmount + tier1Payable + tier2Payable + tier3Amount + otherAmount + accruedNetPay);
 
   const now = new Date().toISOString();
   const entryId = `JE-PAYROLL-${period.id}`;
@@ -375,11 +436,14 @@ export function buildPayrollJournal(period: PayrollPeriod, records: PayrollRecor
     sourceModule: 'payroll',
     sourceTransactionId: period.id,
     lines: [
-      line('salaries', '5210', `Gross pay — ${ref}`, grossExpense, 0), // Salaries and Wages
-      ...(employer > 0 ? [line('employercost', '5220', `Employer statutory contributions — ${ref}`, employer, 0)] : []), // Employee Benefits
-      ...(payeAmount > 0 ? [line('paye', '2210', `PAYE withheld — ${ref}`, 0, payeAmount)] : []), // PAYE Payable
-      ...(ssnitPayable > 0 ? [line('ssnit', '2220', `SSNIT due (employee + employer) — ${ref}`, 0, ssnitPayable)] : []), // SSNIT & Tier-1 Contributions Payable
-      line('accrued', '2300', `Net pay accrued — ${ref}`, 0, accruedNetPay), // Accrued Expenses (net pay owed to employees)
+      line('salaries', '5210', `Gross pay — ${ref}`, grossExpense, 0),
+      ...(employer > 0 ? [line('employercost', '5221', `Employer statutory contributions — ${ref}`, employer, 0)] : []),
+      ...(payeAmount > 0 ? [line('paye', '2210', `PAYE withheld — ${ref}`, 0, payeAmount)] : []),
+      ...(tier1Payable > 0 ? [line('tier1', '2220', `Tier 1 due (employee + employer) — ${ref}`, 0, tier1Payable)] : []),
+      ...(tier2Payable > 0 ? [line('tier2', '2225', `Tier 2 occupational pension — ${ref}`, 0, tier2Payable)] : []),
+      ...(tier3Amount > 0 ? [line('tier3', '2221', `Tier 3 provident fund — ${ref}`, 0, tier3Amount)] : []),
+      ...(otherAmount > 0 ? [line('other', '2230', `Other staff deductions — ${ref}`, 0, otherAmount)] : []),
+      line('accrued', '2300', `Net pay accrued — ${ref}`, 0, accruedNetPay),
     ],
   };
 }

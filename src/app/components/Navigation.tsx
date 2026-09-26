@@ -6,6 +6,7 @@ import { Button, Accordion, AccordionItem, Badge, Avatar } from "@heroui/react";
 import { useSession } from 'next-auth/react';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useSettingsStore } from '../lib/settings/store';
+import { moduleEnabled, reportsEnabled } from '../lib/settings/moduleAccess';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'System Administrator',
@@ -33,18 +34,13 @@ const ActivityLog = lazy(() => import('./ActivityLog'));
 const SystemSettingsMainDashboard = lazy(() => import('./SystemSettingsMainDashboard'));
 const AutoComplianceMainDashboard = lazy(() => import('./AutoComplianceMainDashboard'));
 const AccountingMainDashboard = lazy(() => import('./AccountingMainDashboard'));
-const FrontofficeRoomsBookings = lazy(() => import('./FrontofficeRoomsBookings'));
-const FrontofficeClientsServices = lazy(() => import('./FrontofficeClientsServices'));
 const FrontofficeEventsConferences = lazy(() => import('./FrontofficeEventsConferences'));
 const EventsConferencesMainDashboard = lazy(() => import('./EventsConferencesMainDashboard'));
 const HRMainDashboard = lazy(() => import('./HRMainDashboard'));
 const SecurityMainDashboard = lazy(() => import('./SecurityMainDashboard'));
 const StoresMainDashboard = lazy(() => import('./StoresMainDashboard'));
 const FoodBeverageMainDashboard = lazy(() => import('./FoodBeverageMainDashboard'));
-const FoodBeverageRestaurantBar = lazy(() => import('./FoodBeverageRestaurantBar'));
 const FoodBeverageKitchen = lazy(() => import('./FoodBeverageKitchen'));
-const FoodBeverageMenuInventory = lazy(() => import('./FoodBeverageMenuInventory'));
-const FoodBeverageStaffReports = lazy(() => import('./FoodBeverageStaffReports'));
 const DepartmentActivityLog = lazy(() => import('./DepartmentActivityLog').then(module => ({ default: module.default })));
 const FrontOfficeReportsAnalysis = lazy(() => import('./FrontOfficeReportsAnalysis'));
 
@@ -124,6 +120,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
   // or the editable role/permission list changes.
   useSettingsStore(s => s.sessionRoleId);
   useSettingsStore(s => s.roles);
+  const moduleSettings = useSettingsStore(s => s.moduleSettings);
   const hasModuleAccess = useSettingsStore.getState().hasModuleAccess;
   const hasPermission = useSettingsStore.getState().hasPermission;
   // The Approvals inbox (pending journal entries/payments/high-value
@@ -230,7 +227,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
       key: 'frontdesk',
       title: `🏨 Front Office Operations${getUnreadCount('frontdesk') ? ` (${getUnreadCount('frontdesk')})` : ''}`,
       icon: '🏨',
-      items: []
+      items: [
+        { title: '📈 Reports & Analysis', href: '#' },
+      ]
     },
     {
       key: 'events-conferences',
@@ -245,7 +244,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: '🍽️ Restaurant & Bar',
       icon: '🍽️',
       items: [
-        { title: '📈 Reports & Analysis', href: '/fb/reports' },
+        { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
     {
@@ -262,8 +261,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
       title: `🛏️ Housekeeping & Maintenance${getUnreadCount('housekeeping') ? ` (${getUnreadCount('housekeeping')})` : ''}`,
       icon: '🛏️',
       items: [
-        { title: '🏠 Main Dashboard', href: '/housekeeping' },
-        { title: '📈 Reports & Analysis', href: '/housekeeping/reports' },
+        { title: '🏠 Main Dashboard', href: '#' },
+        { title: '📈 Reports & Analysis', href: '#' },
         { title: '👁️ View Activities', href: '#' },
       ]
     },
@@ -292,7 +291,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       icon: '👥',
       items: [
         { title: '🏠 Main Dashboard', href: '#' },
-        { title: '📈 Reports & Analysis', href: '/hr/reports' },
+        { title: '📈 Reports & Analysis', href: '#' },
       ]
     },
     {
@@ -318,18 +317,23 @@ export default function Navigation({ onLogout }: NavigationProps) {
     }
   ];
 
-  const visibleNavigationSections = navigationSections.filter(section => hasModuleAccess(section.key));
+  const visibleNavigationSections = navigationSections
+    .filter(section => hasModuleAccess(section.key) && moduleEnabled(section.key, moduleSettings))
+    .map(section => reportsEnabled(moduleSettings)
+      ? section
+      : { ...section, items: section.items.filter(item => !item.title.includes('Reports')) });
 
   // If the current role loses access to whatever section is active (role changed, or a
   // stale deep link from a previous, more-privileged session), fall back to the dashboard
   // instead of silently continuing to render restricted content.
   React.useEffect(() => {
     const activeModuleKey = sectionToModuleKey(activeSection);
-    if (activeModuleKey !== 'dashboard' && !hasModuleAccess(activeModuleKey)) {
+    const allowed = hasModuleAccess(activeModuleKey) && moduleEnabled(activeModuleKey, moduleSettings);
+    if (activeModuleKey !== 'dashboard' && !allowed) {
       setActiveSection('dashboard');
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSection, hasModuleAccess]);
+  }, [activeSection, hasModuleAccess, moduleSettings]);
 
   const handleSelectionChange = (keys: any) => {
     // Handle both Set<string> and Selection types
@@ -377,8 +381,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
     // Handle Restaurant & Bar sub-items
     } else if (sectionKey === 'restaurant' && itemTitle) {
       if (itemTitle === '📈 Reports & Analysis') {
-        window.location.assign('/fb/reports');
-        return;
+        try { localStorage.setItem('fb.tab', 'reports'); } catch {}
+        setActiveSection('restaurant');
+        try { window.dispatchEvent(new Event('fb-navigate')); } catch {}
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('fb-preferences');
       } else {
@@ -400,7 +405,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
       if (itemTitle === '📊 Operations') {
         setActiveSection('housekeeping');
       } else if (itemTitle === '📈 Reports & Analysis') {
-        window.location.assign('/housekeeping/reports');
+        try { localStorage.setItem('hk.tab', 'reports'); } catch {}
+        setActiveSection('housekeeping');
+        try { window.dispatchEvent(new Event('hk-navigate')); } catch {}
         return;
       } else if (itemTitle === '👁️ View Activities') {
         setActiveSection('housekeeping-activities');
@@ -440,7 +447,9 @@ export default function Navigation({ onLogout }: NavigationProps) {
       if (itemTitle === '📊 Operations' || itemTitle === '🏠 Main Dashboard') {
         setActiveSection('hr');
       } else if (itemTitle === '📈 Reports & Analysis') {
-        window.location.assign('/hr/reports');
+        try { localStorage.setItem('hr.tab', 'reports'); } catch {}
+        setActiveSection('hr');
+        try { window.dispatchEvent(new Event('hr-navigate')); } catch {}
         return;
       } else if (itemTitle === '⚙️ User Preferences') {
         setActiveSection('hr-preferences');
@@ -467,8 +476,10 @@ export default function Navigation({ onLogout }: NavigationProps) {
         setActiveSection('accounting-management');
       }
     } else if (sectionKey === 'housekeeping' && itemTitle) {
-      if (itemTitle === 'Analytics Dashboard') {
-        window.location.assign('/housekeeping/reports');
+      if (itemTitle === 'Analytics Dashboard' || itemTitle === '📈 Reports & Analysis') {
+        try { localStorage.setItem('hk.tab', 'reports'); } catch {}
+        setActiveSection('housekeeping');
+        try { window.dispatchEvent(new Event('hk-navigate')); } catch {}
         return;
       } else if (itemTitle === 'View Activities') {
         setActiveSection('housekeeping-activities');
@@ -483,6 +494,14 @@ export default function Navigation({ onLogout }: NavigationProps) {
         setActiveSection('inventory-activities');
       } else {
         setActiveSection('inventory');
+      }
+    } else if (sectionKey === 'frontdesk' && itemTitle) {
+      if (itemTitle === '📈 Reports & Analysis') {
+        try { localStorage.setItem('fo.tab', 'reports'); } catch {}
+        setActiveSection('frontdesk');
+        try { window.dispatchEvent(new Event('fo-navigate')); } catch {}
+      } else {
+        setActiveSection('frontdesk');
       }
     } else if (sectionKey === 'settings' && itemTitle) {
       if (itemTitle === 'System Setup Wizard') {
@@ -506,18 +525,11 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'frontdesk-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Front Desk Activities...</div>}><DepartmentActivityLog area="frontdesk" title="Front Office - View Activities" /></Suspense>;
       case 'rooms-bookings':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Rooms & Bookings...</div>}><FrontofficeRoomsBookings /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Rooms...</div>}><FrontdeskDashboard initialTab="rooms" /></Suspense>;
       case 'invoices-payments':
-        return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
-          <div className="p-6 text-center">
-            <p>Redirecting to Invoices & Payments...</p>
-            <Button color="primary" onPress={() => window.location.href = '/guest-services/check-ins?tab=billing'}>
-              Go to Invoices & Payments
-            </Button>
-          </div>
-        </Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Invoices & Payments...</div>}><FrontdeskDashboard initialTab="billing" /></Suspense>;
       case 'clients-services':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Clients & Services...</div>}><FrontofficeClientsServices /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Clients...</div>}><FrontdeskDashboard initialTab="clients" /></Suspense>;
       case 'events-conferences':
         return <Suspense fallback={<div className="p-6 text-center">Loading Events & Conferences...</div>}><EventsConferencesMainDashboard /></Suspense>;
       case 'events-conferences-standalone':
@@ -529,23 +541,8 @@ export default function Navigation({ onLogout }: NavigationProps) {
         return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
 
       case 'check-ins':
-        return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
-          <div className="p-6 text-center">
-            <p>Redirecting to Check-ins & Check-Ins Management...</p>
-            <Button color="primary" onPress={() => window.location.href = '/guest-services/check-ins?tab=checkins'}>
-              Go to Check-Ins Management
-            </Button>
-          </div>
-        </Suspense>;
       case 'check-outs':
-        return <Suspense fallback={<div className="p-6 text-center">Redirecting...</div>}>
-          <div className="p-6 text-center">
-            <p>Redirecting to Check-outs...</p>
-            <Button color="primary" onPress={() => window.location.href = '/guest-services/check-ins?tab=checkouts'}>
-              Go to Check-outs
-            </Button>
-          </div>
-        </Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading the desk...</div>}><FrontdeskDashboard initialTab="desk" /></Suspense>;
       // 'food-beverage' alias handled in the F&B section below
       case 'accounting-management':
         return <Suspense fallback={<div className="p-6 text-center">Loading Accounting Dashboard...</div>}><AccountingMainDashboard /></Suspense>;
@@ -558,10 +555,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'housekeeping':
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Dashboard...</div>}><HousekeepingMainDashboard /></Suspense>;
       case 'housekeeping-analytics':
-        if (typeof window !== 'undefined') {
-          window.location.replace('/housekeeping/reports');
-        }
-        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Dashboard...</div>}><HousekeepingMainDashboard initialTab="reports" /></Suspense>;
       case 'housekeeping-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading Housekeeping Activities...</div>}><DepartmentActivityLog area="housekeeping" title="Housekeeping - View Activities" /></Suspense>;
       // ── Restaurant & Bar (front-of-house: POS, tables, menu, bar) ───────────
@@ -578,16 +572,13 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'pos': // alias
         return <Suspense fallback={<div className="p-6 text-center">Loading POS Terminal...</div>}><FBPOS onClose={() => setActiveSection('restaurant')} /></Suspense>;
       case 'fb-restaurant-bar':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar...</div>}><FoodBeverageRestaurantBar /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar...</div>}><FoodBeverageMainDashboard initialTab="tables" /></Suspense>;
       case 'fb-menu-inventory':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Menu & Inventory...</div>}><FoodBeverageMenuInventory /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Menu & Inventory...</div>}><FoodBeverageMainDashboard initialTab="menu" /></Suspense>;
       case 'fb-staff-reports':
-        return <Suspense fallback={<div className="p-6 text-center">Loading Staff Reports...</div>}><FoodBeverageStaffReports /></Suspense>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Restaurant & Bar...</div>}><FoodBeverageMainDashboard initialTab="tables" /></Suspense>;
       case 'fb-analytics':
-        if (typeof window !== 'undefined') {
-          window.location.replace('/fb/reports');
-        }
-        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading Reports & Analysis...</div>}><FoodBeverageMainDashboard initialTab="reports" /></Suspense>;
       // ── Kitchen (ticket fulfillment) — its own top-level dashboard, no longer
       // nested inside Restaurant & Bar's tabs. Embeds the live KDS as its first tab.
       case 'fb-kitchen':
@@ -605,10 +596,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       case 'hr':
         return <Suspense fallback={<div className="p-6 text-center">Loading HR Dashboard...</div>}><HRMainDashboard /></Suspense>;
       case 'hr-analytics':
-        if (typeof window !== 'undefined') {
-          window.location.replace('/hr/reports');
-        }
-        return <div className="p-6 text-center">Opening Reports & Analysis...</div>;
+        return <Suspense fallback={<div className="p-6 text-center">Loading HR Dashboard...</div>}><HRMainDashboard initialTab="reports" /></Suspense>;
       case 'hr-activities':
         return <Suspense fallback={<div className="p-6 text-center">Loading HR Activities...</div>}><DepartmentActivityLog area="hr" title="HR & Payroll - View Activities" /></Suspense>;
       case 'accounting':

@@ -20,6 +20,19 @@ function hkHeaders(): HeadersInit {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
 }
 
+function taskDetailsPayload(task: HousekeepingTask) {
+  return {
+    roomTypeId: task.roomTypeId,
+    estimatedMinutes: task.estimatedMinutes,
+    checklist: task.checklist,
+    completedItems: task.completedItems,
+    actualMinutes: task.actualMinutes,
+    issues: task.issues,
+    suppliesUsed: task.suppliesUsed || [],
+    suppliesIssued: !!task.suppliesIssued,
+  };
+}
+
 interface RoomStatusData {
   roomNumber: string;
   roomTypeId: string;
@@ -128,7 +141,9 @@ class HousekeepingStore {
             priority: t.priority,
             status: t.status,
             assignedTo: t.assignedTo || undefined,
+            assignedName: t.assignedName || undefined,
             assignedAt: details.assignedAt || undefined,
+            createdAt: t.createdAt || undefined,
             startedAt: t.startedAt || undefined,
             completedAt: t.completedAt || undefined,
             verifiedAt: details.verifiedAt || undefined,
@@ -139,6 +154,8 @@ class HousekeepingStore {
             completedItems: details.completedItems || [],
             issues: details.issues || [],
             photos: details.photos || [],
+            suppliesUsed: details.suppliesUsed || [],
+            suppliesIssued: !!details.suppliesIssued,
           };
         });
       }
@@ -180,7 +197,22 @@ class HousekeepingStore {
 
       if (statusRes.ok) {
         const data = await statusRes.json();
-        const logs = (data.logs || []) as Array<{ roomNumber: string; toStatus: string; createdAt: string }>;
+        const logs = (data.logs || []) as Array<{
+          roomNumber: string;
+          fromStatus?: string;
+          toStatus: string;
+          changedBy?: string;
+          reason?: string;
+          createdAt: string;
+        }>;
+        this.statusHistory = logs.map((log) => ({
+          roomNumber: log.roomNumber,
+          status: log.toStatus as RoomStatus,
+          timestamp: log.createdAt,
+          changedBy: log.changedBy || '—',
+          reason: log.reason,
+          previousStatus: (log.fromStatus || 'vacant') as RoomStatus,
+        }));
         // logs are ordered desc by createdAt — first occurrence per room is the latest.
         const latestByRoom = new Map<string, string>();
         for (const log of logs) {
@@ -295,6 +327,10 @@ class HousekeepingStore {
     return Array.from(this.rooms.values());
   }
 
+  getStatusHistory(): RoomStatusHistory[] {
+    return [...this.statusHistory];
+  }
+
   getRoomsByStatus(status: RoomStatus): RoomStatusData[] {
     return Array.from(this.rooms.values()).filter(room => room.status === status);
   }
@@ -362,7 +398,7 @@ class HousekeepingStore {
         status: task.status,
         priority: task.priority,
         notes: task.notes,
-        details: { roomTypeId: task.roomTypeId, estimatedMinutes: task.estimatedMinutes, checklist: task.checklist },
+        details: taskDetailsPayload(task),
       }),
     }).catch((e) => console.warn('HK: Failed to sync new task:', e));
 
@@ -393,11 +429,20 @@ class HousekeepingStore {
     }).catch((e) => console.warn('HK: Failed to sync task assignment:', e));
   }
 
-  updateTaskStatus(taskId: string, status: TaskStatus, completedItems?: string[]) {
+  updateTaskStatus(
+    taskId: string,
+    status: TaskStatus,
+    completedItems?: string[],
+    suppliesUsed?: HousekeepingTask['suppliesUsed'],
+  ) {
     const task = this.tasks.find(t => t.id === taskId);
     if (!task) return;
 
     task.status = status;
+    if (suppliesUsed) {
+      task.suppliesUsed = suppliesUsed;
+      task.suppliesIssued = true;
+    }
     
     if (status === 'in-progress' && !task.startedAt) {
       task.startedAt = new Date().toISOString();
@@ -420,7 +465,7 @@ class HousekeepingStore {
       headers: hkHeaders(),
       body: JSON.stringify({
         status,
-        details: { roomTypeId: task.roomTypeId, estimatedMinutes: task.estimatedMinutes, checklist: task.checklist, completedItems: task.completedItems, actualMinutes: task.actualMinutes },
+        details: taskDetailsPayload(task),
       }),
     }).catch((e) => console.warn('HK: Failed to sync task status:', e));
   }
@@ -661,7 +706,7 @@ class HousekeepingStore {
         assignedTo: task.assignedTo,
         notes: task.notes,
         priority: task.priority,
-        details: { roomTypeId: task.roomTypeId, estimatedMinutes: task.estimatedMinutes, checklist: task.checklist, completedItems: task.completedItems, actualMinutes: task.actualMinutes, issues: task.issues },
+        details: taskDetailsPayload(task),
       }),
     }).catch((e) => console.warn('HK: Failed to sync task update:', e));
   }

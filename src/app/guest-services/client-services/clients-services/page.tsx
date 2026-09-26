@@ -3,9 +3,11 @@
 import React, { useEffect, useMemo, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import PageLayout from '../../../components/PageLayout';
+import HeadingInfo from '../../../components/HeadingInfo';
 import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
 import { Card, CardBody, Button, Input, Select, SelectItem, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Avatar, Badge, Chip, Switch, Tooltip, Pagination } from '@heroui/react';
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Textarea, useDisclosure, Tabs, Tab } from '@heroui/react';
+import { worksheetTableClassNames } from '../../../components/frontoffice/StayWorksheetTable';
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
 import { COUNTRIES, countryCodeToNationalityAdjective } from '../../../lib/countries';
@@ -13,7 +15,7 @@ import { Autocomplete, AutocompleteItem } from '@heroui/react';
 import { GuestProfile, Reservation, Nationality } from '../../../lib/frontoffice/types';
 import { isCorporateGuest } from '../../../lib/frontoffice/helpers/guests';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
-import { PencilSquareIcon, TrashIcon, AdjustmentsHorizontalIcon, InformationCircleIcon, EyeIcon, EnvelopeIcon } from '@heroicons/react/24/outline';
+import { InformationCircleIcon } from '@heroicons/react/24/outline';
 
 interface ClientRow {
 	id: string;
@@ -97,7 +99,7 @@ interface ReservationHistory {
 	notes?: string;
 }
 
-function ClientsServicesContent() {
+export function ClientsServicesContent({ embedded = false }: { embedded?: boolean }) {
 	const [rows, setRows] = useState<ClientRow[]>([]);
 	const [searchTerm, setSearchTerm] = useState('');
 	const [typeFilter, setTypeFilter] = useState<'all' | 'individual' | 'corporate'>('all');
@@ -148,18 +150,18 @@ function ClientsServicesContent() {
         index: 40, id: 90, name: 200, email: 150, phone: 110, secondaryPhone: 110, 
         gender: 70, nationality: 90, dob: 90, company: 150, jobTitle: 120, 
         industry: 120, contactPerson: 140, address: 160, city: 90, 
-        type: 70, reservations: 90, services: 80, dateJoined: 100, actions: 110 
+        type: 110, reservations: 90, services: 80, dateJoined: 100
     };
     const [colWidths, setColWidths] = useState<Record<string, number>>(defaultColWidths);
     const columnsOrder: Array<keyof typeof colWidths> = [
         'index','id','name','email','phone','secondaryPhone','gender','nationality','dob',
         'company','jobTitle','industry','contactPerson','address','city',
-        'type','reservations','services','dateJoined','actions'
+        'type','reservations','services','dateJoined'
     ];
     
     // Define which columns are visible by default
     const defaultVisibleColumns: Array<keyof typeof colWidths> = [
-        'index', 'id', 'name', 'email', 'phone', 'type', 'actions'
+        'index', 'id', 'name', 'email', 'phone', 'type'
     ];
     
     // Get visible columns based on showAllColumns state
@@ -991,7 +993,7 @@ function ClientsServicesContent() {
 	// Debug logging
 	// Debug logging removed for production
     const HeaderCell = ({ colKey, title }: { colKey: string; title: string }) => {
-        const isSortable = !['index', 'actions'].includes(colKey);
+        const isSortable = colKey !== 'index';
         const isActive = sortState.column === colKey;
         
         return (
@@ -1011,19 +1013,7 @@ function ClientsServicesContent() {
                         }
                     }}
                 >
-                    <span className="mr-1 text-xs font-medium">{title}</span>
-                    {isSortable && (
-                        <span className={`text-xs transition-colors ${
-                            isActive 
-                                ? 'text-blue-600 font-bold' 
-                                : 'text-gray-400 hover:text-gray-600'
-                        }`}>
-                            {isActive 
-                                ? (sortState.direction === 'asc' ? '▲' : '▼') 
-                                : '↕'
-                            }
-                        </span>
-                    )}
+                    <span className="font-semibold text-ghana-black">{title}{isActive ? (sortState.direction === 'asc' ? ' ↑' : ' ↓') : ''}</span>
                 </div>
             </div>
         );
@@ -1034,17 +1024,21 @@ function ClientsServicesContent() {
         minWidth: colWidths[key]
     });
 
-	return (
-		<PageLayout>
-			<div className="py-8 px-6">
-				<div className="max-w-[1800px] mx-auto">
-					<div className="mb-8 flex items-center justify-between">
+	const content = (
+		<>
+			<div className={embedded ? '' : 'py-8 px-6'}>
+				<div className={embedded ? '' : 'max-w-[1800px] mx-auto'}>
+					<div className={`${embedded ? 'mb-4' : 'mb-8'} flex items-center justify-between`}>
+						{!embedded && (
 						<div>
 							<FrontOfficeBackButton />
-							<h1 className="text-3xl font-bold text-gray-900">👥 Clients & Services</h1>
-							<p className="text-gray-600">Manage clients, corporate accounts, and service offerings</p>
+							<div className="flex items-center gap-1.5">
+								<h1 className="text-3xl font-bold text-gray-900">👥 Clients & Services</h1>
+								<HeadingInfo label="About clients">Manage clients, corporate accounts, and service offerings</HeadingInfo>
+							</div>
 						</div>
-						<Button color="primary" variant="flat" onClick={()=>{ setEditClientId(null); setNewClientStep('basic'); onNewOpen(); }}>➕ New Client</Button>
+						)}
+						<Button color="primary" variant="flat" className={embedded ? 'ml-auto' : ''} onClick={()=>{ setEditClientId(null); setNewClientStep('basic'); onNewOpen(); }}>➕ New Client</Button>
 					</div>
 
 					<div className="flex items-center justify-between mb-4 gap-3">
@@ -1331,19 +1325,12 @@ function ClientsServicesContent() {
 									{showAllColumns ? "Show Less" : "Show More"}
 								</Button>
 							</div>
-							<div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-								<div className="max-h-[600px] overflow-y-auto overflow-x-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
-									<Table 
+							<Card className="border-0 shadow-lg">
+								<CardBody className="px-2 py-3">
+									<Table
 										aria-label="Clients and services table"
-										classNames={{
-											base: "min-h-[300px]",
-											table: "min-h-[300px] table-fixed",
-											thead: "[&>tr]:first:shadow-none sticky top-0 z-10 bg-gray-50",
-											tbody: "[&>tr]:border-b [&>tr]:border-gray-200",
-											tr: "hover:bg-gray-50 transition-colors",
-											td: "py-1.5 px-3 border-r border-gray-100 last:border-r-0 text-sm truncate",
-											th: "py-2 px-3 border-r border-gray-200 last:border-r-0 bg-gray-50 text-sm font-medium"
-										}}
+										removeWrapper
+										classNames={worksheetTableClassNames}
 									>
 						<TableHeader>
 							{visibleColumns.map(columnKey => {
@@ -1385,20 +1372,20 @@ function ClientsServicesContent() {
 								// Memoize row rendering for better performance with large datasets
 								const rowKey = `${row.id}-${idx}`;
 								return (
-								<TableRow key={row.id}>
+								<TableRow key={row.id} className="cursor-pointer hover:bg-gray-50" onClick={() => setShowProfile(row.id)}>
 									{visibleColumns.map(columnKey => {
 										const renderCell = (): JSX.Element => {
 											switch (columnKey) {
 												case 'index':
 													return <TableCell style={colStyle('index')}>{startIndex + idx + 1}</TableCell>;
 												case 'id':
-													return <TableCell style={{ width: colWidths.id }}>{row.serialNumber}</TableCell>;
+													return <TableCell className="text-gray-600" style={{ width: colWidths.id }}>{row.serialNumber}</TableCell>;
 												case 'name':
 													return (
 														<TableCell style={{ width: colWidths.name }}>
 											<div>
 												<div className="flex items-center gap-2">
-												<p className="font-medium">{row.name}</p>
+												<p className="font-semibold text-ghana-black">{row.name}</p>
 												{!row.isActive && <Chip size="sm" variant="flat">Inactive</Chip>}
 												</div>
 																{row.type==='corporate' && row.contactPerson && (
@@ -1434,7 +1421,7 @@ function ClientsServicesContent() {
 												case 'type':
 													return (
 														<TableCell style={{ width: colWidths.type }}>
-										<Badge variant="flat" color={row.type==='corporate'?'primary':'default'}>{row.type}</Badge>
+										<Chip size="sm" variant="flat" color={row.type==='corporate'?'primary':'default'}>{row.type === 'corporate' ? 'Corporate' : 'Individual'}</Chip>
 									</TableCell>
 													);
 												case 'reservations':
@@ -1457,38 +1444,6 @@ function ClientsServicesContent() {
 											</div>
 									</TableCell>
 													);
-												case 'actions':
-													return (
-														<TableCell style={{ width: colWidths.actions }}>
-															<div className="flex items-center gap-2">
-																<Tooltip content="Edit">
-																	<Button isIconOnly size="sm" variant="flat" onClick={()=>openEdit(row)} aria-label="Edit client">
-																		<PencilSquareIcon className="w-4 h-4" />
-																	</Button>
-																</Tooltip>
-																<Tooltip content={clientHasHistory(row) ? (row.isActive ? 'Deactivate' : 'Already inactive') : 'Delete'}>
-																	<Button isIconOnly size="sm" color={clientHasHistory(row) ? 'warning' : 'danger'} variant="light" onClick={()=>handleDelete(row)} aria-label={clientHasHistory(row) ? 'Deactivate client' : 'Delete client'}>
-																		<TrashIcon className="w-4 h-4" />
-																	</Button>
-																</Tooltip>
-																<Tooltip content="Preferences">
-																	<Button isIconOnly size="sm" variant="light" onClick={()=>openPreferences(row)} aria-label="Preferences">
-																		<AdjustmentsHorizontalIcon className="w-4 h-4" />
-																	</Button>
-																</Tooltip>
-																<Tooltip content="View Profile">
-																	<Button isIconOnly size="sm" variant="light" onClick={()=>setShowProfile(row.id)} aria-label="View profile">
-																		<EyeIcon className="w-4 h-4" />
-																	</Button>
-																</Tooltip>
-																<Tooltip content="Message">
-																	<Button isIconOnly size="sm" variant="light" onClick={()=>setShowMessageFor(row.id)} aria-label="Message client">
-																		<EnvelopeIcon className="w-4 h-4" />
-																	</Button>
-																</Tooltip>
-										</div>
-									</TableCell>
-													);
 												default:
 													return <TableCell>—</TableCell>;
 											}
@@ -1501,8 +1456,8 @@ function ClientsServicesContent() {
 							})}
 						</TableBody>
 					</Table>
-								</div>
-							</div>
+								</CardBody>
+							</Card>
 							
 							{/* Pagination Controls */}
 							{totalPages > 1 && (
@@ -1726,9 +1681,9 @@ function ClientsServicesContent() {
                                 </div>
                             </div>
                             
-                            <div className="border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-                                <div className="max-h-[600px] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
-                            <Table aria-label="Reservation history table">
+                            <Card className="border-0 shadow-lg">
+                                <CardBody className="px-2 py-3">
+                            <Table aria-label="Reservation history table" removeWrapper classNames={worksheetTableClassNames}>
                                 <TableHeader>
                                     <TableColumn>Client</TableColumn>
                                     <TableColumn>Room</TableColumn>
@@ -1818,8 +1773,8 @@ function ClientsServicesContent() {
                                     })}
                                 </TableBody>
                             </Table>
-                                </div>
-                            </div>
+                                </CardBody>
+                            </Card>
                         </div>
                     )}
 
@@ -2614,27 +2569,79 @@ function ClientsServicesContent() {
             </Modal>
 
             {/* Profile Modal */}
-            <Modal isOpen={!!showProfile} onClose={()=>setShowProfile(null)}>
+            <Modal
+              isOpen={!!showProfile}
+              onClose={() => setShowProfile(null)}
+              size="2xl"
+              classNames={{ base: 'sm:!max-w-3xl', closeButton: 'text-white hover:bg-white/20' }}
+            >
               <ModalContent>
-                <ModalHeader>Client Profile</ModalHeader>
-                <ModalBody>
-                  {(() => {
-                    const g = frontOfficeStore.guests.find(x=>x.id===showProfile);
-                    if (!g) return <div>Not found</div>;
+                {(() => {
+                  const profile = rows.find((row) => row.id === showProfile);
+                  const guest = frontOfficeStore.guests.find((item) => item.id === showProfile);
+                  if (!profile || !guest) {
                     return (
-                      <div className="space-y-2 text-sm">
-                        <div><span className="font-medium">ID:</span> {g.id}</div>
-                        <div><span className="font-medium">Name:</span> {(g as any).firstName} {(g as any).middleName} {(g as any).lastName}</div>
-                        <div><span className="font-medium">Email:</span> {(g as any).email || '—'}</div>
-                        <div><span className="font-medium">Phone:</span> {(g as any).phone || '—'}</div>
-                        <div><span className="font-medium">Company:</span> {(g as any).companyName || (g as any).employerCompany || '—'}</div>
-                        <div><span className="font-medium">Nationality:</span> {(g as any).nationality}</div>
-                        <div><span className="font-medium">DOB:</span> {(g as any).dateOfBirth || '—'}</div>
-                        <div><span className="font-medium">Joined:</span> {(g as any).createdAt ? new Date((g as any).createdAt).toLocaleString() : '—'}</div>
-                      </div>
+                      <>
+                        <ModalHeader>Client Profile</ModalHeader>
+                        <ModalBody>Not found</ModalBody>
+                      </>
                     );
-                  })()}
-                </ModalBody>
+                  }
+                  const joined = profile.createdAt ? new Date(profile.createdAt).toLocaleDateString() : '—';
+                  const removeLabel = !profile.isActive ? 'Reactivate' : clientHasHistory(profile) ? 'Deactivate' : 'Delete';
+                  const fact = (label: string, value?: string | number) => (
+                    <div>
+                      <div className="text-xs text-gray-500">{label}</div>
+                      <div className="font-semibold text-ghana-black">{value || '—'}</div>
+                    </div>
+                  );
+                  return (
+                    <>
+                      <ModalHeader className="flex flex-row items-center justify-between gap-3 bg-gradient-to-r from-blue-600 to-purple-600 py-3 pr-12 text-white">
+                        <div className="min-w-0">
+                          <h2 className="truncate text-xl font-bold">{profile.name}</h2>
+                          <p className="text-sm font-normal text-blue-100">
+                            {profile.serialNumber} • {profile.type === 'corporate' ? 'Corporate' : 'Individual'}
+                            {!profile.isActive ? ' • Inactive' : ''}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap justify-end gap-1">
+                          <Button size="sm" variant="flat" className="bg-white/20 text-white" onPress={() => openEdit(profile)}>Edit</Button>
+                          <Button size="sm" variant="flat" className="bg-white/20 text-white" onPress={() => openPreferences(profile)}>Preferences</Button>
+                          <Button size="sm" variant="flat" className="bg-white/20 text-white" onPress={() => setShowMessageFor(profile.id)}>Message</Button>
+                          <Button
+                            size="sm"
+                            variant="flat"
+                            className="bg-white/20 text-white"
+                            onPress={() => {
+                              handleDelete(profile);
+                              if (!frontOfficeStore.guests.find((item) => item.id === profile.id)) setShowProfile(null);
+                            }}
+                          >
+                            {removeLabel}
+                          </Button>
+                        </div>
+                      </ModalHeader>
+                      <ModalBody className="gap-4">
+                        <Card shadow="sm">
+                          <CardBody>
+                            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
+                              {fact('Phone', profile.phone)}
+                              {fact('Email', profile.email)}
+                              {fact('Nationality', profile.nationality)}
+                              {fact('ID', guest.idNumber ? `${guest.idType || ''} ${guest.idNumber}`.trim() : '')}
+                              {fact('Date of birth', profile.dateOfBirth ? new Date(profile.dateOfBirth).toLocaleDateString() : '')}
+                              {fact('Company', profile.company)}
+                              {fact('Stays', profile.reservationCount)}
+                              {fact('Last visit', profile.lastVisit ? new Date(profile.lastVisit).toLocaleDateString() : '')}
+                              {fact('Joined', joined)}
+                            </div>
+                          </CardBody>
+                        </Card>
+                      </ModalBody>
+                    </>
+                  );
+                })()}
               </ModalContent>
             </Modal>
 
@@ -2696,14 +2703,29 @@ function ClientsServicesContent() {
                 </ModalBody>
                 </ModalContent>
             </Modal>
-		</PageLayout>
+		</>
 	);
+
+	return embedded ? content : <PageLayout>{content}</PageLayout>;
+}
+
+function ClientsRedirect() {
+	useEffect(() => {
+		try {
+			localStorage.setItem('nav.section', 'frontdesk');
+			localStorage.setItem('fo.tab', 'clients');
+		} catch {
+			/* ignore */
+		}
+		window.location.replace('/');
+	}, []);
+	return <div className="p-6 text-center">Opening Front Office...</div>;
 }
 
 export default function ClientsServicesPage() {
 	return (
-		<Suspense fallback={<div>Loading client services...</div>}>
-			<ClientsServicesContent />
+		<Suspense fallback={<div className="p-6 text-center">Opening Front Office...</div>}>
+			<ClientsRedirect />
 		</Suspense>
 	);
 }

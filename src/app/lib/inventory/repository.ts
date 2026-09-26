@@ -415,6 +415,7 @@ export async function recordStockTransfer(params: {
 export const DEPARTMENT_LOCATIONS: Record<string, { code: string; name: string }> = {
 	restaurant: { code: 'RESTAURANT', name: 'Restaurant & Bar' },
 	kitchen: { code: 'KITCHEN', name: 'Kitchen' },
+	housekeeping: { code: 'HOUSEKEEPING', name: 'Housekeeping' },
 };
 
 export async function ensureDepartmentLocations(tenantId: string): Promise<void> {
@@ -435,6 +436,73 @@ export async function getDepartmentLocationId(tenantId: string, department: stri
 	await ensureDepartmentLocations(tenantId);
 	const row = await prisma.stockLocation.findUnique({ where: { tenantId_code: { tenantId, code: loc.code } } });
 	return row?.id ?? null;
+}
+
+/** Use stock sitting in a department (housekeeping task, kitchen prep). Reduces that location and the hotel-wide balance. */
+export async function issueDepartmentStock(params: {
+	tenantId: string;
+	department: string;
+	items: { itemId: string; quantity: number }[];
+	referenceType: string;
+	referenceId: string;
+	performedBy?: string;
+	notes?: string;
+}) {
+	if (!DEPARTMENT_LOCATIONS[params.department]) return { error: 'unknown_department' as const };
+	const locationId = await getDepartmentLocationId(params.tenantId, params.department);
+	if (!locationId) return { error: 'no_location' as const };
+
+	const levels = await getLocationStockLevels(params.tenantId, params.department);
+	const onHand = new Map(levels.map((row) => [row.id, row.onHand]));
+	const wanted = params.items.filter((item) => item.itemId && Number(item.quantity) > 0);
+
+	for (const item of wanted) {
+		const qty = Number(item.quantity);
+		const already = await prisma.inventoryTransaction.findFirst({
+			where: {
+				tenantId: params.tenantId,
+				itemId: item.itemId,
+				locationId,
+				type: 'issue',
+				referenceType: params.referenceType,
+				referenceId: params.referenceId,
+			},
+		});
+		if (already) continue;
+		const have = onHand.get(item.itemId) ?? 0;
+		if (have < qty) {
+			const name = levels.find((row) => row.id === item.itemId)?.name || item.itemId;
+			return { error: 'insufficient' as const, itemName: name, onHand: have };
+		}
+	}
+
+	for (const item of wanted) {
+		const qty = Number(item.quantity);
+		const already = await prisma.inventoryTransaction.findFirst({
+			where: {
+				tenantId: params.tenantId,
+				itemId: item.itemId,
+				locationId,
+				type: 'issue',
+				referenceType: params.referenceType,
+				referenceId: params.referenceId,
+			},
+		});
+		if (already) continue;
+		await recordStockTransaction({
+			tenantId: params.tenantId,
+			itemId: item.itemId,
+			locationId,
+			type: 'issue',
+			quantity: -qty,
+			referenceType: params.referenceType,
+			referenceId: params.referenceId,
+			notes: params.notes,
+			performedBy: params.performedBy,
+		});
+	}
+
+	return { error: null as null };
 }
 
 export async function getLocationStockLevels(tenantId: string, department: string) {
@@ -494,6 +562,8 @@ export interface RequisitionItemInput {
 	itemName: string;
 	quantity: number;
 	estimatedPrice: number;
+	preferredSupplierId?: string;
+	preferredSupplierName?: string;
 	notes?: string;
 }
 
@@ -567,6 +637,8 @@ export async function upsertRequisition(params: {
 							quantity: i.quantity,
 							estimatedPrice: i.estimatedPrice,
 							totalCost: i.quantity * i.estimatedPrice,
+							preferredSupplierId: i.preferredSupplierId,
+							preferredSupplierName: i.preferredSupplierName,
 							notes: i.notes,
 						})),
 					},
@@ -623,6 +695,8 @@ export async function upsertRequisition(params: {
 					quantity: i.quantity,
 					estimatedPrice: i.estimatedPrice,
 					totalCost: i.quantity * i.estimatedPrice,
+					preferredSupplierId: i.preferredSupplierId,
+					preferredSupplierName: i.preferredSupplierName,
 					notes: i.notes,
 				})),
 			},
@@ -715,7 +789,7 @@ export async function upsertGoodsReceiptNote(params: {
 					items: {
 						create: params.items.map((i) => ({
 							tenantId: params.tenantId,
-							poItemId: i.poItemId,
+							poItemId: i.poItemId || i.itemId,
 							itemId: i.itemId,
 							itemCode: i.itemCode,
 							itemName: i.itemName,
@@ -746,7 +820,7 @@ export async function upsertGoodsReceiptNote(params: {
 			items: {
 				create: params.items.map((i) => ({
 					tenantId: params.tenantId,
-					poItemId: i.poItemId,
+					poItemId: i.poItemId || i.itemId,
 					itemId: i.itemId,
 					itemCode: i.itemCode,
 					itemName: i.itemName,
@@ -1033,6 +1107,297 @@ export async function upsertSupplierInvoice(params: {
 					notes: i.notes,
 				})),
 			},
+		},
+		include: { items: true },
+	});
+}
+
+// ---------------------------------------------------------------------------
+// Stock Transfers & Stock Counts — document headers + line items, same upsert
+// pattern as GRNs so the UI can create optimistically then sync via PUT.
+// ---------------------------------------------------------------------------
+
+export interface StockTransferItemInput {
+	itemId: string;
+	itemCode: string;
+	itemName: string;
+	quantity: number;
+	unitCost: number;
+	transferredQuantity?: number;
+	notes?: string;
+}
+
+export async function listStockTransfers(tenantId: string, filters?: { status?: string }) {
+	return prisma.stockTransfer.findMany({
+		where: { tenantId, status: filters?.status || undefined },
+		include: { items: true },
+		orderBy: { createdAt: 'desc' },
+	});
+}
+
+export async function upsertStockTransfer(params: {
+	id?: string;
+	tenantId: string;
+	transferNumber?: string;
+	fromLocation: string;
+	toLocation: string;
+	transferDate?: Date | string;
+	expectedDeliveryDate?: Date | string;
+	actualDeliveryDate?: Date | string | null;
+	status?: string;
+	priority?: string;
+	notes?: string;
+	createdBy: string;
+	approvedBy?: string;
+	approvedAt?: Date | string;
+	items: StockTransferItemInput[];
+}) {
+	const totalItems = params.items.length;
+	const totalValue = params.items.reduce((sum, i) => sum + Number(i.quantity) * Number(i.unitCost), 0);
+	const data = {
+		fromLocation: params.fromLocation,
+		toLocation: params.toLocation,
+		transferDate: params.transferDate ? new Date(params.transferDate) : undefined,
+		expectedDeliveryDate: params.expectedDeliveryDate ? new Date(params.expectedDeliveryDate) : undefined,
+		actualDeliveryDate: params.actualDeliveryDate ? new Date(params.actualDeliveryDate) : params.actualDeliveryDate === null ? null : undefined,
+		status: params.status,
+		priority: params.priority,
+		totalItems,
+		totalValue,
+		notes: params.notes,
+		createdBy: params.createdBy,
+		approvedBy: params.approvedBy,
+		approvedAt: params.approvedAt ? new Date(params.approvedAt) : undefined,
+	};
+
+	const itemCreates = params.items.map((i) => ({
+		tenantId: params.tenantId,
+		itemId: i.itemId,
+		itemCode: i.itemCode,
+		itemName: i.itemName,
+		quantity: Number(i.quantity),
+		unitCost: Number(i.unitCost),
+		totalValue: Number(i.quantity) * Number(i.unitCost),
+		transferredQuantity: Number(i.transferredQuantity || 0),
+		notes: i.notes,
+	}));
+
+	if (params.id) {
+		const existing = await prisma.stockTransfer.findFirst({ where: { id: params.id, tenantId: params.tenantId } });
+		if (existing) {
+			await prisma.stockTransferItem.deleteMany({ where: { transferId: params.id } });
+			return prisma.stockTransfer.update({
+				where: { id: params.id },
+				data: {
+					...data,
+					items: { create: itemCreates },
+				},
+				include: { items: true },
+			});
+		}
+	}
+
+	const count = await prisma.stockTransfer.count({ where: { tenantId: params.tenantId } });
+	const transferNumber = params.transferNumber || `ST-${String(count + 1).padStart(4, '0')}`;
+
+	return prisma.stockTransfer.create({
+		data: {
+			...(params.id ? { id: params.id } : {}),
+			tenantId: params.tenantId,
+			transferNumber,
+			...data,
+			status: data.status || 'pending',
+			priority: data.priority || 'medium',
+			items: { create: itemCreates },
+		},
+		include: { items: true },
+	});
+}
+
+export interface StockCountItemInput {
+	itemId: string;
+	itemCode: string;
+	itemName: string;
+	expectedQuantity: number;
+	countedQuantity: number;
+	variance: number;
+	unitCost: number;
+	varianceValue: number;
+	notes?: string;
+}
+
+export async function listStockCounts(tenantId: string, filters?: { status?: string; location?: string }) {
+	return prisma.stockCount.findMany({
+		where: {
+			tenantId,
+			status: filters?.status || undefined,
+			location: filters?.location || undefined,
+		},
+		include: { items: true },
+		orderBy: { createdAt: 'desc' },
+	});
+}
+
+export async function upsertStockCount(params: {
+	id?: string;
+	tenantId: string;
+	countNumber?: string;
+	countType?: string;
+	location: string;
+	startDate?: Date | string;
+	endDate?: Date | string | null;
+	status?: string;
+	notes?: string;
+	createdBy: string;
+	performedBy?: string;
+	items: StockCountItemInput[];
+}) {
+	const totalItems = params.items.length;
+	const countedItems = params.items.filter((i) => i.countedQuantity >= 0).length;
+	const varianceItems = params.items.filter((i) => Number(i.variance) !== 0).length;
+	const totalValue = params.items.reduce((sum, i) => sum + Number(i.expectedQuantity) * Number(i.unitCost), 0);
+	const varianceValue = params.items.reduce((sum, i) => sum + Math.abs(Number(i.varianceValue)), 0);
+
+	const data = {
+		countType: params.countType,
+		location: params.location,
+		startDate: params.startDate ? new Date(params.startDate) : undefined,
+		endDate: params.endDate ? new Date(params.endDate) : params.endDate === null ? null : undefined,
+		status: params.status,
+		totalItems,
+		countedItems,
+		varianceItems,
+		totalValue,
+		varianceValue,
+		notes: params.notes,
+		createdBy: params.createdBy,
+		performedBy: params.performedBy,
+	};
+
+	const itemCreates = params.items.map((i) => ({
+		tenantId: params.tenantId,
+		itemId: i.itemId,
+		itemCode: i.itemCode,
+		itemName: i.itemName,
+		expectedQuantity: Number(i.expectedQuantity),
+		countedQuantity: Number(i.countedQuantity),
+		variance: Number(i.variance),
+		unitCost: Number(i.unitCost),
+		varianceValue: Number(i.varianceValue),
+		notes: i.notes,
+	}));
+
+	if (params.id) {
+		const existing = await prisma.stockCount.findFirst({ where: { id: params.id, tenantId: params.tenantId } });
+		if (existing) {
+			await prisma.stockCountItem.deleteMany({ where: { countId: params.id } });
+			return prisma.stockCount.update({
+				where: { id: params.id },
+				data: {
+					...data,
+					items: { create: itemCreates },
+				},
+				include: { items: true },
+			});
+		}
+	}
+
+	const count = await prisma.stockCount.count({ where: { tenantId: params.tenantId } });
+	const countNumber = params.countNumber || `CNT-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
+
+	return prisma.stockCount.create({
+		data: {
+			...(params.id ? { id: params.id } : {}),
+			tenantId: params.tenantId,
+			countNumber,
+			...data,
+			status: data.status || 'in-progress',
+			countType: data.countType || 'full',
+			items: { create: itemCreates },
+		},
+		include: { items: true },
+	});
+}
+
+export interface GoodsIssueItemInput {
+	itemId: string;
+	itemCode: string;
+	itemName: string;
+	quantity: number;
+	unitCost: number;
+	reason?: string;
+}
+
+export async function listGoodsIssues(tenantId: string, filters?: { status?: string; department?: string }) {
+	return prisma.goodsIssue.findMany({
+		where: {
+			tenantId,
+			status: filters?.status || undefined,
+			department: filters?.department || undefined,
+		},
+		include: { items: true },
+		orderBy: { createdAt: 'desc' },
+	});
+}
+
+export async function upsertGoodsIssue(params: {
+	id?: string;
+	tenantId: string;
+	issueNumber?: string;
+	department: string;
+	issuedTo: string;
+	issueDate?: Date | string;
+	status?: string;
+	notes?: string;
+	issuedBy: string;
+	items: GoodsIssueItemInput[];
+}) {
+	const totalItems = params.items.length;
+	const totalValue = params.items.reduce((sum, i) => sum + Number(i.quantity) * Number(i.unitCost), 0);
+	const data = {
+		department: params.department,
+		issuedTo: params.issuedTo,
+		issueDate: params.issueDate ? new Date(params.issueDate) : undefined,
+		status: params.status,
+		totalItems,
+		totalValue,
+		notes: params.notes,
+		issuedBy: params.issuedBy,
+	};
+	const itemCreates = params.items.map((i) => ({
+		tenantId: params.tenantId,
+		itemId: i.itemId,
+		itemCode: i.itemCode,
+		itemName: i.itemName,
+		quantity: Number(i.quantity),
+		unitCost: Number(i.unitCost),
+		totalValue: Number(i.quantity) * Number(i.unitCost),
+		reason: i.reason,
+	}));
+
+	if (params.id) {
+		const existing = await prisma.goodsIssue.findFirst({ where: { id: params.id, tenantId: params.tenantId } });
+		if (existing) {
+			await prisma.goodsIssueItem.deleteMany({ where: { issueId: params.id } });
+			return prisma.goodsIssue.update({
+				where: { id: params.id },
+				data: { ...data, items: { create: itemCreates } },
+				include: { items: true },
+			});
+		}
+	}
+
+	const count = await prisma.goodsIssue.count({ where: { tenantId: params.tenantId } });
+	const issueNumber = params.issueNumber || `ISS-${String(count + 1).padStart(4, '0')}`;
+
+	return prisma.goodsIssue.create({
+		data: {
+			...(params.id ? { id: params.id } : {}),
+			tenantId: params.tenantId,
+			issueNumber,
+			...data,
+			status: data.status || 'issued',
+			items: { create: itemCreates },
 		},
 		include: { items: true },
 	});

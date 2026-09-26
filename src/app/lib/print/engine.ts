@@ -19,16 +19,44 @@ export function listAllTemplates(type: PrintType, customTemplates: BlockTemplate
   return [...custom, ...builtIns, ...legacy];
 }
 
+function signedInUserName(): string | undefined {
+  const user = useSettingsStore.getState().currentUser;
+  if (!user) return undefined;
+  const name = `${user.firstName || ''} ${user.lastName || ''}`.trim();
+  return name || user.email || user.username || undefined;
+}
+
+function templateKind(type: PrintType, key: string | undefined): 'block' | 'legacy' | null {
+  if (!key) return null;
+  const settings = useSettingsStore.getState();
+  const block = settings.getDocBuilderTemplate(key) || getBuiltInTemplate(key);
+  if (block && block.docType === type) return 'block';
+  if (printTemplates[type]?.[key]) return 'legacy';
+  return null;
+}
+
+/** The key Set Active stored for this document type, when it still exists. */
+function activeTemplateKey(type: PrintType): string {
+  const printing = useSettingsStore.getState().printing as Record<string, string> | undefined;
+  const active = printing?.[type];
+  if (active && templateKind(type, active)) return active;
+  return listBuiltInTemplates(type)[0]?.id || Object.keys(printTemplates[type] || {})[0] || '';
+}
+
 export function renderPrint(type: PrintType, templateKey: string, data: PrintData): string {
-  // Block templates (built-in presets or tenant-custom, see print/blocks.ts and
-  // settings/store.ts's docBuilder slice) take priority. Falls through to the legacy
-  // hand-written templates registry below for any key that isn't a block template —
-  // every existing call site's default `settings.printing.<type>` value.
-  const block = useSettingsStore.getState().getDocBuilderTemplate(templateKey) || getBuiltInTemplate(templateKey);
-  if (block && block.docType === type) return renderBlockTemplate(block, data);
+  // An explicit key wins when it is a real template for this document type.
+  // Otherwise use the one Set Active stored, so a newly activated template
+  // shows up on the next print even if a screen still has an old default.
+  const settings = useSettingsStore.getState();
+  const key = templateKind(type, templateKey) ? templateKey : activeTemplateKey(type);
+  const block = settings.getDocBuilderTemplate(key) || getBuiltInTemplate(key);
+  if (block && block.docType === type) {
+    const withUser = data.userName ? data : { ...data, userName: signedInUserName() };
+    return renderBlockTemplate(block, withUser);
+  }
 
   const typeRegistry = printTemplates[type] || {};
-  const tmpl = typeRegistry[templateKey] || typeRegistry[Object.keys(typeRegistry)[0]];
+  const tmpl = typeRegistry[key] || typeRegistry[Object.keys(typeRegistry)[0]];
   return tmpl ? tmpl(data) : '<html><body>No template</body></html>';
 }
 

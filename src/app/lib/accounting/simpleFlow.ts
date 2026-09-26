@@ -18,6 +18,7 @@ import { computeSalesTax } from '../tax/engine';
 import { applyJournalEntryToGlBalances } from './invoicePostingBridge';
 import { assertPeriodNotClosed } from './periodClose';
 import { logAccountingProcessWarn } from './accountingProcessLog';
+import { mirrorGlCashToCashbook } from './cashbookMirror';
 
 function nowIso() {
   return new Date().toISOString();
@@ -290,6 +291,17 @@ export function postGuestFolioCheckoutToLedger(params: {
 
     store.addJournalEntry(payEntry);
     applyJournalEntryToGlBalances(payEntry, store);
+    mirrorGlCashToCashbook(() => useAccountingStore.getState(), {
+      glCode: cashGl,
+      amount: abs,
+      direction: isRefund ? 'out' : 'in',
+      date: p.date || ts,
+      reference: params.invoiceNumber,
+      description: isRefund
+        ? `Guest refund — ${params.guestLabel}`
+        : `Guest payment — ${params.guestLabel} (${p.method})`,
+      journalEntryId: payJeId,
+    });
 
     const paymentId = p.paymentId;
     if (paymentId) {

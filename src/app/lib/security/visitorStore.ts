@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { Visitor } from './models';
 import { getClientTenantSubdomain } from '../api/clientTenant';
+import { useSettingsStore } from '../settings/store';
 
 function hkHeaders(): HeadersInit {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
@@ -64,7 +65,7 @@ export const useVisitorStore = create<VisitorStore>((set, get) => ({
     const newVisitor: Visitor = {
       ...visitor,
       id: `vis_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
-      visitorNumber: `VIS-${now.getFullYear()}-${Date.now().toString().slice(-6)}`,
+      visitorNumber: useSettingsStore.getState().getNextModuleNumber('security', 'accessPass'),
       checkInTime: now,
       status: 'checked_in',
       createdAt: now,

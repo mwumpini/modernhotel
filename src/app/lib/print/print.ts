@@ -85,13 +85,13 @@ export function buildReceiptHtml(args: {
 }
 
 export function buildKOTHtml(args: {
-  code: string; table: string; waiter: string; notes?: string; urgent?: boolean; items: Array<{ name: string; qty: number }>;
+  code: string; table: string; waiter: string; notes?: string; urgent?: boolean; title?: string; items: Array<{ name: string; qty: number }>;
 }) {
   const itemsRows = args.items.map(i => `<tr><td>${i.qty} x ${i.name}</td></tr>`).join('');
   return `
   <div class="receipt">
     <div class="center">
-      <h2>Kitchen Order Ticket</h2>
+      <h2>${args.title || 'Kitchen Order Ticket'}</h2>
       <div class="muted">Order: ${args.code}</div>
       <div class="muted">Table ${args.table} • ${args.waiter}</div>
       ${args.urgent ? '<div style="color:#b91c1c;font-weight:700;margin-top:4px">URGENT</div>' : ''}
@@ -156,13 +156,14 @@ export function previewReceipt(args: Parameters<typeof buildReceiptHtml>[0]) {
   return previewHtml('Receipt Preview', html);
 }
 
-export function printKOTDoc(args: { code: string; table: string; waiter: string; notes?: string; urgent?: boolean; items: Array<{ name: string; qty: number }>; }) {
+export function printKOTDoc(args: { code: string; table: string; waiter: string; notes?: string; urgent?: boolean; title?: string; items: Array<{ name: string; qty: number }>; }) {
   const html = buildKOTHtml(args);
   const { method, routeKOT } = getPrintSettings();
   const effective = routeKOT || method;
-  if (effective === 'browser') return printHtml('KOT', html);
+  const heading = args.title || 'KOT';
+  if (effective === 'browser') return printHtml(heading, html);
   const items = args.items.map(i => `${i.qty} x ${i.name}`.slice(0,42)).join('\n');
-  const esc = `${escposHeader('KOT')}${args.code}\nTable ${args.table} • ${args.waiter}\n${args.urgent ? 'URGENT\n' : ''}${escposLine()}${items}${args.notes ? '\nNotes: '+args.notes : ''}\n\x1DVA\x00`;
+  const esc = `${escposHeader(heading)}${args.code}\nTable ${args.table} • ${args.waiter}\n${args.urgent ? 'URGENT\n' : ''}${escposLine()}${items}${args.notes ? '\nNotes: '+args.notes : ''}\n\x1DVA\x00`;
   return sendToBridge('kot', html, esc);
 }
 

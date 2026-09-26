@@ -1101,7 +1101,6 @@ export default function FrontOfficeOperationsDashboard() {
         </div>
         <div className="flex items-center space-x-2">
           <Badge color="success">System Online</Badge>
-          <Badge color="primary">SaaS Ready</Badge>
         </div>
       </div>
 

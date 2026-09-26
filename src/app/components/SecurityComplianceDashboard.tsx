@@ -7,7 +7,6 @@ import {
   Autocomplete, AutocompleteItem
 } from '@heroui/react';
 import { useSession } from 'next-auth/react';
-import { useRouter } from 'next/navigation';
 import { useSettingsStore } from '../lib/settings/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { useIncidentStore } from '../lib/security/incidentStore';
@@ -17,9 +16,9 @@ import { usePersonnelStore } from '../lib/security/personnelStore';
 import { useCheckpointLocationStore } from '../lib/security/checkpointLocationStore';
 import { usePatrolRouteStore } from '../lib/security/patrolRouteStore';
 import { useShiftStore } from '../lib/security/shiftStore';
-import { SecurityIncident, Visitor } from '../lib/security/models';
+import { CheckpointLocation, PatrolLog, PatrolRoute, SecurityIncident, SecurityPersonnel, SecurityShift, Visitor } from '../lib/security/models';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
-import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import { HideCardButton } from './dashboard/CustomizeViewControl';
 import type { DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 
@@ -57,10 +56,17 @@ interface SecurityComplianceDashboardProps {
   toggle: (id: string) => void;
   showAll: () => void;
   hiddenCount: number;
+  fullPage?: boolean;
 }
 
-export default function SecurityComplianceDashboard({ isHidden, hide, toggle, showAll, hiddenCount }: SecurityComplianceDashboardProps) {
-  const router = useRouter();
+export default function SecurityComplianceDashboard({
+  isHidden,
+  hide,
+  toggle,
+  showAll,
+  hiddenCount,
+  fullPage = false,
+}: SecurityComplianceDashboardProps) {
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
   const currentUserId = (session?.user as any)?.id as string | undefined;
@@ -82,6 +88,11 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
   const [isPatrolModalOpen, setIsPatrolModalOpen] = useState(false);
   const [viewingIncident, setViewingIncident] = useState<SecurityIncident | null>(null);
   const [viewingVisitor, setViewingVisitor] = useState<Visitor | null>(null);
+  const [viewingPatrol, setViewingPatrol] = useState<PatrolLog | null>(null);
+  const [viewingShift, setViewingShift] = useState<SecurityShift | null>(null);
+  const [viewingPersonnel, setViewingPersonnel] = useState<SecurityPersonnel | null>(null);
+  const [viewingLocation, setViewingLocation] = useState<CheckpointLocation | null>(null);
+  const [viewingRoute, setViewingRoute] = useState<PatrolRoute | null>(null);
 
   const { incidents, hydrateFromApi: hydrateIncidents, addIncident, assignIncident, resolveIncident } = useIncidentStore();
   const { visitors, hydrateFromApi: hydrateVisitors, addVisitor, checkOutVisitor } = useVisitorStore();
@@ -90,6 +101,14 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
   const { locations: checkpointLocations, hydrateFromApi: hydrateCheckpointLocations, addLocation: addCheckpointLocation, setLocationActive: setCheckpointLocationActive } = useCheckpointLocationStore();
   const { routes: patrolRoutes, hydrateFromApi: hydratePatrolRoutes, addRoute: addPatrolRoute, setRouteActive: setPatrolRouteActive } = usePatrolRouteStore();
   const { shifts, hydrateFromApi: hydrateShifts, checkIn, checkOut } = useShiftStore();
+
+  const openIncident = viewingIncident ? incidents.find((i) => i.id === viewingIncident.id) ?? null : null;
+  const openVisitor = viewingVisitor ? visitors.find((v) => v.id === viewingVisitor.id) ?? null : null;
+  const openPatrol = viewingPatrol ? patrols.find((p) => p.id === viewingPatrol.id) ?? null : null;
+  const openShift = viewingShift ? shifts.find((s) => s.id === viewingShift.id) ?? null : null;
+  const openPersonnel = viewingPersonnel ? personnel.find((p) => p.id === viewingPersonnel.id) ?? null : null;
+  const openLocation = viewingLocation ? checkpointLocations.find((l) => l.id === viewingLocation.id) ?? null : null;
+  const openRoute = viewingRoute ? patrolRoutes.find((r) => r.id === viewingRoute.id) ?? null : null;
 
   useEffect(() => {
     hydrateIncidents();
@@ -222,7 +241,7 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
   const submitIncident = () => {
     if (!incidentForm.location.trim() || !incidentForm.description.trim()) return;
     addIncident({
-      incidentNumber: `INC-${Date.now().toString().slice(-6)}`,
+      incidentNumber: useSettingsStore.getState().getNextModuleNumber('security', 'incidentReport'),
       type: incidentForm.type,
       severity: incidentForm.severity,
       status: 'reported',
@@ -291,7 +310,7 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
 
   const renderOverview = () => (
     <div className="space-y-6">
-      {(!isHidden('totalIncidents') || !isHidden('criticalIssues') || !isHidden('currentVisitors')) && (
+      {!fullPage && (!isHidden('totalIncidents') || !isHidden('criticalIssues') || !isHidden('currentVisitors')) && (
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {!isHidden('totalIncidents') && (
         <Card className="border-0 shadow-lg">
@@ -349,7 +368,7 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
       </div>
       )}
 
-      {!isHidden('quickActions') && (
+      {!fullPage && !isHidden('quickActions') && (
       <Card className="border-0 shadow-lg">
         <CardHeader className="pb-3 flex items-center justify-between">
           <h3 className="text-xl font-semibold text-ghana-black">🚀 Quick Actions</h3>
@@ -457,8 +476,8 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
                     <div className="text-xs text-gray-500">
                       In: {visitor.checkInTime.toLocaleTimeString()}
                     </div>
-                    <Button size="sm" variant="flat" color="success" onClick={() => checkOutVisitor(visitor.id)}>
-                      Check Out
+                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingVisitor(visitor)}>
+                      View
                     </Button>
                   </div>
                 </div>
@@ -515,21 +534,9 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
                     </TableCell>
                     <TableCell>{incident.assignedTo || 'Unassigned'}</TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="flat" color="primary" onClick={() => setViewingIncident(incident)}>
-                          View
-                        </Button>
-                        {incident.status === 'reported' && (
-                          <Button size="sm" variant="flat" color="warning" onClick={() => assignIncident(incident.id, currentUserName)}>
-                            Assign to me
-                          </Button>
-                        )}
-                        {incident.status === 'investigating' && (
-                          <Button size="sm" variant="flat" color="success" onClick={() => resolveIncident(incident.id, 'Resolved')}>
-                            Resolve
-                          </Button>
-                        )}
-                      </div>
+                      <Button size="sm" variant="flat" color="primary" onClick={() => setViewingIncident(incident)}>
+                        View
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -591,16 +598,9 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="flat" color="primary" onClick={() => setViewingVisitor(visitor)}>
-                          View
-                        </Button>
-                        {visitor.status === 'checked_in' && (
-                          <Button size="sm" variant="flat" color="success" onClick={() => checkOutVisitor(visitor.id)}>
-                            Check Out
-                          </Button>
-                        )}
-                      </div>
+                      <Button size="sm" variant="flat" color="primary" onClick={() => setViewingVisitor(visitor)}>
+                        View
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -669,76 +669,42 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
           </div>
         </CardHeader>
         <CardBody>
-          {patrols.length === 0 && <p className="text-sm text-gray-500 py-4 text-center">No patrols logged yet.</p>}
-          <div className="space-y-4 max-h-[640px] overflow-y-auto">
-            {patrols.map((patrol) => {
-              const checkedCount = patrol.checkpoints.filter(c => c.status !== 'pending').length;
-              return (
-              <Card key={patrol.id} className="border border-gray-200">
-                <CardBody>
-                  <div className="flex items-start justify-between mb-3">
-                    <div>
-                      <div className="font-semibold">{patrol.patrolNumber} — {patrol.route}</div>
-                      <div className="text-sm text-gray-500">
-                        {patrol.officerName} • Started {patrol.startTime.toLocaleString()}
-                        {patrol.endTime ? ` • Ended ${patrol.endTime.toLocaleString()}` : ''}
-                      </div>
-                      <div className="text-xs text-gray-400 mt-0.5">
-                        {checkedCount}/{patrol.checkpoints.length} checkpoints logged
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge color={patrol.status === 'completed' ? 'success' : patrol.status === 'interrupted' ? 'danger' : 'primary'} size="sm">
-                        {patrol.status}
-                      </Badge>
-                      {patrol.status === 'active' && canManagePatrols && (
-                        <Button size="sm" variant="flat" color="success" onClick={() => endPatrol(patrol.id)}>
-                          End Patrol
+          <div className="max-h-[560px] overflow-y-auto">
+            <Table aria-label="Patrol log table">
+              <TableHeader>
+                <TableColumn>Patrol #</TableColumn>
+                <TableColumn>Officer</TableColumn>
+                <TableColumn>Route</TableColumn>
+                <TableColumn>Started</TableColumn>
+                <TableColumn>Checkpoints</TableColumn>
+                <TableColumn>Status</TableColumn>
+                <TableColumn>Actions</TableColumn>
+              </TableHeader>
+              <TableBody emptyContent="No patrols logged yet.">
+                {patrols.map((patrol) => {
+                  const logged = patrol.checkpoints.filter((c) => c.status !== 'pending').length;
+                  return (
+                    <TableRow key={patrol.id}>
+                      <TableCell className="font-mono font-semibold">{patrol.patrolNumber}</TableCell>
+                      <TableCell>{patrol.officerName}</TableCell>
+                      <TableCell>{patrol.route}</TableCell>
+                      <TableCell>{patrol.startTime.toLocaleString()}</TableCell>
+                      <TableCell>{logged}/{patrol.checkpoints.length}</TableCell>
+                      <TableCell>
+                        <Badge color={patrol.status === 'completed' ? 'success' : patrol.status === 'interrupted' ? 'danger' : 'primary'} size="sm">
+                          {patrol.status}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Button size="sm" variant="flat" color="primary" onClick={() => setViewingPatrol(patrol)}>
+                          View
                         </Button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    {patrol.checkpoints.map((cp) => (
-                      <div key={cp.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 rounded-lg">
-                        <div className="min-w-0">
-                          <div className="text-sm font-medium text-ghana-black truncate">{cp.location}</div>
-                          <div className="text-xs text-gray-500 truncate">
-                            {cp.status === 'completed' && cp.actualTime
-                              ? `Checked ${cp.actualTime.toLocaleTimeString()}`
-                              : cp.status === 'missed'
-                                ? (cp.notes || 'Missed — no reason given')
-                                : `Scheduled ${cp.scheduledTime.toLocaleTimeString()}`}
-                          </div>
-                        </div>
-                        {patrol.status === 'active' && cp.status === 'pending' && canManagePatrols ? (
-                          <div className="flex gap-1 shrink-0">
-                            <Button size="sm" isIconOnly color="success" variant="flat" title="Mark checked" onClick={() => completeCheckpoint(patrol.id, cp.id)}>
-                              ✓
-                            </Button>
-                            <Button
-                              size="sm"
-                              isIconOnly
-                              color="danger"
-                              variant="flat"
-                              title="Mark missed"
-                              onClick={() => setMissCheckpointTarget({ patrolId: patrol.id, checkpointId: cp.id, location: cp.location })}
-                            >
-                              ✕
-                            </Button>
-                          </div>
-                        ) : (
-                          <Badge color={cp.status === 'completed' ? 'success' : cp.status === 'missed' ? 'danger' : 'default'} size="sm" className="shrink-0">
-                            {cp.status}
-                          </Badge>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </CardBody>
-              </Card>
-              );
-            })}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </div>
         </CardBody>
       </Card>
@@ -817,11 +783,9 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    {s.status === 'on_duty' && canManageShifts && (
-                      <Button size="sm" variant="flat" color="danger" onClick={() => checkOut(s.id)}>
-                        Check Out
-                      </Button>
-                    )}
+                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingShift(s)}>
+                      View
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -876,11 +840,9 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
                     <Badge color={p.isActive ? 'success' : 'default'} size="sm">{p.isActive ? 'active' : 'inactive'}</Badge>
                   </TableCell>
                   <TableCell>
-                    {canManagePersonnel && (
-                      <Button size="sm" variant="flat" color={p.isActive ? 'danger' : 'success'} onClick={() => setPersonnelActive(p.id, !p.isActive)}>
-                        {p.isActive ? 'Deactivate' : 'Reactivate'}
-                      </Button>
-                    )}
+                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingPersonnel(p)}>
+                      View
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -925,11 +887,9 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
                     <Badge color={loc.isActive ? 'success' : 'default'} size="sm">{loc.isActive ? 'active' : 'inactive'}</Badge>
                   </TableCell>
                   <TableCell>
-                    {canManageCheckpoints && (
-                      <Button size="sm" variant="flat" color={loc.isActive ? 'danger' : 'success'} onClick={() => setCheckpointLocationActive(loc.id, !loc.isActive)}>
-                        {loc.isActive ? 'Deactivate' : 'Reactivate'}
-                      </Button>
-                    )}
+                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingLocation(loc)}>
+                      View
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -974,11 +934,9 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
                     <Badge color={r.isActive ? 'success' : 'default'} size="sm">{r.isActive ? 'active' : 'inactive'}</Badge>
                   </TableCell>
                   <TableCell>
-                    {canManageRoutes && (
-                      <Button size="sm" variant="flat" color={r.isActive ? 'danger' : 'success'} onClick={() => setPatrolRouteActive(r.id, !r.isActive)}>
-                        {r.isActive ? 'Deactivate' : 'Reactivate'}
-                      </Button>
-                    )}
+                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingRoute(r)}>
+                      View
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
@@ -990,30 +948,14 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
   );
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-3xl font-bold text-ghana-black">🚨 Security Operations Management</h1>
-          <p className="text-gray-600">Incidents, visitors, and patrols</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="bordered"
-            className="border-blue-600 text-blue-700 font-semibold"
-            onPress={() => router.push('/security/reports')}
-          >
-            📊 Reports & Analysis
-          </Button>
-          <CustomizeViewControl
-            sections={SECURITY_DASHBOARD_SECTIONS}
-            isHidden={isHidden}
-            toggle={toggle}
-            showAll={showAll}
-            hiddenCount={hiddenCount}
-          />
-        </div>
-      </div>
-
+    <div>
+      <Card className="border-0 shadow-lg">
+        {fullPage && (
+          <CardHeader className="pb-3">
+            <h3 className="text-xl font-semibold text-ghana-black">Security</h3>
+          </CardHeader>
+        )}
+        <CardBody>
       <Tabs
         selectedKey={selectedTab}
         onSelectionChange={(key) => setSelectedTab(key as string)}
@@ -1035,6 +977,8 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
         {selectedTab === 'shifts' && renderShiftLog()}
         {selectedTab === 'staff' && renderStaffManagement()}
       </div>
+        </CardBody>
+      </Card>
 
       {/* Incident Modal */}
       <Modal isOpen={isIncidentModalOpen} onClose={() => setIsIncidentModalOpen(false)} size="2xl">
@@ -1288,44 +1232,227 @@ export default function SecurityComplianceDashboard({ isHidden, hide, toggle, sh
       </Modal>
 
       {/* View Incident */}
-      <Modal isOpen={!!viewingIncident} onClose={() => setViewingIncident(null)} size="2xl">
+      <Modal isOpen={!!openIncident} onClose={() => setViewingIncident(null)} size="2xl">
         <ModalContent>
-          <ModalHeader>{viewingIncident?.incidentNumber}</ModalHeader>
-          <ModalBody className="gap-2 pb-6">
-            {viewingIncident && (
+          <ModalHeader>{openIncident?.incidentNumber}</ModalHeader>
+          <ModalBody className="gap-2">
+            {openIncident && (
               <>
-                <p><strong>Type:</strong> {viewingIncident.type.replace('_', ' ')}</p>
-                <p><strong>Severity:</strong> {viewingIncident.severity}</p>
-                <p><strong>Status:</strong> {viewingIncident.status}</p>
-                <p><strong>Location:</strong> {viewingIncident.location}{viewingIncident.room ? `, Room ${viewingIncident.room}` : ''}</p>
-                <p><strong>Reported by:</strong> {viewingIncident.reportedBy} on {viewingIncident.reportedAt.toLocaleString()}</p>
-                {viewingIncident.assignedTo && <p><strong>Assigned to:</strong> {viewingIncident.assignedTo}</p>}
-                <p><strong>Description:</strong> {viewingIncident.description}</p>
-                {viewingIncident.resolution && <p><strong>Resolution:</strong> {viewingIncident.resolution}</p>}
+                <p><strong>Type:</strong> {openIncident.type.replace('_', ' ')}</p>
+                <p><strong>Severity:</strong> {openIncident.severity}</p>
+                <p><strong>Status:</strong> {openIncident.status}</p>
+                <p><strong>Location:</strong> {openIncident.location}{openIncident.room ? `, Room ${openIncident.room}` : ''}</p>
+                <p><strong>Reported by:</strong> {openIncident.reportedBy} on {openIncident.reportedAt.toLocaleString()}</p>
+                {openIncident.assignedTo && <p><strong>Assigned to:</strong> {openIncident.assignedTo}</p>}
+                <p><strong>Description:</strong> {openIncident.description}</p>
+                {openIncident.resolution && <p><strong>Resolution:</strong> {openIncident.resolution}</p>}
               </>
             )}
           </ModalBody>
+          <ModalFooter>
+            {openIncident?.status === 'reported' && (
+              <Button color="warning" variant="flat" onPress={() => assignIncident(openIncident.id, currentUserName)}>
+                Assign to me
+              </Button>
+            )}
+            {openIncident?.status === 'investigating' && (
+              <Button color="success" variant="flat" onPress={() => resolveIncident(openIncident.id, 'Resolved')}>
+                Resolve
+              </Button>
+            )}
+            <Button variant="light" onPress={() => setViewingIncident(null)}>Close</Button>
+          </ModalFooter>
         </ModalContent>
       </Modal>
 
       {/* View Visitor */}
-      <Modal isOpen={!!viewingVisitor} onClose={() => setViewingVisitor(null)} size="2xl">
+      <Modal isOpen={!!openVisitor} onClose={() => setViewingVisitor(null)} size="2xl">
         <ModalContent>
-          <ModalHeader>{viewingVisitor?.name}</ModalHeader>
-          <ModalBody className="gap-2 pb-6">
-            {viewingVisitor && (
+          <ModalHeader>{openVisitor?.name}</ModalHeader>
+          <ModalBody className="gap-2">
+            {openVisitor && (
               <>
-                <p><strong>Visitor #:</strong> {viewingVisitor.visitorNumber}</p>
-                <p><strong>Purpose:</strong> {viewingVisitor.purpose}</p>
-                {viewingVisitor.hostName && <p><strong>Host:</strong> {viewingVisitor.hostName}{viewingVisitor.hostRoom ? ` (Room ${viewingVisitor.hostRoom})` : ''}</p>}
-                <p><strong>Check-in:</strong> {viewingVisitor.checkInTime.toLocaleString()}</p>
-                {viewingVisitor.checkOutTime && <p><strong>Check-out:</strong> {viewingVisitor.checkOutTime.toLocaleString()}</p>}
-                <p><strong>Status:</strong> {viewingVisitor.status.replace('_', ' ')}</p>
-                {viewingVisitor.idType && <p><strong>ID:</strong> {viewingVisitor.idType} {viewingVisitor.idNumber}</p>}
-                {viewingVisitor.vehicleNumber && <p><strong>Vehicle:</strong> {viewingVisitor.vehicleNumber}</p>}
+                <p><strong>Visitor #:</strong> {openVisitor.visitorNumber}</p>
+                <p><strong>Purpose:</strong> {openVisitor.purpose}</p>
+                {openVisitor.hostName && <p><strong>Host:</strong> {openVisitor.hostName}{openVisitor.hostRoom ? ` (Room ${openVisitor.hostRoom})` : ''}</p>}
+                <p><strong>Check-in:</strong> {openVisitor.checkInTime.toLocaleString()}</p>
+                {openVisitor.checkOutTime && <p><strong>Check-out:</strong> {openVisitor.checkOutTime.toLocaleString()}</p>}
+                <p><strong>Status:</strong> {openVisitor.status.replace('_', ' ')}</p>
+                {openVisitor.idType && <p><strong>ID:</strong> {openVisitor.idType} {openVisitor.idNumber}</p>}
+                {openVisitor.vehicleNumber && <p><strong>Vehicle:</strong> {openVisitor.vehicleNumber}</p>}
               </>
             )}
           </ModalBody>
+          <ModalFooter>
+            {openVisitor?.status === 'checked_in' && (
+              <Button color="success" variant="flat" onPress={() => checkOutVisitor(openVisitor.id)}>
+                Check Out
+              </Button>
+            )}
+            <Button variant="light" onPress={() => setViewingVisitor(null)}>Close</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* View Patrol */}
+      <Modal isOpen={!!openPatrol} onClose={() => setViewingPatrol(null)} size="2xl" scrollBehavior="inside">
+        <ModalContent>
+          <ModalHeader>{openPatrol ? `${openPatrol.patrolNumber} — ${openPatrol.route}` : 'Patrol'}</ModalHeader>
+          <ModalBody className="gap-3">
+            {openPatrol && (
+              <>
+                <p><strong>Officer:</strong> {openPatrol.officerName}</p>
+                <p><strong>Started:</strong> {openPatrol.startTime.toLocaleString()}</p>
+                {openPatrol.endTime && <p><strong>Ended:</strong> {openPatrol.endTime.toLocaleString()}</p>}
+                <p><strong>Status:</strong> {openPatrol.status}</p>
+                <div className="space-y-1.5">
+                  {openPatrol.checkpoints.map((cp) => (
+                    <div key={cp.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 rounded-lg">
+                      <div className="min-w-0">
+                        <div className="text-sm font-medium text-ghana-black truncate">{cp.location}</div>
+                        <div className="text-xs text-gray-500 truncate">
+                          {cp.status === 'completed' && cp.actualTime
+                            ? `Checked ${cp.actualTime.toLocaleTimeString()}`
+                            : cp.status === 'missed'
+                              ? (cp.notes || 'Missed — no reason given')
+                              : `Scheduled ${cp.scheduledTime.toLocaleTimeString()}`}
+                        </div>
+                      </div>
+                      {openPatrol.status === 'active' && cp.status === 'pending' && canManagePatrols ? (
+                        <div className="flex gap-1 shrink-0">
+                          <Button size="sm" isIconOnly color="success" variant="flat" title="Mark checked" onClick={() => completeCheckpoint(openPatrol.id, cp.id)}>
+                            ✓
+                          </Button>
+                          <Button
+                            size="sm"
+                            isIconOnly
+                            color="danger"
+                            variant="flat"
+                            title="Mark missed"
+                            onClick={() => setMissCheckpointTarget({ patrolId: openPatrol.id, checkpointId: cp.id, location: cp.location })}
+                          >
+                            ✕
+                          </Button>
+                        </div>
+                      ) : (
+                        <Badge color={cp.status === 'completed' ? 'success' : cp.status === 'missed' ? 'danger' : 'default'} size="sm" className="shrink-0">
+                          {cp.status}
+                        </Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            {openPatrol?.status === 'active' && canManagePatrols && (
+              <Button color="success" variant="flat" onPress={() => endPatrol(openPatrol.id)}>
+                End Patrol
+              </Button>
+            )}
+            <Button variant="light" onPress={() => setViewingPatrol(null)}>Close</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* View Shift */}
+      <Modal isOpen={!!openShift} onClose={() => setViewingShift(null)} size="lg">
+        <ModalContent>
+          <ModalHeader>{openShift?.personName}</ModalHeader>
+          <ModalBody className="gap-2">
+            {openShift && (
+              <>
+                <p><strong>Checked in:</strong> {openShift.checkInTime.toLocaleString()}</p>
+                <p><strong>Checked out:</strong> {openShift.checkOutTime ? openShift.checkOutTime.toLocaleString() : '—'}</p>
+                <p><strong>Duration:</strong> {formatShiftDuration(openShift.checkInTime, openShift.checkOutTime)}</p>
+                <p><strong>Status:</strong> {openShift.status === 'on_duty' ? 'on duty' : 'completed'}</p>
+                {openShift.notes && <p><strong>Notes:</strong> {openShift.notes}</p>}
+              </>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            {openShift?.status === 'on_duty' && canManageShifts && (
+              <Button color="danger" variant="flat" onPress={() => checkOut(openShift.id)}>
+                Check Out
+              </Button>
+            )}
+            <Button variant="light" onPress={() => setViewingShift(null)}>Close</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* View personnel */}
+      <Modal isOpen={!!openPersonnel} onClose={() => setViewingPersonnel(null)} size="lg">
+        <ModalContent>
+          <ModalHeader>{openPersonnel?.name}</ModalHeader>
+          <ModalBody className="gap-2">
+            {openPersonnel && (
+              <>
+                <p><strong>Agency:</strong> {openPersonnel.agency || '—'}</p>
+                <p><strong>Role:</strong> {openPersonnel.role || '—'}</p>
+                <p><strong>Phone:</strong> {openPersonnel.phone || '—'}</p>
+                <p><strong>Status:</strong> {openPersonnel.isActive ? 'active' : 'inactive'}</p>
+                {openPersonnel.notes && <p><strong>Notes:</strong> {openPersonnel.notes}</p>}
+              </>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            {openPersonnel && canManagePersonnel && (
+              <Button
+                color={openPersonnel.isActive ? 'danger' : 'success'}
+                variant="flat"
+                onPress={() => setPersonnelActive(openPersonnel.id, !openPersonnel.isActive)}
+              >
+                {openPersonnel.isActive ? 'Deactivate' : 'Reactivate'}
+              </Button>
+            )}
+            <Button variant="light" onPress={() => setViewingPersonnel(null)}>Close</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* View checkpoint location */}
+      <Modal isOpen={!!openLocation} onClose={() => setViewingLocation(null)} size="md">
+        <ModalContent>
+          <ModalHeader>{openLocation?.name}</ModalHeader>
+          <ModalBody>
+            {openLocation && <p><strong>Status:</strong> {openLocation.isActive ? 'active' : 'inactive'}</p>}
+          </ModalBody>
+          <ModalFooter>
+            {openLocation && canManageCheckpoints && (
+              <Button
+                color={openLocation.isActive ? 'danger' : 'success'}
+                variant="flat"
+                onPress={() => setCheckpointLocationActive(openLocation.id, !openLocation.isActive)}
+              >
+                {openLocation.isActive ? 'Deactivate' : 'Reactivate'}
+              </Button>
+            )}
+            <Button variant="light" onPress={() => setViewingLocation(null)}>Close</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* View patrol route */}
+      <Modal isOpen={!!openRoute} onClose={() => setViewingRoute(null)} size="md">
+        <ModalContent>
+          <ModalHeader>{openRoute?.name}</ModalHeader>
+          <ModalBody>
+            {openRoute && <p><strong>Status:</strong> {openRoute.isActive ? 'active' : 'inactive'}</p>}
+          </ModalBody>
+          <ModalFooter>
+            {openRoute && canManageRoutes && (
+              <Button
+                color={openRoute.isActive ? 'danger' : 'success'}
+                variant="flat"
+                onPress={() => setPatrolRouteActive(openRoute.id, !openRoute.isActive)}
+              >
+                {openRoute.isActive ? 'Deactivate' : 'Reactivate'}
+              </Button>
+            )}
+            <Button variant="light" onPress={() => setViewingRoute(null)}>Close</Button>
+          </ModalFooter>
         </ModalContent>
       </Modal>
     </div>

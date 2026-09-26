@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import { 
   Card, 
   CardBody, 
@@ -174,8 +175,10 @@ export default function StaffManagementPanel() {
       {/* Header and Actions */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-ghana-black">👥 Staff Management</h2>
-          <p className="text-gray-600">Manage housekeeping staff, assignments, and performance</p>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-xl font-semibold text-ghana-black">👥 Staff Management</h2>
+            <HeadingInfo label="About staff">Manage housekeeping staff, assignments, and performance</HeadingInfo>
+          </div>
         </div>
         <Button 
           color="primary" 

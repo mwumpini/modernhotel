@@ -9,10 +9,10 @@ import { taxCodeForGl, TAX_CODE_TO_REPORT_TYPE } from './glMap';
 /**
  * Marks the filing for this tax/period as submitted the moment its remittance posts — there
  * was previously no path anywhere in the app that ever told the Compliance & Reports filing
- * tracker that a VAT/WHT/NHIL/Tourism/PAYE/SSNIT payment had actually been made, so "Filing
- * compliance" stayed stuck at 0% regardless of real payment activity (only payroll's own
- * PAYE/SSNIT sync ever wrote into it). Silently no-ops for a tax code with no filing schedule
- * of its own (GETFund, COVID levy — bundled into the VAT return).
+ * tracker that a VAT/WHT/NHIL/GETFund/Tourism/PAYE/SSNIT payment had actually been made, so
+ * "Filing compliance" stayed stuck at 0% regardless of real payment activity (only payroll's
+ * own PAYE/SSNIT sync ever wrote into it). Silently no-ops for a tax code with no filing
+ * schedule of its own (COVID levy — bundled into the VAT return).
  */
 function syncTaxRemittanceToComplianceFiling(input: CaptureTaxRemittanceInput): void {
   const taxCode = taxCodeForGl(input.taxGlCode);
@@ -133,7 +133,8 @@ export function captureTaxRemittance(input: CaptureTaxRemittanceInput): { journa
   try {
     store.addJournalEntry(je);
 
-    const newBalance = Math.round(((bank.currentBalance ?? 0) - input.amount) * 100) / 100;
+    const live = useAccountingStore.getState().bankAccounts.find((b) => b.id === bank.id) || bank;
+    const newBalance = Math.round(((live.currentBalance ?? 0) - input.amount) * 100) / 100;
     store.updateBankAccount(bank.id, { currentBalance: newBalance, updatedAt: now });
     store.addBankTransaction({
       id: `BT-TAX-REMIT-${jeId}`,

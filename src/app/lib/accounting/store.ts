@@ -47,7 +47,7 @@ import { buildChartOfAccountsFromTemplate, resolveAccountingCountryCode, getChar
 import { buildOperationalAccountingSeed, EMPTY_TRANSACTION_SEED } from './operationalSeed';
 import { computeCostCenterActual, computeRevenueCenterActual } from './costRevenueRollup';
 import { isAccountingDemoMode } from './tenantAccountingConfig';
-import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts, persistCostCenter, persistCostCenterDelete, fetchCostCenters, persistRevenueCenter, persistRevenueCenterDelete, fetchRevenueCenters, persistBusinessPartner, persistBusinessPartnerDelete, fetchBusinessPartners, persistBankTransaction, persistBankTransactionDelete, fetchBankTransactions } from './helpers/api';
+import { persistJournalEntry, persistJournalEntryStatus, fetchJournalEntries, fetchAccountingAuditTrail, persistInvoice, persistInvoicePatch, persistInvoiceDelete, fetchInvoices, persistPayment, persistPaymentPatch, fetchPayments, persistChartOfAccount, persistChartOfAccountsBulk, persistChartOfAccountDelete, fetchChartOfAccounts, persistBankAccount, persistBankAccountDelete, fetchBankAccounts, persistCostCenter, persistCostCenterDelete, fetchCostCenters, persistRevenueCenter, persistRevenueCenterDelete, fetchRevenueCenters, persistBusinessPartner, persistBusinessPartnerDelete, fetchBusinessPartners, persistBankTransaction, persistBankTransactionDelete, fetchBankTransactions } from './helpers/api';
 import { useSettingsStore } from '../settings/store';
 import {
   syncInvoiceToLedger,
@@ -60,6 +60,8 @@ import { findJournalEntryForInvoice, MANUAL_AR_AP_SOURCE } from './accountingPro
 import { isManualArApSource, postJournalEntryReversal } from './journalReversal';
 import { isPettyCashAccount, resolveBankGlAccountCode } from './bankCoaLink';
 import { syncBankOpeningBalanceToLedger } from './bankOpeningBalance';
+import { mirrorGlCashToCashbook } from './cashbookMirror';
+import { GL_ACCOUNTS, PAYMENT_GL_MAP } from './glAccounts';
 import {
   createManualBankTransaction,
   reverseManualBankTransaction,
@@ -1291,6 +1293,19 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         }
       }
 
+      const checkoutSales = state.journalEntries.find(
+        (e) => e.id === `JE-FO-CHK-${invoice.id}` && e.status === 'Posted',
+      );
+      if (checkoutSales) {
+        const voidedAt = new Date().toISOString();
+        set((s) => ({
+          journalEntries: s.journalEntries.map((e) =>
+            e.id === checkoutSales.id ? { ...e, status: 'Void' as const, updatedAt: voidedAt } : e,
+          ),
+        }));
+        persistJournalEntryStatus(checkoutSales.id, { status: 'Void' });
+      }
+
       const now = new Date().toISOString();
       const openAmount = roundMoney2(invoice.total - (invoice.paidAmount || 0));
 
@@ -1496,6 +1511,41 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       const result = syncPaymentToLedger(refreshed, partner, get());
       if (!result.ok && !('skipped' in result)) {
         throw new Error(result.error);
+      }
+
+      if (result.ok && !('skipped' in result) && payment.type === 'Receipt' && !payment.bankAccountId) {
+        const methodGl = PAYMENT_GL_MAP[payment.paymentMethod] || GL_ACCOUNTS.CASH;
+        mirrorGlCashToCashbook(() => get(), {
+          glCode: methodGl,
+          amount: payment.amount,
+          direction: 'in',
+          date: payment.date,
+          reference: payment.reference || payment.paymentNumber,
+          description: payment.description || `Receipt ${payment.paymentNumber}`,
+          journalEntryId: result.entry.id,
+        });
+      }
+
+      if (result.ok && !('skipped' in result) && payment.type === 'Receipt' && payment.bankAccountId) {
+        const bank = get().bankAccounts.find(b => b.id === payment.bankAccountId);
+        if (bank && !get().bankTransactions.some((t) => t.journalEntryId === result.entry.id && t.bankAccountId === bank.id)) {
+          const newBalance = +(bank.currentBalance + payment.amount).toFixed(2);
+          get().updateBankAccount(bank.id, { currentBalance: newBalance, updatedAt: new Date().toISOString() });
+          get().addBankTransaction({
+            id: `BT-${result.entry.id}`,
+            bankAccountId: bank.id,
+            transactionDate: payment.date,
+            reference: payment.reference || payment.paymentNumber,
+            description: payment.description || `Receipt ${payment.paymentNumber}`,
+            amount: payment.amount,
+            type: 'Deposit',
+            currency: bank.currency,
+            balance: newBalance,
+            status: 'Cleared',
+            journalEntryId: result.entry.id,
+            createdAt: new Date().toISOString()
+          });
+        }
       }
 
       if (result.ok && !('skipped' in result) && payment.type === 'Payment' && payment.bankAccountId) {
@@ -2134,7 +2184,30 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
     const glStore = get();
 
     if (cashPayment) {
-      syncPaymentToLedger(cashPayment, partner, glStore);
+      const cashResult = syncPaymentToLedger(cashPayment, partner, glStore);
+      if (cashResult.ok && !('skipped' in cashResult) && cashPayment.bankAccountId) {
+        const bank = get().bankAccounts.find((b) => b.id === cashPayment.bankAccountId);
+        const journalEntryId = cashResult.entry.id;
+        if (bank && !get().bankTransactions.some((t) => t.journalEntryId === journalEntryId && t.bankAccountId === bank.id)) {
+          const newBalance = +((bank.currentBalance || 0) - cashPayment.amount).toFixed(2);
+          const postedAt = new Date().toISOString();
+          get().updateBankAccount(bank.id, { currentBalance: newBalance, updatedAt: postedAt });
+          get().addBankTransaction({
+            id: `BT-${journalEntryId}`,
+            bankAccountId: bank.id,
+            transactionDate: (cashPayment.date || postedAt).slice(0, 10),
+            reference: cashPayment.reference || cashPayment.paymentNumber,
+            description: cashPayment.description || `Supplier payment ${cashPayment.paymentNumber}`,
+            amount: cashPayment.amount,
+            type: 'Withdrawal',
+            currency: bank.currency || 'GHS',
+            balance: newBalance,
+            status: 'Cleared',
+            journalEntryId,
+            createdAt: postedAt,
+          });
+        }
+      }
     }
 
     if (whtPayment && totalWithheld > 0) {
@@ -3076,7 +3149,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
 
       // Hydrate persisted records from the database (server authoritative when tenant is set).
       // Demo transaction seed loads only when NEXT_PUBLIC_DEMO_MODE=true.
-      const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts, serverCostCenters, serverRevenueCenters, serverPartners, serverBankTxns] = await Promise.all([
+      const [serverJEs, serverInvoices, serverPayments, serverCoa, serverBankAccounts, serverCostCenters, serverRevenueCenters, serverPartners, serverBankTxns, serverAudit] = await Promise.all([
         fetchJournalEntries(),
         fetchInvoices(),
         fetchPayments(),
@@ -3086,6 +3159,7 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
         fetchRevenueCenters(),
         fetchBusinessPartners(),
         fetchBankTransactions(),
+        fetchAccountingAuditTrail(),
       ]);
       // Chart of accounts and bank accounts are only ever edited one action at a time through
       // their own screens (no concurrent-write race like invoices/payments can have), and the
@@ -3136,6 +3210,9 @@ export const useAccountingStore = create<AccountingState>((set, get) => ({
       } else {
         const seeded = get().bankTransactions;
         seeded.forEach((t) => persistBankTransaction(t));
+      }
+      if (serverAudit && serverAudit.length > 0) {
+        set({ auditTrail: serverAudit });
       }
       if (serverJEs && serverJEs.length > 0) {
         set((s) => ({ journalEntries: mergeServerRecordsByRecency(s.journalEntries, serverJEs) }));

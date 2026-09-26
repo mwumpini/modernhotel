@@ -8,7 +8,7 @@
  * so an entry's POST always lands before any status PATCH that follows.
  */
 import { getClientTenantSubdomain } from '../../api/clientTenant';
-import { JournalEntry, Invoice, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter, BusinessPartner, BankTransaction } from '../models';
+import { JournalEntry, Invoice, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter, BusinessPartner, BankTransaction, AuditTrail } from '../models';
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
@@ -86,6 +86,22 @@ export async function fetchJournalEntries(): Promise<JournalEntry[] | null> {
     return Array.isArray(data.journalEntries) ? data.journalEntries : null;
   } catch (e) {
     console.warn('Accounting: journal entry hydration failed', e);
+    return null;
+  }
+}
+
+export async function fetchAccountingAuditTrail(): Promise<AuditTrail[] | null> {
+  const t = getClientTenantSubdomain();
+  if (typeof window === 'undefined' || !t) return null;
+  try {
+    const res = await fetch('/api/accounting/audit-trail', {
+      headers: { 'x-tenant-subdomain': t },
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.auditTrail) ? data.auditTrail : null;
+  } catch (e) {
+    console.warn('Accounting: audit trail hydration failed', e);
     return null;
   }
 }

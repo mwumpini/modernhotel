@@ -7,6 +7,7 @@ import type { Session } from 'next-auth';
 import '../lib/demo/init';
 import HelpF12Shortcut from './HelpF12Shortcut';
 import NightAuditScheduler from './NightAuditScheduler';
+import SessionIdleGuard from './SessionIdleGuard';
 import NotificationToaster from './NotificationToaster';
 import ThemeProvider from './ThemeProvider';
 
@@ -23,6 +24,7 @@ export default function Providers({ children, session = null }: ProvidersProps) 
           <NotificationToaster />
           <HelpF12Shortcut />
           <NightAuditScheduler />
+          <SessionIdleGuard />
           {children}
         </ThemeProvider>
       </HeroUIProvider>

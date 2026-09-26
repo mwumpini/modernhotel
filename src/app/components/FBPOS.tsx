@@ -29,7 +29,7 @@ import {
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { logAudit } from '../lib/analytics/auditLogStore';
 import { ordersStore, FBOrder } from '../lib/fb/ordersStore';
-import { buildReceiptHtml, printReceipt, printKOTDoc, buildKOTHtml, printHtml, previewReceipt } from '../lib/print/print';
+import { buildReceiptHtml, printReceipt, buildKOTHtml, printHtml, previewReceipt } from '../lib/print/print';
 import { storesIssueBus } from '../lib/fb/stores';
 import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { storesStore } from '../lib/stores/store';
@@ -40,6 +40,8 @@ import { customerStore } from '../lib/fb/customerStore';
 import { fbTenantHeaders, normalizePosVenue, createFbOrder, patchFbOrderStatus, fetchFbOrderById, type FbOrderStatus } from '../lib/fb/api';
 import { computeSalesTaxTotal } from '../lib/tax/engine';
 import { useSettingsStore } from '../lib/settings/store';
+import { managerPinMatches } from '../lib/settings/managerPin';
+import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
 
 type CustomerType = 'In-house' | 'Walk-in';
 type VenueMode = 'Restaurant' | 'Bar';
@@ -51,6 +53,7 @@ interface FBPOSProps {
 
 interface MenuItem {
   id: string;
+  code?: string;
   name: string;
   price: number;
   category: string;
@@ -122,24 +125,22 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   ]);
 
   const paymentModal = useDisclosure();
-  const aliasModal = useDisclosure();
-  const newItemModal = useDisclosure();
   const orderDetailModal = useDisclosure();
   const managerPinModal = useDisclosure();
   const printPreviewModal = useDisclosure();
   const [printPreview, setPrintPreview] = useState<{ title: string; html: string } | null>(null);
-  const [managerPin, setManagerPin] = useState<string>('1234');
   const [pinValue, setPinValue] = useState<string>('');
   const [pinError, setPinError] = useState<string>('');
   const [pendingManagerAction, setPendingManagerAction] = useState<{ type: 'delete'; orderId: string } | null>(null);
   const [orders, setOrders] = useState<FBOrder[]>([]);
   const [showAllItems, setShowAllItems] = useState(false);
-  const [sortKey, setSortKey] = useState<string>('id');
+  const [sortKey, setSortKey] = useState<string>('time');
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
   const [activityPage, setActivityPage] = useState<number>(1);
   const [activityRowsPerPage, setActivityRowsPerPage] = useState<number>(10);
   const [activitySearch, setActivitySearch] = useState<string>('');
-  const [activityStatusFilter, setActivityStatusFilter] = useState<string>('all');
+  const [activityQueue, setActivityQueue] = useState<'all' | 'pending-kot' | 'pending-bot' | 'unpaid' | 'billed' | 'cancelled'>('all');
+  const [activityWaiterFilter, setActivityWaiterFilter] = useState<string>('all');
   const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: number }>>([]);
   const [tipAmount, setTipAmount] = useState<number>(0);
   const [settleRoomSearch, setSettleRoomSearch] = useState<string>('');
@@ -339,7 +340,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   }, []);
 
   type AliasesMap = Record<string, string[]>; // menuId -> aliases
-  const [aliases, setAliases] = useState<AliasesMap>(() => {
+  const [aliases] = useState<AliasesMap>(() => {
     try {
       const raw = localStorage.getItem('fbpos.aliases');
       return raw ? JSON.parse(raw) : {};
@@ -347,12 +348,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       return {};
     }
   });
-
-  const saveAliases = (next: AliasesMap) => {
-    setAliases(next);
-    localStorage.setItem('fbpos.aliases', JSON.stringify(next));
-    trackEvent('FB.MenuAliasesUpdated', { count: Object.values(next).reduce((a, b) => a + b.length, 0) }, { sourceModule: 'F&B' });
-  };
 
   const aliasMatches = (m: MenuItem, q: string) => {
     const qs = q.trim().toLowerCase();
@@ -377,6 +372,16 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     return map;
   }, [menu]);
 
+  const activityStamp = (iso?: string) => {
+    if (!iso) return { date: '-', time: '-' };
+    const when = new Date(iso);
+    if (Number.isNaN(when.getTime())) return { date: '-', time: '-' };
+    return {
+      date: when.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+      time: when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
+    };
+  };
+
   const sortedOrders = useMemo(() => {
     const allItems = orders.flatMap((o) => o.items.map((it) => ({ order: o, item: it })));
     const sorted = [...allItems].sort((a, b) => {
@@ -387,13 +392,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           aValue = a.order.orderNumber || a.order.id;
           bValue = b.order.orderNumber || b.order.id;
           break;
+        case 'date':
         case 'time':
           aValue = a.order.createdAt || '';
           bValue = b.order.createdAt || '';
-          break;
-        case 'itemCode':
-          aValue = (aliases[a.item.id]?.[0]) || a.item.id;
-          bValue = (aliases[b.item.id]?.[0]) || b.item.id;
           break;
         case 'itemName':
           aValue = a.item.name;
@@ -454,18 +456,48 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     });
     
     return sorted;
-  }, [orders, aliases, menuIdToCategory, waiters, sortKey, sortDirection]);
+  }, [orders, menuIdToCategory, waiters, sortKey, sortDirection]);
 
-  const activityStatusOptions = useMemo(
-    () => Array.from(new Set(sortedOrders.map(({ order, item }) => item.status || order.status))).sort(),
-    [sortedOrders]
-  );
+  const activityLineOpen = (status: string) => status !== 'served' && status !== 'billed' && status !== 'cancelled';
+
+  const activityRowInQueue = (
+    queue: 'pending-kot' | 'pending-bot' | 'unpaid' | 'billed' | 'cancelled',
+    order: { status?: string },
+    item: { status?: string; route?: string },
+  ) => {
+    const status = String(item.status || order.status || '').toLowerCase();
+    const route = item.route === 'bar' ? 'bar' : 'kitchen';
+    if (queue === 'pending-kot') return route === 'kitchen' && activityLineOpen(status);
+    if (queue === 'pending-bot') return route === 'bar' && activityLineOpen(status);
+    if (queue === 'unpaid') return status === 'served' || status === 'ready';
+    if (queue === 'billed') return status === 'billed';
+    return status === 'cancelled';
+  };
+
+  const activityWaiterOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const order of orders) {
+      if (!order.waiterId) continue;
+      map.set(order.waiterId, waiters.find(w => w.id === order.waiterId)?.name || order.waiterId);
+    }
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [orders, waiters]);
+
+  const activitySortValue =
+    (sortKey === 'time' || sortKey === 'date') && sortDirection === 'asc' ? 'time-asc'
+    : sortKey === 'table' ? 'table'
+    : sortKey === 'waiter' ? 'waiter'
+    : sortKey === 'amount' && sortDirection === 'asc' ? 'amount-asc'
+    : sortKey === 'amount' ? 'amount-desc'
+    : 'time-desc';
 
   const filteredActivityRows = useMemo(() => {
     const term = activitySearch.trim().toLowerCase();
     return sortedOrders.filter(({ order, item }) => {
-      const status = item.status || order.status;
-      if (activityStatusFilter !== 'all' && status !== activityStatusFilter) return false;
+      if (activityQueue !== 'all' && !activityRowInQueue(activityQueue, order, item)) return false;
+      if (activityWaiterFilter !== 'all' && order.waiterId !== activityWaiterFilter) return false;
       if (!term) return true;
       const haystack = [
         order.orderNumber, order.id, item.name, order.guestName, order.table, order.roomNumber,
@@ -473,7 +505,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       ].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(term);
     });
-  }, [sortedOrders, activitySearch, activityStatusFilter, waiters]);
+  }, [sortedOrders, activitySearch, activityQueue, activityWaiterFilter, waiters]);
 
   const totalActivityPages = Math.max(1, Math.ceil((filteredActivityRows.length || 0) / (activityRowsPerPage || 10)));
   React.useEffect(() => {
@@ -481,7 +513,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   }, [activityRowsPerPage, filteredActivityRows.length, totalActivityPages, activityPage]);
   React.useEffect(() => {
     setActivityPage(1);
-  }, [activitySearch, activityStatusFilter]);
+  }, [activitySearch, activityQueue, activityWaiterFilter]);
 
   const openActivityModal = (o: FBOrder, it: any) => {
     setActivitySelected({ order: o, item: it });
@@ -489,6 +521,59 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setActivityTable(o.table);
     setActivityVenue(o.venue as VenueMode);
     setActivityWaiter(o.waiterId);
+  };
+
+  const activityLineStatus = (o: { status?: string }, it: { status?: string }) =>
+    String(it.status || o.status || '').toLowerCase();
+
+  const serveActivityItem = async (o: FBOrder, it: any) => {
+    const status = activityLineStatus(o, it);
+    if (status === 'served' || status === 'billed' || status === 'cancelled') return;
+    ordersStore.updateItem(o.id, it.id, { status: 'served' });
+    kitchenOpsStore.add({ orderId: o.id, table: o.table, waiterId: o.waiterId, itemId: it.id, itemName: it.name, action: 'status', fromStatus: (it.status as any) || 'pending', toStatus: 'served', priority: (o.priority || (o.urgent ? 'urgent' : 'low')) as any });
+    trackEvent('FB.OrderStatusChanged', { id: o.id, itemId: it.id, status: 'served' }, { sourceModule: 'F&B' });
+    try {
+      await fetch(`/api/fb/orders/${o.id}`, {
+        method: 'PATCH',
+        headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ status: 'served' }),
+      });
+    } catch { /* in-memory store already updated */ }
+    setActivitySelected(prev => prev && prev.order.id === o.id && prev.item.id === it.id
+      ? { ...prev, item: { ...prev.item, status: 'served' }, order: { ...prev.order, status: 'served' } }
+      : prev);
+  };
+
+  const payActivityOrder = (o: FBOrder) => {
+    const status = String(o.status || '').toLowerCase();
+    if (status === 'billed' || status === 'cancelled') return;
+    const linesSubtotal = o.items.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+    const storedTotal = Number(o.total) || 0;
+    const taxAmount = storedTotal > linesSubtotal
+      ? Math.round((storedTotal - linesSubtotal) * 100) / 100
+      : computeSalesTaxTotal(linesSubtotal);
+    const ticketTotal = storedTotal > 0 ? storedTotal : Math.round((linesSubtotal + taxAmount) * 100) / 100;
+    loadOrderIntoCart({
+      id: o.id,
+      table: o.table,
+      waiterId: o.waiterId,
+      items: o.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: i.category || '', route: i.route })),
+      status: o.status as any,
+      customerType: o.customerType as any,
+      venue: o.venue as any,
+      notes: o.notes,
+      urgent: o.urgent,
+      priority: o.priority,
+    } as any);
+    if (o.customerType === 'In-house') {
+      setGuestName(o.guestName || '');
+      setRoomNumber(o.roomNumber || '');
+    } else if (o.guestName) {
+      setWalkInSearchTerm(o.guestName);
+    }
+    setSentOrderData({ id: o.id, subtotal: linesSubtotal, taxAmount, total: ticketTotal });
+    setActivitySelected(null);
+    paymentModal.onOpen();
   };
 
   const activityReceipt = () => {
@@ -580,6 +665,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const totalBeforeTip = Math.max(0, subtotal - itemDiscountAmount - orderDiscountAmount + serviceChargeAmount + (orderMode === 'Takeaway' ? (packagingFee || 0) : 0));
   const total = Math.max(0, totalBeforeTip);
   const grandTotal = Math.max(0, total + (tipAmount || 0));
+  // A saved ticket (just sent, or opened from the activity table) is billed at its stored total.
+  const payingSavedTicket = Boolean(sentOrderData && (cart.length === 0 || editingOrderId === sentOrderData.id));
+  const amountDue = payingSavedTicket
+    ? Math.max(0, (sentOrderData?.total || 0) + (tipAmount || 0))
+    : (cart.length > 0 ? grandTotal : 0);
   const splitPaid = splitPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0);
   const splitRemaining = Math.max(0, grandTotal - splitPaid);
 
@@ -626,7 +716,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
     // ── POST to database API (source of truth for KDS) ─────────────────────
     let apiId: string | null = null;
-    const orderNumber = useSettingsStore.getState().getNextModuleNumber('foodBeverage', 'order');
+    const stamped = issueOrderIdentity(itemsWithOrderDiscount, orderNotes);
+    const orderNumber = stamped.orderNumber;
     try {
       const data = await createFbOrder({
         orderNumber,
@@ -637,7 +728,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         reservationId: inHouseReservationId(),
         guestName: guestDisplayName,
         serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
-        notes: orderNotes,
+        notes: stamped.notes,
         covers: 1,
         discountAmount: orderDiscountAmount,
         serviceCharge: serviceChargeAmount,
@@ -689,7 +780,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       status: 'pending',
       customerType,
       venue,
-      notes: orderNotes,
+      notes: stamped.notes,
       urgent: priority === 'urgent',
       priority,
       guestName: guestDisplayName,
@@ -711,7 +802,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const openPayment = () => paymentModal.onOpen();
 
   const handlePayment = async (paymentMethod: PaymentMethod, amount: number) => {
-    if (cart.length === 0) return;
+    if (cart.length === 0 && !sentOrderData) return;
     if (isProcessingPayment) return; // guard against double-click double-charging the guest
 
     // Validate in-house customer selection
@@ -735,6 +826,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       let totalTax = 0;
       let total = subtotal; // fallback — replaced by API data
 
+      let expressStamp: ReturnType<typeof issueOrderIdentity> | null = null;
       if (sentOrderData) {
         // Reuse existing DB order created by sendOrder()
         apiOrder = { id: sentOrderData.id };
@@ -743,9 +835,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         total = sentOrderData.total;
       } else {
         // Express pay: create order now (single-step: order + pay)
+        expressStamp = issueOrderIdentity(itemsWithOrderDiscount, orderNotes);
+        const stamped = expressStamp;
         try {
           const data = await createFbOrder({
-            orderNumber: useSettingsStore.getState().getNextModuleNumber('foodBeverage', 'order'),
+            orderNumber: stamped.orderNumber,
             venue: normalizePosVenue(venue),
             tableNumber,
             roomNumber: customerType === 'In-house' ? roomNumber : undefined,
@@ -753,7 +847,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             reservationId: inHouseReservationId(),
             guestName: guestDisplayName,
             serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
-            notes: orderNotes,
+            notes: stamped.notes,
             covers: 1,
             discountAmount: orderDiscountAmount,
             serviceCharge: serviceChargeAmount,
@@ -810,26 +904,41 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       const newId = apiOrder?.id ?? `ORD-${Date.now().toString().slice(-6)}`;
 
       // ── Mirror to in-memory store for immediate UI reactivity ───────────────
-      ordersStore.add({
+      const billedItems = (cart.length > 0 ? itemsWithOrderDiscount : (ordersStore.all().find(o => o.id === newId)?.items || [])).map(i => ({
+        id: i.id, name: i.name, price: i.price, qty: i.qty, route: i.route,
+        status: 'billed' as const, prepMinutes: i.route === 'kitchen' ? 15 : 2,
+        isRoomService: i.isRoomService || false,
+        discountPerUnit: i.discountPerUnit || 0,
+        serviceChargePerUnit: i.serviceChargePerUnit || 0,
+      }));
+      const billedOrder = {
         id: newId,
         table: tableNumber,
         waiterId,
-        items: itemsWithOrderDiscount.map(i => ({
-          id: i.id, name: i.name, price: i.price, qty: i.qty, route: i.route,
-          status: 'billed', prepMinutes: i.route === 'kitchen' ? 15 : 2,
-          isRoomService: i.isRoomService || false,
-          discountPerUnit: i.discountPerUnit || 0,
-          serviceChargePerUnit: i.serviceChargePerUnit || 0,
-        })),
+        items: billedItems,
         status: 'billed',
         customerType,
         venue,
-        notes: orderNotes,
+        notes: expressStamp?.notes || orderNotes,
         urgent: priority === 'urgent',
         priority,
         guestName: guestDisplayName,
         roomNumber: customerType === 'In-house' ? roomNumber : undefined,
-      } as any);
+        total,
+        orderNumber: expressStamp?.orderNumber,
+      } as any;
+      const existingBilled = ordersStore.all().find(o => o.id === newId);
+      if (existingBilled) {
+        ordersStore.update({
+          ...existingBilled,
+          ...billedOrder,
+          notes: existingBilled.notes,
+          orderNumber: existingBilled.orderNumber,
+          items: billedItems.length > 0 ? billedItems : existingBilled.items,
+        });
+      } else {
+        ordersStore.add(billedOrder);
+      }
 
       // Update inventory (demo issue movements)
       cart.forEach(cartItem => {
@@ -870,7 +979,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
               customerName: guestDisplayName,
               reference: newId,
               description: `${venue} Sale - Table ${tableNumber || 'N/A'}`,
-              items: cart.map(item => ({
+              items: (cart.length > 0 ? cart : [{ name: `${venue} order`, qty: 1, price: finalSubtotal }]).map(item => ({
                 description: item.name,
                 quantity: item.qty,
                 unitPrice: item.price,
@@ -908,6 +1017,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
       // Clear cart and show success
       setCart([]);
+      setSentOrderData(null);
+      setEditingOrderId(null);
       setDiscountPercent(0);
       setOrderNotes('');
       
@@ -938,10 +1049,31 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     }
   };
 
-  const printKOT = () => {
-    if (cart.length === 0) return;
-    const args = { code: `KOT-${Date.now().toString().slice(-6)}`, table: tableNumber, waiter: waiters.find(w => w.id === waiterId)?.name || waiterId, notes: orderNotes, urgent: priority === 'urgent', items: cart.map(i => ({ name: i.name, qty: i.qty })) };
-    printKOTDoc(args);
+  const previewStationTicket = (kind: 'kot' | 'bot') => {
+    const source = cart.length > 0 ? cart : (kind === 'kot'
+      ? [{ name: 'Jollof Rice', qty: 1, route: 'kitchen' as const }]
+      : [{ name: 'Club Beer', qty: 2, route: 'bar' as const }]);
+    const items = source.filter(i => kind === 'bot' ? i.route === 'bar' : (i.route || 'kitchen') !== 'bar');
+    if (items.length === 0) {
+      alert(kind === 'bot' ? 'No bar items on this order.' : 'No kitchen items on this order.');
+      return;
+    }
+    const code = useSettingsStore.getState().peekNextModuleNumber(
+      'foodBeverage',
+      kind === 'bot' ? 'barOrderTicket' : 'kitchenOrderTicket',
+    );
+    const title = kind === 'bot' ? 'Bar Order Ticket' : 'Kitchen Order Ticket';
+    const args = {
+      title,
+      code,
+      table: tableNumber,
+      waiter: waiters.find(w => w.id === waiterId)?.name || waiterId,
+      notes: parseTicketTag(orderNotes).notes,
+      urgent: priority === 'urgent',
+      items: items.map(i => ({ name: i.name, qty: i.qty })),
+    };
+    setPrintPreview({ title: kind === 'bot' ? 'BOT Preview' : 'KOT Preview', html: buildKOTHtml(args) });
+    printPreviewModal.onOpen();
   };
 
   const reopenOrderToCart = (order: PendingOrder) => {
@@ -1027,7 +1159,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   };
 
   const confirmManagerPin = () => {
-    if (pinValue === managerPin) {
+    if (managerPinMatches(pinValue)) {
       if (pendingManagerAction?.type === 'delete') {
         deleteOrder(pendingManagerAction.orderId);
       }
@@ -1066,24 +1198,25 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         <div className="flex items-center justify-between mb-4">
           <h1 className="text-2xl font-bold text-ghana-black">🛒 POS Terminal</h1>
           <div className="flex gap-2">
-            <Button variant="flat" className="bg-gray-100" onClick={aliasModal.onOpen}>Aliases</Button>
             <Button variant="flat" className="bg-gray-200" onClick={() => {
               try {
                 const evt = new CustomEvent('app.navigate', { detail: { section: 'fb-kitchen' } });
                 window.dispatchEvent(evt);
               } catch {}
             }}>Kitchen Orders</Button>
-            <Button variant="flat" className="bg-gray-200" onClick={onClose}>Back to F&B</Button>
+            <Button variant="flat" className="bg-gray-200" onClick={() => {
+              document.getElementById('pos-activity-table')?.scrollIntoView({ behavior: 'auto', block: 'start' });
+            }}>POS Table</Button>
           </div>
         </div>
 
         
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-          <div className="space-y-4">
-            <Card className="border-0 shadow-lg">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:h-[calc(100vh-10.5rem)] lg:items-stretch">
+          <div className="lg:col-span-3 h-full min-h-0">
+            <Card className="border-0 shadow-lg h-full">
               <CardHeader className="pb-2"><h3 className="font-semibold text-ghana-black">Order Context</h3></CardHeader>
-              <CardBody className="space-y-3">
+              <CardBody className="space-y-3 min-h-0 overflow-y-auto">
                 <Select label="Venue" selectedKeys={[venue]} onSelectionChange={(k) => setVenue(Array.from(k as Set<string>)[0] as VenueMode)}>
                   <SelectItem key="Restaurant">Restaurant</SelectItem>
                   <SelectItem key="Bar">Bar</SelectItem>
@@ -1204,21 +1337,20 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                   </Select>
                   <Input type="number" label="Room Service Charge / Unit (₵)" value={String(roomServiceChargePerUnit)} onChange={(e) => setRoomServiceChargePerUnit(Number(e.target.value || 0))} />
                 </div>
-                <Button variant="flat" className="w-full bg-green-50 text-ghana-green border border-ghana-green/30" onClick={newItemModal.onOpen}>Add Menu Item</Button>
               </CardBody>
             </Card>
 
             {/* Orders table removed per request; replaced by POS Activity Table at top of screen */}
           </div>
 
-          <div className="lg:col-span-2 space-y-4">
-            <Card className="border-0 shadow-lg">
+          <div className="lg:col-span-5 h-full min-h-0">
+            <Card className="border-0 shadow-lg h-full">
               <CardHeader className="pb-2 flex items-center justify-between">
                 <h3 className="font-semibold text-ghana-black">Menu</h3>
                 {menuLoading && <span className="text-xs text-gray-400 animate-pulse">Loading from database…</span>}
                 {!menuLoading && menu.length === 0 && <span className="text-xs text-orange-500">No menu items found. Run accounting setup to seed.</span>}
               </CardHeader>
-              <CardBody>
+              <CardBody className="min-h-0 overflow-y-auto">
                 <Tabs aria-label="Menu categories">
                   {categories.map(cat => (
                     <Tab key={cat} title={cat}>
@@ -1242,66 +1374,87 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             </Card>
           </div>
 
-          <div className="space-y-4">
-            <Card className="border-0 shadow-lg">
+          <div className="lg:col-span-4 h-full min-h-0">
+            <Card className="border-0 shadow-lg h-full">
               <CardHeader className="pb-2 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <h3 className="font-semibold text-ghana-black">Current Order</h3>
-                  <Chip size="sm" variant="flat" color="primary">{venue}</Chip>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => setShowItemDiscounts(v => !v)}>
-                    {showItemDiscounts ? 'Hide Item Discounts' : 'Show Item Discounts'}
-                  </Button>
-                </div>
+                <h3 className="font-semibold text-ghana-black">Current Order</h3>
+                <Chip size="sm" variant="flat" color="primary">{venue}</Chip>
               </CardHeader>
-              <CardBody {...({ ref: cartRef } as any)}>
-                <div className="space-y-3">
-                  {cart.length === 0 && (
-                    <div className="text-sm text-gray-500">No items added.</div>
-                  )}
+              <CardBody {...({ ref: cartRef } as any)} className="flex flex-col min-h-0 overflow-hidden">
+                {cart.length === 0 && !sentOrderData && (
+                  <div className="py-8 text-center text-sm text-gray-500">Tap a menu item.</div>
+                )}
+                {cart.length === 0 && sentOrderData && (
+                  <div className="space-y-2 text-sm">
+                    <div className="text-xs font-medium text-ghana-green">Sent to kitchen</div>
+                    <div className="flex justify-between"><span>Subtotal</span><span>₵{sentOrderData.subtotal.toFixed(2)}</span></div>
+                    <div className="flex justify-between text-gray-500"><span>Tax</span><span>₵{sentOrderData.taxAmount.toFixed(2)}</span></div>
+                    <div className="flex justify-between border-t pt-2 text-base font-bold text-ghana-black"><span>Total</span><span>₵{sentOrderData.total.toFixed(2)}</span></div>
+                  </div>
+                )}
+                {cart.length > 1 && (
+                  <div className="mb-1 text-sm text-gray-500">{cart.length} items</div>
+                )}
+                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
                   {cart.map(ci => (
-                    <div key={ci.id} className="border-b border-gray-100 pb-2">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="font-medium text-ghana-black">{ci.name}</div>
+                    <div key={ci.id} className="border-b border-gray-100 py-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-medium text-ghana-black leading-snug">{ci.name}</div>
                           <div className="text-xs text-gray-500 capitalize">{ci.route}</div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => updateQty(ci.id, -1)}>-</Button>
-                          <div className="w-6 text-center text-sm">{ci.qty}</div>
-                          <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => updateQty(ci.id, 1)}>+</Button>
-                          <div className="w-16 text-right text-sm">₵{((ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty).toFixed(2)}</div>
-                        </div>
+                        <div className="shrink-0 text-sm font-semibold">₵{((ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty).toFixed(2)}</div>
+                      </div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <Button size="sm" variant="flat" className="bg-gray-100 min-w-8" onClick={() => updateQty(ci.id, -1)}>-</Button>
+                        <div className="w-6 text-center text-sm">{ci.qty}</div>
+                        <Button size="sm" variant="flat" className="bg-gray-100 min-w-8" onClick={() => updateQty(ci.id, 1)}>+</Button>
                       </div>
                       {showItemDiscounts && (
-                        <div className="mt-2 grid grid-cols-3 gap-2 text-xs items-center">
-                          <Input 
-                            size="sm" 
-                            type="number" 
-                            label="Disc/Unit (₵)" 
-                            value={String(ci.discountPerUnit || 0)} 
-                            onChange={(e) => setCart(prev => prev.map(x => x.id === ci.id ? { ...x, discountPerUnit: Number(e.target.value || 0) } : x))} 
+                        <div className="mt-1">
+                          <Input
+                            size="sm"
+                            type="number"
+                            label="Disc/Unit (₵)"
+                            value={String(ci.discountPerUnit || 0)}
+                            onChange={(e) => setCart(prev => prev.map(x => x.id === ci.id ? { ...x, discountPerUnit: Number(e.target.value || 0) } : x))}
                           />
                         </div>
                       )}
                     </div>
                   ))}
                 </div>
-                <div className="mt-3 space-y-2 text-sm">
-                  <div className="flex justify-between"><span>Subtotal</span><span>₵{subtotal.toFixed(2)}</span></div>
-                  <div className="flex items-center justify-between">
-                    <span>Discount (%)</span>
-                    <Input className="w-24" type="number" value={String(discountPercent)} onChange={(e) => setDiscountPercent(Number(e.target.value || 0))} />
+                {cart.length > 0 && (
+                  <div className="shrink-0">
+                    <button
+                      type="button"
+                      className="mt-2 text-sm text-ghana-green hover:underline"
+                      onClick={() => setShowItemDiscounts(v => !v)}
+                    >
+                      {showItemDiscounts ? 'Hide item discounts' : 'Item discounts'}
+                    </button>
+                    <div className="mt-3 space-y-2 text-sm">
+                      <div className="flex justify-between"><span>Subtotal</span><span>₵{subtotal.toFixed(2)}</span></div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span>Discount %</span>
+                        <Input size="sm" className="w-16" type="number" aria-label="Discount percent" value={String(discountPercent)} onChange={(e) => setDiscountPercent(Number(e.target.value || 0))} />
+                      </div>
+                      {orderDiscountAmount > 0 && (
+                        <div className="flex justify-between text-gray-500"><span>Discount</span><span>-₵{orderDiscountAmount.toFixed(2)}</span></div>
+                      )}
+                      {serviceChargeAmount > 0 && (
+                        <div className="flex justify-between text-gray-500"><span>Service</span><span>₵{serviceChargeAmount.toFixed(2)}</span></div>
+                      )}
+                      {orderMode === 'Takeaway' && packagingFee > 0 && (
+                        <div className="flex justify-between text-gray-500"><span>Packaging</span><span>₵{packagingFee.toFixed(2)}</span></div>
+                      )}
+                      <div className="flex justify-between text-gray-500"><span>Tax</span><span>₵{computeSalesTaxTotal(total).toFixed(2)}</span></div>
+                      <div className="flex justify-between border-t pt-2 text-base font-bold text-ghana-black"><span>Total</span><span>₵{(total + computeSalesTaxTotal(total)).toFixed(2)}</span></div>
+                    </div>
                   </div>
-                  <div className="flex justify-between"><span>Discount</span><span>-₵{orderDiscountAmount.toFixed(2)}</span></div>
-                  <div className="flex justify-between"><span>Service Charge</span><span>₵{serviceChargeAmount.toFixed(2)}</span></div>
-                  <div className="flex justify-between text-gray-500"><span>Pre-tax Total</span><span>₵{total.toFixed(2)}</span></div>
-                  <div className="flex justify-between text-xs text-gray-400"><span>~Ghana Tax (VAT+NHIL+GETFund+Tourism)</span><span>₵{computeSalesTaxTotal(total).toFixed(2)}</span></div>
-                  <div className="flex justify-between font-bold text-ghana-black border-t pt-1 mt-1"><span>Est. Total (incl. tax)</span><span>₵{(total + computeSalesTaxTotal(total)).toFixed(2)}</span></div>
-                </div>
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  <Button variant="flat" className="bg-ghana-green text-white" onClick={() => {
+                )}
+                <div className="mt-4 shrink-0 space-y-2">
+                  <Button fullWidth variant="flat" className="bg-ghana-green text-white" onClick={() => {
                     if (editingOrderId) {
                       // Update existing order instead of creating a new one
                       const existing = orders.find(o => o.id === editingOrderId);
@@ -1345,9 +1498,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     }
                     sendOrder();
                   }} isLoading={isSending} isDisabled={isSending || cart.length === 0}>{editingOrderId ? 'Update' : (isSending ? 'Sending…' : 'Send to Kitchen')}</Button>
-                  <Button variant="flat" className="bg-gray-200" onClick={() => clearCart()}>Clear</Button>
-                  <Button variant="flat" className="bg-blue-600 text-white" onClick={openPayment}>Pay</Button>
-                  <Button variant="flat" className="bg-indigo-600 text-white" isDisabled={cart.length === 0} onClick={() => {
+                  <Button fullWidth variant="flat" className="bg-blue-600 text-white" isDisabled={cart.length === 0 && !sentOrderData} onClick={openPayment}>Pay</Button>
+                  <div className="grid grid-cols-2 gap-2">
+                  <Button size="sm" variant="flat" className="bg-gray-100 text-gray-700" onClick={() => clearCart()}>Clear</Button>
+                  <Button size="sm" variant="flat" className="bg-gray-100 text-gray-700" isDisabled={cart.length === 0} onClick={() => {
                     const html = buildReceiptHtml({
                       hotelName,
                       contact: 'Accra, Ghana',
@@ -1363,7 +1517,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     setPrintPreview({ title: 'Receipt Preview', html });
                     printPreviewModal.onOpen();
                   }}>Preview</Button>
-                  <Select label="Priority" selectedKeys={[priority]} onSelectionChange={(k) => {
+                  <Select size="sm" aria-label="Priority" selectedKeys={[priority]} onSelectionChange={(k) => {
                     const p = Array.from(k as Set<string>)[0] as 'low' | 'medium' | 'high' | 'urgent';
                     setPriority(p);
                     localStorage.setItem('kitchen.priority.filter', p);
@@ -1373,15 +1527,9 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <SelectItem key="medium">Medium</SelectItem>
                     <SelectItem key="low">Low</SelectItem>
                   </Select>
-                  <Button variant="flat" className="bg-orange-500 text-white" onClick={() => {
-                    const args = { code: `KOT-${Date.now().toString().slice(-6)}`, table: tableNumber, waiter: waiters.find(w => w.id === waiterId)?.name || waiterId, notes: orderNotes, urgent: priority === 'urgent', items: (cart.length > 0 ? cart : [
-                      { id: 'M1', name: 'Jollof Rice', price: 65, category: 'Mains', route: 'kitchen', qty: 1 },
-                      { id: 'D1', name: 'Club Beer', price: 20, category: 'Drinks', route: 'bar', qty: 2 },
-                    ]).map(i => ({ name: i.name, qty: i.qty })) };
-                    const html = buildKOTHtml(args);
-                    setPrintPreview({ title: 'KOT Preview', html });
-                    printPreviewModal.onOpen();
-                  }}>Print KOT</Button>
+                  <Button size="sm" variant="flat" className="bg-gray-100 text-gray-700" onClick={() => previewStationTicket('kot')}>Print KOT</Button>
+                  <Button size="sm" variant="flat" className="bg-gray-100 text-gray-700" onClick={() => previewStationTicket('bot')}>Print BOT</Button>
+                  </div>
                 </div>
               </CardBody>
             </Card>
@@ -1393,6 +1541,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         <div className="my-6 border-t border-gray-300" />
 
         {/* POS Activity Table - moved to bottom */}
+        <div id="pos-activity-table">
         <Card className="border border-gray-300 shadow-lg mt-6">
                         <CardHeader className="pb-2 flex items-center justify-between">
                 <h3 className="font-semibold text-ghana-black">POS Activity Table</h3>
@@ -1415,10 +1564,40 @@ export default function FBPOS({ onClose }: FBPOSProps) {
               </CardHeader>
           <CardBody>
                   <div className="flex flex-wrap items-center gap-2 mb-3">
+                    <Select
+                      size="sm"
+                      label="Queue"
+                      placeholder="Queue"
+                      isClearable
+                      selectedKeys={[activityQueue]}
+                      onSelectionChange={(k) => {
+                        const next = !k || k === 'all'
+                          ? 'all'
+                          : (typeof k === 'string' ? k : String(Array.from(k as Iterable<string>)[0] || 'all'));
+                        if (next === 'all' || next === 'pending-kot' || next === 'pending-bot' || next === 'unpaid' || next === 'billed' || next === 'cancelled') {
+                          setActivityQueue(next);
+                        } else {
+                          setActivityQueue('all');
+                        }
+                      }}
+                      onClear={() => setActivityQueue('all')}
+                      className="w-48"
+                    >
+                      {([
+                        { key: 'all', label: 'All' },
+                        { key: 'pending-kot', label: 'Pending KOT' },
+                        { key: 'pending-bot', label: 'Pending BOT' },
+                        { key: 'unpaid', label: 'Unpaid' },
+                        { key: 'billed', label: 'Billed' },
+                        { key: 'cancelled', label: 'Cancelled' },
+                      ] as const).map((q) => (
+                        <SelectItem key={q.key}>{q.label}</SelectItem>
+                      ))}
+                    </Select>
                     <Input
                       size="sm"
-                      className="w-64"
-                      placeholder="Search order #, item, customer, table, waiter..."
+                      className="w-56"
+                      placeholder="Search order #, item, table..."
                       value={activitySearch}
                       onChange={(e) => setActivitySearch(e.target.value)}
                       startContent={<span className="text-gray-400">🔍</span>}
@@ -1427,17 +1606,41 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     />
                     <Select
                       size="sm"
-                      label="Status"
-                      selectedKeys={[activityStatusFilter]}
-                      onSelectionChange={(k) => setActivityStatusFilter(Array.from(k as Set<string>)[0] || 'all')}
+                      label="Waiter"
+                      selectedKeys={[activityWaiterFilter]}
+                      onSelectionChange={(k) => {
+                        const next = !k || k === 'all'
+                          ? 'all'
+                          : (typeof k === 'string' ? k : String(Array.from(k as Iterable<string>)[0] ?? 'all'));
+                        setActivityWaiterFilter(next || 'all');
+                      }}
+                      className="w-44"
+                    >
+                      {[{ id: 'all', name: 'All waiters' }, ...activityWaiterOptions].map((w) => (
+                        <SelectItem key={w.id}>{w.name}</SelectItem>
+                      ))}
+                    </Select>
+                    <Select
+                      size="sm"
+                      label="Sort"
+                      selectedKeys={[activitySortValue]}
+                      onSelectionChange={(k) => {
+                        const v = Array.from(k as Set<string>)[0] || 'time-desc';
+                        if (v === 'time-asc') { setSortKey('time'); setSortDirection('asc'); }
+                        else if (v === 'table') { setSortKey('table'); setSortDirection('asc'); }
+                        else if (v === 'waiter') { setSortKey('waiter'); setSortDirection('asc'); }
+                        else if (v === 'amount-desc') { setSortKey('amount'); setSortDirection('desc'); }
+                        else if (v === 'amount-asc') { setSortKey('amount'); setSortDirection('asc'); }
+                        else { setSortKey('time'); setSortDirection('desc'); }
+                      }}
                       className="w-40"
                     >
-                      <SelectItem key="all">All statuses</SelectItem>
-                      <>
-                        {activityStatusOptions.map((s) => (
-                          <SelectItem key={s} className="capitalize">{s}</SelectItem>
-                        ))}
-                      </>
+                      <SelectItem key="time-desc">Newest</SelectItem>
+                      <SelectItem key="time-asc">Oldest</SelectItem>
+                      <SelectItem key="table">Table</SelectItem>
+                      <SelectItem key="waiter">Waiter</SelectItem>
+                      <SelectItem key="amount-desc">Amount high</SelectItem>
+                      <SelectItem key="amount-asc">Amount low</SelectItem>
                     </Select>
                   </div>
                             <div className="w-full overflow-x-auto max-h-[50vh] overflow-y-auto">
@@ -1454,10 +1657,23 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           }
                         }}
                       >
-                        ID {sortKey === 'id' && (sortDirection === 'asc' ? '↑' : '↓')}
+                        TICKET {sortKey === 'id' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </TableColumn>
                       <TableColumn 
-                        className="cursor-pointer select-none"
+                        className="cursor-pointer select-none whitespace-nowrap"
+                        onClick={() => {
+                          if (sortKey === 'date') {
+                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setSortKey('date');
+                            setSortDirection('desc');
+                          }
+                        }}
+                      >
+                        DATE {sortKey === 'date' && (sortDirection === 'asc' ? '↑' : '↓')}
+                      </TableColumn>
+                      <TableColumn 
+                        className="cursor-pointer select-none whitespace-nowrap"
                         onClick={() => {
                           if (sortKey === 'time') {
                             setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -1467,23 +1683,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           }
                         }}
                       >
-                        DATE/TIME {sortKey === 'time' && (sortDirection === 'asc' ? '↑' : '↓')}
+                        TIME {sortKey === 'time' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </TableColumn>
                       <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'itemCode') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('itemCode');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        ITEM CODE {sortKey === 'itemCode' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
+                        className="cursor-pointer select-none min-w-[16rem]"
                         onClick={() => {
                           if (sortKey === 'itemName') {
                             setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
@@ -1494,32 +1697,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                         }}
                       >
                         ITEM NAME {sortKey === 'itemName' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'category') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('category');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        CATEGORY {sortKey === 'category' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'status') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('status');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        STATUS {sortKey === 'status' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </TableColumn>
                       <TableColumn 
                         className="cursor-pointer select-none"
@@ -1628,6 +1805,32 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       <TableColumn 
                         className="cursor-pointer select-none"
                         onClick={() => {
+                          if (sortKey === 'category') {
+                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setSortKey('category');
+                            setSortDirection('desc');
+                          }
+                        }}
+                      >
+                        CATEGORY {sortKey === 'category' && (sortDirection === 'asc' ? '↑' : '↓')}
+                      </TableColumn>
+                      <TableColumn 
+                        className="cursor-pointer select-none"
+                        onClick={() => {
+                          if (sortKey === 'status') {
+                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+                          } else {
+                            setSortKey('status');
+                            setSortDirection('desc');
+                          }
+                        }}
+                      >
+                        STATUS {sortKey === 'status' && (sortDirection === 'asc' ? '↑' : '↓')}
+                      </TableColumn>
+                      <TableColumn 
+                        className="cursor-pointer select-none"
+                        onClick={() => {
                           if (sortKey === 'waiter') {
                             setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
                           } else {
@@ -1643,12 +1846,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <TableBody emptyContent="No matching orders.">
                       {filteredActivityRows.slice((activityPage - 1) * activityRowsPerPage, activityPage * activityRowsPerPage).map(({ order: o, item: it }) => (
                         <TableRow key={`${o.id}-${it.id}`} onDoubleClick={() => openActivityModal(o, it)}>
-                          <TableCell>{o.orderNumber || o.id}</TableCell>
-                          <TableCell>{o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}</TableCell>
-                          <TableCell>{(aliases[it.id]?.[0]) || it.id}</TableCell>
-                          <TableCell>{it.name}</TableCell>
-                          <TableCell>{it.category || menuIdToCategory[it.id] || '-'}</TableCell>
-                          <TableCell>{(it.status || o.status)}</TableCell>
+                          <TableCell>{lineTicket(o.notes, it.route, o.orderNumber || o.id)}</TableCell>
+                          <TableCell className="whitespace-nowrap">{activityStamp(o.createdAt).date}</TableCell>
+                          <TableCell className="whitespace-nowrap">{activityStamp(o.createdAt).time}</TableCell>
+                          <TableCell className="min-w-[16rem]">{it.name}</TableCell>
                           <TableCell>{o.guestName || '-'}</TableCell>
                           <TableCell>{o.roomNumber || '-'}</TableCell>
                           <TableCell><Badge color="primary" variant="flat">{o.table}</Badge></TableCell>
@@ -1657,50 +1858,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           <TableCell>₵{(it.price * it.qty).toFixed(2)}</TableCell>
                           <TableCell>₵{(((it as any).discountPerUnit || 0) * it.qty).toFixed(2)}</TableCell>
                           <TableCell>₵{(it.price - ((it as any).discountPerUnit || 0) + (((it as any).serviceChargePerUnit || 0))).toFixed(2)}</TableCell>
+                          <TableCell>{it.category || menuIdToCategory[it.id] || '-'}</TableCell>
+                          <TableCell>{(it.status || o.status)}</TableCell>
                           <TableCell>{waiters.find(w => w.id === o.waiterId)?.name || o.waiterId}</TableCell>
                           <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                className={`${(it.status || o.status) === 'served' ? 'bg-green-600 text-white' : 'bg-orange-50 text-orange-700 border border-orange-200'}`}
-                                isDisabled={(it.status || o.status) === 'served'}
-                                onClick={async () => {
-                                  if ((it.status || o.status) === 'served') return;
-                                  ordersStore.updateItem(o.id, it.id, { status: 'served' });
-                                  kitchenOpsStore.add({ orderId: o.id, table: o.table, waiterId: o.waiterId, itemId: it.id, itemName: it.name, action: 'status', fromStatus: (it.status as any) || 'pending', toStatus: 'served', priority: (o.priority || (o.urgent ? 'urgent' : 'low')) as any });
-                                  trackEvent('FB.OrderStatusChanged', { id: o.id, itemId: it.id, status: 'served' }, { sourceModule: 'F&B' });
-                                  // Persist to DB — attempt PATCH (silent fail if in-memory-only ID)
-                                  try {
-                                    await fetch(`/api/fb/orders/${o.id}`, {
-                                      method: 'PATCH',
-                                      headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
-                                      body: JSON.stringify({ status: 'served' }),
-                                    });
-                                  } catch { /* silent — in-memory store already updated */ }
-                                }}
-                              >
-                                {(it.status || o.status) === 'served' ? 'Served' : 'Serve'}
-                              </Button>
-                              <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => openActivityModal(o, it)}>Actions</Button>
-                              <Button size="sm" variant="flat" className="bg-blue-50 text-blue-700 border border-blue-200" onClick={() => {
-                                // Open payment modal for current cart based on this order
-                                const mapped = {
-                                  id: o.id,
-                                  table: o.table,
-                                  waiterId: o.waiterId,
-                                  items: o.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: '', route: i.route })),
-                                  status: o.status as any,
-                                  customerType: o.customerType as any,
-                                  venue: o.venue as any,
-                                  notes: o.notes,
-                                  urgent: o.urgent,
-                                  priority: o.priority,
-                                } as any;
-                                loadOrderIntoCart(mapped);
-                                paymentModal.onOpen();
-                              }}>Payment</Button>
-                            </div>
+                            <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => openActivityModal(o, it)}>View</Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1709,16 +1871,17 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 </div>
           </CardBody>
         </Card>
+        </div>
 
       <Modal isOpen={paymentModal.isOpen} onClose={paymentModal.onClose} size="lg">
         <ModalContent>
           <ModalHeader className="text-ghana-black">Complete Payment</ModalHeader>
           <ModalBody>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <Button variant="flat" className="bg-ghana-green text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment} onClick={() => handlePayment('Cash', total)}>Cash</Button>
-              <Button variant="flat" className="bg-blue-600 text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment} onClick={() => handlePayment('Card', total)}>Card</Button>
-              <Button variant="flat" className="bg-yellow-500 text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment} onClick={() => handlePayment('Mobile Money', total)}>Mobile Money</Button>
-              <Button variant="flat" className="bg-purple-600 text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment} onClick={() => handlePayment('Room Charge', total)}>Bill to Room</Button>
+              <Button variant="flat" className="bg-ghana-green text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment || amountDue <= 0} onClick={() => handlePayment('Cash', amountDue)}>Cash</Button>
+              <Button variant="flat" className="bg-blue-600 text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment || amountDue <= 0} onClick={() => handlePayment('Card', amountDue)}>Card</Button>
+              <Button variant="flat" className="bg-yellow-500 text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment || amountDue <= 0} onClick={() => handlePayment('Mobile Money', amountDue)}>Mobile Money</Button>
+              <Button variant="flat" className="bg-purple-600 text-white" isLoading={isProcessingPayment} isDisabled={isProcessingPayment || amountDue <= 0} onClick={() => handlePayment('Room Charge', amountDue)}>Bill to Room</Button>
             </div>
             <div className="mt-4">
               <div className="flex items-center justify-between mb-2">
@@ -1838,12 +2001,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
               </div>
             )}
             <div className="text-sm">
-              <div className="flex items-center justify-between"><span>Subtotal</span><span className="font-semibold">₵{total.toFixed(2)}</span></div>
+              <div className="flex items-center justify-between"><span>Subtotal</span><span className="font-semibold">₵{(payingSavedTicket ? (sentOrderData?.subtotal ?? 0) : (cart.length > 0 ? total : 0)).toFixed(2)}</span></div>
               {orderMode === 'Takeaway' && (
                 <div className="flex items-center justify-between"><span>Packaging</span><span className="font-semibold">₵{(packagingFee || 0).toFixed(2)}</span></div>
               )}
               <div className="flex items-center justify-between"><span>Tip</span><span className="font-semibold">₵{(tipAmount || 0).toFixed(2)}</span></div>
-              <div className="flex items-center justify-between"><span>Total</span><span className="font-semibold">₵{grandTotal.toFixed(2)}</span></div>
+              <div className="flex items-center justify-between"><span>Total</span><span className="font-semibold">₵{amountDue.toFixed(2)}</span></div>
             </div>
           </ModalBody>
           <ModalFooter>
@@ -1871,8 +2034,9 @@ export default function FBPOS({ onClose }: FBPOSProps) {
               if (!orderId) {
                 try {
                   const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
+                  const stamped = issueOrderIdentity(itemsWithOrderDiscount, orderNotes);
                   const data = await createFbOrder({
-                    orderNumber: useSettingsStore.getState().getNextModuleNumber('foodBeverage', 'order'),
+                    orderNumber: stamped.orderNumber,
                     venue: normalizePosVenue(venue),
                     tableNumber,
                     roomNumber: settleSelectedRoom?.roomId || (customerType === 'In-house' ? roomNumber : undefined),
@@ -1880,7 +2044,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     reservationId: inHouseReservationId(),
                     guestName: guestDisplayName,
                     serverName: waiters.find(w => w.id === waiterId)?.name || waiterId,
-                    notes: orderNotes,
+                    notes: stamped.notes,
                     covers: 1,
                     discountAmount: orderDiscountAmount,
                     serviceCharge: serviceChargeAmount,
@@ -1967,39 +2131,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         </ModalContent>
       </Modal>
 
-      <Modal isOpen={newItemModal.isOpen} onClose={newItemModal.onClose}>
-        <ModalContent>
-          <ModalHeader className="text-ghana-black">Add Menu Item</ModalHeader>
-          <ModalBody>
-            <div className="grid grid-cols-2 gap-2">
-              <Input label="Name" placeholder="Item name" id="new-item-name" />
-              <Input label="Price (₵)" type="number" placeholder="0" id="new-item-price" />
-              <Input label="Category" placeholder="Mains/Drinks/Desserts" id="new-item-category" />
-              <Select label="Route" selectedKeys={['kitchen']} id="new-item-route">
-                <SelectItem key="kitchen">kitchen</SelectItem>
-                <SelectItem key="bar">bar</SelectItem>
-              </Select>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" className="bg-gray-200" onClick={newItemModal.onClose}>Cancel</Button>
-            <Button variant="flat" className="bg-ghana-green text-white" onClick={() => {
-              const name = (document.getElementById('new-item-name') as HTMLInputElement)?.value?.trim();
-              const price = Number((document.getElementById('new-item-price') as HTMLInputElement)?.value || 0);
-              const category = (document.getElementById('new-item-category') as HTMLInputElement)?.value?.trim() || 'Mains';
-              const routeEl = document.getElementById('new-item-route') as HTMLElement;
-              const route = (routeEl?.querySelector('select') as HTMLSelectElement)?.value || 'kitchen';
-              if (!name || price <= 0) return;
-              const id = `${name.toUpperCase().replace(/\s+/g, '_')}-${Date.now().toString().slice(-4)}`;
-              const item: MenuItem = { id, name, price, category, route: route as 'kitchen' | 'bar' };
-              setMenu(prev => [item, ...prev]);
-              trackEvent('FB.MenuItemAdded', { id, name, price, category, route }, { sourceModule: 'F&B' });
-              newItemModal.onClose();
-            }}>Add</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
       <Modal isOpen={orderDetailModal.isOpen} onClose={orderDetailModal.onClose} size="lg">
         <ModalContent>
           <ModalHeader className="text-ghana-black">Order Details</ModalHeader>
@@ -2069,44 +2200,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
       {/* Split bill and tips modals removed */}
 
-      <Modal isOpen={aliasModal.isOpen} onClose={aliasModal.onClose} size="lg">
-        <ModalContent>
-          <ModalHeader className="text-ghana-black">Menu Short Names (Aliases)</ModalHeader>
-          <ModalBody>
-            <div className="space-y-3 max-h-[60vh] overflow-y-auto">
-              {menu.map(m => (
-                <div key={m.id} className="p-2 rounded-lg border border-gray-200">
-                  <div className="text-sm font-medium text-ghana-black">{m.name} <span className="text-xs text-gray-500">(₵{m.price})</span></div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {(aliases[m.id] || []).map((a, idx) => (
-                      <Chip key={idx} variant="flat" className="bg-ghana-green/10 text-ghana-green">
-                        {a}
-                        <button className="ml-2 text-xs" onClick={() => {
-                          const next = { ...aliases, [m.id]: (aliases[m.id] || []).filter(x => x !== a) };
-                          saveAliases(next);
-                        }}>✕</button>
-                      </Chip>
-                    ))}
-                    <Input className="w-48" size="sm" placeholder="Add alias and press Enter" onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        const val = (e.target as HTMLInputElement).value.trim();
-                        if (!val) return;
-                        const next = { ...aliases, [m.id]: Array.from(new Set([...(aliases[m.id] || []), val])) };
-                        saveAliases(next);
-                        (e.target as HTMLInputElement).value = '';
-                      }
-                    }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" className="bg-gray-200" onClick={aliasModal.onClose}>Close</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
       {/* Print Preview Modal */}
       <Modal isOpen={printPreviewModal.isOpen} onClose={() => { setPrintPreview(null); printPreviewModal.onClose(); }} size="lg">
         <ModalContent>
@@ -2132,52 +2225,83 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       </Modal>
 
       {/* Activity Row Actions Modal */}
-      <Modal isOpen={!!activitySelected} onClose={() => setActivitySelected(null)}>
+      <Modal isOpen={!!activitySelected} onClose={() => setActivitySelected(null)} size="lg">
         <ModalContent>
-          <ModalHeader className="text-ghana-black">POS Item Actions</ModalHeader>
-          <ModalBody>
-            {!activitySelected ? null : (
-              <div className="space-y-3 text-sm">
-                <div className="p-3 rounded-lg bg-gray-50 border border-gray-200">
-                  <div className="flex items-center justify-between">
-                    <div className="font-medium text-ghana-black">{activitySelected.item.name}</div>
-                    <Badge color="primary" variant="flat">{activitySelected.order.table}</Badge>
+          {activitySelected && (() => {
+            const o = activitySelected.order;
+            const it = activitySelected.item;
+            const status = String(o.status || activityLineStatus(o, it)).toLowerCase();
+            const canServe = status !== 'served' && status !== 'billed' && status !== 'cancelled';
+            const canPay = status !== 'billed' && status !== 'cancelled';
+            const waiterName = waiters.find(w => w.id === o.waiterId)?.name || o.waiterId || '—';
+            const linesSubtotal = o.items.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+            const storedTotal = Number(o.total) || 0;
+            const ticketTotal = storedTotal > 0 ? storedTotal : linesSubtotal + computeSalesTaxTotal(linesSubtotal);
+            const statusColor = status === 'billed' ? 'success' : status === 'cancelled' ? 'danger' : status === 'served' ? 'primary' : 'warning';
+            return (
+              <>
+                <ModalHeader className="flex flex-col items-start gap-1 text-ghana-black">
+                  <span>{o.orderNumber || o.id}</span>
+                  <span className="text-sm font-normal text-gray-500">{o.guestName || 'Walk-in'} · {o.table || 'No table'}</span>
+                </ModalHeader>
+                <ModalBody>
+                  <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+                    <Chip size="sm" variant="flat" color={statusColor} className="capitalize">{status || '—'}</Chip>
+                    <span className="text-gray-500">{o.venue || '—'}</span>
+                    <span className="text-gray-300">·</span>
+                    <span className="text-gray-500">{waiterName}</span>
                   </div>
-                  <div className="mt-1 text-xs text-gray-600">
-                    <span>Waiter: {waiters.find(w => w.id === activitySelected.order.waiterId)?.name || activitySelected.order.waiterId}</span>
-                    <span className="mx-2">•</span>
-                    <span>Venue: {activitySelected.order.venue}</span>
-                    <span className="mx-2">•</span>
-                    <span>Status: {(activitySelected.item.status || activitySelected.order.status)}</span>
+                  <div className="max-h-48 space-y-2 overflow-y-auto text-sm">
+                    {o.items.map(line => (
+                      <div key={line.id} className="flex items-start justify-between gap-3 border-b border-gray-100 pb-2">
+                        <div className="min-w-0">
+                          <div className="font-medium text-ghana-black">{line.name}</div>
+                          <div className="text-xs text-gray-500">{line.qty} × ₵{Number(line.price || 0).toFixed(2)}</div>
+                        </div>
+                        <div className="shrink-0">₵{(Number(line.price || 0) * Number(line.qty || 0)).toFixed(2)}</div>
+                      </div>
+                    ))}
                   </div>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                  <Button variant="flat" className="bg-blue-50 text-blue-700 border border-blue-200" onClick={() => {
-                    const o = activitySelected.order;
-                    const mapped = {
-                      id: o.id,
-                      table: o.table,
-                      waiterId: o.waiterId,
-                      items: o.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: '', route: i.route })),
-                      status: o.status as any,
-                      customerType: o.customerType as any,
-                      venue: o.venue as any,
-                      notes: o.notes,
-                      urgent: o.urgent,
-                      priority: o.priority,
-                    } as any;
-                    loadOrderIntoCart(mapped);
-                    setActivitySelected(null);
-                  }}>Edit in Cart</Button>
-                  <Button variant="flat" className="bg-red-50 text-red-700 border border-red-200" onClick={() => cancelReasonModal.onOpen()}>Cancel Item</Button>
-                  <Button variant="flat" className="bg-gray-100 text-red-600" onClick={() => { if (activitySelected) requestDeleteWithPin(activitySelected.order.id); }}>Delete Order</Button>
-                </div>
-              </div>
-            )}
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" className="bg-gray-200" onClick={() => setActivitySelected(null)}>Close</Button>
-          </ModalFooter>
+                  <div className="mt-3 flex items-center justify-between border-t pt-3 text-base font-semibold text-ghana-black">
+                    <span>Total</span>
+                    <span>₵{ticketTotal.toFixed(2)}</span>
+                  </div>
+                  {(canServe || canPay) && (
+                    <div className="mt-4 flex gap-2">
+                      {canServe && (
+                        <Button fullWidth variant="flat" className="bg-orange-50 text-orange-700 border border-orange-200" onClick={() => serveActivityItem(o, it)}>Serve</Button>
+                      )}
+                      {canPay && (
+                        <Button fullWidth variant="flat" className="bg-blue-600 text-white" onClick={() => payActivityOrder(o)}>Pay ticket</Button>
+                      )}
+                    </div>
+                  )}
+                </ModalBody>
+                <ModalFooter className="flex-wrap justify-between gap-2">
+                  <div className="flex flex-wrap gap-1">
+                    <Button size="sm" variant="light" onClick={() => {
+                      loadOrderIntoCart({
+                        id: o.id,
+                        table: o.table,
+                        waiterId: o.waiterId,
+                        items: o.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: '', route: i.route })),
+                        status: o.status as any,
+                        customerType: o.customerType as any,
+                        venue: o.venue as any,
+                        notes: o.notes,
+                        urgent: o.urgent,
+                        priority: o.priority,
+                      } as any);
+                      setActivitySelected(null);
+                    }}>Edit in cart</Button>
+                    <Button size="sm" variant="light" className="text-red-600" onClick={() => cancelReasonModal.onOpen()}>Cancel item</Button>
+                    <Button size="sm" variant="light" className="text-red-600" onClick={() => requestDeleteWithPin(o.id)}>Delete order</Button>
+                  </div>
+                  <Button variant="flat" className="bg-gray-200" onClick={() => setActivitySelected(null)}>Close</Button>
+                </ModalFooter>
+              </>
+            );
+          })()}
         </ModalContent>
       </Modal>
 

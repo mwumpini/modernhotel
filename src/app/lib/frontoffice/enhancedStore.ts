@@ -353,7 +353,7 @@ export class EnhancedFrontOfficeStore {
     let f = this.folios.find(x => x.reservationId === reservationId);
     if (!f) {
       f = { 
-        id: `F-${Date.now().toString().slice(-6)}`, 
+        id: useSettingsStore.getState().getNextModuleNumber('frontOffice', 'folio'), 
         reservationId, 
         charges: [], 
         payments: [], 

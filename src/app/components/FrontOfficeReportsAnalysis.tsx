@@ -391,7 +391,7 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
   ],
 };
 
-export default function FrontOfficeReportsAnalysis() {
+export default function FrontOfficeReportsAnalysis({ embedded = false }: { embedded?: boolean }) {
   const [selectedTab, setSelectedTab] = useState<ReportGroupKey>('front-desk');
   const [selectedReport, setSelectedReport] = useState('arrivals');
   const [cashierId, setCashierId] = useState('');
@@ -873,7 +873,7 @@ export default function FrontOfficeReportsAnalysis() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50/70 p-4 md:p-6">
+    <div className={embedded ? 'p-2' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
       <div className="mx-auto max-w-[1600px] space-y-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>

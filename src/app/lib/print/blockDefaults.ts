@@ -49,21 +49,26 @@ function standardBlocks(recipientHeading: string): BlockConfig[] {
     block({ id: 'guest-details', type: 'guest-details', order: 7, heading: recipientHeading }),
     block({ id: 'stay-details', type: 'stay-details', order: 8 }),
     block({ id: 'line-items-table', type: 'line-items-table', order: 9, columns: ['qty', 'unit', 'unitPrice', 'date'] }),
-    block({ id: 'totals-subtotal', type: 'totals-subtotal', order: 10 }),
-    block({ id: 'totals-taxes', type: 'totals-taxes', order: 11 }),
-    block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 12 }),
-    block({ id: 'totals-payments', type: 'totals-payments', order: 13 }),
-    block({ id: 'totals-balance', type: 'totals-balance', order: 14 }),
-    block({ id: 'notes-text', type: 'notes-text', order: 15 }),
+    block({
+      id: 'totals-grid', type: 'container', order: 10, direction: 'column', gap: 'none', spacing: 'small', joinTable: true,
+      children: [
+        block({ id: 'totals-subtotal', type: 'totals-subtotal', order: 0, totalsDisplay: 'grid' }),
+        block({ id: 'totals-taxes', type: 'totals-taxes', order: 1, totalsDisplay: 'grid' }),
+        block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 2, totalsDisplay: 'grid' }),
+        block({ id: 'totals-payments', type: 'totals-payments', order: 3, totalsDisplay: 'grid' }),
+        block({ id: 'totals-balance', type: 'totals-balance', order: 4, totalsDisplay: 'grid' }),
+      ],
+    }),
+    block({ id: 'signature-block', type: 'signature-block', order: 15, signatureParties: 'staff-guest', guestSignature: 'auto', signatureDisplay: 'line' }),
+    block({ id: 'notes-text', type: 'notes-text', order: 16 }),
   ];
 }
 
 /** Mirrors variantTopClassInvoice() in templates.ts — same blocks + watermark + signatures. */
 function premiumBlocks(recipientHeading: string, signatures: Array<{ label: string; role?: string }>): BlockConfig[] {
-  return [
-    ...standardBlocks(recipientHeading),
-    block({ id: 'signature-block', type: 'signature-block', order: 16, signatures }),
-  ];
+  return standardBlocks(recipientHeading).map(b =>
+    b.type === 'signature-block' ? { ...b, signatureParties: 'custom', signatures } : b
+  );
 }
 
 /**
@@ -245,6 +250,52 @@ function checkoutBillBlocks(): BlockConfig[] {
     block({
       id: 'settle-notice', type: 'custom-text', order: 10, align: 'center', spacing: 'small', style: { fontSize: 'sm', bold: true },
       text: 'Accounts must be settled before vacating room.\nPlease leave key with the receptionist before vacating.\n<<<<<<< Service Next to None >>>>>>>',
+    }),
+  ];
+}
+
+/**
+ * The typed Noda-style check-out bill: centered letterhead, billing lines beside
+ * the checkout number, a stay box, a charges box, a right-hand tax grid, then
+ * guest and receptionist lines with the settle-before-leaving notice at the bottom.
+ */
+function rukyBlocks(): BlockConfig[] {
+  return [
+    block({ id: 'company-name', type: 'company-name', order: 0, align: 'center', underline: true, spacing: 'none', style: { fontSize: 'lg', bold: true } }),
+    block({ id: 'company-address', type: 'company-address', order: 1, align: 'center', spacing: 'none' }),
+    block({ id: 'company-contact', type: 'company-contact', order: 2, align: 'center', spacing: 'none' }),
+    block({ id: 'doc-title', type: 'doc-title', order: 3, heading: 'CHECK OUT BILL', align: 'center', underline: true, spacing: 'medium' }),
+    block({
+      id: 'billing-row', type: 'container', order: 4, direction: 'row', gap: 'large', spacing: 'small',
+      children: [
+        block({ id: 'guest-details', type: 'guest-details', order: 0, flexWeight: 2, border: 'none', guestDetailsDisplay: 'lines', heading: 'Billing Person' }),
+        block({ id: 'doc-number', type: 'doc-number', order: 1, flexWeight: 1, align: 'right', border: 'none', docNumberLabel: 'CheckOut No :', style: { bold: true } }),
+      ],
+    }),
+    block({ id: 'stay-details', type: 'stay-details', order: 5, border: 'thin', spacing: 'small', stayDetailsDisplay: 'grid' }),
+    block({ id: 'line-items-table', type: 'line-items-table', order: 6, lineItemsDisplay: 'simple', border: 'thin', spacing: 'small' }),
+    block({
+      id: 'totals-grid', type: 'container', order: 7, direction: 'column', gap: 'none', spacing: 'small', joinTable: true,
+      children: [
+        block({ id: 'totals-subtotal', type: 'totals-subtotal', order: 0, totalsDisplay: 'grid' }),
+        block({ id: 'totals-taxes', type: 'totals-taxes', order: 1, totalsDisplay: 'grid' }),
+        block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 2, totalsDisplay: 'grid', heading: 'Net Total', showAmountInWords: true, align: 'center' }),
+        block({ id: 'totals-payments', type: 'totals-payments', order: 3, totalsDisplay: 'grid', heading: 'Advance' }),
+      ],
+    }),
+    block({
+      id: 'sign-off', type: 'container', order: 11, direction: 'column', gap: 'small', spacing: 'bottom',
+      children: [
+        block({
+          id: 'signature-block', type: 'signature-block', order: 0, spacing: 'none',
+          signatureDisplay: 'line', signatureParties: 'staff-guest', guestSignature: 'auto',
+          guestSignLabel: 'Guest Sign', staffSignLabel: 'Receptionist Sign', signatureNote: 'Phone No:',
+        }),
+        block({
+          id: 'settle-notice', type: 'custom-text', order: 1, align: 'center', spacing: 'small', style: { bold: true },
+          text: 'Accounts must be settled before vacating room.\nPlease Leave Key with The Receptionist Before vacating.\n<<<<<<<< Service Next to None >>>>>>>>',
+        }),
+      ],
     }),
   ];
 }
@@ -772,11 +823,16 @@ function taxInvoiceBlocks(recipientHeading: string): BlockConfig[] {
     }),
     block({ id: 'guest-details', type: 'guest-details', order: 5, heading: recipientHeading, border: 'thick' }),
     block({ id: 'line-items-table', type: 'line-items-table', order: 6, columns: ['qty', 'unit', 'unitPrice', 'date'] }),
-    block({ id: 'totals-subtotal', type: 'totals-subtotal', order: 7 }),
-    block({ id: 'totals-taxes', type: 'totals-taxes', order: 8, border: 'thick' }),
-    block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 9, showAmountInWords: true }),
-    block({ id: 'totals-payments', type: 'totals-payments', order: 10 }),
-    block({ id: 'totals-balance', type: 'totals-balance', order: 11 }),
+    block({
+      id: 'totals-grid', type: 'container', order: 7, direction: 'column', gap: 'none', spacing: 'small', joinTable: true,
+      children: [
+        block({ id: 'totals-subtotal', type: 'totals-subtotal', order: 0, totalsDisplay: 'grid' }),
+        block({ id: 'totals-taxes', type: 'totals-taxes', order: 1, totalsDisplay: 'grid' }),
+        block({ id: 'totals-grandtotal', type: 'totals-grandtotal', order: 2, totalsDisplay: 'grid', showAmountInWords: true }),
+        block({ id: 'totals-payments', type: 'totals-payments', order: 3, totalsDisplay: 'grid' }),
+        block({ id: 'totals-balance', type: 'totals-balance', order: 4, totalsDisplay: 'grid' }),
+      ],
+    }),
     block({ id: 'notes-text', type: 'notes-text', order: 12 }),
   ];
 }
@@ -927,6 +983,7 @@ export const builtInTemplates: Record<PrintType, BlockTemplate[]> = {
       { label: 'Guest Signature' }, { label: 'Cashier Signature' },
     ]), { showWatermark: true, watermarkText: 'INVOICE' }),
     template('builtin-invoice-checkout-bill', 'invoice', 'Checkout Bill', checkoutBillBlocks()),
+    template('builtin-invoice-ruky', 'invoice', 'Ruky', rukyBlocks(), { fontFamily: 'serif', borderColor: '#000000', corners: 'square', primaryColor: '#111111' }),
     template('builtin-invoice-modern-banner', 'invoice', 'Mamani', modernBannerBlocks('Guest / Client')),
     template('builtin-invoice-statement', 'invoice', 'Statement (corporate account)', statementBlocks('Guest / Client')),
     template('builtin-invoice-tax-invoice', 'invoice', 'Tax Invoice (GRA compliance)', taxInvoiceBlocks('Guest / Client'), { fontFamily: 'serif', borderWidth: 'thick' }),

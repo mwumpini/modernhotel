@@ -304,10 +304,14 @@ function toStoreReportingRule(row: any) {
 }
 
 async function ensureReportingRulesSeeded(tenantId: string, countryCode: string) {
-  const existing = await prisma.complianceReportingRule.count({ where: { tenantId, countryCode } })
-  if (existing > 0) return
-  const legacy = ComplianceDB.getReports(countryCode) as Array<Record<string, any>>
-  const source = legacy.length > 0 ? legacy : getSeedReports().filter((r) => r.countryCode === countryCode)
+  const existing = await prisma.complianceReportingRule.findMany({
+    where: { tenantId, countryCode },
+    select: { code: true },
+  })
+  const have = new Set(existing.map((r) => r.code))
+  const legacy = existing.length === 0 ? (ComplianceDB.getReports(countryCode) as Array<Record<string, any>>) : []
+  const source = (legacy.length > 0 ? legacy : getSeedReports().filter((r) => r.countryCode === countryCode))
+    .filter((r) => !have.has(String(r.id)))
   if (!source.length) return
   await prisma.complianceReportingRule.createMany({
     data: source.map((r) => ({ tenantId, countryCode, code: String(r.id), data: r })),

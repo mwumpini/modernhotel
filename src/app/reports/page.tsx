@@ -1,17 +1,17 @@
 'use client';
 
-import React from 'react';
-import PageLayout from '../components/PageLayout';
-import FrontOfficeReportsAnalysis from '../components/FrontOfficeReportsAnalysis';
-import FrontOfficeBackButton from '../components/FrontOfficeBackButton';
+import { useEffect } from 'react';
 
 export default function ReportsPage() {
-  return (
-    <PageLayout>
-      <div className="p-6 pb-0">
-        <FrontOfficeBackButton />
-      </div>
-      <FrontOfficeReportsAnalysis />
-    </PageLayout>
-  );
+  useEffect(() => {
+    try {
+      localStorage.setItem('nav.section', 'frontdesk');
+      localStorage.setItem('fo.tab', 'reports');
+    } catch {
+      /* ignore */
+    }
+    window.location.replace('/');
+  }, []);
+
+  return <div className="p-6 text-center">Opening Front Office...</div>;
 }

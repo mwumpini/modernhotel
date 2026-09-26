@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useCallback } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
@@ -482,10 +483,10 @@ export default function AccountsPayablePage() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">💳 Accounts Payable</h1>
-        <p className="text-gray-600 mt-2">
-          Manage supplier accounts, purchase invoices, and payments
-        </p>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-3xl font-bold text-gray-900">💳 Accounts Payable</h1>
+          <HeadingInfo label="About accounts payable">Manage supplier accounts, purchase invoices, and payments</HeadingInfo>
+        </div>
       </div>
 
       {/* Summary Cards */}
@@ -1950,9 +1951,12 @@ export default function AccountsPayablePage() {
 
             {form.paymentMethod === 'Bank' && (
               <div className="grid grid-cols-2 gap-4">
-                <Select label="Bank Account" selectedKeys={[form.bankAccountId || '']} onSelectionChange={(keys)=> setForm({ ...form, bankAccountId: Array.from(keys)[0] })}>
+                <Select label="Bank Account" selectedKeys={form.bankAccountId ? [form.bankAccountId] : []} onSelectionChange={(keys)=> {
+                  const id = Array.from(keys)[0];
+                  setForm({ ...form, bankAccountId: id ? String(id) : '' });
+                }}>
                   {bankAccounts.map(acc => (
-                    <SelectItem key={acc.id}>{acc.accountName} - {acc.accountNumber}</SelectItem>
+                    <SelectItem key={acc.id} textValue={`${acc.accountName} - ${acc.accountNumber}`}>{acc.accountName} - {acc.accountNumber}</SelectItem>
                   ))}
                 </Select>
                 <Input label="Cheque No" value={form.checkNumber || ''} onChange={(e)=> setForm({ ...form, checkNumber: e.target.value })} />

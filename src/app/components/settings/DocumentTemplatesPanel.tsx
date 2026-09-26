@@ -62,6 +62,14 @@ const FAMILIES: FamilyOption[] = [
   },
 ];
 
+function previewSample(docType: PrintType, org: Parameters<typeof getSampleData>[1], staffName?: string) {
+  return {
+    attendantName: 'Abena Serwaa',
+    userName: staffName || 'Admin User',
+    ...getSampleData(docType, org),
+  };
+}
+
 function locateDocType(docType: PrintType): { family: FamilyOption; leg?: LegOption } {
   for (const family of FAMILIES) {
     if (family.types?.some(t => t.key === docType)) return { family };
@@ -74,6 +82,9 @@ function locateDocType(docType: PrintType): { family: FamilyOption; leg?: LegOpt
 
 function newBlankTemplate(docType: PrintType): BlockTemplate {
   const now = new Date().toISOString();
+  // Granular fields only — each one can be renamed, restyled, or removed.
+  // Legacy bundled blocks (company-info, doc-meta, …) stay readable on old
+  // templates but a new form should start as pieces the builder can actually edit.
   const blocks: BlockTemplate['blocks'] = docType === 'payslip'
     ? [
         { id: 'company-name', type: 'company-name', visible: true, order: 0, align: 'center', style: { fontSize: 'lg', bold: true } },
@@ -83,17 +94,24 @@ function newBlankTemplate(docType: PrintType): BlockTemplate {
         { id: 'payslip-earnings-table', type: 'payslip-earnings-table', visible: true, order: 4, columnSpan: 'half' },
         { id: 'payslip-deductions-table', type: 'payslip-deductions-table', visible: true, order: 5, columnSpan: 'half' },
         { id: 'payslip-summary', type: 'payslip-summary', visible: true, order: 6, showAmountInWords: true },
-        { id: 'signature-block', type: 'signature-block', visible: true, order: 7, signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] },
-        { id: 'notes-text', type: 'notes-text', visible: true, order: 8 },
+        { id: 'signature-block', type: 'signature-block', visible: true, order: 7, signatureParties: 'custom', signatures: [{ label: 'Employer Signature' }, { label: 'Employee Signature' }] },
+        { id: 'terms-conditions', type: 'terms-conditions', visible: true, order: 8, termsSections: [{ heading: 'Terms & Conditions', body: '' }] },
+        { id: 'notes-text', type: 'notes-text', visible: true, order: 9 },
       ]
     : [
-        { id: 'logo', type: 'logo', visible: true, order: 0 },
-        { id: 'company-info', type: 'company-info', visible: true, order: 1 },
-        { id: 'doc-meta', type: 'doc-meta', visible: true, order: 2 },
-        { id: 'recipient-info', type: 'recipient-info', visible: true, order: 3 },
-        { id: 'line-items-table', type: 'line-items-table', visible: true, order: 4, columns: ['qty', 'unit', 'unitPrice', 'date'] },
-        { id: 'totals-summary', type: 'totals-summary', visible: true, order: 5 },
-        { id: 'notes-text', type: 'notes-text', visible: true, order: 6 },
+        { id: 'logo', type: 'logo', visible: true, order: 0, align: 'center' },
+        { id: 'company-name', type: 'company-name', visible: true, order: 1, align: 'center', style: { fontSize: 'lg', bold: true } },
+        { id: 'company-address', type: 'company-address', visible: true, order: 2, align: 'center' },
+        { id: 'company-contact', type: 'company-contact', visible: true, order: 3, align: 'center' },
+        { id: 'doc-title', type: 'doc-title', visible: true, order: 4, align: 'center', underline: true, style: { bold: true } },
+        { id: 'doc-number', type: 'doc-number', visible: true, order: 5 },
+        { id: 'doc-date', type: 'doc-date', visible: true, order: 6 },
+        { id: 'guest-details', type: 'guest-details', visible: true, order: 7, heading: 'Bill To' },
+        { id: 'line-items-table', type: 'line-items-table', visible: true, order: 8, columns: ['qty', 'unit', 'unitPrice'] },
+        { id: 'totals-grandtotal', type: 'totals-grandtotal', visible: true, order: 9, showAmountInWords: true },
+        { id: 'signature-block', type: 'signature-block', visible: true, order: 10, signatureParties: 'staff-guest', guestSignature: 'auto' },
+        { id: 'terms-conditions', type: 'terms-conditions', visible: true, order: 11, termsSections: [{ heading: 'Terms & Conditions', body: '' }] },
+        { id: 'notes-text', type: 'notes-text', visible: true, order: 12 },
       ];
   return {
     id: `custom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -120,6 +138,8 @@ export default function DocumentTemplatesPanel() {
   // actually print, not a placeholder — reactive since settingsStore is the
   // full store subscription above.
   const previewOrg = buildOrgProfile(settingsStore);
+  const signedIn = settingsStore.currentUser;
+  const staffName = `${signedIn?.firstName || ''} ${signedIn?.lastName || ''}`.trim() || signedIn?.email || signedIn?.username;
 
   const goToDocType = (key: PrintType) => {
     setDocType(key);
@@ -260,10 +280,11 @@ export default function DocumentTemplatesPanel() {
               <Button color="primary" onPress={() => save(true)} isDisabled={!canManageTemplates}>Save &amp; Set Active</Button>
             </div>
           </div>
-          <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-            <BlockEditor template={draft} onChange={setDraft} />
-            <TemplatePreview template={draft} sampleData={getSampleData(draft.docType, previewOrg)} />
-          </div>
+          <BlockEditor
+            template={draft}
+            onChange={setDraft}
+            sampleData={previewSample(draft.docType, previewOrg, staffName)}
+          />
         </div>
       ) : previewing ? (
         <div className="space-y-4">
@@ -280,7 +301,7 @@ export default function DocumentTemplatesPanel() {
               <Button color="primary" onPress={() => setActiveTemplate(previewing)} isDisabled={!canManageTemplates}>Set Active</Button>
             </div>
           </div>
-          <TemplatePreview template={previewing} sampleData={getSampleData(previewing.docType, previewOrg)} />
+          <TemplatePreview template={previewing} sampleData={previewSample(previewing.docType, previewOrg, staffName)} />
         </div>
       ) : (
         <TemplateGallery docType={docType} onEdit={startEdit} onView={startView} onCreateNew={startNew} />

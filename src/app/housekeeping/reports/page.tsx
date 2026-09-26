@@ -2,8 +2,8 @@
 
 import React from 'react';
 import PageLayout from '../../components/PageLayout';
-import HousekeepingReportsAnalysis from '../../components/HousekeepingReportsAnalysis';
 import HousekeepingBackButton from '../../components/HousekeepingBackButton';
+import HousekeepingReportsAnalysis from '../../components/HousekeepingReportsAnalysis';
 
 export default function HousekeepingReportsPage() {
   return (

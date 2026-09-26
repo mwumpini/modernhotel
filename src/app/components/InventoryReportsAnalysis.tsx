@@ -217,7 +217,7 @@ function stockRow(item: {
   };
 }
 
-export default function InventoryReportsAnalysis() {
+export default function InventoryReportsAnalysis({ embedded = false }: { embedded?: boolean }) {
   const [selectedTab, setSelectedTab] = useState<ReportGroupKey>('stock');
   const [selectedReport, setSelectedReport] = useState('stock-items');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -552,17 +552,21 @@ export default function InventoryReportsAnalysis() {
   const rangeAllowed = RANGE_REPORT_KEYS.has(selectedReport);
 
   return (
-    <div className="min-h-screen bg-slate-50/70 p-4 md:p-6">
-      <div className="mx-auto max-w-[1600px] space-y-5">
+    <div className={embedded ? 'bg-transparent p-0' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
+      <div className={embedded ? 'space-y-5' : 'mx-auto max-w-[1600px] space-y-5'}>
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
-              <BarChart3 size={18} />
-              INVENTORY INTELLIGENCE
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight text-slate-950">Reports & Analysis</h1>
+            {!embedded && (
+              <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-blue-700">
+                <BarChart3 size={18} />
+                INVENTORY INTELLIGENCE
+              </div>
+            )}
+            <h1 className={`${embedded ? 'text-xl' : 'text-3xl'} font-bold tracking-tight text-slate-950`}>
+              Reports & Analysis
+            </h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Stock, movements and procurement on file. No turnover, fill-rate or supplier score is invented here.
+              Stock, movements, procurement, and reconciliation on file. No invented KPIs.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

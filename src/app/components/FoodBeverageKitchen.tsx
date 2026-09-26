@@ -4,12 +4,12 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardBody, CardHeader, Button, Input, Textarea, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Progress, Tabs, Tab } from "@heroui/react";
 import { kitchenOpsStore, KitchenOpRecord } from '../lib/fb/kitchenOpsStore';
 import { fetchFbOrders, openKitchenDisplay, type FbOrderDto } from '../lib/fb/api';
-import { useRouter } from 'next/navigation';
 import { buildLiveStationBoard, kitchenStats, type LiveStationView } from '../lib/fb/kitchenStations';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import KitchenDisplaySystem from './KitchenDisplaySystem';
 import DepartmentRequisitionModal from './inventory/DepartmentRequisitionModal';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 
@@ -64,8 +64,11 @@ interface Requisition {
   items: { itemName: string; quantity: number }[];
 }
 
-export default function FoodBeverageKitchen() {
-  const router = useRouter();
+export default function FoodBeverageKitchen({
+  fullPage = false,
+}: {
+  fullPage?: boolean;
+} = {}) {
   const [selectedTab, setSelectedTab] = useState('kds');
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.kitchen', KITCHEN_DASHBOARD_SECTIONS);
   const [isRecipeModalOpen, setIsRecipeModalOpen] = useState(false);
@@ -106,6 +109,7 @@ export default function FoodBeverageKitchen() {
   }, []);
 
   const [requisitions, setRequisitions] = useState<Requisition[]>([]);
+  const [requisitionStatusFilter, setRequisitionStatusFilter] = useState('all');
   const reloadRequisitions = () => {
     fetch('/api/inventory/requisitions?department=kitchen', { headers: fbHeaders() })
       .then((r) => (r.ok ? r.json() : { requisitions: [] }))
@@ -229,42 +233,12 @@ export default function FoodBeverageKitchen() {
   };
 
   return (
-    <div className="p-6">
+    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
       {/* Header */}
+      {!fullPage && (
       <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-ghana-black">👨‍🍳 Kitchen Operations</h2>
-          <p className="text-gray-600">Live kitchen display, stations, inventory, requisitions, and recipes</p>
-        </div>
-        <div className="flex gap-3">
-          <Button
-            variant="bordered"
-            className="border-blue-600 text-blue-700 font-semibold"
-            onClick={() => router.push('/kitchen/reports')}
-          >
-            📊 Reports & Analysis
-          </Button>
-          <Button
-            color="primary"
-            className="bg-ghana-green text-white"
-            onClick={openKitchenDisplay}
-          >
-            Open Full-Screen KDS
-          </Button>
-          <Button
-            color="success"
-            className="bg-blue-500 text-white"
-            onClick={() => setIsNewRequisitionModalOpen(true)}
-          >
-            + Request Stock
-          </Button>
-          <Button
-            color="secondary"
-            className="bg-ghana-gold text-white"
-            onClick={() => setIsRecipeModalOpen(true)}
-          >
-            + Add Recipe
-          </Button>
+        <h2 className="text-2xl font-bold text-ghana-black">👨‍🍳 Kitchen</h2>
+        <div className="flex items-center gap-2">
           <CustomizeViewControl
             sections={KITCHEN_DASHBOARD_SECTIONS}
             isHidden={isHidden}
@@ -272,11 +246,16 @@ export default function FoodBeverageKitchen() {
             showAll={showAll}
             hiddenCount={hiddenCount}
           />
+          <ModuleExpandButton
+            href="/kitchen/ops"
+            label="Open kitchen full page"
+          />
         </div>
       </div>
+      )}
 
       {/* Stats Overview */}
-      {(!isHidden('activeOrders') || !isHidden('avgPrepTime') || !isHidden('kitchenEfficiency') || !isHidden('recipesOnFile')) && (
+      {!fullPage && (!isHidden('activeOrders') || !isHidden('avgPrepTime') || !isHidden('kitchenEfficiency') || !isHidden('recipesOnFile')) && (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         {!isHidden('activeOrders') && (
         <Card className="border-0 shadow-lg">
@@ -354,6 +333,19 @@ export default function FoodBeverageKitchen() {
 
       {/* Main Content Tabs */}
       <Card className="border-0 shadow-lg">
+        {fullPage && (
+          <CardHeader className="pb-3 flex items-center justify-between gap-3">
+            <h3 className="text-xl font-semibold text-ghana-black">Kitchen</h3>
+            <Button
+              color="primary"
+              size="sm"
+              className="bg-ghana-green text-white"
+              onClick={openKitchenDisplay}
+            >
+              Open Full-Screen KDS
+            </Button>
+          </CardHeader>
+        )}
         <CardBody className="p-0">
           <Tabs 
             selectedKey={selectedTab} 
@@ -488,7 +480,24 @@ export default function FoodBeverageKitchen() {
                 <p className="text-xs text-gray-500 mb-3">
                   Request stock from Stores — Kitchen doesn't manage suppliers or purchase orders directly. Stores approves it, then marks it <strong>Ready</strong> once it's pulled and staged for pickup (that's also when it lands in your Kitchen Inventory on-hand); until then it's still just approved and you're waiting on it.
                 </p>
-                <div className="flex justify-end mb-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <Select
+                    aria-label="Filter requisitions by status"
+                    label="Status"
+                    size="sm"
+                    className="w-44"
+                    selectedKeys={[requisitionStatusFilter]}
+                    onSelectionChange={(keys) => {
+                      const next = Array.from(keys)[0] as string;
+                      if (next) setRequisitionStatusFilter(next);
+                    }}
+                  >
+                    <SelectItem key="all">All statuses</SelectItem>
+                    <SelectItem key="pending">Pending</SelectItem>
+                    <SelectItem key="approved">Approved</SelectItem>
+                    <SelectItem key="ready">Ready</SelectItem>
+                    <SelectItem key="rejected">Rejected</SelectItem>
+                  </Select>
                   <Button color="success" className="bg-blue-500 text-white" onClick={() => setIsNewRequisitionModalOpen(true)}>
                     + Request Stock
                   </Button>
@@ -501,15 +510,20 @@ export default function FoodBeverageKitchen() {
                     <TableColumn>REQUESTED DATE</TableColumn>
                     <TableColumn>STATUS</TableColumn>
                   </TableHeader>
-                  <TableBody emptyContent="No requisitions yet — request stock from Stores using the button above.">
-                    {requisitions.map((req) => (
+                  <TableBody emptyContent={requisitions.length === 0 ? 'No requisitions yet — request stock from Stores using the button above.' : 'No requisitions match this status.'}>
+                    {[...(requisitionStatusFilter === 'all' ? requisitions : requisitions.filter((req) => req.status === requisitionStatusFilter))]
+                      .sort((a, b) => b.requestedDate.getTime() - a.requestedDate.getTime())
+                      .map((req) => (
                       <TableRow key={req.id}>
                         <TableCell className="font-medium">{req.requisitionNumber}</TableCell>
                         <TableCell>
-                          <div className="text-sm">
-                            {req.items.length} items
-                            <p className="text-gray-500 text-xs">
-                              {req.items.map(item => `${item.itemName} (${item.quantity})`).join(', ')}
+                          <div className="text-sm max-w-xs">
+                            <p className="font-medium">
+                              {req.items.length} {req.items.length === 1 ? 'item' : 'items'}
+                            </p>
+                            <p className="text-gray-500 text-xs" title={req.items.map(item => `${item.itemName} (${item.quantity})`).join(', ')}>
+                              {req.items.slice(0, 2).map(item => `${item.itemName} (${item.quantity})`).join(', ')}
+                              {req.items.length > 2 ? ` +${req.items.length - 2} more` : ''}
                             </p>
                           </div>
                         </TableCell>
@@ -531,6 +545,17 @@ export default function FoodBeverageKitchen() {
 
             <Tab key="recipes" title="📖 Recipe Management">
               <div className="p-6">
+                {recipes.length > 0 && (
+                  <div className="flex justify-end mb-4">
+                    <Button
+                      color="secondary"
+                      className="bg-ghana-gold text-white"
+                      onClick={() => setIsRecipeModalOpen(true)}
+                    >
+                      + Add Recipe
+                    </Button>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {recipes.map((recipe) => (
                     <Card key={recipe.id} className="border border-gray-200 hover:border-ghana-green transition-colors">
@@ -591,7 +616,16 @@ export default function FoodBeverageKitchen() {
                     </Card>
                   ))}
                   {recipes.length === 0 && (
-                    <p className="text-gray-500 col-span-full text-center py-8">No recipes yet. Add one to get started.</p>
+                    <div className="col-span-full text-center py-8">
+                      <p className="text-gray-500 mb-3">No recipes yet.</p>
+                      <Button
+                        color="secondary"
+                        className="bg-ghana-gold text-white"
+                        onClick={() => setIsRecipeModalOpen(true)}
+                      >
+                        + Add Recipe
+                      </Button>
+                    </div>
                   )}
                 </div>
               </div>

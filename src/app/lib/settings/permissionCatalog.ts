@@ -73,6 +73,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     extra: [
       { id: 'frontdesk.checkin', label: 'Check guests in' },
       { id: 'frontdesk.checkout', label: 'Check guests out' },
+      { id: 'frontdesk.waive-late-checkout', label: 'Waive a late checkout fee' },
       { id: 'frontdesk.cancel', label: 'Cancel a reservation' },
       { id: 'frontdesk.no-show', label: 'Mark a reservation no-show' },
       { id: 'frontdesk.assign-room', label: 'Assign / reassign a room' },

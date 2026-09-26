@@ -2,18 +2,13 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import HeadingInfo from './HeadingInfo';
 import { 
   Card, 
   CardBody, 
   CardHeader, 
   Button, 
   Badge, 
-  Table, 
-  TableHeader, 
-  TableColumn, 
-  TableBody, 
-  TableRow, 
-  TableCell,
   Input,
   Select,
   SelectItem,
@@ -37,18 +32,21 @@ import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewC
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { resolveGuestAddress } from '../lib/frontoffice/helpers/guests';
-import { useSettingsStore } from '../lib/settings/store';
+import { autoAssignRoomsEnabled, useSettingsStore } from '../lib/settings/store';
+import { useComplianceStore } from '../lib/compliance/store';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { Reservation, GuestProfile, StayReason, Nationality, IdType } from '../lib/frontoffice/types';
 import {
+  computeSalesTax,
   effectiveSalesTaxRate,
   exclusiveFromGross,
   grossFromExclusive,
-  salesTaxBreakdown,
 } from '../lib/tax/engine';
-import { resolveNightlyGross } from '../lib/frontoffice/helpers/rates';
+import { calculateStayNights, resolveNightlyGross } from '../lib/frontoffice/helpers/rates';
 import { canMarkNoShow } from '../lib/frontoffice/arrivals';
+import { localStayDay, sortStays, type StaySortKey } from '../lib/frontoffice/stayWorksheet';
+import StayWorksheetTable from './frontoffice/StayWorksheetTable';
 import { findMainFolio, getFolioDisplayTotals } from '../lib/frontoffice/helpers/folio';
 import { openPrintPreview, renderPrint } from '../lib/print/engine';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
@@ -106,6 +104,12 @@ interface ReservationsManagerProps {
   mode?: 'reservation' | 'checkin';
   embed?: boolean; // when true, hide lists and auto-open modal if requested
   autoOpenNew?: boolean; // when embed, auto-open new form
+  onAutoOpenConsumed?: () => void;
+  /** YYYY-MM-DD. Used when the desk opens this form for a walk-in. */
+  defaultArrival?: string;
+  defaultDeparture?: string;
+  /** Called when the form closes. Ids are the stays just created, empty on cancel. */
+  onFinished?: (reservationIds: string[]) => void;
 }
 
 // Audit Log Section Component
@@ -210,7 +214,7 @@ const RESERVATIONS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'pending', label: 'Pending' },
 ];
 
-export default function ReservationsBookingsManager({ mode = 'reservation', embed = false, autoOpenNew = false }: ReservationsManagerProps) {
+export default function ReservationsBookingsManager({ mode = 'reservation', embed = false, autoOpenNew = false, onAutoOpenConsumed, defaultArrival = '', defaultDeparture = '', onFinished }: ReservationsManagerProps) {
   const router = useRouter();
   const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
     useDashboardVisibility('dashboard.hidden.reservations', RESERVATIONS_DASHBOARD_SECTIONS);
@@ -222,6 +226,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
   const [filteredReservations, setFilteredReservations] = useState<Reservation[]>([]);
   const [resPage, setResPage] = useState(1);
   const resRowsPerPage = 10;
+  const [resSortKey, setResSortKey] = useState<StaySortKey>('arrival');
+  const [resSortDir, setResSortDir] = useState<'asc' | 'desc'>('asc');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [purposeFilter, setPurposeFilter] = useState<string>('all');
@@ -309,7 +315,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       const grandTotal = reservation.rateBreakdown.reduce((s, d) => s + (d.total || 0), 0);
       const tax = grandTotal - subtotal;
       const nightly = reservation.rateBreakdown[0]?.total || 0;
-      return { nights, nightly, subtotal, taxRate: effectiveSalesTaxRate(), tax, grandTotal };
+      const taxRate = subtotal > 0 ? tax / subtotal : effectiveSalesTaxRate();
+      return { nights, nightly, subtotal, taxRate, tax, grandTotal };
     }
     const settingsState = useSettingsStore.getState();
     const plan = reservation.ratePlanId
@@ -327,7 +334,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       const subtotal = breakdown.reduce((s, d) => s + (d.base || 0), 0);
       const grandTotal = breakdown.reduce((s, d) => s + (d.total || 0), 0);
       const tax = grandTotal - subtotal;
-      return { nights, nightly: breakdown[0]?.total || 0, subtotal, taxRate: effectiveSalesTaxRate(), tax, grandTotal };
+      const taxRate = subtotal > 0 ? tax / subtotal : effectiveSalesTaxRate();
+      return { nights, nightly: breakdown[0]?.total || 0, subtotal, taxRate, tax, grandTotal };
     }
     return getComputedTotals(reservation.arrival, reservation.departure, reservation.roomTypeId);
   };
@@ -341,8 +349,12 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     const settingsState = useSettingsStore.getState();
     const address = resolveGuestAddress(frontOfficeStore.guests, reservation.guestId);
     const roomTypeName = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Room';
-    const { nights, nightly, subtotal, grandTotal } = getComputedTotalsForReservation(reservation);
-    const breakdown = salesTaxBreakdown(subtotal);
+    const { nights, nightly, subtotal, tax, grandTotal } = getComputedTotalsForReservation(reservation);
+    // Scale the levy lines to the tax already on the quote, so VAT + NHIL + GETFund + Tourism
+    // equals the tax the confirmation total was built from.
+    const quoted = computeSalesTax(subtotal, tax);
+    const pickTax = (type: string) =>
+      quoted.lines.find((l) => l.type === type || l.taxCode.toUpperCase().includes(type.toUpperCase()))?.amount ?? 0;
     const company = reservation.companyName || reservation.billingPersonName;
     return {
       org: buildOrgProfile(settingsState),
@@ -362,7 +374,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       items: [{ description: roomTypeName, qty: nights, unit: nights === 1 ? 'night' : 'nights', unitPrice: nights ? subtotal / nights : subtotal, amount: subtotal }],
       totals: {
         subTotal: subtotal,
-        taxes: { vat: breakdown.vat, nhil: breakdown.nhil, levy: breakdown.tourism, gefl: breakdown.getfund },
+        taxes: { vat: pickTax('VAT'), nhil: pickTax('NHIL'), levy: pickTax('Tourism'), gefl: pickTax('GETFund') },
         grandTotal,
       },
       footerNotes: [reservation.remarksToGuest || 'We look forward to welcoming you.'],
@@ -446,10 +458,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     arrival: string,
     departure: string,
     selectedPlan?: { basePrice?: number; priceType?: string },
-    customNet?: number
+    customAmount?: number,
+    customPriceType?: 'subtotal' | 'gross_total'
   ) => {
-    if (typeof customNet === 'number') {
-      return frontOfficeStore.calculateRateBreakdown(roomTypeId, arrival, departure, customNet, 'subtotal');
+    // A blank custom rate is 0. Passing that through priced the whole stay at ₵0
+    // while the form still showed the room's normal rate. Fall through instead.
+    if (typeof customAmount === 'number' && customAmount > 0) {
+      return frontOfficeStore.calculateRateBreakdown(roomTypeId, arrival, departure, customAmount, customPriceType || 'subtotal');
     }
     if (selectedPlan?.basePrice) {
       return frontOfficeStore.calculateRateBreakdown(
@@ -527,6 +542,10 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     departure: string;
   }>>([]);
 
+  // Re-quote when tax rules finish loading. The amount is computed during render
+  // from the compliance store, which starts empty on this page.
+  const complianceRuleCount = useComplianceStore((s) => s.taxRules.length);
+
   // Link multiple guests under a shared group (shared groupId + leader)
   const [linkAsGroup, setLinkAsGroup] = useState(false);
 
@@ -588,11 +607,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     return unsubscribe;
   }, []);
 
-  // When embedded as a New Check-In form, auto-open the modal in create mode
+  // When embedded as a New Check-In form, or opened from Rooms, auto-open the modal in create mode
   useEffect(() => {
-    if (embed && autoOpenNew) {
-      handleCreateReservation();
-    }
+    if (!autoOpenNew) return;
+    handleCreateReservation();
+    if (!embed) onAutoOpenConsumed?.();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [embed, autoOpenNew]);
 
@@ -857,8 +876,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       emergencyContactAddress: '',
       roomTypeId: '',
       ratePlanId: '',
-      arrival: '',
-      departure: '',
+      arrival: defaultArrival,
+      departure: defaultDeparture,
       adults: 1,
       children: 0,
       source: 'walkin',
@@ -1084,15 +1103,18 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           const guest = bulkGuest.guest;
 
           // Determine nightly base from selected rate plan or custom
-          const selectedPlan = bulkGuest.ratePlanId
-            ? (useSettingsStore.getState().roomManagement.ratePlans || []).find((r: any) => r.id === bulkGuest.ratePlanId)
+          const planId = bulkGuest.ratePlanId && bulkGuest.ratePlanId !== 'custom' ? bulkGuest.ratePlanId : undefined;
+          const selectedPlan = planId
+            ? (useSettingsStore.getState().roomManagement.ratePlans || []).find((r: any) => r.id === planId)
             : undefined;
+          const typedGross = parseFloat(String(bulkGuest.customRateInput ?? ''));
           const rateBreakdown = buildRateBreakdown(
             bulkGuest.roomTypeId,
             bulkGuest.arrival,
             bulkGuest.departure,
             selectedPlan,
-            typeof bulkGuest.customRate === 'number' ? bulkGuest.customRate : undefined
+            selectedPlan ? undefined : (Number.isFinite(typedGross) && typedGross > 0 ? typedGross : undefined),
+            'gross_total'
           );
 
           // Create reservation with personal details from each guest
@@ -1101,7 +1123,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
         guestName: (guest as any).name || `${(guest as any).firstName || ''} ${(guest as any).lastName || ''}`.trim() || 'Guest',
             roomTypeId: bulkGuest.roomTypeId,
         ratePlanId: (() => {
-          if (bulkGuest.ratePlanId) return bulkGuest.ratePlanId;
+          if (bulkGuest.ratePlanId && bulkGuest.ratePlanId !== 'custom') return bulkGuest.ratePlanId;
           if (formData.ratePlanId) return formData.ratePlanId;
           try {
             const settings = useSettingsStore.getState();
@@ -1158,7 +1180,11 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           createdReservations.forEach((r) => {
             try { frontOfficeStore.checkIn(r.id); } catch {}
           });
-          alert(`Created & checked in ${createdReservations.length} guest${createdReservations.length !== 1 ? 's' : ''}.`);
+          const updated = createdReservations.map((r) => frontOfficeStore.reservations.find((stay) => stay.id === r.id) || r);
+          const who = updated.map((r) => r.guestName).filter(Boolean).join(', ') || 'Guest';
+          const rooms = updated.map((r) => (r.roomId && r.roomId !== 'TBD' ? `Room ${r.roomId}` : 'room to assign')).join(', ');
+          notifySuccess(`${who} is in-house — ${rooms}`, 'Walk-in');
+          onFinished?.(createdReservations.map((r) => r.id));
         } else {
         alert(`Successfully created ${createdReservations.length} reservation${createdReservations.length !== 1 ? 's' : ''}${formData.companyName ? ` for ${formData.companyName}` : ''}`);
         }
@@ -1224,7 +1250,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     switch (action) {
       case 'checkin':
         {
-          const autoAssign = useSettingsStore.getState().roomSettings.autoAssignRooms !== false;
+          const autoAssign = autoAssignRoomsEnabled();
           const hasRoom = !!reservation.roomId && reservation.roomId !== 'TBD';
           if (!autoAssign && !hasRoom) {
             // Prompt assign room modal instead of immediate check-in
@@ -1304,12 +1330,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
     }
   };
 
-  const calculateNights = (arrival: string, departure: string) => {
-    const start = new Date(arrival);
-    const end = new Date(departure);
-    const diffTime = Math.abs(end.getTime() - start.getTime());
-    return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-  };
+  const calculateNights = (arrival: string, departure: string) => calculateStayNights(arrival, departure);
 
   const getAvailableRooms = (roomTypeId: string) => {
     return housekeepingStore.getRoomsByStatus('vacant')
@@ -1323,13 +1344,19 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
       .map(r => r.roomNumber);
   };
 
+  const dismissForm = () => {
+    onClose();
+    onFinished?.([]);
+  };
+
   return (
-    <div className="space-y-6">
+    <div className={embed ? '' : 'space-y-6'}>
+      {!embed && <>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-xl sm:text-2xl font-bold text-ghana-black">📅 Reservations & Bookings Management</h2>
-          <p className="text-sm sm:text-base text-gray-600">Create, view, and manage room reservations and bookings</p>
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-xl sm:text-2xl font-bold text-ghana-black">📅 Reservations & Bookings</h2>
+          <HeadingInfo label="About reservations">Create, view, and manage room reservations and bookings</HeadingInfo>
         </div>
         <div className="flex items-center space-x-2 sm:space-x-4">
           <CustomizeViewControl
@@ -1352,144 +1379,30 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
       {/* Quick Stats */}
       {hiddenStatsCount < RESERVATIONS_DASHBOARD_SECTIONS.length && (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
-        {!isHidden('totalReservations') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Reservations</p>
-                <p className="text-2xl font-bold text-ghana-black">{reservations.length}</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('totalReservations')} label="Total Reservations" />
-                <span className="text-2xl">📊</span>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
-        {!isHidden('confirmed') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Confirmed</p>
-                <p className="text-2xl font-bold text-green-600">
-                  {reservations.filter(r => r.status === 'confirmed').length}
-                </p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('confirmed')} label="Confirmed" />
-                <span className="text-2xl">✅</span>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
-        {!isHidden('checkedIn') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Checked In</p>
-                <p className="text-2xl font-bold text-blue-600">
-                  {reservations.filter(r => r.status === 'checked-in').length}
-                </p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('checkedIn')} label="Checked In" />
-                <span className="text-2xl">🔑</span>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
-        {!isHidden('businessStays') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Business Stays</p>
-                  <p className="text-2xl font-bold text-purple-600">
-                    {reservations.filter(r => ['business', 'corporate', 'conference', 'training'].includes(r.stayReason || 'personal')).length}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    {reservations.filter(r => r.stayReason === 'corporate').length} Corporate
-                  </p>
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4 xl:grid-cols-7">
+        {([
+          ['totalReservations', reservations.length, 'text-gray-900'],
+          ['confirmed', reservations.filter(r => r.status === 'confirmed').length, 'text-green-700'],
+          ['checkedIn', reservations.filter(r => r.status === 'checked-in').length, 'text-blue-700'],
+          ['businessStays', reservations.filter(r => ['business', 'corporate', 'conference', 'training'].includes(r.stayReason || 'personal')).length, 'text-purple-700'],
+          ['thirdPartyBilling', reservations.filter(r => r.billingPersonId).length, 'text-orange-700'],
+          ['internationalGuests', reservations.filter(r => frontOfficeStore.guests.find(g => g.id === r.guestId)?.nationality !== 'ghanaian').length, 'text-indigo-700'],
+          ['pending', reservations.filter(r => r.status === 'pending').length, 'text-yellow-700'],
+        ] as const).map(([id, value, tone]) => {
+          if (isHidden(id)) return null;
+          const label = RESERVATIONS_DASHBOARD_SECTIONS.find((card) => card.id === id)?.label || id;
+          return (
+            <Card key={id} className="relative border border-gray-200 shadow-none">
+              <CardBody className="px-2 py-1.5 text-center">
+                <div className="absolute right-1 top-0.5">
+                  <HideCardButton onHide={() => hide(id)} label={label} />
                 </div>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('businessStays')} label="Business Stays" />
-                <span className="text-2xl">💼</span>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
-        {!isHidden('thirdPartyBilling') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Third Party Billing</p>
-                  <p className="text-2xl font-bold text-orange-600">
-                    {reservations.filter(r => r.billingPersonId).length}
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('thirdPartyBilling')} label="Third Party Billing" />
-                <span className="text-2xl">🏢</span>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
-        {!isHidden('internationalGuests') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <div>
-                  <p className="text-sm font-medium text-gray-600">International Guests</p>
-                  <p className="text-2xl font-bold text-indigo-600">
-                    {reservations.filter(r =>
-                      frontOfficeStore.guests.find(g => g.id === r.guestId)?.nationality !== 'ghanaian').length}
-                  </p>
-                  <p className="text-xs text-gray-500">
-                    Non-Ghanaian
-                  </p>
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('internationalGuests')} label="International Guests" />
-                <span className="text-2xl">🌍</span>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
-        {!isHidden('pending') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Pending</p>
-                <p className="text-2xl font-bold text-yellow-600">
-                  {reservations.filter(r => r.status === 'pending').length}
-                </p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('pending')} label="Pending" />
-                <span className="text-2xl">⏳</span>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
+                <div className={`text-base font-semibold tabular-nums ${tone}`}>{value}</div>
+                <div className="text-xs leading-tight text-gray-500">{label}</div>
+              </CardBody>
+            </Card>
+          );
+        })}
       </div>
       )}
 
@@ -1603,243 +1516,27 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
 
       {/* Reservations Table */}
       <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <h3 className="text-lg sm:text-xl font-semibold text-ghana-black">Reservations</h3>
-        </CardHeader>
-        <CardBody className="p-0 overflow-x-auto">
-          <Table aria-label="Reservations table">
-            <TableHeader>
-              <TableColumn className="hidden sm:table-cell">ResID</TableColumn>
-              <TableColumn>Guest</TableColumn>
-              <TableColumn className="hidden lg:table-cell">Room Type</TableColumn>
-              <TableColumn className="hidden md:table-cell">Check-in Date</TableColumn>
-              <TableColumn className="hidden md:table-cell">Check-out Date</TableColumn>
-              <TableColumn className="hidden md:table-cell">Nights</TableColumn>
-              <TableColumn className="hidden sm:table-cell">Rate</TableColumn>
-              <TableColumn className="hidden sm:table-cell">Amount</TableColumn>
-              <TableColumn className="hidden lg:table-cell">Rate Plan</TableColumn>
-              <TableColumn className="hidden xl:table-cell">Purpose</TableColumn>
-              <TableColumn className="hidden xl:table-cell">Billing</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn className="hidden lg:table-cell">Room</TableColumn>
-              <TableColumn>Actions</TableColumn>
-            </TableHeader>
-            <TableBody>
-              {filteredReservations
-                .slice((resPage - 1) * resRowsPerPage, resPage * resRowsPerPage)
-                .map((reservation) => (
-                <TableRow 
-                  key={reservation.id}
-                  className="cursor-pointer hover:bg-gray-50"
-                  onClick={() => handleEditReservation(reservation)}
-                >
-                  <TableCell className="hidden sm:table-cell">
-                    <div className="flex items-center space-x-2">
-                      <span className="font-semibold text-ghana-black">{reservation.resId || reservation.id}</span>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="max-w-[200px]">
-                      <div className="flex items-center gap-1.5">
-                        <p className="font-medium text-ghana-black truncate">{reservation.guestName}</p>
-                        {reservation.groupId && (
-                          <Chip size="sm" variant="flat" color="warning" title={reservation.groupId}>
-                            {reservation.isGroupLeader ? '🔗 Group lead' : '🔗 Group'}
-                          </Chip>
-                        )}
-                      </div>
-                      <p className="text-xs text-gray-500">
-                        {reservation.adults || 1} adult{reservation.adults !== 1 ? 's' : ''}
-                        {reservation.children ? `, ${reservation.children} child${reservation.children !== 1 ? 'ren' : ''}` : ''}
-                      </p>
-                      <p className="text-xs font-medium text-ghana-black sm:hidden">
-                        ₵{getDisplayNightlyRateGross(reservation).toFixed(2)}/night · ₵{getDisplayStayTotal(reservation).toFixed(2)}
-                      </p>
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    <Chip size="sm" variant="flat" color="secondary">
-                      {frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId)?.name || 'Unknown'}
-                    </Chip>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <div className="text-sm">
-                      {new Date(reservation.arrival).toLocaleDateString()}
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <div className="text-sm">
-                      {new Date(reservation.departure).toLocaleDateString()}
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden md:table-cell">
-                    <div className="text-sm">
-                      {calculateNights(reservation.arrival, reservation.departure)}
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    <span className="font-medium">₵{getDisplayNightlyRateGross(reservation).toFixed(2)}</span>
-                  </TableCell>
-                  <TableCell className="hidden sm:table-cell">
-                    <span className="font-medium">₵{getDisplayStayTotal(reservation).toFixed(2)}</span>
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    {(() => {
-                      const rpId = reservation.ratePlanId;
-                      if (!rpId) return 'Custom Rate';
-                      const rp = (useSettingsStore.getState().roomManagement.ratePlans || []).find((r: any) => r.id === rpId);
-                      return rp?.name || rpId;
-                    })()}
-                  </TableCell>
-                  <TableCell className="hidden xl:table-cell">
-                    <div className="text-sm">
-                      <Chip size="sm" variant="flat" color="primary">
-                        {reservation.stayReason || 'personal'}
-                      </Chip>
-                      {reservation.stayReasonDetails && (
-                        <p className="text-xs text-gray-500 mt-1 truncate max-w-[150px]">
-                          {reservation.stayReasonDetails}
-                        </p>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden xl:table-cell">
-                    <div className="text-sm">
-                      {reservation.billingPersonId ? (
-                        <div>
-                          <Chip size="sm" variant="flat" color="success">
-                            Third Party
-                          </Chip>
-                          <p className="text-xs text-gray-500 mt-1 truncate max-w-[150px]">
-                            {reservation.billingPersonName || 'Billing person'}
-                          </p>
-                        </div>
-                      ) : (
-                        <Chip size="sm" variant="flat" color="secondary">
-                          Guest Pays
-                        </Chip>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex items-center space-x-2">
-                      <span>{getStatusIcon(reservation.status)}</span>
-                      <Badge 
-                        color={getStatusColor(reservation.status) as any}
-                        variant="flat"
-                        size="sm"
-                      >
-                        {reservation.status}
-                      </Badge>
-                    </div>
-                  </TableCell>
-                  <TableCell className="hidden lg:table-cell">
-                    {reservation.roomId ? (
-                      <Chip size="sm" variant="flat" color="success">
-                        {reservation.roomId}
-                      </Chip>
-                    ) : (
-                      <span className="text-gray-400">Unassigned</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex space-x-1">
-                      <Button
-                        size="sm"
-                        color="secondary"
-                        variant="flat"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleViewReservation(reservation);
-                        }}
-                      >
-                        🧾 View
-                      </Button>
-                      {reservation.status === 'confirmed' && !reservation.roomId && (
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="flat"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleQuickAction('assign', reservation);
-                          }}
-                        >
-                          🏠 Assign
-                        </Button>
-                      )}
-                      {reservation.roomId && reservation.status !== 'checked-in' && (
-                        <Button
-                          size="sm"
-                          color="danger"
-                          variant="flat"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            frontOfficeStore.assignRoom(reservation.id, '');
-                            loadReservations();
-                          }}
-                        >
-                          🗑️ Unassign
-                        </Button>
-                      )}
-                      {(reservation.status === 'confirmed' || reservation.status === 'pending') && (
-                        <Button
-                          size="sm"
-                          color="success"
-                          variant="flat"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleQuickAction('checkin', reservation);
-                          }}
-                        >
-                          🔑 Check In
-                        </Button>
-                      )}
-                      {canMarkNoShow(reservation, businessDate ?? '') && (
-                        <Button
-                          size="sm"
-                          color="danger"
-                          variant="bordered"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            openNoShowConfirm(reservation);
-                          }}
-                        >
-                          👻 No-Show
-                        </Button>
-                      )}
-                      {reservation.status === 'checked-in' && (
-                        <Button
-                          size="sm"
-                          color="warning"
-                          variant="flat"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleQuickAction('checkout', reservation);
-                          }}
-                        >
-                          🚪 Check Out
-                        </Button>
-                      )}
-                      {['pending', 'confirmed'].includes(reservation.status) && (
-                        <Button
-                          size="sm"
-                          color="danger"
-                          variant="flat"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleQuickAction('cancel', reservation);
-                          }}
-                        >
-                          ❌ Cancel
-                        </Button>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+        <CardBody className="px-2 py-3">
+          <StayWorksheetTable
+            stays={sortStays(filteredReservations, resSortKey, resSortDir).slice((resPage - 1) * resRowsPerPage, resPage * resRowsPerPage)}
+            today={localStayDay()}
+            selectedId={selectedReservation?.id}
+            sortKey={resSortKey}
+            sortDir={resSortDir}
+            onSort={(key) => {
+              setResPage(1);
+              if (resSortKey === key) setResSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
+              else {
+                setResSortKey(key);
+                setResSortDir('asc');
+              }
+            }}
+            onOpen={(id) => {
+              const stay = filteredReservations.find((reservation) => reservation.id === id);
+              if (stay) handleEditReservation(stay);
+            }}
+            emptyContent="No reservation matches these filters."
+          />
         </CardBody>
       </Card>
       <div className="flex justify-end mt-3">
@@ -1851,42 +1548,19 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
           size="sm"
         />
       </div>
+      </>}
 
       {/* Reservation Form Modal */}
-      <Modal isOpen={isOpen} onClose={onClose} size="4xl" className="mx-2 sm:mx-4">
+      <Modal isOpen={isOpen} onClose={dismissForm} size="4xl" className="mx-2 sm:mx-4">
         <ModalContent className="max-h-[90vh]">
           <ModalHeader>
-            {isCreatingNew ? 'Create New Reservation' : 'View / Edit Reservation'}
+            {isCreatingNew ? (mode === 'checkin' ? 'Walk-in' : 'Create New Reservation') : 'View / Edit Reservation'}
           </ModalHeader>
           <ModalBody className="overflow-y-auto">
             <Tabs aria-label="Reservation details" selectedKey={tabKey} onSelectionChange={(key)=> setTabKey(key as string)}>
               <Tab key="summary" title="🧾 Summary / Print">
                 {selectedReservation ? (
                   <div className="space-y-4 pt-4" id="reservation-summary">
-                    {/* Hotel Header */}
-                    <div className="text-center border-b pb-4 mb-6">
-                      {useSettingsStore.getState().saasSettings.customBranding.logoUrl && (
-                        <div className="mb-4">
-                          <img 
-                            src={useSettingsStore.getState().saasSettings.customBranding.logoUrl} 
-                            alt="Hotel Logo" 
-                            className="h-16 mx-auto object-contain"
-                          />
-                        </div>
-                      )}
-                      <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                        {useSettingsStore.getState().saasSettings.customBranding.companyName || 'Ghana Hotel Management'}
-                      </h1>
-                      <div className="text-sm text-gray-600 space-y-1">
-                        <div>{useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.address || '123 Hotel Street, Accra, Ghana'}</div>
-                        <div>Phone: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.phone || '+233 20 123 4567'}</div>
-                        <div>Email: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.email || 'info@ghana-hotel.com'}</div>
-                        {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.website && (
-                          <div>Website: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.website}</div>
-                        )}
-                      </div>
-                    </div>
-
                     {/* Reservation Details */}
                     <div className="mb-6">
                       <h2 className="text-lg font-semibold text-gray-900 mb-4">Reservation Details</h2>
@@ -1976,23 +1650,6 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                         )}
                       </div>
                     )}
-
-                    {/* Hotel Footer */}
-                    <div className="mt-8 pt-4 border-t text-center text-xs text-gray-500">
-                      <div className="mb-2">
-                        <strong>{useSettingsStore.getState().saasSettings.customBranding.companyName || 'Ghana Hotel Management'}</strong>
-                      </div>
-                      <div className="space-y-1">
-                        <div>{useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.address || '123 Hotel Street, Accra, Ghana'}</div>
-                        <div>Phone: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.phone || '+233 20 123 4567'} | Email: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.email || 'info@ghana-hotel.com'}</div>
-                        {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.website && (
-                          <div>Website: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.website}</div>
-                        )}
-                        {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.taxId && (
-                          <div>Tax ID: {useSettingsStore.getState().countryCompliance[useSettingsStore.getState().defaultCountry]?.businessInfo.taxId}</div>
-                        )}
-                      </div>
-                    </div>
 
                     <div className="flex flex-wrap gap-2 justify-end pt-4">
                       <Button color="primary" variant="flat" onClick={() => {
@@ -2148,6 +1805,13 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                   {/* Guest Management - Unified for Single and Multiple */}
                   {isCreatingNew && (
                     <div className="bg-purple-50 p-4 rounded-lg border">
+                      {mode === 'checkin' && (
+                        <p className="mb-3 text-sm text-gray-600">
+                          {defaultDeparture
+                            ? `Check-in is today. Departure is ${defaultDeparture}. Change either date on the guest if the stay is different.`
+                            : 'Check-in is today. Change the dates on the guest if the stay is longer.'}
+                        </p>
+                      )}
                       <div className="flex items-center justify-between mb-4">
                         <h4 className="font-medium text-purple-900">👥 Guest List ({bulkGuests.length} guest{bulkGuests.length !== 1 ? 's' : ''})</h4>
                         {bulkGuests.length > 1 ? (
@@ -2208,7 +1872,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                   </Button>
                                 )}
                               </div>
-                              {showGuestSearch && guestSearchTerm.trim() && (
+                              {guestSearchTerm.trim() && (
                                 <div className="absolute z-50 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
                               {isGuestSearching ? (
                                 <div className="p-4 text-center">
@@ -2221,6 +1885,8 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                                     filteredGuests.map(guest => (
                                       <div
                                         key={guest.id}
+                                        role="button"
+                                        tabIndex={0}
                                         className="p-3 hover:bg-gray-100 cursor-pointer border-b border-gray-200 last:border-b-0"
                                     onClick={() => addGuestToBulk(guest)}
                                   >
@@ -2435,13 +2101,19 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
                       <div className="text-sm text-gray-600">Amount (incl. taxes)</div>
                       <div className="text-lg font-semibold text-gray-900">
                         {(() => {
-                          const nights = calculateNights(bulkGuest.arrival, bulkGuest.departure) || 1;
-                          // If plan selected, use settings plan price directly (already gross)
-                          const rp = bulkGuest.ratePlanId ? useSettingsStore.getState().roomManagement.ratePlans.find(r => r.id === bulkGuest.ratePlanId) : undefined;
-                          const nightlyGross = rp 
-                            ? getPlanGross(rp)
-                            : grossFromExclusive(bulkGuest.customRate || baseRate);
-                          const amount = nightlyGross * nights;
+                          const planId = bulkGuest.ratePlanId && bulkGuest.ratePlanId !== 'custom' ? bulkGuest.ratePlanId : undefined;
+                          const rp = planId ? useSettingsStore.getState().roomManagement.ratePlans.find(r => r.id === planId) : undefined;
+                          const typedGross = parseFloat(String(bulkGuest.customRateInput ?? ''));
+                          const breakdown = buildRateBreakdown(
+                            bulkGuest.roomTypeId,
+                            bulkGuest.arrival,
+                            bulkGuest.departure,
+                            rp,
+                            rp ? undefined : (Number.isFinite(typedGross) && typedGross > 0 ? typedGross : undefined),
+                            'gross_total'
+                          );
+                          const amount = breakdown.reduce((s, d) => s + (d.total || 0), 0);
+                          void complianceRuleCount;
                           return `₵${amount.toFixed(2)}`;
                         })()}
                       </div>
@@ -2907,16 +2579,43 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             </Tabs>
           </ModalBody>
           <ModalFooter className="flex flex-col sm:flex-row gap-2 sm:gap-0 sm:justify-end">
+            {!isCreatingNew && selectedReservation && (selectedReservation.status === 'confirmed' || selectedReservation.status === 'pending') && (
+              <Button size="sm" color="success" variant="flat" className="w-full sm:w-auto" onClick={() => handleQuickAction('checkin', selectedReservation)}>
+                Check in
+              </Button>
+            )}
+            {!isCreatingNew && selectedReservation && selectedReservation.status === 'confirmed' && !selectedReservation.roomId && (
+              <Button size="sm" color="primary" variant="flat" className="w-full sm:w-auto" onClick={() => handleQuickAction('assign', selectedReservation)}>
+                Assign
+              </Button>
+            )}
+            {!isCreatingNew && selectedReservation && !!selectedReservation.roomId && selectedReservation.roomId !== 'TBD' && selectedReservation.status !== 'checked-in' && (
+              <Button size="sm" color="danger" variant="flat" className="w-full sm:w-auto" onClick={() => { frontOfficeStore.assignRoom(selectedReservation.id, ''); loadReservations(); }}>
+                Unassign
+              </Button>
+            )}
+            {!isCreatingNew && selectedReservation && canMarkNoShow(selectedReservation, businessDate ?? '') && (
+              <Button size="sm" color="danger" variant="bordered" className="w-full sm:w-auto" onClick={() => openNoShowConfirm(selectedReservation)}>
+                No-show
+              </Button>
+            )}
+            {!isCreatingNew && selectedReservation && ['pending', 'confirmed'].includes(selectedReservation.status) && (
+              <Button size="sm" color="danger" variant="flat" className="w-full sm:w-auto" onClick={() => handleQuickAction('cancel', selectedReservation)}>
+                Cancel reservation
+              </Button>
+            )}
             <Button 
               color="primary" 
               onClick={handleSaveReservation} 
               className="w-full sm:w-auto"
               isDisabled={isCreatingNew && bulkGuests.length === 0}
             >
-              {isCreatingNew 
-                ? (bulkGuests.length > 0 
-                    ? `💾 Create ${bulkGuests.length} Reservation${bulkGuests.length !== 1 ? 's' : ''}`
-                    : '💾 Add Guest First')
+              {isCreatingNew
+                ? (bulkGuests.length > 0
+                    ? (mode === 'checkin'
+                        ? `Check in ${bulkGuests.length} guest${bulkGuests.length !== 1 ? 's' : ''}`
+                        : `💾 Create ${bulkGuests.length} Reservation${bulkGuests.length !== 1 ? 's' : ''}`)
+                    : (mode === 'checkin' ? 'Add guest first' : '💾 Add Guest First'))
                 : '💾 Update Reservation'
               }
             </Button>
@@ -2928,7 +2627,7 @@ export default function ReservationsBookingsManager({ mode = 'reservation', embe
             >
               {tabKey === 'guest' ? 'Next: Additional Info' : 'Previous: Guest Info'}
             </Button>
-            <Button variant="light" onClick={onClose} className="w-full sm:w-auto">
+            <Button variant="light" onClick={dismissForm} className="w-full sm:w-auto">
               Cancel
             </Button>
           </ModalFooter>

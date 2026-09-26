@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
+import dynamic from 'next/dynamic';
 import DeptNotices from './DeptNotices';
 import RecentActivities from './RecentActivities';
 import DeptMessenger from './DeptMessenger';
@@ -8,25 +9,45 @@ import {
   Card, 
   CardBody, 
   CardHeader, 
-  Button, 
-  Badge, 
   Tabs, 
   Tab,
-  Chip,
-  Tooltip
 } from "@heroui/react";
 import OfflineIndicator from './OfflineIndicator';
 import { housekeepingStore } from '../lib/housekeeping/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useSettingsStore } from '../lib/settings/store';
-import { useRouter } from 'next/navigation';
+import { useComplianceStore } from '../lib/compliance/store';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
-import DepartmentStaffTab from './hr/DepartmentStaffTab';
-import { useCashierShift } from '../lib/frontoffice/useCashierShift';
+const panelFallback = <div className="p-6 text-center text-gray-500">Loading...</div>;
+const ReservationsBookingsManager = dynamic(() => import('./ReservationsBookingsManager'), { ssr: false, loading: () => panelFallback });
+const ServiceChargesPage = dynamic(() => import('../guest-services/service-charges/page'), { ssr: false, loading: () => panelFallback });
+const InvoicesPaymentsPage = dynamic(() => import('../guest-services/client-services/invoices-payments/page'), { ssr: false, loading: () => panelFallback });
+const RoomAssignmentsManager = dynamic(() => import('./RoomAssignmentsManager'), { ssr: false, loading: () => panelFallback });
+const FrontDeskCounter = dynamic(() => import('./FrontDeskCounter'), { ssr: false, loading: () => panelFallback });
+const RoomTransferPanel = dynamic(() => import('./RoomTransferPanel'), { ssr: false, loading: () => panelFallback });
+const ClientsServicesContent = dynamic(() => import('../guest-services/client-services/clients-services/page').then((m) => ({ default: m.ClientsServicesContent })), { ssr: false, loading: () => panelFallback });
+const CashierShiftPanel = dynamic(() => import('./CashierShiftPanel'), { ssr: false, loading: () => panelFallback });
+const FrontofficeNightAudit = dynamic(() => import('./FrontofficeNightAudit'), { ssr: false, loading: () => panelFallback });
+const FrontOfficeReportsAnalysis = dynamic(() => import('./FrontOfficeReportsAnalysis'), { ssr: false, loading: () => panelFallback });
 
-// Hideable summary/widget cards on this dashboard — the "Operations Overview"
-// tabs are core navigation, not clutter, so they're deliberately not included.
+const FO_TABS = new Set(['reservations', 'rooms', 'desk', 'transfer', 'servicecharges', 'billing', 'cashiering', 'clients', 'night-audit', 'reports']);
+const FO_TAB_ALIASES: Record<string, string> = {
+  overview: 'reservations',
+  'guest-services': 'desk',
+  checkins: 'desk',
+  checkouts: 'desk',
+  staff: 'reservations',
+};
+
+function resolveFoTab(raw: string | null) {
+  if (!raw) return null;
+  const mapped = FO_TAB_ALIASES[raw] || raw;
+  return FO_TABS.has(mapped) ? mapped : null;
+}
+
+// Hideable summary cards. The stay tabs stay visible.
 const FRONTDESK_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'availableRooms', label: 'Available Rooms' },
   { id: 'occupiedRooms', label: 'Occupied Rooms' },
@@ -36,61 +57,16 @@ const FRONTDESK_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'notices', label: 'Front Desk Notices' },
 ];
 
-// Info Icon Component with Tooltip
-const InfoIcon = ({ description }: { description: string }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
-
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    timeoutRef.current = setTimeout(() => {
-      setShowTooltip(true);
-    }, 2000); // 2 second delay
-  };
-
-  const handleMouseLeave = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    setShowTooltip(false);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  return (
-    <Tooltip
-      content={description}
-      isOpen={showTooltip}
-      onOpenChange={setShowTooltip}
-      placement="top"
-      showArrow
-      color="primary"
-      delay={0}
-    >
-      <div
-        className="inline-flex items-center justify-center w-4 h-4 mr-2 text-xs text-blue-500 bg-blue-100 rounded-full cursor-help hover:bg-blue-200 transition-colors"
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        title={description}
-      >
-        ℹ
-      </div>
-    </Tooltip>
-  );
-};
-
-export default function FrontdeskDashboard() {
-  const [selectedTab, setSelectedTab] = useState("overview");
-  const [refreshTrigger, setRefreshTrigger] = useState(0);
-  const router = useRouter();
+export default function FrontdeskDashboard({
+  initialTab,
+  fullPage = false,
+}: {
+  initialTab?: string;
+  fullPage?: boolean;
+} = {}) {
+  const [selectedTab, setSelectedTab] = useState(resolveFoTab(initialTab || null) || 'reservations');
+  const [openNewReservation, setOpenNewReservation] = useState(false);
+  const [, setRefreshTrigger] = useState(0);
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.frontdesk', FRONTDESK_DASHBOARD_SECTIONS);
 
@@ -98,7 +74,26 @@ export default function FrontdeskDashboard() {
   const reservations = frontOfficeStore.reservations;
   const rooms = frontOfficeStore.rooms;
   const hkAllRooms = housekeepingStore.getAllRooms();
-  const { shifts: cashierShifts } = useCashierShift();
+  useEffect(() => {
+    void useComplianceStore.getState().syncCountryFromSetup();
+  }, []);
+
+  useEffect(() => {
+    const applyStoredTab = () => {
+      try {
+        const tab = resolveFoTab(localStorage.getItem('fo.tab'));
+        if (tab) {
+          setSelectedTab(tab);
+          localStorage.removeItem('fo.tab');
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    applyStoredTab();
+    window.addEventListener('fo-navigate', applyStoredTab);
+    return () => window.removeEventListener('fo-navigate', applyStoredTab);
+  }, []);
 
   // Subscribe to store changes to update client count
   useEffect(() => {
@@ -123,50 +118,10 @@ export default function FrontdeskDashboard() {
     hkAllRooms.filter(r => r.roomTypeId === typeId && ['vacant', 'clean', 'inspected'].includes(r.status as any)).length;
   const todayCheckIns = reservations.filter(r => (r.status === 'confirmed' || r.status === 'pending') && r.arrival.slice(0,10) === todayIso).length;
   const todayCheckOuts = checkingOutToday;
-  // Reservations with an outstanding folio balance right now — the same
-  // "unpaid" concept the Invoices & Payments page itself tracks, without
-  // duplicating its reservation-by-reservation recompute here. Deduped by
-  // reservationId, not a raw folio-row count: some reservations have
-  // accumulated many duplicate folio rows (a separate data-integrity issue,
-  // not something this card should surface as if it were real invoice volume).
-  const outstandingFolios = new Set(
-    frontOfficeStore.folios.filter(f => (f.balance || 0) > 0).map(f => f.reservationId)
-  ).size;
-  const openCashierShifts = cashierShifts.filter(s => s.status === 'open').length;
-
-  const operationalItems = [
-    {
-      category: 'Reservations & Bookings',
-      items: [
-        { title: 'Reservations', icon: '📅', description: 'Manage room reservations and bookings', status: 'active', count: reservations.length },
-        { title: 'Rooms & Bookings', icon: '🏠', description: 'View and manage room assignments', status: 'active', count: totalRooms },
-        { title: 'Room Management', icon: '📋', description: 'Room status and maintenance tracking', status: 'active', count: totalRooms },
-      ]
-    },
-    {
-      category: 'Guest Services',
-      items: [
-        { title: 'Check-ins', icon: '✅', description: 'Guest check-in and check-ins management', status: 'active', count: todayCheckIns + occupiedTotal },
-        { title: 'Check-outs', icon: '🚪', description: 'Guest check-out processing', status: 'active', count: todayCheckOuts },
-        { title: 'Invoices & Payments', icon: '📄', description: 'Billing and payment processing', status: 'active', count: outstandingFolios },
-        { title: 'Client Management', icon: '👥', description: 'Manage client profiles, search, and preferences', status: 'active', count: frontOfficeStore.guests.length },
-      ]
-    },
-    {
-      category: 'Operations & Reports',
-      items: [
-        { title: 'Cashiering', icon: '💵', description: 'Open/close till shifts and reconcile cash against real payments', status: 'active', count: openCashierShifts },
-        // No count concept fits either of these — a report catalog and an
-        // audit-run log aren't countable "N items waiting" the way the
-        // others are, so the count badge is omitted rather than faked.
-        { title: 'Night Audit', icon: '🌙', description: 'Run and review the nightly revenue/room reconciliation', status: 'active' },
-        { title: 'Reports & Analysis', icon: '📊', description: 'Occupancy, arrivals, departures, and front office analytics', status: 'active' },
-      ]
-    },
-  ];
-
   return (
-    <div className="p-6">
+    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
+      {!fullPage && (
+        <>
       <DeptMessenger from="frontdesk" mode="drawer" />
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">🏨 Front Office Operations</h2>
@@ -178,33 +133,40 @@ export default function FrontdeskDashboard() {
             showAll={showAll}
             hiddenCount={hiddenCount}
           />
+          <ModuleExpandButton
+            href="/frontoffice/ops"
+            label="Open front office full page"
+          />
           <OfflineIndicator />
         </div>
       </div>
+        </>
+      )}
 
       {/* Room Status Overview */}
+      {!fullPage && (
       <div className="mb-8">
+        {(!isHidden('availableRooms') || !isHidden('occupiedRooms') || !isHidden('maintenance')) && (
+        <>
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-xl font-semibold text-ghana-black flex items-center gap-2">
             🏠 Room Status Overview ({totalRooms} Rooms)
           </h3>
         </div>
 
-        {/* Status Cards */}
-        {(!isHidden('availableRooms') || !isHidden('occupiedRooms') || !isHidden('maintenance')) && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+        <div className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-3">
           {/* Available Rooms */}
           {!isHidden('availableRooms') && (
-          <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
-            <CardBody className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Available Rooms</h4>
+          <Card className="border border-gray-200 border-l-2 border-l-green-500 shadow-none">
+            <CardBody className="px-3 py-2">
+              <div className="mb-1 flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-ghana-black">Available Rooms</h4>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-green-500 rounded-full"></div>
                   <HideCardButton onHide={() => hide('availableRooms')} label="Available Rooms" />
                 </div>
               </div>
-              <div className="text-3xl font-bold text-green-600 mb-3">{availableTotal}</div>
+              <div className="mb-1 text-base font-semibold tabular-nums text-green-700">{availableTotal}</div>
               <div className="space-y-1 text-sm text-gray-600">
                 {roomTypes.map((rt: any) => (
                   <div key={rt.id} className="flex justify-between">
@@ -219,16 +181,16 @@ export default function FrontdeskDashboard() {
 
           {/* Occupied Rooms */}
           {!isHidden('occupiedRooms') && (
-          <Card className="border-0 shadow-lg border-l-4 border-l-red-500">
-            <CardBody className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Occupied Rooms</h4>
+          <Card className="border border-gray-200 border-l-2 border-l-red-500 shadow-none">
+            <CardBody className="px-3 py-2">
+              <div className="mb-1 flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-ghana-black">Occupied Rooms</h4>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-red-500 rounded-full"></div>
                   <HideCardButton onHide={() => hide('occupiedRooms')} label="Occupied Rooms" />
                 </div>
               </div>
-              <div className="text-3xl font-bold text-red-600 mb-3">{occupiedTotal}</div>
+              <div className="mb-1 text-base font-semibold tabular-nums text-red-700">{occupiedTotal}</div>
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex justify-between">
                   <span>Checking Out Today</span>
@@ -249,16 +211,16 @@ export default function FrontdeskDashboard() {
 
           {/* Maintenance & Cleaning */}
           {!isHidden('maintenance') && (
-          <Card className="border-0 shadow-lg border-l-4 border-l-yellow-500">
-            <CardBody className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Maintenance & Cleaning</h4>
+          <Card className="border border-gray-200 border-l-2 border-l-yellow-500 shadow-none">
+            <CardBody className="px-3 py-2">
+              <div className="mb-1 flex items-center justify-between">
+                <h4 className="text-sm font-semibold text-ghana-black">Maintenance & Cleaning</h4>
                 <div className="flex items-center gap-2">
                   <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
                   <HideCardButton onHide={() => hide('maintenance')} label="Maintenance & Cleaning" />
                 </div>
               </div>
-              <div className="text-3xl font-bold text-yellow-600 mb-3">{maintenanceOpen + dirtyRooms}</div>
+              <div className="mb-1 text-base font-semibold tabular-nums text-yellow-700">{maintenanceOpen + dirtyRooms}</div>
               <div className="space-y-1 text-sm text-gray-600">
                 <div className="flex justify-between">
                   <span>Under Maintenance</span>
@@ -277,6 +239,7 @@ export default function FrontdeskDashboard() {
           </Card>
           )}
         </div>
+        </>
         )}
 
         {/* Today's Room Operations */}
@@ -302,239 +265,69 @@ export default function FrontdeskDashboard() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              color="success"
-              variant="solid"
-              className="bg-green-600 hover:bg-green-700"
-              onClick={() => router.push('/room-assignments')}
-            >
-              🏢 View Full Status
-            </Button>
-            <HideCardButton onHide={() => hide('todayOps')} label="Today's Room Operations" />
-          </div>
+          <HideCardButton onHide={() => hide('todayOps')} label="Today's Room Operations" />
         </div>
         )}
       </div>
+      )}
 
-      {/* Main Operations Interface */}
       <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <h3 className="text-xl font-semibold text-ghana-black">📊 Operations Overview</h3>
-        </CardHeader>
+        {fullPage && (
+          <CardHeader className="pb-3">
+            <h3 className="text-xl font-semibold text-ghana-black">Front Office</h3>
+          </CardHeader>
+        )}
         <CardBody>
-          <Tabs 
-            selectedKey={selectedTab} 
-            onSelectionChange={(key) => {
-              console.log(`[GUEST-SERVICES] Tab changed from ${selectedTab} to ${key}`);
-              setSelectedTab(key as string);
-            }}
+          <Tabs
+            selectedKey={selectedTab}
+            onSelectionChange={(key) => setSelectedTab(key as string)}
             className="w-full"
+            aria-label="Front office operations"
           >
-            <Tab key="overview" title="📊 Overview">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-4">
-                {operationalItems.slice(0, 5).map((category, categoryIndex) => (
-                  <Card key={categoryIndex} className="border border-gray-200 shadow-md">
-                    <CardHeader className="pb-3">
-                      <h4 className="text-lg font-semibold text-ghana-black">{category.category}</h4>
-                    </CardHeader>
-                    <CardBody className="pt-0">
-                      <div className="space-y-3">
-                        {category.items.map((item, itemIndex) => (
-                          <div 
-                            key={itemIndex}
-                            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
-                            onClick={() => {
-                              // Handle navigation based on item type
-                              if (item.title.includes('Reservations')) {
-                                router.push('/guest-services/check-ins?tab=reservations');
-                              } else if (item.title.includes('Rooms & Bookings')) {
-                                router.push('/room-assignments');
-                              } else if (item.title.includes('Room Management')) {
-                                router.push('/room-status');
-                              } else if (item.title.includes('Check-ins')) {
-                                router.push('/guest-services/check-ins?tab=checkins');
-                              } else if (item.title.includes('Check-outs')) {
-                                router.push('/guest-services/check-ins?tab=checkouts');
-                              } else if (item.title.includes('Invoices & Payments')) {
-                                router.push('/guest-services/check-ins?tab=billing');
-                              } else if (item.title.includes('Cashiering')) {
-                                router.push('/cashiering');
-                              } else if (item.title.includes('Night Audit')) {
-                                router.push('/night-audit');
-                              } else if (item.title.includes('Reports & Analysis')) {
-                                router.push('/reports');
-                              } else if (item.title.includes('Client Management')) {
-                                router.push('/guest-services/client-services/clients-services');
-                              }
-                            }}
-                          >
-                            <div className="flex items-center space-x-3">
-                              <span className="text-xl">{item.icon}</span>
-                              <div>
-                                <div className="flex items-center">
-                                  <InfoIcon description={item.description} />
-                                  <p className="font-medium text-ghana-black">{item.title}</p>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <Badge 
-                                color={item.status === 'active' ? 'success' : 'default'}
-                                variant="flat"
-                              >
-                                {item.status}
-                              </Badge>
-                              {item.count !== undefined && (
-                                <Chip size="sm" variant="flat" color="primary">
-                                  {item.count}
-                                </Chip>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardBody>
-                  </Card>
-                ))}
-              </div>
-            </Tab>
-            <Tab key="guest-services" title="👥 Guest Services">
-              <div className="mt-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {/* 1. Check-ins */}
-                  <Card className="border border-gray-200">
-                      <CardBody className="p-4">
-                        <div className="flex items-center space-x-3 mb-3">
-                        <span className="text-2xl">✅</span>
-                          <div>
-                            <div className="flex items-center">
-                            <InfoIcon description="Guest arrival and registration" />
-                            <h4 className="font-semibold text-ghana-black">Check-ins</h4>
-                          </div>
-                          </div>
-                        </div>
-                        <div className="flex items-center justify-between mb-3">
-                        <Badge color="success" variant="flat">active</Badge>
-                        <Chip size="sm" variant="flat" color="primary">0</Chip>
-                        </div>
-                        <div className="mt-3">
-                          <Button
-                            size="sm"
-                            color="primary"
-                            variant="flat"
-                            className="w-full"
-                          onClick={() => router.push('/guest-services/check-ins?tab=reservations')}
-                        >
-                          ➕ New Reservation
-                        </Button>
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="flat"
-                          className="w-full mt-2"
-                          onClick={() => router.push('/guest-services/check-ins?tab=checkins')}
-                        >
-                          ✅ Process Check-ins
-                        </Button>
-                      </div>
-                    </CardBody>
-                  </Card>
-
-                  {/* 2. Check-ins */}
-                  <Card className="border border-gray-200">
-                    <CardBody className="p-4">
-                      <div className="flex items-center space-x-3 mb-3">
-                        <span className="text-2xl">🏠</span>
-                        <div>
-                          <div className="flex items-center">
-                            <InfoIcon description="Manage guests during their stay" />
-                            <h4 className="font-semibold text-ghana-black">Check-ins</h4>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between mb-3">
-                        <Badge color="success" variant="flat">active</Badge>
-                        <Chip size="sm" variant="flat" color="primary">0</Chip>
-                      </div>
-                      <div className="mt-3">
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="flat"
-                          className="w-full"
-                          onClick={() => router.push('/guest-services/check-ins?tab=checkins')}
-                        >
-                          🏠 Manage Guests
-                        </Button>
-                        </div>
-                      </CardBody>
-                    </Card>
-
-                  {/* 3. Check-outs */}
-                  <Card className="border border-gray-200">
-                    <CardBody className="p-4">
-                      <div className="flex items-center space-x-3 mb-3">
-                        <span className="text-2xl">🚪</span>
-                        <div>
-                          <div className="flex items-center">
-                            <InfoIcon description="Guest departure and final billing" />
-                            <h4 className="font-semibold text-ghana-black">Check-outs</h4>
-                          </div>
-                </div>
-              </div>
-                      <div className="flex items-center justify-between mb-3">
-                        <Badge color="success" variant="flat">active</Badge>
-                        <Chip size="sm" variant="flat" color="primary">0</Chip>
-                      </div>
-                      <div className="mt-3">
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="flat"
-                          className="w-full"
-                          onClick={() => router.push('/guest-services/check-ins?tab=checkouts')}
-                        >
-                          🚪 Process Check-outs
-                        </Button>
-                      </div>
-                    </CardBody>
-                  </Card>
-
-                  {/* 4. Invoices & Payments */}
-                  <Card className="border-0 shadow-lg hover:shadow-xl transition-shadow cursor-pointer" onClick={() => router.push('/guest-services/check-ins?tab=billing')}>
-                  <CardBody className="p-4 text-center">
-                    <div className="text-3xl mb-2">📄</div>
-                    <h3 className="text-lg font-semibold text-gray-800">Invoices & Payments</h3>
-                    <p className="text-sm text-gray-600">Billing and payment processing</p>
-                      <Button
-                        color="primary"
-                        variant="flat"
-                        size="sm"
-                        className="mt-3"
-                        onClick={() => router.push('/guest-services/check-ins?tab=billing')}
-                      >
-                        Manage
-                      </Button>
-                    </CardBody>
-                  </Card>
-                </div>
-              </div>
-            </Tab>
-
-            <Tab key="staff" title="👥 Staff Management">
-              <DepartmentStaffTab
-                departmentLabel="Front Office"
-                overtimePermissionId="frontdesk.log-overtime"
-                departmentNameHints={['front', 'reception', 'desk']}
-              />
-            </Tab>
+            <Tab key="rooms" title="🛏️ Rooms" />
+            <Tab key="reservations" title="📅 Reservations" />
+            <Tab key="desk" title="🛎️ Desk" />
+            <Tab key="transfer" title="🔄 Room Transfer" />
+            <Tab key="servicecharges" title="🏊 Service Charges" />
+            <Tab key="billing" title="💳 Invoices & Payments" />
+            <Tab key="cashiering" title="💵 Cashiering" />
+            <Tab key="clients" title="👥 Clients" />
+            <Tab key="night-audit" title="🌙 Night Audit" />
+            <Tab key="reports" title="📈 Reports & Analysis" />
           </Tabs>
+          <div className="mt-4">
+            {selectedTab === 'reservations' && (
+              <ReservationsBookingsManager
+                autoOpenNew={openNewReservation}
+                onAutoOpenConsumed={() => setOpenNewReservation(false)}
+              />
+            )}
+            {selectedTab === 'rooms' && (
+              <RoomAssignmentsManager
+                onNewReservation={() => {
+                  setOpenNewReservation(true);
+                  setSelectedTab('reservations');
+                }}
+              />
+            )}
+            {selectedTab === 'desk' && <FrontDeskCounter />}
+            {selectedTab === 'transfer' && <RoomTransferPanel />}
+            {selectedTab === 'servicecharges' && <ServiceChargesPage />}
+            {selectedTab === 'billing' && <InvoicesPaymentsPage />}
+            {selectedTab === 'cashiering' && <CashierShiftPanel />}
+            {selectedTab === 'clients' && (
+              <Suspense fallback={panelFallback}>
+                <ClientsServicesContent embedded />
+              </Suspense>
+            )}
+            {selectedTab === 'night-audit' && <FrontofficeNightAudit />}
+            {selectedTab === 'reports' && <FrontOfficeReportsAnalysis embedded />}
+          </div>
         </CardBody>
       </Card>
 
       {/* Recent Activities & Notices */}
-      {(!isHidden('recentActivities') || !isHidden('notices')) && (
+      {!fullPage && (!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Recent Activities */}

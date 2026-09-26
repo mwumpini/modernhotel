@@ -55,6 +55,17 @@
     "isActive": true
   },
   {
+    "id": "gh-getfund",
+    "countryCode": "GH",
+    "reportType": "GETFund",
+    "frequency": "Monthly",
+    "fieldsRequired": ["getfundOnSales", "getfundDue"],
+    "dueDay": 15,
+    "dueRule": { "type": "dayOfFollowingMonth", "day": 15 },
+    "description": "GETFund levy — filed with the VAT stack returns under Act 1151.",
+    "isActive": true
+  },
+  {
     "id": "gh-tourism",
     "countryCode": "GH",
     "reportType": "Tourism",

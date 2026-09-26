@@ -4,7 +4,7 @@ import React from 'react';
 import { tickNightAuditScheduler } from '../lib/frontoffice/nightAuditScheduler';
 
 /**
- * Runs at 1:00am local time when the app is open and night_audit_auto_run is enabled.
+ * Runs during the 1:00 hour (Accra) when the app is open, signed in, and auto-run is enabled.
  * Console logs use prefix [NightAuditScheduler] — see nightAuditScheduler.ts.
  * To test: temporarily adjust isNightAuditScheduleWindow() in nightAudit.ts, then restore.
  */

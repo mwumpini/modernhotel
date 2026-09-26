@@ -21,6 +21,7 @@ import {
 } from '../src/app/lib/accounting/revenueSourcePolicy';
 import type { Invoice, JournalEntry, Payment } from '../src/app/lib/accounting/models';
 import { defaultRollupCoa } from '../src/app/lib/accounting/jeDrivenReports';
+import { computeStackedTaxLines, taxConfigsFromGhanaTemplate } from '../src/app/lib/accounting/taxFromConfig';
 
 function assert(cond: boolean, msg: string) {
   if (!cond) throw new Error(`FAIL: ${msg}`);
@@ -277,6 +278,27 @@ function assert(cond: boolean, msg: string) {
     sourceModule: 'front_office_checkout',
   };
   assert(!paymentNeedsGlPost(pay, []), 'folio checkout receipt GL via simpleFlow only');
+}
+
+// Purchase withholding must not sit on a guest sale, even if a stored config still marks it as a sales tax.
+{
+  const configs = taxConfigsFromGhanaTemplate();
+  configs.push({
+    id: 'wht-vat',
+    code: 'WITHHOLDING_VAT',
+    name: 'Withholding VAT (Purchases)',
+    rate: 7,
+    type: 'Other',
+    glAccountCode: '2170',
+    isRecoverable: true,
+    isActive: true,
+    effectiveFrom: '2026-01-01',
+    countryCode: 'GH',
+    applyOnSales: true,
+  });
+  const { lines, totalTax } = computeStackedTaxLines(650, configs, 'sales');
+  assert(!lines.some((l) => l.glAccountCode === '2170'), '2170 excluded from sales stack');
+  assert(Math.abs(totalTax - 136.5) < 0.02, `sales tax on 650 is 136.50, got ${totalTax}`);
 }
 
 console.log('All accounting process regression checks passed.');

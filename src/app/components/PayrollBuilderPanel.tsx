@@ -101,7 +101,7 @@ export default function PayrollBuilderPanel() {
 
   const earningOptions = [
     { key: 'BASIC', name: 'Basic Salary', calculationType: 'fixed', amount: 0, taxable: true },
-    { key: 'TRANSPORT', name: 'Transport Allowance', calculationType: 'fixed', amount: 300, taxable: false },
+    { key: 'TRANSPORT', name: 'Transport Allowance', calculationType: 'fixed', amount: 0, taxable: true },
     { key: 'OVERTIME', name: 'Overtime', calculationType: 'hourly', rate: 1.5, amount: 0, taxable: true },
   ];
 

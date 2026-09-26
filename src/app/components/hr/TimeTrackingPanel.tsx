@@ -156,6 +156,7 @@ export default function TimeTrackingPanel() {
           <CardBody>
             <Table aria-label="attendance-log" className="overflow-x-auto">
               <TableHeader>
+                <TableColumn>TIMESHEET</TableColumn>
                 <TableColumn>STAFF</TableColumn>
                 <TableColumn>DATE</TableColumn>
                 <TableColumn>IN</TableColumn>
@@ -170,6 +171,7 @@ export default function TimeTrackingPanel() {
                   const late = isLate(a.checkInTime, shiftOn(shifts, a.employeeId, localDay(a.date)));
                   return (
                     <TableRow key={a.id}>
+                      <TableCell className="font-mono">{a.id}</TableCell>
                       <TableCell>{nameOf(a.employeeId)}</TableCell>
                       <TableCell>{new Date(a.date).toLocaleDateString('en-GB')}</TableCell>
                       <TableCell>{fmtTime(a.checkInTime)}</TableCell>

@@ -1,6 +1,6 @@
 import { prisma } from '../database/client'
 import { Reservation, GuestProfile, Folio } from './types'
-import { mergedFolioWrite } from './folioServer'
+import { loadFolioRounding, mergedFolioWrite } from './folioServer'
 
 function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
   const out: Record<string, any> = {}
@@ -74,6 +74,8 @@ export function toStoreReservation(row: any): Reservation {
     taxExemptionExpiry: details.taxExemptionExpiry,
     taxExemptionDocuments: details.taxExemptionDocuments || [],
     taxExemptionNotes: details.taxExemptionNotes,
+    waiveLateCheckoutFee: details.waiveLateCheckoutFee,
+    companyBillStatus: details.companyBillStatus,
     checkedInAt: toISOOrUndefined(row.checkedInAt),
     checkedOutAt: toISOOrUndefined(row.checkedOutAt),
     createdAt: toISO(row.createdAt),
@@ -109,6 +111,8 @@ export function toDbReservationData(r: Partial<Reservation>) {
     taxExemptionExpiry: r.taxExemptionExpiry,
     taxExemptionDocuments: r.taxExemptionDocuments,
     taxExemptionNotes: r.taxExemptionNotes,
+    waiveLateCheckoutFee: r.waiveLateCheckoutFee,
+    companyBillStatus: r.companyBillStatus,
   })
   const data: Record<string, any> = stripUndefined({
     resId: r.resId,
@@ -408,11 +412,12 @@ export async function upsertFolio(tenantId: string, f: Partial<Folio>): Promise<
   if (!f.id) throw new Error('folio id is required')
   if (!f.reservationId) throw new Error('reservationId is required')
   const existing = await prisma.guestFolio.findFirst({ where: { id: f.id, tenantId } })
+  const rounding = await loadFolioRounding(tenantId)
   const merged = mergedFolioWrite(existing, {
     status: f.status,
     charges: (f.charges || []) as any,
     payments: (f.payments || []) as any,
-  })
+  }, rounding)
   const fields = {
     reservationId: f.reservationId,
     currency: f.currency || 'GHS',

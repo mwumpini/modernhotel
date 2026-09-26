@@ -5,7 +5,7 @@ import { Button, Card, CardBody, CardHeader, Input, Select, SelectItem, Table, T
 import { useLeaveAttendanceStore } from '@/app/lib/hr/leaveAttendanceStore';
 import { useEmployeeStore } from '@/app/lib/hr/employeeStore';
 import { useCurrentUserName } from '@/app/lib/auth/useCurrentUserName';
-import { addDays, dayKey, leaveOn } from '@/app/lib/hr/leaveDates';
+import { addDays, countLeaveDays, dayKey, leaveOn } from '@/app/lib/hr/leaveDates';
 import { downloadLeaveForm, printLeaveForm } from '@/app/lib/hr/leaveForm';
 import LeaveBalancesTab from './LeaveBalancesTab';
 import LeaveCalendarTab from './LeaveCalendarTab';
@@ -27,7 +27,7 @@ export default function LeaveManagementPanel() {
   const submit = () => {
     if (!form.employeeId || !form.startDate || !form.endDate) return;
     if (new Date(form.endDate) < new Date(form.startDate)) return;
-    requestLeave({ employeeId: form.employeeId, leaveType: form.leaveType, startDate: new Date(form.startDate), endDate: new Date(form.endDate), totalDays: Math.max(1, Math.ceil((new Date(form.endDate).getTime() - new Date(form.startDate).getTime()) / (1000*60*60*24)) + 1), reason: form.reason, coveringEmployeeId: form.coveringEmployeeId || undefined, handoverNotes: form.handoverNotes.trim() || undefined, requestedBy: form.employeeId, status: 'pending', createdAt: new Date(), updatedAt: new Date() } as any);
+    requestLeave({ employeeId: form.employeeId, leaveType: form.leaveType, startDate: new Date(form.startDate), endDate: new Date(form.endDate), totalDays: countLeaveDays(form.startDate, form.endDate, form.leaveType), reason: form.reason, coveringEmployeeId: form.coveringEmployeeId || undefined, handoverNotes: form.handoverNotes.trim() || undefined, requestedBy: form.employeeId, status: 'pending', createdAt: new Date(), updatedAt: new Date() } as any);
     // Dates, reason and cover belong to that one request — start the next one clean.
     setForm({ ...form, startDate: '', endDate: '', reason: '', coveringEmployeeId: '', handoverNotes: '' });
   };
@@ -44,7 +44,7 @@ export default function LeaveManagementPanel() {
 
   // Shown under the form so the requester sees what is left before submitting.
   const requestedDays = form.startDate && form.endDate && form.endDate >= form.startDate
-    ? Math.max(1, Math.ceil((new Date(form.endDate).getTime() - new Date(form.startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1)
+    ? countLeaveDays(form.startDate, form.endDate, form.leaveType)
     : 0;
   const balance = form.employeeId
     ? getLeaveBalance(form.employeeId, form.leaveType, form.startDate ? new Date(form.startDate).getUTCFullYear() : new Date().getFullYear())

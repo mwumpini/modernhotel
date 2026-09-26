@@ -2,8 +2,8 @@
 
 import React from 'react';
 import PageLayout from '../../components/PageLayout';
-import FoodBeverageReportsAnalysis from '../../components/FoodBeverageReportsAnalysis';
 import FoodBeverageBackButton from '../../components/FoodBeverageBackButton';
+import FoodBeverageReportsAnalysis from '../../components/FoodBeverageReportsAnalysis';
 
 export default function FoodBeverageReportsPage() {
   return (

@@ -1,6 +1,7 @@
 import { prisma } from '@/app/lib/database/client'
+import { approvalDecision, type ApprovalCategory } from '@/app/lib/settings/approvalDecision'
 
-export type ApprovalCategory = 'expense' | 'purchaseOrder' | 'payment' | 'overtime'
+export type { ApprovalCategory }
 
 /**
  * Tenant-configurable director-approval thresholds (see
@@ -9,21 +10,6 @@ export type ApprovalCategory = 'expense' | 'purchaseOrder' | 'payment' | 'overti
  * discount-approval fields — GHS 1,000 with approval required is the default
  * for every category until a tenant changes it themselves.
  */
-const DEFAULTS: Record<ApprovalCategory, { required: boolean; threshold: number }> = {
-  expense: { required: true, threshold: 1000 },
-  purchaseOrder: { required: true, threshold: 1000 },
-  payment: { required: true, threshold: 1000 },
-  // Hours, not currency.
-  overtime: { required: true, threshold: 8 },
-}
-
-const FIELD_NAMES: Record<ApprovalCategory, { requiredKey: string; thresholdKey: string }> = {
-  expense: { requiredKey: 'requireApprovalForExpenses', thresholdKey: 'expenseApprovalThreshold' },
-  purchaseOrder: { requiredKey: 'requireApprovalForPurchaseOrders', thresholdKey: 'purchaseOrderApprovalThreshold' },
-  payment: { requiredKey: 'requireApprovalForPayments', thresholdKey: 'paymentApprovalThreshold' },
-  overtime: { requiredKey: 'requireApprovalForOvertime', thresholdKey: 'overtimeApprovalThreshold' },
-}
-
 export const APPROVAL_PERMISSION: Record<ApprovalCategory, string> = {
   expense: 'accounting.approve-journal-entry',
   purchaseOrder: 'inventory.approve-high-value-requisition',
@@ -38,9 +24,6 @@ export async function getApprovalRequirement(
   amount: number,
 ): Promise<{ needsApproval: boolean; threshold: number; required: boolean }> {
   const settings = await prisma.systemSettings.findUnique({ where: { tenantId }, select: { financialSettings: true } })
-  const fs = (settings?.financialSettings as Record<string, any>) || {}
-  const { requiredKey, thresholdKey } = FIELD_NAMES[category]
-  const required = typeof fs[requiredKey] === 'boolean' ? fs[requiredKey] : DEFAULTS[category].required
-  const threshold = typeof fs[thresholdKey] === 'number' ? fs[thresholdKey] : DEFAULTS[category].threshold
-  return { needsApproval: required && amount >= threshold, threshold, required }
+  const fs = (settings?.financialSettings as Record<string, unknown>) || {}
+  return approvalDecision(fs, category, amount)
 }

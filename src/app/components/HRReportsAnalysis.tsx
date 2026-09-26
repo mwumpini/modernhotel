@@ -13,6 +13,9 @@ import {
 import { useEmployeeStore } from '../lib/hr/employeeStore';
 import { usePayrollStore } from '../lib/hr/payrollStore';
 import { useLeaveAttendanceStore } from '../lib/hr/leaveAttendanceStore';
+import { useBenefitsStore } from '../lib/hr/benefitsStore';
+import { useTrainingStore } from '../lib/hr/trainingStore';
+import { usePerformanceStore } from '../lib/hr/performanceStore';
 import { useSettingsStore } from '../lib/settings/store';
 import { buildOrgProfile } from '../lib/print/buildOrgProfile';
 import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob } from '../lib/frontoffice/reportExportFormat';
@@ -45,13 +48,21 @@ function inDateRange(day: string, startDate: string, endDate: string) {
   return Boolean(day) && day >= startDate && day <= endDate;
 }
 
+/** A stay, leave, or payroll month counts when it overlaps the selected dates, so "Today"
+ * still shows the month or request that covers today. */
+function rangesOverlap(rowStart: string, rowEnd: string, filterStart: string, filterEnd: string) {
+  if (!rowStart || !filterStart || !filterEnd) return false;
+  const end = rowEnd || rowStart;
+  return rowStart <= filterEnd && end >= filterStart;
+}
+
 function employeeName(employees: { id: string; firstName: string; lastName: string }[], id?: string) {
   const employee = employees.find((row) => row.id === id);
   return employee ? `${employee.firstName} ${employee.lastName}`.trim() : id || '—';
 }
 
-const RANGE_REPORT_KEYS = new Set(['payroll-records', 'payroll-periods', 'leave', 'attendance', 'shifts']);
-const NO_DATE_REPORT_KEYS = new Set(['employees']);
+const RANGE_REPORT_KEYS = new Set(['payroll-records', 'payroll-periods', 'leave', 'attendance', 'shifts', 'benefits', 'training', 'performance']);
+const NO_DATE_REPORT_KEYS = new Set(['employees', 'departments']);
 
 const REPORT_GROUPS = {
   people: {
@@ -59,6 +70,7 @@ const REPORT_GROUPS = {
     description: 'Staff on the HR file, as recorded.',
     reports: [
       ['employees', 'Employees'],
+      ['departments', 'Departments'],
     ],
   },
   payroll: {
@@ -76,6 +88,15 @@ const REPORT_GROUPS = {
       ['leave', 'Leave Requests'],
       ['attendance', 'Attendance'],
       ['shifts', 'Shifts'],
+    ],
+  },
+  activity: {
+    title: 'Activity',
+    description: 'Benefits, training and performance already recorded for staff.',
+    reports: [
+      ['benefits', 'Benefits'],
+      ['training', 'Training'],
+      ['performance', 'Performance'],
     ],
   },
 } as const;
@@ -101,12 +122,22 @@ const EMPTY_REPORT_FILTERS: ReportFilters = {
 
 const REPORT_DESCRIPTIONS: Record<string, string> = {
   employees: 'Employee roster currently on file. Salary is the stored figure, not a calculated package.',
-  'payroll-records': 'Payslip lines saved for the selected period. Tax and SSNIT are the amounts already stored on each record.',
-  'payroll-periods': 'Payroll runs on file, with the totals saved when the period was processed.',
-  leave: 'Leave requests whose start date falls in the selected period.',
+  'payroll-records': 'Payslip lines whose payroll month overlaps the selected dates. Tax and SSNIT are the amounts already stored on each record.',
+  'payroll-periods': 'Payroll runs whose month overlaps the selected dates, with the totals saved when the period was processed.',
+  leave: 'Leave requests that overlap the selected dates.',
   attendance: 'Clock records for the selected period.',
   shifts: 'Scheduled shifts for the selected period.',
+  departments: 'Departments on the HR file, with headcount from current staff records.',
+  benefits: 'Benefit enrollments whose effective date falls in the selected period.',
+  training: 'Training enrollments whose enrollment date falls in the selected period.',
+  performance: 'Performance reviews whose review date falls in the selected period.',
 };
+
+function payslipTies(row: { grossPay?: number; tax?: number; socialSecurity?: number; pension?: number; tier3?: number; other?: number; netPay?: number }) {
+  const withheld = Number(row.tax || 0) + Number(row.socialSecurity || 0) + Number(row.pension || 0) + Number(row.tier3 || 0) + Number(row.other || 0);
+  const expected = Math.round((Number(row.grossPay || 0) - withheld) * 100) / 100;
+  return Math.abs(expected - Number(row.netPay || 0)) < 0.02;
+}
 
 type ReportColumnDefinition = { key: string; label: string; defaultVisible?: boolean };
 
@@ -128,10 +159,18 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
     { key: 'employeeName', label: 'Name' },
     { key: 'department', label: 'Department' },
     { key: 'period', label: 'Period' },
+    { key: 'basicSalary', label: 'Basic' },
+    { key: 'allowances', label: 'Allowances' },
+    { key: 'overtimePay', label: 'Overtime' },
+    { key: 'bonuses', label: 'Bonus' },
     { key: 'grossPay', label: 'Gross' },
-    { key: 'tax', label: 'Tax' },
-    { key: 'socialSecurity', label: 'SSNIT' },
+    { key: 'tax', label: 'PAYE' },
+    { key: 'socialSecurity', label: 'Tier 1' },
+    { key: 'pension', label: 'Tier 2' },
+    { key: 'tier3', label: 'Tier 3' },
+    { key: 'other', label: 'Other' },
     { key: 'netPay', label: 'Net' },
+    { key: 'ties', label: 'Ties' },
     { key: 'status', label: 'Status' },
     { key: 'paymentMethod', label: 'Method', defaultVisible: false },
   ],
@@ -171,9 +210,41 @@ const REPORT_COLUMNS: Record<string, ReportColumnDefinition[]> = {
     { key: 'endTime', label: 'End' },
     { key: 'location', label: 'Location' },
   ],
+  departments: [
+    { key: 'name', label: 'Department' },
+    { key: 'code', label: 'Code' },
+    { key: 'headcount', label: 'Staff' },
+    { key: 'active', label: 'Active' },
+    { key: 'status', label: 'Status' },
+  ],
+  benefits: [
+    { key: 'employee', label: 'Employee' },
+    { key: 'packageName', label: 'Package' },
+    { key: 'status', label: 'Status' },
+    { key: 'effectiveDate', label: 'Effective' },
+    { key: 'totalCost', label: 'Cost' },
+    { key: 'employeeContribution', label: 'Employee' },
+    { key: 'employerContribution', label: 'Employer' },
+  ],
+  training: [
+    { key: 'employee', label: 'Employee' },
+    { key: 'program', label: 'Program' },
+    { key: 'status', label: 'Status' },
+    { key: 'enrollmentDate', label: 'Enrolled' },
+    { key: 'score', label: 'Score' },
+    { key: 'cost', label: 'Cost' },
+  ],
+  performance: [
+    { key: 'employee', label: 'Employee' },
+    { key: 'period', label: 'Period' },
+    { key: 'reviewDate', label: 'Reviewed' },
+    { key: 'rating', label: 'Rating' },
+    { key: 'status', label: 'Status' },
+    { key: 'reviewer', label: 'Reviewer' },
+  ],
 };
 
-export default function HRReportsAnalysis() {
+export default function HRReportsAnalysis({ embedded = false }: { embedded?: boolean } = {}) {
   const [selectedTab, setSelectedTab] = useState<ReportGroupKey>('people');
   const [selectedReport, setSelectedReport] = useState('employees');
   const [startDate, setStartDate] = useState('');
@@ -207,6 +278,14 @@ export default function HRReportsAnalysis() {
   const attendances = useLeaveAttendanceStore((s) => s.attendances);
   const shifts = useLeaveAttendanceStore((s) => s.shifts);
   const hydrateLeave = useLeaveAttendanceStore((s) => s.hydrateFromApi);
+  const benefitEnrollments = useBenefitsStore((s) => s.enrollments);
+  const benefitPackages = useBenefitsStore((s) => s.packages);
+  const hydrateBenefits = useBenefitsStore((s) => s.hydrateFromApi);
+  const trainingEnrollments = useTrainingStore((s) => s.enrollments);
+  const trainingPrograms = useTrainingStore((s) => s.programs);
+  const hydrateTraining = useTrainingStore((s) => s.hydrateFromApi);
+  const performanceReviews = usePerformanceStore((s) => s.reviews);
+  const hydratePerformance = usePerformanceStore((s) => s.hydrateFromApi);
 
   const departmentName = (id?: string) => departments.find((row) => row.id === id)?.name || id || '—';
   const positionTitle = (id?: string) => positions.find((row) => row.id === id)?.title || id || '—';
@@ -217,7 +296,7 @@ export default function HRReportsAnalysis() {
     return Number.isNaN(date.getTime()) ? '—' : date.toLocaleTimeString('en-GH', { hour: '2-digit', minute: '2-digit' });
   };
 
-  const hydrateAll = () => Promise.all([hydrateEmployees(), hydratePayroll(), hydrateLeave()]);
+  const hydrateAll = () => Promise.all([hydrateEmployees(), hydratePayroll(), hydrateLeave(), hydrateBenefits(), hydrateTraining(), hydratePerformance()]);
 
   useEffect(() => {
     const today = new Date().toISOString().split('T')[0];
@@ -236,7 +315,7 @@ export default function HRReportsAnalysis() {
   useEffect(() => {
     hydrateAll().catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrateEmployees, hydratePayroll, hydrateLeave]);
+  }, [hydrateEmployees, hydratePayroll, hydrateLeave, hydrateBenefits, hydrateTraining, hydratePerformance]);
   useEffect(() => {
     setGeneratedAt(new Date().toLocaleString('en-GH'));
   }, [selectedReport, selectedTab, startDate, endDate, refreshVersion, employees, payrollRecords, leaveRequests, attendances]);
@@ -284,24 +363,40 @@ export default function HRReportsAnalysis() {
         return payrollRecords
           .filter((record) => {
             const period = payrollPeriods.find((row) => row.id === record.payrollPeriodId);
-            const day = dayOf(period?.startDate) || dayOf(record.createdAt);
-            return inDateRange(day, startDate, endDate);
+            if (period) return rangesOverlap(dayOf(period.startDate), dayOf(period.endDate), startDate, endDate);
+            return inDateRange(dayOf(record.createdAt), startDate, endDate);
           })
           .map((record) => ({
             employeeNumber: record.employeeNumber,
             employeeName: record.employeeName,
             department: record.department,
             period: periodLabel(record.payrollPeriodId),
+            basicSalary: record.basicSalary || 0,
+            allowances: record.allowances || 0,
+            overtimePay: record.overtimePay || 0,
+            bonuses: record.bonuses || 0,
             grossPay: record.grossPay,
             tax: record.deductions?.tax || 0,
             socialSecurity: record.deductions?.socialSecurity || 0,
+            pension: record.deductions?.pension || 0,
+            tier3: record.deductions?.tier3 || 0,
+            other: record.deductions?.other || 0,
             netPay: record.netPay,
+            ties: payslipTies({
+              grossPay: record.grossPay,
+              tax: record.deductions?.tax,
+              socialSecurity: record.deductions?.socialSecurity,
+              pension: record.deductions?.pension,
+              tier3: record.deductions?.tier3,
+              other: record.deductions?.other,
+              netPay: record.netPay,
+            }) ? 'Yes' : 'No',
             status: record.status,
             paymentMethod: record.paymentMethod,
           }));
       case 'payroll-periods':
         return payrollPeriods
-          .filter((period) => inDateRange(dayOf(period.startDate), startDate, endDate))
+          .filter((period) => rangesOverlap(dayOf(period.startDate), dayOf(period.endDate), startDate, endDate))
           .map((period) => ({
             periodNumber: period.periodNumber,
             startDate: dayOf(period.startDate),
@@ -314,7 +409,7 @@ export default function HRReportsAnalysis() {
           }));
       case 'leave':
         return leaveRequests
-          .filter((request) => inDateRange(dayOf(request.startDate), startDate, endDate))
+          .filter((request) => rangesOverlap(dayOf(request.startDate), dayOf(request.endDate), startDate, endDate))
           .map((request) => ({
             employee: employeeName(employees, request.employeeId),
             leaveType: request.leaveType,
@@ -346,6 +441,51 @@ export default function HRReportsAnalysis() {
             startTime: shift.startTime,
             endTime: shift.endTime,
             location: shift.location || '—',
+          }));
+      case 'departments':
+        return departments.map((department) => {
+          const staff = employees.filter((employee) => employee.departmentId === department.id);
+          return {
+            name: department.name,
+            code: department.code || '—',
+            headcount: staff.length,
+            active: staff.filter((employee) => employee.status === 'active').length,
+            status: department.status || (department.isActive ? 'active' : 'inactive'),
+          };
+        });
+      case 'benefits':
+        return benefitEnrollments
+          .filter((row) => inDateRange(dayOf(row.effectiveDate), startDate, endDate))
+          .map((row) => ({
+            employee: employeeName(employees, row.employeeId),
+            packageName: benefitPackages.find((pkg) => pkg.id === row.benefitsPackageId)?.name || row.benefitsPackageId,
+            status: row.status,
+            effectiveDate: dayOf(row.effectiveDate),
+            totalCost: row.totalCost || 0,
+            employeeContribution: row.employeeContribution || 0,
+            employerContribution: row.employerContribution || 0,
+          }));
+      case 'training':
+        return trainingEnrollments
+          .filter((row) => inDateRange(dayOf(row.enrollmentDate), startDate, endDate))
+          .map((row) => ({
+            employee: employeeName(employees, row.employeeId),
+            program: trainingPrograms.find((program) => program.id === row.trainingProgramId)?.title || row.trainingProgramId,
+            status: row.status,
+            enrollmentDate: dayOf(row.enrollmentDate),
+            score: row.score ?? '—',
+            cost: row.cost || 0,
+          }));
+      case 'performance':
+        return performanceReviews
+          .filter((row) => inDateRange(dayOf(row.reviewDate), startDate, endDate))
+          .map((row) => ({
+            employee: employeeName(employees, row.employeeId),
+            period: row.reviewPeriod,
+            reviewDate: dayOf(row.reviewDate),
+            rating: row.overallRating,
+            status: row.status,
+            reviewer: row.reviewerName || '—',
           }));
       default:
         return [];
@@ -425,6 +565,7 @@ export default function HRReportsAnalysis() {
         { label: 'Gross', value: money(rows.reduce((sum, row) => sum + Number(row.grossPay || 0), 0)), hint: 'Stored totals' },
         { label: 'Net', value: money(rows.reduce((sum, row) => sum + Number(row.netPay || 0), 0)), hint: 'Stored totals' },
         { label: 'Paid', value: paid.length.toLocaleString(), hint: 'Marked paid' },
+        { label: 'Untied', value: rows.filter((row) => row.ties === 'No').length.toLocaleString(), hint: 'Gross minus deductions ≠ net' },
       ];
     }
     if (selectedReport === 'payroll-periods') {
@@ -546,7 +687,7 @@ export default function HRReportsAnalysis() {
   const rangeAllowed = RANGE_REPORT_KEYS.has(selectedReport);
 
   return (
-    <div className="min-h-screen bg-slate-50/70 p-4 md:p-6">
+    <div className={embedded ? 'p-2' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
       <div className="mx-auto max-w-[1600px] space-y-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
@@ -556,7 +697,7 @@ export default function HRReportsAnalysis() {
             </div>
             <h1 className="text-3xl font-bold tracking-tight text-slate-950">Reports & Analysis</h1>
             <p className="mt-1 max-w-2xl text-sm text-slate-600">
-              Employees, payroll and time records on file. Statutory filings stay in Compliance Reports.
+              Staff, payroll, time, benefits, training and performance records on file. Statutory filings stay in Compliance.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">

@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from './HeadingInfo';
 import { 
   Card, 
   CardBody, 
@@ -192,8 +193,10 @@ export default function NightAudit() {
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-3xl font-bold text-ghana-black">🌙 Night Audit Automation</h1>
-              <p className="text-gray-600 mt-2">Complete automated end-of-day processing for Ghanaian compliance</p>
+              <div className="flex items-center gap-1.5">
+                <h1 className="text-3xl font-bold text-ghana-black">🌙 Night Audit Automation</h1>
+                <HeadingInfo label="About night audit">Complete automated end-of-day processing for Ghanaian compliance</HeadingInfo>
+              </div>
             </div>
             <div className="text-right">
               <p className="text-sm text-gray-500">Current Time</p>

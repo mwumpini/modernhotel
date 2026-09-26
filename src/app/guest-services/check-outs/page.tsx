@@ -36,8 +36,7 @@ import CustomizeViewControl, { HideCardButton } from '../../components/dashboard
 import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { resolveGuestAddress } from '../../lib/frontoffice/helpers/guests';
-import { openPrintPreview } from '../../lib/print/engine';
-import { listTemplates } from '../../lib/print/templates';
+import { listAllTemplates, openPrintPreview } from '../../lib/print/engine';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 import { useSettingsStore } from '../../lib/settings/store';
 import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
@@ -132,14 +131,25 @@ export default function CheckOutsPage() {
   const [paymentAmount, setPaymentAmount] = useState<number>(0);
   const [paymentMethod, setPaymentMethod] = useState<string>('cash');
   const [paymentReference, setPaymentReference] = useState<string>('');
-  // Print templates
-  const receiptTemplates = useMemo(() => listTemplates('receipt'), []);
-  const invoiceTemplates = useMemo(() => listTemplates('invoice'), []);
-  const proformaTemplates = useMemo(() => listTemplates('proforma'), []);
+  // Print templates — builder presets (including the one set active in Document
+  // Templates) plus the older hand-written layouts.
   const settings = useSettingsStore();
-  const [receiptTpl, setReceiptTpl] = useState<string>((settings as any)?.printing?.receipt || receiptTemplates[0]?.key || 'simple-receipt');
-  const [invoiceTpl, setInvoiceTpl] = useState<string>((settings as any)?.printing?.invoice || invoiceTemplates[0]?.key || 'corporate-invoice');
-  const [proformaTpl, setProformaTpl] = useState<string>((settings as any)?.printing?.proforma || proformaTemplates[0]?.key || 'conference-proforma-grid');
+  const customTemplates = settings.docBuilder?.templates;
+  const receiptTemplates = useMemo(() => listAllTemplates('receipt', customTemplates), [customTemplates]);
+  const invoiceTemplates = useMemo(() => listAllTemplates('invoice', customTemplates), [customTemplates]);
+  const proformaTemplates = useMemo(() => listAllTemplates('proforma', customTemplates), [customTemplates]);
+  const [receiptTpl, setReceiptTpl] = useState<string>((settings as any)?.printing?.receipt || 'simple-receipt');
+  const [invoiceTpl, setInvoiceTpl] = useState<string>((settings as any)?.printing?.invoice || 'corporate-invoice');
+  const [proformaTpl, setProformaTpl] = useState<string>((settings as any)?.printing?.proforma || 'conference-proforma-grid');
+
+  useEffect(() => {
+    const activeInvoice = settings.printing?.invoice;
+    if (activeInvoice && invoiceTemplates.some(t => t.key === activeInvoice)) setInvoiceTpl(activeInvoice);
+    const activeReceipt = settings.printing?.receipt;
+    if (activeReceipt && receiptTemplates.some(t => t.key === activeReceipt)) setReceiptTpl(activeReceipt);
+    const activeProforma = settings.printing?.proforma;
+    if (activeProforma && proformaTemplates.some(t => t.key === activeProforma)) setProformaTpl(activeProforma);
+  }, [settings.printing?.invoice, settings.printing?.receipt, settings.printing?.proforma, invoiceTemplates, receiptTemplates, proformaTemplates]);
 
   useEffect(() => {
     loadCheckOuts();
@@ -570,66 +580,66 @@ export default function CheckOutsPage() {
           </div>
 
           {hiddenStatsCount < CHECKOUTS_DASHBOARD_SECTIONS.length && (
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="mb-6 grid grid-cols-2 gap-2 lg:grid-cols-4">
             {!isHidden('pending') && (
-            <Card className="border-0 shadow-lg">
-              <CardBody className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Pending Check-outs</p>
-                    <p className="text-2xl font-bold text-ghana-black">{checkoutStats.totalPending}</p>
+            <Card className="border border-gray-200 shadow-none">
+              <CardBody className="px-2 py-1.5">
+                <div className="flex items-center justify-between gap-1">
+                  <div className="min-w-0">
+                    <p className="text-xs leading-tight text-gray-500">Pending Check-outs</p>
+                    <p className="text-base font-semibold tabular-nums text-ghana-black">{checkoutStats.totalPending}</p>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
+                  <div className="flex shrink-0 flex-col items-end">
                     <HideCardButton onHide={() => hide('pending')} label="Pending Check-outs" />
-                    <div className="text-2xl">⏳</div>
+                    <div className="text-sm leading-none">⏳</div>
                   </div>
                 </div>
               </CardBody>
             </Card>
             )}
             {!isHidden('completedToday') && (
-            <Card className="border-0 shadow-lg">
-              <CardBody className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Completed Today</p>
-                    <p className="text-2xl font-bold text-ghana-black">{checkoutStats.totalCompleted}</p>
+            <Card className="border border-gray-200 shadow-none">
+              <CardBody className="px-2 py-1.5">
+                <div className="flex items-center justify-between gap-1">
+                  <div className="min-w-0">
+                    <p className="text-xs leading-tight text-gray-500">Completed Today</p>
+                    <p className="text-base font-semibold tabular-nums text-ghana-black">{checkoutStats.totalCompleted}</p>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
+                  <div className="flex shrink-0 flex-col items-end">
                     <HideCardButton onHide={() => hide('completedToday')} label="Completed Today" />
-                    <div className="text-2xl">✅</div>
+                    <div className="text-sm leading-none">✅</div>
                   </div>
                 </div>
               </CardBody>
             </Card>
             )}
             {!isHidden('extendedStays') && (
-            <Card className="border-0 shadow-lg">
-              <CardBody className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Extended Stays</p>
-                    <p className="text-2xl font-bold text-ghana-black">{checkoutStats.totalExtended}</p>
+            <Card className="border border-gray-200 shadow-none">
+              <CardBody className="px-2 py-1.5">
+                <div className="flex items-center justify-between gap-1">
+                  <div className="min-w-0">
+                    <p className="text-xs leading-tight text-gray-500">Extended Stays</p>
+                    <p className="text-base font-semibold tabular-nums text-ghana-black">{checkoutStats.totalExtended}</p>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
+                  <div className="flex shrink-0 flex-col items-end">
                     <HideCardButton onHide={() => hide('extendedStays')} label="Extended Stays" />
-                    <div className="text-2xl">🔄</div>
+                    <div className="text-sm leading-none">🔄</div>
                   </div>
                 </div>
               </CardBody>
             </Card>
             )}
             {!isHidden('totalRevenue') && (
-            <Card className="border-0 shadow-lg">
-              <CardBody className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">Total Revenue</p>
-                    <p className="text-2xl font-bold text-ghana-black">₵{checkoutStats.totalRevenue.toLocaleString()}</p>
+            <Card className="border border-gray-200 shadow-none">
+              <CardBody className="px-2 py-1.5">
+                <div className="flex items-center justify-between gap-1">
+                  <div className="min-w-0">
+                    <p className="text-xs leading-tight text-gray-500">Total Revenue</p>
+                    <p className="text-base font-semibold tabular-nums text-ghana-black">₵{checkoutStats.totalRevenue.toLocaleString()}</p>
                   </div>
-                  <div className="flex flex-col items-end gap-1">
+                  <div className="flex shrink-0 flex-col items-end">
                     <HideCardButton onHide={() => hide('totalRevenue')} label="Total Revenue" />
-                    <div className="text-2xl">💰</div>
+                    <div className="text-sm leading-none">💰</div>
                   </div>
                 </div>
               </CardBody>
@@ -835,10 +845,8 @@ export default function CheckOutsPage() {
                         // Single source of truth for checkout print data — see buildPrintData
                         // above, which already includes billing company, guest address, and
                         // room rate (this used to be a separate, drifted rebuild of the same data).
-                        try {
-                          const settings = useSettingsStore.getState();
-                          openPrintPreview('invoice' as any, settings.printing.invoice || 'ghana-top-class-invoice', buildPrintData(checkOut, 'invoice'));
-                        } catch {}
+                        const live = useSettingsStore.getState();
+                        openPrintPreview('invoice' as any, live.printing.invoice || 'builtin-invoice-ruky', buildPrintData(checkOut, 'invoice'));
                       }}
                       >
                         Print
@@ -911,37 +919,37 @@ export default function CheckOutsPage() {
                 <div className="space-y-6">
 
                   {/* ── KPI Summary Cards ── */}
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
-                      <CardBody className="text-center p-4">
-                        <div className="text-2xl font-bold text-blue-600">₵{folioTotals.roomChargesInclusive.toLocaleString()}</div>
-                        <div className="text-sm text-blue-700 font-medium">Room Charges</div>
-                        <div className="text-xs text-blue-500 mt-1">incl. tax</div>
+                  <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                    <Card className="border border-blue-100 bg-blue-50 shadow-none">
+                      <CardBody className="px-2 py-1.5 text-center">
+                        <div className="text-base font-semibold tabular-nums text-blue-700">₵{folioTotals.roomChargesInclusive.toLocaleString()}</div>
+                        <div className="text-xs text-blue-700">Room Charges</div>
+                        <div className="text-[11px] text-blue-500">incl. tax</div>
                       </CardBody>
                     </Card>
-                    <Card className="bg-gradient-to-br from-orange-50 to-orange-100 border-orange-200">
-                      <CardBody className="text-center p-4">
-                        <div className="text-2xl font-bold text-orange-600">₵{folioTotals.serviceChargesInclusive.toLocaleString()}</div>
-                        <div className="text-sm text-orange-700 font-medium">Service Charges</div>
-                        <div className="text-xs text-orange-500 mt-1">incl. tax</div>
+                    <Card className="border border-orange-100 bg-orange-50 shadow-none">
+                      <CardBody className="px-2 py-1.5 text-center">
+                        <div className="text-base font-semibold tabular-nums text-orange-700">₵{folioTotals.serviceChargesInclusive.toLocaleString()}</div>
+                        <div className="text-xs text-orange-700">Service Charges</div>
+                        <div className="text-[11px] text-orange-500">incl. tax</div>
                       </CardBody>
                     </Card>
-                    <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-                      <CardBody className="text-center p-4">
-                        <div className="text-2xl font-bold text-green-600">₵{folioTotals.totalPayments.toLocaleString()}</div>
-                        <div className="text-sm text-green-700 font-medium">Payments</div>
-                        <div className="text-xs text-green-500 mt-1">{folio.payments?.length || 0} transactions</div>
+                    <Card className="border border-green-100 bg-green-50 shadow-none">
+                      <CardBody className="px-2 py-1.5 text-center">
+                        <div className="text-base font-semibold tabular-nums text-green-700">₵{folioTotals.totalPayments.toLocaleString()}</div>
+                        <div className="text-xs text-green-700">Payments</div>
+                        <div className="text-[11px] text-green-500">{folio.payments?.length || 0} transactions</div>
                       </CardBody>
                     </Card>
-                    <Card className={`${balance > 0 ? 'bg-gradient-to-br from-red-50 to-red-100 border-red-200' : balance < 0 ? 'bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200' : 'bg-gradient-to-br from-gray-50 to-gray-100 border-gray-200'}`}>
-                      <CardBody className="text-center p-4">
-                        <div className={`text-2xl font-bold ${balance > 0 ? 'text-red-600' : balance < 0 ? 'text-emerald-600' : 'text-gray-500'}`}>
+                    <Card className={`shadow-none border ${balance > 0 ? 'border-red-100 bg-red-50' : balance < 0 ? 'border-emerald-100 bg-emerald-50' : 'border-gray-200 bg-gray-50'}`}>
+                      <CardBody className="px-2 py-1.5 text-center">
+                        <div className={`text-base font-semibold tabular-nums ${balance > 0 ? 'text-red-700' : balance < 0 ? 'text-emerald-700' : 'text-gray-500'}`}>
                           ₵{Math.abs(balance).toLocaleString()}
                         </div>
-                        <div className={`text-sm font-medium ${balance > 0 ? 'text-red-700' : balance < 0 ? 'text-emerald-700' : 'text-gray-600'}`}>
+                        <div className={`text-xs ${balance > 0 ? 'text-red-700' : balance < 0 ? 'text-emerald-700' : 'text-gray-600'}`}>
                           {balance > 0 ? 'Outstanding' : balance < 0 ? 'Credit / Overpaid' : 'Settled'}
                         </div>
-                        <div className={`text-xs mt-1 ${balance > 0 ? 'text-red-500' : balance < 0 ? 'text-emerald-500' : 'text-gray-400'}`}>
+                        <div className={`text-[11px] ${balance > 0 ? 'text-red-500' : balance < 0 ? 'text-emerald-500' : 'text-gray-400'}`}>
                           {balance > 0 ? 'Amount owed' : balance < 0 ? 'Refund owed' : 'Fully paid'}
                         </div>
                       </CardBody>
@@ -1140,10 +1148,10 @@ export default function CheckOutsPage() {
                             </div>
                           )}
                           <div className="flex items-end gap-3 pt-1">
-                            <Select label="Receipt Template" className="flex-1" selectedKeys={[receiptTpl]} onSelectionChange={(keys) => setReceiptTpl(Array.from(keys)[0] as string)}>
+                            <Select label="Receipt Template" className="flex-1" selectedKeys={receiptTemplates.some(t => t.key === receiptTpl) ? [receiptTpl] : []} onSelectionChange={(keys) => { const key = Array.from(keys)[0] as string; if (key) setReceiptTpl(key); }}>
                               {receiptTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
                             </Select>
-                            <Select label="Invoice Template" className="flex-1" selectedKeys={[invoiceTpl]} onSelectionChange={(keys) => setInvoiceTpl(Array.from(keys)[0] as string)}>
+                            <Select label="Invoice Template" className="flex-1" selectedKeys={invoiceTemplates.some(t => t.key === invoiceTpl) ? [invoiceTpl] : []} onSelectionChange={(keys) => { const key = Array.from(keys)[0] as string; if (key) setInvoiceTpl(key); }}>
                               {invoiceTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
                             </Select>
                             <Button variant="flat" onPress={() => handlePrintReceipt(selectedCheckOut)} className="mb-0.5">🧾 Receipt</Button>

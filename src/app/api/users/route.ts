@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
+import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy'
+import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
 
 const USER_SELECT = {
   id: true,
@@ -60,9 +62,9 @@ export async function POST(request: NextRequest) {
     if (!email || !name || !password || !role) {
       return NextResponse.json({ error: 'email, name, password, and role are required' }, { status: 400 })
     }
-    if (password.length < 6) {
-      return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
-    }
+    const { policy } = await readTenantSecurity(ctx.tenantId)
+    const passwordError = passwordPolicyError(password, policy.passwordPolicy)
+    if (passwordError) return NextResponse.json({ error: passwordError }, { status: 400 })
 
     const hashed = await bcrypt.hash(password, 10)
     const user = await prisma.user
@@ -75,6 +77,7 @@ export async function POST(request: NextRequest) {
           role,
           isActive: typeof body.isActive === 'boolean' ? body.isActive : true,
           profile: body.profile && typeof body.profile === 'object' ? body.profile : undefined,
+          preferences: { passwordChangedAt: new Date().toISOString() },
         },
         select: USER_SELECT,
       })

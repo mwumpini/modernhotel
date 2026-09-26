@@ -32,6 +32,7 @@ import OfflineIndicator from './OfflineIndicator';
 import { trackEvent } from '../lib/analytics/trackEvent';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { fetchConferenceHalls, saveConferenceHall, fetchCateringItems, saveCateringItem, fetchEventBookings, saveEventBooking } from '../lib/frontoffice/eventsApi';
+import { useSettingsStore } from '../lib/settings/store';
 
 interface ConferenceHall {
   id: string;
@@ -185,7 +186,7 @@ export default function FrontofficeEventsConferences() {
     setSubmitting(true);
     try {
       const hall = conferenceHalls.find(h => h.id === form.hallId);
-      const id = `EVT-${Date.now().toString().slice(-8)}`;
+      const id = useSettingsStore.getState().getNextModuleNumber('events', 'eventBooking');
       const budget = Number((form.budget || '0').replace(/[^\d.]/g, '')) || 0;
 
       const booking = await saveEventBooking({
@@ -520,6 +521,7 @@ export default function FrontofficeEventsConferences() {
                         <TableCell>
                           <div>
                             <p className="font-semibold">{event.title}</p>
+                            <p className="font-mono text-xs text-gray-500">{event.id}</p>
                             <p className="text-sm text-gray-500">{event.contactPerson}</p>
                           </div>
                         </TableCell>

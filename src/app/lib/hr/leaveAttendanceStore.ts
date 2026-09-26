@@ -6,6 +6,7 @@ import { useEmployeeStore } from './employeeStore';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 import { normalizeTenantSubdomain } from '../api/tenantSubdomain';
 import { newId } from './newId';
+import { useSettingsStore } from '../settings/store';
 
 function hrTenantHeaders(): HeadersInit {
   const sub = normalizeTenantSubdomain(getClientTenantSubdomain());
@@ -132,7 +133,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
           r.employeeId === employeeId &&
           r.leaveType === leaveType &&
           r.status === 'approved' &&
-          new Date(r.startDate).getFullYear() === year,
+          new Date(r.startDate).getUTCFullYear() === year,
       )
       .reduce((sum, r) => sum + (r.totalDays || 0), 0);
     return { entitlement, used, remaining: Math.max(0, entitlement - used) };
@@ -148,7 +149,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
     // 'other'-type leave has no default entitlement to check against (0 by default,
     // meaning unlimited/untracked unless the employee has an explicit override) — only
     // enforce a balance check for types with a real entitlement.
-    const year = new Date(req.startDate).getFullYear();
+    const year = new Date(req.startDate).getUTCFullYear();
     const balance = get().getLeaveBalance(req.employeeId, req.leaveType, year);
     if (balance.entitlement > 0 && req.totalDays > balance.remaining) {
       return {
@@ -185,7 +186,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
 
   clockIn: (employeeId, date = new Date(), when = new Date(), notes) => {
     const rec: Attendance = {
-      id: newId('att_'),
+      id: useSettingsStore.getState().getNextModuleNumber('hr', 'timesheet'),
       employeeId,
       date,
       checkInTime: when,
@@ -207,17 +208,16 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
 
   clockOut: (employeeId, when = new Date()) => {
     const out = when.getTime();
+    const openId = get().attendances.find((a) => a.employeeId === employeeId && !a.checkOutTime)?.id;
     let result: Attendance | null = null;
     set((state) => ({
       attendances: state.attendances.map((a) => {
-        if (a.employeeId === employeeId && !a.checkOutTime && new Date(a.date).toDateString() === new Date().toDateString()) {
-          const inTs = (a.checkInTime ? new Date(a.checkInTime) : new Date()).getTime();
-          const hours = Math.max(0, (out - inTs) / (1000 * 60 * 60));
-          const overtime = Math.max(0, hours - 8);
-          result = { ...a, checkOutTime: new Date(out), totalHours: hours, overtimeHours: overtime, updatedAt: new Date() } as Attendance;
-          return result;
-        }
-        return a;
+        if (a.id !== openId) return a;
+        const inTs = (a.checkInTime ? new Date(a.checkInTime) : new Date()).getTime();
+        const hours = Math.max(0, (out - inTs) / (1000 * 60 * 60));
+        const overtime = Math.max(0, hours - 8);
+        result = { ...a, checkOutTime: new Date(out), totalHours: hours, overtimeHours: overtime, updatedAt: new Date() } as Attendance;
+        return result;
       })
     }));
     console.log('[HR][Time] clockOut', { employeeId, when });
@@ -267,7 +267,7 @@ export const useLeaveAttendanceStore = create<LeaveAttendanceState>((set, get) =
     const end = endTime.getTime() > startTime.getTime() ? endTime : new Date(endTime.getTime() + 24 * 60 * 60 * 1000);
     const hours = Math.max(0, (end.getTime() - startTime.getTime()) / (1000 * 60 * 60));
     const rec: Attendance = {
-      id: newId('att_'),
+      id: useSettingsStore.getState().getNextModuleNumber('hr', 'timesheet'),
       employeeId,
       date,
       checkInTime: startTime,

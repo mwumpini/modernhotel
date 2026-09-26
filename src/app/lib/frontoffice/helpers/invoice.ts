@@ -5,6 +5,9 @@ import { useSettingsStore } from '../../settings/store';
 import { useAccountingStore } from '../../accounting/store';
 import { postGuestFolioCheckoutToLedger } from '../../accounting/simpleFlow';
 import { folioChargeGlCode, getFolioDisplayTotals } from './folio';
+import { chargeNet } from '../folioLedger';
+import { isCorporateGuest } from './guests';
+import { creditTermDays } from '../operationalPolicies';
 
 /**
  * Generate and post an accounting invoice from a reservation folio.
@@ -37,22 +40,48 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
     return;
   }
 
-  const lines = folio.charges.map((c: any, idx: number) => ({
+  const lines = folio.charges.map((c: any, idx: number) => {
+    const net = chargeNet(c);
+    return {
     id: `IL-${Date.now().toString().slice(-6)}-${idx}`,
     invoiceId: 'pending',
     description: c.description,
     quantity: 1,
-    unitPrice: c.amount,
-    amount: c.amount,
+    unitPrice: net,
+    amount: net,
     taxAmount: c.tax || 0,
     glAccountCode: folioChargeGlCode(c),
-  }));
+  };
+  });
 
   const settings = useSettingsStore.getState();
   const accounting = useAccountingStore.getState();
+  const partnerId = reservation.guestId || `guest-${reservation.id}`;
+  if (!accounting.businessPartners.some((p: { id: string }) => p.id === partnerId)) {
+    const ts = new Date().toISOString();
+    accounting.addBusinessPartner({
+      id: partnerId,
+      code: String(reservation.resId || partnerId).slice(0, 20),
+      name: reservation.guestName || 'Guest',
+      type: 'Customer',
+      glAccountCode: '1210',
+      currency: 'GHS',
+      balance: 0,
+      isActive: true,
+      countryCode: 'GH',
+      createdAt: ts,
+      updatedAt: ts,
+    });
+  }
   const newId = `A-INV-${Date.now().toString().slice(-6)}`;
   const invNumber = settings.getNextInvoiceNumber();
-  const dueDate = new Date(Date.now() + (settings.invoiceSettings.defaultPaymentTerms * 24 * 60 * 60 * 1000)).toISOString();
+  const guest = (self.guests || []).find((g: { id?: string }) => g.id === reservation.guestId);
+  const corporate = isCorporateGuest(guest) || !!(reservation.companyName || reservation.billingPersonName);
+  const invoiceDays = settings.invoiceSettings?.defaultPaymentTerms ?? 30;
+  const termDays = corporate
+    ? creditTermDays(settings.roomManagement, guest?.paymentTerms, invoiceDays)
+    : invoiceDays;
+  const dueDate = new Date(Date.now() + (termDays * 24 * 60 * 60 * 1000)).toISOString();
 
   const invoice: any = {
     id: newId,
@@ -60,7 +89,7 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
     type: 'Sales',
     date: new Date().toISOString(),
     dueDate,
-    businessPartnerId: reservation.guestId || reservation.guestName,
+    businessPartnerId: partnerId,
     customerName: reservation.guestName,
     reference: reservation.resId || reservation.id,
     description: `Guest stay folio for ${reservation.guestName}`,
@@ -117,7 +146,7 @@ export function generateAccountingInvoiceForReservation(self: StoreLike, reserva
         paymentNumber: isRefund ? `RFD-${invNumber}-${idx + 1}` : `PAY-${invNumber}-${idx + 1}`,
         date: p.date,
         type: 'Receipt',
-        businessPartnerId: reservation.guestId || reservation.guestName,
+        businessPartnerId: partnerId,
         invoiceId: newId,
         reference: p.ref,
         description: isRefund ? `Refund — ${invNumber}` : `Payment for ${invNumber}`,

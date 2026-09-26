@@ -7,11 +7,21 @@ import {
   mergeLinesById,
   recomputeFolioTotals,
   reconstructDayLedger,
+  roundingFromFinancialSettings,
   type DayLedger,
   type FolioLineJson,
+  type FolioRounding,
 } from './folioLedger'
 
 type Tx = Omit<typeof prisma, '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'>
+
+export async function getPropertyCalendarDate(tenantId: string, now = new Date()): Promise<string> {
+  const property = await prisma.property.findFirst({
+    where: { tenantId, isActive: true },
+    select: { timezone: true },
+  })
+  return getZonedClockParts(now, property?.timezone || DEFAULT_PROPERTY_TIMEZONE).date
+}
 
 export async function getFrontOfficeBusinessDate(tenantId: string): Promise<string> {
   const settings = await prisma.systemSettings.findUnique({
@@ -46,6 +56,14 @@ export async function setFrontOfficeBusinessDate(tenantId: string, date: string)
       saasSettings: {},
     },
   })
+}
+
+export async function loadFolioRounding(tenantId: string): Promise<FolioRounding> {
+  const settings = await prisma.systemSettings.findUnique({
+    where: { tenantId },
+    select: { financialSettings: true },
+  })
+  return roundingFromFinancialSettings(settings?.financialSettings)
 }
 
 export async function findMainGuestFolio(
@@ -102,7 +120,7 @@ export async function appendGuestFolioCharge(params: {
   }
   charges.push(params.charge)
   const payments = asLineArray(folio.payments)
-  const totals = recomputeFolioTotals(charges, payments)
+  const totals = recomputeFolioTotals(charges, payments, await loadFolioRounding(params.tenantId))
   await db.guestFolio.update({
     where: { id: folio.id },
     data: {
@@ -124,7 +142,7 @@ export async function replaceGuestFolioPayments(params: {
   if (!folio) return
   const charges = asLineArray(folio.charges)
   const payments = mergeLinesById(asLineArray(folio.payments), params.payments)
-  const totals = recomputeFolioTotals(charges, payments)
+  const totals = recomputeFolioTotals(charges, payments, await loadFolioRounding(params.tenantId))
   await db.guestFolio.update({
     where: { id: folio.id },
     data: { payments: payments as any, ...totals },
@@ -140,10 +158,10 @@ export function mergedFolioWrite(existing: {
   status?: string
   charges?: FolioLineJson[]
   payments?: FolioLineJson[]
-}) {
+}, rounding?: FolioRounding) {
   const charges = mergeLinesById(asLineArray(existing?.charges), incoming.charges || [])
   const payments = mergeLinesById(asLineArray(existing?.payments), incoming.payments || [])
-  const totals = recomputeFolioTotals(charges, payments)
+  const totals = recomputeFolioTotals(charges, payments, rounding)
   return {
     charges,
     payments,

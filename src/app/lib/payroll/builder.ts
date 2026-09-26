@@ -232,7 +232,8 @@ export default class UniversalPayrollBuilder {
         // must be applied on top of the employee's actual hourly wage, not used alone
         // (hours * 1.5 previously produced a near-zero amount regardless of salary). If no
         // hourly rate is on file, this pays 0 rather than guessing one from salary.
-        const hours = adjustments.hours?.[earning.code] || earning.amount;
+        const recorded = adjustments.hours?.[earning.code];
+        const hours = recorded == null ? earning.amount : recorded;
         const hourlyWage = employee.employment.hourlyRate || 0;
         return hours * hourlyWage * earning.rate;
       }
@@ -507,10 +508,8 @@ export default class UniversalPayrollBuilder {
       payFrequency: 'monthly',
       earnings: [
         this.createEarningComponent({ name: 'Basic Salary', code: 'BASIC', category: 'regular', calculationType: 'fixed', taxable: true }),
-        // Cash transport allowance is fully PAYE-taxable under GRA rules unless it's a
-        // documented reimbursement of actual business expense — a flat allowance like this
-        // one is not, so it must not be marked exempt.
-        this.createEarningComponent({ name: 'Transport Allowance', code: 'TRANSPORT', category: 'allowance', calculationType: 'fixed', amount: 300, taxable: true }),
+        // Overtime only. Cash allowances, benefits and bonuses come from the staff file
+        // so a template amount is not paid to every employee.
         this.createEarningComponent({ name: 'Overtime', code: 'OVERTIME', category: 'overtime', calculationType: 'hourly', rate: 1.5, taxable: true }),
       ],
       deductions: [],

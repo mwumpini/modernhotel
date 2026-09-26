@@ -12,9 +12,8 @@ import { logAccountingProcessWarn } from '../accountingProcessLog';
 const GL_COST = '1510';
 const GL_ACCUM_DEP = '1520';
 const GL_DEP_EXP = '5710';
-// 2200 is the "Accounts Payable" category HEADER (see GHANA_CHART_OF_ACCOUNTS in models.ts) —
-// its only declared children are 2210/2220 (payroll withholdings), not trade payables. 2205 is
-// the actual postable leaf, matching GL_ACCOUNTS.ACCOUNTS_PAYABLE in integration.ts.
+// 2200 is the "Accounts Payable" category HEADER (see GHANA_CHART_OF_ACCOUNTS in models.ts).
+// 2205 is the postable leaf for supplier invoices, matching GL_ACCOUNTS.ACCOUNTS_PAYABLE.
 const GL_AP = '2205';
 const GL_GAIN_ON_DISPOSAL = '4310';
 const GL_LOSS_ON_DISPOSAL = '5690';

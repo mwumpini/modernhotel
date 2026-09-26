@@ -463,7 +463,7 @@ export interface Reservation {
   pendingGlPost?: Record<string, unknown>;
   checkoutStatus?: 'pending' | 'checked-in' | 'completed';
   
-  rateBreakdown?: { date: string; base: number; extraAdult?: number; extraChild?: number; total: number }[];
+  rateBreakdown?: { date: string; base: number; extraAdult?: number; extraChild?: number; total: number; roomId?: string }[];
   deposit?: { amount: number; method: 'Cash'|'Card'|'Mobile Money'; date: string };
 
   // Tax exemption — government/diplomatic/NGO guests legally exempt from VAT/NHIL/
@@ -486,6 +486,16 @@ export interface Reservation {
   checkedInAt?: string;
   checkedOutAt?: string;
 
+  /** Management waiver for this stay. Checkout skips the late fee when true. */
+  waiveLateCheckoutFee?: boolean;
+
+  /**
+   * Company-billed stay only. `waiting_on_guest` means the guest has not handed
+   * the bill in for the company to process. `with_company` means it has been
+   * presented and the company can be asked to pay. Unpaid money stays on this stay.
+   */
+  companyBillStatus?: 'waiting_on_guest' | 'with_company';
+
   createdAt: string;
   updatedAt: string;
 }
@@ -496,6 +506,8 @@ export interface FolioCharge {
   description: string;
   amount: number; // positive
   tax?: number; // tax component
+  serviceCharge?: number;
+  discountAmount?: number;
   category?: string;
   reference?: string;
 }

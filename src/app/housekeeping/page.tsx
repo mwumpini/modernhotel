@@ -1,26 +1,18 @@
 'use client';
 
-import React, { Suspense } from 'react';
-import PageLayout from '../components/PageLayout';
-import HousekeepingMainDashboard from '../components/HousekeepingMainDashboard';
+import { useEffect } from 'react';
 
 export default function HousekeepingPage() {
-  return (
-    <PageLayout>
-      <div className="py-8 px-6">
-        <div className="max-w-7xl mx-auto">
-          {/* Header */}
-          <div className="mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">🏠 Housekeeping & Maintenance</h1>
-            <p className="text-gray-600">Comprehensive room management, task assignment, and quality control system</p>
-          </div>
+  useEffect(() => {
+    try {
+      const tab = new URLSearchParams(window.location.search).get('tab');
+      localStorage.setItem('nav.section', 'housekeeping');
+      if (tab) localStorage.setItem('hk.tab', tab);
+    } catch {
+      /* ignore */
+    }
+    window.location.replace('/');
+  }, []);
 
-          {/* Main Housekeeping Dashboard */}
-          <Suspense fallback={<div>Loading housekeeping dashboard...</div>}>
-            <HousekeepingMainDashboard />
-          </Suspense>
-        </div>
-      </div>
-    </PageLayout>
-  );
+  return <div className="p-6 text-center text-gray-500">Opening housekeeping…</div>;
 }

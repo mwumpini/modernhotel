@@ -69,6 +69,7 @@ import EventsModuleFilters, {
 } from './EventsModuleFilters';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
+import ModuleExpandButton from './ModuleExpandButton';
 import {
   buildIdSequence,
   nextSequenceLabel,
@@ -1263,7 +1264,11 @@ const loadStoredConferenceRates = () => {
 
 const EVENTS_REPORT_CATALOG: ReportCategory[] = [];
 
-export default function EventsConferencesMainDashboard() {
+export default function EventsConferencesMainDashboard({
+  fullPage = false,
+}: {
+  fullPage?: boolean;
+} = {}) {
   const router = useRouter();
   const { costCenters, revenueCenters, initializeAccounting } = useAccountingStore();
   const accountingInvoices = useAccountingStore((s) => s.invoices);
@@ -1996,6 +2001,17 @@ const [folioEntryForm, setFolioEntryForm] = useState<{
   const [selectedProformaTemplate, setSelectedProformaTemplate] = useState<string>('');
   const [selectedInvoiceTemplate, setSelectedInvoiceTemplate] = useState<string>('');
   const [selectedReceiptTemplate, setSelectedReceiptTemplate] = useState<string>('');
+  const activeAccommodationProforma = useSettingsStore(s => s.printing['accommodation-proforma']);
+  const activeAccommodationInvoice = useSettingsStore(s => s.printing['accommodation-invoice']);
+  const activeAccommodationReceipt = useSettingsStore(s => s.printing['accommodation-receipt']);
+  const activeEventProforma = useSettingsStore(s => s.printing['event-proforma']);
+  const activeEventInvoice = useSettingsStore(s => s.printing['event-invoice']);
+  const activeEventReceipt = useSettingsStore(s => s.printing['event-receipt']);
+  useEffect(() => {
+    setSelectedProformaTemplate('');
+    setSelectedInvoiceTemplate('');
+    setSelectedReceiptTemplate('');
+  }, [activeAccommodationProforma, activeAccommodationInvoice, activeAccommodationReceipt, activeEventProforma, activeEventInvoice, activeEventReceipt]);
   const showQuotePrintInModal = useMemo(() => {
     if (!editingEvent) return false;
     const status = normalizeStatus(editingEvent.status || (editingEvent as any).eventStatus);
@@ -3195,7 +3211,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     const documentNumber =
       docType === 'invoice'
         ? editingEvent?.invoiceNumber || settingsState.getNextInvoiceNumber()
-        : editingEvent?.quoteNumber || settingsState.getNextProformaInvoiceNumber();
+        : editingEvent?.quoteNumber || settingsState.getNextModuleNumber('events', 'quotation');
     const title = docType === 'invoice' ? 'Invoice' : 'Quotation';
     const taxSpread = mapTaxBreakdownToPrint(eventTotals.taxBreakdown);
     const printTotals: any = {
@@ -4320,7 +4336,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         eventCoordinator: resolveCoordinatorValue(eventCoordinator),
         nextAction: nextAction.trim(),
         followUpDate,
-        quoteNumber: editingEvent?.quoteNumber || (savedStatus === 'quote' ? nextSequenceLabel('Q', quoteIdSequence) : ''),
+        quoteNumber: editingEvent?.quoteNumber || (savedStatus === 'quote' ? useSettingsStore.getState().getNextModuleNumber('events', 'quotation') : ''),
         notes: '',
         specialRequirements: '',
         setupTime: '',
@@ -5186,7 +5202,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     const quoteDraft = {
       id: quoteId,
       eventId: editingEvent?.id || editingQuote?.eventId,
-      quoteNumber: editingQuote?.quoteNumber || nextSequenceLabel('Q', quoteIdSequence),
+      quoteNumber: editingQuote?.quoteNumber || useSettingsStore.getState().peekNextModuleNumber('events', 'quotation'),
       clientName: orgName,
       clientEmail: orgClientEmail,
       clientPhone: orgContactPhone,
@@ -5250,7 +5266,8 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
       return;
     }
     const totals = calculateQuoteTotals(exportQuote);
-    const quoteNumber = exportQuote.quoteNumber || nextSequenceLabel('Q', quoteIdSequence);
+    const quoteNumber = editingQuote?.quoteNumber?.trim()
+      || useSettingsStore.getState().getNextModuleNumber('events', 'quotation');
     const linkedEventId = exportQuote.eventId || editingEvent?.id;
 
     if (linkedEventId) {
@@ -5270,7 +5287,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
         )
       );
     } else {
-      const newEventId = genId('EVT');
+      const newEventId = useSettingsStore.getState().getNextModuleNumber('events', 'eventBooking');
       setCustomEvents((prev) => [
         {
           id: newEventId,
@@ -6004,7 +6021,7 @@ const [particularLabels, setParticularLabels] = useState<{ conferencePax: string
     setIsCreatingEvent(true);
     loadQuoteIntoEventForm(exportQuote);
     const eventDraft = {
-      id: exportQuote.id || `EVT-Q${String(customEvents.length + 1).padStart(3, '0')}`,
+      id: useSettingsStore.getState().getNextModuleNumber('events', 'eventBooking'),
       eventName: exportQuote.eventName,
       organization: exportQuote.clientName,
       contactPerson: exportQuote.clientName,
@@ -8502,7 +8519,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
       debit: amount, // Credit note reduces overpayment
       credit: 0,
       balance: lastBalance + amount, // Moves balance toward zero
-      reference: genId('CN')
+      reference: useSettingsStore.getState().getNextModuleNumber('accounting', 'creditNote'),
     };
     
     setEventFolios((prev: any) =>
@@ -8520,7 +8537,48 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
     
     console.log('[Folio] Created credit note:', formatCurrency(amount), reason);
     trackEvent('Events.EventCreated', { action: 'folio_credit_note_created', folioId: folio.id, amount: amount });
-    alert(`Credit note of ${formatCurrency(amount)} created successfully.`);
+    alert(`Credit note ${newEntry.reference} of ${formatCurrency(amount)} created successfully.`);
+  };
+
+  const createDebitNote = (folio: EventFolio) => {
+    const debitNoteAmount = prompt('Enter debit note amount:');
+    if (!debitNoteAmount) return;
+
+    const amount = parseFloat(debitNoteAmount);
+    if (isNaN(amount) || amount <= 0) {
+      alert('Invalid debit note amount.');
+      return;
+    }
+
+    const reason = prompt('Reason for debit note:', 'Additional charge');
+    if (!reason) return;
+
+    const lastBalance = getFolioCurrentBalance(folio);
+    const newEntry: EventFolioEntry = {
+      id: genId('FLE'),
+      date: new Date().toISOString().split('T')[0],
+      description: `Debit Note - ${reason}`,
+      debit: amount,
+      credit: 0,
+      balance: lastBalance + amount,
+      reference: useSettingsStore.getState().getNextModuleNumber('accounting', 'debitNote'),
+    };
+
+    setEventFolios((prev: any) =>
+      prev.map((f: any) =>
+        f.id === folio.id
+          ? { ...f, entries: [...f.entries, newEntry], updatedAt: new Date().toISOString() }
+          : f
+      )
+    );
+    setActiveFolio((prev: any) =>
+      prev && prev.id === folio.id
+        ? { ...prev, entries: [...prev.entries, newEntry], updatedAt: new Date().toISOString() }
+        : prev
+    );
+
+    trackEvent('Events.EventCreated', { action: 'folio_debit_note_created', folioId: folio.id, amount });
+    alert(`Debit note ${newEntry.reference} of ${formatCurrency(amount)} created successfully.`);
   };
 
   // Delete folio entry
@@ -15204,12 +15262,21 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
   };
   return (
     <>
-      <div className="p-6">
+      <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
       {/* Removed top notices; bottom section contains notices & activities */}
-      <DeptMessenger from="events" mode="drawer" />
+      {!fullPage && <DeptMessenger from="events" mode="drawer" />}
       
-      <div className="mb-6 flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-ghana-black">🎪 Events & Conferences</h2>
+      <div className="mb-6 flex items-center justify-between gap-3">
+        {!fullPage && (
+          <h2 className="text-2xl font-bold text-ghana-black">🎪 Events & Conferences</h2>
+        )}
+        {fullPage && <h3 className="text-xl font-semibold text-ghana-black">Events & Conferences</h3>}
+        {!fullPage && (
+          <ModuleExpandButton
+            href={selectedTab === 'reports' ? '/events/reports' : '/events/ops'}
+            label={selectedTab === 'reports' ? 'Open reports full page' : 'Open events full page'}
+          />
+        )}
       </div>
       <Tabs 
             selectedKey={selectedTab} 
@@ -16273,8 +16340,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                             <Select
                               size="sm"
                               label="Template"
-                              selectedKeys={[selectedProformaTemplate || proformaDefault]}
-                              onSelectionChange={(keys) => setSelectedProformaTemplate(Array.from(keys)[0] as string)}
+                              selectedKeys={proformaOptions.some(opt => opt.key === (selectedProformaTemplate || proformaDefault)) ? [selectedProformaTemplate || proformaDefault] : []}
+                              onSelectionChange={(keys) => { const key = Array.from(keys)[0] as string; if (key) setSelectedProformaTemplate(key); }}
                             >
                               {proformaOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
                             </Select>
@@ -16303,8 +16370,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                             <Select
                               size="sm"
                               label="Template"
-                              selectedKeys={[selectedInvoiceTemplate || invoiceDefault]}
-                              onSelectionChange={(keys) => setSelectedInvoiceTemplate(Array.from(keys)[0] as string)}
+                              selectedKeys={invoiceOptions.some(opt => opt.key === (selectedInvoiceTemplate || invoiceDefault)) ? [selectedInvoiceTemplate || invoiceDefault] : []}
+                              onSelectionChange={(keys) => { const key = Array.from(keys)[0] as string; if (key) setSelectedInvoiceTemplate(key); }}
                             >
                               {invoiceOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
                             </Select>
@@ -16350,8 +16417,8 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                                 <Select
                                   size="sm"
                                   label="Print Template"
-                                  selectedKeys={[selectedReceiptTemplate || receiptDefault]}
-                                  onSelectionChange={(keys) => setSelectedReceiptTemplate(Array.from(keys)[0] as string)}
+                                  selectedKeys={receiptOptions.some(opt => opt.key === (selectedReceiptTemplate || receiptDefault)) ? [selectedReceiptTemplate || receiptDefault] : []}
+                                  onSelectionChange={(keys) => { const key = Array.from(keys)[0] as string; if (key) setSelectedReceiptTemplate(key); }}
                                 >
                                   {receiptOptions.map((opt) => (<SelectItem key={opt.key}>{opt.name}</SelectItem>))}
                                 </Select>
@@ -17213,6 +17280,9 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                         }}
                       >
                         Add charge
+                      </Button>
+                      <Button size="sm" variant="flat" onPress={() => createDebitNote(activeFolio)}>
+                        Debit note
                       </Button>
                       <Button
                         size="sm"

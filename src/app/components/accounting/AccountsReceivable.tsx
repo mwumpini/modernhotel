@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import {
 	Card, CardBody, Button, Progress,
 	Tabs, Tab,
@@ -896,6 +897,8 @@ export default function AccountsReceivable() {
 		
 		const isProforma = invoiceForm.isProforma || false;
 		const prefix = isProforma ? 'PRO' : 'INV';
+		const typedNumber = invoiceForm.invoiceNumber?.trim();
+		const invoiceNumber = typedNumber || (isProforma ? settings.getNextProformaInvoiceNumber() : settings.getNextInvoiceNumber());
 
 		const subtotal = Number(invoiceForm.subtotal || invoiceForm.total);
 		const invoiceId = `${prefix}-${Date.now()}`;
@@ -932,7 +935,7 @@ export default function AccountsReceivable() {
 
 		const payload = {
 			id: invoiceId,
-			invoiceNumber: invoiceForm.invoiceNumber || `${prefix}-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
+			invoiceNumber,
 			type: 'Sales' as const,
 			isProforma: isProforma,
 			date: new Date(invoiceForm.date).toISOString(),
@@ -1550,7 +1553,7 @@ export default function AccountsReceivable() {
 
 		const payload: StoredReceiptPayment = {
 			id: `RCP-${Date.now()}`,
-			paymentNumber: `RCP-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
+			paymentNumber: settings.getNextReceiptNumber(),
 			date: new Date(receiptForm.date).toISOString(),
 			type: 'Receipt' as const,
 			businessPartnerId: receiptForm.businessPartnerId || `CUST-${Date.now()}`,
@@ -1650,7 +1653,10 @@ export default function AccountsReceivable() {
 		e?.stopPropagation();
 		const src = inv.sourceModule || 'manual_ar_ap';
 		if (src === 'manual_ar_ap' || src === 'manual') {
-			const newNumber = (inv.invoiceNumber || '').replace(/^PRO-/, 'INV-') || `INV-${Date.now()}`;
+			const currentNumber = inv.invoiceNumber || '';
+			const newNumber = currentNumber.startsWith('PRO-')
+				? currentNumber.replace(/^PRO-/, 'INV-')
+				: settings.getNextInvoiceNumber();
 			const subtotal = Number(inv.subtotal || inv.total);
 			updateInvoice(inv.id, {
 				isProforma: false,
@@ -2087,20 +2093,14 @@ export default function AccountsReceivable() {
 		<div className="p-6" key={refreshKey}>
 			<div className="mb-6 flex justify-between items-start">
 				<div>
-				<h1 className="text-3xl font-bold text-gray-900">🧾 Accounts Receivable</h1>
-					<p className="text-gray-600 mt-2 inline-flex items-center gap-1.5 flex-wrap">
-						Manage customer accounts, sales invoices, proformas, and receipts
-						<InfoTip label="Official finance AR">
-							<div className="space-y-2">
-								<p className="font-semibold">Official finance AR</p>
-								<p>
-									Aging and outstanding on this screen come from the <strong>accounting subledger</strong>{' '}
-									(posted invoices + GL).
-								</p>
-								<p>In-house guest folios are operational only until checkout posts here.</p>
-							</div>
-						</InfoTip>
-					</p>
+				<div className="flex items-center gap-1.5">
+					<h1 className="text-3xl font-bold text-gray-900">🧾 Accounts Receivable</h1>
+					<HeadingInfo label="About accounts receivable">
+						<p>Manage customer accounts, sales invoices, proformas, and receipts.</p>
+						<p className="mt-2 font-semibold">Official finance AR</p>
+						<p className="mt-1">Aging and outstanding on this screen come from the accounting subledger (posted invoices + GL). In-house guest folios are operational only until checkout posts here.</p>
+					</HeadingInfo>
+				</div>
 				</div>
 				<div className="flex gap-2">
 					<Button 
@@ -2215,7 +2215,7 @@ export default function AccountsReceivable() {
 													</TableCell>
 													<TableCell className="text-right">{formatAccountingCurrency(c.totalInvoiced)}</TableCell>
 													<TableCell className="text-right text-green-600">{formatAccountingCurrency(c.totalPaid)}</TableCell>
-													<TableCell className="text-right font-bold">{formatAccountingCurrency(c.balance)}</TableCell>
+													<TableCell className={`text-right font-bold ${c.balance < -0.005 ? 'text-sky-700' : ''}`}>{c.balance < -0.005 ? `−${formatAccountingCurrency(c.balance)}` : formatAccountingCurrency(c.balance)}</TableCell>
 													<TableCell className="text-right">{c.current > 0 ? `${formatAccountingCurrency(c.current)}` : '-'}</TableCell>
 													<TableCell className="text-right text-yellow-600">{c.days30 > 0 ? `${formatAccountingCurrency(c.days30)}` : '-'}</TableCell>
 													<TableCell className="text-right text-orange-600">{c.days60 > 0 ? `${formatAccountingCurrency(c.days60)}` : '-'}</TableCell>

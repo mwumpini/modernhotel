@@ -54,10 +54,6 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       title: '🏨 Frontdesk Operations',
       icon: '🏨',
       items: [
-        { title: 'Booking Engine', href: '/frontdesk/bookings', badge: 'Web/OTA' },
-        { title: 'Group Blocking', href: '/frontdesk/groups', badge: 'Tool' },
-        { title: 'Check-In/Out', href: '/frontdesk/checkin', badge: 'Ghana Card' },
-        { title: 'Guest Services', href: '/frontdesk/services', badge: 'Tracking' },
         { title: 'Billing Persons', href: '/billing-persons', badge: 'Corporate' },
       ]
     },
@@ -66,11 +62,6 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       title: '🍽️ Food & Beverage',
       icon: '🍽️',
       items: [
-        { title: 'Point of Sale', href: '/f&b/pos', badge: 'POS' },
-        { title: 'Restaurant & Bar', href: '/restaurant', badge: 'Kitchen' },
-        { title: 'Kitchen Operations', href: '/f&b/kitchen', badge: 'Prep' },
-        { title: 'Menu & Inventory', href: '/f&b/inventory', badge: 'Auto' },
-        { title: 'Staff & Reports', href: '/f&b/payments', badge: 'Mobile' },
       ]
     },
     {
@@ -78,9 +69,6 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       title: '🛏️ Housekeeping & Maintenance',
       icon: '🛏️',
       items: [
-        { title: 'Room Status Grid', href: '/housekeeping/rooms', badge: 'Color' },
-        { title: 'Inspection & Cleaning', href: '/housekeeping/inspections', badge: 'QC' },
-        { title: 'Work Orders & Maintenance', href: '/housekeeping/maintenance', badge: 'Vendor' },
       ]
     },
     {
@@ -108,12 +96,7 @@ export default function MobileNavigation({ onLogout }: MobileNavigationProps) {
       key: 'hr',
       title: '👥 HR & Payroll',
       icon: '👥',
-      items: [
-        { title: 'Staff Management', href: '/hr/staff', badge: 'Biometric' },
-        { title: 'Shift Scheduling', href: '/hr/scheduling', badge: 'Auto' },
-        { title: 'Training & Benefits', href: '/hr/training', badge: 'Certified' },
-        { title: 'Payroll Processing', href: '/hr/payroll', badge: 'PAYE/SSNIT' },
-      ]
+      items: []
     },
     {
       key: 'accounting',

@@ -13,10 +13,10 @@ import { logAccountingProcess, logAccountingProcessWarn } from './accountingProc
 import { computeStackedTaxLines } from './taxFromConfig';
 import { getActiveTaxConfigs } from '../tax/engine';
 import { GHANA_TAX_CODES } from './models';
-import { GL_ACCOUNTS, PAYMENT_GL_MAP } from './integration';
+import { GL_ACCOUNTS, PAYMENT_GL_MAP } from './glAccounts';
 import { assertPeriodNotClosed } from './periodClose';
 
-// AR/AP/CASH/BANK share the one canonical GL_ACCOUNTS table (integration.ts) so every
+// AR/AP/CASH/BANK share the one canonical GL_ACCOUNTS table (glAccounts.ts) so every
 // posting path lands guest/departmental/supplier transactions in the same leaf accounts.
 // The rest here (VAT, WHT, EXPENSE) are specific to manual/legacy AR-AP documents and
 // have no equivalent in GL_ACCOUNTS.

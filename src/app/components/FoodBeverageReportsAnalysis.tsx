@@ -277,7 +277,7 @@ function generateFinancialRows(startDate: string, endDate: string) {
   ];
 }
 
-export default function FoodBeverageReportsAnalysis() {
+export default function FoodBeverageReportsAnalysis({ embedded = false }: { embedded?: boolean }) {
   const [selectedTab, setSelectedTab] = useState<ReportGroupKey>('service');
   const [selectedReport, setSelectedReport] = useState('orders');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
@@ -680,7 +680,7 @@ export default function FoodBeverageReportsAnalysis() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-50/70 p-4 md:p-6">
+    <div className={embedded ? 'p-2' : 'min-h-screen bg-slate-50/70 p-4 md:p-6'}>
       <div className="mx-auto max-w-[1600px] space-y-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>

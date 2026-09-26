@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useMemo, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import HeadingInfo from '../../components/HeadingInfo';
 import {
   Card,
   CardBody,
@@ -21,23 +23,43 @@ import {
   ModalBody,
   ModalFooter,
   Badge,
-  Chip,
   Textarea,
   Divider,
   Pagination,
   Switch
 } from "@heroui/react";
 import CustomizeViewControl, { HideCardButton } from '../../components/dashboard/CustomizeViewControl';
+import { worksheetTableClassNames } from '../../components/frontoffice/StayWorksheetTable';
 import { useDashboardVisibility, type DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { useSettingsStore } from '../../lib/settings/store';
 import { useCurrentUserName } from '../../lib/auth/useCurrentUserName';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { openPrintPreview, openHtmlPrintWindow } from '../../lib/print/engine';
-import { listTemplates } from '../../lib/print/templates';
+import { listAllTemplates } from '../../lib/print/engine';
 import { buildOrgProfile } from '../../lib/print/buildOrgProfile';
 import { computeChargeTax } from '../../lib/frontoffice/helpers/folio';
 import { formatMoney } from '../../lib/format/currency';
+import { localStayDay } from '../../lib/frontoffice/stayWorksheet';
+const SERVICE_TAX_CATEGORIES = [
+  { key: 'SERVICE', label: 'Standard sales tax' },
+  { key: 'FOOD', label: 'Food & beverage' },
+  { key: 'EVENT', label: 'Event' },
+  { key: 'HOTEL', label: 'Accommodation' },
+] as const;
+type ServiceTaxCategory = typeof SERVICE_TAX_CATEGORIES[number]['key'];
+
+
+function suggestedTaxCategory(charge: { name?: string; description?: string; category?: string; taxCategory?: string }): ServiceTaxCategory {
+  const explicit = (charge.taxCategory || '').toUpperCase();
+  if (explicit === 'FOOD' || explicit === 'EVENT' || explicit === 'HOTEL' || explicit === 'SERVICE') return explicit;
+  if (explicit === 'ROOM') return 'HOTEL';
+  const text = `${charge.name || ''} ${charge.description || ''} ${charge.category || ''}`.toLowerCase();
+  if (/(restaurant|bar|room service|minibar|breakfast|lunch|dinner|snack|beverage|drink|food|meal)/.test(text)) return 'FOOD';
+  if (text.includes('conference') || text.includes('event')) return 'EVENT';
+  if (/\b(room|hotel|accommodation)\b/.test(text) && !text.includes('room service')) return 'HOTEL';
+  return 'SERVICE';
+}
 
 /**
  * Line total incl. tax (table / guest-facing amounts) — via the same compliance-engine
@@ -52,11 +74,21 @@ function resolveTaxExempt(guestId?: string, forceExempt?: boolean): boolean | un
   if (!guestId) return undefined;
   return frontOfficeStore.reservations.find(r => r.guestId === guestId)?.taxExempt;
 }
-function serviceChargeGross(amount: number, description?: string, guestId?: string, forceExempt?: boolean): number {
-  return Math.round((amount + computeChargeTax(amount, description, undefined, resolveTaxExempt(guestId, forceExempt))) * 100) / 100;
+function serviceChargeGross(amount: number, description?: string, guestId?: string, forceExempt?: boolean, taxCategory?: string): number {
+  return Math.round((amount + computeChargeTax(amount, description, taxCategory, resolveTaxExempt(guestId, forceExempt))) * 100) / 100;
 }
-function serviceChargeTax(amount: number, description?: string, guestId?: string, forceExempt?: boolean): number {
-  return computeChargeTax(amount, description, undefined, resolveTaxExempt(guestId, forceExempt));
+function serviceChargeTax(amount: number, description?: string, guestId?: string, forceExempt?: boolean, taxCategory?: string): number {
+  return computeChargeTax(amount, description, taxCategory, resolveTaxExempt(guestId, forceExempt));
+}
+
+function inclusiveUnitPrice(charge: { basePrice: number; name?: string; description?: string; category?: string; taxCategory?: string }): number {
+  return serviceChargeGross(
+    charge.basePrice,
+    charge.description || charge.name,
+    undefined,
+    false,
+    charge.taxCategory || suggestedTaxCategory(charge)
+  );
 }
 
 interface ServiceCharge {
@@ -75,6 +107,7 @@ interface ServiceCharge {
   // Per-charge exemption override set from the Add Service Charge modal's Tax Exempt
   // toggle — only ever adds exemption on top of whatever the reservation itself has.
   taxExempt?: boolean;
+  taxCategory?: string;
 }
 
 const SERVICE_CHARGES_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
@@ -85,6 +118,7 @@ const SERVICE_CHARGES_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
 ];
 
 export default function ServiceChargesPage() {
+  const router = useRouter();
   const currentUserName = useCurrentUserName();
   const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
     useDashboardVisibility('dashboard.hidden.serviceCharges', SERVICE_CHARGES_DASHBOARD_SECTIONS);
@@ -101,8 +135,13 @@ export default function ServiceChargesPage() {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const receiptTemplates = useMemo(() => listTemplates('receipt'), []);
-  const [receiptTpl, setReceiptTpl] = useState<string>(receiptTemplates[0]?.key || 'simple-receipt');
+  const printingReceipt = useSettingsStore(s => s.printing.receipt);
+  const customTemplates = useSettingsStore(s => s.docBuilder?.templates);
+  const receiptTemplates = useMemo(() => listAllTemplates('receipt', customTemplates), [customTemplates]);
+  const [receiptTpl, setReceiptTpl] = useState<string>(printingReceipt || '');
+  useEffect(() => {
+    if (printingReceipt && receiptTemplates.some(t => t.key === printingReceipt)) setReceiptTpl(printingReceipt);
+  }, [printingReceipt, receiptTemplates]);
 
   // Form state
   const [formData, setFormData] = useState({
@@ -120,7 +159,7 @@ export default function ServiceChargesPage() {
 
   // External guest form state
   const [externalGuestData, setExternalGuestData] = useState({
-    name: '',
+    name: 'Guest',
     phone: '',
     email: '',
     company: ''
@@ -136,6 +175,24 @@ export default function ServiceChargesPage() {
 
   // Get service charges from settings store
   const serviceChargesConfig = roomManagement.serviceCharges || [];
+  const taxCategoryForCharge = (charge: { category?: string; taxCategory?: string }) =>
+    charge.taxCategory || serviceChargesConfig.find(item => item.id === charge.category)?.taxCategory;
+  const selectedCatalog = serviceChargesConfig.find(item => item.id === formData.category);
+  const shownUnitPrice = !selectedCatalog
+    ? 0
+    : formData.taxExempt
+      ? selectedCatalog.basePrice
+      : inclusiveUnitPrice(selectedCatalog);
+  const discountedNet = Math.max(0, (selectedCatalog?.basePrice || 0) - Math.max(0, formData.discountAmount)) * formData.quantity;
+  const guestTotal = !selectedCatalog || formData.taxExempt
+    ? discountedNet
+    : serviceChargeGross(
+      discountedNet,
+      selectedCatalog.description || selectedCatalog.name,
+      undefined,
+      false,
+      selectedCatalog.taxCategory || suggestedTaxCategory(selectedCatalog)
+    );
 
   // Get available guests (checked-in only) — subscribe so list updates on new check-ins
   const [storeVersion, setStoreVersion] = useState(0);
@@ -161,6 +218,17 @@ export default function ServiceChargesPage() {
   // Mock service charges data (in real app, this would come from a store)
   const [serviceCharges, setServiceCharges] = useState<ServiceCharge[]>([]);
 
+  // Charges created before this column used a timestamp id. Give those the same
+  // document number new charges get, without posting another charge.
+  useEffect(() => {
+    setServiceCharges(prev => {
+      if (!prev.some(charge => /^SC-\d{13}$/.test(charge.id))) return prev;
+      return prev.map(charge => /^SC-\d{13}$/.test(charge.id)
+        ? { ...charge, id: useSettingsStore.getState().getNextModuleNumber('frontOffice', 'serviceCharge') }
+        : charge);
+    });
+  }, []);
+
   // Get categories from settings
   const categories = useMemo(() => {
     const uniqueCategories = [...new Set(serviceChargesConfig.map(charge => charge.category))];
@@ -169,13 +237,15 @@ export default function ServiceChargesPage() {
 
   // Filtered charges
   const filteredCharges = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localStayDay();
     return serviceCharges.filter(charge => {
       const matchesSearch = charge.guestName.toLowerCase().includes(searchTerm.toLowerCase()) ||
                            charge.roomNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           charge.description.toLowerCase().includes(searchTerm.toLowerCase());
+                           charge.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           charge.id.toLowerCase().includes(searchTerm.toLowerCase());
       const matchesStatus = statusFilter === 'all' || charge.status === statusFilter;
-      const matchesCategory = categoryFilter === 'all' || charge.category === categoryFilter;
+      const categoryName = serviceChargesConfig.find(item => item.id === charge.category)?.category || charge.category;
+      const matchesCategory = categoryFilter === 'all' || categoryName === categoryFilter;
       const chargeDate = charge.date?.slice(0, 10) ?? '';
       let matchesDate = true;
       if (dateFilterMode === 'today') {
@@ -188,7 +258,7 @@ export default function ServiceChargesPage() {
       }
       return matchesSearch && matchesStatus && matchesCategory && matchesDate;
     });
-  }, [serviceCharges, searchTerm, statusFilter, categoryFilter, dateFilterMode, dateFilterSingle, dateFilterFrom, dateFilterTo]);
+  }, [serviceCharges, serviceChargesConfig, searchTerm, statusFilter, categoryFilter, dateFilterMode, dateFilterSingle, dateFilterFrom, dateFilterTo]);
 
   // Pagination state
   const [page, setPage] = useState(1);
@@ -201,10 +271,10 @@ export default function ServiceChargesPage() {
     const selectedCategory = serviceChargesConfig.find(c => c.id === formData.category);
     if (!selectedCategory) return;
 
-    // Calculate final amount with discount
-    const maxDiscount = (selectedCategory.basePrice * selectedCategory.maxDiscountPercent) / 100;
-    const finalDiscount = Math.min(formData.discountAmount, maxDiscount);
-    const finalAmount = (formData.amount - finalDiscount) * formData.quantity;
+    const rate = selectedCategory.basePrice;
+    const maxDiscount = (rate * selectedCategory.maxDiscountPercent) / 100;
+    const finalDiscount = Math.min(Math.max(0, formData.discountAmount), maxDiscount);
+    const finalAmount = (rate - finalDiscount) * formData.quantity;
 
     let guestName = '';
     let roomNumber = '';
@@ -225,7 +295,7 @@ export default function ServiceChargesPage() {
     }
 
     const newCharge: ServiceCharge = {
-      id: `SC-${Date.now()}`,
+      id: useSettingsStore.getState().getNextModuleNumber('frontOffice', 'serviceCharge'),
       guestId: formData.customerType === 'inhouse' ? (formData.guestId || '') : `EXT-${Date.now()}`,
       guestName: guestName,
       roomNumber: roomNumber,
@@ -237,7 +307,8 @@ export default function ServiceChargesPage() {
       status: 'pending',
       notes: formData.notes,
       createdBy: 'Current User', // In real app, get from auth context
-      taxExempt: formData.taxExempt
+      taxExempt: formData.taxExempt,
+      taxCategory: selectedCategory.taxCategory || suggestedTaxCategory(selectedCategory),
     };
 
     setServiceCharges(prev => [newCharge, ...prev]);
@@ -254,7 +325,8 @@ export default function ServiceChargesPage() {
           reservation.id,
           `${formData.description} (${formData.quantity}x)`,
           finalAmount,
-          formData.taxExempt
+          formData.taxExempt,
+          newCharge.taxCategory
         );
       }
     }
@@ -289,7 +361,7 @@ export default function ServiceChargesPage() {
       taxExempt: false
     });
     setExternalGuestData({
-      name: '',
+      name: 'Guest',
       phone: '',
       email: '',
       company: ''
@@ -364,8 +436,8 @@ export default function ServiceChargesPage() {
   // tenant reformats, it always looks the same with just the org's own header on top.
   const handlePrintServiceCharge = (charge: ServiceCharge) => {
     const org = buildOrgProfile(useSettingsStore.getState());
-    const gross = serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt);
-    const tax = serviceChargeTax(charge.amount, charge.description, charge.guestId, charge.taxExempt);
+    const gross = serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge));
+    const tax = serviceChargeTax(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge));
     const categoryInfo = getCategoryInfo(charge.category);
     const fmt = (n: number) => `₵${formatMoney(n)}`;
 
@@ -407,6 +479,7 @@ export default function ServiceChargesPage() {
       <div class="section">
         <div class="section-title">Guest Information</div>
         <div class="grid">
+          <div><div class="field-label">ID</div><div class="field-value">${charge.id}</div></div>
           <div><div class="field-label">Customer</div><div class="field-value">${charge.guestName}</div></div>
           <div><div class="field-label">Type</div><div class="field-value">${charge.roomNumber === 'External' ? 'External Customer' : 'In-House Guest'}</div></div>
           <div><div class="field-label">Room/Reference</div><div class="field-value">${charge.roomNumber === 'External' ? 'External Service' : `Room ${charge.roomNumber}`}</div></div>
@@ -499,18 +572,18 @@ export default function ServiceChargesPage() {
     setSelectedCharge(charge);
     setPaymentData(prev => ({
       ...prev,
-      amount: serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt)
+      amount: serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge))
     }));
     setIsPaymentModalOpen(true);
   };
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       {/* Header */}
       <div className="flex justify-between items-center">
-        <div>
+        <div className="flex items-center gap-1.5">
           <h1 className="text-2xl font-bold text-ghana-black">Service Charges Management</h1>
-          <p className="text-gray-600">Manage additional charges for guests (swimming pool, laundry, spa, etc.)</p>
+          <HeadingInfo label="About service charges">Manage additional charges for guests (swimming pool, laundry, spa, etc.)</HeadingInfo>
         </div>
         <div className="flex gap-2">
           <CustomizeViewControl
@@ -535,17 +608,23 @@ export default function ServiceChargesPage() {
                 customerType: 'inhouse',
                 taxExempt: false
               });
-              setExternalGuestData({ name: '', phone: '', email: '', company: '' });
+              setExternalGuestData({ name: 'Guest', phone: '', email: '', company: '' });
               setIsAddModalOpen(true);
             }}
             className="bg-ghana-gold text-white"
           >
             ➕ Add Service Charge
           </Button>
-          <Button 
-            color="secondary" 
+          <Button
+            color="secondary"
             variant="flat"
-            onClick={() => alert('Room and event pricing is managed in Settings > Rooms & Pricing')}
+            onPress={() => {
+              try {
+                localStorage.setItem('nav.section', 'settings');
+                localStorage.setItem('rooms.tab', 'service-charges');
+              } catch {}
+              router.push('/?tab=rooms');
+            }}
           >
             ⚙️ Manage Pricing
           </Button>
@@ -554,46 +633,42 @@ export default function ServiceChargesPage() {
 
       {/* Filters */}
       <Card>
-        <CardBody className="space-y-3">
-          <div className="flex flex-col sm:flex-row gap-4">
+        <CardBody>
+          <div className="flex flex-wrap items-center gap-3">
             <Input
-              placeholder="Search by guest name, room number, or description..."
+              placeholder="Search guest, room, or charge..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="flex-1"
+              className="w-64"
               startContent={<span className="text-gray-400">🔍</span>}
             />
             <Select
-              placeholder="Filter by status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="w-full sm:w-48"
+              aria-label="Filter by status"
+              selectedKeys={new Set([statusFilter])}
+              onSelectionChange={(keys) => setStatusFilter(Array.from(keys as Set<string>)[0] || 'all')}
+              className="w-40"
             >
               <SelectItem key="all">All Statuses</SelectItem>
-              <SelectItem key="pending">⏳ Pending</SelectItem>
-              <SelectItem key="approved">✅ Approved</SelectItem>
-              <SelectItem key="billed">📄 Billed</SelectItem>
-              <SelectItem key="paid">💳 Paid</SelectItem>
+              <SelectItem key="pending">Pending</SelectItem>
+              <SelectItem key="approved">Approved</SelectItem>
+              <SelectItem key="billed">Billed</SelectItem>
+              <SelectItem key="paid">Paid</SelectItem>
             </Select>
             <Select
-              placeholder="Filter by category"
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-              className="w-full sm:w-48"
+              aria-label="Filter by category"
+              selectedKeys={new Set([categoryFilter])}
+              onSelectionChange={(keys) => setCategoryFilter(Array.from(keys as Set<string>)[0] || 'all')}
+              className="w-44"
             >
               <SelectItem key="all">All Categories</SelectItem>
-              <>
-                {categories.map(category =>
-                  <SelectItem key={category} textValue={category}>
-                    {category}
-                  </SelectItem>
-                )}
-              </>
+              {categories.map(category =>
+                <SelectItem key={category} textValue={category}>
+                  {category}
+                </SelectItem>
+              )}
             </Select>
-          </div>
-          {/* Date filter pills */}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-medium text-gray-500 mr-1">📅 Charge Date:</span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <span className="text-sm font-medium text-gray-500">📅 Charge Date:</span>
             {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
               const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
               return (
@@ -616,61 +691,62 @@ export default function ServiceChargesPage() {
               </div>
             )}
           </div>
+          </div>
         </CardBody>
       </Card>
 
       {/* Payment Summary — totals reflect the active filter so cards match table rows */}
       {hiddenStatsCount < SERVICE_CHARGES_DASHBOARD_SECTIONS.length && (
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {!isHidden('totalCharges') && (
-        <Card className="relative">
-          <CardBody className="text-center">
-            <div className="absolute top-2 right-2">
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="absolute right-1 top-0.5">
               <HideCardButton onHide={() => hide('totalCharges')} label="Total Charges (incl. tax)" />
             </div>
-            <div className="text-2xl font-bold text-blue-600">
-              ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt), 0))}
+            <div className="text-base font-semibold tabular-nums text-blue-700">
+              ₵{formatMoney(filteredCharges.reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)), 0))}
             </div>
-            <div className="text-sm text-gray-600">Total Charges (incl. tax)</div>
+            <div className="text-xs leading-tight text-gray-500">Total Charges (incl. tax)</div>
           </CardBody>
         </Card>
         )}
         {!isHidden('paidAmount') && (
-        <Card className="relative">
-          <CardBody className="text-center">
-            <div className="absolute top-2 right-2">
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="absolute right-1 top-0.5">
               <HideCardButton onHide={() => hide('paidAmount')} label="Paid Amount (incl. tax)" />
             </div>
-            <div className="text-2xl font-bold text-green-600">
-              ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt), 0))}
+            <div className="text-base font-semibold tabular-nums text-green-700">
+              ₵{formatMoney(filteredCharges.filter(c => c.status === 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)), 0))}
             </div>
-            <div className="text-sm text-gray-600">Paid Amount (incl. tax)</div>
+            <div className="text-xs leading-tight text-gray-500">Paid Amount (incl. tax)</div>
           </CardBody>
         </Card>
         )}
         {!isHidden('outstanding') && (
-        <Card className="relative">
-          <CardBody className="text-center">
-            <div className="absolute top-2 right-2">
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="absolute right-1 top-0.5">
               <HideCardButton onHide={() => hide('outstanding')} label="Outstanding (incl. tax)" />
             </div>
-            <div className="text-2xl font-bold text-orange-600">
-              ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt), 0))}
+            <div className="text-base font-semibold tabular-nums text-orange-700">
+              ₵{formatMoney(filteredCharges.filter(c => c.status !== 'paid').reduce((sum, charge) => sum + serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)), 0))}
             </div>
-            <div className="text-sm text-gray-600">Outstanding (incl. tax)</div>
+            <div className="text-xs leading-tight text-gray-500">Outstanding (incl. tax)</div>
           </CardBody>
         </Card>
         )}
         {!isHidden('paidTotal') && (
-        <Card className="relative">
-          <CardBody className="text-center">
-            <div className="absolute top-2 right-2">
+        <Card className="relative border border-gray-200 shadow-none">
+          <CardBody className="px-2 py-1.5 text-center">
+            <div className="absolute right-1 top-0.5">
               <HideCardButton onHide={() => hide('paidTotal')} label="Paid/Total" />
             </div>
-            <div className="text-2xl font-bold text-purple-600">
+            <div className="text-base font-semibold tabular-nums text-purple-700">
               {filteredCharges.filter(c => c.status === 'paid').length}/{filteredCharges.length}
             </div>
-            <div className="text-sm text-gray-600">Paid/Total</div>
+            <div className="text-xs leading-tight text-gray-500">Paid/Total</div>
           </CardBody>
         </Card>
         )}
@@ -678,19 +754,28 @@ export default function ServiceChargesPage() {
       )}
 
       {/* Service Charges Table */}
-      <Card>
-        <CardBody>
-          <Table aria-label="Service charges table">
+      <Card className="min-w-0 overflow-hidden border-0 shadow-lg">
+        <CardBody className="overflow-x-hidden px-2 py-3">
+          <Table
+            aria-label="Service charges table"
+            removeWrapper
+            classNames={{
+              ...worksheetTableClassNames,
+              base: 'max-w-full overflow-x-auto',
+              td: 'max-w-0 overflow-hidden border-b border-gray-100 px-2 py-2.5 align-middle',
+            }}
+          >
             <TableHeader>
-              <TableColumn>CUSTOMER</TableColumn>
-              <TableColumn>TYPE</TableColumn>
-              <TableColumn>ROOM/REF</TableColumn>
-              <TableColumn>CATEGORY</TableColumn>
+              <TableColumn className="w-[8.5rem]">ID</TableColumn>
+              <TableColumn className="w-[8rem]">CUSTOMER</TableColumn>
+              <TableColumn className="w-[5.5rem]">TYPE</TableColumn>
+              <TableColumn className="w-[6.5rem]">ROOM/REF</TableColumn>
+              <TableColumn className="w-[12.65rem]">CATEGORY</TableColumn>
               <TableColumn>DESCRIPTION</TableColumn>
-              <TableColumn>AMOUNT</TableColumn>
-              <TableColumn>STATUS</TableColumn>
-              <TableColumn>DATE</TableColumn>
-              <TableColumn>ACTIONS</TableColumn>
+              <TableColumn className="w-[5.5rem]">AMOUNT</TableColumn>
+              <TableColumn className="w-[6.5rem]">STATUS</TableColumn>
+              <TableColumn className="w-[6.5rem]">DATE</TableColumn>
+              <TableColumn className="w-[12rem]">ACTIONS</TableColumn>
             </TableHeader>
             <TableBody emptyContent={<div className="text-center text-gray-500 py-8">No service charges found</div>}>
               {filteredCharges.length === 0 ? [] as any : (
@@ -701,6 +786,9 @@ export default function ServiceChargesPage() {
                   const isExternal = charge.roomNumber === 'External';
                   return (
                     <TableRow key={charge.id}>
+                      <TableCell>
+                        <div className="truncate font-medium" title={charge.id}>{charge.id}</div>
+                      </TableCell>
                       <TableCell>
                         <div className="font-medium">{charge.guestName}</div>
                         {isExternal && (
@@ -721,21 +809,21 @@ export default function ServiceChargesPage() {
                         </Badge>
                       </TableCell>
                       <TableCell>
-                        <Chip size="sm" variant="flat">
+                        <span className="block truncate" title={`${categoryInfo.icon} ${categoryInfo.name}`}>
                           {categoryInfo.icon} {categoryInfo.name}
-                        </Chip>
+                        </span>
                       </TableCell>
                       <TableCell>
-                        <div className="max-w-xs truncate">{charge.description}</div>
+                        <div className="truncate" title={charge.description}>{charge.description}</div>
                         {charge.quantity > 1 && (
                           <div className="text-sm text-gray-500">Qty: {charge.quantity}</div>
                         )}
                       </TableCell>
                       <TableCell>
-                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt))}</div>
+                        <div className="font-semibold">₵{formatMoney(serviceChargeGross(charge.amount, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)))}</div>
                         {charge.quantity > 1 && (
                           <div className="text-xs text-gray-500">
-                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity, charge.description, charge.guestId, charge.taxExempt))} / unit
+                            ₵{formatMoney(serviceChargeGross(charge.amount / charge.quantity, charge.description, charge.guestId, charge.taxExempt, taxCategoryForCharge(charge)))} / unit
                           </div>
                         )}
                       </TableCell>
@@ -767,7 +855,7 @@ export default function ServiceChargesPage() {
                             size="sm"
                             color="primary"
                             variant="solid"
-                            className="bg-blue-600 text-white font-semibold px-3 py-1"
+                            className="min-w-0 bg-blue-600 px-2 font-semibold text-white"
                             onClick={() => {
                               setSelectedCharge(charge);
                               setIsViewModalOpen(true);
@@ -780,7 +868,7 @@ export default function ServiceChargesPage() {
                               size="sm"
                               color="success"
                               variant="solid"
-                              className="bg-green-600 text-white font-semibold px-3 py-1"
+                              className="min-w-0 bg-green-600 px-2 font-semibold text-white"
                               onClick={() => handlePaymentClick(charge)}
                             >
                               Pay
@@ -790,7 +878,7 @@ export default function ServiceChargesPage() {
                             size="sm"
                             color="default"
                             variant="solid"
-                            className="bg-gray-600 text-white font-semibold px-3 py-1"
+                            className="min-w-0 bg-gray-600 px-2 font-semibold text-white"
                             onClick={() => {
                               setSelectedCharge(charge);
                               setIsEditModalOpen(true);
@@ -813,10 +901,12 @@ export default function ServiceChargesPage() {
               onChange={setPage}
               showControls
               size="sm"
+              classNames={{ base: 'overflow-visible' }}
             />
           </div>
         </CardBody>
       </Card>
+
 
       {/* Add Service Charge Modal */}
       <Modal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} size="2xl">
@@ -902,33 +992,36 @@ export default function ServiceChargesPage() {
                 </div>
               )}
 
-              <Select
-                label="Service Category"
-                placeholder="Select category"
-                selectedKeys={formData.category ? [formData.category] : []}
-                onSelectionChange={(keys) => handleCategorySelect(Array.from(keys)[0] as string || '')}
-                isRequired
-              >
-                {serviceChargesConfig.map(category => (
-                  <SelectItem key={category.id} textValue={`${category.name} - ₵${category.basePrice}`}>
-                    {category.icon} {category.name} - ₵{category.basePrice} {getUnitLabel(category.unit)}
-                  </SelectItem>
-                ))}
-              </Select>
-
-              <Input
-                label="Description"
-                value={formData.description}
-                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                isRequired
-              />
+              <div className="grid grid-cols-2 gap-4">
+                <Select
+                  label="Service Category"
+                  placeholder="Select category"
+                  selectedKeys={formData.category ? [formData.category] : []}
+                  onSelectionChange={(keys) => handleCategorySelect(Array.from(keys)[0] as string || '')}
+                  isRequired
+                >
+                  {serviceChargesConfig.map(category => {
+                    const gross = inclusiveUnitPrice(category);
+                    return (
+                      <SelectItem key={category.id} textValue={`${category.name} - ₵${formatMoney(gross)}`}>
+                        {category.icon} {category.name} - ₵{formatMoney(gross)} {getUnitLabel(category.unit)}
+                      </SelectItem>
+                    );
+                  })}
+                </Select>
+                <Input
+                  label="Description"
+                  value={formData.description}
+                  onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                  isRequired
+                />
+              </div>
 
               <div className="grid grid-cols-3 gap-4">
                 <Input
-                  label="Amount per Unit"
+                  label={formData.taxExempt ? 'Amount per Unit' : 'Amount per Unit (incl. tax)'}
                   type="number"
-                  value={formData.amount.toString()}
-                  onChange={(e) => setFormData(prev => ({ ...prev, amount: parseFloat(e.target.value) || 0 }))}
+                  value={shownUnitPrice.toString()}
                   isRequired
                   isReadOnly
                   description="Pricing managed in Settings"
@@ -949,31 +1042,33 @@ export default function ServiceChargesPage() {
                 />
               </div>
 
-              <Textarea
-                label="Notes (Optional)"
-                value={formData.notes}
-                onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
-                placeholder="Additional notes about this charge..."
-              />
-
-              <div className="flex items-center justify-between p-3 bg-amber-50 border border-amber-200 rounded-lg">
-                <div>
-                  <div className="text-sm font-medium text-amber-900">Tax Exempt</div>
-                  <div className="text-xs text-amber-700">Post this charge with no tax, regardless of the guest's own status</div>
-                </div>
-                <Switch
-                  isSelected={formData.taxExempt}
-                  onValueChange={(val) => setFormData(prev => ({ ...prev, taxExempt: val }))}
+              <div className="grid grid-cols-2 items-start gap-4">
+                <Textarea
+                  label="Notes (Optional)"
+                  value={formData.notes}
+                  onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
+                  placeholder="Additional notes about this charge..."
+                  minRows={2}
                 />
+                <div className="flex h-full items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                  <div>
+                    <div className="text-sm font-medium text-amber-900">Tax Exempt</div>
+                    <div className="text-xs text-amber-700">Post this charge with no tax, regardless of the guest's own status</div>
+                  </div>
+                  <Switch
+                    isSelected={formData.taxExempt}
+                    onValueChange={(val) => setFormData(prev => ({ ...prev, taxExempt: val }))}
+                  />
+                </div>
               </div>
 
               <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
                 <div className="text-sm text-blue-800">
                   <div className="font-medium">
-                    Total Amount: ₵{((formData.amount - formData.discountAmount) * formData.quantity).toLocaleString()}
+                    Total Amount: ₵{formatMoney(guestTotal)}
                     {formData.discountAmount > 0 && (
                       <span className="text-green-600 ml-2">
-                        (₵{(formData.amount * formData.quantity).toLocaleString()} - ₵{formData.discountAmount} discount)
+                        (₵{formatMoney(shownUnitPrice * formData.quantity)} before ₵{formatMoney(formData.discountAmount)} discount)
                       </span>
                     )}
                   </div>
@@ -1019,6 +1114,10 @@ export default function ServiceChargesPage() {
                   </CardHeader>
                   <CardBody>
                     <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs text-gray-500">ID</label>
+                        <div className="font-medium">{selectedCharge.id}</div>
+                      </div>
                       <div>
                         <label className="text-xs text-gray-500">Customer Type</label>
                         <div className="mt-1">
@@ -1066,7 +1165,8 @@ export default function ServiceChargesPage() {
                             selectedCharge.quantity > 0 ? selectedCharge.amount / selectedCharge.quantity : selectedCharge.amount,
                             selectedCharge.description,
                             selectedCharge.guestId,
-                            selectedCharge.taxExempt
+                            selectedCharge.taxExempt,
+                            taxCategoryForCharge(selectedCharge)
                           ))}
                         </div>
                       </div>
@@ -1082,11 +1182,11 @@ export default function ServiceChargesPage() {
                       <div>
                         <div className="text-xs text-gray-500">Total Amount (incl. tax)</div>
                         <div className="text-xs text-gray-500">
-                          Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(serviceChargeTax(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt))} tax
+                          Excl. tax: ₵{formatMoney(selectedCharge.amount)} + ₵{formatMoney(serviceChargeTax(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt, taxCategoryForCharge(selectedCharge)))} tax
                         </div>
                       </div>
                       <div className="text-2xl font-bold text-ghana-gold">
-                        ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt))}
+                        ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt, taxCategoryForCharge(selectedCharge)))}
                       </div>
                     </div>
 
@@ -1155,7 +1255,7 @@ export default function ServiceChargesPage() {
                       <div>
                         <span className="text-gray-600">Amount (incl. tax):</span>
                         <div className="font-medium text-lg text-ghana-gold">
-                          ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt))}
+                          ₵{formatMoney(serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt, taxCategoryForCharge(selectedCharge)))}
                         </div>
                       </div>
                     </div>
@@ -1222,7 +1322,7 @@ export default function ServiceChargesPage() {
                       </span>
                     </div>
                     {(() => {
-                      const due = serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt);
+                      const due = serviceChargeGross(selectedCharge.amount, selectedCharge.description, selectedCharge.guestId, selectedCharge.taxExempt, taxCategoryForCharge(selectedCharge));
                       return (
                         <>
                           {paymentData.amount < due && (
@@ -1239,7 +1339,7 @@ export default function ServiceChargesPage() {
                       );
                     })()}
                   <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2 items-end">
-                    <Select label="Receipt Template" selectedKeys={[receiptTpl]} onSelectionChange={(keys)=> setReceiptTpl(Array.from(keys)[0] as string)}>
+                    <Select label="Receipt Template" selectedKeys={receiptTemplates.some(t => t.key === receiptTpl) ? [receiptTpl] : []} onSelectionChange={(keys) => { const key = Array.from(keys)[0] as string; if (key) setReceiptTpl(key); }}>
                       {receiptTemplates.map(t => (<SelectItem key={t.key}>{t.name}</SelectItem>))}
                     </Select>
                     <Button
@@ -1257,7 +1357,8 @@ export default function ServiceChargesPage() {
                           totals: { subTotal: paymentData.amount, payments: paymentData.amount, balance: 0, grandTotal: paymentData.amount },
                           currency: '₵'
                         } as any;
-                        try { openPrintPreview('receipt' as any, receiptTpl, data); } catch {}
+                        const key = receiptTemplates.some(t => t.key === receiptTpl) ? receiptTpl : printingReceipt;
+                        openPrintPreview('receipt' as any, key, data);
                       }}
                     >
                       🧾 Print Receipt

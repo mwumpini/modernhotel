@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import { 
   Card, 
   CardBody, 
@@ -293,8 +294,10 @@ export default function SupplyManagementPanel() {
       {/* Header and Actions */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-ghana-black">📦 Supply Management</h2>
-          <p className="text-gray-600">Track inventory, manage supplies, and monitor stock levels</p>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-xl font-semibold text-ghana-black">📦 Supply Management</h2>
+            <HeadingInfo label="About supplies">Track inventory, manage supplies, and monitor stock levels</HeadingInfo>
+          </div>
         </div>
         <Button 
           color="primary" 

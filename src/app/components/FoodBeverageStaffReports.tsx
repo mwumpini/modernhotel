@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from './HeadingInfo';
 import { Card, CardBody, Button, Input, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Tabs, Tab } from "@heroui/react";
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 
@@ -197,8 +198,10 @@ export default function FoodBeverageStaffReports() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-ghana-black">🍽️ Food & Beverage - Staff & Training</h2>
-          <p className="text-gray-600">Staff on record and training programs</p>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-2xl font-bold text-ghana-black">🍽️ Food & Beverage - Staff & Training</h2>
+            <HeadingInfo label="About staff and training">Staff on record and training programs</HeadingInfo>
+          </div>
         </div>
         <div className="flex gap-3">
           <Button

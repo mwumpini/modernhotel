@@ -1,33 +1,28 @@
 'use client';
 
-import React, { useState, useEffect, useRef, Suspense, lazy } from 'react';
-import { 
-  Card, 
-  CardBody, 
-  CardHeader, 
-  Button, 
-  Badge, 
-  Tabs, 
-  Tab, 
-  Chip,
-  Tooltip
-} from "@heroui/react";
+import React, { useState, useEffect, Suspense, lazy } from 'react';
+import {
+  Card,
+  CardBody,
+  CardHeader,
+  Button,
+  Tabs,
+  Tab,
+} from '@heroui/react';
 import { trackEvent } from '../lib/analytics/trackEvent';
-import { useRouter } from 'next/navigation';
 import { useStockStore } from '../lib/inventory/stockStore';
 import { useSupplierStore } from '../lib/inventory/supplierStore';
-
-// Import specialized Stores/Inventory components - lazy load heavy components
-const InventorySupplyChainDashboard = lazy(() => import('./InventorySupplyChainDashboard'));
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
+import InventoryReportsAnalysis from './InventoryReportsAnalysis';
 
-// Hideable summary/widget cards on this dashboard — the "Operations Overview"
-// tabs are core navigation, not clutter, so they're deliberately not included.
+const InventorySupplyChainDashboard = lazy(() => import('./InventorySupplyChainDashboard'));
+
 const STORES_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'stockLevels', label: 'Stock Levels' },
   { id: 'inventoryValue', label: 'Inventory Value' },
@@ -38,73 +33,37 @@ const STORES_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'notices', label: 'Inventory Notices' },
 ];
 
-// Info Icon Component with Tooltip
-const InfoIcon = ({ description }: { description: string }) => {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+const INV_TABS = ['items', 'staff', 'reports'] as const;
 
-  const handleMouseEnter = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    timeoutRef.current = setTimeout(() => {
-      setShowTooltip(true);
-    }, 2000); // 2 second delay
-  };
+function resolveInvTab(raw?: string | null): string {
+  const key = String(raw || '').toLowerCase();
+  if (key === 'inventory' || key === 'operations' || key === 'overview') return 'items';
+  if ((INV_TABS as readonly string[]).includes(key)) return key;
+  return 'items';
+}
 
-  const handleMouseLeave = () => {
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current);
-    }
-    setShowTooltip(false);
-  };
-
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
-  return (
-    <Tooltip
-      content={description}
-      isOpen={showTooltip}
-      onOpenChange={setShowTooltip}
-      placement="top"
-      showArrow
-      color="primary"
-      delay={0}
-    >
-      <div
-        className="inline-flex items-center justify-center w-4 h-4 mr-2 text-xs text-blue-500 bg-blue-100 rounded-full cursor-help hover:bg-blue-200 transition-colors"
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-        title={description}
-      >
-        ℹ
-      </div>
-    </Tooltip>
-  );
-};
-
+/**
+ * Lean Inventory & Stores shell — status at a glance, then real ops
+ * (items / suppliers / requisitions / POs / stock ops + reconciliation),
+ * staff, and full Reports & Analysis. No fake overview menu.
+ *
+ * Need more room? Use Expand on the Operations card — opens `/inventory` or
+ * `/inventory/reports` as a full page (sidebar-free), with Back to Inventory.
+ */
 export default function StoresMainDashboard() {
-  const [selectedTab, setSelectedTab] = useState('overview');
-  const router = useRouter();
+  const [selectedTab, setSelectedTab] = useState('items');
 
-  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.stores', STORES_DASHBOARD_SECTIONS);
+  const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility(
+    'dashboard.hidden.stores',
+    STORES_DASHBOARD_SECTIONS
+  );
 
-  // Real data — hydrated from the DB on mount below. These stores already power
-  // InventorySupplyChainDashboard.tsx; this landing page just reads the same state.
   const stockItems = useStockStore((s) => s.stockItems);
   const stockMovements = useStockStore((s) => s.stockMovements);
   const getLowStockItems = useStockStore((s) => s.getLowStockItems);
   const getOutOfStockItems = useStockStore((s) => s.getOutOfStockItems);
-  const getOverstockItems = useStockStore((s) => s.getOverstockItems);
   const getTotalInventoryValue = useStockStore((s) => s.getTotalInventoryValue);
   const hydrateStock = useStockStore((s) => s.hydrateFromApi);
-  const suppliers = useSupplierStore((s) => s.suppliers);
   const purchaseOrders = useSupplierStore((s) => s.purchaseOrders);
   const hydrateSuppliers = useSupplierStore((s) => s.hydrateSuppliersFromApi);
   const hydratePOs = useSupplierStore((s) => s.hydratePurchaseOrdersFromApi);
@@ -116,30 +75,28 @@ export default function StoresMainDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    const apply = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      if (detail.tab) setSelectedTab(resolveInvTab(detail.tab));
+    };
+    window.addEventListener('inv-navigate', apply);
+    return () => window.removeEventListener('inv-navigate', apply);
+  }, []);
+
   const today = new Date().toISOString().slice(0, 10);
   const isToday = (d: Date) => new Date(d).toISOString().slice(0, 10) === today;
 
   const lowStockItemsList = getLowStockItems();
   const outOfStockItemsList = getOutOfStockItems();
-  const overstockItemsList = getOverstockItems();
   const valueOf = (items: typeof stockItems) => items.reduce((sum, i) => sum + i.currentStock * i.unitCost, 0);
 
   const totalItems = stockItems.length;
   const lowStockItems = lowStockItemsList.length;
   const outOfStockItems = outOfStockItemsList.length;
-  const overstockItems = overstockItemsList.length;
-
   const totalInventoryValue = getTotalInventoryValue();
   const lowStockValue = valueOf(lowStockItemsList);
   const outOfStockValue = valueOf(outOfStockItemsList);
-  const overstockValue = valueOf(overstockItemsList);
-
-  const totalSuppliers = suppliers.length;
-  const activeSuppliers = suppliers.filter((s) => s.isActive).length;
-  const pendingSuppliers = totalSuppliers - activeSuppliers;
-  const supplierRating = suppliers.length > 0
-    ? Number((suppliers.reduce((sum, s) => sum + (s.rating || 0), 0) / suppliers.length).toFixed(1))
-    : 0;
 
   const totalPurchaseOrders = purchaseOrders.length;
   const pendingOrders = purchaseOrders.filter((p) => p.status === 'draft' || p.status === 'sent').length;
@@ -150,131 +107,43 @@ export default function StoresMainDashboard() {
   const itemsIssuedToday = stockMovements.filter((m) => m.movementType === 'out' && isToday(m.createdAt)).length;
   const purchaseOrdersCreatedToday = purchaseOrders.filter((p) => isToday(p.createdAt)).length;
 
-  // Operational items following the uniform pattern
-  const operationalItems = [
-    {
-      category: 'Inventory Management',
-      items: [
-        { title: 'Stock Items', icon: '📦', description: 'Complete inventory database', status: 'active', count: totalItems },
-        { title: 'Low Stock Alerts', icon: '⚠️', description: 'Items below reorder level', status: 'active', count: lowStockItems },
-        { title: 'Out of Stock', icon: '❌', description: 'Items requiring immediate restock', status: 'active', count: outOfStockItems },
-        { title: 'Overstock Items', icon: '📈', description: 'Items exceeding optimal levels', status: 'active', count: overstockItems },
-      ]
-    },
-    {
-      category: 'Procurement & Suppliers',
-      items: [
-        { title: 'Supplier Management', icon: '🏢', description: 'Vendor database and ratings', status: 'active', count: totalSuppliers },
-        { title: 'Purchase Orders', icon: '📋', description: 'Procurement and ordering', status: 'active', count: totalPurchaseOrders },
-        { title: 'Delivery Tracking', icon: '🚚', description: 'Order delivery monitoring', status: 'active', count: deliveredOrders },
-        { title: 'Cost Analysis', icon: '💰', description: 'Price and cost optimization', status: 'active', count: 0 },
-      ]
-    },
-    {
-      category: 'Stock Operations',
-      items: [
-        { title: 'Goods Receipt', icon: '📥', description: 'Incoming stock processing', status: 'active', count: itemsReceivedToday },
-        { title: 'Goods Issue', icon: '📤', description: 'Stock distribution and usage', status: 'active', count: itemsIssuedToday },
-        { title: 'Stock Transfers', icon: '🔄', description: 'Internal stock movements', status: 'active', count: 0 },
-        { title: 'Stock Counts', icon: '🔍', description: 'Physical inventory verification', status: 'active', count: 0 },
-      ]
-    },
-    {
-      category: 'Compliance & Reporting',
-      items: [
-        { title: 'Reports & Analysis', icon: '📊', description: 'Stock, movements and procurement on file', status: 'active', count: 0 },
-        { title: 'Ghana Compliance', icon: '🔒', description: 'Import/export regulations', status: 'active', count: 0 },
-        { title: 'VAT Management', icon: '🧾', description: 'Tax compliance and reporting', status: 'active', count: 0 },
-      ]
+  const goOps = (inner?: { tab?: string; stockOp?: string }) => {
+    setSelectedTab('items');
+    if (inner?.tab || inner?.stockOp) {
+      window.dispatchEvent(new CustomEvent('inv-ops-navigate', { detail: inner }));
     }
-  ];
+  };
 
-  // Quick action handlers
   const handleQuickAction = (action: string) => {
     trackEvent('Stores.QuickAction', { action });
-    
     switch (action) {
       case 'add-item':
-        setSelectedTab('inventory');
+        goOps({ tab: 'inventory' });
         break;
       case 'create-po':
+        goOps({ tab: 'purchase-orders' });
+        break;
       case 'add-supplier':
+        goOps({ tab: 'suppliers' });
+        break;
       case 'stock-count':
+        goOps({ tab: 'stock-operations', stockOp: 'stock-counts' });
+        break;
       case 'low-stock-report':
-        // All of these live inside the single Inventory & Supply Chain tab's own
-        // sub-navigation now — there's no separate outer tab per action anymore.
-        setSelectedTab('inventory');
+        setSelectedTab('reports');
+        break;
+      case 'reports':
+        setSelectedTab('reports');
         break;
     }
   };
 
   const quickActions = [
-    { 
-      title: 'Add Item', 
-      icon: '➕', 
-      color: 'primary', 
-      action: 'add-item',
-      description: 'Add new inventory item'
-    },
-    { 
-      title: 'Create PO', 
-      icon: '📋', 
-      color: 'secondary', 
-      action: 'create-po',
-      description: 'Create purchase order'
-    },
-    { 
-      title: 'Add Supplier', 
-      icon: '🏢', 
-      color: 'success', 
-      action: 'add-supplier',
-      description: 'Register new supplier'
-    },
-    { 
-      title: 'Stock Count', 
-      icon: '🔍', 
-      color: 'warning', 
-      action: 'stock-count',
-      description: 'Physical inventory count'
-    },
-    { 
-      title: 'Low Stock Report', 
-      icon: '⚠️', 
-      color: 'danger', 
-      action: 'low-stock-report',
-      description: 'View reorder alerts'
-    }
-  ];
-
-  const kpis = [
-    { 
-      label: 'Total Items', 
-      value: totalItems, 
-      target: 1500, 
-      color: 'success',
-      icon: '📦'
-    },
-    { 
-      label: 'Low Stock Items', 
-      value: lowStockItems, 
-      target: 30, 
-      color: 'warning',
-      icon: '⚠️'
-    },
-    { 
-      label: 'Inventory Value', 
-      value: `₵${(totalInventoryValue / 1000).toFixed(0)}K`, 
-      target: 150, 
-      color: 'primary',
-      icon: '💰'
-    },
-    { 
-      label: 'Supplier Rating', 
-      value: `${supplierRating}/5`, 
-      target: 4.5, 
-      color: 'secondary',
-      icon: '⭐'
-    }
+    { title: 'Add Item', icon: '➕', color: 'primary', action: 'add-item', description: 'New stock item' },
+    { title: 'Create PO', icon: '📋', color: 'secondary', action: 'create-po', description: 'Purchase order' },
+    { title: 'Add Supplier', icon: '🏢', color: 'success', action: 'add-supplier', description: 'Vendor on file' },
+    { title: 'Stock Count', icon: '🔍', color: 'warning', action: 'stock-count', description: 'Reconcile physical' },
+    { title: 'Reports', icon: '📊', color: 'danger', action: 'reports', description: 'Usage & stock file' },
   ];
 
   return (
@@ -283,15 +152,6 @@ export default function StoresMainDashboard() {
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-ghana-black">📦 Inventory & Stores</h2>
         <div className="flex items-center gap-2">
-          <Badge color="success" variant="flat">Reorder System</Badge>
-          <Badge color="primary" variant="flat">Suppliers Active</Badge>
-          <Button
-            variant="bordered"
-            className="border-blue-600 text-blue-700 font-semibold"
-            onPress={() => router.push('/inventory/reports')}
-          >
-            📊 Reports & Analysis
-          </Button>
           <CustomizeViewControl
             sections={STORES_DASHBOARD_SECTIONS}
             isHidden={isHidden}
@@ -299,291 +159,214 @@ export default function StoresMainDashboard() {
             showAll={showAll}
             hiddenCount={hiddenCount}
           />
+          {(selectedTab === 'items' || selectedTab === 'reports') && (
+            <ModuleExpandButton
+              href={selectedTab === 'reports' ? '/inventory/reports' : '/inventory'}
+              label={selectedTab === 'reports' ? 'Open reports full page' : 'Open stock & supply full page'}
+            />
+          )}
         </div>
       </div>
 
-      {/* Inventory Status Overview - Following Uniform Pattern */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-xl font-semibold text-ghana-black flex items-center gap-2">
-            📊 Inventory Status Overview ({totalItems} Total Items)
-          </h3>
-        </div>
-
-        {/* Status Cards - Matching Uniform Design */}
-        {(!isHidden('stockLevels') || !isHidden('inventoryValue') || !isHidden('purchaseOrders')) && (
+      {(!isHidden('stockLevels') || !isHidden('inventoryValue') || !isHidden('purchaseOrders')) && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          {/* Stock Levels */}
           {!isHidden('stockLevels') && (
-          <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
-            <CardBody className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Stock Levels</h4>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-green-500 rounded-full"></div>
+            <Card className="border-0 shadow-lg border-l-4 border-l-green-500">
+              <CardBody className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-lg font-semibold text-ghana-black">Stock Levels</h4>
                   <HideCardButton onHide={() => hide('stockLevels')} label="Stock Levels" />
                 </div>
-              </div>
-              <div className="text-3xl font-bold text-green-600 mb-3">{totalItems - lowStockItems - outOfStockItems}</div>
-              <div className="space-y-1 text-sm text-gray-600">
-                <div className="flex justify-between">
-                  <span>Optimal</span>
-                  <span className="font-medium">{totalItems - lowStockItems - outOfStockItems}</span>
+                <div className="text-3xl font-bold text-green-600 mb-3">
+                  {Math.max(0, totalItems - lowStockItems - outOfStockItems)}
                 </div>
-                <div className="flex justify-between">
-                  <span>Low Stock</span>
-                  <span className="font-medium">{lowStockItems}</span>
+                <div className="space-y-1 text-sm text-gray-600">
+                  <div className="flex justify-between">
+                    <span>On file</span>
+                    <span className="font-medium">{totalItems}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Low stock</span>
+                    <span className="font-medium">{lowStockItems}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Out of stock</span>
+                    <span className="font-medium">{outOfStockItems}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span>Out of Stock</span>
-                  <span className="font-medium">{outOfStockItems}</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
+              </CardBody>
+            </Card>
           )}
 
-          {/* Inventory Value */}
           {!isHidden('inventoryValue') && (
-          <Card className="border-0 shadow-lg border-l-4 border-l-blue-500">
-            <CardBody className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Inventory Value</h4>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+            <Card className="border-0 shadow-lg border-l-4 border-l-blue-500">
+              <CardBody className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-lg font-semibold text-ghana-black">Inventory Value</h4>
                   <HideCardButton onHide={() => hide('inventoryValue')} label="Inventory Value" />
                 </div>
-              </div>
-              <div className="text-3xl font-bold text-blue-600 mb-3">₵{(totalInventoryValue / 1000).toFixed(0)}K</div>
-              <div className="space-y-1 text-sm text-gray-600">
-                <div className="flex justify-between">
-                  <span>Total Value</span>
-                  <span className="font-medium">₵{(totalInventoryValue / 1000).toFixed(0)}K</span>
+                <div className="text-3xl font-bold text-blue-600 mb-3">
+                  ₵{(totalInventoryValue / 1000).toFixed(0)}K
                 </div>
-                <div className="flex justify-between">
-                  <span>Low Stock Value</span>
-                  <span className="font-medium">₵{(lowStockValue / 1000).toFixed(0)}K</span>
+                <div className="space-y-1 text-sm text-gray-600">
+                  <div className="flex justify-between">
+                    <span>Total</span>
+                    <span className="font-medium">₵{totalInventoryValue.toLocaleString('en-GH', { maximumFractionDigits: 0 })}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Low stock value</span>
+                    <span className="font-medium">₵{(lowStockValue / 1000).toFixed(0)}K</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Out of stock value</span>
+                    <span className="font-medium">₵{(outOfStockValue / 1000).toFixed(0)}K</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span>Out of Stock Value</span>
-                  <span className="font-medium">₵{(outOfStockValue / 1000).toFixed(0)}K</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
+              </CardBody>
+            </Card>
           )}
 
-          {/* Purchase Orders */}
           {!isHidden('purchaseOrders') && (
-          <Card className="border-0 shadow-lg border-l-4 border-l-orange-500">
-            <CardBody className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <h4 className="text-lg font-semibold text-ghana-black">Purchase Orders</h4>
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
+            <Card className="border-0 shadow-lg border-l-4 border-l-orange-500">
+              <CardBody className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h4 className="text-lg font-semibold text-ghana-black">Purchase Orders</h4>
                   <HideCardButton onHide={() => hide('purchaseOrders')} label="Purchase Orders" />
                 </div>
-              </div>
-              <div className="text-3xl font-bold text-orange-600 mb-3">{totalPurchaseOrders}</div>
-              <div className="space-y-1 text-sm text-gray-600">
-                <div className="flex justify-between">
-                  <span>Pending</span>
-                  <span className="font-medium">{pendingOrders}</span>
+                <div className="text-3xl font-bold text-orange-600 mb-3">{totalPurchaseOrders}</div>
+                <div className="space-y-1 text-sm text-gray-600">
+                  <div className="flex justify-between">
+                    <span>Pending</span>
+                    <span className="font-medium">{pendingOrders}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Confirmed</span>
+                    <span className="font-medium">{confirmedOrders}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Delivered</span>
+                    <span className="font-medium">{deliveredOrders}</span>
+                  </div>
                 </div>
-                <div className="flex justify-between">
-                  <span>Confirmed</span>
-                  <span className="font-medium">{confirmedOrders}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>Delivered</span>
-                  <span className="font-medium">{deliveredOrders}</span>
-                </div>
-              </div>
-            </CardBody>
-          </Card>
+              </CardBody>
+            </Card>
           )}
         </div>
-        )}
+      )}
 
-        {/* Today's Operations - Matching Uniform Pattern */}
-        {!isHidden('todayOps') && (
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <span className="text-lg">📅</span>
-              <h4 className="text-lg font-semibold text-ghana-black">Today's Operations</h4>
-            </div>
+      {!isHidden('todayOps') && (
+        <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+          <div className="flex items-center gap-4 flex-wrap">
+            <h4 className="text-lg font-semibold text-ghana-black">Today&apos;s Operations</h4>
             <div className="flex items-center gap-6 text-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-green-600 font-medium">{itemsReceivedToday} Items</span>
-                <span className="text-gray-500">Received today</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-blue-600 font-medium">{itemsIssuedToday} Items</span>
-                <span className="text-gray-500">Issued today</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <span className="text-orange-600 font-medium">{purchaseOrdersCreatedToday} POs</span>
-                <span className="text-gray-500">Created today</span>
-              </div>
+              <span>
+                <span className="text-green-600 font-medium">{itemsReceivedToday}</span>
+                <span className="text-gray-500"> received</span>
+              </span>
+              <span>
+                <span className="text-blue-600 font-medium">{itemsIssuedToday}</span>
+                <span className="text-gray-500"> issued</span>
+              </span>
+              <span>
+                <span className="text-orange-600 font-medium">{purchaseOrdersCreatedToday}</span>
+                <span className="text-gray-500"> POs created</span>
+              </span>
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button
-              color="success"
-              variant="solid"
-              className="bg-green-600 hover:bg-green-700"
-              onClick={() => setSelectedTab('inventory')}
-            >
-              📦 Manage Inventory
+            <Button color="success" className="bg-green-600" onPress={() => goOps({ tab: 'inventory' })}>
+              Open stock file
             </Button>
             <HideCardButton onHide={() => hide('todayOps')} label="Today's Operations" />
           </div>
         </div>
-        )}
-      </div>
-
-      {/* Quick Actions */}
-      {!isHidden('quickActions') && (
-      <Card className="border-0 shadow-lg mb-6">
-        <CardHeader className="pb-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🚀</span>
-            <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
-          </div>
-          <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
-        </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-            {quickActions.map((action) => (
-              <Button
-                key={action.action}
-                color={action.color as any}
-                variant="flat"
-                className="h-24 flex flex-col items-center justify-center gap-2 p-4"
-                onClick={() => handleQuickAction(action.action)}
-              >
-                <span className="text-2xl">{action.icon}</span>
-                <span className="font-medium">{action.title}</span>
-                <span className="text-xs text-center opacity-80">{action.description}</span>
-              </Button>
-            ))}
-          </div>
-        </CardBody>
-      </Card>
       )}
 
-      {/* Main Operations Interface - Following Uniform Pattern */}
+      {!isHidden('quickActions') && (
+        <Card className="border-0 shadow-lg mb-6">
+          <CardHeader className="pb-3 flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-ghana-black">Quick Actions</h3>
+            <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
+          </CardHeader>
+          <CardBody>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {quickActions.map((action) => (
+                <Button
+                  key={action.action}
+                  color={action.color as any}
+                  variant="flat"
+                  className="h-20 flex flex-col items-center justify-center gap-1"
+                  onPress={() => handleQuickAction(action.action)}
+                >
+                  <span className="text-xl">{action.icon}</span>
+                  <span className="font-medium text-sm">{action.title}</span>
+                </Button>
+              ))}
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
       <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <h3 className="text-xl font-semibold text-ghana-black">📊 Operations Overview</h3>
-        </CardHeader>
         <CardBody>
-          <Tabs 
-            selectedKey={selectedTab} 
-            onSelectionChange={(key) => setSelectedTab(key as string)}
+          <Tabs
+            selectedKey={selectedTab}
+            onSelectionChange={(key) => setSelectedTab(String(key))}
             className="w-full"
-            aria-label="Stores operations"
+            aria-label="Inventory operations"
           >
-            <Tab key="overview" title="📊 Overview">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mt-4">
-                {operationalItems.map((category, categoryIndex) => (
-                  <Card key={categoryIndex} className="border border-gray-200 shadow-md">
-                    <CardHeader className="pb-3">
-                      <h4 className="text-lg font-semibold text-ghana-black">{category.category}</h4>
-                    </CardHeader>
-                    <CardBody className="pt-0">
-                      <div className="space-y-3">
-                        {category.items.map((item, itemIndex) => (
-                          <div 
-                            key={itemIndex}
-                            className="flex items-center justify-between p-3 bg-gray-50 rounded-lg hover:bg-ghana-gold/10 cursor-pointer transition-colors"
-                            onClick={() => {
-                              // Handle navigation based on item type
-                              if (item.title.includes('Reports & Analysis')) {
-                                router.push('/inventory/reports');
-                              } else {
-                                setSelectedTab('inventory');
-                              }
-                            }}
-                          >
-                            <div className="flex items-center space-x-3">
-                              <span className="text-xl">{item.icon}</span>
-                              <div>
-                                <div className="flex items-center">
-                                  <InfoIcon description={item.description} />
-                                  <p className="font-medium text-ghana-black">{item.title}</p>
-                                </div>
-                              </div>
-                            </div>
-                            <div className="flex items-center space-x-2">
-                              <Badge 
-                                color={item.status === 'active' ? 'success' : 'default'}
-                                variant="flat"
-                              >
-                                {item.status}
-                              </Badge>
-                              <Chip size="sm" variant="flat" color="primary">
-                                {item.count}
-                              </Chip>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardBody>
-                  </Card>
-                ))}
-              </div>
+            <Tab key="items" title="📦 Stock & Supply">
+              {selectedTab === 'items' && (
+                <Suspense fallback={<div className="p-6 text-center text-slate-500">Loading stock & supply…</div>}>
+                  <InventorySupplyChainDashboard embedded />
+                </Suspense>
+              )}
             </Tab>
-
-            <Tab key="inventory" title="📦 Inventory & Supply Chain">
-              <Suspense fallback={<div className="p-6 text-center">Loading Inventory Dashboard...</div>}>
-                <InventorySupplyChainDashboard />
-              </Suspense>
-            </Tab>
-
             <Tab key="staff" title="👥 Staff Management">
-              <DepartmentStaffTab
-                departmentLabel="Inventory & Stores"
-                overtimePermissionId="inventory.log-overtime"
-                departmentNameHints={['stores', 'inventory', 'warehouse']}
-              />
+              {selectedTab === 'staff' && (
+                <DepartmentStaffTab
+                  departmentLabel="Inventory & Stores"
+                  overtimePermissionId="inventory.log-overtime"
+                  departmentNameHints={['stores', 'inventory', 'warehouse']}
+                />
+              )}
+            </Tab>
+            <Tab key="reports" title="📈 Reports & Analysis">
+              {selectedTab === 'reports' && (
+                <div className="pt-2">
+                  <InventoryReportsAnalysis embedded />
+                </div>
+              )}
             </Tab>
           </Tabs>
         </CardBody>
       </Card>
 
-      {/* Recent Activities & Notices - directly under Operations Overview */}
       {(!isHidden('recentActivities') || !isHidden('notices')) && (
-      <div className="mt-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Recent Activities */}
+        <div className="mt-8 grid grid-cols-1 lg:grid-cols-2 gap-6">
           {!isHidden('recentActivities') && (
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3 flex items-center justify-between">
-              <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
-              <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
-            </CardHeader>
-            <CardBody>
-              <RecentActivities area="inventory" />
-            </CardBody>
-          </Card>
+            <Card className="border-0 shadow-lg">
+              <CardHeader className="pb-3 flex items-center justify-between">
+                <h3 className="text-xl font-semibold text-ghana-black">Recent Activities</h3>
+                <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
+              </CardHeader>
+              <CardBody>
+                <RecentActivities area="inventory" />
+              </CardBody>
+            </Card>
           )}
-
-          {/* Inventory Notices */}
           {!isHidden('notices') && (
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3 flex items-center justify-between">
-              <h3 className="text-xl font-semibold text-ghana-black">🔔 Inventory Notices</h3>
-              <HideCardButton onHide={() => hide('notices')} label="Inventory Notices" />
-            </CardHeader>
-            <CardBody>
-              <DeptNotices dept="inventory" title="" defaultTab="alerts" />
-            </CardBody>
-          </Card>
+            <Card className="border-0 shadow-lg">
+              <CardHeader className="pb-3 flex items-center justify-between">
+                <h3 className="text-xl font-semibold text-ghana-black">Inventory Notices</h3>
+                <HideCardButton onHide={() => hide('notices')} label="Inventory Notices" />
+              </CardHeader>
+              <CardBody>
+                <DeptNotices dept="inventory" title="" defaultTab="alerts" />
+              </CardBody>
+            </Card>
           )}
         </div>
-      </div>
       )}
     </div>
   );

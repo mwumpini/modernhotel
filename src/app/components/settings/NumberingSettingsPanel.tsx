@@ -2,8 +2,9 @@
 
 import React from 'react';
 import { useRouter } from 'next/navigation';
+import HeadingInfo from '../HeadingInfo';
 import { Card, CardHeader, CardBody, Input, Button, Chip } from '@heroui/react';
-import { useSettingsStore } from '../../lib/settings/store';
+import { formatDocumentNumber, useSettingsStore } from '../../lib/settings/store';
 
 /**
  * Common numbering patterns so most series can be set without typing token syntax
@@ -13,14 +14,20 @@ import { useSettingsStore } from '../../lib/settings/store';
  */
 const FORMAT_PRESETS = (prefix: string) => {
   const p = prefix || 'PREFIX';
+  const yy = String(new Date().getFullYear()).slice(-2);
   return [
-    { value: '{PREFIX}-{YEAR}-{NUMBER}', label: `Prefix-Year-Number (e.g. ${p}-2026-1002)` },
+    { value: '{PREFIX}{NUMBER}', label: `Number (e.g. ${p}100001)` },
+    { value: '{PREFIX}{YY}{NUMBER}', label: `Year number (e.g. ${p}${yy}00001)` },
+    { value: '{PREFIX}-{YEAR}-{NUMBER}', label: `Long year (e.g. ${p}-2026-1002)` },
     { value: '{PREFIX}-{NUMBER}', label: `Prefix-Number (e.g. ${p}-1002)` },
-    { value: '{PREFIX}{NUMBER}', label: `PrefixNumber (e.g. ${p}1002)` },
     { value: '{YEAR}-{PREFIX}-{NUMBER}', label: `Year-Prefix-Number (e.g. 2026-${p}-1002)` },
     { value: '{PREFIX}/{YEAR}/{NUMBER}', label: `Prefix/Year/Number (e.g. ${p}/2026/1002)` },
   ];
 };
+
+function simpleSeries(prefix: string) {
+  return { prefix, suffix: '', nextNumber: 100001, numberFormat: '{PREFIX}{NUMBER}' };
+}
 
 /**
  * System-wide document numbering. Relocated out of the first-run setup wizard so
@@ -29,46 +36,61 @@ const FORMAT_PRESETS = (prefix: string) => {
  */
 const DEFAULT_MODULE_NUMBERING = {
   frontOffice: {
-    folio: { prefix: 'FOL', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-    housekeepingTicket: { prefix: 'HK', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+    folio: simpleSeries('FOL'),
+    housekeepingTicket: simpleSeries('HK'),
+    serviceCharge: simpleSeries('SC'),
+    corporateGuest: simpleSeries('C'),
+    personalGuest: simpleSeries('P'),
   },
   foodBeverage: {
-    order: { prefix: 'ORD', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
-    kitchenOrderTicket: { prefix: 'KOT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+    order: simpleSeries('ORD'),
+    kitchenOrderTicket: simpleSeries('KOT'),
+    barOrderTicket: simpleSeries('BOT'),
   },
   inventory: {
-    requisition: { prefix: 'REQ', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
-    stockTransfer: { prefix: 'ST', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
-    goodsReceipt: { prefix: 'GRN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+    stockItem: simpleSeries('ITM'),
+    purchaseOrder: simpleSeries('PO'),
+    requisition: simpleSeries('REQ'),
+    stockTransfer: simpleSeries('ST'),
+    goodsIssue: simpleSeries('ISS'),
+    goodsReceipt: simpleSeries('GRN'),
+    stockCount: simpleSeries('CNT'),
   },
   accounting: {
-    creditNote: { prefix: 'CN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-    debitNote: { prefix: 'DN', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+    creditNote: simpleSeries('CN'),
+    debitNote: simpleSeries('DN'),
   },
   events: {
-    eventBooking: { prefix: 'EVT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-    quotation: { prefix: 'QT', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+    eventBooking: simpleSeries('EVT'),
+    quotation: simpleSeries('QT'),
   },
   maintenance: {
-    workOrder: { prefix: 'WO', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-    inspection: { prefix: 'INSP', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+    workOrder: simpleSeries('WO'),
+    inspection: simpleSeries('INSP'),
   },
   security: {
-    incidentReport: { prefix: 'INC', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
-    accessPass: { prefix: 'PASS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{NUMBER}' },
+    incidentReport: simpleSeries('INC'),
+    accessPass: simpleSeries('PASS'),
   },
   hr: {
-    employeeId: { prefix: 'EMP', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}{NUMBER}' },
-    timesheet: { prefix: 'TS', suffix: '', nextNumber: 1, numberFormat: '{PREFIX}-{YEAR}-{NUMBER}' },
+    employeeId: simpleSeries('EMP'),
+    timesheet: simpleSeries('TS'),
   },
 };
 
-function Trio({ label, prefix, format, next, onPrefix, onFormat, onNext }: {
-  label: string; prefix: string; format: string; next: number;
-  onPrefix: (v: string) => void; onFormat: (v: string) => void; onNext: (v: number) => void;
+function Trio({ label, prefix, suffix = '', format, next, pad = 4, onPrefix, onSuffix, onFormat, onNext }: {
+  label: string; prefix: string; suffix?: string; format: string; next: number; pad?: number;
+  onPrefix: (v: string) => void; onSuffix: (v: string) => void; onFormat: (v: string) => void; onNext: (v: number) => void;
 }) {
   const presets = FORMAT_PRESETS(prefix);
-  const isPreset = presets.some(p => p.value === format);
+  const matchesPreset = presets.some(p => p.value === format);
+  const [customOn, setCustomOn] = React.useState(!matchesPreset);
+  const showCustom = customOn || !matchesPreset;
+  const preview = formatDocumentNumber(
+    { prefix, suffix, numberFormat: format || '{PREFIX}-{NUMBER}', nextNumber: next },
+    pad,
+  );
+  const missingNumber = !String(format || '').includes('{NUMBER}');
   return (
     <>
       <Input label={`${label} Prefix`} value={prefix} onChange={e => onPrefix(e.target.value)} />
@@ -76,23 +98,45 @@ function Trio({ label, prefix, format, next, onPrefix, onFormat, onNext }: {
         <label className="text-xs text-gray-600">{label} Format</label>
         <select
           className="mt-1 w-full border rounded-md p-2 text-sm"
-          value={isPreset ? format : 'custom'}
-          onChange={e => { if (e.target.value !== 'custom') onFormat(e.target.value); }}
+          aria-label={`${label} Format`}
+          value={showCustom ? 'custom' : format}
+          onChange={e => {
+            if (e.target.value === 'custom') {
+              setCustomOn(true);
+              return;
+            }
+            setCustomOn(false);
+            onFormat(e.target.value);
+          }}
         >
           {presets.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
           <option value="custom">Custom…</option>
         </select>
-        {!isPreset && (
-          <input
-            type="text"
-            className="mt-2 w-full border rounded-md p-2 text-sm"
-            value={format}
-            onChange={e => onFormat(e.target.value)}
-            placeholder="e.g. {PREFIX}-{YEAR}-{NUMBER}"
-          />
+        {showCustom && (
+          <>
+            <input
+              type="text"
+              aria-label={`${label} custom format`}
+              className="mt-2 w-full border rounded-md p-2 text-sm"
+              value={format}
+              onChange={e => onFormat(e.target.value)}
+              placeholder="{PREFIX}-{YEAR}-{NUMBER}{SUFFIX}"
+            />
+            <input
+              type="text"
+              aria-label={`${label} Suffix`}
+              className="mt-2 w-full border rounded-md p-2 text-sm"
+              value={suffix}
+              onChange={e => onSuffix(e.target.value)}
+              placeholder="Suffix — used by {SUFFIX}"
+            />
+          </>
         )}
+        <p className={`mt-1 text-xs ${missingNumber ? 'text-danger' : 'text-gray-500'}`}>
+          {missingNumber ? 'Format must include {NUMBER}. ' : ''}Next: {preview}
+        </p>
       </div>
-      <Input type="number" label={`${label} Next`} value={String(next)} onChange={e => onNext(Number(e.target.value))} />
+      <Input type="number" label={`${label} Next`} value={String(next ?? '')} onChange={e => onNext(Number(e.target.value))} />
     </>
   );
 }
@@ -107,24 +151,92 @@ export default function NumberingSettingsPanel() {
 
   const [core, setCore] = React.useState(() => ({
     invoicePrefix: settings.invoiceSettings.prefix,
+    invoiceSuffix: settings.invoiceSettings.suffix || '',
     invoiceFormat: settings.invoiceSettings.numberFormat,
     invoiceNext: settings.invoiceSettings.nextNumber,
     receiptPrefix: settings.receiptSettings.prefix || 'RCP',
-    receiptFormat: settings.receiptSettings.numberFormat || 'RCP-{YEAR}-{NUMBER}',
+    receiptSuffix: settings.receiptSettings.suffix || '',
+    receiptFormat: settings.receiptSettings.numberFormat || '{PREFIX}{NUMBER}',
     receiptNext: settings.receiptSettings.nextNumber || 1,
+    proformaPrefix: settings.proformaInvoiceSettings.prefix || 'PRO',
+    proformaSuffix: settings.proformaInvoiceSettings.suffix || '',
+    proformaFormat: settings.proformaInvoiceSettings.numberFormat || '{PREFIX}{NUMBER}',
+    proformaNext: settings.proformaInvoiceSettings.nextNumber || 1,
     reservationPrefix: settings.reservationSettings.prefix,
+    reservationSuffix: settings.reservationSettings.suffix || '',
     reservationFormat: settings.reservationSettings.numberFormat,
     reservationNext: settings.reservationSettings.nextNumber,
     clientPrefix: settings.clientSettings.prefix,
+    clientSuffix: settings.clientSettings.suffix || '',
     clientFormat: settings.clientSettings.numberFormat,
     clientNext: settings.clientSettings.nextNumber,
   }));
 
-  const [moduleNumbering, setModuleNumbering] = React.useState<any>(
-    () => (settings as any).moduleNumbering || DEFAULT_MODULE_NUMBERING,
-  );
+  const [moduleNumbering, setModuleNumbering] = React.useState<any>(() => {
+    const saved = (settings as any).moduleNumbering || {};
+    const merged: any = { ...DEFAULT_MODULE_NUMBERING };
+    for (const category of Object.keys(DEFAULT_MODULE_NUMBERING)) {
+      const savedCategory = saved[category] || {};
+      merged[category] = { ...(DEFAULT_MODULE_NUMBERING as any)[category] };
+      for (const series of Object.keys((DEFAULT_MODULE_NUMBERING as any)[category])) {
+        merged[category][series] = {
+          ...(DEFAULT_MODULE_NUMBERING as any)[category][series],
+          ...(savedCategory[series] || {}),
+        };
+      }
+    }
+    return merged;
+  });
 
   const [savedAt, setSavedAt] = React.useState<number | null>(null);
+
+  React.useEffect(() => {
+    let done = false;
+    const sync = () => {
+      const live = useSettingsStore.getState();
+      if (!live.hydrated || done) return;
+      done = true;
+      live.adoptSimpleNumberDefaults();
+      const next = useSettingsStore.getState();
+      setCore({
+        invoicePrefix: next.invoiceSettings.prefix,
+        invoiceSuffix: next.invoiceSettings.suffix || '',
+        invoiceFormat: next.invoiceSettings.numberFormat,
+        invoiceNext: next.invoiceSettings.nextNumber,
+        receiptPrefix: next.receiptSettings.prefix || 'RCP',
+        receiptSuffix: next.receiptSettings.suffix || '',
+        receiptFormat: next.receiptSettings.numberFormat || '{PREFIX}{NUMBER}',
+        receiptNext: next.receiptSettings.nextNumber || 1,
+        proformaPrefix: next.proformaInvoiceSettings.prefix || 'PRO',
+        proformaSuffix: next.proformaInvoiceSettings.suffix || '',
+        proformaFormat: next.proformaInvoiceSettings.numberFormat || '{PREFIX}{NUMBER}',
+        proformaNext: next.proformaInvoiceSettings.nextNumber || 1,
+        reservationPrefix: next.reservationSettings.prefix,
+        reservationSuffix: next.reservationSettings.suffix || '',
+        reservationFormat: next.reservationSettings.numberFormat,
+        reservationNext: next.reservationSettings.nextNumber,
+        clientPrefix: next.clientSettings.prefix,
+        clientSuffix: next.clientSettings.suffix || '',
+        clientFormat: next.clientSettings.numberFormat,
+        clientNext: next.clientSettings.nextNumber,
+      });
+      const saved = (next as any).moduleNumbering || {};
+      const merged: any = {};
+      for (const category of Object.keys(DEFAULT_MODULE_NUMBERING)) {
+        const savedCategory = saved[category] || {};
+        merged[category] = {};
+        for (const series of Object.keys((DEFAULT_MODULE_NUMBERING as any)[category])) {
+          merged[category][series] = {
+            ...(DEFAULT_MODULE_NUMBERING as any)[category][series],
+            ...(savedCategory[series] || {}),
+          };
+        }
+      }
+      setModuleNumbering(merged);
+    };
+    sync();
+    return useSettingsStore.subscribe(sync);
+  }, []);
 
   const setMod = (path: (m: any) => any) => setModuleNumbering((m: any) => path({ ...m }));
 
@@ -146,6 +258,7 @@ export default function NumberingSettingsPanel() {
     const errors: string[] = [];
     validateSeries('Invoice', core.invoiceFormat, Number(core.invoiceNext), settings.invoiceSettings.nextNumber, errors);
     validateSeries('Receipt', core.receiptFormat, Number(core.receiptNext), settings.receiptSettings.nextNumber || 1, errors);
+    validateSeries('Proforma', core.proformaFormat, Number(core.proformaNext), settings.proformaInvoiceSettings.nextNumber || 1, errors);
     validateSeries('Reservation', core.reservationFormat, Number(core.reservationNext), settings.reservationSettings.nextNumber, errors);
     validateSeries('Guest Profile', core.clientFormat, Number(core.clientNext), settings.clientSettings.nextNumber, errors);
     const priorMod = (settings as any).moduleNumbering || DEFAULT_MODULE_NUMBERING;
@@ -161,20 +274,50 @@ export default function NumberingSettingsPanel() {
       return;
     }
     updateNestedSetting('invoiceSettings.prefix', core.invoicePrefix);
+    updateNestedSetting('invoiceSettings.suffix', core.invoiceSuffix);
     updateNestedSetting('invoiceSettings.numberFormat', core.invoiceFormat);
     updateNestedSetting('invoiceSettings.nextNumber', Number(core.invoiceNext));
     updateNestedSetting('receiptSettings.prefix', core.receiptPrefix);
+    updateNestedSetting('receiptSettings.suffix', core.receiptSuffix);
     updateNestedSetting('receiptSettings.numberFormat', core.receiptFormat);
     updateNestedSetting('receiptSettings.nextNumber', Number(core.receiptNext));
+    updateNestedSetting('proformaInvoiceSettings.prefix', core.proformaPrefix);
+    updateNestedSetting('proformaInvoiceSettings.suffix', core.proformaSuffix);
+    updateNestedSetting('proformaInvoiceSettings.numberFormat', core.proformaFormat);
+    updateNestedSetting('proformaInvoiceSettings.nextNumber', Number(core.proformaNext));
     updateNestedSetting('reservationSettings.prefix', core.reservationPrefix);
+    updateNestedSetting('reservationSettings.suffix', core.reservationSuffix);
     updateNestedSetting('reservationSettings.numberFormat', core.reservationFormat);
     updateNestedSetting('reservationSettings.nextNumber', Number(core.reservationNext));
     updateNestedSetting('clientSettings.prefix', core.clientPrefix);
+    updateNestedSetting('clientSettings.suffix', core.clientSuffix);
     updateNestedSetting('clientSettings.numberFormat', core.clientFormat);
     updateNestedSetting('clientSettings.nextNumber', Number(core.clientNext));
     updateSetting('moduleNumbering', moduleNumbering as any);
     saveSettings();
     setSavedAt(Date.now());
+  };
+
+  const modRow = (label: string, category: string, series: string) => {
+    const row = moduleNumbering[category][series];
+    const set = (patch: Record<string, unknown>) => setMod((m: any) => ({
+      ...m,
+      [category]: { ...m[category], [series]: { ...m[category][series], ...patch } },
+    }));
+    return (
+      <Trio
+        key={`${category}.${series}`}
+        label={label}
+        prefix={row.prefix}
+        suffix={row.suffix || ''}
+        format={row.numberFormat}
+        next={row.nextNumber}
+        onPrefix={v => set({ prefix: v })}
+        onSuffix={v => set({ suffix: v })}
+        onFormat={v => set({ numberFormat: v })}
+        onNext={v => set({ nextNumber: v })}
+      />
+    );
   };
 
   return (
@@ -190,8 +333,10 @@ export default function NumberingSettingsPanel() {
       </Button>
       <div className="flex items-center justify-between pr-10">
         <div>
-          <h3 className="text-xl font-semibold">Document Numbering</h3>
-          <p className="text-sm text-gray-600">Prefixes, formats, and next numbers for every document series. Tokens: {'{PREFIX}'}, {'{YEAR}'}, {'{NUMBER}'}, {'{SUFFIX}'}.</p>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-xl font-semibold">Document Numbering</h3>
+            <HeadingInfo label="About document numbering">Prefixes, formats, and next numbers for every document series. Tokens: {'{PREFIX}'}, {'{YEAR}'}, {'{NUMBER}'}, {'{SUFFIX}'}.</HeadingInfo>
+          </div>
         </div>
         <div className="flex items-center gap-3">
           {savedAt && <Chip color="success" variant="flat" size="sm">Saved</Chip>}
@@ -202,90 +347,63 @@ export default function NumberingSettingsPanel() {
       <Card>
         <CardHeader><h4 className="font-semibold">Accounting &amp; Finance</h4></CardHeader>
         <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Trio label="Invoice" prefix={core.invoicePrefix} format={core.invoiceFormat} next={core.invoiceNext}
-            onPrefix={v => setCore(c => ({ ...c, invoicePrefix: v }))} onFormat={v => setCore(c => ({ ...c, invoiceFormat: v }))} onNext={v => setCore(c => ({ ...c, invoiceNext: v }))} />
-          <Trio label="Receipt" prefix={core.receiptPrefix} format={core.receiptFormat} next={core.receiptNext}
-            onPrefix={v => setCore(c => ({ ...c, receiptPrefix: v }))} onFormat={v => setCore(c => ({ ...c, receiptFormat: v }))} onNext={v => setCore(c => ({ ...c, receiptNext: v }))} />
-          <Trio label="Credit Note" prefix={moduleNumbering.accounting.creditNote.prefix} format={moduleNumbering.accounting.creditNote.numberFormat} next={moduleNumbering.accounting.creditNote.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, accounting: { ...m.accounting, creditNote: { ...m.accounting.creditNote, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, accounting: { ...m.accounting, creditNote: { ...m.accounting.creditNote, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, accounting: { ...m.accounting, creditNote: { ...m.accounting.creditNote, nextNumber: v } } }))} />
-          <Trio label="Debit Note" prefix={moduleNumbering.accounting.debitNote.prefix} format={moduleNumbering.accounting.debitNote.numberFormat} next={moduleNumbering.accounting.debitNote.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, accounting: { ...m.accounting, debitNote: { ...m.accounting.debitNote, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, accounting: { ...m.accounting, debitNote: { ...m.accounting.debitNote, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, accounting: { ...m.accounting, debitNote: { ...m.accounting.debitNote, nextNumber: v } } }))} />
+          <Trio label="Invoice" prefix={core.invoicePrefix} suffix={core.invoiceSuffix} format={core.invoiceFormat} next={core.invoiceNext}
+            onPrefix={v => setCore(c => ({ ...c, invoicePrefix: v }))} onSuffix={v => setCore(c => ({ ...c, invoiceSuffix: v }))} onFormat={v => setCore(c => ({ ...c, invoiceFormat: v }))} onNext={v => setCore(c => ({ ...c, invoiceNext: v }))} />
+          <Trio label="Receipt" prefix={core.receiptPrefix} suffix={core.receiptSuffix} format={core.receiptFormat} next={core.receiptNext}
+            onPrefix={v => setCore(c => ({ ...c, receiptPrefix: v }))} onSuffix={v => setCore(c => ({ ...c, receiptSuffix: v }))} onFormat={v => setCore(c => ({ ...c, receiptFormat: v }))} onNext={v => setCore(c => ({ ...c, receiptNext: v }))} />
+          <Trio label="Proforma" prefix={core.proformaPrefix} suffix={core.proformaSuffix} format={core.proformaFormat} next={core.proformaNext}
+            onPrefix={v => setCore(c => ({ ...c, proformaPrefix: v }))} onSuffix={v => setCore(c => ({ ...c, proformaSuffix: v }))} onFormat={v => setCore(c => ({ ...c, proformaFormat: v }))} onNext={v => setCore(c => ({ ...c, proformaNext: v }))} />
+          {modRow('Credit Note', 'accounting', 'creditNote')}
+          {modRow('Debit Note', 'accounting', 'debitNote')}
         </CardBody>
       </Card>
 
       <Card>
         <CardHeader><h4 className="font-semibold">Front Office &amp; Guests</h4></CardHeader>
         <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Trio label="Reservation" prefix={core.reservationPrefix} format={core.reservationFormat} next={core.reservationNext}
-            onPrefix={v => setCore(c => ({ ...c, reservationPrefix: v }))} onFormat={v => setCore(c => ({ ...c, reservationFormat: v }))} onNext={v => setCore(c => ({ ...c, reservationNext: v }))} />
-          <Trio label="Folio" prefix={moduleNumbering.frontOffice.folio.prefix} format={moduleNumbering.frontOffice.folio.numberFormat} next={moduleNumbering.frontOffice.folio.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, frontOffice: { ...m.frontOffice, folio: { ...m.frontOffice.folio, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, frontOffice: { ...m.frontOffice, folio: { ...m.frontOffice.folio, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, frontOffice: { ...m.frontOffice, folio: { ...m.frontOffice.folio, nextNumber: v } } }))} />
-          <Trio label="Guest Profile" prefix={core.clientPrefix} format={core.clientFormat} next={core.clientNext}
-            onPrefix={v => setCore(c => ({ ...c, clientPrefix: v }))} onFormat={v => setCore(c => ({ ...c, clientFormat: v }))} onNext={v => setCore(c => ({ ...c, clientNext: v }))} />
+          <Trio label="Reservation" pad={5} prefix={core.reservationPrefix} suffix={core.reservationSuffix} format={core.reservationFormat} next={core.reservationNext}
+            onPrefix={v => setCore(c => ({ ...c, reservationPrefix: v }))} onSuffix={v => setCore(c => ({ ...c, reservationSuffix: v }))} onFormat={v => setCore(c => ({ ...c, reservationFormat: v }))} onNext={v => setCore(c => ({ ...c, reservationNext: v }))} />
+          {modRow('Folio', 'frontOffice', 'folio')}
+          {modRow('Housekeeping', 'frontOffice', 'housekeepingTicket')}
+          {modRow('Service Charge', 'frontOffice', 'serviceCharge')}
+          {modRow('Corporate Guest', 'frontOffice', 'corporateGuest')}
+          {modRow('Personal Guest', 'frontOffice', 'personalGuest')}
         </CardBody>
       </Card>
 
       <Card>
         <CardHeader><h4 className="font-semibold">Food &amp; Beverage</h4></CardHeader>
         <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Trio label="Order" prefix={moduleNumbering.foodBeverage.order.prefix} format={moduleNumbering.foodBeverage.order.numberFormat} next={moduleNumbering.foodBeverage.order.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, foodBeverage: { ...m.foodBeverage, order: { ...m.foodBeverage.order, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, foodBeverage: { ...m.foodBeverage, order: { ...m.foodBeverage.order, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, foodBeverage: { ...m.foodBeverage, order: { ...m.foodBeverage.order, nextNumber: v } } }))} />
-          <Trio label="KOT" prefix={moduleNumbering.foodBeverage.kitchenOrderTicket.prefix} format={moduleNumbering.foodBeverage.kitchenOrderTicket.numberFormat} next={moduleNumbering.foodBeverage.kitchenOrderTicket.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, foodBeverage: { ...m.foodBeverage, kitchenOrderTicket: { ...m.foodBeverage.kitchenOrderTicket, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, foodBeverage: { ...m.foodBeverage, kitchenOrderTicket: { ...m.foodBeverage.kitchenOrderTicket, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, foodBeverage: { ...m.foodBeverage, kitchenOrderTicket: { ...m.foodBeverage.kitchenOrderTicket, nextNumber: v } } }))} />
+          {modRow('Order', 'foodBeverage', 'order')}
+          {modRow('KOT', 'foodBeverage', 'kitchenOrderTicket')}
+          {modRow('BOT', 'foodBeverage', 'barOrderTicket')}
         </CardBody>
       </Card>
 
       <Card>
         <CardHeader><h4 className="font-semibold">Inventory &amp; Stores</h4></CardHeader>
         <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Trio label="Requisition" prefix={moduleNumbering.inventory.requisition.prefix} format={moduleNumbering.inventory.requisition.numberFormat} next={moduleNumbering.inventory.requisition.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, inventory: { ...m.inventory, requisition: { ...m.inventory.requisition, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, inventory: { ...m.inventory, requisition: { ...m.inventory.requisition, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, inventory: { ...m.inventory, requisition: { ...m.inventory.requisition, nextNumber: v } } }))} />
-          <Trio label="Stock Transfer" prefix={moduleNumbering.inventory.stockTransfer.prefix} format={moduleNumbering.inventory.stockTransfer.numberFormat} next={moduleNumbering.inventory.stockTransfer.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, inventory: { ...m.inventory, stockTransfer: { ...m.inventory.stockTransfer, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, inventory: { ...m.inventory, stockTransfer: { ...m.inventory.stockTransfer, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, inventory: { ...m.inventory, stockTransfer: { ...m.inventory.stockTransfer, nextNumber: v } } }))} />
-          <Trio label="Goods Receipt" prefix={moduleNumbering.inventory.goodsReceipt.prefix} format={moduleNumbering.inventory.goodsReceipt.numberFormat} next={moduleNumbering.inventory.goodsReceipt.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, inventory: { ...m.inventory, goodsReceipt: { ...m.inventory.goodsReceipt, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, inventory: { ...m.inventory, goodsReceipt: { ...m.inventory.goodsReceipt, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, inventory: { ...m.inventory, goodsReceipt: { ...m.inventory.goodsReceipt, nextNumber: v } } }))} />
+          {modRow('Stock Item', 'inventory', 'stockItem')}
+          {modRow('Purchase Order', 'inventory', 'purchaseOrder')}
+          {modRow('Requisition', 'inventory', 'requisition')}
+          {modRow('Stock Transfer', 'inventory', 'stockTransfer')}
+          {modRow('Goods Issue', 'inventory', 'goodsIssue')}
+          {modRow('Goods Receipt', 'inventory', 'goodsReceipt')}
+          {modRow('Stock Count', 'inventory', 'stockCount')}
         </CardBody>
       </Card>
 
       <Card>
         <CardHeader><h4 className="font-semibold">Events, Maintenance, Security &amp; HR</h4></CardHeader>
         <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Trio label="Event Booking" prefix={moduleNumbering.events.eventBooking.prefix} format={moduleNumbering.events.eventBooking.numberFormat} next={moduleNumbering.events.eventBooking.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, events: { ...m.events, eventBooking: { ...m.events.eventBooking, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, events: { ...m.events, eventBooking: { ...m.events.eventBooking, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, events: { ...m.events, eventBooking: { ...m.events.eventBooking, nextNumber: v } } }))} />
-          <Trio label="Work Order" prefix={moduleNumbering.maintenance.workOrder.prefix} format={moduleNumbering.maintenance.workOrder.numberFormat} next={moduleNumbering.maintenance.workOrder.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, maintenance: { ...m.maintenance, workOrder: { ...m.maintenance.workOrder, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, maintenance: { ...m.maintenance, workOrder: { ...m.maintenance.workOrder, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, maintenance: { ...m.maintenance, workOrder: { ...m.maintenance.workOrder, nextNumber: v } } }))} />
-          <Trio label="Incident Report" prefix={moduleNumbering.security.incidentReport.prefix} format={moduleNumbering.security.incidentReport.numberFormat} next={moduleNumbering.security.incidentReport.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, security: { ...m.security, incidentReport: { ...m.security.incidentReport, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, security: { ...m.security, incidentReport: { ...m.security.incidentReport, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, security: { ...m.security, incidentReport: { ...m.security.incidentReport, nextNumber: v } } }))} />
-          <Trio label="Employee ID" prefix={moduleNumbering.hr.employeeId.prefix} format={moduleNumbering.hr.employeeId.numberFormat} next={moduleNumbering.hr.employeeId.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, hr: { ...m.hr, employeeId: { ...m.hr.employeeId, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, hr: { ...m.hr, employeeId: { ...m.hr.employeeId, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, hr: { ...m.hr, employeeId: { ...m.hr.employeeId, nextNumber: v } } }))} />
-          <Trio label="Timesheet" prefix={moduleNumbering.hr.timesheet.prefix} format={moduleNumbering.hr.timesheet.numberFormat} next={moduleNumbering.hr.timesheet.nextNumber}
-            onPrefix={v => setMod(m => ({ ...m, hr: { ...m.hr, timesheet: { ...m.hr.timesheet, prefix: v } } }))}
-            onFormat={v => setMod(m => ({ ...m, hr: { ...m.hr, timesheet: { ...m.hr.timesheet, numberFormat: v } } }))}
-            onNext={v => setMod(m => ({ ...m, hr: { ...m.hr, timesheet: { ...m.hr.timesheet, nextNumber: v } } }))} />
+          {modRow('Event Booking', 'events', 'eventBooking')}
+          {modRow('Quotation', 'events', 'quotation')}
+          {modRow('Work Order', 'maintenance', 'workOrder')}
+          {modRow('Inspection', 'maintenance', 'inspection')}
+          {modRow('Incident Report', 'security', 'incidentReport')}
+          {modRow('Access Pass', 'security', 'accessPass')}
+          {modRow('Employee ID', 'hr', 'employeeId')}
+          {modRow('Timesheet', 'hr', 'timesheet')}
         </CardBody>
       </Card>
     </div>

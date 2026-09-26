@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import {
   Card, CardBody, Button, Input, Select, SelectItem,
   Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
@@ -477,10 +478,10 @@ export default function BankCashManagementPage() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">🏦 Bank & Cash Management</h1>
-        <p className="text-gray-600 mt-2">
-          Manage bank accounts, cash positions, and liquidity
-        </p>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-3xl font-bold text-gray-900">🏦 Bank & Cash Management</h1>
+          <HeadingInfo label="About bank and cash">Manage bank accounts, cash positions, and liquidity</HeadingInfo>
+        </div>
       </div>
 
       {/* Summary Cards */}

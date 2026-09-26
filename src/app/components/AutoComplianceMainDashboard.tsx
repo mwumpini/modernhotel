@@ -5,7 +5,6 @@ import {
   Card,
   CardBody,
   Button,
-  Divider,
   Input,
   Modal,
   ModalBody,
@@ -17,6 +16,8 @@ import {
   useDisclosure,
 } from '@heroui/react';
 import { useComplianceStore } from '../lib/compliance/store';
+import { useAccountingStore } from '../lib/accounting/store';
+import { usePayrollStore } from '../lib/hr/payrollStore';
 import {
   DEFAULT_COMPLIANCE_TAB_LABELS,
   getComplianceTabLabels,
@@ -26,6 +27,7 @@ import CountrySelector from './CountrySelector';
 import ComplianceReports from './ComplianceReports';
 import TaxRateBuilder from './TaxRateBuilder';
 import PayrollBuilderPanel from './PayrollBuilderPanel';
+import { syncOpenSalesTaxFilings } from '../lib/compliance/salesFilingSync';
 
 const VALID_TABS = ['tax', 'payroll', 'reports'] as const;
 type ComplianceTab = (typeof VALID_TABS)[number];
@@ -58,8 +60,15 @@ export default function AutoComplianceMainDashboard() {
   const [draftLabels, setDraftLabels] = useState(DEFAULT_COMPLIANCE_TAB_LABELS);
 
   useEffect(() => {
-    void useComplianceStore.getState().syncCountryFromSetup();
-    void useComplianceStore.getState().hydrateReportFilingsFromApi();
+    void (async () => {
+      await useComplianceStore.getState().syncCountryFromSetup();
+      await useComplianceStore.getState().hydrateReportFilingsFromApi();
+      await Promise.all([
+        useAccountingStore.getState().initializeAccounting().catch(() => {}),
+        usePayrollStore.getState().hydrateFromApi().catch(() => {}),
+      ]);
+      syncOpenSalesTaxFilings();
+    })();
   }, []);
 
   useEffect(() => {
@@ -132,26 +141,21 @@ export default function AutoComplianceMainDashboard() {
         </Card>
       )}
 
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-bold text-ghana-black">⚖️ Compliance & Reports</h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <CountrySelector />
+          <Button size="sm" variant="bordered" onPress={openSettings}>
+            Rooms &amp; company
+          </Button>
+          <Button size="sm" variant="light" onPress={openRename}>
+            Rename tabs
+          </Button>
+        </div>
+      </div>
+
       <Card className="border border-slate-200 shadow-sm">
-        <CardBody className="gap-4 p-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <h1 className="text-2xl font-bold tracking-tight text-ghana-black">Compliance &amp; Tax</h1>
-              <p className="mt-1 max-w-2xl text-sm text-slate-600">
-                Country rates for invoices, rooms and payroll. Name the sections and the rates — Ghana starts with VAT and levies.
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <CountrySelector />
-              <Button size="sm" variant="bordered" onPress={openSettings}>
-                Rooms &amp; company
-              </Button>
-              <Button size="sm" variant="light" onPress={openRename}>
-                Rename tabs
-              </Button>
-            </div>
-          </div>
-          <Divider />
+        <CardBody className="p-5">
           <div className="flex flex-wrap items-baseline divide-x divide-slate-200">
             <div className="flex items-baseline gap-2 px-4 first:pl-0">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Tax rules</span>

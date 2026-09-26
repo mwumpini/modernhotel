@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from './HeadingInfo';
 import { 
   Card, 
   CardBody, 
@@ -33,10 +34,117 @@ import {
   AccordionItem
 } from "@heroui/react";
 import { useSettingsStore } from '../lib/settings/store';
-import { applyTheme, type AppTheme } from '../lib/theme/applyTheme';
+import { passwordPolicyError } from '../lib/settings/passwordPolicy';
+import { applyDisplay, normalizeFontSize, normalizeTheme, type AppFont, type AppFontSize, type AppTheme } from '../lib/theme/applyTheme';
 import type { UserPreferences } from '../lib/settings/store';
 import { PERMISSION_MODULES, FULL_SYSTEM_ACCESS } from '../lib/settings/permissionCatalog';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
+
+const LIGHT_BACKGROUNDS = [
+  { id: '', label: 'Soft gray', color: '#eef1f4' },
+  { id: '#ffffff', label: 'White', color: '#ffffff' },
+  { id: '#f6f1e7', label: 'Warm', color: '#f6f1e7' },
+  { id: '#e4efe7', label: 'Sage', color: '#e4efe7' },
+  { id: '#e6eef6', label: 'Mist', color: '#e6eef6' },
+  { id: '#f4eadc', label: 'Sand', color: '#f4eadc' },
+];
+
+const DARK_BACKGROUNDS = [
+  { id: '', label: 'Slate', color: '#1a1f29' },
+  { id: '#172033', label: 'Navy', color: '#172033' },
+  { id: '#17241e', label: 'Forest', color: '#17241e' },
+  { id: '#241c28', label: 'Plum', color: '#241c28' },
+  { id: '#2a241c', label: 'Brown', color: '#2a241c' },
+];
+
+const FONT_CHOICES: { id: AppFont; label: string; family: string }[] = [
+  { id: 'source', label: 'Source Sans', family: 'var(--font-source), "Source Sans 3", sans-serif' },
+  { id: 'nunito', label: 'Nunito Sans', family: 'var(--font-nunito), "Nunito Sans", sans-serif' },
+  { id: 'geist', label: 'Geist', family: 'var(--font-geist-sans), sans-serif' },
+  { id: 'serif', label: 'Literata', family: 'var(--font-literata), Georgia, serif' },
+];
+
+const FONT_SIZES: { id: AppFontSize; label: string; px: number }[] = [
+  { id: 'small', label: 'Small', px: 13 },
+  { id: 'medium', label: 'Medium', px: 15 },
+  { id: 'large', label: 'Large', px: 17 },
+  { id: 'xlarge', label: 'Extra large', px: 19 },
+];
+
+function BackgroundPicker({
+  theme,
+  lightValue,
+  darkValue,
+  onLight,
+  onDark,
+}: {
+  theme: AppTheme;
+  lightValue: string;
+  darkValue: string;
+  onLight: (color: string) => void;
+  onDark: (color: string) => void;
+}) {
+  const showLight = theme !== 'dark';
+  const showDark = theme !== 'light';
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-default-500">
+        The color behind the cards. White is hard on some eyes, so the page can be a softer color.
+      </p>
+      {showLight && (
+        <SwatchRow title="Light page" presets={LIGHT_BACKGROUNDS} value={lightValue} onChange={onLight} />
+      )}
+      {showDark && (
+        <SwatchRow title="Dark page" presets={DARK_BACKGROUNDS} value={darkValue} onChange={onDark} />
+      )}
+    </div>
+  );
+}
+
+function SwatchRow({
+  title,
+  presets,
+  value,
+  onChange,
+}: {
+  title: string;
+  presets: { id: string; label: string; color: string }[];
+  value: string;
+  onChange: (color: string) => void;
+}) {
+  const custom = value && !presets.some((preset) => preset.id === value);
+  return (
+    <div className="space-y-2">
+      <p className="text-sm font-medium">{title}</p>
+      <div className="flex flex-wrap gap-2">
+        {presets.map((preset) => {
+          const selected = value === preset.id;
+          return (
+            <button
+              key={preset.label}
+              type="button"
+              onClick={() => onChange(preset.id)}
+              className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-sm ${selected ? 'border-primary' : 'border-default-200'}`}
+            >
+              <span className="h-5 w-5 rounded-md border border-black/10" style={{ backgroundColor: preset.color }} />
+              {preset.label}
+            </button>
+          );
+        })}
+      </div>
+      <label className="flex items-center gap-2 text-sm">
+        Custom
+        <input
+          type="color"
+          aria-label={`${title} custom color`}
+          value={custom ? value : '#eef1f4'}
+          onChange={(e) => onChange(e.target.value)}
+          className="h-8 w-12 cursor-pointer rounded border border-default-200 bg-transparent"
+        />
+      </label>
+    </div>
+  );
+}
 
 export default function UserManagementUnified() {
   const { users, roles, addUser, updateUser, deleteUser, currentUser, updateUserProfile, updateUserPreferences, changePassword, addRole, updateRole, deleteRole, hasPermission } = useSettingsStore();
@@ -110,6 +218,8 @@ export default function UserManagementUnified() {
     newPassword: '',
     confirmPassword: '',
   });
+
+  const [displayTab, setDisplayTab] = useState<'theme' | 'background' | 'font'>('theme');
 
   const [profileForm, setProfileForm] = useState({
     firstName: currentUser?.firstName || '',
@@ -208,6 +318,10 @@ export default function UserManagementUnified() {
       window.alert(`You don't have permission to ${isEditing ? 'edit' : 'create'} users.`);
       return;
     }
+    if (!isEditing || userForm.password) {
+      const pwError = passwordPolicyError(userForm.password || '', useSettingsStore.getState().security.passwordPolicy);
+      if (pwError) { window.alert(pwError); return; }
+    }
     if (isEditing && selectedUser) {
       // Update existing user
       console.log('🔧 [UserManagementUnified] Updating user:', {
@@ -235,12 +349,6 @@ export default function UserManagementUnified() {
       }, userForm.password || undefined);
       if (error) { window.alert(error); return; }
     } else {
-      // Create new user — requires a password, since this now creates a real,
-      // NextAuth-authenticated account (see /api/users), not just a local row.
-      if (!userForm.password || userForm.password.length < 6) {
-        window.alert('Password is required and must be at least 6 characters.');
-        return;
-      }
       console.log('🔧 [UserManagementUnified] Creating new user:', {
         username: userForm.username,
         email: userForm.email,
@@ -354,13 +462,21 @@ export default function UserManagementUnified() {
       current[pathParts[pathParts.length - 1]] = value;
       
       // Update user preferences
+      if (path === 'theme' && value !== 'light' && value !== 'dark' && value !== 'auto') return;
+      if (path === 'fontSize' && !['small', 'medium', 'large', 'xlarge'].includes(String(value))) return;
+
       updateUserPreferences(currentUser.id, preferenceUpdates as Partial<UserPreferences>);
-      
-      // Apply theme immediately if it's a theme change
-      if (path === 'theme') {
-        console.log('🔧 [UserManagementUnified] Applying theme immediately:', value);
-        applyTheme(value as AppTheme);
-      }
+
+      const nextTheme = (path === 'theme' ? value : userPreferences.theme) as AppTheme;
+      const nextFont = (path === 'font' ? value : userPreferences.font) as AppFont;
+      const nextFontSize = (path === 'fontSize' ? value : userPreferences.fontSize) as AppFontSize;
+      applyDisplay({
+        theme: nextTheme,
+        backgroundLight: path === 'backgroundLight' ? String(value) : userPreferences.backgroundLight,
+        backgroundDark: path === 'backgroundDark' ? String(value) : userPreferences.backgroundDark,
+        font: nextFont,
+        fontSize: nextFontSize,
+      });
       
       // Force a re-render by updating the component state
       setSelectedTab(selectedTab);
@@ -747,17 +863,97 @@ export default function UserManagementUnified() {
             <h4 className="text-lg font-semibold text-ghana-black">🎨 Theme & Display</h4>
           </CardHeader>
           <CardBody className="space-y-4">
-                         <Select
-               label="Theme"
-               selectedKeys={[userPreferences.theme]}
-               onChange={(e) => updatePreference('theme', e.target.value)}
-               description={`Current: ${userPreferences.theme === 'auto' ? 'System preference' : userPreferences.theme}`}
-             >
-               <SelectItem key="light">🌞 Light</SelectItem>
-               <SelectItem key="dark">🌙 Dark</SelectItem>
-               <SelectItem key="auto">🔄 Auto (System)</SelectItem>
-             </Select>
+            <div className="flex gap-1 rounded-lg bg-default-100 p-1">
+              {([
+                ['theme', 'Theme'],
+                ['background', 'Background'],
+                ['font', 'Font'],
+              ] as const).map(([key, label]) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  variant={displayTab === key ? 'solid' : 'light'}
+                  color={displayTab === key ? 'primary' : 'default'}
+                  className="flex-1"
+                  onPress={() => setDisplayTab(key)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
 
+            {displayTab === 'theme' && (
+              <Select
+                label="Theme"
+                selectedKeys={[normalizeTheme(userPreferences.theme)]}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  if (next === 'light' || next === 'dark' || next === 'auto') updatePreference('theme', next);
+                }}
+                description="Light, dark, or follow this computer."
+              >
+                <SelectItem key="light">🌞 Light</SelectItem>
+                <SelectItem key="dark">🌙 Dark</SelectItem>
+                <SelectItem key="auto">🔄 Auto (System)</SelectItem>
+              </Select>
+            )}
+
+            {displayTab === 'background' && (
+              <BackgroundPicker
+                theme={normalizeTheme(userPreferences.theme)}
+                lightValue={userPreferences.backgroundLight || ''}
+                darkValue={userPreferences.backgroundDark || ''}
+                onLight={(color) => updatePreference('backgroundLight', color)}
+                onDark={(color) => updatePreference('backgroundDark', color)}
+              />
+            )}
+
+            {displayTab === 'font' && (
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-sm text-default-500">The type used across the app.</p>
+                  {FONT_CHOICES.map((choice) => {
+                    const selected = (userPreferences.font || 'source') === choice.id;
+                    return (
+                      <button
+                        key={choice.id}
+                        type="button"
+                        onClick={() => updatePreference('font', choice.id)}
+                        className={`w-full rounded-lg border px-3 py-2 text-left ${selected ? 'border-primary bg-primary/10' : 'border-default-200'}`}
+                      >
+                        <span className="block text-base" style={{ fontFamily: choice.family }}>
+                          {choice.label}
+                        </span>
+                        <span className="block text-sm text-default-500" style={{ fontFamily: choice.family }}>
+                          Front desk · Invoice INV100001 · ₵1,250.00
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="space-y-2">
+                  <p className="text-sm text-default-500">The size used across the app.</p>
+                  {FONT_SIZES.map((choice) => {
+                    const selected = normalizeFontSize(userPreferences.fontSize) === choice.id;
+                    return (
+                      <button
+                        key={choice.id}
+                        type="button"
+                        onClick={() => updatePreference('fontSize', choice.id)}
+                        className={`w-full rounded-lg border px-3 py-2 text-left ${selected ? 'border-primary bg-primary/10' : 'border-default-200'}`}
+                      >
+                        <span className="block" style={{ fontSize: `${choice.px}px` }}>
+                          {choice.label}
+                        </span>
+                        <span className="block text-default-500" style={{ fontSize: `${Math.max(12, choice.px - 2)}px` }}>
+                          Front desk · Invoice INV100001 · ₵1,250.00
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </CardBody>
         </Card>
       </div>
@@ -803,12 +999,13 @@ export default function UserManagementUnified() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-3xl font-bold text-ghana-black">👥 User Management & Preferences</h1>
-          <p className="text-gray-600">Complete user lifecycle management with Ghana compliance, role-based access control, and personalized preferences</p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-3xl font-bold text-ghana-black">👥 User Management & Preferences</h1>
+            <HeadingInfo label="About user management">Complete user lifecycle management with Ghana compliance, role-based access control, and personalized preferences</HeadingInfo>
+          </div>
         </div>
                  <div className="flex items-center space-x-2">
            <Badge color="success">System Online</Badge>
-           <Badge color="primary">SaaS Ready</Badge>
            <Badge 
              color={userPreferences.theme === 'dark' ? 'secondary' : 'default'}
              className="flex items-center space-x-1"
@@ -869,7 +1066,7 @@ export default function UserManagementUnified() {
                 type="password"
                 value={userForm.password}
                 onChange={(e) => setUserForm({...userForm, password: e.target.value})}
-                placeholder={isEditing ? 'Leave blank to keep unchanged' : 'At least 6 characters'}
+                placeholder={isEditing ? 'Leave blank to keep unchanged' : `At least ${useSettingsStore.getState().security.passwordPolicy.minLength} characters`}
                 description={isEditing ? (!canResetPassword ? "You don't have permission to reset passwords" : undefined) : 'This user will sign in with this email and password.'}
                 isDisabled={isEditing && !canResetPassword}
               />

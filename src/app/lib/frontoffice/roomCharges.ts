@@ -11,6 +11,7 @@
 import type { Reservation } from './types';
 import { roundMoney2 } from '../tax/engine';
 import { genId } from './helpers/ids';
+import { isPostedRoomCharge } from './folioLedger';
 
 export type StoreLike = {
   reservations: Reservation[];
@@ -24,13 +25,13 @@ export type StoreLike = {
 export const ROOM_CHARGE_DESCRIPTION = 'Room Charge';
 
 export function isRoomLine(description?: string): boolean {
-  return (description || '').toLowerCase().includes('room');
+  return isPostedRoomCharge({ description });
 }
 
-export function getRoomChargeDatesOnFolio(folio: { charges?: Array<{ description?: string; date?: string }> }): Set<string> {
+export function getRoomChargeDatesOnFolio(folio: { charges?: Array<{ description?: string; category?: string; date?: string }> }): Set<string> {
   return new Set(
     (folio.charges || [])
-      .filter((c) => isRoomLine(c.description))
+      .filter((c) => isPostedRoomCharge(c))
       .map((c) => (c.date || '').slice(0, 10))
       .filter(Boolean),
   );

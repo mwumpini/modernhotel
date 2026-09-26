@@ -583,6 +583,9 @@ export const GHANA_CHART_OF_ACCOUNTS = [
   { code: '2205', name: 'Trade Accounts Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Supplier invoices and payments — the postable leaf under 2200; 2210/2220 are payroll withholdings, not trade payables' },
   { code: '2210', name: 'PAYE Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Employee income tax withheld' },
   { code: '2220', name: 'SSNIT & Tier-1 Contributions Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Social security remittances due' },
+  { code: '2221', name: 'Tier 3 Provident Fund Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Voluntary provident contributions withheld from staff' },
+  { code: '2225', name: 'Tier 2 Occupational Pension Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Employer occupational pension owed to the licensed trustee' },
+  { code: '2230', name: 'Other Staff Deductions Payable', type: 'Liability', category: 'Current Liabilities', level: 3, description: 'Loans, advances and other amounts withheld from net pay' },
   { code: '2300', name: 'Accrued Expenses', type: 'Liability', category: 'Current Liabilities', level: 2 },
   { code: '2400', name: 'Deferred Revenue', type: 'Liability', category: 'Current Liabilities', level: 2 },
 

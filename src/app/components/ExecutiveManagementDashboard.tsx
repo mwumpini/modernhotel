@@ -384,7 +384,7 @@ export default function ExecutiveManagementDashboard() {
     <div className="p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🏛️ Master Command Center</h2>
+        <h2 className="text-2xl font-bold text-ghana-black">📊 Executive Management</h2>
         <div className="flex items-center gap-2">
           <input
             type="date"

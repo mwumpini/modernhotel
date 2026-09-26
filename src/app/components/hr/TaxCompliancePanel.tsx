@@ -9,8 +9,9 @@ export default function TaxCompliancePanel() {
   const setCountry = useComplianceStore((s) => s.setCountry);
   const taxRules = useComplianceStore((s) => s.taxRules);
 
-  const [amount, setAmount] = React.useState(1000);
-  const [result, setResult] = React.useState<{ taxes: Array<{ name: string; amount: number; glCode: string }>; total: number; netPay: number } | null>(null);
+  const [basic, setBasic] = React.useState(2500);
+  const [allowances, setAllowances] = React.useState(0);
+  const [result, setResult] = React.useState<{ taxes: Array<{ name: string; amount: number; glCode: string }>; total: number; netPay: number; gross: number } | null>(null);
   const [loading, setLoading] = React.useState(false);
 
   React.useEffect(() => {
@@ -28,22 +29,28 @@ export default function TaxCompliancePanel() {
     setLoading(true);
     try {
       const compliance = useComplianceStore.getState();
-      const tier1Rule = findRule('TIER1');
-      const tier2Rule = findRule('TIER2');
-      const tier1Amount = tier1Rule ? amount * ((tier1Rule.rate ?? 0) / 100) : 0;
-      const tier2Amount = tier2Rule ? amount * ((tier2Rule.rate ?? 0) / 100) : 0;
-      // Ghana's PAYE base nets off the Tier 1 (SSNIT) employee contribution first, same as
-      // the real payroll run -- other countries with no TIER1 rule just tax the full amount.
-      const taxablePay = Math.max(0, amount - tier1Amount);
+      const gross = Math.round((basic + allowances) * 100) / 100;
+      // Same bases as the payroll run: Tier 1 and Tier 2 are on basic salary only.
+      // Cash allowances are PAYE-taxable and are not part of the SSNIT base.
+      const employeeAmount = (category: string) =>
+        compliance.calculateTax(basic, category, { domain: 'payroll', operation: 'internal' }).taxes
+          .reduce((sum, line) => sum + (line.amount || 0), 0);
+      const tier1Amount = findRule('TIER1') ? employeeAmount('TIER1') : 0;
+      const tier2Amount = findRule('TIER2') ? employeeAmount('TIER2') : 0;
+      const taxablePay = Math.max(0, gross - tier1Amount - tier2Amount);
       const paye = compliance.calculateTax(taxablePay, 'PAYE', { domain: 'payroll', operation: 'internal' });
 
       const taxes: Array<{ name: string; amount: number; glCode: string }> = [];
-      if (tier1Rule) taxes.push({ name: tier1Rule.name || 'Tier 1 (SSNIT)', amount: tier1Amount, glCode: tier1Rule.glCode || '' });
-      if (tier2Rule) taxes.push({ name: tier2Rule.name || 'Tier 2 Pension', amount: tier2Amount, glCode: tier2Rule.glCode || '' });
+      const pushTier = (tag: string, amount: number, fallback: string) => {
+        const rule = findRule(tag);
+        if (rule && amount > 0) taxes.push({ name: rule.name || fallback, amount, glCode: rule.glCode || '' });
+      };
+      pushTier('TIER1', tier1Amount, 'Tier 1 (SSNIT)');
+      pushTier('TIER2', tier2Amount, 'Tier 2 Pension');
       paye.taxes.forEach((t) => taxes.push({ name: t.name, amount: t.amount, glCode: t.glCode }));
 
-      const total = taxes.reduce((s, t) => s + t.amount, 0);
-      setResult({ taxes, total, netPay: amount - total });
+      const total = Math.round(taxes.reduce((s, t) => s + t.amount, 0) * 100) / 100;
+      setResult({ taxes, total, gross, netPay: Math.round((gross - total) * 100) / 100 });
     } finally {
       setLoading(false);
     }
@@ -60,16 +67,17 @@ export default function TaxCompliancePanel() {
               <SelectItem key="NG">Nigeria</SelectItem>
               <SelectItem key="ZA">South Africa</SelectItem>
             </Select>
-            <Input label="Gross Salary" type="number" value={String(amount)} onChange={(e) => setAmount(parseFloat(e.target.value || '0'))} variant="bordered" className="w-40" />
+            <Input label="Basic salary" type="number" value={String(basic)} onChange={(e) => setBasic(parseFloat(e.target.value || '0'))} variant="bordered" className="w-36" />
+            <Input label="Cash allowances" type="number" value={String(allowances)} onChange={(e) => setAllowances(parseFloat(e.target.value || '0'))} variant="bordered" className="w-36" />
             <Button color="primary" onPress={run} isLoading={loading}>Calculate</Button>
           </div>
         </CardHeader>
         <CardBody>
-          {!result && <div className="text-sm text-gray-600">Choose a country and calculate to preview PAYE/SSNIT withholding on a gross salary.</div>}
+          {!result && <div className="text-sm text-gray-600">Tier 1 (SSNIT) is charged on basic salary. Cash allowances are added for PAYE and are not part of the SSNIT base — the same split the payroll run uses.</div>}
           {result && (
             <>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-                <div className="p-3 bg-gray-50 rounded"><div className="text-xs text-gray-500">Gross Salary</div><div className="text-xl font-semibold">{amount.toFixed(2)}</div></div>
+                <div className="p-3 bg-gray-50 rounded"><div className="text-xs text-gray-500">Gross (basic + allowances)</div><div className="text-xl font-semibold">{result.gross.toFixed(2)}</div></div>
                 <div className="p-3 bg-gray-50 rounded"><div className="text-xs text-gray-500">Total Statutory Deductions</div><div className="text-xl font-semibold">{result.total.toFixed(2)}</div></div>
                 <div className="p-3 bg-gray-50 rounded"><div className="text-xs text-gray-500">Net Pay</div><div className="text-xl font-semibold">{result.netPay.toFixed(2)}</div></div>
               </div>

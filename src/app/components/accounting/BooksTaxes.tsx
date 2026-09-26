@@ -30,7 +30,6 @@ const defaultRemitForm = {
 export default function BooksTaxes() {
 	const journalEntries = useAccountingStore((s) => s.journalEntries);
 	const bankAccounts = useAccountingStore((s) => s.bankAccounts);
-	const initializeAccounting = useAccountingStore((s) => s.initializeAccounting);
 	const activeBankAccounts = useMemo(() => bankAccounts.filter((b) => b.isActive), [bankAccounts]);
 
 	const [period, setPeriod] = useState('All');
@@ -105,7 +104,6 @@ export default function BooksTaxes() {
 			bankAccountId: remitForm.bankAccountId,
 		});
 		if (result) {
-			void initializeAccounting();
 			setNotice(`Remittance recorded — JE ${result.journalEntryId}`);
 			onClose();
 		} else {

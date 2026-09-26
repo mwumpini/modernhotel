@@ -50,11 +50,13 @@ export function taxCodeForGl(gl: string): string | undefined {
 
 /** TAX_LIABILITY_GL keys that have their own statutory filing schedule (see
  * compliance/config/seed-reports.json's `reportType`) — used to auto-mark a filing as
- * submitted when its remittance posts. GETFUND and COVID19 are administratively bundled
- * into the VAT return and have no schedule of their own, so they're deliberately absent. */
+ * submitted when its remittance posts. COVID19 is administratively bundled into the VAT
+ * return and has no schedule of its own, so it is deliberately absent. GETFund has its own
+ * schedule, same as NHIL, so a remittance is recorded against that filing. */
 export const TAX_CODE_TO_REPORT_TYPE: Record<string, string> = {
   VAT: 'VAT',
   NHIL: 'NHIL',
+  GETFUND: 'GETFund',
   TOURISM: 'Tourism',
   WHT: 'WHT',
   PAYE: 'PAYE',

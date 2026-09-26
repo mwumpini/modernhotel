@@ -2,6 +2,7 @@
 
 // Restored Invoices & Payments component for embedding inside consolidated tab
 import React, { useState, useMemo, useEffect } from 'react';
+import HeadingInfo from '../../../components/HeadingInfo';
 import { 
   Card,
   CardBody,
@@ -25,8 +26,12 @@ import {
   useDisclosure,
   Badge,
   Chip,
-  Divider
+  Divider,
+  Popover,
+  PopoverTrigger,
+  PopoverContent
 } from '@heroui/react';
+import { InformationCircleIcon } from '@heroicons/react/24/outline';
 import { usePathname } from 'next/navigation';
 import FrontOfficeBackButton from '../../../components/FrontOfficeBackButton';
 import CustomizeViewControl, { HideCardButton } from '../../../components/dashboard/CustomizeViewControl';
@@ -34,13 +39,16 @@ import { useDashboardVisibility, type DashboardSectionDef } from '../../../lib/d
 import { frontOfficeStore } from '../../../lib/frontoffice/store';
 import { useSettingsStore } from '../../../lib/settings/store';
 import { useCurrentUserName } from '../../../lib/auth/useCurrentUserName';
-import { openPrintPreview, openHtmlPrintWindow } from '../../../lib/print/engine';
-import { listTemplates } from '../../../lib/print/templates';
+import { listAllTemplates, openPrintPreview, openHtmlPrintWindow } from '../../../lib/print/engine';
 import { buildOrgProfile } from '../../../lib/print/buildOrgProfile';
 import { trackEvent } from '../../../lib/analytics/trackEvent';
 import { logAudit } from '../../../lib/analytics/auditLogStore';
 import { computeSalesTaxTotal, effectiveSalesTaxRate } from '../../../lib/tax/engine';
 import { formatMoney } from '../../../lib/format/currency';
+import { localStayDay, shortDay, sortStays, stayFigures, type StaySortKey } from '../../../lib/frontoffice/stayWorksheet';
+import StayWorksheetTable, { worksheetTableClassNames } from '../../../components/frontoffice/StayWorksheetTable';
+import CompanyAccounts, { CompanyStatement } from '../../../components/frontoffice/CompanyAccounts';
+import { companyAccounts } from '../../../lib/frontoffice/companyAccount';
 
 interface InvoiceItem {
   id: string;
@@ -119,15 +127,23 @@ export default function InvoicesPaymentsPage() {
   const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
     useDashboardVisibility('dashboard.hidden.invoicesPayments', INVOICES_PAYMENTS_DASHBOARD_SECTIONS);
   const [activeTab, setActiveTab] = useState('folios');
+  const [companyFocus, setCompanyFocus] = useState<{ key: string; name: string } | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [dateFilterMode, setDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('today');
+  const [dateFilterMode, setDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
   const [dateFilterSingle, setDateFilterSingle] = useState('');
   const [dateFilterFrom, setDateFilterFrom] = useState('');
   const [dateFilterTo, setDateFilterTo] = useState('');
   const [sortBy, setSortBy] = useState('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const settings = useSettingsStore();
+  const invoicePrintTemplates = useMemo(
+    () => listAllTemplates('invoice', settings.docBuilder?.templates),
+    [settings.docBuilder?.templates],
+  );
+  const activeInvoiceTemplate = invoicePrintTemplates.some(t => t.key === settings.printing.invoice)
+    ? settings.printing.invoice
+    : (invoicePrintTemplates[0]?.key || '');
   
   // Folio management state
   const [selectedFolio, setSelectedFolio] = useState<any>(null);
@@ -135,8 +151,8 @@ export default function InvoicesPaymentsPage() {
   const [folioStatusFilter, setFolioStatusFilter] = useState('all');
   const [payerFilter, setPayerFilter] = useState<'all'|'guest'|'company'>('all');
   const [balanceFilter, setBalanceFilter] = useState<'all'|'zero'|'positive'>('all');
-  const [folioSortBy, setFolioSortBy] = useState<'balance'|'updatedAt'>('balance');
-  const [folioSortOrder, setFolioSortOrder] = useState<'asc'|'desc'>('desc');
+  const [folioSortKey, setFolioSortKey] = useState<StaySortKey>('arrival');
+  const [folioSortDir, setFolioSortDir] = useState<'asc' | 'desc'>('asc');
   const [folioDateFilterMode, setFolioDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
   const [folioDateSingle, setFolioDateSingle] = useState('');
   const [folioDateFrom, setFolioDateFrom] = useState<string>('');
@@ -147,6 +163,12 @@ export default function InvoicesPaymentsPage() {
   const [paymentDateSingle, setPaymentDateSingle] = useState('');
   const [paymentDateFrom, setPaymentDateFrom] = useState('');
   const [paymentDateTo, setPaymentDateTo] = useState('');
+  const [companyDateFilterMode, setCompanyDateFilterMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
+  const [companyDateSingle, setCompanyDateSingle] = useState('');
+  const [companyDateFrom, setCompanyDateFrom] = useState('');
+  const [companyDateTo, setCompanyDateTo] = useState('');
+  const [companySearch, setCompanySearch] = useState('');
+  const [companyStatus, setCompanyStatus] = useState('all');
   const { isOpen: isFolioModalOpen, onOpen: onFolioModalOpen, onClose: onFolioModalClose } = useDisclosure();
   const [adjustmentAmount, setAdjustmentAmount] = useState<number>(0);
   const [adjustmentReason, setAdjustmentReason] = useState<string>('');
@@ -164,12 +186,8 @@ export default function InvoicesPaymentsPage() {
   const { isOpen: isPaymentOpen, onOpen: onPaymentOpen, onClose: onPaymentClose } = useDisclosure();
   const { isOpen: isCreateOpen, onOpen: onCreateOpen, onClose: onCreateClose } = useDisclosure();
   const { isOpen: isAddPaymentOpen, onOpen: onAddPaymentOpen, onClose: onAddPaymentClose } = useDisclosure();
-  const { isOpen: isCorpOpen, onOpen: onCorpOpen, onClose: onCorpClose } = useDisclosure();
   const { isOpen: isSplitOpen, onOpen: onSplitOpen, onClose: onSplitClose } = useDisclosure();
 
-  const [corpPayerName, setCorpPayerName] = useState('');
-  const [corpAmount, setCorpAmount] = useState('');
-  const [corpReference, setCorpReference] = useState('');
   const [splitChargeId, setSplitChargeId] = useState<string>('');
   const [splitTargetReservationId, setSplitTargetReservationId] = useState<string>('');
   const [splitAmount, setSplitAmount] = useState<number>(0);
@@ -236,11 +254,10 @@ export default function InvoicesPaymentsPage() {
     const isCompany = !!(reservation.billingPersonName || reservation.companyName);
     const matchesPayer = payerFilter === 'all' || (payerFilter === 'company' ? isCompany : !isCompany);
     // Balance filter
-    const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
-    const bal = folio.balance || 0;
-    const matchesBalance = balanceFilter === 'all' || (balanceFilter === 'zero' ? bal === 0 : bal > 0);
+    const bal = stayFigures(reservation).balance;
+    const matchesBalance = balanceFilter === 'all' || (balanceFilter === 'zero' ? bal <= 0.005 : bal > 0.005);
     // Date filter: match by check-in date
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localStayDay();
     const arrivalDate = reservation.arrival?.slice(0, 10) ?? '';
     let dateOk = true;
     if (folioDateFilterMode === 'today') dateOk = arrivalDate === today;
@@ -405,7 +422,7 @@ export default function InvoicesPaymentsPage() {
 
   // Derive a filtered invoice list so stats and table always agree
   const filteredInvoices = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localStayDay();
     return invoices
       .filter(inv => statusFilter === 'all' ? true : inv.status === statusFilter)
       .filter(inv => {
@@ -426,7 +443,7 @@ export default function InvoicesPaymentsPage() {
   }, [invoices, statusFilter, searchTerm, dateFilterMode, dateFilterSingle, dateFilterFrom, dateFilterTo]);
 
   const filteredPayments = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localStayDay();
     return [...payments]
       .filter(p => {
         const d = (p.processedAt || '').slice(0, 10);
@@ -440,6 +457,21 @@ export default function InvoicesPaymentsPage() {
       })
       .sort((a, b) => new Date(b.processedAt).getTime() - new Date(a.processedAt).getTime());
   }, [payments, paymentDateFilterMode, paymentDateSingle, paymentDateFrom, paymentDateTo]);
+
+  const companyStayMatches = useMemo(() => {
+    if (companyDateFilterMode === 'all') return undefined;
+    return (reservation: { arrival?: string }) => {
+      const day = (reservation.arrival || '').slice(0, 10);
+      if (companyDateFilterMode === 'today') return day === localStayDay();
+      if (companyDateFilterMode === 'specific' && companyDateSingle) return day === companyDateSingle;
+      if (companyDateFilterMode === 'range') {
+        if (companyDateFrom && day < companyDateFrom) return false;
+        if (companyDateTo && day > companyDateTo) return false;
+      }
+      return true;
+    };
+  }, [companyDateFilterMode, companyDateSingle, companyDateFrom, companyDateTo]);
+  const companyStanding = companyStatus === 'pending' || companyStatus === 'paid' ? companyStatus : 'all';
 
   // Stats always reflect the filtered list so KPI cards match the table rows
   const stats = useMemo(() => {
@@ -699,12 +731,10 @@ export default function InvoicesPaymentsPage() {
   };
 
   const handleViewPayment = (payment: Payment) => {
-    // Enrich the selected payment with reservation context for the modal
     const res = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
-    const folio = res ? frontOfficeStore.getOrCreateFolio(res.id) : undefined;
     const billedTo = res ? (res.companyName || res.billingPersonName || res.guestName || '—') : '—';
-    const balance = folio?.balance || 0;
-    setSelectedPayment({ ...payment, billedTo, balance } as any);
+    const balance = res ? stayFigures(res).balance : 0;
+    setSelectedPayment({ ...payment, billedTo, balance });
     onPaymentOpen();
   };
 
@@ -957,8 +987,10 @@ export default function InvoicesPaymentsPage() {
         <div>
           {/* Only on the standalone route (e.g. "View Folio →" from a reservation). When embedded as a tab in Front Office Operations, that page already renders its own back button. */}
           {pathname?.startsWith('/guest-services/client-services/invoices-payments') && <FrontOfficeBackButton />}
-          <h1 className="text-3xl font-bold text-gray-900">Invoices & Payments</h1>
-          <p className="text-gray-600">Manage guest billing and payment processing</p>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-3xl font-bold text-gray-900">Invoices & Payments</h1>
+            <HeadingInfo label="About invoices and payments">Manage guest billing and payment processing</HeadingInfo>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <CustomizeViewControl
@@ -973,75 +1005,75 @@ export default function InvoicesPaymentsPage() {
       </div>
 
       {hiddenStatsCount < INVOICES_PAYMENTS_DASHBOARD_SECTIONS.length && (
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
         {!isHidden('totalInvoices') && (
-        <Card className="border-l-4 border-l-blue-500">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Total Invoices</p>
-                <p className="text-2xl font-bold text-gray-900">{stats.totalInvoices}</p>
+        <Card className="border border-gray-200 border-l-2 border-l-blue-500 shadow-none">
+          <CardBody className="px-2 py-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <div className="min-w-0">
+                <p className="text-xs leading-tight text-gray-500">Total Invoices</p>
+                <p className="text-base font-semibold tabular-nums text-gray-900">{stats.totalInvoices}</p>
+                <p className="text-[11px] leading-tight text-gray-400">{invoices.length} total</p>
               </div>
-              <div className="flex flex-col items-end gap-1">
+              <div className="flex shrink-0 flex-col items-end">
                 <HideCardButton onHide={() => hide('totalInvoices')} label="Total Invoices" />
-                <div className="text-blue-500 text-2xl">📄</div>
+                <div className="text-sm leading-none text-blue-500">📄</div>
               </div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">{invoices.length} total</p>
           </CardBody>
         </Card>
         )}
 
         {!isHidden('collected') && (
-        <Card className="border-l-4 border-l-green-500">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Collected</p>
-                <p className="text-2xl font-bold text-green-600">₵{formatMoney(stats.totalCollected)}</p>
+        <Card className="border border-gray-200 border-l-2 border-l-green-500 shadow-none">
+          <CardBody className="px-2 py-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <div className="min-w-0">
+                <p className="text-xs leading-tight text-gray-500">Collected</p>
+                <p className="text-base font-semibold tabular-nums text-green-700">₵{formatMoney(stats.totalCollected)}</p>
+                <p className="text-[11px] leading-tight text-gray-400">{stats.collectionRate.toFixed(1)}% collection rate</p>
               </div>
-              <div className="flex flex-col items-end gap-1">
+              <div className="flex shrink-0 flex-col items-end">
                 <HideCardButton onHide={() => hide('collected')} label="Collected" />
-                <div className="text-green-500 text-2xl">💰</div>
+                <div className="text-sm leading-none">💰</div>
               </div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">{stats.collectionRate.toFixed(1)}% collection rate</p>
           </CardBody>
         </Card>
         )}
 
         {!isHidden('outstanding') && (
-        <Card className="border-l-4 border-l-orange-500">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Outstanding</p>
-                <p className="text-2xl font-bold text-orange-600">₵{formatMoney(stats.totalOutstanding)}</p>
+        <Card className="border border-gray-200 border-l-2 border-l-orange-500 shadow-none">
+          <CardBody className="px-2 py-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <div className="min-w-0">
+                <p className="text-xs leading-tight text-gray-500">Outstanding</p>
+                <p className="text-base font-semibold tabular-nums text-orange-700">₵{formatMoney(stats.totalOutstanding)}</p>
+                <p className="text-[11px] leading-tight text-gray-400">To be collected</p>
               </div>
-              <div className="flex flex-col items-end gap-1">
+              <div className="flex shrink-0 flex-col items-end">
                 <HideCardButton onHide={() => hide('outstanding')} label="Outstanding" />
-                <div className="text-orange-500 text-2xl">⏰</div>
+                <div className="text-sm leading-none">⏰</div>
               </div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">To be collected</p>
           </CardBody>
         </Card>
         )}
 
         {!isHidden('overdue') && (
-        <Card className="border-l-4 border-l-red-500">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm text-gray-600">Overdue</p>
-                <p className="text-2xl font-bold text-red-600">₵{formatMoney(stats.overdueAmount)}</p>
+        <Card className="border border-gray-200 border-l-2 border-l-red-500 shadow-none">
+          <CardBody className="px-2 py-1.5">
+            <div className="flex items-center justify-between gap-1">
+              <div className="min-w-0">
+                <p className="text-xs leading-tight text-gray-500">Overdue</p>
+                <p className="text-base font-semibold tabular-nums text-red-700">₵{formatMoney(stats.overdueAmount)}</p>
+                <p className="text-[11px] leading-tight text-gray-400">{stats.overdueInvoices} invoices</p>
               </div>
-              <div className="flex flex-col items-end gap-1">
+              <div className="flex shrink-0 flex-col items-end">
                 <HideCardButton onHide={() => hide('overdue')} label="Overdue" />
-                <div className="text-red-500 text-2xl">🚨</div>
+                <div className="text-sm leading-none">🚨</div>
               </div>
             </div>
-            <p className="text-xs text-gray-500 mt-1">{stats.overdueInvoices} invoices</p>
           </CardBody>
         </Card>
         )}
@@ -1054,35 +1086,23 @@ export default function InvoicesPaymentsPage() {
       <Card>
         <CardBody>
             <div className="flex gap-3 mb-4 items-center">
-            <Button
-              variant={activeTab === 'folios' ? 'solid' : 'light'}
-              color="primary"
-              className={activeTab === 'folios' ? 'bg-indigo-600 text-white font-semibold' : ''}
-              onPress={() => setActiveTab('folios')}
-            >
-              Folios ({frontOfficeStore.reservations.length})
-            </Button>
-            <Button
-              variant={activeTab === 'invoices' ? 'solid' : 'light'}
-              color="primary"
-              className={activeTab === 'invoices' ? 'bg-indigo-600 text-white font-semibold' : ''}
-              onPress={() => setActiveTab('invoices')}
-            >
-              Invoices ({invoices.length})
-            </Button>
-            <Button
-              variant={activeTab === 'payments' ? 'solid' : 'light'}
-              color="primary"
-              className={activeTab === 'payments' ? 'bg-indigo-600 text-white font-semibold' : ''}
-              onPress={() => setActiveTab('payments')}
-            >
-              Payment Ledger ({payments.length})
-            </Button>
-            <div className="ml-auto flex gap-2">
-              <Button size="sm" color="secondary" variant="solid" className="bg-purple-600 text-white font-semibold px-3" onPress={onCorpOpen}>
-                Post Corporate Receipt
+            {([
+              ['folios', 'Folios', frontOfficeStore.reservations.length],
+              ['invoices', 'Invoices', invoices.length],
+              ['payments', 'Payments', payments.length],
+              ['companies', 'Companies', companyAccounts().length],
+            ] as const).map(([key, label, count]) => (
+              <Button
+                key={key}
+                size="sm"
+                color={activeTab === key ? 'success' : 'default'}
+                variant={activeTab === key ? 'solid' : 'flat'}
+                className={activeTab === key ? 'bg-green-600 text-white' : ''}
+                onPress={() => setActiveTab(key)}
+              >
+                {label} ({count})
               </Button>
-            </div>
+            ))}
           </div>
 
           {activeTab === 'invoices' ? (
@@ -1138,9 +1158,12 @@ export default function InvoicesPaymentsPage() {
                 )}
               </div>
             </div>
-            <Table aria-label="Invoices table">
+            <p className="mb-2 text-xs text-gray-500">Same amounts as the folio. Open a row to view, pay, or print.</p>
+            <Table aria-label="Invoices table" removeWrapper classNames={worksheetTableClassNames}>
               <TableHeader>
-                <TableColumn>INVOICE</TableColumn>
+                <TableColumn>STAY</TableColumn>
+                <TableColumn>GUEST</TableColumn>
+                <TableColumn>ROOM</TableColumn>
                 <TableColumn>
                   <button
                     className="font-semibold"
@@ -1149,113 +1172,50 @@ export default function InvoicesPaymentsPage() {
                       setSortOrder(prev => (sortBy === 'createdAt' && prev === 'desc') ? 'asc' : (sortBy === 'createdAt' && prev === 'asc') ? 'desc' : 'desc');
                     }}
                   >
-                    DATE {sortBy === 'createdAt' ? (sortOrder === 'asc' ? '▲' : '▼') : ''}
+                    CHECK-IN {sortBy === 'createdAt' ? (sortOrder === 'asc' ? '↑' : '↓') : ''}
                   </button>
                 </TableColumn>
-                <TableColumn>GUEST</TableColumn>
-                <TableColumn>ROOM</TableColumn>
+                <TableColumn>CHECK-OUT</TableColumn>
                 <TableColumn>AMOUNT</TableColumn>
+                <TableColumn>BALANCE</TableColumn>
                 <TableColumn>STATUS</TableColumn>
-                <TableColumn>DUE DATE</TableColumn>
-                <TableColumn>ACTIONS</TableColumn>
               </TableHeader>
-              <TableBody>
+              <TableBody emptyContent="No invoice matches these filters.">
                 {[...filteredInvoices]
                   .sort((a, b) => {
-                    const keyA = sortBy === 'createdAt' ? a.createdAt : a.updatedAt;
-                    const keyB = sortBy === 'createdAt' ? b.createdAt : b.updatedAt;
-                    const av = new Date(keyA).getTime();
-                    const bv = new Date(keyB).getTime();
-                    return sortOrder === 'asc' ? av - bv : bv - av;
+                    const stayA = frontOfficeStore.reservations.find(r => r.id === a.id);
+                    const stayB = frontOfficeStore.reservations.find(r => r.id === b.id);
+                    const keyA = stayA?.arrival || a.checkInDate || a.createdAt;
+                    const keyB = stayB?.arrival || b.checkInDate || b.createdAt;
+                    const order = keyA.localeCompare(keyB);
+                    return sortOrder === 'asc' ? order : -order;
                   })
                   .slice((invoicePage - 1) * itemsPerPage, invoicePage * itemsPerPage)
-                  .map((invoice) => (
-                  <TableRow key={invoice.id}>
+                  .map((invoice) => {
+                    const stay = frontOfficeStore.reservations.find(r => r.id === invoice.id);
+                    const figures = stay ? stayFigures(stay) : null;
+                    const amount = figures ? figures.amount : invoice.totalAmount;
+                    const balance = figures ? figures.balance : invoice.balance;
+                    const paid = figures ? figures.paid : Math.max(0, invoice.totalAmount - invoice.balance);
+                    const standing = balance <= 0.005 ? 'paid' : paid > 0.005 ? 'partially_paid' : 'pending';
+                    const room = stay?.roomId && stay.roomId !== 'TBD' ? stay.roomId : (invoice.roomNumber && invoice.roomNumber !== 'TBD' ? invoice.roomNumber : '—');
+                    return (
+                  <TableRow key={invoice.id} className="cursor-pointer" onClick={() => handleViewInvoice(invoice)}>
+                    <TableCell>{stay?.resId || invoice.invoiceNumber}</TableCell>
+                    <TableCell><span className="font-semibold">{invoice.guestName}</span></TableCell>
+                    <TableCell>{room}</TableCell>
+                    <TableCell>{shortDay(stay?.arrival || invoice.checkInDate)}</TableCell>
+                    <TableCell>{shortDay(stay?.departure || invoice.checkOutDate)}</TableCell>
+                    <TableCell><span className="tabular-nums">₵{formatMoney(amount)}</span></TableCell>
+                    <TableCell><span className={`tabular-nums font-semibold ${balance > 0.005 ? 'text-orange-700' : 'text-green-700'}`}>₵{formatMoney(balance)}</span></TableCell>
                     <TableCell>
-                      <div>
-                        <p className="font-medium">{invoice.invoiceNumber}</p>
-                        <p className="text-sm text-gray-500">{invoice.checkInDate} - {invoice.checkOutDate}</p>
-                        <p className="text-xs text-gray-400">Res: {invoice.id}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-sm">{new Date(invoice.createdAt).toLocaleDateString()}</span>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                      <span className="font-medium">{invoice.guestName}</span>
-                        <p className="text-sm text-gray-500">{invoice.guestEmail}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                      <span className="font-medium">{invoice.roomNumber}</span>
-                        <p className="text-sm text-gray-500">{invoice.roomType}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">₵{formatMoney(invoice.totalAmount)}</p>
-                        <p className="text-sm text-gray-500">Tax: ₵{formatMoney(invoice.taxAmount)}</p>
-                        {invoice.discountAmount > 0 && (
-                          <p className="text-sm text-green-600">Discount: -₵{formatMoney(invoice.discountAmount)}</p>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold
-                        ${invoice.status === 'paid' ? 'bg-green-100 text-green-700 border border-green-200'
-                        : invoice.status === 'overdue' ? 'bg-red-100 text-red-700 border border-red-200'
-                        : invoice.status === 'partially_paid' ? 'bg-blue-100 text-blue-700 border border-blue-200'
-                        : invoice.status === 'cancelled' || invoice.status === 'refunded' ? 'bg-gray-100 text-gray-600 border border-gray-200'
-                        : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full
-                          ${invoice.status === 'paid' ? 'bg-green-500'
-                          : invoice.status === 'overdue' ? 'bg-red-500'
-                          : invoice.status === 'partially_paid' ? 'bg-blue-500'
-                          : invoice.status === 'cancelled' || invoice.status === 'refunded' ? 'bg-gray-400'
-                          : 'bg-amber-500'}`} />
-                        {invoice.status.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-sm">{invoice.dueDate}</span>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button size="sm" color="primary" variant="solid" className="bg-blue-600 text-white font-semibold px-3 py-1" onPress={() => handleViewInvoice(invoice)}>
-                          View
-                        </Button>
-                        {invoice.balance > 0 && (
-                          <Button
-                            size="sm"
-                            color="success"
-                            variant="solid"
-                            className="bg-green-600 text-white font-semibold px-3 py-1"
-                            onPress={() => {
-                              setSelectedInvoice(invoice);
-                              onAddPaymentOpen();
-                            }}
-                          >
-                            Pay
-                          </Button>
-                        )}
-                        {(() => {
-                          const reservation = frontOfficeStore.reservations.find(r => r.id === invoice.id);
-                          const guest = reservation ? frontOfficeStore.guests.find(g => g.id === reservation.guestId) : null;
-                          const creditBalance = guest?.creditBalance || 0;
-                          const canUseCredit = creditBalance > 0 && invoice.balance > 0;
-                          return canUseCredit ? (
-                            <Button size="sm" color="warning" variant="solid" className="text-white font-semibold px-3 py-1" onPress={() => handleApplyCreditToInvoice(invoice)}>
-                              Credit
-                            </Button>
-                          ) : null;
-                        })()}
-                        <Button size="sm" color="default" variant="solid" className="bg-gray-600 text-white font-semibold px-3 py-1" onPress={() => handlePrintInvoice(invoice)}>Print</Button>
-                      </div>
+                      <Chip size="sm" variant="flat" color={standing === 'paid' ? 'success' : standing === 'partially_paid' ? 'primary' : 'warning'}>
+                        {standing === 'paid' ? 'Paid' : standing === 'partially_paid' ? 'Part paid' : 'Unpaid'}
+                      </Chip>
                     </TableCell>
                   </TableRow>
-                ))}
+                    );
+                  })}
               </TableBody>
             </Table>
             <div className="flex justify-end mt-3">
@@ -1301,116 +1261,51 @@ export default function InvoicesPaymentsPage() {
                 )}
               </div>
             </div>
-            <Table aria-label="Payments table">
+            <p className="mb-2 text-xs text-gray-500">Same stay columns as invoices. Open a row to see who the payment was for.</p>
+            <Table aria-label="Payments table" removeWrapper classNames={worksheetTableClassNames}>
               <TableHeader>
-                <TableColumn>TRANSACTION</TableColumn>
-                <TableColumn>INVOICE</TableColumn>
-                <TableColumn>GUEST</TableColumn>
-                <TableColumn>BILLED TO</TableColumn>
-                <TableColumn>PAID</TableColumn>
-                <TableColumn>BALANCE</TableColumn>
-                <TableColumn>METHOD</TableColumn>
-                <TableColumn>STATUS</TableColumn>
-                <TableColumn>DATE</TableColumn>
-                <TableColumn>ACTIONS</TableColumn>
+                <TableColumn>Stay</TableColumn>
+                <TableColumn>Guest</TableColumn>
+                <TableColumn>Room</TableColumn>
+                <TableColumn>Date</TableColumn>
+                <TableColumn>Method</TableColumn>
+                <TableColumn>Paid</TableColumn>
+                <TableColumn>Balance</TableColumn>
+                <TableColumn>Status</TableColumn>
               </TableHeader>
-              <TableBody>
-                {filteredPayments.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={10} className="text-center py-8">
-                      <div className="text-gray-500">
-                        <p className="text-lg">No payments found</p>
-                        <p className="text-sm">{payments.length > 0 ? 'Try a different date filter' : 'Payments will appear here when they are added to invoices'}</p>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  filteredPayments.slice((paymentPage - 1) * itemsPerPage, paymentPage * itemsPerPage)
-                    .map((payment) => (
-                  <TableRow key={payment.id}>
-                    <TableCell>
-                      <div>
-                      <span className="font-medium">{payment.transactionId}</span>
-                        <p className="text-sm text-gray-500">Ref: {payment.reference}</p>
-                        <p className="text-xs text-gray-400">Res: {payment.invoiceId}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <span className="font-medium">{payment.invoiceId}</span>
-                    </TableCell>
-                    <TableCell>
-                      {(() => {
-                        const res = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
-                        const guestName = res?.guestName || '—';
-                        return <span className="font-medium">{guestName}</span>;
-                      })()}
-                    </TableCell>
-                    <TableCell>
-                      {(() => {
-                        const res = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
-                        if (!res) return '—';
-                        const billed = res.companyName || res.billingPersonName || res.guestName || '—';
-                        return <span className="font-medium">{billed}</span>;
-                      })()}
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        {payment.amount < 0 ? (
-                          <span className="font-semibold text-purple-600">−₵{formatMoney(Math.abs(payment.amount))}</span>
-                        ) : (
-                          <span className="font-medium text-gray-900">₵{formatMoney(payment.amount)}</span>
-                        )}
-                        {payment.amount < 0 && (
-                          <p className="text-xs text-purple-500 font-medium">Refund</p>
-                        )}
-                        {payment.creditApplied && payment.creditApplied > 0 && (
-                          <p className="text-xs text-green-600">Credit: ₵{formatMoney(payment.creditApplied)}</p>
-                        )}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      {(() => {
-                        const res = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
-                        if (!res) return '—';
-                        const folio = frontOfficeStore.getOrCreateFolio(res.id);
-                        const balance = folio.balance || 0;
-                        return <span className="font-medium">₵{formatMoney(balance)}</span>;
-                      })()}
-                    </TableCell>
-                    <TableCell>
-                      <Chip size="sm" variant="flat">{getPaymentMethodLabel(payment.paymentMethod)}</Chip>
-                    </TableCell>
-                    <TableCell>
-                      <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold
-                        ${payment.status === 'completed' ? 'bg-green-100 text-green-700 border border-green-200'
-                        : payment.status === 'failed' ? 'bg-red-100 text-red-700 border border-red-200'
-                        : payment.status === 'refunded' ? 'bg-purple-100 text-purple-700 border border-purple-200'
-                        : payment.status === 'cancelled' ? 'bg-gray-100 text-gray-600 border border-gray-200'
-                        : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full
-                          ${payment.status === 'completed' ? 'bg-green-500'
-                          : payment.status === 'failed' ? 'bg-red-500'
-                          : payment.status === 'refunded' ? 'bg-purple-500'
-                          : payment.status === 'cancelled' ? 'bg-gray-400'
-                          : 'bg-amber-500'}`} />
-                        {payment.status.charAt(0).toUpperCase() + payment.status.slice(1)}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <span className="text-sm">{new Date(payment.processedAt).toLocaleDateString()}</span>
-                        <p className="text-xs text-gray-500">{payment.processedBy}</p>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-1">
-                        <Button size="sm" color="primary" variant="solid" className="bg-blue-600 text-white font-semibold px-3 py-1" onPress={() => handleViewPayment(payment)}>View</Button>
-                        <Button size="sm" color="default" variant="solid" className="bg-gray-600 text-white font-semibold px-3 py-1" onPress={() => handlePrintReceipt(payment)}>Receipt</Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                    ))
-                )}
+              <TableBody emptyContent="No payment matches these dates.">
+                {filteredPayments
+                  .slice((paymentPage - 1) * itemsPerPage, paymentPage * itemsPerPage)
+                  .map((payment) => {
+                    const stay = frontOfficeStore.reservations.find(r => r.id === payment.invoiceId);
+                    const figures = stay ? stayFigures(stay) : null;
+                    const room = stay?.roomId && stay.roomId !== 'TBD' ? stay.roomId : '—';
+                    const balance = figures ? figures.balance : (payment.balance || 0);
+                    const statusLabel = payment.status === 'completed' ? 'Paid' : payment.status === 'refunded' ? 'Refund' : payment.status.charAt(0).toUpperCase() + payment.status.slice(1);
+                    const statusColor = payment.status === 'completed' ? 'success' : payment.status === 'failed' ? 'danger' : payment.status === 'refunded' ? 'secondary' : payment.status === 'pending' ? 'warning' : 'default';
+                    return (
+                      <TableRow key={payment.id} className="cursor-pointer" onClick={() => handleViewPayment(payment)}>
+                        <TableCell>{stay?.resId || payment.invoiceId}</TableCell>
+                        <TableCell><span className="font-semibold">{stay?.guestName || '—'}</span></TableCell>
+                        <TableCell>{room}</TableCell>
+                        <TableCell>{shortDay(payment.processedAt)}</TableCell>
+                        <TableCell>{getPaymentMethodLabel(payment.paymentMethod)}</TableCell>
+                        <TableCell>
+                          <span className={`tabular-nums font-semibold ${payment.amount < 0 ? 'text-purple-700' : 'text-ghana-black'}`}>
+                            {payment.amount < 0 ? '−' : ''}₵{formatMoney(Math.abs(payment.amount))}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className={`tabular-nums font-semibold ${balance > 0.005 ? 'text-orange-700' : 'text-green-700'}`}>
+                            ₵{formatMoney(balance)}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Chip size="sm" variant="flat" color={statusColor}>{statusLabel}</Chip>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
               </TableBody>
             </Table>
             <div className="flex justify-end mt-3">
@@ -1423,14 +1318,93 @@ export default function InvoicesPaymentsPage() {
               />
             </div>
             </>
+          ) : activeTab === 'companies' ? (
+            <>
+            <div className="space-y-3 mb-3">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-sm font-semibold text-ghana-black">Companies</h3>
+                <Popover placement="right">
+                  <PopoverTrigger>
+                    <button type="button" className="inline-flex text-gray-400 hover:text-gray-600" aria-label="About company ledgers">
+                      <InformationCircleIcon className="h-4 w-4" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent>
+                    <p className="max-w-xs px-1 py-1 text-xs text-gray-600">Open a company ledger to see what was billed, what a payment covered, and what is still outstanding.</p>
+                  </PopoverContent>
+                </Popover>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <Input
+                  placeholder="Search company or guest..."
+                  value={companySearch}
+                  onChange={(e) => setCompanySearch(e.target.value)}
+                  className="w-64"
+                  startContent={<span>🔎</span>}
+                />
+                <Select
+                  selectedKeys={new Set([companyStanding])}
+                  onSelectionChange={(keys) => setCompanyStatus(Array.from(keys as Set<string>)[0] || 'all')}
+                  className="w-40"
+                  aria-label="Filter company status"
+                >
+                  <SelectItem key="all">All statuses</SelectItem>
+                  <SelectItem key="pending">Pending</SelectItem>
+                  <SelectItem key="paid">Paid</SelectItem>
+                </Select>
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-gray-500">📅 Check-in:</span>
+                {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
+                  const labels: Record<string, string> = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
+                  return (
+                    <button key={mode} onClick={() => setCompanyDateFilterMode(mode)}
+                      className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${companyDateFilterMode === mode ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'}`}
+                    >{labels[mode]}</button>
+                  );
+                })}
+                {companyDateFilterMode === 'specific' && (
+                  <input type="date" value={companyDateSingle} onChange={(e) => setCompanyDateSingle(e.target.value)}
+                    className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                )}
+                {companyDateFilterMode === 'range' && (
+                  <div className="flex items-center gap-2">
+                    <input type="date" value={companyDateFrom} onChange={(e) => setCompanyDateFrom(e.target.value)}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    <span className="text-gray-400 text-sm">→</span>
+                    <input type="date" value={companyDateTo} onChange={(e) => setCompanyDateTo(e.target.value)}
+                      className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  </div>
+                )}
+              </div>
+              </div>
+            </div>
+            <CompanyAccounts
+              filtered={companyDateFilterMode !== 'all' || companyStanding !== 'all' || companySearch.trim() !== ''}
+              query={companySearch}
+              status={companyStanding}
+              matches={companyStayMatches}
+              onOpen={(key, name) => setCompanyFocus({ key, name })}
+            />
+            <Modal isOpen={!!companyFocus} onClose={() => setCompanyFocus(null)} size="3xl" scrollBehavior="inside" classNames={{ base: 'sm:!max-w-3xl' }}>
+              <ModalContent>
+                <ModalHeader>{companyFocus?.name} ledger</ModalHeader>
+                <ModalBody>
+                  {companyFocus && <CompanyStatement companyKey={companyFocus.key} matches={companyStayMatches} />}
+                </ModalBody>
+                <ModalFooter>
+                  <Button variant="light" onPress={() => setCompanyFocus(null)}>Close</Button>
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+            </>
           ) : activeTab === 'folios' ? (
             <>
-            <div className="mb-4 p-4 bg-indigo-50 rounded-lg space-y-2">
+            <div className="mb-3 space-y-2">
               {/* Row 1: title + subtitle left, filters right */}
               <div className="flex items-center justify-between gap-3 flex-wrap">
                 <div>
-                  <h3 className="text-lg font-semibold text-indigo-800">Guest Folios</h3>
-                  <p className="text-sm text-indigo-600">Live charge ledger per guest — add payments, print invoices, or manage adjustments</p>
+                  <h3 className="text-sm font-semibold text-ghana-black">Folios</h3>
+                  <p className="text-xs text-gray-500">Same stay figures as Desk. Open a row to take payment, print, or adjust.</p>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
                   <Input
@@ -1505,136 +1479,25 @@ export default function InvoicesPaymentsPage() {
               </div>
             </div>
 
-            <Table aria-label="Folio management table">
-              <TableHeader>
-                <TableColumn>ID</TableColumn>
-                <TableColumn>GUEST</TableColumn>
-                <TableColumn>PAYER</TableColumn>
-                <TableColumn>ROOM</TableColumn>
-                <TableColumn>CHECK-IN</TableColumn>
-                <TableColumn>CHECK-OUT</TableColumn>
-                <TableColumn>
-                  <button
-                    className="font-semibold"
-                    onClick={() => {
-                      setFolioSortBy('balance');
-                      setFolioSortOrder(prev => (folioSortBy === 'balance' && prev === 'desc') ? 'asc' : (folioSortBy === 'balance' && prev === 'asc') ? 'desc' : 'desc');
-                    }}
-                  >
-                    FINANCIAL STATUS {folioSortBy === 'balance' ? (folioSortOrder === 'asc' ? '▲' : '▼') : ''}
-                  </button>
-                </TableColumn>
-                <TableColumn>FOLIO SUMMARY</TableColumn>
-                <TableColumn>ACTIONS</TableColumn>
-              </TableHeader>
-              <TableBody>
-                {(!mounted ? [] : frontOfficeStore.reservations
-                  .filter(matchesFolioFilters))
-                  .sort((a, b) => {
-                    const fa = frontOfficeStore.getOrCreateFolio(a.id);
-                    const fb = frontOfficeStore.getOrCreateFolio(b.id);
-                    const av = (fa.balance || 0);
-                    const bv = (fb.balance || 0);
-                    return folioSortOrder === 'asc' ? av - bv : bv - av;
-                  })
-                  .slice((folioPage - 1) * itemsPerPage, folioPage * itemsPerPage)
-                  .map((reservation) => {
-                    const guest = frontOfficeStore.guests.find(g => g.id === reservation.guestId);
-                    const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
-                    const room = frontOfficeStore.rooms.find(r => r.id === reservation.roomId);
-                    const roomType = frontOfficeStore.roomTypes.find(rt => rt.id === reservation.roomTypeId);
-                    const isCompany = !!(reservation.billingPersonName || reservation.companyName);
-                    
-                    return (
-                      <TableRow key={reservation.id}>
-                        <TableCell>
-                          <div className="text-sm font-medium">{reservation.resId || reservation.id}</div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="font-semibold text-gray-900">{guest?.name || reservation.guestName || 'Unknown Guest'}</div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            {isCompany ? (
-                              <>
-                                <div className="font-medium">Company</div>
-                                <div className="text-xs text-gray-500">{reservation.companyName || reservation.billingPersonName || 'Corporate'}</div>
-                                {(!((reservation as any).projectCode || (reservation as any).costCenter || (reservation as any).poNumber)) && (
-                                  <Badge color="danger" variant="flat" className="mt-1">Missing PO/Ref</Badge>
-                                )}
-                              </>
-                            ) : (
-                              <>
-                                <div className="font-medium">Guest</div>
-                                <div className="text-xs text-gray-500">Self-paying</div>
-                              </>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">
-                            <div className="font-medium">Room {room?.id || 'TBD'}</div>
-                            <div className="text-xs text-gray-500">{roomType?.name || 'Standard'}</div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">{new Date(reservation.arrival).toLocaleDateString()}</div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="text-sm">{new Date(reservation.departure).toLocaleDateString()}</div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            <div className="flex justify-between text-sm">
-                              <span>Charges:</span>
-                              <span className="font-medium">₵{formatMoney((folio.totalCharges || 0))}</span>
-                            </div>
-                            <div className="flex justify-between text-sm">
-                              <span>Payments:</span>
-                              <span className="font-medium text-green-600">₵{formatMoney((folio.totalPayments || 0))}</span>
-                            </div>
-                            <div className="flex justify-between text-sm font-semibold">
-                              <span>Balance:</span>
-                              <span className={((folio.balance || 0) > 0) ? 'text-red-600' : 'text-green-600'}>
-                                ₵{formatMoney((folio.balance || 0))}
-                              </span>
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="space-y-1">
-                            <div className="text-xs text-gray-600">
-                              {folio.charges.length} charges, {folio.payments.length} payments
-                            </div>
-                            <div className="text-xs text-gray-500">
-                              Last updated: {new Date((reservation as any).updatedAt).toLocaleDateString()}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex gap-1">
-                            <Button size="sm" color="primary" variant="solid" className="bg-blue-600 text-white font-semibold px-3 py-1" onPress={() => handleManageFolio(reservation)}>Manage</Button>
-                            {(() => {
-                              const inv = invoices.find(i => i.id === reservation.id);
-                              return inv ? (
-                                <Button size="sm" color="default" variant="solid" className="bg-gray-600 text-white font-semibold px-3 py-1" onPress={() => handlePrintInvoice(inv)}>Print</Button>
-                              ) : null;
-                            })()}
-                            {(() => {
-                              const inv = invoices.find(i => i.id === reservation.id);
-                              const folio = frontOfficeStore.getOrCreateFolio(reservation.id);
-                              const bal = folio.balance || 0;
-                              return (bal > 0 && inv) ? (
-                                <Button size="sm" color="success" variant="solid" className="bg-green-600 text-white font-semibold px-3 py-1" onPress={() => { setSelectedInvoice(inv); onAddPaymentOpen(); }}>Pay</Button>
-                              ) : null;
-                            })()}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-              </TableBody>
-            </Table>
+            <StayWorksheetTable
+              stays={mounted ? sortStays(frontOfficeStore.reservations.filter(matchesFolioFilters), folioSortKey, folioSortDir).slice((folioPage - 1) * itemsPerPage, folioPage * itemsPerPage) : []}
+              today={localStayDay()}
+              sortKey={folioSortKey}
+              sortDir={folioSortDir}
+              onSort={(key) => {
+                setFolioPage(1);
+                if (folioSortKey === key) setFolioSortDir((dir) => (dir === 'asc' ? 'desc' : 'asc'));
+                else {
+                  setFolioSortKey(key);
+                  setFolioSortDir('asc');
+                }
+              }}
+              onOpen={(id) => {
+                const stay = frontOfficeStore.reservations.find((reservation) => reservation.id === id);
+                if (stay) handleManageFolio(stay);
+              }}
+              emptyContent="No folio matches these filters."
+            />
             <div className="flex justify-end mt-3">
               <Pagination 
                 page={folioPage}
@@ -1665,14 +1528,14 @@ export default function InvoicesPaymentsPage() {
                 </Select>
                 <Select
                   aria-label="Template"
-                  selectedKeys={new Set([settings.printing.invoice || 'ghana-top-class-invoice'])}
+                  selectedKeys={activeInvoiceTemplate ? new Set([activeInvoiceTemplate]) : new Set()}
                   onSelectionChange={(keys) => {
                     const key = Array.from(keys as Set<string>)[0];
-                    useSettingsStore.getState().updateNestedSetting('printing', { ...settings.printing, invoice: key });
+                    if (key) useSettingsStore.getState().updateNestedSetting('printing.invoice', key);
                   }}
                   className="w-80"
                 >
-                  {listTemplates('invoice').map(t => (
+                  {invoicePrintTemplates.map(t => (
                     <SelectItem key={t.key}>{t.name}</SelectItem>
                   ))}
                 </Select>
@@ -1686,7 +1549,11 @@ export default function InvoicesPaymentsPage() {
 
       <Modal isOpen={isViewOpen} onClose={onViewClose} size="2xl">
         <ModalContent>
-          <ModalHeader>Invoice Details - {selectedInvoice?.invoiceNumber}</ModalHeader>
+          <ModalHeader>
+            {selectedInvoice
+              ? `${frontOfficeStore.reservations.find(r => r.id === selectedInvoice.id)?.resId || selectedInvoice.invoiceNumber} · ${selectedInvoice.guestName}`
+              : 'Invoice'}
+          </ModalHeader>
           <ModalBody>
             {selectedInvoice && (
               <div className="space-y-4">
@@ -1697,17 +1564,16 @@ export default function InvoicesPaymentsPage() {
                     <p><strong>Email:</strong> {selectedInvoice.guestEmail}</p>
                     <p><strong>Phone:</strong> {selectedInvoice.guestPhone}</p>
                     <p><strong>Room:</strong> {selectedInvoice.roomNumber} ({selectedInvoice.roomType})</p>
-                    <p><strong>Check-in:</strong> {selectedInvoice.checkInDate}</p>
-                    <p><strong>Check-out:</strong> {selectedInvoice.checkOutDate}</p>
+                    <p><strong>Check-in:</strong> {shortDay(selectedInvoice.checkInDate)}</p>
+                    <p><strong>Check-out:</strong> {shortDay(selectedInvoice.checkOutDate)}</p>
                     <p><strong>Nights:</strong> {selectedInvoice.nights}</p>
                   </div>
                   <div>
                     <h4 className="font-semibold mb-2">Invoice Information</h4>
-                    <p><strong>Number:</strong> {selectedInvoice.invoiceNumber}</p>
+                    <p><strong>Number:</strong> {frontOfficeStore.reservations.find(r => r.id === selectedInvoice.id)?.resId || selectedInvoice.invoiceNumber}</p>
                     <div><strong>Status:</strong> <span className="inline-flex ml-2"><Badge color={getStatusColor(selectedInvoice.status)} variant="flat" className="ml-2">{selectedInvoice.status.replace('_', ' ')}</Badge></span></div>
-                    <p><strong>Due Date:</strong> {selectedInvoice.dueDate}</p>
-                    <p><strong>Created:</strong> {selectedInvoice.createdAt}</p>
-                    <p><strong>Updated:</strong> {selectedInvoice.updatedAt}</p>
+                    <p><strong>Due Date:</strong> {shortDay(selectedInvoice.dueDate)}</p>
+                    <p><strong>Created:</strong> {shortDay(selectedInvoice.createdAt)}</p>
                     {selectedInvoice.notes && (<p><strong>Notes:</strong> {selectedInvoice.notes}</p>)}
                   </div>
                 </div>
@@ -1843,105 +1709,90 @@ export default function InvoicesPaymentsPage() {
           </ModalBody>
           <ModalFooter>
             <Button variant="light" onPress={onViewClose}>Close</Button>
+            {selectedInvoice && selectedInvoice.balance > 0.005 && (
+              <Button color="success" className="bg-green-600 font-semibold text-white" onPress={() => onAddPaymentOpen()}>
+                Pay
+              </Button>
+            )}
             <Button color="primary" onPress={() => selectedInvoice && handlePrintInvoice(selectedInvoice)}>Print Invoice</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>
 
-      {/* Corporate Receipt Modal */}
-      <Modal isOpen={isCorpOpen} onClose={onCorpClose} size="lg">
+      <Modal isOpen={isPaymentOpen} onClose={onPaymentClose} size="2xl" scrollBehavior="inside" classNames={{ base: 'sm:!max-w-2xl' }}>
         <ModalContent>
-          <ModalHeader>Post Corporate Receipt</ModalHeader>
+          <ModalHeader>
+            {selectedPayment
+              ? `${frontOfficeStore.reservations.find(r => r.id === selectedPayment.invoiceId)?.guestName || 'Payment'} · ${frontOfficeStore.reservations.find(r => r.id === selectedPayment.invoiceId)?.resId || selectedPayment.invoiceId}`
+              : 'Payment'}
+          </ModalHeader>
           <ModalBody>
-            <div className="space-y-4">
-              <Input label="Payer (Company)" placeholder="e.g., Ghana Telecom Ltd" isRequired value={corpPayerName}
-                onChange={(e) => setCorpPayerName(e.target.value)} />
-              <Input label="Amount" type="number" startContent={<span>₵</span>} isRequired value={corpAmount}
-                onChange={(e) => setCorpAmount(e.target.value)} />
-              <Input label="Bank Reference / LPO / PO Number" placeholder="e.g., BANK-REF-123 or LPO-456" value={corpReference}
-                onChange={(e) => setCorpReference(e.target.value)} />
-              <div className="text-sm text-gray-600 bg-blue-50 px-3 py-2 rounded">
-                Payment will be auto-allocated to outstanding folios below — highest balance first.
-              </div>
-              <div className="max-h-56 overflow-auto border rounded-md p-2">
-                {[...frontOfficeStore.reservations]
-                  .filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0)
-                  .sort((a, b) => (frontOfficeStore.getOrCreateFolio(b.id).balance || 0) - (frontOfficeStore.getOrCreateFolio(a.id).balance || 0))
-                  .map(r => (
-                    <div key={r.id} className="flex items-center justify-between py-1 text-sm border-b last:border-0">
-                      <div>
-                        <span className="font-medium mr-2">{r.guestName}</span>
-                        <span className="text-gray-500">Room {r.roomId || 'TBD'}</span>
-                        {(r.companyName || r.billingPersonName) && (
-                          <span className="ml-2 text-xs text-indigo-600">{r.companyName || r.billingPersonName}</span>
-                        )}
+            {selectedPayment && (() => {
+              const stay = frontOfficeStore.reservations.find(r => r.id === selectedPayment.invoiceId);
+              const figures = stay ? stayFigures(stay) : null;
+              const room = stay?.roomId && stay.roomId !== 'TBD' ? stay.roomId : '—';
+              const billedTo = stay ? (stay.companyName || stay.billingPersonName || stay.guestName || '—') : (selectedPayment.billedTo || '—');
+              const balance = figures ? figures.balance : (selectedPayment.balance || 0);
+              const statusLabel = selectedPayment.status === 'completed' ? 'Paid' : selectedPayment.status === 'refunded' ? 'Refund' : selectedPayment.status.charAt(0).toUpperCase() + selectedPayment.status.slice(1);
+              const statusColor = selectedPayment.status === 'completed' ? 'success' : selectedPayment.status === 'failed' ? 'danger' : selectedPayment.status === 'refunded' ? 'secondary' : selectedPayment.status === 'pending' ? 'warning' : 'default';
+              const reference = String(selectedPayment.reference ?? '').trim();
+              const notes = String(selectedPayment.notes ?? '').trim();
+              const showReference = reference !== '' && reference !== '0';
+              const showNotes = notes !== '' && notes !== '0';
+              const facts = [
+                ['Room', room],
+                ['Check-in', shortDay(stay?.arrival)],
+                ['Check-out', shortDay(stay?.departure)],
+                ['Billed to', billedTo],
+                ['Date', shortDay(selectedPayment.processedAt)],
+                ['Taken by', selectedPayment.processedBy || '—'],
+                ...(showReference ? [['Reference', reference] as [string, string]] : []),
+              ];
+              return (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-sm text-gray-600">{getPaymentMethodLabel(selectedPayment.paymentMethod)}</p>
+                    <Chip size="sm" variant="flat" color={statusColor}>{statusLabel}</Chip>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-lg bg-green-50 px-3 py-2 text-center">
+                      <div className={`text-base font-semibold tabular-nums ${selectedPayment.amount < 0 ? 'text-purple-700' : 'text-green-700'}`}>
+                        {selectedPayment.amount < 0 ? '−' : ''}₵{formatMoney(Math.abs(selectedPayment.amount))}
                       </div>
-                      <div className="text-right font-semibold text-red-600">₵{formatMoney((frontOfficeStore.getOrCreateFolio(r.id).balance || 0))}</div>
+                      <div className="text-xs text-green-600">This payment</div>
                     </div>
-                ))}
-                {frontOfficeStore.reservations.filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0).length === 0 && (
-                  <div className="text-center py-4 text-gray-500 text-sm">No outstanding balances</div>
-                )}
-              </div>
-            </div>
-          </ModalBody>
-          <ModalFooter>
-            <Button variant="flat" onPress={onCorpClose}>Cancel</Button>
-            <Button color="primary" variant="solid" className="bg-purple-600 text-white font-semibold" isDisabled={!corpPayerName.trim() || Number(corpAmount) <= 0} onPress={() => {
-              const payer = corpPayerName.trim() || 'Corporate Payer';
-              const amount = Number(corpAmount || 0);
-              if (amount <= 0) return;
-              const outstanding = frontOfficeStore.reservations
-                .filter(r => (frontOfficeStore.getOrCreateFolio(r.id).balance || 0) > 0)
-                .map(r => r.id);
-              const result = frontOfficeStore.postCorporateReceipt(payer, outstanding, amount, corpReference.trim() || undefined, currentUserName);
-              try { trackEvent('Invoice.CorporateReceipt' as any, { payer, amount, appliedTo: result.allocations?.length || 0 }); } catch {}
-              try { logAudit({ area: 'accounting', action: 'create', entity: 'Payment', entityId: `CORP-${Date.now()}`, details: `Corporate receipt ₵${amount} from ${payer}${corpReference ? ` ref: ${corpReference}` : ''}, allocated to ${result.allocations?.length || 0} folios`, severity: 'medium' }); } catch {}
-              showNotification('success', `Corporate receipt ₵${formatMoney(amount)} from ${payer} allocated to ${result.allocations?.length || 0} folio(s). Unallocated: ₵${formatMoney(result.remaining)}`);
-              setCorpPayerName('');
-              setCorpAmount('');
-              setCorpReference('');
-              onCorpClose();
-            }}>Post Receipt</Button>
-          </ModalFooter>
-        </ModalContent>
-      </Modal>
-
-      <Modal isOpen={isPaymentOpen} onClose={onPaymentClose} size="lg">
-        <ModalContent>
-          <ModalHeader>Payment Details - {selectedPayment?.transactionId}</ModalHeader>
-          <ModalBody>
-            {selectedPayment && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <h4 className="font-semibold mb-2">Transaction</h4>
-                    <p><strong>ID:</strong> {selectedPayment.transactionId}</p>
-                    <p><strong>Invoice:</strong> {selectedPayment.invoiceId}</p>
-                    <p><strong>Amount:</strong> ₵{formatMoney(selectedPayment.amount)}</p>
-                    <p><strong>Method:</strong> {getPaymentMethodLabel(selectedPayment.paymentMethod)}</p>
-                    {selectedPayment.creditApplied && selectedPayment.creditApplied > 0 && (
-                      <p><strong>Credit Applied:</strong> ₵{formatMoney(selectedPayment.creditApplied)}</p>
-                    )}
-                    {selectedPayment.reference && (
-                      <p><strong>Reference:</strong> {selectedPayment.reference}</p>
-                    )}
+                    <div className="rounded-lg bg-gray-50 px-3 py-2 text-center">
+                      <div className="text-base font-semibold tabular-nums text-ghana-black">₵{formatMoney(figures?.amount || 0)}</div>
+                      <div className="text-xs text-gray-500">Stay</div>
+                    </div>
+                    <div className={`rounded-lg px-3 py-2 text-center ${balance > 0.005 ? 'bg-orange-50' : 'bg-green-50'}`}>
+                      <div className={`text-base font-semibold tabular-nums ${balance > 0.005 ? 'text-orange-700' : 'text-green-700'}`}>₵{formatMoney(balance)}</div>
+                      <div className={`text-xs ${balance > 0.005 ? 'text-orange-600' : 'text-green-600'}`}>Outstanding</div>
+                    </div>
                   </div>
-                  <div>
-                    <h4 className="font-semibold mb-2">Status</h4>
-                    <div><strong>Status:</strong> <span className="inline-flex ml-2"><Badge color={getPaymentStatusColor(selectedPayment.status)} variant="flat" className="ml-2">{selectedPayment.status}</Badge></span></div>
-                    <p><strong>Processed:</strong> {selectedPayment.processedAt}</p>
-                    <p><strong>By:</strong> {selectedPayment.processedBy}</p>
-                    {selectedPayment.reference && (<p><strong>Reference:</strong> {selectedPayment.reference}</p>)}
+                  <div className="divide-y divide-gray-100 rounded-lg border border-gray-200">
+                    {facts.map(([label, value]) => (
+                      <div key={label} className="flex items-start justify-between gap-4 px-3 py-2.5 text-sm">
+                        <span className="text-gray-500">{label}</span>
+                        <span className="text-right font-medium text-ghana-black">{value}</span>
+                      </div>
+                    ))}
                   </div>
+                  {selectedPayment.creditApplied && selectedPayment.creditApplied > 0 && (
+                    <p className="text-sm text-green-700">Credit used ₵{formatMoney(selectedPayment.creditApplied)}</p>
+                  )}
+                  {showNotes && (
+                    <p className="text-sm text-gray-600">{notes}</p>
+                  )}
                 </div>
-                {selectedPayment.notes && (<><Divider /><div><h4 className="font-semibold mb-2">Notes</h4><p>{selectedPayment.notes}</p></div></>)}
-                {selectedPayment.receiptUrl && (<><Divider /><div><h4 className="font-semibold mb-2">Receipt</h4><Button variant="flat" color="primary" onPress={() => window.open(selectedPayment.receiptUrl, '_blank')}>View Receipt</Button></div></>)}
-              </div>
-            )}
+              );
+            })()}
           </ModalBody>
           <ModalFooter>
             <Button variant="light" onPress={onPaymentClose}>Close</Button>
+            {selectedPayment && (
+              <Button color="default" className="bg-gray-600 font-semibold text-white" onPress={() => handlePrintReceipt(selectedPayment)}>Receipt</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -2153,18 +2004,30 @@ export default function InvoicesPaymentsPage() {
       </Modal>
 
       {/* Folio Management Modal */}
-        <Modal isOpen={isFolioModalOpen} onClose={onFolioModalClose} size="5xl" scrollBehavior="inside">
+        <Modal isOpen={isFolioModalOpen} onClose={onFolioModalClose} size="5xl" scrollBehavior="inside" classNames={{ closeButton: 'text-white hover:bg-white/20' }}>
         <ModalContent>
-          <ModalHeader className="bg-gradient-to-r from-blue-600 to-purple-600 text-white">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-                <span className="text-xl">📊</span>
-              </div>
-              <div>
-                <h2 className="text-xl font-bold">Folio Management</h2>
-                <p className="text-blue-100 text-sm">{selectedFolio?.guestName || 'Unknown Guest'} • Room {selectedFolio?.roomId || 'TBD'}</p>
-              </div>
+          <ModalHeader className="flex flex-row items-center justify-between gap-3 bg-gradient-to-r from-blue-600 to-purple-600 pr-12 text-white">
+            <div className="min-w-0">
+              <h2 className="truncate text-xl font-bold">{selectedFolio?.guestName || 'Folio'}</h2>
+              <p className="text-sm font-normal text-blue-100">
+                {selectedFolio?.resId || selectedFolio?.id || 'Folio'}
+                {selectedFolio?.roomId && selectedFolio.roomId !== 'TBD' ? ` • Room ${selectedFolio.roomId}` : ''}
+              </p>
             </div>
+            {selectedFolio && (() => {
+              const inv = invoices.find((item) => item.id === selectedFolio.id);
+              const due = stayFigures(selectedFolio).balance;
+              return (
+                <div className="flex shrink-0 gap-1">
+                  {inv && (
+                    <Button size="sm" variant="flat" className="bg-white/20 text-white" onPress={() => handlePrintInvoice(inv)}>Print</Button>
+                  )}
+                  {inv && due > 0.005 && (
+                    <Button size="sm" variant="flat" className="bg-white/20 text-white" onPress={() => { setSelectedInvoice(inv); onAddPaymentOpen(); }}>Pay</Button>
+                  )}
+                </div>
+              );
+            })()}
           </ModalHeader>
           <ModalBody>
             {selectedFolio && (
@@ -2223,22 +2086,22 @@ export default function InvoicesPaymentsPage() {
                     {(() => {
                       const folio = frontOfficeStore.getOrCreateFolio(selectedFolio.id);
                       return (
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                          <div className="text-center p-4 bg-blue-50 rounded-lg">
-                            <div className="text-sm text-blue-600">Total Charges</div>
-                            <div className="text-2xl font-bold text-blue-700">₵{formatMoney((folio.totalCharges || 0))}</div>
+                        <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                          <div className="rounded-lg bg-blue-50 px-2 py-1.5 text-center">
+                            <div className="text-base font-semibold tabular-nums text-blue-700">₵{formatMoney((folio.totalCharges || 0))}</div>
+                            <div className="text-xs text-blue-600">Total Charges</div>
                           </div>
-                          <div className="text-center p-4 bg-green-50 rounded-lg">
-                            <div className="text-sm text-green-600">Total Payments</div>
-                            <div className="text-2xl font-bold text-green-700">₵{formatMoney((folio.totalPayments || 0))}</div>
+                          <div className="rounded-lg bg-green-50 px-2 py-1.5 text-center">
+                            <div className="text-base font-semibold tabular-nums text-green-700">₵{formatMoney((folio.totalPayments || 0))}</div>
+                            <div className="text-xs text-green-600">Total Payments</div>
                           </div>
-                          <div className="text-center p-4 bg-orange-50 rounded-lg">
-                            <div className="text-sm text-orange-600">Outstanding Balance</div>
-                            <div className="text-2xl font-bold text-orange-700">₵{formatMoney((folio.balance || 0))}</div>
+                          <div className="rounded-lg bg-orange-50 px-2 py-1.5 text-center">
+                            <div className="text-base font-semibold tabular-nums text-orange-700">₵{formatMoney((folio.balance || 0))}</div>
+                            <div className="text-xs text-orange-600">Outstanding Balance</div>
                           </div>
-                          <div className="text-center p-4 bg-purple-50 rounded-lg">
-                            <div className="text-sm text-purple-600">Transactions</div>
-                            <div className="text-2xl font-bold text-purple-700">{folio.charges.length + folio.payments.length}</div>
+                          <div className="rounded-lg bg-purple-50 px-2 py-1.5 text-center">
+                            <div className="text-base font-semibold tabular-nums text-purple-700">{folio.charges.length + folio.payments.length}</div>
+                            <div className="text-xs text-purple-600">Transactions</div>
                           </div>
                         </div>
                       );

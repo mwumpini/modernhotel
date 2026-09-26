@@ -17,10 +17,18 @@
 import { trackEvent } from '../../analytics/trackEvent';
 import { logAudit } from '../../analytics/auditLogStore';
 import type { Folio, FolioPayment } from '../types';
-import { roundToIncrement, roundMoney2 } from '../../tax/engine';
+import { roundMoney2 } from '../../tax/engine';
 import { useComplianceStore } from '../../compliance/store';
 import { useSettingsStore } from '../../settings/store';
 import { genId as genChargeId } from './ids';
+import {
+  chargeGross,
+  chargeNet,
+  DEFAULT_FOLIO_ROUNDING,
+  roundCents,
+  roundFolioTotal,
+  type FolioRounding,
+} from '../folioLedger';
 
 type StoreLike = any;
 
@@ -70,13 +78,36 @@ function isServiceCharge(description?: string) {
 
 const SALES_TAX_CONTEXT = { domain: 'sales' as const, operation: 'external' as const };
 
+function paymentCounts(p: { status?: string }) {
+	return (p.status || 'completed') === 'completed';
+}
+
+/** Cash-rounding rule the desk is using right now. Missing settings keep the ₵0.50 default. */
+function folioRoundingFromSettings(): FolioRounding {
+	try {
+		const fs = useSettingsStore.getState().financialSettings;
+		const raw = fs?.roundToNearest;
+		const increment = raw == null || (raw as unknown) === '' ? (DEFAULT_FOLIO_ROUNDING.increment as number) : Number(raw) || 0;
+		const rule = fs?.roundingRule === 'up' || fs?.roundingRule === 'down' || fs?.roundingRule === 'nearest'
+			? fs.roundingRule
+			: 'nearest';
+		return { increment, rule };
+	} catch {
+		return DEFAULT_FOLIO_ROUNDING;
+	}
+}
+
 /**
  * Maps a folio charge to a compliance `appliesTo` category — reuses the same
  * FB_KEYWORDS/OTHER_SERVICE_KEYWORDS keyword lists GL routing already uses above, so a
  * charge lands in the same bucket for both. Room charges don't go through this (they
  * pre-supply `tax` from rates.ts, category 'HOTEL' — see roomCharges.ts).
  */
+const EXPLICIT_TAX_CATEGORIES = ['FOOD', 'EVENT', 'HOTEL', 'ROOM', 'SERVICE', 'ALL'];
+
 function inferChargeTaxCategory(description?: string, category?: string): string {
+	const explicit = (category || '').toUpperCase();
+	if (EXPLICIT_TAX_CATEGORIES.includes(explicit)) return explicit;
 	const cat = (category || '').toLowerCase();
 	if (cat === 'f&b' || cat === 'fb' || matchesKeyword(description, FB_KEYWORDS)) return 'FOOD';
 	if (cat === 'conference' || (description || '').toLowerCase().includes('conference')) return 'EVENT';
@@ -109,30 +140,32 @@ export function getFolioDisplayTotals(folio: Folio, asOfDate?: string) {
 	const inRange = (d?: string) => !asOfDate || (!!d && d.slice(0, 10) <= asOfDate);
 	const charges = (folio.charges || []).filter((c) => inRange(c.date));
 	const payments = (folio.payments || []).filter((p) => inRange(p.date));
-	const subtotal = charges.reduce((s, c) => s + (c.amount || 0), 0);
+	// Net includes a line's service charge and discount so an F&B bill-to-room
+	// matches the POS total (subtotal − discount + service + tax), not just subtotal + tax.
+	const subtotal = charges.reduce((s, c) => s + chargeNet(c as any), 0);
 	const taxTotal = charges.reduce((s, c) => s + (c.tax || 0), 0);
 	const exactTotalCharges = subtotal + taxTotal;
 	// Settings > Billing & Rounding "Round Total To Nearest" — line items (subtotal/taxTotal
 	// above) stay exact; only the amount the guest is asked to settle is nudged to the
 	// increment. The gap is posted as a rounding-adjustment GL line at checkout (invoice.ts).
-	const totalCharges = roundToIncrement(exactTotalCharges);
-	const roundingAdjustment = roundMoney2(totalCharges - exactTotalCharges);
+	const totalCharges = roundFolioTotal(exactTotalCharges, folioRoundingFromSettings());
+	const roundingAdjustment = roundCents(totalCharges - exactTotalCharges);
 	const totalPayments = payments
-		.filter((p) => p.status === 'completed')
+		.filter((p) => paymentCounts(p))
 		.reduce((s, p) => s + (p.amount || 0), 0);
-	const balance = totalCharges - totalPayments;
+	const balance = roundCents(totalCharges - totalPayments);
 	const outstandingBalance = Math.max(0, balance);
 	// Room charges are net (excl. tax); all levy amounts roll up into taxTotal.
 	const roomCharges = charges
 		.filter((c) => isRoomCharge(c.description))
-		.reduce((s, c) => s + (c.amount || 0), 0);
+		.reduce((s, c) => s + chargeNet(c as any), 0);
 	const serviceCharges = charges
 		.filter((c) => isServiceCharge(c.description))
-		.reduce((s, c) => s + (c.amount || 0), 0);
+		.reduce((s, c) => s + chargeNet(c as any), 0);
 	const otherCharges = charges
 		.filter((c) => !isRoomCharge(c.description) && !isServiceCharge(c.description))
-		.reduce((s, c) => s + (c.amount || 0), 0);
-	const gross = (c: { amount?: number; tax?: number }) => (c.amount || 0) + (c.tax || 0);
+		.reduce((s, c) => s + chargeNet(c as any), 0);
+	const gross = (c: { amount?: number; tax?: number; serviceCharge?: number; discountAmount?: number }) => chargeGross(c as any);
 	const roomChargesInclusive = charges
 		.filter((c) => isRoomCharge(c.description))
 		.reduce((s, c) => s + gross(c), 0);
@@ -169,15 +202,12 @@ export function getFolioDisplayTotals(folio: Folio, asOfDate?: string) {
 export function findMainFolio(folios: Folio[] | undefined, reservationId: string): Folio | undefined {
 	const candidates = (folios || []).filter((f: any) => f.reservationId === reservationId && f.type !== 'split');
 	if (candidates.length <= 1) return candidates[0];
-	// A hydration race (getOrCreateFolio called client-side before the async GET
-	// /api/folios pull resolves) can leave several folio rows for the same
-	// reservation — the real one plus empty duplicates created and persisted
-	// before the server's copy was known locally. Prefer whichever actually has
-	// charges/payments over an empty placeholder so old data isn't shadowed by
-	// a duplicate that happens to sit earlier in the array.
-	return (
-		candidates.find((f: any) => (f.charges?.length || 0) > 0 || (f.payments?.length || 0) > 0) || candidates[0]
-	);
+	// A hydration race can leave several folio rows for the same reservation.
+	// Prefer the one that actually holds the stay: more charges and payments
+	// beats an empty placeholder or a one-line duplicate created later.
+	const weight = (folio: { charges?: unknown[]; payments?: unknown[] }) =>
+		(folio.charges?.length || 0) + (folio.payments?.length || 0);
+	return candidates.reduce((best, folio) => (weight(folio) > weight(best) ? folio : best));
 }
 
 /**
@@ -205,8 +235,16 @@ function dedupeById<T extends { id: string }>(items: T[] | undefined): T[] {
 export function getOrCreateFolio(self: StoreLike, reservationId: string): Folio {
 	let f = findMainFolio(self.folios, reservationId);
 	if (!f) {
+		// The folio counter lives in this browser. A number already on a loaded folio
+		// must not be issued again: the server merges a PUT by folio id, so a reused
+		// id would attach this stay's charges to another guest's folio.
+		const used = new Set((self.folios || []).map((existing: { id: string }) => existing.id));
+		let folioId = useSettingsStore.getState().getNextModuleNumber('frontOffice', 'folio');
+		for (let attempt = 0; used.has(folioId) && attempt < 100; attempt++) {
+			folioId = useSettingsStore.getState().getNextModuleNumber('frontOffice', 'folio');
+		}
 		f = {
-			id: useSettingsStore.getState().getNextModuleNumber('frontOffice', 'folio'),
+			id: folioId,
 			reservationId,
 			charges: [],
 			payments: [],
@@ -247,15 +285,15 @@ export function getFolioById(self: StoreLike, folioId: string): Folio | undefine
  * Safe to call after any folio mutation.
  */
 export function updateFolioBalances(self: StoreLike, folio: Folio) {
-	const exactTotalCharges = folio.charges.reduce((sum, charge) => sum + charge.amount + (charge.tax || 0), 0);
-	const totalCharges = roundToIncrement(exactTotalCharges);
+	const exactTotalCharges = folio.charges.reduce((sum, charge) => sum + chargeGross(charge as any), 0);
+	const totalCharges = roundFolioTotal(exactTotalCharges, folioRoundingFromSettings());
 	const totalPayments = (folio.payments || [])
-		.filter((p: any) => p.status === 'completed')
+		.filter((p: any) => paymentCounts(p))
 		.reduce((sum: number, payment: any) => sum + payment.amount, 0);
-	const balance = totalCharges - totalPayments;
+	const balance = roundCents(totalCharges - totalPayments);
 
 	folio.totalCharges = totalCharges;
-	folio.roundingAdjustment = roundMoney2(totalCharges - exactTotalCharges);
+	folio.roundingAdjustment = roundCents(totalCharges - exactTotalCharges);
 	folio.totalPayments = totalPayments;
 	folio.balance = balance;
 
@@ -464,6 +502,42 @@ export function postCorporateReceipt(self: StoreLike, payer: string, reservation
 	return { allocations, remaining };
 }
 
+/** Post one company lump sum onto the stays already chosen, in that order. */
+export function postCompanyReceipt(
+	self: StoreLike,
+	payer: string,
+	allocations: Array<{ reservationId: string; amount: number }>,
+	reference: string,
+	method: 'Cash' | 'Card' | 'Mobile Money' | 'Credit' | 'Corporate Account' | 'Bank Transfer' | 'Check',
+	processedBy?: string,
+) {
+	const posted: Array<{ reservationId: string; applied: number }> = [];
+	for (const row of allocations) {
+		const apply = Math.round((row.amount || 0) * 100) / 100;
+		if (apply <= 0) continue;
+		addPayment(self, row.reservationId, method, apply, {
+			notes: `Company receipt from ${payer}`,
+			processedBy: processedBy || 'Front Desk',
+			ref: reference,
+		});
+		posted.push({ reservationId: row.reservationId, applied: apply });
+	}
+	self.notify();
+	trackEvent('FO.Folio.CompanyReceipt', { payer, reference, method, allocations: posted.length });
+	try {
+		logAudit({
+			area: 'frontdesk',
+			action: 'create',
+			entity: 'Payment',
+			entityId: reference || genChargeId('CORP'),
+			details: `Company receipt ₵${posted.reduce((sum, row) => sum + row.applied, 0)} from ${payer} on ${posted.length} stays`,
+			severity: 'medium',
+			meta: { allocations: posted, reference, method },
+		});
+	} catch {}
+	return { allocations: posted };
+}
+
 /**
  * Canonical tax rates snapshot, sourced directly from the compliance engine's active
  * rules for GH (category 'HOTEL', so Tourism Levy — which only applies to
@@ -487,11 +561,11 @@ export function getTaxRates(_self: StoreLike) {
  * reservation itself isn't exempt (e.g. a complimentary item) — it only ever
  * adds exemption, never removes it from an already tax-exempt reservation.
  */
-export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number, forceExempt?: boolean) {
+export function addCharge(self: StoreLike, reservationId: string, description: string, amount: number, forceExempt?: boolean, taxCategory?: string) {
 	const f = getOrCreateFolio(self, reservationId);
 	const reservation = self.reservations?.find((r: any) => r.id === reservationId);
-	const tax = computeChargeTax(amount, description, undefined, reservation?.taxExempt || forceExempt);
-	f.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description, amount, tax } as any);
+	const tax = computeChargeTax(amount, description, taxCategory, reservation?.taxExempt || forceExempt);
+	f.charges.push({ id: genChargeId('C'), date: new Date().toISOString(), description, amount, tax, category: taxCategory } as any);
 	updateFolioBalances(self, f);
 	self.notify();
 	trackEvent('FO.Folio.ChargePosted', { reservationId, description, amount, tax });

@@ -1,3 +1,4 @@
+import { elapsedBusinessDates } from '../src/app/lib/frontoffice/folioLedger';
 import {
   getRoomChargeDatesOnFolio,
   isRoomLine,
@@ -122,6 +123,13 @@ assert(!isRoomLine('Restaurant'), 'non-room');
 {
   assert(isAuthoritativeRevenueSource('front_office_checkout'), 'checkout ok');
   assert(!isAuthoritativeRevenueSource('front_office'), 'fo builder excluded');
+}
+
+{
+  const missed = elapsedBusinessDates('2026-09-23', '2026-09-26');
+  assert(missed.join(',') === '2026-09-23,2026-09-24,2026-09-25', `missed ${missed.join(',')}`);
+  assert(elapsedBusinessDates('2026-09-26', '2026-09-26').length === 0, 'today stays open');
+  assert(elapsedBusinessDates('2026-09-27', '2026-09-26').length === 0, 'future open date is not rewound');
 }
 
 console.log('All front-office night-audit regression checks passed.');

@@ -146,6 +146,9 @@ export interface RequisitionItem {
   quantity: number;
   estimatedPrice: number;
   totalCost: number;
+  /** Preferred vendor for this line — used when converting to PO(s). */
+  preferredSupplierId?: string;
+  preferredSupplierName?: string;
   notes?: string;
 }
 
@@ -202,6 +205,33 @@ export interface StockTransferItem {
   totalValue: number;
   transferredQuantity: number;
   notes?: string;
+}
+
+export interface GoodsIssue {
+  id: string;
+  issueNumber: string;
+  department: string;
+  issuedTo: string;
+  issueDate: Date;
+  status: 'issued' | 'cancelled';
+  totalItems: number;
+  totalValue: number;
+  items: GoodsIssueItem[];
+  notes?: string;
+  issuedBy: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface GoodsIssueItem {
+  id: string;
+  itemId: string;
+  itemCode: string;
+  itemName: string;
+  quantity: number;
+  unitCost: number;
+  totalValue: number;
+  reason?: string;
 }
 
 export interface InventoryAdjustment {

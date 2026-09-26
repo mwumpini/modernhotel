@@ -6,10 +6,15 @@ import RecentActivities from './RecentActivities';
 import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import SecurityComplianceDashboard, { SECURITY_DASHBOARD_SECTIONS } from './SecurityComplianceDashboard';
-import { HideCardButton } from './dashboard/CustomizeViewControl';
+import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility } from '../lib/dashboard/useDashboardVisibility';
 
-export default function SecurityMainDashboard() {
+export default function SecurityMainDashboard({
+  fullPage = false,
+}: {
+  fullPage?: boolean;
+} = {}) {
   // Owns the one useDashboardVisibility call for the whole Security module —
   // passed down to SecurityComplianceDashboard, which renders the actual
   // "Customize View" control, so there's a single source of truth instead of
@@ -17,16 +22,39 @@ export default function SecurityMainDashboard() {
   const { isHidden, hide, toggle, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.security', SECURITY_DASHBOARD_SECTIONS);
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">🛡️ Security Operations</h2>
-      </div>
+    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
+      {!fullPage && (
+        <>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-ghana-black">🚨 Security Operations</h2>
+            <div className="flex items-center gap-2">
+              <CustomizeViewControl
+                sections={SECURITY_DASHBOARD_SECTIONS}
+                isHidden={isHidden}
+                toggle={toggle}
+                showAll={showAll}
+                hiddenCount={hiddenCount}
+              />
+              <ModuleExpandButton
+                href="/security/ops"
+                label="Open security full page"
+              />
+            </div>
+          </div>
+          <DeptMessenger from="security" mode="drawer" />
+        </>
+      )}
 
-      <DeptMessenger from="security" mode="drawer" />
+      <SecurityComplianceDashboard
+        fullPage={fullPage}
+        isHidden={isHidden}
+        hide={hide}
+        toggle={toggle}
+        showAll={showAll}
+        hiddenCount={hiddenCount}
+      />
 
-      <SecurityComplianceDashboard isHidden={isHidden} hide={hide} toggle={toggle} showAll={showAll} hiddenCount={hiddenCount} />
-
-      {(!isHidden('recentActivities') || !isHidden('notices')) && (
+      {!fullPage && (!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {!isHidden('recentActivities') && (

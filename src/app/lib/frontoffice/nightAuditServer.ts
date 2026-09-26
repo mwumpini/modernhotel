@@ -3,11 +3,13 @@ import { prisma } from '../database/client'
 import { resolveTaxConfigs, type PrismaTaxRow } from '../tax/resolveConfigs'
 import { computeStackedTaxLines } from '../accounting/taxFromConfig'
 import { createNightAuditLog } from './nightAuditLogRepository'
-import { asLineArray, nextCalendarDate, recomputeFolioTotals, type FolioLineJson } from './folioLedger'
+import { asLineArray, elapsedBusinessDates, isPostedRoomCharge, lineOnBusinessDate, nextCalendarDate, recomputeFolioTotals, roundCents, type FolioLineJson } from './folioLedger'
 import {
   appendGuestFolioCharge,
   ensureGuestFolio,
   getFrontOfficeBusinessDate,
+  getPropertyCalendarDate,
+  loadFolioRounding,
   reconstructTenantDay,
   setFrontOfficeBusinessDate,
 } from './folioServer'
@@ -32,11 +34,25 @@ export type NightAuditServerResult = {
   errors: string[]
   completedAt: string
   logId?: string
+  /** Hotel days this call actually closed. Empty when the open day was already closed. */
+  daysClosed: string[]
 }
 
-function nightlyRateFromReservation(details: unknown, businessDate: string): number {
-  const breakdown = (details as { rateBreakdown?: Array<{ date: string; base: number }> } | null)?.rateBreakdown || []
-  return breakdown.find((d) => d.date === businessDate)?.base ?? breakdown[0]?.base ?? 0
+type RateDay = { date: string; base: number; total?: number }
+
+/**
+ * The night the guest was quoted, for this business date only.
+ * Tax is the stored gross minus net so a ₵500.00 rate is not recomputed into ₵499.99,
+ * and a missing night is not silently priced at the first night's rate.
+ */
+function quotedNight(details: unknown, businessDate: string): { base: number; tax: number; taxIsQuoted: boolean } | null {
+  const breakdown = (details as { rateBreakdown?: RateDay[] } | null)?.rateBreakdown || []
+  const day = breakdown.find((d) => d.date === businessDate)
+  if (!day || !(Number(day.base) > 0)) return null
+  if (typeof day.total === 'number') {
+    return { base: day.base, tax: roundCents(Math.max(0, day.total - day.base)), taxIsQuoted: true }
+  }
+  return { base: day.base, tax: 0, taxIsQuoted: false }
 }
 
 export async function runTenantNightAudit(params: {
@@ -68,12 +84,14 @@ export async function runTenantNightAudit(params: {
       errors: [],
       completedAt: already.runAt.toISOString(),
       logId: already.id,
+      daysClosed: [],
     }
   }
 
   const errors: string[] = []
   let roomChargesPosted = 0
   let noShowsMarked = 0
+  const folioRounding = await loadFolioRounding(params.tenantId)
 
   const tenantTaxRows = await prisma.tax.findMany({ where: { tenantId: params.tenantId, isActive: true } })
   const tenantTaxConfigs = resolveTaxConfigs({
@@ -102,21 +120,27 @@ export async function runTenantNightAudit(params: {
       const departure = reservation.checkOutDate.toISOString().slice(0, 10)
       if (businessDate < arrival || businessDate >= departure) continue
 
-      const nightlyRate = nightlyRateFromReservation(reservation.details, businessDate)
-      if (nightlyRate <= 0) continue
-
-      const { totalTax: taxAmount } = computeStackedTaxLines(nightlyRate, tenantTaxConfigs, 'sales')
+      const night = quotedNight(reservation.details, businessDate)
+      if (!night) continue
+      const taxAmount = night.taxIsQuoted
+        ? night.tax
+        : computeStackedTaxLines(night.base, tenantTaxConfigs, 'sales').totalTax
       const charge: FolioLineJson = {
         id: `ROOM-${businessDate}-${reservation.id.slice(-8)}`,
         date: `${businessDate}T12:00:00.000Z`,
         description: `Room Charge — ${businessDate}`,
-        amount: nightlyRate,
+        amount: night.base,
         tax: taxAmount,
         category: 'room',
         glAccountCode: GL.ROOM_REVENUE,
       }
 
       const posted = await prisma.$transaction(async (tx) => {
+        const folio = await ensureGuestFolio(params.tenantId, reservation.id, tx as any)
+        const already = asLineArray(folio.charges).some(
+          (c) => isPostedRoomCharge(c) && lineOnBusinessDate(c, businessDate),
+        )
+        if (already) return false
         const result = await appendGuestFolioCharge({
           tenantId: params.tenantId,
           reservationId: reservation.id,
@@ -147,20 +171,33 @@ export async function runTenantNightAudit(params: {
       const arrival = res.checkInDate.toISOString().slice(0, 10)
       if (arrival > businessDate) continue
 
-      const resBreakdown = (res.details as { rateBreakdown?: Array<{ date: string; base: number }> } | null)?.rateBreakdown || []
+      const resBreakdown = (res.details as { rateBreakdown?: RateDay[] } | null)?.rateBreakdown || []
       const nightlyNet = resBreakdown[0]?.base ?? 0
+      const nightlyGross = typeof resBreakdown[0]?.total === 'number' ? resBreakdown[0].total : nightlyNet
       const stayNetTotal = resBreakdown.reduce((s, d) => s + (d.base || 0), 0)
+      const stayGrossTotal = resBreakdown.reduce((s, d) => s + (typeof d.total === 'number' ? d.total : (d.base || 0)), 0)
 
       let chargeAmt = 0
+      let quotedTax: number | undefined
       if (noShowPolicy.enabled) {
-        if (noShowPolicy.chargeType === 'first_night') chargeAmt = nightlyNet
-        else if (noShowPolicy.chargeType === 'percent_reservation') chargeAmt = Math.max(0, (noShowPolicy.chargeValue / 100) * stayNetTotal)
-        else chargeAmt = Math.max(0, noShowPolicy.chargeValue)
+        if (noShowPolicy.chargeType === 'first_night') {
+          chargeAmt = nightlyNet
+          quotedTax = roundCents(Math.max(0, nightlyGross - nightlyNet))
+        } else if (noShowPolicy.chargeType === 'percent_reservation') {
+          const penaltyGross = Math.max(0, (noShowPolicy.chargeValue / 100) * stayGrossTotal)
+          const ratio = stayGrossTotal > 0 ? penaltyGross / stayGrossTotal : 0
+          chargeAmt = roundCents(stayNetTotal * ratio)
+          quotedTax = roundCents(Math.max(0, penaltyGross - chargeAmt))
+        } else {
+          chargeAmt = Math.max(0, noShowPolicy.chargeValue)
+        }
       }
 
       const chargeId = `C-NS-${res.id.slice(-8)}`
       const { totalTax: taxAmount, lines: taxLines } =
-        chargeAmt > 0 ? computeStackedTaxLines(chargeAmt, tenantTaxConfigs, 'sales') : { totalTax: 0, lines: [] as Array<{ amount: number; glAccountCode: string; name: string }> }
+        chargeAmt > 0
+          ? computeStackedTaxLines(chargeAmt, tenantTaxConfigs, 'sales', quotedTax)
+          : { totalTax: 0, lines: [] as Array<{ amount: number; glAccountCode: string; name: string }> }
       const total = chargeAmt + taxAmount
       const cardCollected = chargeAmt > 0 && res.isGuaranteed
 
@@ -197,7 +234,7 @@ export async function runTenantNightAudit(params: {
                 notes: 'No-show penalty — card guarantee',
               })
             }
-            const totals = recomputeFolioTotals(asLineArray(fresh.charges), payments)
+            const totals = recomputeFolioTotals(asLineArray(fresh.charges), payments, folioRounding)
             await tx.guestFolio.update({
               where: { id: fresh.id },
               data: { payments: payments as any, ...totals, status: 'closed' },
@@ -323,5 +360,63 @@ export async function runTenantNightAudit(params: {
     errors,
     completedAt,
     logId: log.id,
+    daysClosed: status === 'completed' ? [businessDate] : [],
+  }
+}
+
+/**
+ * Close every hotel day that is already behind the property calendar.
+ * Today stays open. When the open day is already today, one run closes that day.
+ */
+export async function catchUpTenantNightAudit(params: {
+  tenantId: string
+  source: 'cron' | 'manual'
+  runBy?: string
+  now?: Date
+}): Promise<NightAuditServerResult> {
+  const today = await getPropertyCalendarDate(params.tenantId, params.now)
+  const openDate = await getFrontOfficeBusinessDate(params.tenantId)
+  const elapsed = elapsedBusinessDates(openDate, today)
+
+  if (elapsed.length === 0) {
+    return runTenantNightAudit({ ...params, businessDate: openDate })
+  }
+
+  let roomChargesPosted = 0
+  let noShowsMarked = 0
+  const daysClosed: string[] = []
+  const errors: string[] = []
+  let last: NightAuditServerResult | null = null
+
+  for (const businessDate of elapsed) {
+    const run = await runTenantNightAudit({ ...params, businessDate })
+    last = run
+    roomChargesPosted += run.roomChargesPosted
+    noShowsMarked += run.noShowsMarked
+    errors.push(...run.errors)
+    if (run.status !== 'completed') {
+      return {
+        ...run,
+        roomChargesPosted,
+        noShowsMarked,
+        errors,
+        daysClosed,
+      }
+    }
+    if (!run.skipped) daysClosed.push(run.businessDate)
+    const next = run.nextBusinessDate
+    if (run.skipped && next > businessDate) {
+      await setFrontOfficeBusinessDate(params.tenantId, next)
+    }
+    if (!next || next <= businessDate) break
+  }
+
+  return {
+    ...last!,
+    roomChargesPosted,
+    noShowsMarked,
+    errors,
+    nextBusinessDate: last!.status === 'completed' ? last!.nextBusinessDate : last!.businessDate,
+    daysClosed,
   }
 }

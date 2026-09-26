@@ -1,5 +1,5 @@
 import { prisma } from '../database/client'
-import { JournalEntry, JournalEntryLine, Invoice, InvoiceLine, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter, BusinessPartner, BankTransaction } from './models'
+import { JournalEntry, JournalEntryLine, Invoice, InvoiceLine, Payment, ChartOfAccounts, BankAccount, CostCenter, RevenueCenter, BusinessPartner, BankTransaction, GHANA_CHART_OF_ACCOUNTS } from './models'
 import type { PpeAsset, PpeCategory } from './ppe/types'
 import { mapCoaTypeToCategory, mapCoaTypeToRollup } from './coaTree'
 
@@ -607,8 +607,41 @@ function toStoreAccount(row: any): ChartOfAccounts {
 }
 
 export async function listChartOfAccounts(tenantId: string): Promise<ChartOfAccounts[]> {
+  await ensurePostedTemplateAccounts(tenantId)
   const rows = await prisma.account.findMany({ where: { tenantId }, orderBy: { position: 'asc' } })
   return rows.map(toStoreAccount)
+}
+
+/** A posted journal can name a template account the tenant chart never received
+ *  (payroll Tier 2 is 2225). Add those codes so the balance sheet includes them. */
+async function ensurePostedTemplateAccounts(tenantId: string) {
+  const [existing, posted] = await Promise.all([
+    prisma.account.findMany({ where: { tenantId }, select: { code: true, position: true } }),
+    prisma.journalEntryLine.findMany({
+      where: { tenantId, journalEntry: { status: 'Posted' } },
+      select: { accountCode: true },
+      distinct: ['accountCode'],
+    }),
+  ])
+  const have = new Set(existing.map((a) => a.code))
+  const postedCodes = new Set(posted.map((l) => l.accountCode))
+  const missing = GHANA_CHART_OF_ACCOUNTS.filter((row) => postedCodes.has(row.code) && !have.has(row.code))
+  if (!missing.length) return
+  let position = existing.reduce((max, a) => Math.max(max, a.position || 0), 0)
+  for (const row of missing) {
+    position += 1
+    await prisma.account.create({
+      data: {
+        tenantId,
+        code: row.code,
+        name: row.name,
+        type: toDbAccountType(row.type),
+        category: row.type,
+        position,
+        isActive: true,
+      },
+    })
+  }
 }
 
 /** `code` (unique per tenant) is the only identifier guaranteed to match between the

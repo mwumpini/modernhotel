@@ -99,9 +99,9 @@ export default function OvertimeManagementPanel() {
         <CardBody>
           {showManualForm && (
             <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-end mb-4 p-3 border border-gray-200 rounded-lg">
-              <Select label="Employee" selectedKeys={manualEmployeeId ? [manualEmployeeId] : []} onSelectionChange={(k) => setManualEmployeeId(Array.from(k)[0] as string)} variant="bordered" className="md:col-span-2">
+              <Select label="Employee" selectedKeys={manualEmployeeId ? [manualEmployeeId] : []} onSelectionChange={(k) => setManualEmployeeId((Array.from(k)[0] as string) || '')} variant="bordered" className="md:col-span-2">
                 {employees.map((e) => (
-                  <SelectItem key={e.id}>{e.firstName} {e.lastName}</SelectItem>
+                  <SelectItem key={e.id} textValue={`${e.firstName} ${e.lastName}`}>{e.firstName} {e.lastName}</SelectItem>
                 ))}
               </Select>
               <Input label="Date" type="date" value={manualDate} onChange={(e) => setManualDate(e.target.value)} variant="bordered" />
@@ -119,6 +119,7 @@ export default function OvertimeManagementPanel() {
           )}
           <Table aria-label="overtime">
             <TableHeader>
+              <TableColumn>TIMESHEET</TableColumn>
               <TableColumn>EMPLOYEE</TableColumn>
               <TableColumn>DATE</TableColumn>
               <TableColumn>HOURS</TableColumn>
@@ -135,6 +136,7 @@ export default function OvertimeManagementPanel() {
                 const escalated = !isApproved && needsDirector(a.overtimeHours || 0);
                 return (
                   <TableRow key={a.id}>
+                    <TableCell className="font-mono">{a.id}</TableCell>
                     <TableCell>{name}</TableCell>
                     <TableCell>{new Date(a.date).toLocaleDateString()}</TableCell>
                     <TableCell>{(a.totalHours || 0).toFixed(2)}</TableCell>

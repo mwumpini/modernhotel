@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from './HeadingInfo';
 import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Tabs, Tab } from "@heroui/react";
 import { ordersStore } from '../lib/fb/ordersStore';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
@@ -51,7 +52,7 @@ interface MenuItem {
 
 const TABLE_STATUSES: RestaurantTable['status'][] = ['available', 'occupied', 'reserved', 'cleaning'];
 
-export default function FoodBeverageRestaurantBar() {
+export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' | 'reservations' }) {
   const [selectedTab, setSelectedTab] = useState('pos-activity');
   const [storeOrders, setStoreOrders] = useState(ordersStore.all());
   React.useEffect(() => {
@@ -65,6 +66,7 @@ export default function FoodBeverageRestaurantBar() {
   }, []);
 
   const [isNewReservationModalOpen, setIsNewReservationModalOpen] = useState(false);
+  const [viewingReservationId, setViewingReservationId] = useState<string | null>(null);
   const [isNewMenuItemModalOpen, setIsNewMenuItemModalOpen] = useState(false);
   const [isNewTableModalOpen, setIsNewTableModalOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('all');
@@ -280,13 +282,21 @@ export default function FoodBeverageRestaurantBar() {
   const pendingReservations = todaysReservations.filter((r) => r.status === 'pending').length;
   const activeStaffCount = staff.filter((s) => s.status === 'active').length;
 
+  const embedded = Boolean(panel);
+  const openReservation = viewingReservationId
+    ? reservations.find((r) => r.id === viewingReservationId) ?? null
+    : null;
+
   return (
-    <div className="p-6">
+    <div className={embedded ? 'p-2' : 'p-6'}>
       {/* Header */}
+      {!embedded && (
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-ghana-black">🍽️ Food & Beverage - Restaurant & Bar</h2>
-          <p className="text-gray-600">Manage tables, reservations, menu, and staff</p>
+          <div className="flex items-center gap-1.5">
+            <h2 className="text-2xl font-bold text-ghana-black">🍽️ Food & Beverage - Restaurant & Bar</h2>
+            <HeadingInfo label="About restaurant and bar">Manage tables, reservations, menu, and staff</HeadingInfo>
+          </div>
         </div>
         <div className="flex gap-3">
           <Button
@@ -305,8 +315,10 @@ export default function FoodBeverageRestaurantBar() {
           </Button>
         </div>
       </div>
+      )}
 
       {/* Stats Overview */}
+      {!embedded && (
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
         <Card className="border-0 shadow-lg">
           <CardBody className="p-6">
@@ -360,21 +372,26 @@ export default function FoodBeverageRestaurantBar() {
           </CardBody>
         </Card>
       </div>
+      )}
 
       {/* Main Content Tabs */}
       <Card className="border-0 shadow-lg">
         <CardBody className="p-0">
           <Tabs
-            selectedKey={selectedTab}
-            onSelectionChange={(key) => setSelectedTab(key as string)}
+            selectedKey={panel || selectedTab}
+            onSelectionChange={(key) => { if (!embedded) setSelectedTab(key as string); }}
             className="w-full"
+            classNames={embedded ? { tabList: 'hidden', panel: 'p-0' } : undefined}
           >
+            {!embedded && (
             <Tab key="pos-activity" title="📊 POS Activity Table">
               <div className="p-6">
                 <DepartmentActivityLog area="f&b" title="POS Activity Table" showCategory showAlias />
               </div>
             </Tab>
+            )}
 
+            {(!embedded || panel === 'tables') && (
             <Tab key="tables" title="🪑 Table Management">
               <div className="p-6">
                 <div className="flex justify-end mb-4">
@@ -421,9 +438,18 @@ export default function FoodBeverageRestaurantBar() {
                 </div>
               </div>
             </Tab>
+            )}
 
+            {(!embedded || panel === 'reservations') && (
             <Tab key="reservations" title="📅 Reservations">
               <div className="p-6">
+                {embedded && (
+                  <div className="flex justify-end mb-4">
+                    <Button color="primary" className="bg-ghana-green text-white" onClick={() => setIsNewReservationModalOpen(true)}>
+                      + New Reservation
+                    </Button>
+                  </div>
+                )}
                 <div className="max-h-[560px] overflow-y-auto">
                   <Table aria-label="Reservations table">
                     <TableHeader>
@@ -467,17 +493,7 @@ export default function FoodBeverageRestaurantBar() {
                             </p>
                           </TableCell>
                           <TableCell>
-                            <div className="flex gap-2">
-                              {reservation.status === 'pending' && (
-                                <Button size="sm" color="success" variant="flat" onClick={() => setReservationStatus(reservation, 'confirmed')}>Confirm</Button>
-                              )}
-                              {(reservation.status === 'pending' || reservation.status === 'confirmed') && (
-                                <Button size="sm" color="danger" variant="flat" onClick={() => setReservationStatus(reservation, 'cancelled')}>Cancel</Button>
-                              )}
-                              {reservation.status === 'confirmed' && (
-                                <Button size="sm" color="secondary" variant="flat" onClick={() => setReservationStatus(reservation, 'completed')}>Complete</Button>
-                              )}
-                            </div>
+                            <Button size="sm" variant="flat" onClick={() => setViewingReservationId(reservation.id)}>View</Button>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -486,7 +502,9 @@ export default function FoodBeverageRestaurantBar() {
                 </div>
               </div>
             </Tab>
+            )}
 
+            {!embedded && (
             <Tab key="menu" title="🍽️ Menu Management">
               <div className="p-6">
                 <div className="flex items-center gap-4 mb-4">
@@ -564,7 +582,9 @@ export default function FoodBeverageRestaurantBar() {
                 </div>
               </div>
             </Tab>
+            )}
 
+            {!embedded && (
             <Tab key="staff" title="👥 Staff Management">
               <DepartmentStaffTab
                 staff={staff}
@@ -575,6 +595,7 @@ export default function FoodBeverageRestaurantBar() {
                 helperText="HR staff in a Restaurant / Bar / Food & Beverage department. Kitchen staff stay on the Kitchen tab. Names come from the HR file — this tab does not invent staff."
               />
             </Tab>
+            )}
           </Tabs>
         </CardBody>
       </Card>
@@ -604,6 +625,37 @@ export default function FoodBeverageRestaurantBar() {
       </Modal>
 
       {/* New Reservation Modal */}
+      <Modal isOpen={!!openReservation} onClose={() => setViewingReservationId(null)} size="lg">
+        <ModalContent>
+          <ModalHeader>Reservation</ModalHeader>
+          <ModalBody>
+            {openReservation && (
+              <div className="space-y-2 text-sm">
+                <p><span className="text-gray-500">Guest</span> · {openReservation.customerName}</p>
+                <p><span className="text-gray-500">Phone</span> · {openReservation.phone || '—'}</p>
+                <p><span className="text-gray-500">Table</span> · {openReservation.tableNumber || '—'}</p>
+                <p><span className="text-gray-500">When</span> · {new Date(openReservation.reservationDate).toLocaleDateString()} {openReservation.time}</p>
+                <p><span className="text-gray-500">Guests</span> · {openReservation.guests}</p>
+                <p><span className="text-gray-500">Status</span> · {openReservation.status}</p>
+                <p><span className="text-gray-500">Requests</span> · {openReservation.specialRequests || 'None'}</p>
+              </div>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            {openReservation?.status === 'pending' && (
+              <Button color="success" variant="flat" onPress={() => setReservationStatus(openReservation, 'confirmed')}>Confirm</Button>
+            )}
+            {openReservation && (openReservation.status === 'pending' || openReservation.status === 'confirmed') && (
+              <Button color="danger" variant="flat" onPress={() => setReservationStatus(openReservation, 'cancelled')}>Cancel</Button>
+            )}
+            {openReservation?.status === 'confirmed' && (
+              <Button color="secondary" variant="flat" onPress={() => setReservationStatus(openReservation, 'completed')}>Complete</Button>
+            )}
+            <Button variant="light" onPress={() => setViewingReservationId(null)}>Close</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
       <Modal isOpen={isNewReservationModalOpen} onClose={() => setIsNewReservationModalOpen(false)} size="2xl">
         <ModalContent>
           <ModalHeader>Create New Reservation</ModalHeader>

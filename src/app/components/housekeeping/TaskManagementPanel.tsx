@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import { 
   Card, 
   CardBody, 
@@ -25,9 +26,13 @@ import {
   TableCell,
   Progress,
   Avatar,
-  Checkbox
 } from "@heroui/react";
 import { housekeepingStore } from '../../lib/housekeeping/store';
+import { getClientTenantSubdomain } from '../../lib/api/clientTenant';
+
+function hkHeaders() {
+  return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
+}
 import { frontOfficeStore } from '../../lib/frontoffice/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
 import { 
@@ -36,6 +41,12 @@ import {
   TaskStatus,
   HousekeepingStaff 
 } from '../../lib/housekeeping/types';
+import {
+  currentResponsibilityShift,
+  findResponsibleForRoom,
+  type RoomResponsibility,
+  RESPONSIBILITY_SHIFTS,
+} from '../../lib/housekeeping/roomResponsibilities';
 
 // Task Templates for quick creation
 const TASK_TEMPLATES = {
@@ -106,6 +117,25 @@ const TASK_TEMPLATES = {
   }
 };
 
+const TASK_TYPE_TO_TEMPLATE: Record<string, keyof typeof TASK_TEMPLATES> = {
+  daily: 'daily-cleaning',
+  turnover: 'turnover',
+  'deep-clean': 'deep-clean',
+  maintenance: 'maintenance-support',
+};
+
+function templateForTaskType(taskType: string) {
+  const key = TASK_TYPE_TO_TEMPLATE[taskType];
+  return key ? TASK_TEMPLATES[key] : null;
+}
+
+function suggestedJobForRoomStatus(status?: string): keyof typeof TASK_TEMPLATES {
+  if (status === 'dirty' || status === 'maintenance' || status === 'out-of-order') return 'turnover';
+  if (status === 'occupied') return 'daily-cleaning';
+  if (status === 'clean' || status === 'inspected') return 'deep-clean';
+  return 'turnover';
+}
+
 export default function TaskManagementPanel() {
   const [tasks, setTasks] = useState<HousekeepingTask[]>([]);
   const [staff, setStaff] = useState<HousekeepingStaff[]>([]);
@@ -117,7 +147,12 @@ export default function TaskManagementPanel() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
-  const [selectedTab, setSelectedTab] = useState('tasks');
+  const [usageTask, setUsageTask] = useState<HousekeepingTask | null>(null);
+  const [usageRows, setUsageRows] = useState<{ itemId: string; itemName: string; unit: string; onHand: number; quantity: string }[]>([]);
+  const [usageError, setUsageError] = useState('');
+  const [usageSaving, setUsageSaving] = useState(false);
+  const [responsibilities, setResponsibilities] = useState<RoomResponsibility[]>([]);
+  const [responsibleHint, setResponsibleHint] = useState<{ name: string; shift: string; matchedStaffId?: string } | null>(null);
 
   // Form state
   const [taskForm, setTaskForm] = useState({
@@ -133,21 +168,47 @@ export default function TaskManagementPanel() {
 
   // Bulk task creation state
   const [bulkTaskForm, setBulkTaskForm] = useState({
-    template: 'daily-cleaning',
+    template: 'turnover' as keyof typeof TASK_TEMPLATES,
     selectedRooms: [] as string[],
+    roomStatusFilter: 'dirty' as string,
     assignedTo: '',
-    priority: 'medium' as TaskPriority,
-    startDate: new Date().toISOString().slice(0, 10),
-    endDate: new Date().toISOString().slice(0, 10),
-    repeatDaily: false,
+    priority: 'high' as TaskPriority,
     notes: ''
   });
+  const [formError, setFormError] = useState('');
 
   useEffect(() => {
     loadData();
     const unsubscribe = housekeepingStore.subscribe(loadData);
+    fetch('/api/housekeeping/room-responsibilities?active=1', {
+      headers: hkHeaders(),
+      cache: 'no-store',
+    })
+      .then((r) => (r.ok ? r.json() : { responsibilities: [] }))
+      .then((data) => setResponsibilities(data.responsibilities || []))
+      .catch(() => setResponsibilities([]));
     return unsubscribe;
   }, []);
+
+  const resolveResponsible = (roomNumber: string, attendants: HousekeepingStaff[]) => {
+    if (!roomNumber) {
+      setResponsibleHint(null);
+      return { assignedTo: '' as string, hint: null as typeof responsibleHint };
+    }
+    const shift = currentResponsibilityShift();
+    const rec = findResponsibleForRoom(responsibilities, roomNumber, shift);
+    if (!rec) {
+      setResponsibleHint(null);
+      return { assignedTo: '', hint: null };
+    }
+    const shiftLabel = RESPONSIBILITY_SHIFTS.find((s) => s.key === rec.shift)?.label || rec.shift;
+    const match = attendants.find(
+      (s) => s.active && s.name.trim().toLowerCase() === rec.staffName.trim().toLowerCase()
+    );
+    const hint = { name: rec.staffName, shift: shiftLabel, matchedStaffId: match?.id };
+    setResponsibleHint(hint);
+    return { assignedTo: match?.id || '', hint };
+  };
 
   const loadData = () => {
     setTasks(housekeepingStore.getAllTasks());
@@ -160,9 +221,10 @@ export default function TaskManagementPanel() {
     const template = TASK_TEMPLATES[templateKey as keyof typeof TASK_TEMPLATES];
     if (!template) return;
 
+    const room = rooms.find((r) => r.roomNumber === roomNumber);
     setTaskForm({
       roomNumber: roomNumber || '',
-      roomTypeId: rooms.find(r => r.roomNumber === roomNumber)?.roomTypeId || 'standard',
+      roomTypeId: room?.roomTypeId || '',
       taskType: template.taskType,
       priority: template.priority,
       estimatedMinutes: template.estimatedMinutes,
@@ -170,58 +232,78 @@ export default function TaskManagementPanel() {
       notes: '',
       assignedTo: ''
     });
+    setFormError('');
     setIsCreatingTask(true);
     setTaskModalOpen(true);
   };
 
   // Bulk task creation
   const handleBulkTaskCreation = () => {
-    const template = TASK_TEMPLATES[bulkTaskForm.template as keyof typeof TASK_TEMPLATES];
+    const template = TASK_TEMPLATES[bulkTaskForm.template];
     if (!template || bulkTaskForm.selectedRooms.length === 0) return;
 
-    const createdTasks: HousekeepingTask[] = [];
-    
-    bulkTaskForm.selectedRooms.forEach(roomNumber => {
-      const room = rooms.find(r => r.roomNumber === roomNumber);
-      if (room) {
-        const task = housekeepingStore.createTask({
-          roomNumber,
-          roomTypeId: room.roomTypeId,
-          taskType: template.taskType,
-          priority: bulkTaskForm.priority,
-          estimatedMinutes: template.estimatedMinutes,
-          checklist: [...template.checklist],
-          notes: bulkTaskForm.notes
-        });
-
-        // Auto-assign if staff member selected
-        if (bulkTaskForm.assignedTo) {
-          housekeepingStore.assignTask(task.id, bulkTaskForm.assignedTo);
-        }
-
-        createdTasks.push(task);
+    bulkTaskForm.selectedRooms.forEach((roomNumber) => {
+      const room = rooms.find((r) => r.roomNumber === roomNumber);
+      if (!room) return;
+      const task = housekeepingStore.createTask({
+        roomNumber,
+        roomTypeId: room.roomTypeId,
+        taskType: template.taskType,
+        priority: bulkTaskForm.priority,
+        estimatedMinutes: template.estimatedMinutes,
+        checklist: [...template.checklist],
+        notes: bulkTaskForm.notes,
+      });
+      if (bulkTaskForm.assignedTo) {
+        housekeepingStore.assignTask(task.id, bulkTaskForm.assignedTo);
       }
     });
 
     trackEvent('HK.BulkTasks.Created', {
-      count: createdTasks.length,
+      count: bulkTaskForm.selectedRooms.length,
       template: bulkTaskForm.template,
-      assignedTo: bulkTaskForm.assignedTo
+      assignedTo: bulkTaskForm.assignedTo,
     });
 
     setBulkTaskModalOpen(false);
+    setBulkTaskForm({
+      template: 'turnover',
+      selectedRooms: [],
+      roomStatusFilter: 'dirty',
+      assignedTo: '',
+      priority: 'high',
+      notes: '',
+    });
     loadData();
+  };
+
+  const openBulkTaskModal = () => {
+    const dirtyRooms = rooms.filter((r) => r.status === 'dirty').map((r) => r.roomNumber);
+    setBulkTaskForm({
+      template: dirtyRooms.length ? 'turnover' : 'daily-cleaning',
+      selectedRooms: dirtyRooms,
+      roomStatusFilter: dirtyRooms.length ? 'dirty' : 'occupied',
+      assignedTo: '',
+      priority: dirtyRooms.length ? 'high' : 'medium',
+      notes: '',
+    });
+    setBulkTaskModalOpen(true);
   };
 
   const handleCreateTask = () => {
     setIsCreatingTask(true);
+    setFormError('');
+    const dirty = rooms.find((r) => r.status === 'dirty');
+    const startRoom = dirty || rooms[0];
+    const templateKey = suggestedJobForRoomStatus(startRoom?.status);
+    const template = TASK_TEMPLATES[templateKey];
     setTaskForm({
-      roomNumber: '',
-      roomTypeId: '',
-      taskType: 'daily',
-      priority: 'medium',
-      estimatedMinutes: 30,
-      checklist: [],
+      roomNumber: startRoom?.roomNumber || '',
+      roomTypeId: startRoom?.roomTypeId || '',
+      taskType: template.taskType,
+      priority: template.priority,
+      estimatedMinutes: template.estimatedMinutes,
+      checklist: [...template.checklist],
       notes: '',
       assignedTo: ''
     });
@@ -245,20 +327,32 @@ export default function TaskManagementPanel() {
   };
 
   const handleSaveTask = () => {
-    if (!taskForm.roomNumber || !taskForm.roomTypeId) return;
+    if (!taskForm.roomNumber) {
+      setFormError('Pick a room.');
+      return;
+    }
+    const room = rooms.find((r) => r.roomNumber === taskForm.roomNumber);
+    const roomTypeId = taskForm.roomTypeId || room?.roomTypeId || '';
+    if (!roomTypeId) {
+      setFormError('This room has no room type on file.');
+      return;
+    }
+    if (!taskForm.checklist.length) {
+      setFormError('Add at least one checklist step for the attendant.');
+      return;
+    }
 
     if (isCreatingTask) {
       const task = housekeepingStore.createTask({
         roomNumber: taskForm.roomNumber,
-        roomTypeId: taskForm.roomTypeId,
+        roomTypeId,
         taskType: taskForm.taskType,
         priority: taskForm.priority,
         estimatedMinutes: taskForm.estimatedMinutes,
-        checklist: taskForm.checklist,
+        checklist: taskForm.checklist.filter((item) => item.trim()),
         notes: taskForm.notes
       });
 
-      // Auto-assign if staff member selected
       if (taskForm.assignedTo) {
         housekeepingStore.assignTask(task.id, taskForm.assignedTo);
       }
@@ -271,8 +365,14 @@ export default function TaskManagementPanel() {
     } else if (selectedTask) {
       housekeepingStore.updateTask(selectedTask.id, {
         ...taskForm,
+        roomTypeId,
+        checklist: taskForm.checklist.filter((item) => item.trim()),
         status: selectedTask.status
       });
+
+      if (taskForm.assignedTo && taskForm.assignedTo !== selectedTask.assignedTo) {
+        housekeepingStore.assignTask(selectedTask.id, taskForm.assignedTo);
+      }
 
       trackEvent('HK.Task.Updated', {
         taskId: selectedTask.id,
@@ -280,6 +380,7 @@ export default function TaskManagementPanel() {
       });
     }
 
+    setFormError('');
     setTaskModalOpen(false);
     loadData();
   };
@@ -291,9 +392,73 @@ export default function TaskManagementPanel() {
   };
 
   const handleUpdateTaskStatus = (taskId: string, status: TaskStatus) => {
+    if (status === 'completed') {
+      const task = tasks.find((t) => t.id === taskId);
+      if (task && !task.suppliesIssued) {
+        setUsageError('');
+        setUsageRows([]);
+        setUsageTask(task);
+        fetch('/api/inventory/stock-levels?department=housekeeping', { headers: hkHeaders() })
+          .then((r) => (r.ok ? r.json() : { items: [] }))
+          .then((data) => setUsageRows(
+            (data.items || [])
+              .map((item: any) => ({
+                itemId: item.id,
+                itemName: item.name,
+                unit: item.unit || '',
+                onHand: Number(item.onHand || 0),
+                quantity: '',
+              }))
+              .filter((item: { onHand: number }) => item.onHand > 0),
+          ));
+        return;
+      }
+    }
     housekeepingStore.updateTaskStatus(taskId, status);
     trackEvent('HK.Task.StatusUpdated', { taskId, status });
     loadData();
+  };
+
+  const finishTaskWithSupplies = async () => {
+    if (!usageTask) return;
+    const used = usageRows
+      .map((row) => ({ itemId: row.itemId, itemName: row.itemName, quantity: Number(row.quantity) || 0 }))
+      .filter((row) => row.quantity > 0);
+    for (const row of used) {
+      const stock = usageRows.find((item) => item.itemId === row.itemId);
+      if (stock && row.quantity > stock.onHand) {
+        setUsageError(`Only ${stock.onHand} ${stock.itemName} on hand.`);
+        return;
+      }
+    }
+    setUsageSaving(true);
+    setUsageError('');
+    try {
+      if (used.length > 0) {
+        const res = await fetch('/api/inventory/department-issue', {
+          method: 'POST',
+          headers: hkHeaders(),
+          body: JSON.stringify({
+            department: 'housekeeping',
+            referenceType: 'housekeeping-task',
+            referenceId: usageTask.id,
+            notes: `Used on room ${usageTask.roomNumber}`,
+            items: used,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          setUsageError(data.error || 'Could not update inventory');
+          return;
+        }
+      }
+      housekeepingStore.updateTaskStatus(usageTask.id, 'completed', undefined, used);
+      trackEvent('HK.Task.StatusUpdated', { taskId: usageTask.id, status: 'completed', supplies: used.length });
+      setUsageTask(null);
+      loadData();
+    } finally {
+      setUsageSaving(false);
+    }
   };
 
   const handleChecklistUpdate = (taskId: string, completedItems: string[]) => {
@@ -353,24 +518,30 @@ export default function TaskManagementPanel() {
     return staff.find(s => s.id === staffId)?.name || 'Unassigned';
   };
 
-  // Get available rooms for bulk operations
-  const availableRooms = rooms.filter(r => 
-    r.status === 'dirty' || r.status === 'vacant' || r.status === 'clean'
-  );
+  // Rooms for bulk: floor work is usually dirty (turnover) or occupied (daily)
+  const roomsForBulk = rooms.filter((r) => {
+    if (bulkTaskForm.roomStatusFilter === 'all') {
+      return ['dirty', 'occupied', 'vacant', 'clean', 'inspected'].includes(r.status);
+    }
+    return r.status === bulkTaskForm.roomStatusFilter;
+  });
+
+  const activeAttendants = staff.filter((s) => s.active && (s.role === 'housekeeper' || s.role === 'supervisor'));
+  const selectedRoom = rooms.find((r) => r.roomNumber === taskForm.roomNumber);
 
   return (
     <div className="p-6 space-y-4">
       {/* Header and Actions */}
       <div className="flex items-center justify-between">
-        <div>
+        <div className="flex items-center gap-1.5">
           <h2 className="text-xl font-semibold text-ghana-black">🧹 Task Management</h2>
-          <p className="text-gray-600">Create, assign, and track housekeeping tasks efficiently</p>
+          <HeadingInfo label="About tasks">Create, assign, and track housekeeping tasks efficiently</HeadingInfo>
         </div>
         <div className="flex gap-2">
           <Button 
             color="secondary" 
             variant="flat"
-            onClick={() => setBulkTaskModalOpen(true)}
+            onClick={openBulkTaskModal}
           >
             📋 Bulk Tasks
           </Button>
@@ -593,49 +764,88 @@ export default function TaskManagementPanel() {
       <Modal isOpen={taskModalOpen} onClose={() => setTaskModalOpen(false)} size="2xl">
         <ModalContent>
           <ModalHeader>
-            {isCreatingTask ? 'Create New Task' : 'Edit Task'}
+            {isCreatingTask ? 'Create room task' : 'Edit room task'}
           </ModalHeader>
           <ModalBody>
+            <p className="text-sm text-gray-600 -mt-1 mb-2">
+              Pick the room and the job. The checklist is what the attendant works through. When they mark the task completed, they enter supplies used and that comes off Housekeeping inventory.
+            </p>
+            {formError && <p className="text-sm text-danger">{formError}</p>}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Input
-                label="Room Number"
-                placeholder="Enter room number"
-                value={taskForm.roomNumber}
-                onChange={(e) => setTaskForm({...taskForm, roomNumber: e.target.value})}
-                required
-              />
               <Select
-                label="Room Type"
-                placeholder="Select room type"
-                value={taskForm.roomTypeId}
-                onChange={(e) => setTaskForm({...taskForm, roomTypeId: e.target.value})}
-                required
+                label="Room"
+                placeholder="Select room"
+                selectedKeys={taskForm.roomNumber ? [taskForm.roomNumber] : []}
+                onSelectionChange={(keys) => {
+                  const roomNumber = Array.from(keys)[0] as string;
+                  if (!roomNumber) return;
+                  const room = rooms.find((r) => r.roomNumber === roomNumber);
+                  const templateKey = suggestedJobForRoomStatus(room?.status);
+                  const template = TASK_TEMPLATES[templateKey];
+                  const { assignedTo } = resolveResponsible(roomNumber, activeAttendants);
+                  setTaskForm({
+                    roomNumber,
+                    roomTypeId: room?.roomTypeId || '',
+                    taskType: template.taskType,
+                    priority: template.priority,
+                    estimatedMinutes: template.estimatedMinutes,
+                    checklist: [...template.checklist],
+                    notes: taskForm.notes,
+                    assignedTo,
+                  });
+                }}
+                isRequired
               >
-                {frontOfficeStore.roomTypes.map(type => (
-                  <SelectItem key={type.id}>
-                    {type.name}
-                  </SelectItem>
-                ))}
+                {[...rooms]
+                  .sort((a, b) => a.roomNumber.localeCompare(b.roomNumber, undefined, { numeric: true }))
+                  .map((room) => (
+                    <SelectItem key={room.roomNumber} textValue={`${room.roomNumber} ${room.status}`}>
+                      {room.roomNumber} · {room.status}
+                    </SelectItem>
+                  ))}
               </Select>
+              <div className="flex flex-col justify-center rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                <span className="text-xs uppercase tracking-wide text-slate-500">Room on file</span>
+                <span className="font-medium text-ghana-black">
+                  {selectedRoom
+                    ? `${getRoomTypeName(selectedRoom.roomTypeId)} · ${selectedRoom.status}`
+                    : 'Choose a room'}
+                </span>
+              </div>
               <Select
-                label="Task Type"
-                placeholder="Select task type"
-                value={taskForm.taskType}
-                onChange={(e) => setTaskForm({...taskForm, taskType: e.target.value as any})}
-                required
+                label="Job"
+                selectedKeys={[taskForm.taskType]}
+                onSelectionChange={(keys) => {
+                  const taskType = Array.from(keys)[0] as HousekeepingTask['taskType'];
+                  if (!taskType) return;
+                  const template = templateForTaskType(taskType);
+                  if (template) {
+                    setTaskForm({
+                      ...taskForm,
+                      taskType,
+                      priority: template.priority,
+                      estimatedMinutes: template.estimatedMinutes,
+                      checklist: [...template.checklist],
+                    });
+                  } else {
+                    setTaskForm({ ...taskForm, taskType });
+                  }
+                }}
+                isRequired
               >
-                <SelectItem key="daily">Daily Cleaning</SelectItem>
-                <SelectItem key="turnover">Room Turnover</SelectItem>
-                <SelectItem key="deep-clean">Deep Cleaning</SelectItem>
-                <SelectItem key="maintenance">Maintenance Support</SelectItem>
-                <SelectItem key="inspection">Inspection</SelectItem>
+                <SelectItem key="turnover">🔄 Turnover — after check-out / dirty</SelectItem>
+                <SelectItem key="daily">🧹 Daily clean — occupied room</SelectItem>
+                <SelectItem key="deep-clean">✨ Deep clean</SelectItem>
+                <SelectItem key="maintenance">🔧 Maintenance support</SelectItem>
+                <SelectItem key="inspection">🔍 Inspection prep</SelectItem>
               </Select>
               <Select
                 label="Priority"
-                placeholder="Select priority"
-                value={taskForm.priority}
-                onChange={(e) => setTaskForm({...taskForm, priority: e.target.value as any})}
-                required
+                selectedKeys={[taskForm.priority]}
+                onSelectionChange={(keys) => {
+                  const priority = Array.from(keys)[0] as TaskPriority;
+                  if (priority) setTaskForm({ ...taskForm, priority });
+                }}
               >
                 <SelectItem key="low">Low</SelectItem>
                 <SelectItem key="medium">Medium</SelectItem>
@@ -643,32 +853,49 @@ export default function TaskManagementPanel() {
                 <SelectItem key="urgent">Urgent</SelectItem>
               </Select>
               <Input
-                label="Estimated Time (minutes)"
+                label="Estimated minutes"
                 type="number"
-                placeholder="30"
+                min={5}
                 value={String(taskForm.estimatedMinutes)}
-                onChange={(e) => setTaskForm({...taskForm, estimatedMinutes: parseInt(e.target.value)})}
-                required
+                onChange={(e) => setTaskForm({ ...taskForm, estimatedMinutes: parseInt(e.target.value, 10) || 0 })}
               />
               <Select
-                label="Assign To"
-                placeholder="Select staff member"
-                value={taskForm.assignedTo}
-                onChange={(e) => setTaskForm({...taskForm, assignedTo: e.target.value})}
+                label="Assign attendant"
+                selectedKeys={[taskForm.assignedTo || 'unassigned']}
+                onSelectionChange={(keys) => {
+                  const value = Array.from(keys)[0] as string;
+                  setTaskForm({ ...taskForm, assignedTo: value === 'unassigned' ? '' : value });
+                }}
+                description={
+                  responsibleHint
+                    ? `Responsible for this room (${responsibleHint.shift}): ${responsibleHint.name}${
+                        responsibleHint.matchedStaffId ? ' — pre-filled' : ' — assign manually if they appear in attendants'
+                      }`
+                    : 'Optional. Set “Responsible for” under Staff Management to auto-suggest.'
+                }
               >
-                {[{ id: '', name: 'Unassigned', role: '' }, ...staff.filter(s => s.active)].map(s => (
-                  <SelectItem key={s.id}>
-                    {s.id === '' ? 'Unassigned' : `${s.name} (${s.role})`}
-                  </SelectItem>
+                <SelectItem key="unassigned">Unassigned — assign later</SelectItem>
+                {activeAttendants.map((s) => (
+                  <SelectItem key={s.id}>{s.name} ({s.role})</SelectItem>
                 ))}
               </Select>
             </div>
-            
+
             <div className="mt-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Checklist Items
-              </label>
-              <div className="space-y-2">
+              <div className="mb-2 flex items-center justify-between">
+                <label className="block text-sm font-medium text-gray-700">Checklist for the room</label>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  onPress={() => {
+                    const template = templateForTaskType(taskForm.taskType);
+                    if (template) setTaskForm({ ...taskForm, checklist: [...template.checklist] });
+                  }}
+                >
+                  Reset to job checklist
+                </Button>
+              </div>
+              <div className="space-y-2 max-h-48 overflow-y-auto">
                 {taskForm.checklist.map((item, index) => (
                   <div key={index} className="flex gap-2">
                     <Input
@@ -676,18 +903,15 @@ export default function TaskManagementPanel() {
                       onChange={(e) => {
                         const newChecklist = [...taskForm.checklist];
                         newChecklist[index] = e.target.value;
-                        setTaskForm({...taskForm, checklist: newChecklist});
+                        setTaskForm({ ...taskForm, checklist: newChecklist });
                       }}
-                      placeholder="Checklist item"
+                      placeholder="Checklist step"
                     />
                     <Button
                       size="sm"
                       color="danger"
                       variant="flat"
-                      onClick={() => {
-                        const newChecklist = taskForm.checklist.filter((_, i) => i !== index);
-                        setTaskForm({...taskForm, checklist: newChecklist});
-                      }}
+                      onPress={() => setTaskForm({ ...taskForm, checklist: taskForm.checklist.filter((_, i) => i !== index) })}
                     >
                       Remove
                     </Button>
@@ -697,27 +921,27 @@ export default function TaskManagementPanel() {
                   size="sm"
                   color="secondary"
                   variant="flat"
-                  onClick={() => setTaskForm({...taskForm, checklist: [...taskForm.checklist, '']})}
+                  onPress={() => setTaskForm({ ...taskForm, checklist: [...taskForm.checklist, ''] })}
                 >
-                  + Add Item
+                  + Add step
                 </Button>
               </div>
             </div>
 
             <Textarea
-              label="Notes"
-              placeholder="Additional notes or special instructions..."
+              label="Notes for attendant"
+              placeholder="Guest still in room, focus on bathroom, etc."
               value={taskForm.notes}
-              onChange={(e) => setTaskForm({...taskForm, notes: e.target.value})}
+              onChange={(e) => setTaskForm({ ...taskForm, notes: e.target.value })}
               className="mt-4"
             />
           </ModalBody>
           <ModalFooter>
-            <Button variant="flat" onClick={() => setTaskModalOpen(false)}>
+            <Button variant="flat" onPress={() => setTaskModalOpen(false)}>
               Cancel
             </Button>
-            <Button color="primary" onClick={handleSaveTask}>
-              {isCreatingTask ? 'Create Task' : 'Update Task'}
+            <Button color="primary" onPress={handleSaveTask}>
+              {isCreatingTask ? 'Create task' : 'Save task'}
             </Button>
           </ModalFooter>
         </ModalContent>
@@ -727,187 +951,248 @@ export default function TaskManagementPanel() {
       <Modal isOpen={bulkTaskModalOpen} onClose={() => setBulkTaskModalOpen(false)} size="3xl">
         <ModalContent>
           <ModalHeader>
-            <h3 className="text-lg font-semibold">📋 Bulk Task Creation</h3>
-            <p className="text-sm text-gray-600">Create multiple tasks quickly using templates</p>
+            <div>
+              <h3 className="text-lg font-semibold">Create tasks for several rooms</h3>
+              <p className="text-sm font-normal text-gray-600">
+                Same job and checklist on each selected room. Dirty rooms usually need turnover; occupied rooms need daily clean.
+              </p>
+            </div>
           </ModalHeader>
           <ModalBody>
             <div className="space-y-6">
-              {/* Template Selection */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Task Template
-                </label>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Job</label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {Object.entries(TASK_TEMPLATES).map(([key, template]) => (
-                    <div
+                    <button
                       key={key}
-                      className={`p-3 border rounded-lg cursor-pointer transition-all ${
-                        bulkTaskForm.template === key 
-                          ? 'border-ghana-gold bg-ghana-gold/10' 
+                      type="button"
+                      className={`p-3 border rounded-lg text-left transition-all ${
+                        bulkTaskForm.template === key
+                          ? 'border-ghana-gold bg-ghana-gold/10'
                           : 'border-gray-200 hover:border-gray-300'
                       }`}
-                      onClick={() => setBulkTaskForm({...bulkTaskForm, template: key})}
+                      onClick={() => {
+                        const nextFilter =
+                          key === 'turnover' ? 'dirty' : key === 'daily-cleaning' ? 'occupied' : bulkTaskForm.roomStatusFilter;
+                        const matching = rooms
+                          .filter((r) => (nextFilter === 'all' ? true : r.status === nextFilter))
+                          .map((r) => r.roomNumber);
+                        setBulkTaskForm({
+                          ...bulkTaskForm,
+                          template: key as keyof typeof TASK_TEMPLATES,
+                          priority: template.priority,
+                          roomStatusFilter: nextFilter,
+                          selectedRooms: matching,
+                        });
+                      }}
                     >
                       <div className="flex items-center gap-2">
                         <span className="text-xl">{template.icon}</span>
                         <div>
                           <div className="font-medium">{template.name}</div>
                           <div className="text-xs text-gray-600">{template.description}</div>
+                          <div className="text-xs text-gray-500 mt-1">{template.estimatedMinutes} min · {template.checklist.length} steps</div>
                         </div>
                       </div>
-                    </div>
+                    </button>
                   ))}
                 </div>
               </div>
 
-              {/* Room Selection */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select Rooms ({bulkTaskForm.selectedRooms.length} selected)
-                </label>
-                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-40 overflow-y-auto border rounded-lg p-3">
-                  {availableRooms.map(room => (
-                    <div
-                      key={room.roomNumber}
-                      className={`p-2 border rounded cursor-pointer text-sm transition-all ${
-                        bulkTaskForm.selectedRooms.includes(room.roomNumber)
-                          ? 'border-ghana-gold bg-ghana-gold/10'
-                          : 'border-gray-200 hover:border-gray-300'
-                      }`}
-                      onClick={() => {
-                        const isSelected = bulkTaskForm.selectedRooms.includes(room.roomNumber);
-                        if (isSelected) {
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Rooms ({bulkTaskForm.selectedRooms.length} selected)
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      ['dirty', 'Dirty'],
+                      ['occupied', 'Occupied'],
+                      ['vacant', 'Vacant'],
+                      ['clean', 'Clean'],
+                      ['all', 'All'],
+                    ] as const).map(([key, label]) => (
+                      <Button
+                        key={key}
+                        size="sm"
+                        variant={bulkTaskForm.roomStatusFilter === key ? 'solid' : 'flat'}
+                        color={bulkTaskForm.roomStatusFilter === key ? 'primary' : 'default'}
+                        onPress={() => {
+                          const matching = rooms
+                            .filter((r) => (key === 'all' ? ['dirty', 'occupied', 'vacant', 'clean', 'inspected'].includes(r.status) : r.status === key))
+                            .map((r) => r.roomNumber);
                           setBulkTaskForm({
                             ...bulkTaskForm,
-                            selectedRooms: bulkTaskForm.selectedRooms.filter(r => r !== room.roomNumber)
+                            roomStatusFilter: key,
+                            selectedRooms: matching,
                           });
-                        } else {
-                          setBulkTaskForm({
-                            ...bulkTaskForm,
-                            selectedRooms: [...bulkTaskForm.selectedRooms, room.roomNumber]
-                          });
-                        }
-                      }}
-                    >
-                      <div className="font-medium">{room.roomNumber}</div>
-                      <div className="text-xs text-gray-600">{room.status}</div>
-                    </div>
-                  ))}
+                        }}
+                      >
+                        {label}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-48 overflow-y-auto border rounded-lg p-3">
+                  {roomsForBulk.length === 0 ? (
+                    <p className="col-span-full text-sm text-gray-500">No rooms in this status right now.</p>
+                  ) : (
+                    roomsForBulk.map((room) => {
+                      const selected = bulkTaskForm.selectedRooms.includes(room.roomNumber);
+                      return (
+                        <button
+                          key={room.roomNumber}
+                          type="button"
+                          className={`p-2 border rounded text-left text-sm transition-all ${
+                            selected ? 'border-ghana-gold bg-ghana-gold/10' : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                          onClick={() => {
+                            setBulkTaskForm({
+                              ...bulkTaskForm,
+                              selectedRooms: selected
+                                ? bulkTaskForm.selectedRooms.filter((r) => r !== room.roomNumber)
+                                : [...bulkTaskForm.selectedRooms, room.roomNumber],
+                            });
+                          }}
+                        >
+                          <div className="font-medium">{room.roomNumber}</div>
+                          <div className="text-xs text-gray-600">{room.status}</div>
+                        </button>
+                      );
+                    })
+                  )}
                 </div>
                 <div className="mt-2 flex gap-2">
                   <Button
                     size="sm"
                     variant="flat"
-                    onClick={() => setBulkTaskForm({...bulkTaskForm, selectedRooms: availableRooms.map(r => r.roomNumber)})}
+                    onPress={() => setBulkTaskForm({ ...bulkTaskForm, selectedRooms: roomsForBulk.map((r) => r.roomNumber) })}
                   >
-                    Select All
+                    Select listed
                   </Button>
                   <Button
                     size="sm"
                     variant="flat"
-                    onClick={() => setBulkTaskForm({...bulkTaskForm, selectedRooms: []})}
+                    onPress={() => setBulkTaskForm({ ...bulkTaskForm, selectedRooms: [] })}
                   >
-                    Clear All
+                    Clear
                   </Button>
                 </div>
               </div>
 
-              {/* Assignment and Settings */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <Select
-                  label="Assign To"
-                  placeholder="Select staff member"
-                  value={bulkTaskForm.assignedTo}
-                  onChange={(e) => setBulkTaskForm({...bulkTaskForm, assignedTo: e.target.value})}
+                  label="Assign attendant"
+                  selectedKeys={[bulkTaskForm.assignedTo || 'unassigned']}
+                  onSelectionChange={(keys) => {
+                    const value = Array.from(keys)[0] as string;
+                    setBulkTaskForm({ ...bulkTaskForm, assignedTo: value === 'unassigned' ? '' : value });
+                  }}
                 >
-                  {[{ id: '', name: 'Unassigned', role: '' }, ...staff.filter(s => s.active)].map(s => (
-                    <SelectItem key={s.id}>
-                      {s.id === '' ? 'Unassigned' : `${s.name} (${s.role})`}
-                    </SelectItem>
+                  <SelectItem key="unassigned">Unassigned — assign later</SelectItem>
+                  {activeAttendants.map((s) => (
+                    <SelectItem key={s.id}>{s.name} ({s.role})</SelectItem>
                   ))}
                 </Select>
                 <Select
                   label="Priority"
-                  placeholder="Select priority"
-                  value={bulkTaskForm.priority}
-                  onChange={(e) => setBulkTaskForm({...bulkTaskForm, priority: e.target.value as any})}
+                  selectedKeys={[bulkTaskForm.priority]}
+                  onSelectionChange={(keys) => {
+                    const priority = Array.from(keys)[0] as TaskPriority;
+                    if (priority) setBulkTaskForm({ ...bulkTaskForm, priority });
+                  }}
                 >
                   <SelectItem key="low">Low</SelectItem>
                   <SelectItem key="medium">Medium</SelectItem>
                   <SelectItem key="high">High</SelectItem>
                   <SelectItem key="urgent">Urgent</SelectItem>
                 </Select>
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    checked={bulkTaskForm.repeatDaily}
-                    onChange={(e) => setBulkTaskForm({...bulkTaskForm, repeatDaily: e.target.checked})}
-                  />
-                  <label className="text-sm text-gray-700">Repeat Daily</label>
-                </div>
               </div>
 
-              {/* Date Range */}
-              {bulkTaskForm.repeatDaily && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Input
-                    label="Start Date"
-                    type="date"
-                    value={bulkTaskForm.startDate}
-                    onChange={(e) => setBulkTaskForm({...bulkTaskForm, startDate: e.target.value})}
-                  />
-                  <Input
-                    label="End Date"
-                    type="date"
-                    value={bulkTaskForm.endDate}
-                    onChange={(e) => setBulkTaskForm({...bulkTaskForm, endDate: e.target.value})}
-                  />
-                </div>
-              )}
-
               <Textarea
-                label="Notes"
-                placeholder="Additional notes for all tasks..."
+                label="Notes for all rooms"
+                placeholder="Same note on every task created here..."
                 value={bulkTaskForm.notes}
-                onChange={(e) => setBulkTaskForm({...bulkTaskForm, notes: e.target.value})}
+                onChange={(e) => setBulkTaskForm({ ...bulkTaskForm, notes: e.target.value })}
               />
 
-              {/* Summary */}
-              <div className="bg-gray-50 p-4 rounded-lg">
-                <h4 className="font-medium mb-2">Task Summary</h4>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div className="bg-gray-50 p-4 rounded-lg text-sm">
+                <h4 className="font-medium mb-2">Will create</h4>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
-                    <span className="text-gray-600">Template:</span>
-                    <div className="font-medium">{TASK_TEMPLATES[bulkTaskForm.template as keyof typeof TASK_TEMPLATES]?.name}</div>
+                    <span className="text-gray-600">Job</span>
+                    <div className="font-medium">{TASK_TEMPLATES[bulkTaskForm.template]?.name}</div>
                   </div>
                   <div>
-                    <span className="text-gray-600">Rooms:</span>
+                    <span className="text-gray-600">Rooms</span>
                     <div className="font-medium">{bulkTaskForm.selectedRooms.length}</div>
                   </div>
                   <div>
-                    <span className="text-gray-600">Staff:</span>
+                    <span className="text-gray-600">Attendant</span>
                     <div className="font-medium">
-                      {bulkTaskForm.assignedTo ? staff.find(s => s.id === bulkTaskForm.assignedTo)?.name : 'Unassigned'}
+                      {bulkTaskForm.assignedTo
+                        ? staff.find((s) => s.id === bulkTaskForm.assignedTo)?.name
+                        : 'Unassigned'}
                     </div>
                   </div>
                   <div>
-                    <span className="text-gray-600">Priority:</span>
-                    <div className="font-medium">{bulkTaskForm.priority}</div>
+                    <span className="text-gray-600">Checklist</span>
+                    <div className="font-medium">{TASK_TEMPLATES[bulkTaskForm.template]?.checklist.length} steps</div>
                   </div>
                 </div>
               </div>
             </div>
           </ModalBody>
           <ModalFooter>
-            <Button variant="flat" onClick={() => setBulkTaskModalOpen(false)}>
+            <Button variant="flat" onPress={() => setBulkTaskModalOpen(false)}>
               Cancel
             </Button>
-            <Button 
-              color="primary" 
-              onClick={handleBulkTaskCreation}
-              disabled={bulkTaskForm.selectedRooms.length === 0}
+            <Button
+              color="primary"
+              onPress={handleBulkTaskCreation}
+              isDisabled={bulkTaskForm.selectedRooms.length === 0}
             >
-              Create {bulkTaskForm.selectedRooms.length} Tasks
+              Create {bulkTaskForm.selectedRooms.length || ''} {bulkTaskForm.selectedRooms.length === 1 ? 'task' : 'tasks'}
             </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      <Modal isOpen={!!usageTask} onClose={() => setUsageTask(null)} size="lg">
+        <ModalContent>
+          <ModalHeader>Supplies used — room {usageTask?.roomNumber}</ModalHeader>
+          <ModalBody>
+            <p className="text-sm text-gray-600">
+              Enter what this task used. Those quantities come off Housekeeping inventory. Leave a row blank if it was not used.
+            </p>
+            {usageRows.length === 0 ? (
+              <p className="text-sm text-gray-500">Nothing is on hand, so this task will not change inventory.</p>
+            ) : (
+              <div className="space-y-2">
+                {usageRows.map((row) => (
+                  <div key={row.itemId} className="grid grid-cols-[1fr,120px] gap-3 items-center">
+                    <div>
+                      <p className="font-medium text-ghana-black">{row.itemName}</p>
+                      <p className="text-xs text-gray-500">{row.onHand}{row.unit ? ` ${row.unit}` : ''} on hand</p>
+                    </div>
+                    <Input
+                      type="number"
+                      size="sm"
+                      label="Used"
+                      min={0}
+                      value={row.quantity}
+                      onChange={(e) => setUsageRows((rows) => rows.map((item) => item.itemId === row.itemId ? { ...item, quantity: e.target.value } : item))}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+            {usageError && <p className="text-sm text-danger">{usageError}</p>}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={() => setUsageTask(null)}>Cancel</Button>
+            <Button color="primary" onPress={finishTaskWithSupplies} isLoading={usageSaving}>Finish task</Button>
           </ModalFooter>
         </ModalContent>
       </Modal>

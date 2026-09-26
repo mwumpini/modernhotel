@@ -77,33 +77,47 @@ function styleBlock(style: TemplateStyle): string {
   const narrow = style.pageWidth === 'narrow';
   return `
   <style>
-    :root { --fg:${style.textColor}; --muted:#555; --border:${style.borderColor}; --brand:${style.primaryColor}; --bw:${bw}; }
+    :root { --fg:${style.textColor}; --muted:#555; --border:${style.borderColor}; --brand:${style.primaryColor}; --bw:${bw}; --radius:${style.corners === 'square' ? '0' : '6px'}; }
     * { box-sizing:border-box; }
-    body { font-family: ${fontStack(style.fontFamily)}; font-size:${bodyFontSizePx(style.bodyFontSize)}; color:var(--fg); margin:0; padding:${marginPx(style.pageMargin)}; ${narrow ? 'max-width:320px; margin-left:auto; margin-right:auto;' : ''} }
+    html, body { height:100%; }
+    body { font-family: ${fontStack(style.fontFamily)}; font-size:${bodyFontSizePx(style.bodyFontSize)}; color:var(--fg); margin:0; padding:${marginPx(style.pageMargin)}; min-height:100%; display:flex; flex-direction:column; ${narrow ? 'max-width:320px; margin-left:auto; margin-right:auto;' : ''} }
+    body > * { flex-shrink:0; }
     h1,h2,h3,h4 { margin:0; }
     .header { display:flex; flex-direction:${narrow ? 'column' : headerFlexDirection(style.logoPosition)}; align-items:center; ${style.logoPosition === 'center' || narrow ? 'text-align:center;' : ''} gap:16px; border-bottom:calc(var(--bw) + 1px) solid var(--brand); padding-bottom:12px; }
     .logo { width:${logoSizePx(style.logoSize)}; height:${logoSizePx(style.logoSize)}; object-fit:contain; }
     .meta { ${style.logoPosition === 'center' || narrow ? '' : 'margin-left:auto;'} text-align:${narrow ? 'center' : 'right'}; font-size:0.9em; color:var(--muted); }
     .doc-title { margin:12px 0 8px; font-size:1.55em; font-weight:700; color:var(--brand); }
     .grid { display:grid; grid-template-columns: ${narrow ? '1fr' : '1fr 1fr'}; gap:12px; }
-    .box { border:var(--bw) solid var(--border); padding:8px; border-radius:6px; }
-    table { width:100%; border-collapse:collapse; margin-top:12px; ${narrow ? 'font-size:0.9em;' : ''} }
-    th, td { border:var(--bw) solid var(--border); padding:${narrow ? '4px' : '8px'}; }
+    .box { border:var(--bw) solid var(--border); padding:8px; border-radius:var(--radius); }
+    table { width:100%; border-collapse:separate; border-spacing:0; border:var(--bw) solid var(--border); margin-top:12px; ${narrow ? 'font-size:0.9em;' : ''} }
+    th, td { border:none; padding:${narrow ? '4px' : '8px'}; }
+    th + th, td + td { border-left:var(--bw) solid var(--border); }
+    tr + tr th, tr + tr td { border-top:var(--bw) solid var(--border); }
     th { background:#f7f7f7; text-align:left; }
+    .bill-grid { width:${narrow ? '100%' : 'max-content'}; min-width:${narrow ? '0' : '50%'}; max-width:100%; margin-left:auto; border:var(--bw) solid var(--border); box-sizing:border-box; }
+    .bill-grid table { width:100%; margin:0; border:none; }
+    .bill-grid .lbl { white-space:${narrow ? 'normal' : 'nowrap'}; }
+    .bill-grid .amt { white-space:nowrap; min-width:${narrow ? '0' : '11em'}; }
     .right { text-align:right; }
-    .totals { width:${narrow ? '100%' : '50%'}; margin-left:auto; }
-    .totals td { border:none; }
-    .totals .label { color:var(--muted); }
+    .totals { width:${narrow ? '100%' : '50%'}; margin-left:auto; margin-top:0; }
+    .totals td { border:none; padding:2px 8px; line-height:1.25; }
+    .totals .label { color:var(--muted); text-align:left; }
     .totals .value { text-align:right; font-weight:600; }
     .grand { font-size:1.1em; border-top:calc(var(--bw) + 1px) solid var(--border); padding-top:6px; }
     .footer { margin-top:16px; font-size:0.85em; color:var(--muted); }
-    .badge { padding:2px 6px; border:var(--bw) solid var(--border); border-radius:4px; font-size:0.85em; }
+    .badge { padding:2px 6px; border:var(--bw) solid var(--border); border-radius:${style.corners === 'square' ? '0' : '4px'}; font-size:0.85em; }
     .watermark { position:fixed; inset:0; pointer-events:none; opacity:.05; font-size:96px; font-weight:800; display:flex; align-items:center; justify-content:center; color:var(--brand); }
-    .signatures { display:flex; flex-wrap:${narrow ? 'nowrap' : 'wrap'}; flex-direction:${narrow ? 'column' : 'row'}; gap:24px; margin-top:24px; }
-    .sigbox { flex:1; min-width:140px; border-top:var(--bw) solid var(--border); padding-top:6px; text-align:center; }
+    .sign-row { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; flex-direction:${narrow ? 'column' : 'row'}; gap:${narrow ? '14px' : '32px'}; width:100%; margin-top:12px; }
+    .sign-slot { flex:${narrow ? '1 1 auto' : '1 1 140px'}; max-width:${narrow ? 'none' : '240px'}; ${narrow ? 'width:100%;' : ''} }
+    .sign-line { border-bottom:1px solid var(--border); height:28px; }
     .custom-text { margin:12px 0; }
     .avoid-break { page-break-inside:avoid; break-inside:avoid; }
-    @media print { body { padding:0; } .no-print { display:none !important; } }
+    @page { size: ${narrow ? '80mm auto' : 'A4'}; margin: ${narrow ? '3mm' : '12mm'}; }
+    @media print {
+      html, body { height:auto; }
+      body { padding:0; min-height:${narrow ? '0' : '260mm'}; }
+      .no-print { display:none !important; }
+    }
   </style>`;
 }
 
@@ -261,21 +275,24 @@ function renderLineItemsTable(block: BlockConfig, data: PrintData, currency: str
     </table>`;
   }
 
+  const items = data.items || [];
   const cols = block.columns || ['qty', 'unit', 'unitPrice', 'date'];
   const showQty = cols.includes('qty');
   const showUnit = cols.includes('unit');
   const showRate = cols.includes('unitPrice');
 
   if (block.lineItemsDisplay === 'simple') {
-    return data.items.map((it) => {
+    const lines = items.map((it) => {
       const headingHtml = it.heading ? `<div style="font-weight:700; text-decoration:underline; margin-top:10px;">${it.heading}</div>` : '';
       const bulletsHtml = renderBullets(it.bullets);
       return `${headingHtml}${bulletsHtml}<div style="display:flex; justify-content:space-between; margin:6px 0;"><span>${it.description}</span><span>${money(it.amount, currency)}</span></div>`;
     }).join('');
+    const roomy = block.border && block.border !== 'none' ? ' style="min-height:120px;"' : '';
+    return `<div${roomy}>${lines}</div>`;
   }
 
   if (block.lineItemsDisplay === 'list') {
-    return data.items.map((it) => {
+    return items.map((it) => {
       const headingHtml = it.heading ? `<div style="font-weight:700; text-decoration:underline; margin-top:10px;">${it.heading}</div>` : '';
       const bulletsHtml = renderBullets(it.bullets);
       const bits = [it.description];
@@ -286,7 +303,7 @@ function renderLineItemsTable(block: BlockConfig, data: PrintData, currency: str
     }).join('');
   }
 
-  const rows = data.items.map((it, idx) => `
+  const rows = items.map((it, idx) => `
     <tr>
       <td>${idx + 1}</td>
       <td>
@@ -379,14 +396,48 @@ function renderPayslipSummary(block: BlockConfig, data: PrintData, currency: str
   const netPay = totalEarnings - totalDeductions;
   const wordsHtml = block.showAmountInWords
     ? `<div style="margin-top:8px; font-style:italic;">${amountInWords(netPay)}</div>` : '';
-  return `
-  <table class="totals">
-    <tbody>
-      <tr><td class="label">Total Earnings</td><td class="value">${money(totalEarnings, currency)}</td></tr>
-      <tr><td class="label">Total Deductions</td><td class="value">${money(totalDeductions, currency)}</td></tr>
-      <tr><td class="label grand">${block.heading || 'Net Pay'}</td><td class="value grand">${money(netPay, currency)}</td></tr>
-    </tbody>
-  </table>${wordsHtml}`;
+  return `${boxedGridTable([
+    { label: 'Total Earnings', value: money(totalEarnings, currency), bold: false },
+    { label: 'Total Deductions', value: money(totalDeductions, currency), bold: false },
+    { label: block.heading || 'Net Pay', value: money(netPay, currency), bold: true },
+  ])}${wordsHtml}`;
+}
+
+/**
+ * Right-hand bill grid. The box border lives on a wrapper, not the table: a
+ * table's right edge is drawn outside its width, so a bold amount such as
+ * ₵100,000.00 was covering that vertical line. The amount column keeps enough
+ * room for a figure that wide, and the bold stays on subtotal and net total.
+ */
+function boxedGridTable(rows: Array<{ label: string; value: string; bold: boolean }>): string {
+  if (!rows.length) return '';
+  const edge = 'var(--bw) solid var(--border)';
+  const body = rows.map((row, i) => {
+    const weight = row.bold ? 'font-weight:700;' : '';
+    const bottom = i === rows.length - 1 ? '' : `border-bottom:${edge};`;
+    const labelCell = `border:none;${bottom}border-right:${edge};${weight}padding:4px 10px;text-align:left;text-transform:uppercase;`;
+    const valueCell = `border:none;${bottom}${weight}padding:4px 12px;text-align:right;`;
+    return `<tr><td class="lbl" style="${labelCell}">${row.label}</td><td class="amt" style="${valueCell}">${row.value}</td></tr>`;
+  }).join('');
+  return `<div class="bill-grid"><table style="border-collapse:separate;border-spacing:0;"><tbody>${body}</tbody></table></div>`;
+}
+
+/** Right-hand bill grid. `box` draws a border on every row, only the first, or only the last. */
+function gridTotals(rows: Array<[string, string]>, box: 'all' | 'first' | 'last' | 'none', bold: 'all' | 'first' | 'last' | 'none'): string {
+  if (!rows.length) return '';
+  const boxedRows = rows.map(([label, value], i) => ({
+    label,
+    value,
+    bold: bold === 'all' || (bold === 'first' && i === 0) || (bold === 'last' && i === rows.length - 1),
+    boxed: box === 'all' || (box === 'first' && i === 0) || (box === 'last' && i === rows.length - 1),
+  }));
+  if (boxedRows.every(row => row.boxed)) return boxedGridTable(boxedRows);
+  const body = boxedRows.map(row => {
+    const border = row.boxed ? 'border:1px solid var(--border);' : 'border:none;';
+    const weight = row.bold ? 'font-weight:700;' : '';
+    return `<tr><td style="${border}${weight}padding:3px 8px; text-align:left; text-transform:uppercase;">${row.label}</td><td style="${border}${weight}padding:3px 8px; text-align:right;">${row.value}</td></tr>`;
+  }).join('');
+  return `<table style="width:50%; margin-left:auto; border-collapse:separate; border-spacing:0; margin-top:0;"><tbody>${body}</tbody></table>`;
 }
 
 function totalsTable(rows: Array<[string, number | undefined]>, currency: string): string {
@@ -400,13 +451,10 @@ function renderTotalsSummary(block: BlockConfig, data: PrintData, currency: stri
     const totalCredit = data.debitCreditLines.reduce((s, l) => s + (l.credit || 0), 0);
     const wordsHtml = block.showAmountInWords
       ? `<div style="margin-top:8px; font-style:italic;">${amountInWords(totalDebit)}</div>` : '';
-    return `
-    <table class="totals">
-      <tbody>
-        <tr><td class="label grand">Total Debit</td><td class="value grand">${money(totalDebit, currency)}</td></tr>
-        <tr><td class="label grand">Total Credit</td><td class="value grand">${money(totalCredit, currency)}</td></tr>
-      </tbody>
-    </table>${wordsHtml}`;
+    return `${boxedGridTable([
+      { label: 'Total Debit', value: money(totalDebit, currency), bold: true },
+      { label: 'Total Credit', value: money(totalCredit, currency), bold: true },
+    ])}${wordsHtml}`;
   }
 
   const numbered = block.totalsDisplay === 'numbered-list';
@@ -423,15 +471,12 @@ function renderTotalsSummary(block: BlockConfig, data: PrintData, currency: stri
   // total — instead of breaking each tax out separately. Matches how some
   // hotels summarize the tax breakdown at a glance rather than itemizing it.
   if (block.totalsDisplay === 'compact-taxes') {
-    return `
-    <table class="totals">
-      <tbody>
-        <tr><td class="label">${preTaxLines[0][0]}</td><td class="value">${money(preTaxLines[0][1], currency)}</td></tr>
-        ${preTaxLines.slice(1).map(([label, val]) => `<tr><td class="label">${label}</td><td class="value">${money(val, currency)}</td></tr>`).join('')}
-        <tr><td class="label">Sales Taxes Incl. (${taxLines.map(([label]) => label.replace(/\s*\([^)]*\)/, '')).join(', ')})</td><td class="value">${money(taxesTotal, currency)}</td></tr>
-        <tr><td class="label grand">Total Taxes Inclusive</td><td class="value grand">${money(grand, currency)}</td></tr>
-      </tbody>
-    </table>${wordsHtml}`;
+    return `${boxedGridTable([
+      { label: preTaxLines[0][0], value: money(preTaxLines[0][1], currency), bold: true },
+      ...preTaxLines.slice(1).map(([label, val]) => ({ label, value: money(val, currency), bold: false })),
+      { label: taxLines.length ? `Sales Taxes Incl. (${taxLines.map(([label]) => label.replace(/\s*\([^)]*\)/, '')).join(', ')})` : 'Sales Taxes', value: money(taxesTotal, currency), bold: false },
+      { label: 'Total Taxes Inclusive', value: money(grand, currency), bold: true },
+    ])}${wordsHtml}`;
   }
 
   if (block.totalsDisplay === 'numbered-list') {
@@ -443,29 +488,27 @@ function renderTotalsSummary(block: BlockConfig, data: PrintData, currency: stri
     return `<div>${numberedLines}${grandLine}${paymentsLine}${balanceLine}</div>${wordsHtml}`;
   }
 
-  const rows = lines.map(([label, val]) => `<tr><td class="label">${label}</td><td class="value">${money(val, currency)}</td></tr>`).join('');
-  return `
-  <table class="totals">
-    <tbody>
-      ${rows}
-      <tr><td class="label grand">Grand Total</td><td class="value grand">${money(grand, currency)}</td></tr>
-      <tr><td class="label">Payments</td><td class="value">${money(payments, currency)}</td></tr>
-      <tr><td class="label">Balance</td><td class="value">${money(balance, currency)}</td></tr>
-    </tbody>
-  </table>${wordsHtml}`;
+  return `${boxedGridTable([
+    ...lines.map(([label, val], i) => ({ label, value: money(val, currency), bold: i === 0 })),
+    { label: 'Grand Total', value: money(grand, currency), bold: true },
+    { label: 'Payments', value: money(payments, currency), bold: false },
+    { label: 'Balance', value: money(balance, currency), bold: true },
+  ])}${wordsHtml}`;
 }
 
 // --- Granular blocks — each is one standalone line pulled from the same data
 // doc-meta/company-info/recipient-info/totals-summary already read. ---
 
-function renderDocTitle(_block: BlockConfig, data: PrintData): string {
-  return data.title ? `<div class="doc-title">${data.title}</div>` : '';
+function renderDocTitle(block: BlockConfig, data: PrintData): string {
+  const title = block.heading || data.title;
+  return title ? `<div class="doc-title">${title}</div>` : '';
 }
 
 function renderDocNumber(block: BlockConfig, data: PrintData): string {
   if (!data.docNumber) return '';
   const label = block.docNumberLabel != null ? block.docNumberLabel : 'No.';
-  return `<div>${label ? `<span class="badge">${label}</span> ` : ''}${data.docNumber}</div>`;
+  const labelHtml = !label ? '' : block.border === 'none' ? `${label} ` : `<span class="badge">${label}</span> `;
+  return `<div>${labelHtml}${data.docNumber}</div>`;
 }
 
 // heading, when set, prefixes the date as a plain label — e.g. "Date: 7 Jul 2026"
@@ -491,6 +534,15 @@ function renderCompanyContact(_block: BlockConfig, data: PrintData): string {
 
 function renderGuestDetails(block: BlockConfig, data: PrintData): string {
   const { guest } = data;
+  if (block.guestDetailsDisplay === 'lines') {
+    const billingLabel = block.heading || 'Billing Person';
+    const billing = guest.company && guest.company !== guest.name ? guest.company : '';
+    return `<div>
+      <div>${billingLabel}: ${billing}</div>
+      <div>GuestName: ${guest.name || ''}</div>
+      <div style="white-space:pre-line;">Address: ${guest.address || ''}</div>
+    </div>`;
+  }
   const boxStyle = boxBorderStyle(block.border);
   // See renderRecipientInfo for why company === name skips the "Billing Person" split.
   const hasDistinctBillingParty = !!guest.company && guest.company !== guest.name;
@@ -517,7 +569,7 @@ function renderStayDetails(block: BlockConfig, data: PrintData, currency: string
     const left: Array<[string, string]> = [
       ['Room No', guest.roomNumber || ''],
       ['Room Type', guest.roomType || ''],
-      ['No of Nights', guest.nights != null ? String(guest.nights) : ''],
+      ['No of Night(s) Stayed', guest.nights != null ? String(guest.nights) : ''],
     ];
     const right: Array<[string, string]> = [
       ['Room Rate', guest.roomRate != null ? money(guest.roomRate, currency) : ''],
@@ -543,30 +595,47 @@ function renderStayDetails(block: BlockConfig, data: PrintData, currency: string
   </div>`;
 }
 
-function renderTotalsSubtotal(_block: BlockConfig, data: PrintData, currency: string): string {
-  return totalsTable(computeTotalsBreakdown(data).preTaxLines, currency);
+function renderTotalsSubtotal(block: BlockConfig, data: PrintData, currency: string): string {
+  const lines = computeTotalsBreakdown(data).preTaxLines;
+  if (block.totalsDisplay === 'grid') {
+    return gridTotals(lines.map(([label, val]) => [label, money(val, currency)]), 'first', 'first');
+  }
+  return totalsTable(lines, currency);
 }
 
-function renderTotalsTaxes(_block: BlockConfig, data: PrintData, currency: string): string {
-  return totalsTable(computeTotalsBreakdown(data).taxLines, currency);
+function renderTotalsTaxes(block: BlockConfig, data: PrintData, currency: string): string {
+  const lines = computeTotalsBreakdown(data).taxLines;
+  if (block.totalsDisplay === 'grid') {
+    return gridTotals(lines.map(([label, val]) => [label, money(val, currency)]), 'all', 'none');
+  }
+  return totalsTable(lines, currency);
 }
 
 function renderTotalsPayments(block: BlockConfig, data: PrintData, currency: string): string {
   const { payments } = computeTotalsBreakdown(data);
   if (!payments) return '';
+  if (block.totalsDisplay === 'grid') {
+    return gridTotals([[block.heading || 'Payments', money(payments, currency)]], 'none', 'none');
+  }
   return `<table class="totals"><tbody><tr><td class="label">${block.heading || 'Payments'}</td><td class="value">${money(payments, currency)}</td></tr></tbody></table>`;
 }
 
-function renderTotalsBalance(_block: BlockConfig, data: PrintData, currency: string): string {
+function renderTotalsBalance(block: BlockConfig, data: PrintData, currency: string): string {
   const { balance, hasBalanceInfo } = computeTotalsBreakdown(data);
   if (!hasBalanceInfo) return '';
-  return `<table class="totals"><tbody><tr><td class="label grand">Balance</td><td class="value grand">${money(balance, currency)}</td></tr></tbody></table>`;
+  if (block.totalsDisplay === 'grid') {
+    return gridTotals([[block.heading || 'Balance', money(balance, currency)]], 'all', 'all');
+  }
+  return `<table class="totals"><tbody><tr><td class="label grand">${block.heading || 'Balance'}</td><td class="value grand">${money(balance, currency)}</td></tr></tbody></table>`;
 }
 
 function renderTotalsGrandTotal(block: BlockConfig, data: PrintData, currency: string): string {
   const { grand } = computeTotalsBreakdown(data);
   const wordsHtml = block.showAmountInWords
-    ? `<div style="margin-top:8px; font-style:italic;">${amountInWords(grand)}</div>` : '';
+    ? `<div style="margin-top:8px; font-style:italic;${block.align === 'center' ? ' text-align:center;' : ''}">${amountInWords(grand)}</div>` : '';
+  if (block.totalsDisplay === 'grid') {
+    return `${gridTotals([[block.heading || 'Grand Total', money(grand, currency)]], 'all', 'all')}${wordsHtml}`;
+  }
   return `<table class="totals"><tbody><tr><td class="label grand">${block.heading || 'Grand Total'}</td><td class="value grand">${money(grand, currency)}</td></tr></tbody></table>${wordsHtml}`;
 }
 
@@ -579,28 +648,46 @@ function renderNotesText(block: BlockConfig, data: PrintData): string {
   return `<div class="footer" style="white-space:pre-line;">${lines.map(n => `<div>${n}</div>`).join('')}</div>`;
 }
 
-function renderSignatureBlock(block: BlockConfig, data: PrintData): string {
-  if (block.signatureDisplay === 'line') {
-    const entries: Array<{ label: string; name?: string; role?: string }> = (data.signatures && data.signatures.length)
-      ? data.signatures.map(s => ({ label: s.label, name: s.name, role: s.role }))
-      : (block.signatures && block.signatures.length ? block.signatures : [{ label: 'Signature' }, { label: 'Signature' }]);
-    return `<div style="display:flex; gap:24px; margin-top:8px;">${entries.map(e => `
-      <div style="flex:1;">
-        <div>${e.label}: <span style="display:inline-block; min-width:140px; border-bottom:1px solid #000;">&nbsp;${e.name || ''}&nbsp;</span></div>
-        ${e.role ? `<div style="font-size:12px; color:#555;">${e.role}</div>` : ''}
-      </div>`).join('')}</div>`;
-  }
+function partySignatureEntries(block: BlockConfig, data: PrintData): Array<{ label: string; name?: string; role?: string }> | null {
+  const parties = block.signatureParties;
+  if (!parties || parties === 'custom') return null;
+  const guestName = data.guest?.name || undefined;
+  const staff = { label: block.staffSignLabel || 'Staff', name: data.userName };
+  const guest = block.guestSignature === 'name'
+    ? { label: block.guestSignLabel || guestName || 'Guest', name: block.guestSignLabel ? guestName : undefined }
+    : { label: block.guestSignLabel || 'Guest', name: guestName };
+  const customer = { label: 'Customer', name: guestName };
+  const attendant = { label: 'Attendant', name: data.attendantName };
+  const user = { label: 'User', name: data.userName };
+  if (parties === 'guest') return [guest];
+  if (parties === 'staff') return [staff];
+  if (parties === 'staff-guest') return [guest, staff];
+  if (parties === 'customer-attendant') return [customer, attendant];
+  if (parties === 'user') return [user];
+  return [customer, attendant, user];
+}
 
+function signatureEntries(block: BlockConfig, data: PrintData): Array<{ label: string; name?: string; role?: string; signedDate?: string }> {
+  const parties = partySignatureEntries(block, data);
+  if (parties) return parties;
   if (data.signatures && data.signatures.length) {
-    return `<div class="signatures">${data.signatures.map(s => `
-      <div class="sigbox">
-        ${s.name ? `<div>${s.name}</div>` : ''}
-        <div>${s.label}${s.role ? ` (${s.role})` : ''}</div>
-        ${s.signedDate ? `<div style="color:#777;">${new Date(s.signedDate).toLocaleDateString()}</div>` : ''}
-      </div>`).join('')}</div>`;
+    return data.signatures.map(s => ({ label: s.label, name: s.name, role: s.role, signedDate: s.signedDate }));
   }
-  const boxes = block.signatures && block.signatures.length ? block.signatures : [{ label: 'Signature' }, { label: 'Signature' }];
-  return `<div class="signatures">${boxes.map(b => `<div class="sigbox">${b.label}${b.role ? ` (${b.role})` : ''}</div>`).join('')}</div>`;
+  if (block.signatures && block.signatures.length) return block.signatures;
+  return [{ label: 'Signature' }, { label: 'Signature' }];
+}
+
+function renderSignatureBlock(block: BlockConfig, data: PrintData): string {
+  const entries = signatureEntries(block, data);
+  return `<div class="sign-row">${entries.map((e, i) => `
+      <div class="sign-slot">
+        <div>${e.label}:</div>
+        <div class="sign-line"></div>
+        ${e.name ? `<div style="margin-top:2px;">${e.name}</div>` : ''}
+        ${e.role ? `<div style="font-size:12px; color:#555;">${e.role}</div>` : ''}
+        ${e.signedDate ? `<div style="font-size:12px; color:#555;">${new Date(e.signedDate).toLocaleDateString()}</div>` : ''}
+        ${i === 0 && block.signatureNote ? `<div style="margin-top:10px;">${block.signatureNote}</div>` : ''}
+      </div>`).join('')}</div>`;
 }
 
 function renderBankDetails(block: BlockConfig, data: PrintData): string {
@@ -659,9 +746,54 @@ function renderTermsConditions(block: BlockConfig): string {
  * exact same renderBlock+wrapBlock pipeline as any top-level block, including
  * `container` itself — that's what gives arbitrary nesting depth for free.
  */
+function billGridParts(block: BlockConfig, data: PrintData, currency: string): { rows: Array<{ label: string; value: string; bold: boolean }>; words: string } | null {
+  if (block.totalsDisplay !== 'grid') return null;
+  const breakdown = computeTotalsBreakdown(data);
+  if (block.type === 'totals-subtotal') {
+    return {
+      rows: breakdown.preTaxLines.map(([label, val], i) => ({ label, value: money(val, currency), bold: i === 0 })),
+      words: '',
+    };
+  }
+  if (block.type === 'totals-taxes') {
+    return {
+      rows: breakdown.taxLines.map(([label, val]) => ({ label, value: money(val, currency), bold: false })),
+      words: '',
+    };
+  }
+  if (block.type === 'totals-payments') {
+    if (!breakdown.payments) return { rows: [], words: '' };
+    return { rows: [{ label: block.heading || 'Payments', value: money(breakdown.payments, currency), bold: false }], words: '' };
+  }
+  if (block.type === 'totals-balance') {
+    if (!breakdown.hasBalanceInfo) return { rows: [], words: '' };
+    return { rows: [{ label: block.heading || 'Balance', value: money(breakdown.balance, currency), bold: true }], words: '' };
+  }
+  if (block.type === 'totals-grandtotal') {
+    const words = block.showAmountInWords
+      ? `<div style="margin-top:8px; font-style:italic;${block.align === 'center' ? ' text-align:center;' : ''}">${amountInWords(breakdown.grand)}</div>`
+      : '';
+    return { rows: [{ label: block.heading || 'Grand Total', value: money(breakdown.grand, currency), bold: true }], words };
+  }
+  return null;
+}
+
+function renderJoinedTable(children: BlockConfig[], data: PrintData, currency: string): string | null {
+  const parts = children.map(child => billGridParts(child, data, currency));
+  if (parts.some(part => part === null)) return null;
+  const rows = parts.flatMap(part => part!.rows);
+  const words = parts.map(part => part!.words).join('');
+  if (!rows.length) return words;
+  return `${boxedGridTable(rows)}${words}`;
+}
+
 function renderContainer(block: BlockConfig, data: PrintData, currency: string): string {
   const children = (block.children || []).filter(c => c.visible).sort((a, b) => a.order - b.order);
   if (!children.length) return '';
+  if (block.joinTable) {
+    const joined = renderJoinedTable(children, data, currency);
+    if (joined) return joined;
+  }
   const direction = block.direction || 'row';
   const gap = gapPx(block.gap) ?? '16px';
   const cells = children
@@ -761,17 +893,23 @@ function wrapBlock(html: string, block: BlockConfig): string {
   if (block.underline) styles.push('text-decoration:underline');
   if (block.border && block.border !== 'none' && !SELF_BORDERED_TYPES.includes(block.type)) {
     const bw = block.border === 'thick' ? '2px' : '1px';
-    styles.push(`border:${bw} solid var(--border)`, 'padding:8px', 'border-radius:6px');
+    styles.push(`border:${bw} solid var(--border)`, 'padding:8px', 'border-radius:var(--radius, 6px)');
   }
   if (block.dividerBelow) styles.push('border-bottom:1px solid var(--border)', 'padding-bottom:12px');
   if (block.background) {
     styles.push(`background:${block.background}`, 'padding:16px', 'border-radius:6px');
     if (block.backgroundTextColor) styles.push(`color:${block.backgroundTextColor}`);
   }
-  const mt = gapPx(block.spacing);
-  if (mt !== undefined) styles.push(`margin-top:${mt}`);
+  if (block.spacing === 'bottom') styles.push('margin-top:auto');
+  else {
+    const mt = gapPx(block.spacing);
+    if (mt !== undefined) styles.push(`margin-top:${mt}`);
+  }
   const ml = gapPx(block.indent);
   if (ml !== undefined) styles.push(`margin-left:${ml}`);
+  const nudgeX = Math.round(block.offsetX || 0) * 16;
+  const nudgeY = Math.round(block.offsetY || 0) * 16;
+  if (nudgeX || nudgeY) styles.push(`transform:translate(${nudgeX}px,${nudgeY}px)`);
   if (block.style?.fontSize === 'sm') styles.push('font-size:0.85em');
   if (block.style?.fontSize === 'lg') styles.push('font-size:1.25em');
   if (block.style?.bold) styles.push('font-weight:700');

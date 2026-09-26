@@ -36,6 +36,7 @@ export default function DepartmentStaffTab({
   helperText,
   staff: preloadedStaff,
   alsoStaffNames = [],
+  extraTabs = [],
 }: {
   departmentLabel: string;
   overtimePermissionId: string;
@@ -52,6 +53,8 @@ export default function DepartmentStaffTab({
   /** Extra HR names to include even when they sit in another department
    * (e.g. coordinators already assigned on live event bookings). */
   alsoStaffNames?: string[];
+  /** Optional extra tabs (e.g. Housekeeping room responsibilities). Receives the same staff list. */
+  extraTabs?: { key: string; title: string; render: (staff: DepartmentStaffMember[]) => React.ReactNode }[];
 }) {
   const fetchedStaff = useDepartmentStaff(departmentNameHints, excludeNameHints, !preloadedStaff, alsoStaffNames);
   const staff = preloadedStaff ?? fetchedStaff;
@@ -123,6 +126,12 @@ export default function DepartmentStaffTab({
             departmentNameHints={departmentNameHints}
           />
         </Tab>
+
+        {extraTabs.map((tab) => (
+          <Tab key={tab.key} title={tab.title}>
+            {tab.render(staff)}
+          </Tab>
+        ))}
       </Tabs>
     </div>
   );

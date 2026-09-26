@@ -74,6 +74,9 @@ export interface BlockConfig {
    *  Nights: N" as two stacked lines. 'grid' — a 2-column x 3-row grid inside the box:
    *  Room No / Room Type / Nights on the left, Room Rate / Arrival / Departure on the right. */
   stayDetailsDisplay?: 'lines' | 'grid';
+  /** guest-details: 'card' (default) — heading, then the name. 'lines' — one caption
+   *  per row: billing person, guest name, and address, with no box of its own. */
+  guestDetailsDisplay?: 'card' | 'lines';
   /** signature-block: 'box' (default) — bordered card, label centered below the line.
    *  'line' — plain "Label: __________" underline blank, left-aligned, laid out side by
    *  side (no box) — matches a hand-signed paper form. */
@@ -84,13 +87,25 @@ export interface BlockConfig {
   payslipItemsDisplay?: 'table' | 'list';
   /** totals-summary: 'table' (default), 'numbered-list' — "(i) Tax Exclusive Value",
    *  "(ii) VAT", … — or 'compact-taxes' — just 3 lines: Taxes Exclusive, all taxes
-   *  combined into one "Sales Taxes Incl." line, Total Taxes Inclusive. Matches how
-   *  different Ghanaian hotels format their tax breakdown at varying detail levels. */
-  totalsDisplay?: 'table' | 'numbered-list' | 'compact-taxes';
+   *  combined into one "Sales Taxes Incl." line, Total Taxes Inclusive.
+   *  On a single totals line (taxes, subtotal, grand total), 'grid' draws a
+   *  right-hand table with a border around each cell. */
+  totalsDisplay?: 'table' | 'numbered-list' | 'compact-taxes' | 'grid';
   /** totals-summary / payslip-summary: append "Ghana Cedis Five Hundred only" under
    *  the grand total / net pay. */
   showAmountInWords?: boolean;
-  /** signature-block: one box per entry. */
+  /** signature-block: who signs. 'guest' and 'staff' print one line. 'staff-guest'
+   *  prints both. Staff is the person signed in. 'custom' (or unset) uses `signatures`. */
+  signatureParties?: 'guest' | 'staff' | 'staff-guest' | 'customer-attendant' | 'user' | 'both' | 'custom';
+  /** signature-block, when parties are staff and guest. 'auto' fills the guest
+   *  on the document. 'name' prints only that guest's name on the line. */
+  guestSignature?: 'auto' | 'name';
+  /** Caption in place of "Guest" / "Staff" when those parties sign. */
+  guestSignLabel?: string;
+  staffSignLabel?: string;
+  /** signature-block, line display: a line under the first signature, such as "Phone No:". */
+  signatureNote?: string;
+  /** signature-block: one box per entry. Used when signatureParties is custom or unset. */
   signatures?: Array<{ label: string; role?: string }>;
   /** custom-text / notes-text static content. */
   text?: string;
@@ -126,9 +141,13 @@ export interface BlockConfig {
    *  (logo/company info) from the rest of the document. Independent of border
    *  (which boxes all 4 sides) and underline (which underlines the text itself). */
   dividerBelow?: boolean;
-  /** Extra space above this block, beyond its normal gap from the block before it —
-   *  'none' collapses it flush against the previous block. Unset = default spacing. */
-  spacing?: 'none' | 'small' | 'medium' | 'large';
+  /** Extra space above this block. 'bottom' pushes this field, and anything after
+   *  it, to the bottom of the page. Unset = default spacing. */
+  spacing?: 'none' | 'small' | 'medium' | 'large' | 'bottom';
+  /** Nudge in steps of 16px. Positive offsetX is right, negative is left.
+   *  Positive offsetY is down, negative is up. */
+  offsetX?: number;
+  offsetY?: number;
   style?: { fontSize?: 'sm' | 'md' | 'lg'; bold?: boolean };
   /** container only: the blocks laid out inside it — each a full BlockConfig,
    *  so a container can itself hold another container (arbitrary nesting). */
@@ -139,6 +158,9 @@ export interface BlockConfig {
   direction?: 'row' | 'column';
   /** container only: gap between children — same scale as spacing/indent. */
   gap?: 'none' | 'small' | 'medium' | 'large';
+  /** container only: subtotal, taxes, and the total inside this layout print as
+   *  one grid, in the order of the fields. Other fields are left as they are. */
+  joinTable?: boolean;
   /** Relative width when this block is a direct child of a 'row' container —
    *  e.g. 2 next to a sibling's 1 splits roughly 67/33 instead of the default
    *  even split. 0 means "size to content, don't stretch" (e.g. a logo image
@@ -158,6 +180,8 @@ export interface TemplateStyle {
   pageMargin: 'compact' | 'normal' | 'spacious';
   borderColor: string;
   borderWidth: 'thin' | 'thick';
+  /** 'rounded' (default) softens boxes. 'square' keeps the sharp corners of a typed bill. */
+  corners?: 'rounded' | 'square';
   showWatermark?: boolean;
   watermarkText?: string;
   /** 'full' (default, unset) — normal full-width printable page. 'narrow' —

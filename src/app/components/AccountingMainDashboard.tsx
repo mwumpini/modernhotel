@@ -14,12 +14,12 @@ import { useAccountingStore } from '../lib/accounting/store';
 import { useComplianceStore } from '../lib/compliance/store';
 import {
   formatAccountingCurrency,
-  getTenantAccountingCountryCode,
   isLeanAccountingUI,
 } from '../lib/accounting/tenantAccountingConfig';
-import { buildAccountingComplianceOverview } from '../lib/accounting/accountingComplianceOverview';
 import { totalFinanceReceivables } from '../lib/accounting/arSubledger';
-import { mapCoaTypeToRollup } from '../lib/accounting/coaTree';
+import { toRollupCoa } from '../lib/accounting/coaHierarchy';
+import { buildFinancialAccountTree } from '../lib/accounting/financialReportRollup';
+import { GHANA_CHART_OF_ACCOUNTS } from '../lib/accounting/models';
 
 // Import specialized accounting components
 import ChartOfAccounts from './accounting/ChartOfAccounts';
@@ -36,6 +36,7 @@ import DeptNotices from './DeptNotices';
 import DeptMessenger from './DeptMessenger';
 import RecentActivities from './RecentActivities';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
+import ModuleExpandButton from './ModuleExpandButton';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 
 // Hideable summary cards. The cycle tabs (chart, bank, receivables, payables,
@@ -50,10 +51,14 @@ const ACCOUNTING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'notices', label: 'Accounting Notices' },
 ];
 
-export default function AccountingMainDashboard() {
+export default function AccountingMainDashboard({
+  fullPage = false,
+}: {
+  fullPage?: boolean;
+} = {}) {
   const leanMode = isLeanAccountingUI();
-  const countryCode = getTenantAccountingCountryCode();
   const [selectedTab, setSelectedTab] = useState('receivables');
+  const [tabsReady, setTabsReady] = useState(false);
 
   const {
     invoices,
@@ -64,25 +69,13 @@ export default function AccountingMainDashboard() {
     initializeAccounting,
   } = useAccountingStore();
 
-  const complianceCountry = useComplianceStore((s) => s.country);
-  const reportingRules = useComplianceStore((s) => s.reportingRules);
-  const complianceReports = useComplianceStore((s) => s.reports);
-  const getComplianceScore = useComplianceStore((s) => s.getComplianceScore);
-
-  const complianceOverview = useMemo(
-    () =>
-      buildAccountingComplianceOverview({
-        countryCode: complianceCountry || countryCode,
-        reportingRules,
-        reports: complianceReports,
-        complianceScore: getComplianceScore(),
-      }),
-    [complianceCountry, countryCode, reportingRules, complianceReports, getComplianceScore],
-  );
-
   const fmt = (amount: number) => formatAccountingCurrency(amount);
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.accounting', ACCOUNTING_DASHBOARD_SECTIONS);
+
+  useEffect(() => {
+    setTabsReady(true);
+  }, []);
 
   useEffect(() => {
     initializeAccounting().catch(() => {});
@@ -117,13 +110,23 @@ export default function AccountingMainDashboard() {
   const salesInvoices = useMemo(() => invoices.filter(i => i.type === 'Sales'), [invoices]);
   const purchaseInvoices = useMemo(() => invoices.filter(i => i.type === 'Purchase'), [invoices]);
 
-  // Revenue = total of Sales invoices that are Posted or Paid
-  const currentRevenue = useMemo(
-    () => salesInvoices
-      .filter(i => i.status === 'Posted' || i.status === 'Paid')
-      .reduce((s, i) => s + (i.total || 0), 0),
-    [salesInvoices]
-  );
+  // Same year-to-date profit and loss as Financial Reports: GL movement from 1 Jan
+  // through today, not sales-invoice face values (those include tax and miss journals).
+  const profitAndLoss = useMemo(() => {
+    const today = new Date();
+    const rollup = toRollupCoa(chartOfAccounts.length > 0 ? chartOfAccounts : GHANA_CHART_OF_ACCOUNTS);
+    const tree = buildFinancialAccountTree(rollup, journalEntries, {
+      kind: 'period',
+      startDate: new Date(today.getFullYear(), 0, 1),
+      endDate: today,
+    });
+    const sum = (type: string) => tree.filter((n) => n.type === type).reduce((s, n) => s + n.balance, 0);
+    const revenue = Math.round(sum('Revenue') * 100) / 100;
+    const expenses = Math.round(sum('Expense') * 100) / 100;
+    return { revenue, expenses, net: Math.round((revenue - expenses) * 100) / 100 };
+  }, [chartOfAccounts, journalEntries]);
+  const currentRevenue = profitAndLoss.revenue;
+  const currentExpenses = profitAndLoss.expenses;
 
   // Receivables = outstanding on finance AR subledger (excludes proformas / open folios)
   const totalReceivables = useMemo(
@@ -140,33 +143,7 @@ export default function AccountingMainDashboard() {
     [purchaseInvoices]
   );
 
-  // Expenses = sum of journal entry debit lines on accounts that roll up to 'Expense' in the
-  // Chart of Accounts, not a hardcoded '5xxx' code prefix — matches FinancialReports'
-  // classification and stays correct if a non-Ghana chart template numbers expenses
-  // differently. Uses mapCoaTypeToRollup (not a raw `a.type === 'Expense'` check) because
-  // `type` can hold a granular CoaAccountType like "Operating Expense" or "Cost of Sales"
-  // rather than the coarse 5-value rollup — a direct string comparison silently matched zero
-  // accounts and made this card's Expenses read ₵0.00 while Financial Reports, which already
-  // goes through this same rollup, showed the real total.
-  const expenseAccountCodes = useMemo(
-    () => new Set(chartOfAccounts.filter(a => mapCoaTypeToRollup(a.type) === 'Expense').map(a => a.code)),
-    [chartOfAccounts]
-  );
-  const currentExpenses = useMemo(() => {
-    let total = 0;
-    for (const je of journalEntries) {
-      if (je.status !== 'Posted') continue;
-      for (const line of (je.lines || [])) {
-        if (line.accountCode && expenseAccountCodes.has(line.accountCode)) {
-          total += (line.debit || 0);
-        }
-      }
-    }
-    return total;
-  }, [journalEntries, expenseAccountCodes]);
-
-  // Net Profit
-  const netIncome = currentRevenue - currentExpenses;
+  const netIncome = profitAndLoss.net;
 
   // Profit margin
   const profitMargin = currentRevenue > 0 ? ((netIncome / currentRevenue) * 100).toFixed(1) : '0.0';
@@ -193,9 +170,6 @@ export default function AccountingMainDashboard() {
     () => chartOfAccounts.filter(a => a.isActive !== false).length,
     [chartOfAccounts]
   );
-
-  // Live compliance metrics (from compliance module — not hardcoded percentages)
-  const { complianceScore, activeSchedules, pendingFilings, submittedFilings } = complianceOverview;
 
   // Today's operations from live data
   const todayStr = new Date().toISOString().slice(0, 10);
@@ -238,48 +212,32 @@ export default function AccountingMainDashboard() {
 
   return (
     <>
-      <DeptMessenger from="accounting" mode="drawer" />
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-gray-50 p-6">
+      {!fullPage && <DeptMessenger from="accounting" mode="drawer" />}
+      <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
         <div>
-          {/* Header */}
-          <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-6">
-                <div className="h-20 w-20 bg-gradient-to-br from-ghana-green to-ghana-gold rounded-3xl flex items-center justify-center shadow-2xl">
-                  <span className="text-4xl">💰</span>
-                </div>
-                <div>
-                  <h1 className="text-4xl font-bold bg-gradient-to-r from-ghana-black to-ghana-green bg-clip-text text-transparent">
-                    Accounting & Financial Management
-                  </h1>
-                  <p className="text-xl text-gray-600 mt-2">
-                    Financial control, statutory reporting, and compliance ({complianceOverview.countryCode})
-                  </p>
-                </div>
-              </div>
-              
-              <div className="text-right">
-                <p className="text-sm text-gray-500">Filing compliance</p>
-                <p className="text-3xl font-bold text-ghana-green">{complianceScore}%</p>
-                <p className="text-xs text-gray-400 mt-1">
-                  {submittedFilings} filed · {pendingFilings} pending · {activeSchedules} schedules
-                </p>
-              </div>
+          {!fullPage && (
+          <>
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-2xl font-bold text-ghana-black">🧾 Accounting & Finance</h2>
+            <div className="flex items-center gap-2">
+              <CustomizeViewControl
+                sections={ACCOUNTING_DASHBOARD_SECTIONS}
+                isHidden={isHidden}
+                toggle={toggleSection}
+                showAll={showAll}
+                hiddenCount={hiddenCount}
+              />
+              <ModuleExpandButton
+                href="/accounting/ops"
+                label="Open accounting full page"
+              />
             </div>
           </div>
-
-          <div className="flex justify-end mb-3 gap-2">
-            <CustomizeViewControl
-              sections={ACCOUNTING_DASHBOARD_SECTIONS}
-              isHidden={isHidden}
-              toggle={toggleSection}
-              showAll={showAll}
-              hiddenCount={hiddenCount}
-            />
-          </div>
+          </>
+          )}
 
           {/* Status Cards */}
-          {(!isHidden('cashBank') || !isHidden('profitability') || !isHidden('operationalMetrics')) && (
+          {!fullPage && (!isHidden('cashBank') || !isHidden('profitability') || !isHidden('operationalMetrics')) && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
             {/* Financial Position */}
             {!isHidden('cashBank') && (
@@ -316,7 +274,10 @@ export default function AccountingMainDashboard() {
             <Card className={`border-0 shadow-lg border-l-4 ${netIncome >= 0 ? 'border-l-green-500' : 'border-l-red-500'}`}>
               <CardBody className="p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h4 className="text-lg font-semibold text-ghana-black">Profitability</h4>
+                  <div>
+                    <h4 className="text-lg font-semibold text-ghana-black">Profitability</h4>
+                    <span className="text-xs text-gray-500">Year to date</span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <div className={`w-3 h-3 rounded-full ${netIncome >= 0 ? 'bg-green-500' : 'bg-red-500'}`}></div>
                     <HideCardButton onHide={() => hide('profitability')} label="Profitability" />
@@ -325,7 +286,7 @@ export default function AccountingMainDashboard() {
                 <div className={`text-3xl font-bold mb-3 ${netIncome >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(netIncome)}</div>
                 <div className="space-y-1 text-sm text-gray-600">
                   <div className="flex justify-between">
-                    <span>Revenue (Posted)</span>
+                    <span>Revenue</span>
                     <span className="font-medium">{fmt(currentRevenue)}</span>
                   </div>
                   <div className="flex justify-between">
@@ -374,7 +335,7 @@ export default function AccountingMainDashboard() {
           )}
 
           {/* Today's Financial Operations */}
-          {!isHidden('todayOps') && (
+          {!fullPage && !isHidden('todayOps') && (
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-2">
@@ -401,7 +362,7 @@ export default function AccountingMainDashboard() {
           )}
 
           {/* Quick Actions */}
-          {!isHidden('quickActions') && (
+          {!fullPage && !isHidden('quickActions') && (
           <Card className="border-0 shadow-lg mb-6">
             <CardHeader className="pb-3 flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -449,10 +410,13 @@ export default function AccountingMainDashboard() {
 
           {/* Main Operations Interface - Following Uniform Pattern */}
           <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3">
-              <h3 className="text-xl font-semibold text-ghana-black">Accounting</h3>
-            </CardHeader>
+            {fullPage && (
+              <CardHeader className="pb-3">
+                <h3 className="text-xl font-semibold text-ghana-black">Accounting</h3>
+              </CardHeader>
+            )}
             <CardBody>
+              {tabsReady ? (
               <Tabs 
                 selectedKey={selectedTab} 
                 onSelectionChange={(key) => setSelectedTab(key as string)}
@@ -515,9 +479,12 @@ export default function AccountingMainDashboard() {
                 </Tab>
                 )}
               </Tabs>
+              ) : (
+                <div className="h-12" aria-hidden />
+              )}
 
       {/* Recent Activities & Notices */}
-      {(!isHidden('recentActivities') || !isHidden('notices')) && (
+      {!fullPage && (!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Recent Activities */}

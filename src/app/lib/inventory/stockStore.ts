@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { StockItem, StockMovement, InventoryAlert } from './models';
+import { StockItem, StockMovement, InventoryAlert, StockTransfer, StockCount, GoodsIssue } from './models';
 import { getClientTenantSubdomain } from '../api/clientTenant';
 
 function invHeaders(): HeadersInit {
@@ -68,6 +68,189 @@ function toStockMovement(row: any): StockMovement {
   };
 }
 
+function mapApiTransferToStore(raw: any): StockTransfer {
+  return {
+    id: raw.id,
+    transferNumber: raw.transferNumber,
+    fromLocation: raw.fromLocation,
+    toLocation: raw.toLocation,
+    transferDate: new Date(raw.transferDate),
+    expectedDeliveryDate: raw.expectedDeliveryDate ? new Date(raw.expectedDeliveryDate) : new Date(raw.transferDate),
+    actualDeliveryDate: raw.actualDeliveryDate ? new Date(raw.actualDeliveryDate) : undefined,
+    status: raw.status,
+    priority: raw.priority || 'medium',
+    totalItems: Number(raw.totalItems || 0),
+    totalValue: Number(raw.totalValue || 0),
+    items: (raw.items || []).map((i: any) => ({
+      id: i.id,
+      itemId: i.itemId,
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      quantity: Number(i.quantity),
+      unitCost: Number(i.unitCost),
+      totalValue: Number(i.totalValue),
+      transferredQuantity: Number(i.transferredQuantity || 0),
+      notes: i.notes ?? undefined,
+    })),
+    notes: raw.notes ?? undefined,
+    createdBy: raw.createdBy,
+    approvedBy: raw.approvedBy ?? undefined,
+    approvedAt: raw.approvedAt ? new Date(raw.approvedAt) : undefined,
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
+function mapApiCountToStore(raw: any): StockCount {
+  return {
+    id: raw.id,
+    countNumber: raw.countNumber,
+    countType: raw.countType || 'full',
+    location: raw.location,
+    startDate: new Date(raw.startDate),
+    endDate: raw.endDate ? new Date(raw.endDate) : undefined,
+    status: raw.status,
+    totalItems: Number(raw.totalItems || 0),
+    countedItems: Number(raw.countedItems || 0),
+    varianceItems: Number(raw.varianceItems || 0),
+    totalValue: Number(raw.totalValue || 0),
+    varianceValue: Number(raw.varianceValue || 0),
+    items: (raw.items || []).map((i: any) => ({
+      id: i.id,
+      itemId: i.itemId,
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      expectedQuantity: Number(i.expectedQuantity),
+      countedQuantity: Number(i.countedQuantity),
+      variance: Number(i.variance),
+      unitCost: Number(i.unitCost),
+      varianceValue: Number(i.varianceValue),
+      notes: i.notes ?? undefined,
+    })),
+    notes: raw.notes ?? undefined,
+    createdBy: raw.createdBy,
+    performedBy: raw.performedBy ?? undefined,
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
+function syncTransferToApi(transfer: StockTransfer) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/inventory/stock-transfers', {
+    method: 'PUT',
+    headers: invHeaders(),
+    body: JSON.stringify({
+      id: transfer.id,
+      transferNumber: transfer.transferNumber,
+      fromLocation: transfer.fromLocation,
+      toLocation: transfer.toLocation,
+      transferDate: transfer.transferDate,
+      expectedDeliveryDate: transfer.expectedDeliveryDate,
+      actualDeliveryDate: transfer.actualDeliveryDate ?? null,
+      status: transfer.status,
+      priority: transfer.priority,
+      notes: transfer.notes,
+      createdBy: transfer.createdBy,
+      approvedBy: transfer.approvedBy,
+      approvedAt: transfer.approvedAt,
+      items: transfer.items.map((i) => ({
+        itemId: i.itemId,
+        itemCode: i.itemCode,
+        itemName: i.itemName,
+        quantity: i.quantity,
+        unitCost: i.unitCost,
+        transferredQuantity: i.transferredQuantity,
+        notes: i.notes,
+      })),
+    }),
+  }).catch((e) => console.warn('[Inventory] Failed to sync stock transfer:', e));
+}
+
+function syncCountToApi(count: StockCount) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/inventory/stock-counts', {
+    method: 'PUT',
+    headers: invHeaders(),
+    body: JSON.stringify({
+      id: count.id,
+      countNumber: count.countNumber,
+      countType: count.countType,
+      location: count.location,
+      startDate: count.startDate,
+      endDate: count.endDate ?? null,
+      status: count.status,
+      notes: count.notes,
+      createdBy: count.createdBy,
+      performedBy: count.performedBy,
+      items: count.items.map((i) => ({
+        itemId: i.itemId,
+        itemCode: i.itemCode,
+        itemName: i.itemName,
+        expectedQuantity: i.expectedQuantity,
+        countedQuantity: i.countedQuantity,
+        variance: i.variance,
+        unitCost: i.unitCost,
+        varianceValue: i.varianceValue,
+        notes: i.notes,
+      })),
+    }),
+  }).catch((e) => console.warn('[Inventory] Failed to sync stock count:', e));
+}
+
+function mapApiIssueToStore(raw: any): GoodsIssue {
+  return {
+    id: raw.id,
+    issueNumber: raw.issueNumber,
+    department: raw.department,
+    issuedTo: raw.issuedTo,
+    issueDate: new Date(raw.issueDate),
+    status: raw.status || 'issued',
+    totalItems: Number(raw.totalItems || 0),
+    totalValue: Number(raw.totalValue || 0),
+    items: (raw.items || []).map((i: any) => ({
+      id: i.id,
+      itemId: i.itemId,
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      quantity: Number(i.quantity),
+      unitCost: Number(i.unitCost),
+      totalValue: Number(i.totalValue),
+      reason: i.reason ?? undefined,
+    })),
+    notes: raw.notes ?? undefined,
+    issuedBy: raw.issuedBy,
+    createdAt: new Date(raw.createdAt),
+    updatedAt: new Date(raw.updatedAt),
+  };
+}
+
+function syncIssueToApi(issue: GoodsIssue) {
+  if (typeof window === 'undefined') return;
+  fetch('/api/inventory/goods-issues', {
+    method: 'PUT',
+    headers: invHeaders(),
+    body: JSON.stringify({
+      id: issue.id,
+      issueNumber: issue.issueNumber,
+      department: issue.department,
+      issuedTo: issue.issuedTo,
+      issueDate: issue.issueDate,
+      status: issue.status,
+      notes: issue.notes,
+      issuedBy: issue.issuedBy,
+      items: issue.items.map((i) => ({
+        itemId: i.itemId,
+        itemCode: i.itemCode,
+        itemName: i.itemName,
+        quantity: i.quantity,
+        unitCost: i.unitCost,
+        reason: i.reason,
+      })),
+    }),
+  }).catch((e) => console.warn('[Inventory] Failed to sync goods issue:', e));
+}
+
 function deriveAlerts(items: StockItem[]): InventoryAlert[] {
   // Computed, not persisted — alerts are a live view of current stock levels,
   // not a durable business record, so they're recalculated on every hydrate
@@ -131,10 +314,19 @@ function deriveAlerts(items: StockItem[]): InventoryAlert[] {
 interface StockStore {
   stockItems: StockItem[];
   stockMovements: StockMovement[];
+  stockTransfers: StockTransfer[];
+  stockCounts: StockCount[];
+  goodsIssues: GoodsIssue[];
   alerts: InventoryAlert[];
   selectedItem: StockItem | null;
   selectedMovement: StockMovement | null;
   hydrateFromApi: () => Promise<void>;
+  hydrateTransfersFromApi: () => Promise<void>;
+  hydrateCountsFromApi: () => Promise<void>;
+  hydrateIssuesFromApi: () => Promise<void>;
+  upsertStockTransfer: (transfer: StockTransfer) => void;
+  upsertStockCount: (count: StockCount) => void;
+  upsertGoodsIssue: (issue: GoodsIssue) => void;
 
   // Stock Item Management
   addStockItem: (item: Omit<StockItem, 'id' | 'createdAt' | 'updatedAt'>) => void;
@@ -185,6 +377,9 @@ interface StockStore {
 export const useStockStore = create<StockStore>((set, get) => ({
   stockItems: [],
   stockMovements: [],
+  stockTransfers: [],
+  stockCounts: [],
+  goodsIssues: [],
   alerts: [],
   selectedItem: null,
   selectedMovement: null,
@@ -217,9 +412,89 @@ export const useStockStore = create<StockStore>((set, get) => ({
         console.warn('[Inventory] Failed to hydrate alert acknowledgments:', e);
       }
       set({ stockItems: items, stockMovements: movements, alerts });
+      await Promise.all([
+        get().hydrateTransfersFromApi(),
+        get().hydrateCountsFromApi(),
+        get().hydrateIssuesFromApi(),
+      ]);
     } catch (e) {
       console.warn('[Inventory] stockStore hydrateFromApi failed:', e);
     }
+  },
+
+  hydrateTransfersFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/inventory/stock-transfers', { headers: invHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const transfers = Array.isArray(data.transfers) ? data.transfers.map(mapApiTransferToStore) : [];
+      set({ stockTransfers: transfers });
+    } catch (e) {
+      console.warn('[Inventory] Failed to hydrate stock transfers:', e);
+    }
+  },
+
+  hydrateCountsFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/inventory/stock-counts', { headers: invHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const counts = Array.isArray(data.counts) ? data.counts.map(mapApiCountToStore) : [];
+      set({ stockCounts: counts });
+    } catch (e) {
+      console.warn('[Inventory] Failed to hydrate stock counts:', e);
+    }
+  },
+
+  hydrateIssuesFromApi: async () => {
+    if (typeof window === 'undefined') return;
+    try {
+      const res = await fetch('/api/inventory/goods-issues', { headers: invHeaders(), cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      const issues = Array.isArray(data.issues) ? data.issues.map(mapApiIssueToStore) : [];
+      set({ goodsIssues: issues });
+    } catch (e) {
+      console.warn('[Inventory] Failed to hydrate goods issues:', e);
+    }
+  },
+
+  upsertStockTransfer: (transfer) => {
+    set((state) => {
+      const exists = state.stockTransfers.some((t) => t.id === transfer.id);
+      return {
+        stockTransfers: exists
+          ? state.stockTransfers.map((t) => (t.id === transfer.id ? transfer : t))
+          : [transfer, ...state.stockTransfers],
+      };
+    });
+    syncTransferToApi(transfer);
+  },
+
+  upsertStockCount: (count) => {
+    set((state) => {
+      const exists = state.stockCounts.some((c) => c.id === count.id);
+      return {
+        stockCounts: exists
+          ? state.stockCounts.map((c) => (c.id === count.id ? count : c))
+          : [count, ...state.stockCounts],
+      };
+    });
+    syncCountToApi(count);
+  },
+
+  upsertGoodsIssue: (issue) => {
+    set((state) => {
+      const exists = state.goodsIssues.some((i) => i.id === issue.id);
+      return {
+        goodsIssues: exists
+          ? state.goodsIssues.map((i) => (i.id === issue.id ? issue : i))
+          : [issue, ...state.goodsIssues],
+      };
+    });
+    syncIssueToApi(issue);
   },
 
   // Stock Item Management
@@ -384,10 +659,35 @@ export const useStockStore = create<StockStore>((set, get) => ({
         signedQty = isUndercount ? -Math.abs(movementData.quantity) : Math.abs(movementData.quantity);
         break;
       }
-      case 'transfer':
-        // Location-only change — already persisted via updateStockItem's real PATCH,
-        // no net quantity change to record on this item.
+      case 'transfer': {
+        // Audit trail only — location already updated via updateStockItem.
+        // Net-zero on quantityOnHand (hotel still owns the units).
+        const absQty = Math.abs(movementData.quantity);
+        if (!absQty) return;
+        const base = {
+          itemId: movementData.itemId,
+          unitCost: movementData.unitCost,
+          referenceType: movementData.referenceType || 'transfer',
+          referenceId: movementData.referenceId,
+          notes: movementData.notes || movementData.reason,
+          performedBy: movementData.performedBy,
+        };
+        Promise.all([
+          fetch('/api/inventory/stock-transactions', {
+            method: 'POST',
+            headers: invHeaders(),
+            body: JSON.stringify({ ...base, type: 'transfer_out', quantity: -absQty }),
+          }),
+          fetch('/api/inventory/stock-transactions', {
+            method: 'POST',
+            headers: invHeaders(),
+            body: JSON.stringify({ ...base, type: 'transfer_in', quantity: absQty }),
+          }),
+        ])
+          .then(() => get().hydrateFromApi())
+          .catch((e) => console.warn('[Inventory] Failed to sync transfer movement:', e));
         return;
+      }
       default:
         type = 'adjustment';
     }

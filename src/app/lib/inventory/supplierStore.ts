@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, GoodsReceiptNote, SupplierInvoice, QualityCheck } from './models';
 import type { BusinessPartner } from '../accounting/models';
-import { GL_ACCOUNTS } from '../accounting/integration';
+import { GL_ACCOUNTS } from '../accounting/glAccounts';
 import { useStockStore } from './stockStore';
 import { computePurchaseTax } from '../tax/engine';
 import { getClientTenantSubdomain } from '../api/clientTenant';
@@ -224,6 +224,8 @@ async function syncRequisitionToApi(req: Requisition): Promise<boolean> {
           itemName: i.itemName,
           quantity: i.quantity,
           estimatedPrice: i.estimatedPrice,
+          preferredSupplierId: i.preferredSupplierId,
+          preferredSupplierName: i.preferredSupplierName,
           notes: i.notes,
         })),
       }),
@@ -263,6 +265,8 @@ function mapApiRequisitionToStore(raw: any): Requisition {
       quantity: Number(i.quantity),
       estimatedPrice: Number(i.estimatedPrice),
       totalCost: Number(i.totalCost),
+      preferredSupplierId: i.preferredSupplierId ?? undefined,
+      preferredSupplierName: i.preferredSupplierName ?? undefined,
       notes: i.notes ?? undefined,
     })),
     status: raw.status,
@@ -591,6 +595,11 @@ interface SupplierStore {
   markRequisitionReady: (id: string, readyBy: string) => void;
   rejectRequisition: (id: string, rejectedBy: string, reason?: string) => void;
   convertRequisitionToPO: (requisitionId: string, supplierId: string) => PurchaseOrder | null;
+  /** Split a requisition into one draft PO per supplier (fish→A, biscuits→B). */
+  convertRequisitionToPOs: (
+    requisitionId: string,
+    lineSuppliers: Record<string, string>
+  ) => PurchaseOrder[];
   getRequisition: (id: string) => Requisition | undefined;
   getRequisitionsByStatus: (status: Requisition['status']) => Requisition[];
   
@@ -1425,73 +1434,103 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
   },
 
   convertRequisitionToPO: (requisitionId, supplierId) => {
+    const pos = get().convertRequisitionToPOs(requisitionId, Object.fromEntries(
+      (get().getRequisition(requisitionId)?.requestedItems || []).map((item) => [item.id, supplierId])
+    ));
+    return pos[0] || null;
+  },
+
+  convertRequisitionToPOs: (requisitionId, lineSuppliers) => {
     const requisition = get().getRequisition(requisitionId);
     if (!requisition || requisition.status !== 'approved') {
-      return null;
+      return [];
     }
 
-    const supplier = get().getSupplier(supplierId);
-    if (!supplier) {
-      return null;
+    // Group lines by assigned supplier (skip lines with no supplier)
+    const groups = new Map<string, typeof requisition.requestedItems>();
+    for (const item of requisition.requestedItems) {
+      const supplierId = lineSuppliers[item.id] || item.preferredSupplierId;
+      if (!supplierId) continue;
+      const list = groups.get(supplierId) || [];
+      list.push(item);
+      groups.set(supplierId, list);
     }
 
-    // Generate PO number
-    const year = new Date().getFullYear();
-    const poCount = get().purchaseOrders.length + 1;
-    const poNumber = `PO-${year}-${String(poCount).padStart(3, '0')}`;
+    if (groups.size === 0) {
+      return [];
+    }
 
-    // Convert requisition items to PO items
-    const poItems: PurchaseOrderItem[] = requisition.requestedItems.map(item => ({
-      id: Date.now().toString() + Math.random().toString(),
-      itemId: item.itemId,
-      itemCode: item.itemCode,
-      itemName: item.itemName,
-      quantity: item.quantity,
-      unitCost: item.estimatedPrice,
-      totalCost: item.totalCost,
-      receivedQuantity: 0,
-      notes: item.notes
-    }));
+    const createdPOs: PurchaseOrder[] = [];
 
-    // Calculate totals
-    const subtotal = poItems.reduce((sum, item) => sum + item.totalCost, 0);
-    const tax = computePurchaseTax(subtotal).totalTax;
-    const finalAmount = subtotal + tax;
+    for (const [supplierId, items] of groups) {
+      const supplier = get().getSupplier(supplierId);
+      if (!supplier) continue;
 
-    const newPO: PurchaseOrder = {
-      id: Date.now().toString(),
-      poNumber,
-      supplierId: supplier.id,
-      supplierName: supplier.name,
-      orderDate: new Date(),
-      expectedDeliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-      status: 'draft',
-      priority: 'medium',
-      totalAmount: subtotal,
-      taxAmount: tax,
-      shippingAmount: 0,
-      discountAmount: 0,
-      finalAmount: finalAmount,
-      currency: 'GHS',
-      paymentTerms: supplier.paymentTerms || 'net30',
-      notes: `Converted from Requisition ${requisition.requisitionNumber}`,
-      items: poItems,
-      createdBy: requisition.requestedBy,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    };
+      const poNumber = useSettingsStore.getState().getNextModuleNumber('inventory', 'purchaseOrder');
+      const poItems: PurchaseOrderItem[] = items.map((item) => ({
+        id: Date.now().toString() + Math.random().toString(),
+        itemId: item.itemId,
+        itemCode: item.itemCode,
+        itemName: item.itemName,
+        quantity: item.quantity,
+        unitCost: item.estimatedPrice,
+        totalCost: item.totalCost,
+        receivedQuantity: 0,
+        notes: item.notes,
+      }));
 
-    // Create the PO
-    get().createPurchaseOrder(newPO);
+      const subtotal = poItems.reduce((sum, item) => sum + item.totalCost, 0);
+      const tax = computePurchaseTax(subtotal).totalTax;
+      const finalAmount = subtotal + tax;
 
-    // Update requisition status
-    get().updateRequisition(requisitionId, {
-      status: 'converted-to-po',
-      convertedToPOId: newPO.id,
-      convertedToPONumber: newPO.poNumber
+      const newPO: PurchaseOrder = {
+        id: Date.now().toString() + Math.random().toString(36).slice(2, 8),
+        poNumber,
+        supplierId: supplier.id,
+        supplierName: supplier.name,
+        orderDate: new Date(),
+        expectedDeliveryDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+        status: 'draft',
+        priority: 'medium',
+        totalAmount: subtotal,
+        taxAmount: tax,
+        shippingAmount: 0,
+        discountAmount: 0,
+        finalAmount,
+        currency: 'GHS',
+        paymentTerms: supplier.paymentTerms || 'net30',
+        notes: `Converted from Requisition ${requisition.requisitionNumber} (${items.length} line${items.length === 1 ? '' : 's'})`,
+        items: poItems,
+        createdBy: requisition.requestedBy,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      get().createPurchaseOrder(newPO);
+      createdPOs.push(newPO);
+    }
+
+    if (createdPOs.length === 0) return [];
+
+    // Persist preferred suppliers chosen at convert onto the requisition lines
+    const updatedItems = requisition.requestedItems.map((item) => {
+      const sid = lineSuppliers[item.id] || item.preferredSupplierId;
+      const supplier = sid ? get().getSupplier(sid) : undefined;
+      return {
+        ...item,
+        preferredSupplierId: sid || item.preferredSupplierId,
+        preferredSupplierName: supplier?.name || item.preferredSupplierName,
+      };
     });
 
-    return newPO;
+    get().updateRequisition(requisitionId, {
+      status: 'converted-to-po',
+      convertedToPOId: createdPOs[0].id,
+      convertedToPONumber: createdPOs.map((p) => p.poNumber).join(', '),
+      requestedItems: updatedItems,
+    });
+
+    return createdPOs;
   },
 
   getRequisition: (id) => get().requisitions.find(req => req.id === id),

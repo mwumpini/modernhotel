@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import HeadingInfo from '../HeadingInfo';
 import { useAccountingStore } from '../../lib/accounting/store';
 import type { CostCenter, RevenueCenter } from '../../lib/accounting/models';
 import { formatAccountingCurrency } from '../../lib/accounting/tenantAccountingConfig';
@@ -173,8 +174,10 @@ export default function CostRevenueCenters() {
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Cost & Revenue Centers</h1>
-        <p className="text-gray-600">Manage cost and revenue centers for financial tracking and reporting</p>
+        <div className="flex items-center gap-1.5">
+          <h1 className="text-2xl font-bold text-gray-900">Cost & Revenue Centers</h1>
+          <HeadingInfo label="About cost and revenue centers">Manage cost and revenue centers for financial tracking and reporting</HeadingInfo>
+        </div>
       </div>
 
       {error && (

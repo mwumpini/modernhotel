@@ -9,6 +9,7 @@
 
 import type { Reservation, FolioCharge, FolioPayment } from './types';
 import { resolveRateForDate, type StoreLike } from './roomCharges';
+import { chargeNet, isPostedRoomCharge } from './folioLedger';
 
 export type NightAuditDiscrepancy = {
   reservationId: string;
@@ -78,13 +79,14 @@ export function computeDailyRevenue(
 
     for (const c of folio.charges || []) {
       if ((c.date || '').slice(0, 10) !== businessDate) continue;
-      if ((c.category || '').toLowerCase() === 'room') result.roomCharges += c.amount || 0;
-      else result.otherCharges += c.amount || 0;
+      const net = chargeNet(c as any);
+      if (isPostedRoomCharge(c)) result.roomCharges += net;
+      else result.otherCharges += net;
       result.taxTotal += c.tax || 0;
     }
 
     for (const p of folio.payments || []) {
-      if (p.status !== 'completed' || (p.date || '').slice(0, 10) !== businessDate) continue;
+      if ((p.status || 'completed') !== 'completed' || (p.date || '').slice(0, 10) !== businessDate) continue;
       switch (p.method) {
         case 'Cash': result.paymentsByMethod.cash += p.amount || 0; break;
         case 'Card': result.paymentsByMethod.card += p.amount || 0; break;

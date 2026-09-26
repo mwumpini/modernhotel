@@ -283,10 +283,10 @@ export default function TrainingProgramsPanel() {
               <ModalBody>
                 <div className="grid grid-cols-1 gap-3">
                   <Select label="Program" selectedKeys={eForm.programId ? [eForm.programId] : []} onSelectionChange={(k) => setEForm({ ...eForm, programId: (Array.from(k)[0] as string) || '' })} variant="bordered" items={programs.map((p) => ({ id: p.id, title: p.title }))}>
-                    {(item: any) => <SelectItem key={item.id}>{item.title}</SelectItem>}
+                    {(item: any) => <SelectItem key={item.id} textValue={item.title}>{item.title}</SelectItem>}
                   </Select>
                   <Select label="Staff" selectionMode="multiple" selectedKeys={new Set(eForm.employeeIds)} onSelectionChange={(k) => setEForm({ ...eForm, employeeIds: Array.from(k as Set<string>) })} variant="bordered" items={employees.map((e) => ({ id: e.id, name: `${e.firstName} ${e.lastName}` }))}>
-                    {(item: any) => <SelectItem key={item.id}>{item.name}</SelectItem>}
+                    {(item: any) => <SelectItem key={item.id} textValue={item.name}>{item.name}</SelectItem>}
                   </Select>
                   <Input label="Enrollment date" type="date" value={eForm.date} onChange={(e) => setEForm({ ...eForm, date: e.target.value })} variant="bordered" />
                 </div>
