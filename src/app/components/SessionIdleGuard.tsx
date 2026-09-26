@@ -22,13 +22,17 @@ export default function SessionIdleGuard() {
       return Number.isFinite(raw) && raw > 0 ? raw : Date.now();
     };
     const stamp = () => sessionStorage.setItem(ACTIVITY_KEY, String(Date.now()));
-    if (!sessionStorage.getItem(ACTIVITY_KEY)) stamp();
+    // Always refresh on a fresh authenticated mount (e.g. a new sign-in), so a
+    // stale timestamp left over from an earlier session can't make this login
+    // look instantly idle.
+    stamp();
 
     let timer = 0;
     const arm = () => {
       window.clearTimeout(timer);
       const last = read();
       if (idleTimedOut(last, Date.now(), minutes)) {
+        sessionStorage.removeItem(ACTIVITY_KEY);
         signOut({ callbackUrl: '/' });
         return;
       }

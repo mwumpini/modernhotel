@@ -6,6 +6,8 @@ export interface DisplayPrefs {
   theme?: AppTheme | string;
   backgroundLight?: string;
   backgroundDark?: string;
+  cardBackgroundLight?: string;
+  cardBackgroundDark?: string;
   font?: AppFont | string;
   fontSize?: AppFontSize | string;
 }
@@ -30,7 +32,7 @@ export function normalizeTheme(theme: string | undefined): AppTheme {
 }
 
 export function normalizeFont(font: string | undefined): AppFont {
-  return FONTS.includes(font as AppFont) ? (font as AppFont) : 'source';
+  return FONTS.includes(font as AppFont) ? (font as AppFont) : 'geist';
 }
 
 export function normalizeFontSize(size: string | undefined): AppFontSize {
@@ -39,6 +41,11 @@ export function normalizeFontSize(size: string | undefined): AppFontSize {
 
 function pageColor(resolved: 'light' | 'dark', prefs: DisplayPrefs): string {
   const raw = resolved === 'dark' ? prefs.backgroundDark : prefs.backgroundLight;
+  return raw && HEX.test(raw) ? raw : '';
+}
+
+function cardColor(resolved: 'light' | 'dark', prefs: DisplayPrefs): string {
+  const raw = resolved === 'dark' ? prefs.cardBackgroundDark : prefs.cardBackgroundLight;
   return raw && HEX.test(raw) ? raw : '';
 }
 
@@ -51,6 +58,7 @@ export function applyDisplay(prefs: DisplayPrefs = {}): void {
   const font = normalizeFont(prefs.font);
   const fontSize = normalizeFontSize(prefs.fontSize);
   const background = pageColor(resolved, prefs);
+  const card = cardColor(resolved, prefs);
 
   root.setAttribute('data-theme', theme);
   root.setAttribute('data-font', font);
@@ -66,6 +74,12 @@ export function applyDisplay(prefs: DisplayPrefs = {}): void {
     root.style.removeProperty('--page-background');
     root.removeAttribute('data-bg');
   }
+
+  if (card) {
+    root.style.setProperty('--card-background', card);
+  } else {
+    root.style.removeProperty('--card-background');
+  }
 }
 
 export function applyTheme(theme: AppTheme): void {
@@ -73,19 +87,19 @@ export function applyTheme(theme: AppTheme): void {
 }
 
 export function readStoredDisplay(): DisplayPrefs {
-  if (typeof window === 'undefined') return { theme: 'light', font: 'source' };
+  if (typeof window === 'undefined') return { theme: 'light', font: 'geist' };
 
   try {
     const raw = localStorage.getItem('system.currentUser');
     if (raw) {
       const user = JSON.parse(raw) as { preferences?: DisplayPrefs };
-      return user?.preferences || { theme: 'light', font: 'source' };
+      return user?.preferences || { theme: 'light', font: 'geist' };
     }
   } catch {
     // ignore malformed storage
   }
 
-  return { theme: 'light', font: 'source' };
+  return { theme: 'light', font: 'geist' };
 }
 
 export function getStoredTheme(): AppTheme {

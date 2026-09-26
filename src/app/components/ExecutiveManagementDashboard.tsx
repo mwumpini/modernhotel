@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Card, CardBody, CardHeader, Button, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Tooltip } from "@heroui/react";
-import { CalendarDays, Download } from 'lucide-react';
+import { CalendarDays, Download, Shield, Sparkles, PartyPopper, Wallet, AlertTriangle, TrendingUp, TrendingDown, UtensilsCrossed, Package, Activity, Bell, Users, LogIn, LogOut, Gauge } from 'lucide-react';
 import { useAnalyticsStore } from '../lib/analytics/analyticsStore';
 import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { auditLogStore, AuditRecord } from '../lib/analytics/auditLogStore';
@@ -60,34 +60,274 @@ function isoDaysFromToday(offset: number) {
 }
 
 /** Same module keys the sidebar uses, minus this dashboard itself. */
-const QUICK_MODULES: { key: string; label: string }[] = [
-  { key: 'frontdesk', label: 'Front Office' },
-  { key: 'events-conferences', label: 'Events' },
-  { key: 'restaurant', label: 'Restaurant' },
-  { key: 'kitchen', label: 'Kitchen' },
-  { key: 'housekeeping', label: 'Housekeeping' },
-  { key: 'inventory', label: 'Inventory' },
-  { key: 'security', label: 'Security' },
-  { key: 'hr', label: 'HR' },
-  { key: 'accounting', label: 'Accounting' },
-  { key: 'compliance', label: 'Compliance' },
-  { key: 'settings', label: 'Settings' },
+// Same emoji per module the sidebar (Navigation.tsx) uses, so this quick-nav
+// row reads as a shortcut to those same sections rather than a separate icon set.
+const QUICK_MODULES: { key: string; label: string; icon: string }[] = [
+  { key: 'frontdesk', label: 'Front Office', icon: '🏨' },
+  { key: 'events-conferences', label: 'Events', icon: '🎪' },
+  { key: 'restaurant', label: 'Restaurant', icon: '🍽️' },
+  { key: 'kitchen', label: 'Kitchen', icon: '👨‍🍳' },
+  { key: 'housekeeping', label: 'Housekeeping', icon: '🛏️' },
+  { key: 'inventory', label: 'Inventory', icon: '📦' },
+  { key: 'security', label: 'Security', icon: '🚨' },
+  { key: 'hr', label: 'HR', icon: '👥' },
+  { key: 'accounting', label: 'Accounting', icon: '🧾' },
+  { key: 'compliance', label: 'Compliance', icon: '⚖️' },
+  { key: 'settings', label: 'Settings', icon: '⚙️' },
 ];
 
 function openModule(section: string) {
   window.dispatchEvent(new CustomEvent('app.navigate', { detail: { section } }));
 }
 
-function OpsMetric({ label, value, onClick }: { label: string; value: string; onClick: () => void }) {
+function OpsMetric({
+  label,
+  value,
+  icon,
+  iconClass,
+  onClick,
+}: {
+  label: string;
+  value: string;
+  icon: React.ReactNode;
+  iconClass: string;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2 text-left transition hover:border-ghana-green/40"
+      className="flex items-center gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2.5 text-left transition hover:-translate-y-0.5 hover:border-ghana-green/40 hover:shadow-md"
     >
-      <span className="text-xs text-gray-500">{label}</span>
-      <span className="text-base font-semibold tabular-nums text-ghana-black">{value}</span>
+      <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${iconClass}`}>{icon}</span>
+      <span className="min-w-0">
+        <span className="block text-xs font-medium text-gray-600">{label}</span>
+        <span className="block text-lg font-semibold tabular-nums text-ghana-black">{value}</span>
+      </span>
     </button>
+  );
+}
+
+// Consistent icon-badge + title + hide-button header, used across all
+// dashboard cards so each section reads as a distinct "widget" at a glance.
+function SectionHeader({
+  icon,
+  iconClass,
+  title,
+  onHide,
+  hideLabel,
+  extra,
+}: {
+  icon: React.ReactNode;
+  iconClass: string;
+  title: string;
+  onHide: () => void;
+  hideLabel: string;
+  extra?: React.ReactNode;
+}) {
+  return (
+    <CardHeader className="pb-1 flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconClass}`}>{icon}</span>
+        <h3 className="font-semibold text-ghana-black">{title}</h3>
+      </div>
+      <div className="flex items-center gap-3">
+        {extra}
+        <HideCardButton onHide={onHide} label={hideLabel} />
+      </div>
+    </CardHeader>
+  );
+}
+
+// Big-number-on-a-tile stat, matching the treatment Today's Financial Pulse
+// established — used to bring the same visual weight to the other cards'
+// metrics instead of plain text rows. Sticks to bg-gray-50/text-gray-600,
+// the only shades this app's dark-mode CSS (globals.css) has overrides for;
+// a colored tile background here would repeat the light-on-light bug fixed
+// in the first pass.
+function StatTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: React.ReactNode }) {
+  return (
+    <div className="rounded-lg bg-gray-50 p-2.5">
+      <div className="text-xs font-medium text-gray-600">{label}</div>
+      <div className="mt-0.5 text-lg font-semibold tracking-tight text-ghana-black">{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-gray-600">{sub}</div>}
+    </div>
+  );
+}
+
+// Hand-rolled SVG area chart (no charting library in this project's
+// dependencies) for the 7-day occupancy trend: gradient fill under the line,
+// a dot per day, a dashed average line, and a real day-over-day delta badge
+// computed from the last two data points (no fabricated comparison).
+function OccupancyTrendChart({ trend, onSelectDate }: { trend: Array<{ date: string; rate: number }>; onSelectDate: (date: string) => void }) {
+  const w = 560;
+  const h = 200;
+  const padX = 6;
+  const padTop = 14;
+  const padBottom = 20;
+  const plotW = w - padX * 2;
+  const plotH = h - padTop - padBottom;
+  const n = trend.length;
+  const avg = n ? trend.reduce((s, t) => s + (t.rate || 0), 0) / n : 0;
+  const xFor = (i: number) => (n <= 1 ? padX : padX + (i / (n - 1)) * plotW);
+  const yFor = (rate: number) => padTop + (1 - Math.max(0, Math.min(100, rate)) / 100) * plotH;
+  const points = trend.map((t, i) => ({ x: xFor(i), y: yFor(t.rate || 0), t }));
+  const linePath = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+  const areaPath = points.length
+    ? `${linePath} L ${points[points.length - 1].x.toFixed(1)} ${(padTop + plotH).toFixed(1)} L ${points[0].x.toFixed(1)} ${(padTop + plotH).toFixed(1)} Z`
+    : '';
+  const avgY = yFor(avg);
+  const last = trend[n - 1]?.rate;
+  const prev = trend[n - 2]?.rate;
+  const delta = typeof last === 'number' && typeof prev === 'number' ? last - prev : null;
+  // Peak/lowest day summary — same trend data as the chart, just called out
+  // as numbers so the card has real substance instead of empty space below
+  // a short chart when it sits next to a taller sibling card.
+  const bestDay = n ? trend.reduce((a, b) => ((b.rate || 0) > (a.rate || 0) ? b : a)) : null;
+  const worstDay = n ? trend.reduce((a, b) => ((b.rate || 0) < (a.rate || 0) ? b : a)) : null;
+  const fmtDay = (d: string) => new Date(d).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+
+  const svgRef = React.useRef<SVGSVGElement>(null);
+  const [hoverIndex, setHoverIndex] = React.useState<number | null>(null);
+
+  const handleMove = (e: React.MouseEvent<SVGSVGElement>) => {
+    if (n === 0 || !svgRef.current) return;
+    const rect = svgRef.current.getBoundingClientRect();
+    const fraction = (e.clientX - rect.left) / rect.width;
+    const idx = Math.round(fraction * (n - 1));
+    setHoverIndex(Math.max(0, Math.min(n - 1, idx)));
+  };
+
+  const hovered = hoverIndex !== null ? points[hoverIndex] : null;
+
+  return (
+    <div>
+      <div className="flex items-center justify-end gap-2 text-xs text-gray-600">
+        {delta !== null && (
+          <span className={`inline-flex items-center gap-0.5 font-semibold ${delta >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+            {delta >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+            {Math.abs(delta).toFixed(0)}pt vs yesterday
+          </span>
+        )}
+        <span>Avg {avg.toFixed(0)}%</span>
+      </div>
+      {n === 0 ? (
+        <div className="flex h-52 items-center justify-center text-sm text-gray-600">No trend data</div>
+      ) : (
+        <>
+          <div className="relative">
+            {hovered && (
+              <div
+                className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium shadow-md whitespace-nowrap"
+                style={{ left: `${(hovered.x / w) * 100}%`, top: `${(hovered.y / h) * 100}%`, marginTop: '-8px' }}
+              >
+                <div className="text-gray-600">{new Date(hovered.t.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</div>
+                <div className="text-sm font-semibold text-ghana-black">{hovered.t.rate.toFixed(0)}% occupied</div>
+              </div>
+            )}
+            <svg
+              ref={svgRef}
+              viewBox={`0 0 ${w} ${h}`}
+              className="h-52 w-full cursor-crosshair"
+              preserveAspectRatio="none"
+              onMouseMove={handleMove}
+              onMouseLeave={() => setHoverIndex(null)}
+              onClick={() => hovered && onSelectDate(hovered.t.date)}
+            >
+              <defs>
+                <linearGradient id="occTrendFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#006B3F" stopOpacity="0.35" />
+                  <stop offset="100%" stopColor="#006B3F" stopOpacity="0" />
+                </linearGradient>
+              </defs>
+              {areaPath && <path d={areaPath} fill="url(#occTrendFill)" />}
+              <line x1={padX} y1={avgY} x2={w - padX} y2={avgY} stroke="#9CA3AF" strokeDasharray="4 4" strokeWidth="1" />
+              {hovered && (
+                <line x1={hovered.x} y1={padTop} x2={hovered.x} y2={padTop + plotH} stroke="#006B3F" strokeOpacity="0.3" strokeWidth="1.5" />
+              )}
+              {linePath && <path d={linePath} fill="none" stroke="#006B3F" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />}
+              {points.map((p, i) => (
+                <circle
+                  key={i}
+                  cx={p.x}
+                  cy={p.y}
+                  r={hoverIndex === i ? 6 : 4}
+                  fill="white"
+                  stroke="#006B3F"
+                  strokeWidth={hoverIndex === i ? 3 : 2}
+                  className="cursor-pointer transition-[r]"
+                />
+              ))}
+            </svg>
+          </div>
+          <div className="mt-1 flex justify-between text-[10px] text-gray-600">
+            {trend.map((t, i) => (
+              <span key={i} className={hoverIndex === i ? 'font-semibold text-ghana-black' : undefined}>
+                {new Date(t.date).toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3)}
+              </span>
+            ))}
+          </div>
+          {bestDay && worstDay && (
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <StatTile label="Peak day" value={`${bestDay.rate.toFixed(0)}%`} sub={fmtDay(bestDay.date)} />
+              <StatTile label="Lowest day" value={`${worstDay.rate.toFixed(0)}%`} sub={fmtDay(worstDay.date)} />
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// Hand-rolled SVG donut for the room/F&B/other revenue split that
+// generateDailyFlashReport already computes (revenueSplit) but this
+// dashboard never visualized — no new data, just a chart for data that
+// already existed in state.
+function RevenueSplitDonut({ room, fb, other, total }: { room: number; fb: number; other: number; total: number }) {
+  const size = 88;
+  const stroke = 13;
+  const r = (size - stroke) / 2;
+  const c = 2 * Math.PI * r;
+  const safeTotal = total > 0 ? total : room + fb + other;
+  const segments = [
+    { label: 'Room', value: room, color: '#006B3F' },
+    { label: 'F&B', value: fb, color: '#F59E0B' },
+    { label: 'Other', value: other, color: '#3B82F6' },
+  ];
+  let offset = 0;
+  return (
+    <div className="flex items-center gap-3">
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90 shrink-0">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#E5E7EB" strokeWidth={stroke} />
+        {safeTotal > 0 && segments.map((s) => {
+          const frac = s.value / safeTotal;
+          const dash = Math.max(0, frac * c);
+          const el = (
+            <circle
+              key={s.label}
+              cx={size / 2}
+              cy={size / 2}
+              r={r}
+              fill="none"
+              stroke={s.color}
+              strokeWidth={stroke}
+              strokeDasharray={`${dash} ${c - dash}`}
+              strokeDashoffset={-offset}
+            />
+          );
+          offset += dash;
+          return el;
+        })}
+      </svg>
+      <div className="space-y-1 text-[11px]">
+        {segments.map((s) => (
+          <div key={s.label} className="flex items-center gap-1.5 text-gray-600">
+            <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: s.color }} />
+            {s.label} {formatCurrency(s.value)}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -444,7 +684,7 @@ export default function ExecutiveManagementDashboard() {
             <button
               type="button"
               aria-label="Rooms, guests, and performance for the selected day"
-              className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-500"
+              className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-600"
             >
               i
             </button>
@@ -489,14 +729,15 @@ export default function ExecutiveManagementDashboard() {
       </div>
 
       {quickModules.length > 0 && (
-        <nav aria-label="Open a module" className="mb-4 flex flex-wrap gap-x-1 gap-y-1">
+        <nav aria-label="Open a module" className="mb-4 flex flex-wrap gap-1.5">
           {quickModules.map((m) => (
             <button
               key={m.key}
               type="button"
               onClick={() => openModule(m.key)}
-              className="rounded-md px-2 py-1 text-xs font-bold text-gray-700 transition hover:bg-white hover:text-ghana-green"
+              className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 py-1 text-xs font-semibold text-gray-700 transition hover:-translate-y-0.5 hover:border-ghana-green/40 hover:bg-white hover:text-ghana-green hover:shadow-sm"
             >
+              <span aria-hidden>{m.icon}</span>
               {m.label}
             </button>
           ))}
@@ -506,16 +747,16 @@ export default function ExecutiveManagementDashboard() {
       {!isHidden('liveOps') && (
         <section className="mb-5" aria-label="Live Operations">
           <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-xs font-medium uppercase tracking-wider text-gray-500">Live operations</h3>
+            <h3 className="text-xs font-medium uppercase tracking-wider text-gray-600">Live operations</h3>
             <HideCardButton onHide={() => hide('liveOps')} label="Live Operations" />
           </div>
           <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-            <OpsMetric label="In-house guests" value={String(inHouse)} onClick={() => go('/housekeeping')} />
-            <OpsMetric label="Today's arrivals" value={String(arrivalsToday)} onClick={() => go('/guest-services/check-ins?tab=checkins')} />
-            <OpsMetric label="Today's departures" value={String(departuresToday)} onClick={() => go('/guest-services/check-ins?tab=checkouts')} />
-            <OpsMetric label="Expected occupancy" value={`${occupancyPct}%`} onClick={() => go('/reports')} />
+            <OpsMetric label="In-house guests" value={String(inHouse)} icon={<Users className="h-4 w-4" />} iconClass="bg-blue-100 text-blue-600" onClick={() => go('/housekeeping')} />
+            <OpsMetric label="Today's arrivals" value={String(arrivalsToday)} icon={<LogIn className="h-4 w-4" />} iconClass="bg-green-100 text-green-600" onClick={() => go('/guest-services/check-ins?tab=checkins')} />
+            <OpsMetric label="Today's departures" value={String(departuresToday)} icon={<LogOut className="h-4 w-4" />} iconClass="bg-orange-100 text-orange-600" onClick={() => go('/guest-services/check-ins?tab=checkouts')} />
+            <OpsMetric label="Expected occupancy" value={`${occupancyPct}%`} icon={<Gauge className="h-4 w-4" />} iconClass="bg-purple-100 text-purple-600" onClick={() => go('/reports')} />
           </div>
-          <p className="mt-2 text-xs text-gray-500">
+          <p className="mt-2 text-xs text-gray-600">
             Next hour · {nextHourCheckins} check-ins · {nextHourCheckouts} check-outs
           </p>
         </section>
@@ -525,42 +766,80 @@ export default function ExecutiveManagementDashboard() {
         {/* Left Sidebar - Safety & status */}
         <aside className="xl:col-span-1 space-y-6">
           {!isHidden('security') && (
-          <Card className="border border-gray-200 shadow-sm">
-            <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">Security & Safety</h3>
-              <HideCardButton onHide={() => hide('security')} label="Security & Safety" />
-            </CardHeader>
-            <CardBody className="pt-2 space-y-2 text-sm">
-              <div className="flex justify-between"><span>Incident Log</span><span className="font-semibold">[{incidentsToday}]</span></div>
-              <div className="flex justify-between"><span>Security Checks</span><span className="font-semibold">{securityRoundsComplete ? 'All completed' : 'Pending'}</span></div>
-              <div className="flex justify-between"><span>CCTV Status</span><span className="font-semibold">Operational</span></div>
-              <div className="flex justify-between"><span>Fire Panel</span><span className="font-semibold">Normal</span></div>
+          <Card className="border border-gray-200/70 border-l-4 border-l-red-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
+            <SectionHeader
+              icon={<Shield className="h-4 w-4" />}
+              iconClass="bg-red-100 text-red-600"
+              title="Security & Safety"
+              onHide={() => hide('security')}
+              hideLabel="Security & Safety"
+            />
+            <CardBody className="pt-2 grid grid-cols-2 gap-3 text-sm">
+              <StatTile
+                label="Incident Log"
+                value={
+                  <span className={`inline-flex items-center gap-1.5 ${incidentsToday === 0 ? 'text-green-700' : 'text-red-700'}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${incidentsToday === 0 ? 'bg-green-500' : 'bg-red-500'}`} />
+                    {incidentsToday}
+                  </span>
+                }
+              />
+              <StatTile
+                label="Security Checks"
+                value={
+                  <span className={`inline-flex items-center gap-1.5 text-base ${securityRoundsComplete ? 'text-green-700' : 'text-red-700'}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${securityRoundsComplete ? 'bg-green-500' : 'bg-red-500'}`} />
+                    {securityRoundsComplete ? 'Complete' : 'Pending'}
+                  </span>
+                }
+              />
+              <StatTile
+                label="CCTV Status"
+                value={
+                  <span className="inline-flex items-center gap-1.5 text-base text-green-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                    Operational
+                  </span>
+                }
+              />
+              <StatTile
+                label="Fire Panel"
+                value={
+                  <span className="inline-flex items-center gap-1.5 text-base text-green-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                    Normal
+                  </span>
+                }
+              />
             </CardBody>
           </Card>
           )}
 
           {!isHidden('housekeeping') && (
-          <Card className="border border-gray-200 shadow-sm">
-            <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">Housekeeping Status</h3>
-              <HideCardButton onHide={() => hide('housekeeping')} label="Housekeeping Status" />
-            </CardHeader>
-            <CardBody className="pt-2 space-y-3 text-sm">
-              <div className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>Clean/Ready</span><span className="font-semibold">{Math.round(hkCleanReadyPct)}%</span></div>
-                <div className="h-2 bg-gray-100 rounded overflow-hidden"><div className="h-2 bg-green-600" style={{ width: `${hkCleanReadyPct}%` }} /></div>
+          <Card className="border border-gray-200/70 border-l-4 border-l-blue-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
+            <SectionHeader
+              icon={<Sparkles className="h-4 w-4" />}
+              iconClass="bg-blue-100 text-blue-600"
+              title="Housekeeping Status"
+              onHide={() => hide('housekeeping')}
+              hideLabel="Housekeeping Status"
+            />
+            <CardBody className="pt-2 grid grid-cols-2 gap-2 text-sm">
+              <div className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
+                <div className="flex justify-between"><span>Clean/Ready</span><span className="font-semibold text-ghana-black">{Math.round(hkCleanReadyPct)}%</span></div>
+                <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className="h-1.5 bg-green-600" style={{ width: `${hkCleanReadyPct}%` }} /></div>
               </div>
-              <div className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>In Progress</span><span className="font-semibold">{Math.round(hkInProgressPct)}%</span></div>
-                <div className="h-2 bg-gray-100 rounded overflow-hidden"><div className="h-2 bg-blue-600" style={{ width: `${hkInProgressPct}%` }} /></div>
+              <div className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
+                <div className="flex justify-between"><span>In Progress</span><span className="font-semibold text-ghana-black">{Math.round(hkInProgressPct)}%</span></div>
+                <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className="h-1.5 bg-blue-600" style={{ width: `${hkInProgressPct}%` }} /></div>
               </div>
-              <div className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>Dirty</span><span className="font-semibold">{Math.round(hkDirtyPct)}%</span></div>
-                <div className="h-2 bg-gray-100 rounded overflow-hidden"><div className="h-2 bg-yellow-500" style={{ width: `${hkDirtyPct}%` }} /></div>
+              <div className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
+                <div className="flex justify-between"><span>Dirty</span><span className="font-semibold text-ghana-black">{Math.round(hkDirtyPct)}%</span></div>
+                <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className="h-1.5 bg-yellow-500" style={{ width: `${hkDirtyPct}%` }} /></div>
               </div>
-              <div className="space-y-1 cursor-pointer" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>Out of Order</span><span className="font-semibold">{Math.round(hkOooPct)}%</span></div>
-                <div className="h-2 bg-gray-100 rounded overflow-hidden"><div className="h-2 bg-red-600" style={{ width: `${hkOooPct}%` }} /></div>
+              <div className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
+                <div className="flex justify-between"><span>Out of Order</span><span className="font-semibold text-ghana-black">{Math.round(hkOooPct)}%</span></div>
+                <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className="h-1.5 bg-red-600" style={{ width: `${hkOooPct}%` }} /></div>
               </div>
             </CardBody>
           </Card>
@@ -568,11 +847,14 @@ export default function ExecutiveManagementDashboard() {
 
           {/* Conferences & Events - live from announcements */}
           {!isHidden('events') && (
-          <Card className="border border-gray-200 shadow-sm">
-            <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">Conferences & Events</h3>
-              <HideCardButton onHide={() => hide('events')} label="Conferences & Events" />
-            </CardHeader>
+          <Card className="border border-gray-200/70 border-l-4 border-l-purple-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
+            <SectionHeader
+              icon={<PartyPopper className="h-4 w-4" />}
+              iconClass="bg-purple-100 text-purple-600"
+              title="Conferences & Events"
+              onHide={() => hide('events')}
+              hideLabel="Conferences & Events"
+            />
             <CardBody className="pt-2 space-y-2 text-sm">
               {eventsList.length === 0 && (
                 <div className="p-3 bg-gray-50 border border-gray-200 rounded text-left">No events today</div>
@@ -588,33 +870,44 @@ export default function ExecutiveManagementDashboard() {
         {/* Center - Financial, Alerts, Trends, F&B/Kitchen, Stocks, Events */}
         <section className="xl:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
           {!isHidden('financial') && (
-          <Card className="border border-gray-200 shadow-sm md:col-span-2">
-            <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">Today's Financial Pulse</h3>
-              <HideCardButton onHide={() => hide('financial')} label="Today's Financial Pulse" />
-            </CardHeader>
-            <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Card className="border border-gray-200/70 border-l-4 border-l-green-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md md:col-span-2">
+            <SectionHeader
+              icon={<Wallet className="h-4 w-4" />}
+              iconClass="bg-green-100 text-green-600"
+              title="Today's Financial Pulse"
+              onHide={() => hide('financial')}
+              hideLabel="Today's Financial Pulse"
+            />
+            <CardBody className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="rounded-xl bg-gray-50 p-4">
-                <div className="text-xs text-gray-500">Revenue posted to GL</div>
+                <div className="text-xs font-medium text-gray-600">Revenue posted to GL</div>
                 <div className="mt-1 text-2xl font-semibold tracking-tight text-ghana-black">{formatCurrency(postedRevenue)}</div>
-                <div className="mt-1 text-xs text-gray-500" title="Room/F&B charges accrued on guest folios today, before checkout posts them to the ledger">
+                <div className="mt-1 text-xs text-gray-600" title="Room/F&B charges accrued on guest folios today, before checkout posts them to the ledger">
                   Billed today, not yet posted: {formatCurrency(revenueToday)}
                 </div>
               </div>
               <div className="rounded-xl bg-gray-50 p-4">
-                <div className="text-xs text-gray-500">Occupancy</div>
+                <div className="text-xs font-medium text-gray-600">Occupancy</div>
                 <div className="mt-1 text-2xl font-semibold tracking-tight text-ghana-black">{occupancyPct}%</div>
-                <div className="mt-1 text-xs text-gray-500">Target 92%</div>
+                <div className="mt-1 text-xs text-gray-600">Target 92%</div>
               </div>
               <div className="flex items-center justify-between gap-4 rounded-xl bg-gray-50 p-4">
                 <div>
-                  <div className="text-xs text-gray-500">ADR</div>
+                  <div className="text-xs font-medium text-gray-600">ADR</div>
                   <div className="mt-1 text-xl font-semibold tracking-tight text-ghana-black">{formatCurrency(adr)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-500">RevPAR</div>
+                  <div className="text-xs font-medium text-gray-600">RevPAR</div>
                   <div className="mt-1 text-xl font-semibold tracking-tight text-ghana-black">{formatCurrency(revpar)}</div>
                 </div>
+              </div>
+              <div className="rounded-xl bg-gray-50 p-4">
+                <div className="mb-1 text-xs font-medium text-gray-600">Revenue split</div>
+                {revenueSplit.total > 0 ? (
+                  <RevenueSplitDonut {...revenueSplit} />
+                ) : (
+                  <div className="flex h-full items-center text-xs text-gray-600">No revenue yet today</div>
+                )}
               </div>
             </CardBody>
           </Card>
@@ -622,11 +915,14 @@ export default function ExecutiveManagementDashboard() {
 
 			{/* System Alerts - functional */}
 			{!isHidden('alerts') && (
-			<Card className="border border-gray-200 shadow-sm md:col-span-2">
-            <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">System Alerts</h3>
-              <HideCardButton onHide={() => hide('alerts')} label="System Alerts" />
-            </CardHeader>
+			<Card className="border border-gray-200/70 border-l-4 border-l-yellow-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md md:col-span-2">
+            <SectionHeader
+              icon={<AlertTriangle className="h-4 w-4" />}
+              iconClass="bg-yellow-100 text-yellow-700"
+              title="System Alerts"
+              onHide={() => hide('alerts')}
+              hideLabel="System Alerts"
+            />
             <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
               {!mounted ? (
                 <>
@@ -642,7 +938,7 @@ export default function ExecutiveManagementDashboard() {
                   </div>
                   <div className="p-3 rounded-lg border border-blue-200 bg-blue-50 space-y-2">
                     <div className="font-semibold mb-1">🔵 INFORMATIONAL</div>
-                    <div className="text-xs text-gray-500">No alerts</div>
+                    <div className="text-xs text-gray-600">No alerts</div>
                   </div>
                 </>
               ) : (
@@ -656,7 +952,7 @@ export default function ExecutiveManagementDashboard() {
                   return blocks.map(b => (
                     <div key={b.key} className={`p-3 rounded-lg border ${b.cls} space-y-2`}>
                       <div className="font-semibold mb-1">{b.title}</div>
-                      {b.items.length === 0 && <div className="text-xs text-gray-500">No alerts</div>}
+                      {b.items.length === 0 && <div className="text-xs text-gray-600">No alerts</div>}
                       {b.items.map(a => (
                         <div key={a.id} className="flex items-start justify-between gap-2">
                           <button onClick={() => a.nav && go(a.nav)} className="text-left hover:underline">{a.text}</button>
@@ -673,46 +969,22 @@ export default function ExecutiveManagementDashboard() {
 
           {/* Trends */}
           {!isHidden('trend') && (
-          <Card className="border border-gray-200 shadow-sm">
-            <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">7-Day Occupancy Trend</h3>
-              <HideCardButton onHide={() => hide('trend')} label="7-Day Occupancy Trend" />
-            </CardHeader>
+          <Card className="self-start border border-gray-200/70 border-l-4 border-l-blue-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
+            <SectionHeader
+              icon={<TrendingUp className="h-4 w-4" />}
+              iconClass="bg-blue-100 text-blue-600"
+              title="7-Day Occupancy Trend"
+              onHide={() => hide('trend')}
+              hideLabel="7-Day Occupancy Trend"
+            />
             <CardBody className="pt-2">
               {!mounted ? (
-                <div className="h-28 bg-gray-50 rounded animate-pulse" />
+                <div className="h-52 bg-gray-50 rounded animate-pulse" />
               ) : (
-                (() => {
-                  const trend = occupancyTrend || [];
-                  const avg = trend.length ? trend.reduce((s, t) => s + (t.rate || 0), 0) / trend.length : 0;
-                  return (
-                    <div className="relative h-32">
-                      {/* average line */}
-                      <div className="absolute left-0 right-0 border-t-2 border-dashed border-gray-300" style={{ bottom: `${Math.max(0, Math.min(100, avg))}%` }} />
-                      <div className="absolute right-0 -top-2 text-xs text-gray-500">Avg {avg.toFixed(0)}%</div>
-                      <div className="absolute inset-0 flex items-end gap-2">
-                        {trend.map((p, i) => {
-                          const day = new Date(p.date).toLocaleDateString(undefined, { weekday: 'short' }).slice(0, 3);
-                          const height = Math.max(8, Math.min(100, p.rate));
-                          return (
-                            <div key={i} className="flex-1 flex flex-col items-center">
-                              <button
-                                onClick={() => { setSelectedDate(p.date); refreshForDate(p.date); }}
-                                className="w-full rounded-t-md bg-gradient-to-t from-ghana-green to-emerald-400 hover:from-emerald-600 hover:to-emerald-400 transition-colors"
-                                style={{ height: `${height}%` }}
-                                title={`${p.date}: ${p.rate.toFixed(0)}%`}
-                              />
-                              <div className="mt-1 text-[10px] text-gray-600">{day}</div>
-                            </div>
-                          );
-                        })}
-                        {trend.length === 0 && (
-                          <div className="text-sm text-gray-500">No trend data</div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })()
+                <OccupancyTrendChart
+                  trend={occupancyTrend || []}
+                  onSelectDate={(date) => { setSelectedDate(date); refreshForDate(date); }}
+                />
               )}
             </CardBody>
           </Card>
@@ -720,26 +992,33 @@ export default function ExecutiveManagementDashboard() {
 
           {/* F&B and Kitchen Efficiency */}
           {!isHidden('fbKitchen') && (
-          <Card className="border border-gray-200 shadow-sm">
-            <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">F&B and Kitchen Efficiency</h3>
-              <HideCardButton onHide={() => hide('fbKitchen')} label="F&B and Kitchen Efficiency" />
-            </CardHeader>
-            <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="font-semibold mb-2">Restaurant/Bar</div>
-                <div className="flex justify-between"><span>Total Orders</span><span className="font-semibold">{fbEff.total}</span></div>
-                <div className="flex justify-between"><span>Served/Paid</span><span className="font-semibold">{fbEff.served}</span></div>
-                <div className="flex justify-between"><span>Items in Queue</span><span className="font-semibold">{fbEff.queue}</span></div>
-                <div className="flex justify-between"><span>Avg Order Value</span><span className="font-semibold">{formatCurrency(fbEff.avgOrder)}</span></div>
-                <div className="flex justify-between"><span>Orders (Last 1h)</span><span className="font-semibold">{fbEff.lastHour}</span></div>
+          <Card className="border border-gray-200/70 border-l-4 border-l-orange-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
+            <SectionHeader
+              icon={<UtensilsCrossed className="h-4 w-4" />}
+              iconClass="bg-orange-100 text-orange-600"
+              title="F&B and Kitchen Efficiency"
+              onHide={() => hide('fbKitchen')}
+              hideLabel="F&B and Kitchen Efficiency"
+            />
+            <CardBody className="pt-2 space-y-3 text-sm">
+              <div>
+                <div className="font-semibold mb-1.5">Restaurant/Bar</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <StatTile label="Total Orders" value={fbEff.total} />
+                  <StatTile label="Served/Paid" value={fbEff.served} />
+                  <StatTile label="Items in Queue" value={fbEff.queue} />
+                  <StatTile label="Avg Order Value" value={formatCurrency(fbEff.avgOrder)} />
+                  <StatTile label="Orders (Last 1h)" value={fbEff.lastHour} />
+                </div>
               </div>
-              <div className="p-3 bg-gray-50 rounded-lg">
-                <div className="font-semibold mb-2">Kitchen</div>
-                <div className="flex justify-between"><span>Items Assigned</span><span className="font-semibold">{kitchEff.assigned}</span></div>
-                <div className="flex justify-between"><span>Items Prepared</span><span className="font-semibold">{kitchEff.prepared}</span></div>
-                <div className="flex justify-between"><span>Avg Prep Time</span><span className="font-semibold">{Math.round(kitchEff.avgPrep)} min</span></div>
-                <div className="flex justify-between"><span>SLA ≤ 15m</span><span className="font-semibold">{kitchEff.sla15}%</span></div>
+              <div>
+                <div className="font-semibold mb-1.5">Kitchen</div>
+                <div className="grid grid-cols-4 gap-2">
+                  <StatTile label="Items Assigned" value={kitchEff.assigned} />
+                  <StatTile label="Items Prepared" value={kitchEff.prepared} />
+                  <StatTile label="Avg Prep Time" value={`${Math.round(kitchEff.avgPrep)} min`} />
+                  <StatTile label="SLA ≤ 15m" value={`${kitchEff.sla15}%`} />
+                </div>
               </div>
             </CardBody>
           </Card>
@@ -747,20 +1026,21 @@ export default function ExecutiveManagementDashboard() {
 
           {/* Stocks & Inventory - functional */}
           {!isHidden('stock') && (
-          <Card className="border border-gray-200 shadow-sm md:col-span-2">
-            <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">Critical Stock Levels</h3>
-              <div className="flex items-center gap-3">
-                <div className="text-xs text-gray-500">Low stock %: {useStockStore.getState().getLowStockPercentage().toFixed(0)}%</div>
-                <HideCardButton onHide={() => hide('stock')} label="Critical Stock Levels" />
-              </div>
-            </CardHeader>
+          <Card className="border border-gray-200/70 border-l-4 border-l-purple-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md md:col-span-2">
+            <SectionHeader
+              icon={<Package className="h-4 w-4" />}
+              iconClass="bg-purple-100 text-purple-600"
+              title="Critical Stock Levels"
+              onHide={() => hide('stock')}
+              hideLabel="Critical Stock Levels"
+              extra={<div className="text-xs text-gray-600">Low stock %: {useStockStore.getState().getLowStockPercentage().toFixed(0)}%</div>}
+            />
             <CardBody className="pt-2 grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div>
                 <div className="font-semibold mb-2">🟢 Adequate</div>
                 <ul className="space-y-1 list-disc list-inside">
                   {stockSummary.adequate.map(i => (<li key={i.id} className="flex justify-between items-center"><span>{i.name}</span><Button size="sm" variant="light" onPress={() => go('/?tab=overview')}>View</Button></li>))}
-                  {stockSummary.adequate.length === 0 && <li className="text-gray-500">No items</li>}
+                  {stockSummary.adequate.length === 0 && <li className="text-gray-600">No items</li>}
                 </ul>
               </div>
               <div>
@@ -777,7 +1057,7 @@ export default function ExecutiveManagementDashboard() {
                       }}>Notify Inventory</Button>
                     </li>
                   ))}
-                  {stockSummary.low.length === 0 && <li className="text-gray-500">No items</li>}
+                  {stockSummary.low.length === 0 && <li className="text-gray-600">No items</li>}
                 </ul>
               </div>
               <div>
@@ -794,7 +1074,7 @@ export default function ExecutiveManagementDashboard() {
                       }}>Notify (Urgent)</Button>
                     </li>
                   ))}
-                  {stockSummary.critical.length === 0 && <li className="text-gray-500">No items</li>}
+                  {stockSummary.critical.length === 0 && <li className="text-gray-600">No items</li>}
                 </ul>
               </div>
             </CardBody>
@@ -814,9 +1094,12 @@ export default function ExecutiveManagementDashboard() {
       <div className="mt-5">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {!isHidden('recentActivities') && (
-          <Card className="border border-gray-200 shadow-sm">
+          <Card className="border border-gray-200/70 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
             <CardHeader className="flex items-center justify-between px-3 py-2">
-              <h3 className="text-sm font-semibold text-ghana-black">Recent Activities</h3>
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-600"><Activity className="h-3.5 w-3.5" /></span>
+                <h3 className="text-sm font-semibold text-ghana-black">Recent Activities</h3>
+              </div>
               <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
             </CardHeader>
             <CardBody className="px-3 pb-3 pt-0">
@@ -825,9 +1108,12 @@ export default function ExecutiveManagementDashboard() {
           </Card>
           )}
           {!isHidden('notices') && (
-          <Card className="border border-gray-200 shadow-sm">
+          <Card className="border border-gray-200/70 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
             <CardHeader className="flex items-center justify-between px-3 py-2">
-              <h3 className="text-sm font-semibold text-ghana-black">Executive Notices</h3>
+              <div className="flex items-center gap-2">
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-600"><Bell className="h-3.5 w-3.5" /></span>
+                <h3 className="text-sm font-semibold text-ghana-black">Executive Notices</h3>
+              </div>
               <HideCardButton onHide={() => hide('notices')} label="Executive Notices" />
             </CardHeader>
             <CardBody className="px-3 pb-3 pt-0">

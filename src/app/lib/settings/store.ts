@@ -235,7 +235,7 @@ async function createUserViaApi(input: { email: string; name: string; password: 
  * as success since there's nothing server-side to reject). Returns an error
  * message on failure (duplicate email, or the last-administrator guard), null
  * on success/no-op. */
-async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; currentPassword?: string; profile?: Partial<User['profile']>; preferences?: { theme?: string; backgroundLight?: string; backgroundDark?: string; font?: string; fontSize?: string } }): Promise<string | null> {
+async function updateUserViaApi(userId: string, patch: { email?: string; name?: string; role?: string; isActive?: boolean; password?: string; currentPassword?: string; profile?: Partial<User['profile']>; preferences?: { theme?: string; backgroundLight?: string; backgroundDark?: string; cardBackgroundLight?: string; cardBackgroundDark?: string; font?: string; fontSize?: string } }): Promise<string | null> {
   const t = typeof window !== 'undefined' ? getClientTenantSubdomain() : '';
   if (!t) return null;
   try {
@@ -700,6 +700,10 @@ export interface UserPreferences {
   backgroundLight?: string;
   /** Page color behind the cards when the dark theme is on. Empty follows the default. */
   backgroundDark?: string;
+  /** Card/panel color when the light theme is on. Empty follows the default (white). */
+  cardBackgroundLight?: string;
+  /** Card/panel color when the dark theme is on. Empty follows the default. */
+  cardBackgroundDark?: string;
   /** App typeface. Source Sans is the default. */
   font?: 'source' | 'nunito' | 'geist' | 'serif';
   /** Root text size. Medium is 15px, the same size the app uses when nothing is chosen. */

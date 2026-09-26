@@ -14,6 +14,8 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
   );
   const backgroundLight = useSettingsStore((state) => state.currentUser?.preferences?.backgroundLight);
   const backgroundDark = useSettingsStore((state) => state.currentUser?.preferences?.backgroundDark);
+  const cardBackgroundLight = useSettingsStore((state) => state.currentUser?.preferences?.cardBackgroundLight);
+  const cardBackgroundDark = useSettingsStore((state) => state.currentUser?.preferences?.cardBackgroundDark);
   const font = useSettingsStore(
     (state) => state.currentUser?.preferences?.font as AppFont | undefined
   );
@@ -27,10 +29,12 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
       theme: theme ?? stored.theme,
       backgroundLight: backgroundLight ?? stored.backgroundLight,
       backgroundDark: backgroundDark ?? stored.backgroundDark,
+      cardBackgroundLight: cardBackgroundLight ?? stored.cardBackgroundLight,
+      cardBackgroundDark: cardBackgroundDark ?? stored.cardBackgroundDark,
       font: font ?? stored.font,
       fontSize: fontSize ?? stored.fontSize,
     });
-  }, [theme, backgroundLight, backgroundDark, font, fontSize]);
+  }, [theme, backgroundLight, backgroundDark, cardBackgroundLight, cardBackgroundDark, font, fontSize]);
 
   React.useEffect(() => {
     const activeTheme = theme ?? readStoredDisplay().theme;
@@ -41,6 +45,8 @@ export default function ThemeProvider({ children }: ThemeProviderProps) {
       theme: 'auto',
       backgroundLight,
       backgroundDark,
+      cardBackgroundLight,
+      cardBackgroundDark,
       font,
       fontSize,
     });

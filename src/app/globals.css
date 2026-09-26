@@ -123,16 +123,16 @@ html[data-font-size="xlarge"] {
 body {
   background: var(--page-background, var(--background));
   color: var(--foreground);
-  font-family: var(--font-source), "Source Sans 3", sans-serif;
+  font-family: var(--font-geist-sans), sans-serif;
   transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+html[data-font="source"] body {
+  font-family: var(--font-source), "Source Sans 3", sans-serif;
 }
 
 html[data-font="nunito"] body {
   font-family: var(--font-nunito), "Nunito Sans", sans-serif;
-}
-
-html[data-font="geist"] body {
-  font-family: var(--font-geist-sans), sans-serif;
 }
 
 html[data-font="serif"] body {

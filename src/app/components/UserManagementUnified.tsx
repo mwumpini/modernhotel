@@ -57,6 +57,22 @@ const DARK_BACKGROUNDS = [
   { id: '#2a241c', label: 'Brown', color: '#2a241c' },
 ];
 
+const LIGHT_CARD_COLORS = [
+  { id: '', label: 'White', color: '#ffffff' },
+  { id: '#faf9f6', label: 'Ivory', color: '#faf9f6' },
+  { id: '#f3f4f6', label: 'Pearl gray', color: '#f3f4f6' },
+  { id: '#f0f7f2', label: 'Mint', color: '#f0f7f2' },
+  { id: '#eef5fb', label: 'Sky', color: '#eef5fb' },
+];
+
+const DARK_CARD_COLORS = [
+  { id: '', label: 'Charcoal', color: '#262d3a' },
+  { id: '#1f2937', label: 'Slate', color: '#1f2937' },
+  { id: '#20291f', label: 'Forest', color: '#20291f' },
+  { id: '#2a2230', label: 'Plum', color: '#2a2230' },
+  { id: '#2c2620', label: 'Brown', color: '#2c2620' },
+];
+
 const FONT_CHOICES: { id: AppFont; label: string; family: string }[] = [
   { id: 'source', label: 'Source Sans', family: 'var(--font-source), "Source Sans 3", sans-serif' },
   { id: 'nunito', label: 'Nunito Sans', family: 'var(--font-nunito), "Nunito Sans", sans-serif' },
@@ -77,26 +93,47 @@ function BackgroundPicker({
   darkValue,
   onLight,
   onDark,
+  cardLightValue,
+  cardDarkValue,
+  onCardLight,
+  onCardDark,
 }: {
   theme: AppTheme;
   lightValue: string;
   darkValue: string;
   onLight: (color: string) => void;
   onDark: (color: string) => void;
+  cardLightValue: string;
+  cardDarkValue: string;
+  onCardLight: (color: string) => void;
+  onCardDark: (color: string) => void;
 }) {
   const showLight = theme !== 'dark';
   const showDark = theme !== 'light';
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-default-500">
-        The color behind the cards. White is hard on some eyes, so the page can be a softer color.
-      </p>
-      {showLight && (
-        <SwatchRow title="Light page" presets={LIGHT_BACKGROUNDS} value={lightValue} onChange={onLight} />
-      )}
-      {showDark && (
-        <SwatchRow title="Dark page" presets={DARK_BACKGROUNDS} value={darkValue} onChange={onDark} />
-      )}
+    <div className="space-y-6">
+      <div className="space-y-4">
+        <p className="text-sm text-default-500">
+          The color behind the cards. White is hard on some eyes, so the page can be a softer color.
+        </p>
+        {showLight && (
+          <SwatchRow title="Light page" presets={LIGHT_BACKGROUNDS} value={lightValue} onChange={onLight} />
+        )}
+        {showDark && (
+          <SwatchRow title="Dark page" presets={DARK_BACKGROUNDS} value={darkValue} onChange={onDark} />
+        )}
+      </div>
+      <div className="space-y-4 border-t border-default-200 pt-4">
+        <p className="text-sm text-default-500">
+          The color of the cards themselves — separate from the page color behind them.
+        </p>
+        {showLight && (
+          <SwatchRow title="Light cards" presets={LIGHT_CARD_COLORS} value={cardLightValue} onChange={onCardLight} />
+        )}
+        {showDark && (
+          <SwatchRow title="Dark cards" presets={DARK_CARD_COLORS} value={cardDarkValue} onChange={onCardDark} />
+        )}
+      </div>
     </div>
   );
 }
@@ -474,6 +511,8 @@ export default function UserManagementUnified() {
         theme: nextTheme,
         backgroundLight: path === 'backgroundLight' ? String(value) : userPreferences.backgroundLight,
         backgroundDark: path === 'backgroundDark' ? String(value) : userPreferences.backgroundDark,
+        cardBackgroundLight: path === 'cardBackgroundLight' ? String(value) : userPreferences.cardBackgroundLight,
+        cardBackgroundDark: path === 'cardBackgroundDark' ? String(value) : userPreferences.cardBackgroundDark,
         font: nextFont,
         fontSize: nextFontSize,
       });
@@ -905,6 +944,10 @@ export default function UserManagementUnified() {
                 darkValue={userPreferences.backgroundDark || ''}
                 onLight={(color) => updatePreference('backgroundLight', color)}
                 onDark={(color) => updatePreference('backgroundDark', color)}
+                cardLightValue={userPreferences.cardBackgroundLight || ''}
+                cardDarkValue={userPreferences.cardBackgroundDark || ''}
+                onCardLight={(color) => updatePreference('cardBackgroundLight', color)}
+                onCardDark={(color) => updatePreference('cardBackgroundDark', color)}
               />
             )}
 
@@ -913,7 +956,7 @@ export default function UserManagementUnified() {
                 <div className="space-y-2">
                   <p className="text-sm text-default-500">The type used across the app.</p>
                   {FONT_CHOICES.map((choice) => {
-                    const selected = (userPreferences.font || 'source') === choice.id;
+                    const selected = (userPreferences.font || 'geist') === choice.id;
                     return (
                       <button
                         key={choice.id}

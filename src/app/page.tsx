@@ -113,7 +113,12 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      <Navigation onLogout={() => signOut({ callbackUrl: '/' })} />
+      <Navigation
+        onLogout={() => {
+          sessionStorage.removeItem('session.lastActivity');
+          signOut({ callbackUrl: '/' });
+        }}
+      />
     </div>
   );
 }
