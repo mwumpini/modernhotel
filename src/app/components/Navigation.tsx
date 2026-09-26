@@ -1,12 +1,14 @@
 'use client';
 
 import React, { Suspense, lazy } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
+import { MessageSquare } from 'lucide-react';
 import { Button, Accordion, AccordionItem, Badge, Avatar } from "@heroui/react";
 import { useSession } from 'next-auth/react';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useSettingsStore } from '../lib/settings/store';
 import { moduleEnabled, reportsEnabled } from '../lib/settings/moduleAccess';
+import { openMessengerFromShell } from '../lib/openMessenger';
 
 const ROLE_LABELS: Record<string, string> = {
   admin: 'System Administrator',
@@ -112,6 +114,7 @@ function resolveNavSection(target: string): ActiveSection {
 }
 export default function Navigation({ onLogout }: NavigationProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
   const [hasMounted, setHasMounted] = React.useState(false);
@@ -757,17 +760,14 @@ export default function Navigation({ onLogout }: NavigationProps) {
               Sign Out
             </Button>
             <Button
-              variant="flat"
-              className="w-full mt-2 bg-ghana-green text-white"
+              variant="bordered"
               size="sm"
-              onClick={() => {
-                try {
-                  const ev = new CustomEvent('open-messenger');
-                  window.dispatchEvent(ev);
-                } catch {}
-              }}
+              className="mt-2 h-9 w-full justify-between border-gray-200 bg-white px-3 text-sm font-medium text-ghana-black"
+              startContent={<MessageSquare className="h-4 w-4 text-ghana-green" aria-hidden />}
+              onPress={() => openMessengerFromShell(router, pathname || '/')}
             >
-              Open Messenger (Ctrl+M)
+              <span className="flex-1 text-left">Messenger</span>
+              <span className="text-[10px] font-normal text-gray-400">Ctrl+M</span>
             </Button>
           </div>
         </div>

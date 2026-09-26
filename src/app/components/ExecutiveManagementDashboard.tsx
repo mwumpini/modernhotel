@@ -1,7 +1,8 @@
 'use client';
 
 import React from 'react';
-import { Card, CardBody, CardHeader, Button } from "@heroui/react";
+import { Card, CardBody, CardHeader, Button, Dropdown, DropdownTrigger, DropdownMenu, DropdownItem, Tooltip } from "@heroui/react";
+import { CalendarDays, Download } from 'lucide-react';
 import { useAnalyticsStore } from '../lib/analytics/analyticsStore';
 import { useReportingStore } from '../lib/frontoffice/reportingStore';
 import { auditLogStore, AuditRecord } from '../lib/analytics/auditLogStore';
@@ -20,6 +21,8 @@ import RecentActivities from './RecentActivities';
 import DeptNotices from './DeptNotices';
 import CustomizeViewControl, { HideCardButton } from './dashboard/CustomizeViewControl';
 import { useDashboardVisibility, type DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
+import { useSettingsStore } from '../lib/settings/store';
+import { moduleEnabled } from '../lib/settings/moduleAccess';
 // Removed broadcast/mentions sidebar; bottom notices cover communication needs
 
 // The full set of hideable cards on this dashboard — used both to render the
@@ -50,6 +53,44 @@ function formatCurrency(amount: number | undefined) {
   }
 }
 
+function isoDaysFromToday(offset: number) {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return d.toISOString().split('T')[0];
+}
+
+/** Same module keys the sidebar uses, minus this dashboard itself. */
+const QUICK_MODULES: { key: string; label: string }[] = [
+  { key: 'frontdesk', label: 'Front Office' },
+  { key: 'events-conferences', label: 'Events' },
+  { key: 'restaurant', label: 'Restaurant' },
+  { key: 'kitchen', label: 'Kitchen' },
+  { key: 'housekeeping', label: 'Housekeeping' },
+  { key: 'inventory', label: 'Inventory' },
+  { key: 'security', label: 'Security' },
+  { key: 'hr', label: 'HR' },
+  { key: 'accounting', label: 'Accounting' },
+  { key: 'compliance', label: 'Compliance' },
+  { key: 'settings', label: 'Settings' },
+];
+
+function openModule(section: string) {
+  window.dispatchEvent(new CustomEvent('app.navigate', { detail: { section } }));
+}
+
+function OpsMetric({ label, value, onClick }: { label: string; value: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-white px-3 py-2 text-left transition hover:border-ghana-green/40"
+    >
+      <span className="text-xs text-gray-500">{label}</span>
+      <span className="text-base font-semibold tabular-nums text-ghana-black">{value}</span>
+    </button>
+  );
+}
+
 export default function ExecutiveManagementDashboard() {
   // Selected (not destructured from the whole store) so this component only
   // re-renders when these two actions actually change reference — which, since
@@ -63,6 +104,12 @@ export default function ExecutiveManagementDashboard() {
   const generateDailyFlashReport = useReportingStore((s) => s.generateDailyFlashReport);
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.executive', DASHBOARD_SECTIONS);
+  useSettingsStore((s) => s.sessionRoleId);
+  useSettingsStore((s) => s.roles);
+  const moduleSettings = useSettingsStore((s) => s.moduleSettings);
+  const quickModules = QUICK_MODULES.filter(
+    (m) => useSettingsStore.getState().hasModuleAccess(m.key) && moduleEnabled(m.key, moduleSettings)
+  );
 
   // IMPORTANT: Keep initial render deterministic across server and client
   const [occupancy, setOccupancy] = React.useState<ReturnType<typeof calculateOccupancyAnalytics> | null>(null);
@@ -380,62 +427,105 @@ export default function ExecutiveManagementDashboard() {
     return out;
   }, [occupancy?.occupancyRate, expectedOcc, hkDirtyPct]);
 
+  const todayISO = isoDaysFromToday(0);
+  const yesterdayISO = isoDaysFromToday(-1);
+  const occupancyPct = Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0;
+  const dateChip = (active: boolean) =>
+    `h-8 rounded-lg px-3 text-sm font-medium transition-colors ${
+      active ? 'bg-ghana-green text-white' : 'text-gray-600 hover:bg-gray-100'
+    }`;
+
   return (
     <div className="p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-ghana-black">📊 Executive Management</h2>
+      <div className="mb-4 flex flex-col gap-3">
         <div className="flex items-center gap-2">
-          <input
-            type="date"
-            className="h-8 px-2 rounded border border-gray-300 text-sm bg-white"
-            value={selectedDate}
-            onChange={(e) => { setSelectedDate(e.target.value); if (e.target.value) refreshForDate(e.target.value); }}
-          />
-          <Button size="sm" variant="flat" onPress={() => { const d = new Date(); const iso = d.toISOString().split('T')[0]; setSelectedDate(iso); refreshForDate(iso); }}>Today</Button>
-          <Button size="sm" variant="flat" onPress={() => { const d = new Date(); d.setDate(d.getDate() - 1); const iso = d.toISOString().split('T')[0]; setSelectedDate(iso); refreshForDate(iso); }}>Yesterday</Button>
-          <Button size="sm" variant="flat" onPress={handleExportCSV}>Export CSV</Button>
-          <Button size="sm" variant="flat" onPress={handleExportPDF}>Export PDF</Button>
+          <h2 className="text-xl font-semibold tracking-tight text-ghana-black">Executive Management</h2>
+          <Tooltip content="Rooms, guests, and performance for the selected day" placement="right">
+            <button
+              type="button"
+              aria-label="Rooms, guests, and performance for the selected day"
+              className="inline-flex h-4 w-4 items-center justify-center rounded-full border border-gray-300 text-[10px] font-bold leading-none text-gray-500"
+            >
+              i
+            </button>
+          </Tooltip>
+          <OfflineIndicator />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="inline-flex items-center rounded-xl border border-gray-200 bg-white p-1 shadow-sm">
+            <button type="button" className={dateChip(selectedDate === todayISO)} onClick={() => { setSelectedDate(todayISO); refreshForDate(todayISO); }}>Today</button>
+            <button type="button" className={dateChip(selectedDate === yesterdayISO)} onClick={() => { setSelectedDate(yesterdayISO); refreshForDate(yesterdayISO); }}>Yesterday</button>
+          </div>
+          <label className="inline-flex h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-sm text-gray-600 shadow-sm">
+            <CalendarDays className="h-4 w-4 shrink-0" aria-hidden />
+            <input
+              type="date"
+              aria-label="Dashboard date"
+              className="bg-transparent text-sm text-ghana-black outline-none"
+              value={selectedDate}
+              onChange={(e) => { setSelectedDate(e.target.value); if (e.target.value) refreshForDate(e.target.value); }}
+            />
+          </label>
+          <Dropdown>
+            <DropdownTrigger>
+              <Button size="sm" variant="flat" className="h-10 rounded-xl border border-gray-200 bg-white px-3 shadow-sm" startContent={<Download className="h-3.5 w-3.5" />}>
+                Export
+              </Button>
+            </DropdownTrigger>
+            <DropdownMenu aria-label="Export dashboard">
+              <DropdownItem key="csv" onPress={handleExportCSV}>Export CSV</DropdownItem>
+              <DropdownItem key="pdf" onPress={handleExportPDF}>Export PDF</DropdownItem>
+            </DropdownMenu>
+          </Dropdown>
           <CustomizeViewControl
             sections={DASHBOARD_SECTIONS}
             isHidden={isHidden}
             toggle={toggleSection}
             showAll={showAll}
             hiddenCount={hiddenCount}
+            className="h-10 rounded-xl border border-gray-200 bg-white px-3 shadow-sm"
           />
-          <OfflineIndicator />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Left Sidebar - Live Operations & Safety */}
-        <aside className="xl:col-span-1 space-y-6">
-          {!isHidden('liveOps') && (
-          <Card className="border-0 shadow-md">
-            <CardHeader className="pb-1 flex items-center justify-between">
-              <h3 className="font-semibold text-ghana-black">Live Operations</h3>
-              <HideCardButton onHide={() => hide('liveOps')} label="Live Operations" />
-            </CardHeader>
-            <CardBody className="pt-2 space-y-3">
-              <button onClick={() => go('/housekeeping')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
-                <span>In-House Guests</span><span className="font-semibold">{inHouse}</span>
-              </button>
-              <button onClick={() => go('/guest-services/check-ins?tab=checkins')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
-                <span>Today's Arrivals</span><span className="font-semibold">{arrivalsToday}</span>
-              </button>
-              <button onClick={() => go('/guest-services/check-ins?tab=checkouts')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
-                <span>Today's Departures</span><span className="font-semibold">{departuresToday}</span>
-              </button>
-              <button onClick={() => go('/reports')} className="w-full text-left flex justify-between text-sm hover:bg-gray-100 p-1.5 rounded">
-                <span>Expected Occupancy</span><span className="font-semibold">{Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0}%</span>
-              </button>
-              <div className="flex justify-between text-xs text-gray-600"><span>Next Hour</span><span>{nextHourCheckins} Check-ins • {nextHourCheckouts} Check-outs</span></div>
-            </CardBody>
-          </Card>
-          )}
+      {quickModules.length > 0 && (
+        <nav aria-label="Open a module" className="mb-4 flex flex-wrap gap-x-1 gap-y-1">
+          {quickModules.map((m) => (
+            <button
+              key={m.key}
+              type="button"
+              onClick={() => openModule(m.key)}
+              className="rounded-md px-2 py-1 text-xs font-bold text-gray-700 transition hover:bg-white hover:text-ghana-green"
+            >
+              {m.label}
+            </button>
+          ))}
+        </nav>
+      )}
 
+      {!isHidden('liveOps') && (
+        <section className="mb-5" aria-label="Live Operations">
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-xs font-medium uppercase tracking-wider text-gray-500">Live operations</h3>
+            <HideCardButton onHide={() => hide('liveOps')} label="Live Operations" />
+          </div>
+          <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+            <OpsMetric label="In-house guests" value={String(inHouse)} onClick={() => go('/housekeeping')} />
+            <OpsMetric label="Today's arrivals" value={String(arrivalsToday)} onClick={() => go('/guest-services/check-ins?tab=checkins')} />
+            <OpsMetric label="Today's departures" value={String(departuresToday)} onClick={() => go('/guest-services/check-ins?tab=checkouts')} />
+            <OpsMetric label="Expected occupancy" value={`${occupancyPct}%`} onClick={() => go('/reports')} />
+          </div>
+          <p className="mt-2 text-xs text-gray-500">
+            Next hour · {nextHourCheckins} check-ins · {nextHourCheckouts} check-outs
+          </p>
+        </section>
+      )}
+
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        {/* Left Sidebar - Safety & status */}
+        <aside className="xl:col-span-1 space-y-6">
           {!isHidden('security') && (
-          <Card className="border-0 shadow-md">
+          <Card className="border border-gray-200 shadow-sm">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">Security & Safety</h3>
               <HideCardButton onHide={() => hide('security')} label="Security & Safety" />
@@ -450,7 +540,7 @@ export default function ExecutiveManagementDashboard() {
           )}
 
           {!isHidden('housekeeping') && (
-          <Card className="border-0 shadow-md">
+          <Card className="border border-gray-200 shadow-sm">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">Housekeeping Status</h3>
               <HideCardButton onHide={() => hide('housekeeping')} label="Housekeeping Status" />
@@ -478,7 +568,7 @@ export default function ExecutiveManagementDashboard() {
 
           {/* Conferences & Events - live from announcements */}
           {!isHidden('events') && (
-          <Card className="border-0 shadow-md">
+          <Card className="border border-gray-200 shadow-sm">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">Conferences & Events</h3>
               <HideCardButton onHide={() => hide('events')} label="Conferences & Events" />
@@ -498,32 +588,32 @@ export default function ExecutiveManagementDashboard() {
         {/* Center - Financial, Alerts, Trends, F&B/Kitchen, Stocks, Events */}
         <section className="xl:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
           {!isHidden('financial') && (
-          <Card className="border-0 shadow-lg md:col-span-2">
+          <Card className="border border-gray-200 shadow-sm md:col-span-2">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">Today's Financial Pulse</h3>
               <HideCardButton onHide={() => hide('financial')} label="Today's Financial Pulse" />
             </CardHeader>
             <CardBody className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="text-xs text-gray-600">REVENUE (Posted to GL)</div>
-                <div className="text-2xl font-bold text-ghana-black">{formatCurrency(postedRevenue)}</div>
-                <div className="text-xs text-gray-500" title="Room/F&B charges accrued on guest folios today, before checkout posts them to the ledger">
-                  Charges billed today (pre-checkout): {formatCurrency(revenueToday)}
+              <div className="rounded-xl bg-gray-50 p-4">
+                <div className="text-xs text-gray-500">Revenue posted to GL</div>
+                <div className="mt-1 text-2xl font-semibold tracking-tight text-ghana-black">{formatCurrency(postedRevenue)}</div>
+                <div className="mt-1 text-xs text-gray-500" title="Room/F&B charges accrued on guest folios today, before checkout posts them to the ledger">
+                  Billed today, not yet posted: {formatCurrency(revenueToday)}
                 </div>
               </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="text-xs text-gray-600">OCCUPANCY</div>
-                <div className="text-2xl font-bold text-ghana-black">{Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0}%</div>
-                <div className="text-xs text-gray-500">Target: 92%</div>
+              <div className="rounded-xl bg-gray-50 p-4">
+                <div className="text-xs text-gray-500">Occupancy</div>
+                <div className="mt-1 text-2xl font-semibold tracking-tight text-ghana-black">{occupancyPct}%</div>
+                <div className="mt-1 text-xs text-gray-500">Target 92%</div>
               </div>
-              <div className="p-4 bg-gray-50 rounded-lg flex items-center justify-between">
+              <div className="flex items-center justify-between gap-4 rounded-xl bg-gray-50 p-4">
                 <div>
-                  <div className="text-xs text-gray-600">ADR</div>
-                  <div className="text-xl font-bold text-ghana-black">{formatCurrency(adr)}</div>
+                  <div className="text-xs text-gray-500">ADR</div>
+                  <div className="mt-1 text-xl font-semibold tracking-tight text-ghana-black">{formatCurrency(adr)}</div>
                 </div>
                 <div>
-                  <div className="text-xs text-gray-600">RevPAR</div>
-                  <div className="text-xl font-bold text-ghana-black">{formatCurrency(revpar)}</div>
+                  <div className="text-xs text-gray-500">RevPAR</div>
+                  <div className="mt-1 text-xl font-semibold tracking-tight text-ghana-black">{formatCurrency(revpar)}</div>
                 </div>
               </div>
             </CardBody>
@@ -532,7 +622,7 @@ export default function ExecutiveManagementDashboard() {
 
 			{/* System Alerts - functional */}
 			{!isHidden('alerts') && (
-			<Card className="border-0 shadow-md md:col-span-2">
+			<Card className="border border-gray-200 shadow-sm md:col-span-2">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">System Alerts</h3>
               <HideCardButton onHide={() => hide('alerts')} label="System Alerts" />
@@ -583,7 +673,7 @@ export default function ExecutiveManagementDashboard() {
 
           {/* Trends */}
           {!isHidden('trend') && (
-          <Card className="border-0 shadow-md">
+          <Card className="border border-gray-200 shadow-sm">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">7-Day Occupancy Trend</h3>
               <HideCardButton onHide={() => hide('trend')} label="7-Day Occupancy Trend" />
@@ -630,7 +720,7 @@ export default function ExecutiveManagementDashboard() {
 
           {/* F&B and Kitchen Efficiency */}
           {!isHidden('fbKitchen') && (
-          <Card className="border-0 shadow-md">
+          <Card className="border border-gray-200 shadow-sm">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">F&B and Kitchen Efficiency</h3>
               <HideCardButton onHide={() => hide('fbKitchen')} label="F&B and Kitchen Efficiency" />
@@ -657,7 +747,7 @@ export default function ExecutiveManagementDashboard() {
 
           {/* Stocks & Inventory - functional */}
           {!isHidden('stock') && (
-          <Card className="border-0 shadow-md md:col-span-2">
+          <Card className="border border-gray-200 shadow-sm md:col-span-2">
             <CardHeader className="pb-1 flex items-center justify-between">
               <h3 className="font-semibold text-ghana-black">Critical Stock Levels</h3>
               <div className="flex items-center gap-3">
@@ -718,31 +808,29 @@ export default function ExecutiveManagementDashboard() {
       </div>
       {/* Global messenger for GM */}
       <DeptMessenger from="master" mode="drawer" />
-      {/* Quick hotkey hint */}
-      <div className="fixed bottom-6 left-6 text-xs text-gray-500 bg-white/60 backdrop-blur px-2 py-1 rounded shadow">Press Ctrl+M to open Messenger</div>
 
       {/* Recent Activities & Notices - bottom section */}
       {(!isHidden('recentActivities') || !isHidden('notices')) && (
-      <div className="mt-8">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="mt-5">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {!isHidden('recentActivities') && (
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3 flex items-center justify-between">
-              <h3 className="text-xl font-semibold text-ghana-black">📋 Recent Activities</h3>
+          <Card className="border border-gray-200 shadow-sm">
+            <CardHeader className="flex items-center justify-between px-3 py-2">
+              <h3 className="text-sm font-semibold text-ghana-black">Recent Activities</h3>
               <HideCardButton onHide={() => hide('recentActivities')} label="Recent Activities" />
             </CardHeader>
-            <CardBody>
+            <CardBody className="px-3 pb-3 pt-0">
               <RecentActivities area="system" limit={10} />
             </CardBody>
           </Card>
           )}
           {!isHidden('notices') && (
-          <Card className="border-0 shadow-lg">
-            <CardHeader className="pb-3 flex items-center justify-between">
-              <h3 className="text-xl font-semibold text-ghana-black">🔔 Executive Notices</h3>
+          <Card className="border border-gray-200 shadow-sm">
+            <CardHeader className="flex items-center justify-between px-3 py-2">
+              <h3 className="text-sm font-semibold text-ghana-black">Executive Notices</h3>
               <HideCardButton onHide={() => hide('notices')} label="Executive Notices" />
             </CardHeader>
-            <CardBody>
+            <CardBody className="px-3 pb-3 pt-0">
               <DeptNotices dept="gm" title="" defaultTab="alerts" />
             </CardBody>
           </Card>

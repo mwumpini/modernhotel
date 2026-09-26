@@ -118,6 +118,103 @@ export default function DeptNotices({ dept, title = 'Notices & Alerts', defaultT
       })
     : [];
 
+  const tabButton = (t: 'all' | 'alerts' | 'broadcasts' | 'mentions') => (
+    <button
+      key={t}
+      type="button"
+      onClick={() => setTab(t)}
+      className={`rounded-md px-1.5 py-0.5 text-xs font-bold transition ${
+        tab === t ? 'text-ghana-green' : 'text-gray-500 hover:text-ghana-black'
+      }`}
+    >
+      {t.charAt(0).toUpperCase() + t.slice(1)}
+    </button>
+  );
+
+  const showSearch = messages.length > 0 || pinnedAlerts.length > 0 || Boolean(search || startDate || endDate);
+
+  const noticeList = (
+    <>
+      {pinnedVisible.map((alert) => (
+        <div key={alert.id} className={`flex items-start gap-2 rounded-md px-2 py-1.5 ${levelStyles(alert.level)}`}>
+          <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dotColor(alert.level)}`}></span>
+          <div className="text-sm text-ghana-black">{alert.message}</div>
+        </div>
+      ))}
+      {byTab.map(m => (
+        <div key={m.id} className={`flex items-start gap-2 rounded-md px-2 py-1.5 ${levelStyles(m.level)}`}>
+          <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${dotColor(m.level)}`}></span>
+          <div className="min-w-0 flex-1">
+            <div className="text-sm text-ghana-black">{m.message}</div>
+            <div className="mt-0.5 flex items-center gap-2">
+              <button
+                type="button"
+                className="text-xs font-medium text-gray-500 hover:text-ghana-green"
+                onClick={() => {
+                  const reply = prompt('Reply:');
+                  if (reply && reply.trim()) {
+                    announcementStore.publish({ level: 'info', message: reply.trim(), departments: m.departments, from: dept, userMentions: [], mentions: [], at: new Date().toISOString(), parentId: m.id } as any);
+                  }
+                }}
+              >
+                Reply
+              </button>
+              <span className="text-xs text-gray-500">{new Date(m.at).toLocaleTimeString()}</span>
+            </div>
+          </div>
+        </div>
+      ))}
+      {byTab.length === 0 && pinnedVisible.length === 0 && <div className="py-1 text-xs text-gray-500">No notices</div>}
+    </>
+  );
+
+  const embedded = !title;
+
+  if (embedded && !dockBottom) {
+    return (
+      <div className="space-y-2 text-sm">
+        <div className="flex flex-wrap items-center gap-x-1 gap-y-1">
+          {(['all', 'alerts', 'broadcasts', 'mentions'] as const).map(tabButton)}
+          <select
+            aria-label="Notice filter"
+            className="ml-auto h-7 rounded-md border border-gray-200 bg-transparent px-1.5 text-xs text-gray-600"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value as 'all' | 'urgent' | 'unread')}
+          >
+            <option value="all">All</option>
+            <option value="urgent">Urgent</option>
+            <option value="unread">Unread</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-3 text-[11px] text-gray-500">
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={enableSound} onChange={(e) => { setEnableSound(e.target.checked); try { localStorage.setItem(`ann.pref.sound.${dept}`, String(e.target.checked)); } catch {} }} />
+            Sound
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={enableDesktop} onChange={(e) => { setEnableDesktop(e.target.checked); try { localStorage.setItem(`ann.pref.desktop.${dept}`, String(e.target.checked)); } catch {} }} />
+            Desktop
+          </label>
+        </div>
+        {showSearch && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            <input type="date" aria-label="From date" className="h-7 rounded-md border border-gray-200 bg-transparent px-1.5 text-xs" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            <input type="date" aria-label="To date" className="h-7 rounded-md border border-gray-200 bg-transparent px-1.5 text-xs" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+            <input placeholder="Search notices..." className="h-7 min-w-[8rem] flex-1 rounded-md border border-gray-200 bg-transparent px-2 text-xs" value={search} onChange={(e) => setSearch(e.target.value)} />
+          </div>
+        )}
+        {noticeList}
+        {toast && (
+          <div className="fixed bottom-4 right-4 z-50 rounded bg-red-600 px-4 py-2 text-sm text-white shadow-lg">
+            <div className="font-semibold">Urgent message</div>
+            <div>{toast.text}</div>
+            <button className="mt-2 text-xs underline" onClick={() => setToast(null)}>Dismiss</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const panelBody = (
     <Card className="border-0 shadow-md">
       <CardHeader className="pb-1 flex items-center justify-between">

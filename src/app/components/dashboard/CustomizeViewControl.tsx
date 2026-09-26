@@ -2,6 +2,7 @@
 
 import React from 'react';
 import { Button, Popover, PopoverTrigger, PopoverContent, Checkbox, Divider } from '@heroui/react';
+import { SlidersHorizontal } from 'lucide-react';
 import type { DashboardSectionDef } from '../../lib/dashboard/useDashboardVisibility';
 
 /** Small ✕ control placed in a card's header — the inline escape hatch for
@@ -32,18 +33,20 @@ export default function CustomizeViewControl({
   toggle,
   showAll,
   hiddenCount,
+  className,
 }: {
   sections: DashboardSectionDef[];
   isHidden: (id: string) => boolean;
   toggle: (id: string) => void;
   showAll: () => void;
   hiddenCount: number;
+  className?: string;
 }) {
   return (
     <Popover placement="bottom-end">
       <PopoverTrigger>
-        <Button size="sm" variant="flat" startContent={<span aria-hidden>⚙️</span>}>
-          Customize View{hiddenCount > 0 ? ` (${hiddenCount} hidden)` : ''}
+        <Button size="sm" variant="flat" className={className} startContent={<SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />}>
+          Customize{hiddenCount > 0 ? ` (${hiddenCount})` : ''}
         </Button>
       </PopoverTrigger>
       <PopoverContent>

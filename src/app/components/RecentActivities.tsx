@@ -35,24 +35,35 @@ export default function RecentActivities({ area, limit = 8 }: RecentActivitiesPr
     }
   };
 
+  const yesterdayISO = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return d.toISOString().split('T')[0];
+  })();
+  const dayChip = (active: boolean) =>
+    `h-6 rounded-md px-2 text-xs font-medium transition-colors ${
+      active ? 'bg-ghana-green text-white' : 'text-gray-600 hover:bg-gray-100'
+    }`;
+  const shortDate = new Date(viewDate + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+
   return (
     <div>
-      <div className="flex items-center justify-between mb-2">
-        <div className="text-xs text-gray-600">{new Date(viewDate + 'T00:00:00').toDateString()}</div>
-        <div className="flex gap-2">
-          <button className="px-2 h-7 text-xs border rounded hover:bg-gray-50" onClick={() => setViewDate(todayISO)}>Today</button>
-          <button className="px-2 h-7 text-xs border rounded hover:bg-gray-50" onClick={() => { const d = new Date(); d.setDate(d.getDate()-1); setViewDate(d.toISOString().split('T')[0]); }}>Yesterday</button>
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="text-xs text-gray-500">{shortDate}</span>
+        <div className="inline-flex items-center rounded-lg border border-gray-200 p-0.5">
+          <button type="button" className={dayChip(viewDate === todayISO)} onClick={() => setViewDate(todayISO)}>Today</button>
+          <button type="button" className={dayChip(viewDate === yesterdayISO)} onClick={() => setViewDate(yesterdayISO)}>Yesterday</button>
         </div>
       </div>
-      <div className="space-y-3">
+      <div className="space-y-1.5">
       {(mounted ? items : []).map((i) => (
-        <div key={i.id} className="flex items-center space-x-3 p-3 bg-gray-50 rounded-lg">
-          <div className={`h-3 w-3 rounded-full ${dotClass((i as any).severity)}`}></div>
+        <div key={i.id} className="flex items-center gap-2 rounded-md px-1 py-1">
+          <div className={`h-1.5 w-1.5 shrink-0 rounded-full ${dotClass((i as any).severity)}`}></div>
           <span className="text-sm text-gray-800">{formatText(i)}</span>
         </div>
       ))}
       {mounted && items.length === 0 && (
-        <div className="text-sm text-gray-500">No activity for this day</div>
+        <div className="py-1 text-xs text-gray-500">No activity for this day</div>
       )}
       </div>
     </div>
