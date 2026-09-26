@@ -4,6 +4,11 @@
  *
  * Run: npx tsx scripts/cert-settings-e2e.ts
  */
+export {}; // isolate this script's scope — otherwise its top-level `localStorage`
+// mock collides with the DOM lib's ambient global, and `let failed`/`function
+// check` collide with other standalone cert-*.ts scripts, since a file with no
+// import/export is treated as a global script.
+
 const mem = new Map<string, string>();
 const localStorage = {
   getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),

@@ -3927,7 +3927,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     set({
       numberingDefaultsVersion: 3,
       invoiceSettings: { ...state.invoiceSettings, ...simplify(state.invoiceSettings, defaultSettings.invoiceSettings) },
-      receiptSettings: { ...state.receiptSettings, ...simplify(state.receiptSettings, defaultSettings.receiptSettings) } as any,
+      // ReceiptSettings is a broader receipt-template config (with businessName/tagline/
+      // logoUrl etc. alongside numbering) whose numbering fields are optional, unlike the
+      // strict NumberingPattern simplify() expects — defaults always populate them at
+      // runtime, so this matches the `as any` already applied to the result below.
+      receiptSettings: { ...state.receiptSettings, ...simplify(state.receiptSettings as any, defaultSettings.receiptSettings as any) } as any,
       purchaseOrderSettings: { ...state.purchaseOrderSettings, ...simplify(state.purchaseOrderSettings, defaultSettings.purchaseOrderSettings) },
       proformaInvoiceSettings: { ...state.proformaInvoiceSettings, ...simplify(state.proformaInvoiceSettings, defaultSettings.proformaInvoiceSettings) },
       clientSettings: { ...state.clientSettings, ...simplify(state.clientSettings, defaultSettings.clientSettings) },

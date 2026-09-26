@@ -104,10 +104,12 @@ export default function HousekeepingInventoryPanel() {
                 if (next) setCategoryFilter(next);
               }}
             >
-              <SelectItem key="all">All Categories</SelectItem>
-              {categories.map((category) => (
-                <SelectItem key={category}>{category}</SelectItem>
-              ))}
+              {[
+                <SelectItem key="all">All Categories</SelectItem>,
+                ...categories.map((category) => (
+                  <SelectItem key={category}>{category}</SelectItem>
+                )),
+              ]}
             </Select>
             <div className="flex items-center space-x-2">
               <span className="text-sm text-gray-600">Filtered:</span>

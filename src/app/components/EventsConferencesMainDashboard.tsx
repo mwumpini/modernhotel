@@ -1120,7 +1120,6 @@ function mapApiBookingToEvent(row: any) {
     pax: Number(row.attendees || 0),
     expectedPax: Number(row.attendees || 0),
     residential,
-    status: row.status || 'quote',
     revenue: Number(row.totalCost || quoteBudgetSnapshot?.total || 0),
     contactPerson: row.contactPerson || '',
     contactPhone: row.contactPhone || '',
@@ -1819,10 +1818,10 @@ export default function EventsConferencesMainDashboard({
         byEvent.set(eventId, {
           id: eventsInvoiceId,
           eventId,
-          eventName: invoice.description?.replace(/^Conference Invoice:\s*/, '').split(' (')[0] || invoice.customerName || 'Event',
-          clientName: invoice.customerName || 'Client',
-          issueDate: (invoice.issueDate || invoice.date || new Date().toISOString()).slice(0, 10),
-          dueDate: (invoice.dueDate || invoice.issueDate || new Date().toISOString()).slice(0, 10),
+          eventName: invoice.description?.replace(/^Conference Invoice:\s*/, '').split(' (')[0] || 'Event',
+          clientName: 'Client',
+          issueDate: (invoice.date || new Date().toISOString()).slice(0, 10),
+          dueDate: (invoice.dueDate || invoice.date || new Date().toISOString()).slice(0, 10),
           subtotal: Number(invoice.subtotal ?? total),
           tax: Number(invoice.taxAmount ?? 0),
           total,
@@ -16488,7 +16487,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                 <Button
                   color="primary"
                   isDisabled={eventSubmitting}
-                  onPress={isEditingInvoiceDetails ? handleInvoiceDetailsSave : handleEventSubmit}
+                  onPress={() => (isEditingInvoiceDetails ? handleInvoiceDetailsSave() : handleEventSubmit())}
                 >
                   {eventSubmitting
                     ? (isEditingInvoiceDetails
@@ -17413,7 +17412,7 @@ ${Object.entries(summary.eventsByStatus).map(([status, count]) => `- ${status}: 
                               <TableCell className="text-right font-semibold">
                                 {formatCurrency(activeFolio.openingBalance)}
                               </TableCell>
-                              <TableCell />
+                              <TableCell>{null}</TableCell>
                             </TableRow>
                           )}
                           {filteredFolioEntries.map((entry: EventFolioEntry) => {

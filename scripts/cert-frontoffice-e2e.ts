@@ -5,6 +5,10 @@
  *
  * Run: node --env-file=.env.local ./node_modules/tsx/dist/cli.mjs scripts/cert-frontoffice-e2e.ts
  */
+export {}; // isolate this script's scope — otherwise its top-level `let failed`/
+// `function check` collide with the same names in other standalone cert-*.ts
+// scripts, since a file with no import/export is treated as a global script.
+
 (globalThis as any).fetch = async () => ({ ok: false, json: async () => ({}), text: async () => '' });
 
 let failed = 0;

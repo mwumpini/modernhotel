@@ -81,8 +81,11 @@ export default function RoomResponsibilitiesPanel({ staff }: { staff: Department
   }, [load]);
 
   const hotelRooms = useMemo(() => {
+    // RoomEntity's real room number lives in `id`, not a `roomNumber` field
+    // (see RoomEntity in lib/frontoffice/types.ts) — map it honestly instead
+    // of casting the type to a shape it doesn't have.
     try {
-      return (frontOfficeStore.rooms || []) as Array<{ roomNumber: string }>;
+      return (frontOfficeStore.rooms || []).map((r) => ({ roomNumber: r.id }));
     } catch {
       return [] as Array<{ roomNumber: string }>;
     }
@@ -209,10 +212,12 @@ export default function RoomResponsibilitiesPanel({ staff }: { staff: Department
             selectedKeys={[shiftFilter]}
             onSelectionChange={(keys) => setShiftFilter((Array.from(keys)[0] as string) || 'all')}
           >
-            <SelectItem key="all">All shifts</SelectItem>
-            {RESPONSIBILITY_SHIFTS.map((s) => (
-              <SelectItem key={s.key}>{s.label}</SelectItem>
-            ))}
+            {[
+              <SelectItem key="all">All shifts</SelectItem>,
+              ...RESPONSIBILITY_SHIFTS.map((s) => (
+                <SelectItem key={s.key}>{s.label}</SelectItem>
+              )),
+            ]}
           </Select>
           <Button size="sm" color="primary" onPress={openCreate} isDisabled={staff.length === 0}>
             Assign rooms

@@ -102,6 +102,7 @@ export interface ReportingRule {
     | 'VAT'
     | 'IncomeTax'
     | 'NHIL'
+    | 'GETFund'
     | 'Tourism'
     | 'SSNIT'
     | 'PAYE'

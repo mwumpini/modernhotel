@@ -27,7 +27,7 @@ const InvoicesPaymentsPage = dynamic(() => import('../guest-services/client-serv
 const RoomAssignmentsManager = dynamic(() => import('./RoomAssignmentsManager'), { ssr: false, loading: () => panelFallback });
 const FrontDeskCounter = dynamic(() => import('./FrontDeskCounter'), { ssr: false, loading: () => panelFallback });
 const RoomTransferPanel = dynamic(() => import('./RoomTransferPanel'), { ssr: false, loading: () => panelFallback });
-const ClientsServicesContent = dynamic(() => import('../guest-services/client-services/clients-services/page').then((m) => ({ default: m.ClientsServicesContent })), { ssr: false, loading: () => panelFallback });
+const ClientsServicesContent = dynamic(() => import('../guest-services/client-services/clients-services/ClientsServicesContent').then((m) => ({ default: m.ClientsServicesContent })), { ssr: false, loading: () => panelFallback });
 const CashierShiftPanel = dynamic(() => import('./CashierShiftPanel'), { ssr: false, loading: () => panelFallback });
 const FrontofficeNightAudit = dynamic(() => import('./FrontofficeNightAudit'), { ssr: false, loading: () => panelFallback });
 const FrontOfficeReportsAnalysis = dynamic(() => import('./FrontOfficeReportsAnalysis'), { ssr: false, loading: () => panelFallback });

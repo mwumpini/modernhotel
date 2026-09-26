@@ -246,13 +246,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   };
 
 
-  React.useEffect(() => {
-    try {
-      const saved = localStorage.getItem('manager.pin');
-      if (saved) setManagerPin(saved);
-    } catch {}
-  }, []);
-
   // keep orders table in sync with shared store
   React.useEffect(() => {
     const sync = () => setOrders(ordersStore.all());

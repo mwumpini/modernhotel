@@ -99,7 +99,7 @@ const CHECKINS_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'netBalance', label: 'Net Balance' },
 ];
 
-export function CheckInsSection() {
+function CheckInsSection() {
   const currentUserName = useCurrentUserName();
   const { isHidden, hide, toggle: toggleStatSection, showAll: showAllStats, hiddenCount: hiddenStatsCount } =
     useDashboardVisibility('dashboard.hidden.checkins', CHECKINS_DASHBOARD_SECTIONS);

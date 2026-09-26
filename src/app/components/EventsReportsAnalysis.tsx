@@ -491,7 +491,7 @@ export default function EventsReportsAnalysis() {
         sortIdsByDate(
           conferenceInvoices,
           (invoice) => String(invoice.id || ''),
-          (invoice) => String(invoice.date || invoice.issueDate || '')
+          (invoice) => String(invoice.date || '')
         )
       ),
     [conferenceInvoices]
@@ -502,7 +502,7 @@ export default function EventsReportsAnalysis() {
         sortIdsByDate(
           conferenceProformas,
           (invoice) => String(invoice.id || ''),
-          (invoice) => String(invoice.date || invoice.issueDate || '')
+          (invoice) => String(invoice.date || '')
         )
       ),
     [conferenceProformas]
@@ -1020,7 +1020,7 @@ export default function EventsReportsAnalysis() {
             <div className="grid gap-4 lg:grid-cols-[minmax(260px,1fr)_2fr]">
               <Select label="Report" selectedKeys={[selectedReport]} onSelectionChange={(keys) => {
                 const next = Array.from(keys)[0] as string;
-                const allowed = REPORT_GROUPS[selectedTab].reports.map(([key]) => key);
+                const allowed: string[] = REPORT_GROUPS[selectedTab].reports.map(([key]) => key);
                 if (next && allowed.includes(next)) setSelectedReport(next);
               }} startContent={<TrendingUp size={16} className="text-slate-400" />}>
                 {REPORT_GROUPS[selectedTab].reports.map(([key, label]) => <SelectItem key={key} textValue={label}>{label}</SelectItem>)}

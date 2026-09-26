@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { frontOfficeStore } from './store';
 import { trackEvent } from '../analytics/trackEvent';
 import { getFolioDisplayTotals, folioChargeGlCode, findMainFolio } from './helpers/folio';
-import { chargeGross } from './folioLedger';
+import { chargeGross, type FolioLineJson } from './folioLedger';
 import { housekeepingStore } from '../housekeeping/store';
 import { reportDataToSections, sectionsToCSV, sectionsToExcelHtml, sectionsToPdfBlob, type ReportOrgInfo } from './reportExportFormat';
 import { useSettingsStore } from '../settings/store';
@@ -825,7 +825,10 @@ export const useReportingStore = create<ReportingStore>((set, get) => ({
             transactionType: 'charge' as const,
             // amount is the net room/service figure; tax sits on the same line.
             // The guest, the desk, and the payment are all on the gross.
-            amount: chargeGross(charge),
+            // FolioCharge and FolioLineJson are structurally compatible (chargeGross only
+            // reads the named fields both share); FolioLineJson's index signature is what
+            // TS otherwise balks at here, not an actual shape mismatch.
+            amount: chargeGross(charge as FolioLineJson),
             description: charge.description,
             timestamp: charge.date,
             cashier: (charge as any).staffName || 'Front Desk',

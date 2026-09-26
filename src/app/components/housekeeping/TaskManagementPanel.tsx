@@ -874,10 +874,12 @@ export default function TaskManagementPanel() {
                     : 'Optional. Set “Responsible for” under Staff Management to auto-suggest.'
                 }
               >
-                <SelectItem key="unassigned">Unassigned — assign later</SelectItem>
-                {activeAttendants.map((s) => (
-                  <SelectItem key={s.id}>{s.name} ({s.role})</SelectItem>
-                ))}
+                {[
+                  <SelectItem key="unassigned">Unassigned — assign later</SelectItem>,
+                  ...activeAttendants.map((s) => (
+                    <SelectItem key={s.id}>{s.name} ({s.role})</SelectItem>
+                  )),
+                ]}
               </Select>
             </div>
 
@@ -1090,10 +1092,12 @@ export default function TaskManagementPanel() {
                     setBulkTaskForm({ ...bulkTaskForm, assignedTo: value === 'unassigned' ? '' : value });
                   }}
                 >
-                  <SelectItem key="unassigned">Unassigned — assign later</SelectItem>
-                  {activeAttendants.map((s) => (
-                    <SelectItem key={s.id}>{s.name} ({s.role})</SelectItem>
-                  ))}
+                  {[
+                    <SelectItem key="unassigned">Unassigned — assign later</SelectItem>,
+                    ...activeAttendants.map((s) => (
+                      <SelectItem key={s.id}>{s.name} ({s.role})</SelectItem>
+                    )),
+                  ]}
                 </Select>
                 <Select
                   label="Priority"

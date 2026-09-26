@@ -119,7 +119,7 @@ console.log('Corporate checkout is blocked until a reference is present, then ea
   assert(!lines.some((c) => (c.description || '').includes('Room Charge')), `unused room nights were removed (${describe})`)
   assert(lines.some((c) => c.description === 'Early Checkout Penalty' && c.amount === 100), `25% penalty on ₵400 removed is ₵100 (${describe})`)
 
-  const invoice = useAccountingStore.getState().invoices.find((inv) => inv.reference === stay.resId || inv.customerName === 'CERT Checkout')
+  const invoice = useAccountingStore.getState().invoices.find((inv) => inv.reference === stay.resId)
   assert(!!invoice, 'checkout raised an invoice')
   const dueInDays = Math.round((new Date(invoice!.dueDate).getTime() - Date.now()) / 86400000)
   assert(dueInDays === 21, `company invoice is due in 21 days, got ${dueInDays}`)

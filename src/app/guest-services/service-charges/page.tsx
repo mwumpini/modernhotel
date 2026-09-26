@@ -660,12 +660,14 @@ export default function ServiceChargesPage() {
               onSelectionChange={(keys) => setCategoryFilter(Array.from(keys as Set<string>)[0] || 'all')}
               className="w-44"
             >
-              <SelectItem key="all">All Categories</SelectItem>
-              {categories.map(category =>
-                <SelectItem key={category} textValue={category}>
-                  {category}
-                </SelectItem>
-              )}
+              {[
+                <SelectItem key="all">All Categories</SelectItem>,
+                ...categories.map(category =>
+                  <SelectItem key={category} textValue={category}>
+                    {category}
+                  </SelectItem>
+                ),
+              ]}
             </Select>
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-gray-500">📅 Charge Date:</span>

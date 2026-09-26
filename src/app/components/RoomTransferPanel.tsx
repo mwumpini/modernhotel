@@ -94,7 +94,7 @@ export default function RoomTransferPanel() {
   const nextRate = stay && nextTypeId ? nightlyOn(stay, today, nextTypeId) : 0;
 
   const transfer = () => {
-    if (!stay || !roomNumber || !reason) return;
+    if (!stay || !stay.roomId || !roomNumber || !reason) return;
     if (!canTransfer) {
       notifyError('You cannot move a guest to another room.', 'Room transfer');
       return;
@@ -143,7 +143,7 @@ export default function RoomTransferPanel() {
         {stay && (
           <>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <Fact label="Current room" value={stay.roomId} />
+              <Fact label="Current room" value={stay.roomId || '—'} />
               <Fact label="Type" value={roomTypeName(stay.roomTypeId)} />
               <Fact label="Check-in" value={shortDay(stay.arrival)} />
               <Fact label="Check-out" value={shortDay(stay.departure)} />
