@@ -2847,6 +2847,24 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
           .then((data) => {
             if (data?.initialSetupCompleted) {
               set({ initialSetupCompleted: true });
+              // loadSettings() runs more than once per page load (Navigation's
+              // own mount effect calls it again), and its synchronous
+              // `set(parsed)` from this same 'system.settings' key would
+              // otherwise clobber the line above back to false on that second
+              // call, since nothing previously wrote the server's answer back
+              // into localStorage — only the in-memory store got it. Patch it
+              // in place so every later read (this page load or the next) sees
+              // the real value instead of stale local fixture data.
+              try {
+                const raw = localStorage.getItem('system.settings');
+                const parsed = raw ? JSON.parse(raw) : {};
+                if (parsed.initialSetupCompleted !== true) {
+                  parsed.initialSetupCompleted = true;
+                  localStorage.setItem('system.settings', JSON.stringify(parsed));
+                }
+              } catch {
+                // Non-fatal — worst case a later loadSettings() call re-fetches and corrects it.
+              }
             } else if (get().initialSetupCompleted) {
               syncSetupStatusToApi();
             }

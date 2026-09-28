@@ -260,7 +260,11 @@ async function main() {
         timezone: 'Africa/Accra',
         currency: 'GHS',
         dateFormat: 'DD/MM/YYYY',
-        timeFormat: '24h'
+        timeFormat: '24h',
+        // The seed already populates a full company profile — a fresh
+        // environment shouldn't re-run the setup wizard for data that's
+        // already there. See /api/settings/setup-status.
+        initialSetupCompleted: true
       },
       hotelSettings: {
         hotelName: 'Demo Hotel Accra',
