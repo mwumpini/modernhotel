@@ -2722,10 +2722,18 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
             // then see instead of what's actually configured.
             const serverHasConfig = ROOM_CONFIG_KEYS.some((k) => Array.isArray(data[k]) && data[k].length > 0);
             if (serverHasConfig) {
+              // Guard against a stray legacy entry (a plain type-name string, from
+              // an older room-settings shape that used to share this same JSON key)
+              // slipping through — every real room type is an object with an
+              // `amenities` array; anything else crashes Rooms & Pricing the moment
+              // it renders that array.
+              const validRoomTypes = Array.isArray(data.roomTypes)
+                ? data.roomTypes.filter((rt: any) => rt && typeof rt === 'object' && Array.isArray(rt.amenities))
+                : [];
               set({
                 roomManagement: {
                   ...get().roomManagement,
-                  roomTypes: data.roomTypes ?? [],
+                  roomTypes: validRoomTypes,
                   rooms: data.rooms ?? [],
                   ratePlans: data.ratePlans ?? [],
                   roomStatuses: data.roomStatuses ?? [],

@@ -279,7 +279,13 @@ async function main() {
       roomSettings: {
         defaultStatus: 'clean',
         statuses: ['clean', 'occupied', 'dirty', 'inspected', 'ooo'],
-        roomTypes: ['standard', 'deluxe', 'suite'],
+        // NOT `roomTypes: [...]` here — that key collides with the richer
+        // {id, name, amenities: [], ...} room-type objects Settings > Rooms &
+        // Pricing reads from this same JSON column via /api/settings/
+        // room-management. A plain string here (the old room-status feature's
+        // shape) crashes that screen the moment it tries rt.amenities.includes(...)
+        // on a string. Room types are meant to be created through that screen,
+        // which builds the correct shape.
         features: ['king_bed', 'queen_bed', 'ocean_view', 'balcony', 'jacuzzi'],
         postFirstNightAtCheckin: false,
         nightAuditAutoRun: true,

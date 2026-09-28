@@ -45,11 +45,15 @@ const DASHBOARD_SECTIONS: DashboardSectionDef[] = [
 
 
 function formatCurrency(amount: number | undefined) {
-  if (!amount || Number.isNaN(amount)) return '₵0';
+  // Intl already renders GHS as "GH₵" for this locale (the .replace below is a
+  // no-op safety net for locales/engines that instead spell out "GHS") — the
+  // zero fallback has to match that exact prefix, or ₵0 sits next to GH₵3,300
+  // on the same card with no explanation for the missing "GH".
+  if (!amount || Number.isNaN(amount)) return 'GH₵0';
   try {
     return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS', maximumFractionDigits: 0 }).format(amount).replace('GHS', '₵');
   } catch {
-    return `₵${Math.round(amount).toLocaleString()}`;
+    return `GH₵${Math.round(amount).toLocaleString()}`;
   }
 }
 
@@ -878,18 +882,13 @@ export default function ExecutiveManagementDashboard() {
               onHide={() => hide('financial')}
               hideLabel="Today's Financial Pulse"
             />
-            <CardBody className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <CardBody className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               <div className="rounded-xl bg-gray-50 p-4">
                 <div className="text-xs font-medium text-gray-600">Revenue posted to GL</div>
                 <div className="mt-1 text-2xl font-semibold tracking-tight text-ghana-black">{formatCurrency(postedRevenue)}</div>
                 <div className="mt-1 text-xs text-gray-600" title="Room/F&B charges accrued on guest folios today, before checkout posts them to the ledger">
                   Billed today, not yet posted: {formatCurrency(revenueToday)}
                 </div>
-              </div>
-              <div className="rounded-xl bg-gray-50 p-4">
-                <div className="text-xs font-medium text-gray-600">Occupancy</div>
-                <div className="mt-1 text-2xl font-semibold tracking-tight text-ghana-black">{occupancyPct}%</div>
-                <div className="mt-1 text-xs text-gray-600">Target 92%</div>
               </div>
               <div className="flex items-center justify-between gap-4 rounded-xl bg-gray-50 p-4">
                 <div>

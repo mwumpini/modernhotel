@@ -3,7 +3,7 @@
 import React, { Suspense, lazy } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { MessageSquare } from 'lucide-react';
-import { Button, Accordion, AccordionItem, Badge, Avatar } from "@heroui/react";
+import { Button, Accordion, AccordionItem, Badge, Avatar, Tooltip } from "@heroui/react";
 import { useSession } from 'next-auth/react';
 import { useComplianceStore } from '../lib/compliance/store';
 import { useSettingsStore } from '../lib/settings/store';
@@ -119,6 +119,43 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
   const [hasMounted, setHasMounted] = React.useState(false);
   React.useEffect(() => { setHasMounted(true); }, []);
+  // The side pane can be tucked away to give the work area the full width. The choice is a
+  // per-device convenience, remembered between visits; Ctrl/Cmd+B toggles it from anywhere.
+  // On phones and tablets the pane always starts tucked away and opens OVER the content (tap
+  // outside or pick a section to close it), so the work area keeps the full width.
+  const NARROW_QUERY = '(max-width: 1023px)';
+  const [narrow, setNarrow] = React.useState(() => {
+    try { return window.matchMedia(NARROW_QUERY).matches; } catch { return false; }
+  });
+  React.useEffect(() => {
+    const mq = window.matchMedia(NARROW_QUERY);
+    const onChange = () => setNarrow(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const [sidebarCollapsed, setSidebarCollapsed] = React.useState(() => {
+    try {
+      if (window.matchMedia(NARROW_QUERY).matches) return true;
+      return localStorage.getItem('nav.collapsed') === '1';
+    } catch { return false; }
+  });
+  const toggleSidebar = () => {
+    const next = !sidebarCollapsed;
+    setSidebarCollapsed(next);
+    if (!narrow) { try { localStorage.setItem('nav.collapsed', next ? '1' : '0'); } catch {} } // only the desktop choice is remembered
+  };
+  React.useEffect(() => { if (narrow) setSidebarCollapsed(true); }, [narrow, activeSection]);
+  React.useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'b') {
+        e.preventDefault();
+        toggleSidebar();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sidebarCollapsed]);
   // Re-render the menu (and re-evaluate hasModuleAccess) whenever the real session role
   // or the editable role/permission list changes.
   useSettingsStore(s => s.sessionRoleId);
@@ -633,9 +670,34 @@ export default function Navigation({ onLogout }: NavigationProps) {
 
   return (
     <div className="flex h-screen">
+      {narrow && !sidebarCollapsed && (
+        <>
+          {/* the open pane floats over the content: keep the rail's space, and dim the page behind it */}
+          <div className="w-14 shrink-0" aria-hidden />
+          <div className="fixed inset-0 z-30 bg-black/40" onClick={toggleSidebar} aria-hidden />
+        </>
+      )}
       {/* Sidebar */}
-      <nav className="w-80 bg-white shadow-xl h-screen overflow-y-auto">
-        <div className="p-6">
+      <nav className={`${sidebarCollapsed ? 'w-14' : 'w-80'} ${narrow && !sidebarCollapsed ? 'fixed inset-y-0 left-0 z-40 max-w-[85vw]' : ''} shrink-0 bg-white shadow-xl h-screen overflow-y-auto overflow-x-hidden transition-[width] duration-200`}>
+        {sidebarCollapsed ? (
+          <div className="flex flex-col items-center gap-1 py-3">
+            <Tooltip content="Show side pane (Ctrl+B)" placement="right">
+              <Button isIconOnly size="sm" variant="flat" aria-label="Show side pane" onPress={toggleSidebar}>»</Button>
+            </Tooltip>
+            {visibleNavigationSections.map((section) => (
+              <Tooltip key={section.key} content={section.title.replace(/^[^\s]+\s/, '')} placement="right">
+                <button
+                  className="h-10 w-10 rounded-lg text-lg hover:bg-ghana-gold/20 transition-colors"
+                  aria-label={section.title.replace(/^[^\s]+\s/, '')}
+                  onClick={() => handleSectionClick(section.key, undefined)}
+                >
+                  {section.icon}
+                </button>
+              </Tooltip>
+            ))}
+          </div>
+        ) : (
+        <div className="p-6 w-80">
           {/* Logo Header */}
           <div
             className="flex items-center mb-8 cursor-pointer"
@@ -651,6 +713,18 @@ export default function Navigation({ onLogout }: NavigationProps) {
               <p className="text-sm text-gray-600">Management System</p>
               <Badge color="primary" variant="flat" size="sm" className="mt-1">Executive</Badge>
             </div>
+            <Tooltip content="Hide side pane (Ctrl+B)" placement="bottom">
+              <Button
+                isIconOnly
+                size="sm"
+                variant="light"
+                className="ml-auto self-start"
+                aria-label="Hide side pane"
+                onPress={() => toggleSidebar()}
+              >
+                «
+              </Button>
+            </Tooltip>
           </div>
 
           {/* Navigation Sections */}
@@ -771,6 +845,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
             </Button>
           </div>
         </div>
+        )}
       </nav>
 
       {/* Main Content Area */}
