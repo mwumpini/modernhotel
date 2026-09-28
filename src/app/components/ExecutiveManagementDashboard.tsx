@@ -766,8 +766,18 @@ export default function ExecutiveManagementDashboard() {
         </section>
       )}
 
+      {(() => {
+        // At full desktop width the left rail is its own grid column (xl:col-span-1)
+        // reserving that width regardless of what's inside it — hiding every card in
+        // it (Customize View) left the column an empty gap with the rest of the
+        // dashboard still squeezed into the remaining two-thirds. Below xl the outer
+        // grid is already single-column, so an empty rail just collapses to zero
+        // height there and this never showed up on tablet/mobile — PC only.
+        const hasAsideContent = !isHidden('security') || !isHidden('housekeeping') || !isHidden('events');
+        return (
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* Left Sidebar - Safety & status */}
+        {hasAsideContent && (
         <aside className="xl:col-span-1 space-y-6">
           {!isHidden('security') && (
           <Card className="border border-gray-200/70 border-l-4 border-l-red-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
@@ -870,9 +880,10 @@ export default function ExecutiveManagementDashboard() {
           </Card>
           )}
         </aside>
+        )}
 
         {/* Center - Financial, Alerts, Trends, F&B/Kitchen, Stocks, Events */}
-        <section className="xl:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <section className={`${hasAsideContent ? 'xl:col-span-2' : 'xl:col-span-3'} grid grid-cols-1 md:grid-cols-2 gap-6`}>
           {!isHidden('financial') && (
           <Card className="border border-gray-200/70 border-l-4 border-l-green-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md md:col-span-2">
             <SectionHeader
@@ -1085,6 +1096,8 @@ export default function ExecutiveManagementDashboard() {
 
         {/* Right Sidebar removed to avoid duplication with Notices */}
       </div>
+        );
+      })()}
       {/* Global messenger for GM */}
       <DeptMessenger from="master" mode="drawer" />
 
