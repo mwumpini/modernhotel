@@ -301,6 +301,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'settings.view-audit-log', label: 'View the system audit log (logins & actions)' },
       { id: 'settings.manage-approval-thresholds', label: 'Configure director-approval thresholds for expenses, purchase orders & payments' },
       { id: 'settings.manage-stock-locations', label: 'Add/edit/deactivate stock locations (stores, fridges, outlets)' },
+      { id: 'settings.manage-sample-data', label: 'Load or remove sample data' },
     ],
   },
 ];
