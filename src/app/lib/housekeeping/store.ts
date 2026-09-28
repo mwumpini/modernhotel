@@ -33,6 +33,17 @@ function taskDetailsPayload(task: HousekeepingTask) {
   };
 }
 
+function isOpenCleaningTask(t: Pick<HousekeepingTask, 'status' | 'taskType'>): boolean {
+  return (
+    (t.status === 'pending' || t.status === 'in-progress') &&
+    t.taskType !== 'maintenance'
+  );
+}
+
+function normalizeTaskLocation(location: string): string {
+  return String(location || '').trim();
+}
+
 interface RoomStatusData {
   roomNumber: string;
   roomTypeId: string;
@@ -133,13 +144,15 @@ class HousekeepingStore {
         const data = await tasksRes.json();
         this.tasks = (data.tasks || []).map((t: any): HousekeepingTask => {
           const details = t.details || {};
+          const rawStatus = String(t.status || 'pending');
+          const status = (rawStatus === 'in_progress' ? 'in-progress' : rawStatus) as HousekeepingTask['status'];
           return {
             id: t.id,
             roomNumber: t.roomNumber || '',
             roomTypeId: details.roomTypeId || '',
             taskType: t.taskType,
             priority: t.priority,
-            status: t.status,
+            status,
             assignedTo: t.assignedTo || undefined,
             assignedName: t.assignedName || undefined,
             assignedAt: details.assignedAt || undefined,
@@ -158,6 +171,7 @@ class HousekeepingStore {
             suppliesIssued: !!details.suppliesIssued,
           };
         });
+        this.collapseDuplicateOpenCleaningTasks();
       }
 
       if (maintRes.ok) {
@@ -367,9 +381,16 @@ class HousekeepingStore {
     checklist: string[];
     notes?: string;
   }): HousekeepingTask {
+    // Hard block: one open cleaning task per room/area (maintenance can stack).
+    if (data.taskType !== 'maintenance') {
+      const existing = this.getOpenCleaningTask(data.roomNumber);
+      if (existing) return existing;
+    }
+
     const task: HousekeepingTask = {
       id: useSettingsStore.getState().getNextModuleNumber('frontOffice', 'housekeepingTicket'),
       ...data,
+      roomNumber: normalizeTaskLocation(data.roomNumber),
       status: 'pending',
       completedItems: [],
       assignedAt: undefined,
@@ -403,6 +424,112 @@ class HousekeepingStore {
     }).catch((e) => console.warn('HK: Failed to sync new task:', e));
 
     return task;
+  }
+
+  /**
+   * After hydrate (or any bulk load): keep one open cleaning task per location,
+   * cancel extras in memory + API so Work/Floor stay 1:1.
+   */
+  private collapseDuplicateOpenCleaningTasks() {
+    const keepByLocation = new Map<string, HousekeepingTask>();
+    const toCancel: HousekeepingTask[] = [];
+
+    for (const task of this.tasks) {
+      if (!isOpenCleaningTask(task)) continue;
+      const key = normalizeTaskLocation(task.roomNumber);
+      if (!key) continue;
+      const kept = keepByLocation.get(key);
+      if (!kept) {
+        keepByLocation.set(key, task);
+        continue;
+      }
+      const preferIncoming =
+        (task.status === 'in-progress' && kept.status !== 'in-progress') ||
+        (task.status === kept.status &&
+          String(task.createdAt || '') < String(kept.createdAt || ''));
+      if (preferIncoming) {
+        toCancel.push(kept);
+        keepByLocation.set(key, task);
+      } else {
+        toCancel.push(task);
+      }
+    }
+
+    if (toCancel.length === 0) return;
+
+    for (const task of toCancel) {
+      task.status = 'cancelled';
+      task.notes = [task.notes, 'Auto-cancelled: duplicate open cleaning task'].filter(Boolean).join(' · ');
+      fetch(`/api/housekeeping/tasks/${encodeURIComponent(task.id)}`, {
+        method: 'PATCH',
+        headers: hkHeaders(),
+        body: JSON.stringify({
+          status: 'cancelled',
+          notes: task.notes,
+        }),
+      }).catch((e) => console.warn('HK: Failed to cancel duplicate task:', e));
+    }
+
+    trackEvent('HK.Tasks.DuplicatesCollapsed', { cancelled: toCancel.length });
+  }
+
+  /** Open cleaning task for a room/area when marked dirty — reuses pending/in-progress if one exists. */
+  ensureOpenCleaningTask(opts: {
+    location: string;
+    roomTypeId: string;
+    taskType?: HousekeepingTask['taskType'];
+    priority?: TaskPriority;
+    estimatedMinutes?: number;
+    checklist?: string[];
+    notes?: string;
+  }): HousekeepingTask {
+    const location = normalizeTaskLocation(opts.location);
+    const existing = this.getOpenCleaningTask(location);
+    if (existing) return existing;
+
+    const isArea = opts.roomTypeId === 'area';
+    const checklist =
+      opts.checklist ||
+      (isArea
+        ? [
+            'Sweep / vacuum floors and mats',
+            'Dust surfaces and wipe high-touch points',
+            'Empty bins and replace liners',
+            'Report spills or maintenance issues',
+          ]
+        : opts.taskType === 'turnover'
+          ? [
+              'Strip bedding and replace linens',
+              'Clean bathroom and sanitize',
+              'Vacuum and mop floors',
+              'Restock amenities',
+              'Final quality check',
+            ]
+          : [
+              'Make bed / change linens if needed',
+              'Clean bathroom and restock',
+              'Empty trash',
+              'Dust and vacuum',
+              'Report maintenance issues',
+            ]);
+
+    return this.createTask({
+      roomNumber: location,
+      roomTypeId: opts.roomTypeId || (isArea ? 'area' : 'standard'),
+      taskType: opts.taskType || (isArea ? 'daily' : 'turnover'),
+      priority: opts.priority || (isArea ? 'medium' : 'high'),
+      estimatedMinutes: opts.estimatedMinutes || (isArea ? 40 : 45),
+      checklist,
+      notes: opts.notes,
+    });
+  }
+
+  /** Find open cleaning task for a location, if any. */
+  getOpenCleaningTask(location: string): HousekeepingTask | undefined {
+    const key = normalizeTaskLocation(location);
+    return this.tasks.find(
+      (t) => normalizeTaskLocation(t.roomNumber) === key && isOpenCleaningTask(t)
+    );
   }
 
   assignTask(taskId: string, staffId: string) {
@@ -775,13 +902,13 @@ class HousekeepingStore {
     
     // If room is marked as dirty (check-out), create cleaning task
     if (status === 'dirty') {
-      this.createTask({
-        roomNumber,
+      this.ensureOpenCleaningTask({
+        location: roomNumber,
         roomTypeId: this.rooms.get(roomNumber)?.roomTypeId || 'standard',
         taskType: 'turnover',
         priority: 'high',
         estimatedMinutes: 45,
-        checklist: ['Change linens', 'Clean bathroom', 'Vacuum floor', 'Restock amenities', 'Check appliances']
+        notes: reason || 'Guest checked out',
       });
     }
   }

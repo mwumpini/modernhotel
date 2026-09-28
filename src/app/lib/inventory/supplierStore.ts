@@ -193,42 +193,64 @@ function deleteSupplierFromApi(id: string) {
 // Returns whether the server actually accepted the change — the caller needs this
 // to revert its optimistic local update and tell the user why (e.g. a permission
 // check on the server rejected it) instead of showing a change that didn't stick.
+function requisitionPayload(req: Requisition) {
+  return {
+    id: req.id,
+    requisitionNumber: req.requisitionNumber,
+    requestedBy: req.requestedBy,
+    requestedDate: req.requestedDate,
+    status: req.status,
+    department: req.department,
+    assignedToId: req.assignedToId,
+    assignedToName: req.assignedToName,
+    approvedBy: req.approvedBy,
+    approvedAt: req.approvedAt,
+    readyBy: req.readyBy,
+    readyAt: req.readyAt,
+    rejectedBy: req.rejectedBy,
+    rejectedAt: req.rejectedAt,
+    rejectionReason: req.rejectionReason,
+    convertedToPOId: req.convertedToPOId,
+    convertedToPONumber: req.convertedToPONumber,
+    notes: req.notes,
+    items: req.requestedItems.map((i) => ({
+      itemId: i.itemId,
+      itemCode: i.itemCode,
+      itemName: i.itemName,
+      quantity: i.quantity,
+      estimatedPrice: i.estimatedPrice,
+      preferredSupplierId: i.preferredSupplierId,
+      preferredSupplierName: i.preferredSupplierName,
+      notes: i.notes,
+    })),
+  };
+}
+
+/** Create → POST (returns server row). Update → PUT (boolean ok). */
+async function createRequisitionOnApi(req: Requisition): Promise<Requisition | null> {
+  if (typeof window === 'undefined') return null;
+  try {
+    const res = await fetch('/api/inventory/requisitions', {
+      method: 'POST',
+      headers: poTenantHeaders(),
+      body: JSON.stringify(requisitionPayload(req)),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data?.requisition ? mapApiRequisitionToStore(data.requisition) : null;
+  } catch (e) {
+    console.warn('[Inventory] Failed to create requisition on server:', e);
+    return null;
+  }
+}
+
 async function syncRequisitionToApi(req: Requisition): Promise<boolean> {
   if (typeof window === 'undefined') return true;
   try {
     const res = await fetch('/api/inventory/requisitions', {
       method: 'PUT',
       headers: poTenantHeaders(),
-      body: JSON.stringify({
-        id: req.id,
-        requisitionNumber: req.requisitionNumber,
-        requestedBy: req.requestedBy,
-        requestedDate: req.requestedDate,
-        status: req.status,
-        department: req.department,
-        assignedToId: req.assignedToId,
-        assignedToName: req.assignedToName,
-        approvedBy: req.approvedBy,
-        approvedAt: req.approvedAt,
-        readyBy: req.readyBy,
-        readyAt: req.readyAt,
-        rejectedBy: req.rejectedBy,
-        rejectedAt: req.rejectedAt,
-        rejectionReason: req.rejectionReason,
-        convertedToPOId: req.convertedToPOId,
-        convertedToPONumber: req.convertedToPONumber,
-        notes: req.notes,
-        items: req.requestedItems.map((i) => ({
-          itemId: i.itemId,
-          itemCode: i.itemCode,
-          itemName: i.itemName,
-          quantity: i.quantity,
-          estimatedPrice: i.estimatedPrice,
-          preferredSupplierId: i.preferredSupplierId,
-          preferredSupplierName: i.preferredSupplierName,
-          notes: i.notes,
-        })),
-      }),
+      body: JSON.stringify(requisitionPayload(req)),
     });
     return res.ok;
   } catch (e) {
@@ -1358,7 +1380,20 @@ export const useSupplierStore = create<SupplierStore>((set, get) => ({
       updatedAt: new Date()
     };
     set(state => ({ requisitions: [...state.requisitions, newRequisition] }));
-    syncRequisitionToApi(newRequisition);
+    // POST + rematerialize — PUT requires an existing row, so approving a client-only
+    // id used to flash "approved" then revert to pending.
+    createRequisitionOnApi(newRequisition).then((serverReq) => {
+      if (!serverReq) {
+        set(state => ({ requisitions: state.requisitions.filter((r) => r.id !== newRequisition.id) }));
+        if (typeof window !== 'undefined') {
+          alert("Couldn't save that requisition — you may not have permission, or the request failed.");
+        }
+        return;
+      }
+      set(state => ({
+        requisitions: state.requisitions.map((r) => (r.id === newRequisition.id ? serverReq : r)),
+      }));
+    });
   },
 
   updateRequisition: (id, updates) => {

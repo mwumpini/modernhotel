@@ -19,6 +19,22 @@ import { StockItem, Supplier, PurchaseOrder, PurchaseOrderItem, Requisition, Req
 import { BusinessPartner } from '../lib/accounting/models';
 import { useRouter } from 'next/navigation';
 import { GL_ACCOUNTS } from '../lib/accounting/glAccounts';
+import { getClientTenantSubdomain } from '../lib/api/clientTenant';
+import { DEPARTMENT_LOCATIONS } from '../lib/inventory/departmentLocations';
+import { sizedTableClassNames, useResizableColumns } from './frontoffice/columnResize';
+import {
+  DESK_PAGE_SIZE,
+  deskTableCardBodyClassName,
+  deskTableCardClassName,
+  deskTableClassNames,
+  SortHeader,
+  toggleColumnSort,
+  type ColumnSort,
+} from './dashboard/deskTableUi';
+
+function inventoryHeaders() {
+  return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
+}
 
 // Supplier interface removed - using imported Supplier from models.ts
 // PurchaseOrder interface removed - using imported PurchaseOrder from models.ts
@@ -46,11 +62,23 @@ export default function InventorySupplyChainDashboard({
   const settings = useSettingsStore();
   const { data: session } = useSession();
   const currentUserName = session?.user?.name || 'User';
+  const [masterLocations, setMasterLocations] = useState<{ id: string; code: string; name: string; isActive: boolean; department?: string | null }[]>([]);
+  useEffect(() => {
+    fetch('/api/inventory/stock-locations?activeOnly=1', { headers: inventoryHeaders() })
+      .then((r) => (r.ok ? r.json() : { locations: [] }))
+      .then((data) => setMasterLocations(data.locations || []))
+      .catch(() => setMasterLocations([]));
+  }, []);
   // Requisition action gates — mirrors the server-side requirePermission() checks in
   // /api/inventory/requisitions, so a user who can't act just doesn't see the button
   // rather than clicking it and hitting a 403 with no explanation.
   const canActOnRequisitions = settings.hasPermission('inventory.approve-requisition');
   const canEditProcessedRequisitions = settings.hasPermission('inventory.edit-processed-requisition');
+  const canPrintInventoryDocs = settings.hasPermission('inventory.print');
+  const canEditInventoryDocs = settings.hasPermission('inventory.edit');
+  const canDeleteInventoryDocs = settings.hasPermission('inventory.delete');
+  const canVoidInventoryDocs = settings.hasPermission('inventory.void');
+  const canRunStockCount = settings.hasPermission('inventory.stock-count');
 
   // Inventory Management Hooks - moved to top level to comply with Rules of Hooks
   const {
@@ -67,6 +95,7 @@ export default function InventorySupplyChainDashboard({
     addStockMovement,
     upsertStockTransfer,
     upsertStockCount,
+    deleteStockCount,
     upsertGoodsIssue,
     hydrateFromApi: hydrateStockFromApi
   } = useStockStore();
@@ -268,7 +297,19 @@ export default function InventorySupplyChainDashboard({
   const [filterLocation, setFilterLocation] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [page, setPage] = useState(1);
-  const rowsPerPage = 10;
+  const [itemSort, setItemSort] = useState<ColumnSort>({ column: 'code', direction: 'asc' });
+  const itemCols = useResizableColumns({
+    code: 110,
+    item: 220,
+    category: 110,
+    unit: 70,
+    onHand: 120,
+    reorder: 80,
+    unitCost: 100,
+    location: 130,
+    status: 110,
+  });
+  const rowsPerPage = DESK_PAGE_SIZE;
 
   // Supplier Management state
   const [supplierSearchTerm, setSupplierSearchTerm] = useState('');
@@ -276,7 +317,17 @@ export default function InventorySupplyChainDashboard({
   const [supplierFilterCategory, setSupplierFilterCategory] = useState<string>('all');
   const [supplierFilterPaymentTerms, setSupplierFilterPaymentTerms] = useState<string>('all');
   const [supplierPage, setSupplierPage] = useState(1);
-  const supplierRowsPerPage = 10;
+  const [supplierSort, setSupplierSort] = useState<ColumnSort>({ column: 'code', direction: 'asc' });
+  const supplierCols = useResizableColumns({
+    code: 110,
+    supplier: 180,
+    contact: 140,
+    address: 160,
+    supplies: 140,
+    terms: 90,
+    status: 90,
+  });
+  const supplierRowsPerPage = DESK_PAGE_SIZE;
   
   // Inventory modals
   const { isOpen, onOpen, onClose } = useDisclosure();
@@ -299,9 +350,11 @@ export default function InventorySupplyChainDashboard({
   }, [stockItems]);
 
   const inventoryLocations = useMemo(() => {
-    const locs = [...new Set(stockItems.map(item => item.location))];
+    const fromMaster = masterLocations.map((loc) => loc.name);
+    if (fromMaster.length > 0) return fromMaster.sort((a, b) => a.localeCompare(b));
+    const locs = [...new Set(stockItems.map((item) => item.location).filter(Boolean))];
     return locs.sort();
-  }, [stockItems]);
+  }, [masterLocations, stockItems]);
 
   // Filter and search stock items
   const filteredItems = useMemo(() => {
@@ -324,12 +377,51 @@ export default function InventorySupplyChainDashboard({
     });
   }, [stockItems, searchTerm, filterCategory, filterLocation, filterStatus]);
 
+  const itemStatusLabel = (item: StockItem) => {
+    if (!item.isActive) return 'Inactive';
+    if (item.currentStock <= item.reorderPoint) return 'Low Stock';
+    if (item.currentStock > item.maximumStock * 0.8) return 'Overstock';
+    return 'In Stock';
+  };
+
+  const sortedItems = useMemo(() => {
+    const dir = itemSort.direction === 'asc' ? 1 : -1;
+    return [...filteredItems].sort((a, b) => {
+      switch (itemSort.column) {
+        case 'item':
+          return a.name.localeCompare(b.name) * dir;
+        case 'category':
+          return a.category.localeCompare(b.category) * dir;
+        case 'unit':
+          return (a.unit || '').localeCompare(b.unit || '') * dir;
+        case 'onHand':
+          return (a.currentStock - b.currentStock) * dir;
+        case 'reorder':
+          return (a.reorderPoint - b.reorderPoint) * dir;
+        case 'unitCost':
+          return (a.unitCost - b.unitCost) * dir;
+        case 'location':
+          return (a.location || '').localeCompare(b.location || '') * dir;
+        case 'status':
+          return itemStatusLabel(a).localeCompare(itemStatusLabel(b)) * dir;
+        case 'code':
+        default:
+          return a.itemCode.localeCompare(b.itemCode) * dir;
+      }
+    });
+  }, [filteredItems, itemSort]);
+
   // Pagination
-  const pages = Math.ceil(filteredItems.length / rowsPerPage);
+  const pages = Math.max(1, Math.ceil(sortedItems.length / rowsPerPage));
+  const pageSafe = Math.min(page, pages);
   const paginatedItems = useMemo(() => {
-    const start = (page - 1) * rowsPerPage;
-    return filteredItems.slice(start, start + rowsPerPage);
-  }, [filteredItems, page]);
+    const start = (pageSafe - 1) * rowsPerPage;
+    return sortedItems.slice(start, start + rowsPerPage);
+  }, [sortedItems, pageSafe]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [searchTerm, filterCategory, filterLocation, filterStatus, itemSort.column, itemSort.direction]);
 
   // Handle form operations
   const handleAddItem = () => {
@@ -347,7 +439,7 @@ export default function InventorySupplyChainDashboard({
       minimumStock: 0,
       maximumStock: 0,
       reorderPoint: 0,
-      location: '',
+      location: 'Main Store',
       isActive: true,
       isPerishable: false,
       isSerialized: false
@@ -517,7 +609,17 @@ export default function InventorySupplyChainDashboard({
   const [poSearchTerm, setPOSearchTerm] = useState('');
   const [poFilterStatus, setPOFilterStatus] = useState<string>('all');
   const [poPage, setPOPage] = useState(1);
-  const poRowsPerPage = 10;
+  const [poSort, setPOSort] = useState<ColumnSort>({ column: 'orderDate', direction: 'desc' });
+  const poCols = useResizableColumns({
+    number: 130,
+    supplier: 160,
+    orderDate: 110,
+    expected: 120,
+    priority: 90,
+    amount: 130,
+    status: 110,
+  });
+  const poRowsPerPage = DESK_PAGE_SIZE;
 
   // Requisition state
   const { isOpen: isRequisitionModalOpen, onOpen: onRequisitionModalOpen, onClose: onRequisitionModalClose } = useDisclosure();
@@ -533,6 +635,67 @@ export default function InventorySupplyChainDashboard({
   const [requisitionSearchTerm, setRequisitionSearchTerm] = useState('');
   const [requisitionFilterStatus, setRequisitionFilterStatus] = useState<string>('all');
   const [requisitionPage, setRequisitionPage] = useState(1);
+  const [requisitionSort, setRequisitionSort] = useState<ColumnSort>({ column: 'date', direction: 'desc' });
+  const requisitionCols = useResizableColumns({
+    number: 130,
+    requestedBy: 140,
+    date: 120,
+    items: 90,
+    amount: 130,
+    status: 120,
+  });
+  const [transferSort, setTransferSort] = useState<ColumnSort>({ column: 'date', direction: 'desc' });
+  const [transferPage, setTransferPage] = useState(1);
+  const transferCols = useResizableColumns({
+    number: 130,
+    from: 140,
+    to: 140,
+    date: 110,
+    items: 70,
+    status: 100,
+  });
+  const [issueSort, setIssueSort] = useState<ColumnSort>({ column: 'date', direction: 'desc' });
+  const [issuePage, setIssuePage] = useState(1);
+  const issueCols = useResizableColumns({
+    number: 130,
+    date: 110,
+    department: 130,
+    issuedTo: 130,
+    lines: 70,
+    value: 120,
+  });
+  const [invoiceSort, setInvoiceSort] = useState<ColumnSort>({ column: 'date', direction: 'desc' });
+  const invoiceCols = useResizableColumns({
+    number: 120,
+    po: 110,
+    grn: 110,
+    supplier: 140,
+    date: 110,
+    amount: 120,
+    matching: 100,
+    status: 100,
+  });
+  const [receiptSort, setReceiptSort] = useState<ColumnSort>({ column: 'expected', direction: 'asc' });
+  const [receiptPage, setReceiptPage] = useState(1);
+  const receiptCols = useResizableColumns({
+    number: 130,
+    supplier: 150,
+    ordered: 110,
+    expected: 110,
+    lines: 70,
+    status: 100,
+  });
+  const [countSort, setCountSort] = useState<ColumnSort>({ column: 'started', direction: 'desc' });
+  const [countPage, setCountPage] = useState(1);
+  const countCols = useResizableColumns({
+    number: 130,
+    type: 90,
+    location: 140,
+    started: 110,
+    lines: 70,
+    variance: 70,
+    status: 110,
+  });
 
   // Approve/Reject/Ready/Convert/Delete confirmation — an in-app modal instead of
   // native confirm()/prompt(), which some embedded/automated browser contexts
@@ -626,7 +789,7 @@ export default function InventorySupplyChainDashboard({
     if (isRequisitionViewOpen) onRequisitionViewClose();
     closeReqAction();
   };
-  const requisitionRowsPerPage = 10;
+  const requisitionRowsPerPage = DESK_PAGE_SIZE;
 
   // Empty placeholder removed — Overview tab no longer used.
 
@@ -688,7 +851,7 @@ export default function InventorySupplyChainDashboard({
         </Card>
 
         {/* Main Table */}
-      <Card className="border-0 shadow-lg">
+      <Card className={deskTableCardClassName}>
         <CardHeader className="pb-3">
             <div className="flex items-center justify-between w-full">
               <h3 className="text-xl font-semibold text-ghana-black">📦 Stock Items</h3>
@@ -703,19 +866,19 @@ export default function InventorySupplyChainDashboard({
             </Button>
           </div>
         </CardHeader>
-        <CardBody>
-            <Table aria-label="Stock items table" classNames={{ table: "min-w-[960px]", th: "whitespace-nowrap" }}>
+        <CardBody className={deskTableCardBodyClassName}>
+            <div ref={itemCols.frameRef} style={itemCols.frameStyle}>
+            <Table aria-label="Stock items table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
             <TableHeader>
-                <TableColumn className="w-[110px]">CODE</TableColumn>
-                <TableColumn className="min-w-[200px]">ITEM</TableColumn>
-                <TableColumn className="w-[110px]">CATEGORY</TableColumn>
-                <TableColumn className="w-[70px]">UNIT</TableColumn>
-                <TableColumn className="w-[120px] text-right">ON HAND</TableColumn>
-                <TableColumn className="w-[80px] text-right">REORDER</TableColumn>
-                <TableColumn className="w-[100px] text-right">UNIT COST</TableColumn>
-                <TableColumn className="min-w-[120px]">LOCATION</TableColumn>
-                <TableColumn className="w-[100px]">STATUS</TableColumn>
-                <TableColumn className="w-[70px]">ACTIONS</TableColumn>
+                <TableColumn className="relative" style={itemCols.style('code')}>{<SortHeader label="Code" column="code" sort={itemSort} onSort={(column) => setItemSort((prev) => toggleColumnSort(prev, column))} />}{itemCols.sizer('code', 'Code')}</TableColumn>
+                <TableColumn className="relative" style={itemCols.style('item')}>{<SortHeader label="Item" column="item" sort={itemSort} onSort={(column) => setItemSort((prev) => toggleColumnSort(prev, column))} />}{itemCols.sizer('item', 'Item')}</TableColumn>
+                <TableColumn className="relative" style={itemCols.style('category')}>{<SortHeader label="Category" column="category" sort={itemSort} onSort={(column) => setItemSort((prev) => toggleColumnSort(prev, column))} />}{itemCols.sizer('category', 'Category')}</TableColumn>
+                <TableColumn className="relative" style={itemCols.style('unit')}>{<SortHeader label="Unit" column="unit" sort={itemSort} onSort={(column) => setItemSort((prev) => toggleColumnSort(prev, column))} />}{itemCols.sizer('unit', 'Unit')}</TableColumn>
+                <TableColumn className="relative" style={itemCols.style('onHand')}>{<SortHeader label="On hand" column="onHand" sort={itemSort} onSort={(column) => setItemSort((prev) => toggleColumnSort(prev, column))} align="right" />}{itemCols.sizer('onHand', 'On hand')}</TableColumn>
+                <TableColumn className="relative" style={itemCols.style('reorder')}>{<SortHeader label="Reorder" column="reorder" sort={itemSort} onSort={(column) => setItemSort((prev) => toggleColumnSort(prev, column))} align="right" />}{itemCols.sizer('reorder', 'Reorder')}</TableColumn>
+                <TableColumn className="relative" style={itemCols.style('unitCost')}>{<SortHeader label="Unit cost" column="unitCost" sort={itemSort} onSort={(column) => setItemSort((prev) => toggleColumnSort(prev, column))} align="right" />}{itemCols.sizer('unitCost', 'Unit cost')}</TableColumn>
+                <TableColumn className="relative" style={itemCols.style('location')}>{<SortHeader label="Location" column="location" sort={itemSort} onSort={(column) => setItemSort((prev) => toggleColumnSort(prev, column))} />}{itemCols.sizer('location', 'Location')}</TableColumn>
+                <TableColumn className="relative" style={itemCols.style('status')}>{<SortHeader label="Status" column="status" sort={itemSort} onSort={(column) => setItemSort((prev) => toggleColumnSort(prev, column))} />}{itemCols.sizer('status', 'Status')}</TableColumn>
             </TableHeader>
               <TableBody emptyContent="No stock items found.">
                 {paginatedItems.map((item) => {
@@ -734,17 +897,21 @@ export default function InventorySupplyChainDashboard({
                     stockColor === 'warning' ? 'text-orange-600' :
                     'text-green-600';
                   return (
-                <TableRow key={item.id}>
+                <TableRow
+                  key={item.id}
+                  className="cursor-pointer hover:bg-gray-50"
+                  onClick={() => handleViewItem(item)}
+                >
                       <TableCell>
-                        <span className="font-mono text-sm font-semibold text-blue-700 whitespace-nowrap" title={item.itemCode}>
+                        <span className="text-gray-600 whitespace-nowrap" title={item.itemCode}>
                           {item.itemCode}
                         </span>
                       </TableCell>
                       <TableCell>
                         <div className="min-w-0 max-w-[260px]">
-                          <div className="font-semibold text-ghana-black truncate" title={item.name}>{item.name}</div>
+                          <p className="font-medium text-ghana-black truncate" title={item.name}>{item.name}</p>
                           {item.description ? (
-                            <div className="text-xs text-gray-500 truncate" title={item.description}>{item.description}</div>
+                            <p className="text-xs text-gray-500 truncate" title={item.description}>{item.description}</p>
                           ) : null}
                         </div>
                       </TableCell>
@@ -806,34 +973,21 @@ export default function InventorySupplyChainDashboard({
                         )}
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <Tooltip content="Review — then edit or delete">
-                      <Button
-                        size="sm"
-                        variant="flat"
-                        color="primary"
-                        onClick={() => handleViewItem(item)}
-                      >
-                        👁️
-                      </Button>
-                    </Tooltip>
-                  </TableCell>
                 </TableRow>
                   );
                 })}
             </TableBody>
           </Table>
-            
-            {pages > 1 && (
-              <div className="flex justify-center mt-4">
-                <Pagination 
-                  total={pages} 
-                  page={page} 
-                  onChange={setPage}
-                  showControls
-                />
-              </div>
-            )}
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Pagination
+                total={pages}
+                page={pageSafe}
+                onChange={setPage}
+                showControls
+                size="sm"
+              />
+            </div>
           </CardBody>
       </Card>
     </div>
@@ -893,7 +1047,7 @@ export default function InventorySupplyChainDashboard({
           setSelectedTab('supplier-invoices');
         } else {
           setSelectedTab('stock-operations');
-          setStockOpSubTab(op);
+          setStockOpSubTab(op === 'grn-management' ? 'goods-receipt' : op);
         }
       }
     };
@@ -1029,11 +1183,39 @@ export default function InventorySupplyChainDashboard({
     });
   }, [mergedSuppliers, supplierSearchTerm, supplierFilterStatus, supplierFilterCategory, supplierFilterPaymentTerms]);
 
-  const supplierPages = Math.ceil(filteredSuppliers.length / supplierRowsPerPage);
+  const sortedSuppliers = useMemo(() => {
+    const dir = supplierSort.direction === 'asc' ? 1 : -1;
+    return [...filteredSuppliers].sort((a, b) => {
+      switch (supplierSort.column) {
+        case 'supplier':
+          return a.name.localeCompare(b.name) * dir;
+        case 'contact':
+          return (a.contactPerson || '').localeCompare(b.contactPerson || '') * dir;
+        case 'address':
+          return (a.address || a.city || '').localeCompare(b.address || b.city || '') * dir;
+        case 'supplies':
+          return (a.categories?.join(',') || '').localeCompare(b.categories?.join(',') || '') * dir;
+        case 'terms':
+          return (a.paymentTerms || '').localeCompare(b.paymentTerms || '') * dir;
+        case 'status':
+          return (Number(a.isActive) - Number(b.isActive)) * dir;
+        case 'code':
+        default:
+          return a.code.localeCompare(b.code) * dir;
+      }
+    });
+  }, [filteredSuppliers, supplierSort]);
+
+  const supplierPages = Math.max(1, Math.ceil(sortedSuppliers.length / supplierRowsPerPage));
+  const supplierPageSafe = Math.min(supplierPage, supplierPages);
   const paginatedSuppliers = useMemo(() => {
-    const start = (supplierPage - 1) * supplierRowsPerPage;
-    return filteredSuppliers.slice(start, start + supplierRowsPerPage);
-  }, [filteredSuppliers, supplierPage]);
+    const start = (supplierPageSafe - 1) * supplierRowsPerPage;
+    return sortedSuppliers.slice(start, start + supplierRowsPerPage);
+  }, [sortedSuppliers, supplierPageSafe]);
+
+  useEffect(() => {
+    setSupplierPage(1);
+  }, [supplierSearchTerm, supplierFilterStatus, supplierFilterCategory, supplierFilterPaymentTerms, supplierSort.column, supplierSort.direction]);
 
   // Supplier handlers
   const handleAddSupplier = () => {
@@ -1541,11 +1723,40 @@ export default function InventorySupplyChainDashboard({
     });
   }, [supplierStorePurchaseOrders, poSearchTerm, poFilterStatus]);
 
-  const poPages = Math.ceil(filteredPOs.length / poRowsPerPage);
+  const sortedPOs = useMemo(() => {
+    const dir = poSort.direction === 'asc' ? 1 : -1;
+    const ms = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
+    return [...filteredPOs].sort((a, b) => {
+      switch (poSort.column) {
+        case 'supplier':
+          return a.supplierName.localeCompare(b.supplierName) * dir;
+        case 'orderDate':
+          return (ms(a.orderDate) - ms(b.orderDate)) * dir;
+        case 'expected':
+          return (ms(a.expectedDeliveryDate) - ms(b.expectedDeliveryDate)) * dir;
+        case 'priority':
+          return a.priority.localeCompare(b.priority) * dir;
+        case 'amount':
+          return ((a.finalAmount || 0) - (b.finalAmount || 0)) * dir;
+        case 'status':
+          return a.status.localeCompare(b.status) * dir;
+        case 'number':
+        default:
+          return a.poNumber.localeCompare(b.poNumber) * dir;
+      }
+    });
+  }, [filteredPOs, poSort]);
+
+  const poPages = Math.max(1, Math.ceil(sortedPOs.length / poRowsPerPage));
+  const poPageSafe = Math.min(poPage, poPages);
   const paginatedPOs = useMemo(() => {
-    const start = (poPage - 1) * poRowsPerPage;
-    return filteredPOs.slice(start, start + poRowsPerPage);
-  }, [filteredPOs, poPage]);
+    const start = (poPageSafe - 1) * poRowsPerPage;
+    return sortedPOs.slice(start, start + poRowsPerPage);
+  }, [sortedPOs, poPageSafe]);
+
+  useEffect(() => {
+    setPOPage(1);
+  }, [poSearchTerm, poFilterStatus, poSort.column, poSort.direction]);
 
   // Requisition handlers — uses the real configured numbering sequence (Settings → Document
   // Numbering → Inventory → Requisition) instead of `array.length + 1`, which reused an
@@ -1805,11 +2016,40 @@ export default function InventorySupplyChainDashboard({
     });
   }, [supplierStoreRequisitions, requisitionSearchTerm, requisitionFilterStatus]);
 
-  const requisitionPages = Math.ceil(filteredRequisitions.length / requisitionRowsPerPage);
+  const sortedRequisitions = useMemo(() => {
+    const dir = requisitionSort.direction === 'asc' ? 1 : -1;
+    const ms = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
+    return [...filteredRequisitions].sort((a, b) => {
+      const amountA = a.requestedItems.reduce((sum, item) => sum + item.totalCost, 0);
+      const amountB = b.requestedItems.reduce((sum, item) => sum + item.totalCost, 0);
+      switch (requisitionSort.column) {
+        case 'requestedBy':
+          return a.requestedBy.localeCompare(b.requestedBy) * dir;
+        case 'date':
+          return (ms(a.requestedDate) - ms(b.requestedDate)) * dir;
+        case 'items':
+          return (a.requestedItems.length - b.requestedItems.length) * dir;
+        case 'amount':
+          return (amountA - amountB) * dir;
+        case 'status':
+          return a.status.localeCompare(b.status) * dir;
+        case 'number':
+        default:
+          return a.requisitionNumber.localeCompare(b.requisitionNumber) * dir;
+      }
+    });
+  }, [filteredRequisitions, requisitionSort]);
+
+  const requisitionPages = Math.max(1, Math.ceil(sortedRequisitions.length / requisitionRowsPerPage));
+  const requisitionPageSafe = Math.min(requisitionPage, requisitionPages);
   const paginatedRequisitions = useMemo(() => {
-    const start = (requisitionPage - 1) * requisitionRowsPerPage;
-    return filteredRequisitions.slice(start, start + requisitionRowsPerPage);
-  }, [filteredRequisitions, requisitionPage]);
+    const start = (requisitionPageSafe - 1) * requisitionRowsPerPage;
+    return sortedRequisitions.slice(start, start + requisitionRowsPerPage);
+  }, [sortedRequisitions, requisitionPageSafe]);
+
+  useEffect(() => {
+    setRequisitionPage(1);
+  }, [requisitionSearchTerm, requisitionFilterStatus, requisitionSort.column, requisitionSort.direction]);
 
   const handleDeleteSupplier = (supplierId: string) => {
     if (confirm('Are you sure you want to delete this supplier? This will also remove it from accounting.')) {
@@ -1880,7 +2120,7 @@ export default function InventorySupplyChainDashboard({
         </Card>
 
         {/* Main Table */}
-        <Card className="border-0 shadow-lg">
+        <Card className={deskTableCardClassName}>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between w-full">
               <h3 className="text-xl font-semibold text-ghana-black">🤝 Suppliers</h3>
@@ -1895,24 +2135,28 @@ export default function InventorySupplyChainDashboard({
               </Button>
             </div>
           </CardHeader>
-          <CardBody>
-            <Table aria-label="Suppliers table">
+          <CardBody className={deskTableCardBodyClassName}>
+            <div ref={supplierCols.frameRef} style={supplierCols.frameStyle}>
+            <Table aria-label="Suppliers table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
               <TableHeader>
-                <TableColumn>CODE</TableColumn>
-                <TableColumn>SUPPLIER</TableColumn>
-                <TableColumn>CONTACT</TableColumn>
-                <TableColumn>ADDRESS</TableColumn>
-                <TableColumn>SUPPLIES</TableColumn>
-                <TableColumn>TERMS</TableColumn>
-                <TableColumn>STATUS</TableColumn>
-                <TableColumn>ACTIONS</TableColumn>
+                <TableColumn className="relative" style={supplierCols.style('code')}>{<SortHeader label="Code" column="code" sort={supplierSort} onSort={(column) => setSupplierSort((prev) => toggleColumnSort(prev, column))} />}{supplierCols.sizer('code', 'Code')}</TableColumn>
+                <TableColumn className="relative" style={supplierCols.style('supplier')}>{<SortHeader label="Supplier" column="supplier" sort={supplierSort} onSort={(column) => setSupplierSort((prev) => toggleColumnSort(prev, column))} />}{supplierCols.sizer('supplier', 'Supplier')}</TableColumn>
+                <TableColumn className="relative" style={supplierCols.style('contact')}>{<SortHeader label="Contact" column="contact" sort={supplierSort} onSort={(column) => setSupplierSort((prev) => toggleColumnSort(prev, column))} />}{supplierCols.sizer('contact', 'Contact')}</TableColumn>
+                <TableColumn className="relative" style={supplierCols.style('address')}>{<SortHeader label="Address" column="address" sort={supplierSort} onSort={(column) => setSupplierSort((prev) => toggleColumnSort(prev, column))} />}{supplierCols.sizer('address', 'Address')}</TableColumn>
+                <TableColumn className="relative" style={supplierCols.style('supplies')}>{<SortHeader label="Supplies" column="supplies" sort={supplierSort} onSort={(column) => setSupplierSort((prev) => toggleColumnSort(prev, column))} />}{supplierCols.sizer('supplies', 'Supplies')}</TableColumn>
+                <TableColumn className="relative" style={supplierCols.style('terms')}>{<SortHeader label="Terms" column="terms" sort={supplierSort} onSort={(column) => setSupplierSort((prev) => toggleColumnSort(prev, column))} />}{supplierCols.sizer('terms', 'Terms')}</TableColumn>
+                <TableColumn className="relative" style={supplierCols.style('status')}>{<SortHeader label="Status" column="status" sort={supplierSort} onSort={(column) => setSupplierSort((prev) => toggleColumnSort(prev, column))} />}{supplierCols.sizer('status', 'Status')}</TableColumn>
               </TableHeader>
               <TableBody emptyContent="No suppliers found.">
                 {paginatedSuppliers.map((supplier) => (
-                  <TableRow key={supplier.id}>
+                  <TableRow
+                    key={supplier.id}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => handleViewSupplier(supplier)}
+                  >
                     <TableCell>
                       <div className="flex items-center gap-2">
-                        <span className="font-mono font-semibold text-blue-700">{supplier.code}</span>
+                        <span className="text-gray-600 whitespace-nowrap">{supplier.code}</span>
                         {accountingSuppliers.some(bp => bp.id === supplier.id || bp.code === supplier.code) && (
                           <Tooltip content="Linked to Accounting">
                             <Badge color="success" size="sm" variant="flat">💼</Badge>
@@ -1921,14 +2165,14 @@ export default function InventorySupplyChainDashboard({
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="font-semibold text-ghana-black">{supplier.name}</div>
+                      <div className="font-medium text-ghana-black truncate" title={supplier.name}>{supplier.name}</div>
                       {supplier.email && (
                         <div className="text-xs text-gray-500 truncate max-w-[160px]">{supplier.email}</div>
                       )}
                     </TableCell>
                     <TableCell>
-                      <div className="text-sm font-medium">{supplier.contactPerson || '—'}</div>
-                      <div className="text-xs text-gray-500">{supplier.phone || supplier.email || ''}</div>
+                      <div className="text-sm font-medium truncate">{supplier.contactPerson || '—'}</div>
+                      <div className="text-xs text-gray-500 truncate">{supplier.phone || supplier.email || ''}</div>
                     </TableCell>
                     <TableCell>
                       <div className="text-sm max-w-[180px]">
@@ -1980,55 +2224,20 @@ export default function InventorySupplyChainDashboard({
                         {supplier.isActive ? 'Active' : 'Inactive'}
                       </Badge>
                     </TableCell>
-                    <TableCell>
-                      <div className="flex gap-2">
-                        <Tooltip content="View Details">
-                          <Button
-                            size="sm"
-                            variant="flat"
-                            color="primary"
-                            onClick={() => handleViewSupplier(supplier)}
-                          >
-                            👁️
-                          </Button>
-                        </Tooltip>
-                        <Tooltip content="Edit">
-                          <Button
-                            size="sm"
-                            variant="flat"
-                            color="warning"
-                            onClick={() => handleEditSupplier(supplier)}
-                          >
-                            ✏️
-                          </Button>
-                        </Tooltip>
-                        <Tooltip content="Delete">
-                          <Button
-                            size="sm"
-                            variant="flat"
-                            color="danger"
-                            onClick={() => handleDeleteSupplier(supplier.id)}
-                          >
-                            🗑️
-                          </Button>
-                        </Tooltip>
-                      </div>
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-            
-            {supplierPages > 1 && (
-              <div className="flex justify-center mt-4">
-                <Pagination 
-                  total={supplierPages} 
-                  page={supplierPage} 
-                  onChange={setSupplierPage}
-                  showControls
-                />
-              </div>
-            )}
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Pagination
+                total={supplierPages}
+                page={supplierPageSafe}
+                onChange={setSupplierPage}
+                showControls
+                size="sm"
+              />
+            </div>
           </CardBody>
         </Card>
       </div>
@@ -2037,7 +2246,7 @@ export default function InventorySupplyChainDashboard({
 
   const renderPurchaseOrders = () => (
     <div className="space-y-6">
-      <Card className="border-0 shadow-lg">
+      <Card className={deskTableCardClassName}>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between w-full">
             <h3 className="text-xl font-semibold text-ghana-black">📋 Purchase Orders</h3>
@@ -2051,7 +2260,7 @@ export default function InventorySupplyChainDashboard({
             </Button>
           </div>
         </CardHeader>
-        <CardBody>
+        <CardBody className={deskTableCardBodyClassName}>
           {/* Filters and Search */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <Input
@@ -2077,16 +2286,16 @@ export default function InventorySupplyChainDashboard({
             </Select>
           </div>
 
-          <Table aria-label="Purchase orders table" classNames={{ table: "min-w-[900px]", th: "whitespace-nowrap" }}>
+          <div ref={poCols.frameRef} style={poCols.frameStyle}>
+          <Table aria-label="Purchase orders table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
             <TableHeader>
-              <TableColumn className="w-[130px]">PO Number</TableColumn>
-              <TableColumn className="min-w-[160px]">Supplier</TableColumn>
-              <TableColumn className="w-[110px]">Order Date</TableColumn>
-              <TableColumn className="w-[120px]">Expected</TableColumn>
-              <TableColumn className="w-[90px]">Priority</TableColumn>
-              <TableColumn className="w-[130px] text-right">Amount</TableColumn>
-              <TableColumn className="w-[110px]">Status</TableColumn>
-              <TableColumn className="w-[70px]">Actions</TableColumn>
+              <TableColumn className="relative" style={poCols.style('number')}>{<SortHeader label="PO Number" column="number" sort={poSort} onSort={(column) => setPOSort((prev) => toggleColumnSort(prev, column))} />}{poCols.sizer('number', 'PO Number')}</TableColumn>
+              <TableColumn className="relative" style={poCols.style('supplier')}>{<SortHeader label="Supplier" column="supplier" sort={poSort} onSort={(column) => setPOSort((prev) => toggleColumnSort(prev, column))} />}{poCols.sizer('supplier', 'Supplier')}</TableColumn>
+              <TableColumn className="relative" style={poCols.style('orderDate')}>{<SortHeader label="Order Date" column="orderDate" sort={poSort} onSort={(column) => setPOSort((prev) => toggleColumnSort(prev, column))} />}{poCols.sizer('orderDate', 'Order Date')}</TableColumn>
+              <TableColumn className="relative" style={poCols.style('expected')}>{<SortHeader label="Expected" column="expected" sort={poSort} onSort={(column) => setPOSort((prev) => toggleColumnSort(prev, column))} />}{poCols.sizer('expected', 'Expected')}</TableColumn>
+              <TableColumn className="relative" style={poCols.style('priority')}>{<SortHeader label="Priority" column="priority" sort={poSort} onSort={(column) => setPOSort((prev) => toggleColumnSort(prev, column))} />}{poCols.sizer('priority', 'Priority')}</TableColumn>
+              <TableColumn className="relative" style={poCols.style('amount')}>{<SortHeader label="Amount" column="amount" sort={poSort} onSort={(column) => setPOSort((prev) => toggleColumnSort(prev, column))} align="right" />}{poCols.sizer('amount', 'Amount')}</TableColumn>
+              <TableColumn className="relative" style={poCols.style('status')}>{<SortHeader label="Status" column="status" sort={poSort} onSort={(column) => setPOSort((prev) => toggleColumnSort(prev, column))} />}{poCols.sizer('status', 'Status')}</TableColumn>
             </TableHeader>
             <TableBody emptyContent="No purchase orders found.">
               {paginatedPOs.map((po) => {
@@ -2113,9 +2322,13 @@ export default function InventorySupplyChainDashboard({
                 };
 
                 return (
-                  <TableRow key={po.id}>
+                  <TableRow
+                    key={po.id}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => handleViewPO(po)}
+                  >
                     <TableCell>
-                      <span className="font-mono text-sm font-semibold whitespace-nowrap">{po.poNumber}</span>
+                      <span className="text-gray-600 whitespace-nowrap">{po.poNumber}</span>
                     </TableCell>
                     <TableCell>
                       <div className="font-semibold truncate max-w-[200px]" title={po.supplierName}>{po.supplierName}</div>
@@ -2143,34 +2356,22 @@ export default function InventorySupplyChainDashboard({
                         {po.status.replace('-', ' ')}
                       </Badge>
                     </TableCell>
-                    <TableCell>
-                      <Tooltip content="Review — then send, confirm, or edit">
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          color="primary"
-                          onPress={() => handleViewPO(po)}
-                        >
-                          👁️
-                        </Button>
-                      </Tooltip>
-                    </TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
           </Table>
+          </div>
 
-          {poPages > 1 && (
-            <div className="flex justify-center mt-4">
-              <Pagination
-                total={poPages}
-                page={poPage}
-                onChange={setPOPage}
-                showControls
-              />
-            </div>
-          )}
+          <div className="mt-3 flex justify-end">
+            <Pagination
+              total={poPages}
+              page={poPageSafe}
+              onChange={setPOPage}
+              showControls
+              size="sm"
+            />
+          </div>
         </CardBody>
       </Card>
     </div>
@@ -2178,7 +2379,7 @@ export default function InventorySupplyChainDashboard({
 
   const renderRequisitions = () => (
     <div className="space-y-6">
-      <Card className="border-0 shadow-lg">
+      <Card className={deskTableCardClassName}>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between w-full">
             <h3 className="text-xl font-semibold text-ghana-black">📝 Requisitions</h3>
@@ -2192,7 +2393,7 @@ export default function InventorySupplyChainDashboard({
             </Button>
           </div>
         </CardHeader>
-        <CardBody>
+        <CardBody className={deskTableCardBodyClassName}>
           {/* Filters and Search */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
             <Input
@@ -2217,15 +2418,15 @@ export default function InventorySupplyChainDashboard({
             </Select>
           </div>
 
-          <Table aria-label="Requisitions table">
+          <div ref={requisitionCols.frameRef} style={requisitionCols.frameStyle}>
+          <Table aria-label="Requisitions table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
             <TableHeader>
-              <TableColumn>Req Number</TableColumn>
-              <TableColumn>Requested By</TableColumn>
-              <TableColumn>Requested Date</TableColumn>
-              <TableColumn>Items Count</TableColumn>
-              <TableColumn className="text-right">Total Amount</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              <TableColumn className="relative" style={requisitionCols.style('number')}>{<SortHeader label="Req Number" column="number" sort={requisitionSort} onSort={(column) => setRequisitionSort((prev) => toggleColumnSort(prev, column))} />}{requisitionCols.sizer('number', 'Req Number')}</TableColumn>
+              <TableColumn className="relative" style={requisitionCols.style('requestedBy')}>{<SortHeader label="Requested By" column="requestedBy" sort={requisitionSort} onSort={(column) => setRequisitionSort((prev) => toggleColumnSort(prev, column))} />}{requisitionCols.sizer('requestedBy', 'Requested By')}</TableColumn>
+              <TableColumn className="relative" style={requisitionCols.style('date')}>{<SortHeader label="Requested Date" column="date" sort={requisitionSort} onSort={(column) => setRequisitionSort((prev) => toggleColumnSort(prev, column))} />}{requisitionCols.sizer('date', 'Requested Date')}</TableColumn>
+              <TableColumn className="relative" style={requisitionCols.style('items')}>{<SortHeader label="Items" column="items" sort={requisitionSort} onSort={(column) => setRequisitionSort((prev) => toggleColumnSort(prev, column))} align="right" />}{requisitionCols.sizer('items', 'Items')}</TableColumn>
+              <TableColumn className="relative" style={requisitionCols.style('amount')}>{<SortHeader label="Total Amount" column="amount" sort={requisitionSort} onSort={(column) => setRequisitionSort((prev) => toggleColumnSort(prev, column))} align="right" />}{requisitionCols.sizer('amount', 'Total Amount')}</TableColumn>
+              <TableColumn className="relative" style={requisitionCols.style('status')}>{<SortHeader label="Status" column="status" sort={requisitionSort} onSort={(column) => setRequisitionSort((prev) => toggleColumnSort(prev, column))} />}{requisitionCols.sizer('status', 'Status')}</TableColumn>
             </TableHeader>
             <TableBody emptyContent="No requisitions found.">
               {paginatedRequisitions.map((req) => {
@@ -2243,61 +2444,51 @@ export default function InventorySupplyChainDashboard({
                 const totalAmount = req.requestedItems.reduce((sum, item) => sum + item.totalCost, 0);
 
                 return (
-                  <TableRow key={req.id}>
-                    <TableCell className="font-mono font-semibold">{req.requisitionNumber}</TableCell>
-                    <TableCell className="font-semibold">{req.requestedBy}</TableCell>
-                    <TableCell>
+                  <TableRow
+                    key={req.id}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => handleViewRequisition(req)}
+                  >
+                    <TableCell className="text-gray-600 whitespace-nowrap">{req.requisitionNumber}</TableCell>
+                    <TableCell className="font-semibold truncate" title={req.requestedBy}>{req.requestedBy}</TableCell>
+                    <TableCell className="whitespace-nowrap">
                       {req.requestedDate instanceof Date 
                         ? req.requestedDate.toLocaleDateString()
                         : new Date(req.requestedDate).toLocaleDateString()}
                     </TableCell>
-                    <TableCell>{req.requestedItems.length} items</TableCell>
-                    <TableCell className="text-right font-semibold">
+                    <TableCell>
+                      <span className="block text-right tabular-nums">{req.requestedItems.length}</span>
+                    </TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums whitespace-nowrap">
                       ₵{totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </TableCell>
                     <TableCell>
-                      <Badge color={getStatusColor(req.status)} size="sm">
+                      <Badge color={getStatusColor(req.status)} size="sm" className="capitalize">
                         {req.status.replace('-', ' ')}
                       </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Tooltip content="Review — then approve, reject, or edit">
-                        <Button 
-                          size="sm" 
-                          variant="flat" 
-                          color="primary"
-                          onPress={() => handleViewRequisition(req)}
-                        >
-                          👁️
-                        </Button>
-                      </Tooltip>
                     </TableCell>
                   </TableRow>
                 );
               })}
             </TableBody>
           </Table>
+          </div>
 
-          {requisitionPages > 1 && (
-            <div className="flex justify-center mt-4">
-              <Pagination
-                total={requisitionPages}
-                page={requisitionPage}
-                onChange={setRequisitionPage}
-                showControls
-              />
-            </div>
-          )}
+          <div className="mt-3 flex justify-end">
+            <Pagination
+              total={requisitionPages}
+              page={requisitionPageSafe}
+              onChange={setRequisitionPage}
+              showControls
+              size="sm"
+            />
+          </div>
         </CardBody>
       </Card>
     </div>
   );
 
-  // GRN Management State
-  const [grnSearchTerm, setGRNSearchTerm] = useState('');
-  const [grnFilterStatus, setGRNFilterStatus] = useState<string>('all');
-  const [grnPage, setGRNPage] = useState(1);
-  const grnRowsPerPage = 10;
+  // GRN view / QC (opened from Goods Receipt flow — no separate list tab)
   const { isOpen: isGRNViewOpen, onOpen: onGRNViewOpen, onClose: onGRNViewClose } = useDisclosure();
   const { isOpen: isQualityCheckOpen, onOpen: onQualityCheckOpen, onClose: onQualityCheckClose } = useDisclosure();
   const [viewingGRN, setViewingGRN] = useState<GoodsReceiptNote | null>(null);
@@ -2308,7 +2499,7 @@ export default function InventorySupplyChainDashboard({
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invoiceFilterStatus, setInvoiceFilterStatus] = useState<string>('all');
   const [invoicePage, setInvoicePage] = useState(1);
-  const invoiceRowsPerPage = 10;
+  const invoiceRowsPerPage = DESK_PAGE_SIZE;
   const { isOpen: isInvoiceModalOpen, onOpen: onInvoiceModalOpen, onClose: onInvoiceModalClose } = useDisclosure();
   const { isOpen: isInvoiceViewOpen, onOpen: onInvoiceViewOpen, onClose: onInvoiceViewClose } = useDisclosure();
   const { isOpen: isThreeWayMatchOpen, onOpen: onThreeWayMatchOpen, onClose: onThreeWayMatchClose } = useDisclosure();
@@ -2556,11 +2747,18 @@ export default function InventorySupplyChainDashboard({
       notes: `Received goods for PO ${selectedPOForReceipt.poNumber}`
     });
 
+    const updatedPoItems = po.items.map((poItem) => {
+      const receiptItem = itemsToReceive.find((r) => r.itemId === poItem.itemId);
+      if (!receiptItem || receiptItem.receiveNow <= 0) return poItem;
+      return {
+        ...poItem,
+        receivedQuantity: (poItem.receivedQuantity || 0) + receiptItem.receiveNow,
+      };
+    });
+
     itemsToReceive.forEach((receiptItem) => {
-      const poItem = po.items.find((i) => i.itemId === receiptItem.itemId);
-      if (!poItem || receiptItem.receiveNow <= 0) return;
+      if (receiptItem.receiveNow <= 0) return;
       const additionalQty = receiptItem.receiveNow;
-      poItem.receivedQuantity = (poItem.receivedQuantity || 0) + additionalQty;
 
       updateStockLevel(receiptItem.itemId, additionalQty, 'add', receiptItem.unitCost);
 
@@ -2583,14 +2781,18 @@ export default function InventorySupplyChainDashboard({
       });
     });
 
-    const allReceived = po.items.every((item) => (item.receivedQuantity || 0) >= item.quantity);
-    if (allReceived) {
-      updatePurchaseOrder(po.id, { status: 'delivered', actualDeliveryDate: new Date() });
-    } else {
-      updatePurchaseOrder(po.id, { status: 'in-transit' });
-    }
+    const allReceived = updatedPoItems.every((item) => (item.receivedQuantity || 0) >= item.quantity);
+    updatePurchaseOrder(po.id, {
+      items: updatedPoItems,
+      status: allReceived ? 'delivered' : 'in-transit',
+      ...(allReceived ? { actualDeliveryDate: new Date() } : {}),
+    });
 
     onGoodsReceiptClose();
+    // Open GRN details so QC can run immediately — without this the PO leaves the
+    // receivable list and there is no inbox to resume quality check.
+    setViewingGRN(grn);
+    onGRNViewOpen();
     trackEvent('Stores.Issued', { action: 'goods_receipt', poNumber: selectedPOForReceipt.poNumber, grnNumber: grn.grnNumber });
   };
 
@@ -2968,9 +3170,52 @@ export default function InventorySupplyChainDashboard({
     trackEvent('Stores.Issued', { action: editingStockCount ? 'update_stock_count' : 'create_stock_count', countNumber: countData.countNumber });
   };
 
-  const handleCompleteStockCount = (count: StockCount) => {
+  const handleCompleteStockCount = async (count: StockCount) => {
     if (!count.items || count.items.length === 0) {
       alert('No items counted');
+      return;
+    }
+
+    // count.location can be a granular sub-location (e.g. "Kitchen Fridge"),
+    // not just the 3 canonical department names in DEPARTMENT_LOCATIONS, so
+    // resolve via the real StockLocation record's department field first —
+    // matching by name alone against those 3 entries missed every specific
+    // fridge/store location and silently fell back to the legacy path.
+    const masterLoc = masterLocations.find((l) => l.name === count.location);
+    const deptEntry = (masterLoc?.department && DEPARTMENT_LOCATIONS[masterLoc.department])
+      ? [masterLoc.department, DEPARTMENT_LOCATIONS[masterLoc.department]] as const
+      : Object.entries(DEPARTMENT_LOCATIONS).find(([, loc]) => loc.name === count.location);
+
+    if (deptEntry) {
+      try {
+        const res = await fetch('/api/inventory/stock-counts/complete', {
+          method: 'POST',
+          headers: inventoryHeaders(),
+          body: JSON.stringify({
+            id: count.id,
+            department: deptEntry[0],
+            performedBy: count.performedBy || currentUserName,
+          }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.error || 'Could not complete count');
+          return;
+        }
+        const updatedCount: StockCount = {
+          ...count,
+          status: 'completed',
+          endDate: new Date(),
+          varianceItems: count.items.filter((i) => i.variance !== 0).length,
+          varianceValue: count.items.reduce((sum, i) => sum + Math.abs(i.varianceValue), 0),
+          updatedAt: new Date(),
+        };
+        upsertStockCount(updatedCount);
+        setViewingStockCount(updatedCount);
+        trackEvent('Stores.Issued', { action: 'complete_stock_count', countNumber: count.countNumber });
+      } catch {
+        alert('Could not complete count');
+      }
       return;
     }
 
@@ -3019,127 +3264,137 @@ export default function InventorySupplyChainDashboard({
     trackEvent('Stores.Issued', { action: 'complete_stock_count', countNumber: count.countNumber });
   };
 
-  // Get unique locations from stock items
+  const handlePrintStockCount = (count: StockCount) => {
+    const esc = (s: unknown) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const money = (n: number) => `₵${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const fmtDate = (d: Date | string | undefined) => {
+      if (!d) return '—';
+      const val = d instanceof Date ? d : new Date(d);
+      return val.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    };
+    const company = settings.companySettings;
+    const companyName = company?.tradingName || company?.legalName || settings.tenant?.name || 'Hotel';
+
+    const html = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Stock Count ${esc(count.countNumber)}</title>
+          <style>
+            body { font-family: Arial, Helvetica, sans-serif; color: #1a1a1a; padding: 32px 40px; font-size: 13px; }
+            h1 { margin: 0 0 4px; font-size: 22px; }
+            .meta { color: #555; margin-bottom: 20px; }
+            .meta span { margin-right: 16px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+            th { background: #1a1a1a; color: #fff; text-align: left; padding: 8px 10px; font-size: 12px; }
+            td { padding: 8px 10px; border-bottom: 1px solid #eee; }
+            th:nth-child(n+3), td:nth-child(n+3) { text-align: right; }
+            .totals { margin-top: 16px; display: flex; justify-content: flex-end; }
+            .totals table td { border: none; padding: 4px 8px; }
+            .neg { color: #b91c1c; }
+            .pos { color: #15803d; }
+          </style>
+        </head>
+        <body>
+          <h1>Stock Count</h1>
+          <div class="meta">
+            <div><strong>${esc(companyName)}</strong></div>
+            <span>#${esc(count.countNumber)}</span>
+            <span>${esc(count.countType)}</span>
+            <span>${esc(count.location)}</span>
+            <span>${esc(count.status)}</span>
+            <span>Started ${esc(fmtDate(count.startDate))}</span>
+            ${count.endDate ? `<span>Ended ${esc(fmtDate(count.endDate))}</span>` : ''}
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Item</th>
+                <th>Expected</th>
+                <th>Counted</th>
+                <th>Variance</th>
+                <th>Variance Value</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${count.items.map((item) => `
+                <tr>
+                  <td>${esc(item.itemCode)}</td>
+                  <td>${esc(item.itemName)}</td>
+                  <td>${esc(item.expectedQuantity)}</td>
+                  <td>${esc(item.countedQuantity)}</td>
+                  <td class="${item.variance < 0 ? 'neg' : item.variance > 0 ? 'pos' : ''}">${item.variance > 0 ? '+' : ''}${esc(item.variance)}</td>
+                  <td>${money(Math.abs(item.varianceValue))}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+          <div class="totals">
+            <table>
+              <tr><td>Total items</td><td>${esc(count.totalItems)}</td></tr>
+              <tr><td>Variance lines</td><td>${esc(count.varianceItems)}</td></tr>
+              <tr><td>Stock value</td><td>${money(count.totalValue)}</td></tr>
+              <tr><td><strong>Variance value</strong></td><td><strong>${money(count.varianceValue)}</strong></td></tr>
+            </table>
+          </div>
+          ${count.notes ? `<p style="margin-top:24px;color:#555"><strong>Notes:</strong> ${esc(count.notes)}</p>` : ''}
+        </body>
+      </html>
+    `;
+    openHtmlPrintWindow(html);
+    trackEvent('Stores.Issued', { action: 'print_stock_count', countNumber: count.countNumber });
+  };
+
+  const handleEditStockCountFromView = (count: StockCount) => {
+    onStockCountViewClose();
+    setEditingStockCount(count);
+    setStockCountFormData({ ...count, items: count.items });
+    onStockCountOpen();
+  };
+
+  const handleVoidStockCount = (count: StockCount) => {
+    if (count.status === 'completed') {
+      alert('Completed counts cannot be voided — stock was already adjusted.');
+      return;
+    }
+    if (count.status === 'cancelled') return;
+    if (!confirm(`Void stock count ${count.countNumber}? It will be marked cancelled.`)) return;
+    const updated: StockCount = {
+      ...count,
+      status: 'cancelled',
+      endDate: new Date(),
+      updatedAt: new Date(),
+    };
+    upsertStockCount(updated);
+    setViewingStockCount(updated);
+    trackEvent('Stores.Issued', { action: 'void_stock_count', countNumber: count.countNumber });
+  };
+
+  const handleDeleteStockCount = (count: StockCount) => {
+    if (count.status === 'completed') {
+      alert('Completed counts cannot be deleted — stock was already adjusted.');
+      return;
+    }
+    if (!confirm(`Delete stock count ${count.countNumber}? This cannot be undone.`)) return;
+    deleteStockCount(count.id);
+    setViewingStockCount(null);
+    onStockCountViewClose();
+    trackEvent('Stores.Issued', { action: 'delete_stock_count', countNumber: count.countNumber });
+  };
+
+  // Locations come from Settings → Stock Locations (seeded defaults + hotel edits).
   const availableLocations = useMemo(() => {
+    const fromMaster = masterLocations.map((loc) => loc.name);
+    if (fromMaster.length > 0) return fromMaster;
     const locSet = new Set<string>();
-    stockItems.forEach(item => {
+    stockItems.forEach((item) => {
       if (item.location) locSet.add(item.location);
     });
     return Array.from(locSet);
-  }, [stockItems]);
+  }, [masterLocations, stockItems]);
 
   const departments = ['Kitchen', 'Restaurant & Bar', 'Housekeeping', 'Maintenance', 'Front Office', 'Accounting', 'Other'];
-
-  // Render GRN Management Function
-  const renderGRNManagement = () => {
-    const filteredGRNs = goodsReceiptNotes.filter((grn) => {
-      const matchesSearch = grnSearchTerm === '' ||
-        grn.grnNumber.toLowerCase().includes(grnSearchTerm.toLowerCase()) ||
-        grn.poNumber.toLowerCase().includes(grnSearchTerm.toLowerCase()) ||
-        grn.supplierName.toLowerCase().includes(grnSearchTerm.toLowerCase());
-      const matchesStatus = grnFilterStatus === 'all' || grn.status === grnFilterStatus;
-      return matchesSearch && matchesStatus;
-    });
-
-    return (
-      <div className="space-y-6">
-        <Card className="border-0 shadow-lg">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between w-full">
-              <div>
-                <h3 className="text-xl font-semibold text-ghana-black">📋 GRN & Quality</h3>
-                <p className="text-sm text-gray-500">Review receipts, run QC, then approve — actions in View</p>
-              </div>
-              <Badge color="primary" variant="flat">{filteredGRNs.length} GRNs</Badge>
-            </div>
-          </CardHeader>
-          <CardBody>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              <Input
-                placeholder="Search GRN, PO, or supplier..."
-                value={grnSearchTerm}
-                onChange={(e) => setGRNSearchTerm(e.target.value)}
-                startContent={<span className="text-gray-400">🔍</span>}
-                className="md:col-span-2"
-              />
-              <Select
-                placeholder="Filter by Status"
-                selectedKeys={[grnFilterStatus]}
-                onSelectionChange={(keys) => setGRNFilterStatus(Array.from(keys)[0] as string)}
-              >
-                <SelectItem key="all">All Status</SelectItem>
-                <SelectItem key="pending">Pending QC</SelectItem>
-                <SelectItem key="quality-check">Ready to Approve</SelectItem>
-                <SelectItem key="approved">Approved</SelectItem>
-                <SelectItem key="rejected">Rejected</SelectItem>
-                <SelectItem key="completed">Completed</SelectItem>
-              </Select>
-            </div>
-
-            <Table aria-label="Goods receipt notes" classNames={{ th: 'whitespace-nowrap' }}>
-              <TableHeader>
-                <TableColumn className="w-[130px]">GRN #</TableColumn>
-                <TableColumn className="w-[120px]">PO #</TableColumn>
-                <TableColumn>Supplier</TableColumn>
-                <TableColumn className="w-[110px]">Date</TableColumn>
-                <TableColumn className="w-[70px]">Lines</TableColumn>
-                <TableColumn className="w-[120px] text-right">Value</TableColumn>
-                <TableColumn className="w-[110px]">Status</TableColumn>
-                <TableColumn className="w-[70px]">Actions</TableColumn>
-              </TableHeader>
-              <TableBody emptyContent="No GRNs yet. Receive goods from a PO first.">
-                {filteredGRNs.map((grn: GoodsReceiptNote) => (
-                  <TableRow key={grn.id}>
-                    <TableCell>
-                      <span className="font-mono text-sm font-semibold whitespace-nowrap">{grn.grnNumber}</span>
-                    </TableCell>
-                    <TableCell className="font-mono text-sm whitespace-nowrap">{grn.poNumber}</TableCell>
-                    <TableCell className="truncate max-w-[160px]" title={grn.supplierName}>{grn.supplierName}</TableCell>
-                    <TableCell className="whitespace-nowrap">
-                      {grn.receiptDate instanceof Date ? grn.receiptDate.toLocaleDateString() : new Date(grn.receiptDate).toLocaleDateString()}
-                    </TableCell>
-                    <TableCell>{grn.totalItems}</TableCell>
-                    <TableCell className="text-right tabular-nums font-semibold whitespace-nowrap">
-                      ₵{grn.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        color={
-                          grn.status === 'completed' || grn.status === 'approved' ? 'success' :
-                          grn.status === 'quality-check' ? 'primary' :
-                          grn.status === 'rejected' ? 'danger' : 'warning'
-                        }
-                        size="sm"
-                        variant="flat"
-                        className="capitalize"
-                      >
-                        {grn.status === 'quality-check' ? 'QC done' : grn.status.replace('-', ' ')}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Tooltip content="Review — then QC / approve">
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          color="primary"
-                          onPress={() => {
-                            setViewingGRN(grn);
-                            onGRNViewOpen();
-                          }}
-                        >
-                          👁️
-                        </Button>
-                      </Tooltip>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardBody>
-        </Card>
-      </div>
-    );
-  };
 
   // Render Invoice Management Function
   const renderInvoiceManagement = () => {
@@ -3151,13 +3406,32 @@ export default function InventorySupplyChainDashboard({
       const matchesStatus = invoiceFilterStatus === 'all' || inv.status === invoiceFilterStatus;
       return matchesSearch && matchesStatus;
     });
-
-    const totalInvoicePages = Math.ceil(filteredInvoices.length / invoiceRowsPerPage);
-    const paginatedInvoices = filteredInvoices.slice((invoicePage - 1) * invoiceRowsPerPage, invoicePage * invoiceRowsPerPage);
+    const dir = invoiceSort.direction === 'asc' ? 1 : -1;
+    const ms = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
+    const sorted = [...filteredInvoices].sort((a, b) => {
+      switch (invoiceSort.column) {
+        case 'po': return a.poNumber.localeCompare(b.poNumber) * dir;
+        case 'grn': return (a.grnNumber || '').localeCompare(b.grnNumber || '') * dir;
+        case 'supplier': return a.supplierName.localeCompare(b.supplierName) * dir;
+        case 'date': return (ms(a.invoiceDate) - ms(b.invoiceDate)) * dir;
+        case 'amount': return (a.totalAmount - b.totalAmount) * dir;
+        case 'matching': {
+          const ma = a.matchingStatus.isQuantityMatched && a.matchingStatus.isPriceMatched && a.matchingStatus.isTermsMatched ? 2 : a.status === 'matched' ? 1 : 0;
+          const mb = b.matchingStatus.isQuantityMatched && b.matchingStatus.isPriceMatched && b.matchingStatus.isTermsMatched ? 2 : b.status === 'matched' ? 1 : 0;
+          return (ma - mb) * dir;
+        }
+        case 'status': return a.status.localeCompare(b.status) * dir;
+        case 'number':
+        default: return a.invoiceNumber.localeCompare(b.invoiceNumber) * dir;
+      }
+    });
+    const totalInvoicePages = Math.max(1, Math.ceil(sorted.length / invoiceRowsPerPage));
+    const invoicePageSafe = Math.min(invoicePage, totalInvoicePages);
+    const paginatedInvoices = sorted.slice((invoicePageSafe - 1) * invoiceRowsPerPage, invoicePageSafe * invoiceRowsPerPage);
 
     return (
       <div className="space-y-6">
-        <Card className="border-0 shadow-lg">
+        <Card className={deskTableCardClassName}>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between w-full">
               <h3 className="text-xl font-semibold text-ghana-black">🧾 Supplier Invoices</h3>
@@ -3180,19 +3454,19 @@ export default function InventorySupplyChainDashboard({
               </div>
             </div>
           </CardHeader>
-          <CardBody>
+          <CardBody className={deskTableCardBodyClassName}>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <Input
                 placeholder="Search invoice, PO number or supplier..."
                 value={invoiceSearchTerm}
-                onChange={(e) => setInvoiceSearchTerm(e.target.value)}
+                onChange={(e) => { setInvoiceSearchTerm(e.target.value); setInvoicePage(1); }}
                 startContent={<span className="text-gray-400">🔍</span>}
                 className="md:col-span-2"
               />
               <Select
                 placeholder="Filter by Status"
                 selectedKeys={[invoiceFilterStatus]}
-                onSelectionChange={(keys) => setInvoiceFilterStatus(Array.from(keys)[0] as string)}
+                onSelectionChange={(keys) => { setInvoiceFilterStatus(Array.from(keys)[0] as string); setInvoicePage(1); }}
               >
                 <SelectItem key="all">All Status</SelectItem>
                 <SelectItem key="pending">Pending</SelectItem>
@@ -3204,27 +3478,34 @@ export default function InventorySupplyChainDashboard({
               </Select>
             </div>
 
-            <Table>
+            <div ref={invoiceCols.frameRef} style={invoiceCols.frameStyle}>
+            <Table aria-label="Supplier invoices" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
               <TableHeader>
-                <TableColumn>Invoice #</TableColumn>
-                <TableColumn>PO Number</TableColumn>
-                <TableColumn>GRN Number</TableColumn>
-                <TableColumn>Supplier</TableColumn>
-                <TableColumn>Invoice Date</TableColumn>
-                <TableColumn>Total Amount</TableColumn>
-                <TableColumn>Matching</TableColumn>
-                <TableColumn>Status</TableColumn>
-                <TableColumn>Actions</TableColumn>
+                <TableColumn className="relative" style={invoiceCols.style('number')}>{<SortHeader label="Invoice #" column="number" sort={invoiceSort} onSort={(column) => setInvoiceSort((prev) => toggleColumnSort(prev, column))} />}{invoiceCols.sizer('number', 'Invoice #')}</TableColumn>
+                <TableColumn className="relative" style={invoiceCols.style('po')}>{<SortHeader label="PO #" column="po" sort={invoiceSort} onSort={(column) => setInvoiceSort((prev) => toggleColumnSort(prev, column))} />}{invoiceCols.sizer('po', 'PO #')}</TableColumn>
+                <TableColumn className="relative" style={invoiceCols.style('grn')}>{<SortHeader label="GRN #" column="grn" sort={invoiceSort} onSort={(column) => setInvoiceSort((prev) => toggleColumnSort(prev, column))} />}{invoiceCols.sizer('grn', 'GRN #')}</TableColumn>
+                <TableColumn className="relative" style={invoiceCols.style('supplier')}>{<SortHeader label="Supplier" column="supplier" sort={invoiceSort} onSort={(column) => setInvoiceSort((prev) => toggleColumnSort(prev, column))} />}{invoiceCols.sizer('supplier', 'Supplier')}</TableColumn>
+                <TableColumn className="relative" style={invoiceCols.style('date')}>{<SortHeader label="Date" column="date" sort={invoiceSort} onSort={(column) => setInvoiceSort((prev) => toggleColumnSort(prev, column))} />}{invoiceCols.sizer('date', 'Date')}</TableColumn>
+                <TableColumn className="relative" style={invoiceCols.style('amount')}>{<SortHeader label="Amount" column="amount" sort={invoiceSort} onSort={(column) => setInvoiceSort((prev) => toggleColumnSort(prev, column))} align="right" />}{invoiceCols.sizer('amount', 'Amount')}</TableColumn>
+                <TableColumn className="relative" style={invoiceCols.style('matching')}>{<SortHeader label="Matching" column="matching" sort={invoiceSort} onSort={(column) => setInvoiceSort((prev) => toggleColumnSort(prev, column))} />}{invoiceCols.sizer('matching', 'Matching')}</TableColumn>
+                <TableColumn className="relative" style={invoiceCols.style('status')}>{<SortHeader label="Status" column="status" sort={invoiceSort} onSort={(column) => setInvoiceSort((prev) => toggleColumnSort(prev, column))} />}{invoiceCols.sizer('status', 'Status')}</TableColumn>
               </TableHeader>
               <TableBody emptyContent="No invoices found.">
                 {paginatedInvoices.map((inv: SupplierInvoice) => (
-                  <TableRow key={inv.id}>
-                    <TableCell className="font-mono font-semibold">{inv.invoiceNumber}</TableCell>
-                    <TableCell className="font-mono">{inv.poNumber}</TableCell>
-                    <TableCell className="font-mono">{inv.grnNumber || 'N/A'}</TableCell>
-                    <TableCell>{inv.supplierName}</TableCell>
-                    <TableCell>{inv.invoiceDate instanceof Date ? inv.invoiceDate.toLocaleDateString() : new Date(inv.invoiceDate).toLocaleDateString()}</TableCell>
-                    <TableCell className="font-semibold">₵{inv.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
+                  <TableRow
+                    key={inv.id}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => {
+                      setViewingInvoice(inv);
+                      onInvoiceViewOpen();
+                    }}
+                  >
+                    <TableCell className="text-gray-600 whitespace-nowrap">{inv.invoiceNumber}</TableCell>
+                    <TableCell className="font-mono whitespace-nowrap">{inv.poNumber}</TableCell>
+                    <TableCell className="font-mono whitespace-nowrap">{inv.grnNumber || '—'}</TableCell>
+                    <TableCell className="truncate max-w-[160px]" title={inv.supplierName}>{inv.supplierName}</TableCell>
+                    <TableCell className="whitespace-nowrap">{inv.invoiceDate instanceof Date ? inv.invoiceDate.toLocaleDateString() : new Date(inv.invoiceDate).toLocaleDateString()}</TableCell>
+                    <TableCell className="text-right font-semibold tabular-nums whitespace-nowrap">₵{inv.totalAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</TableCell>
                     <TableCell>
                       {inv.matchingStatus.isQuantityMatched && inv.matchingStatus.isPriceMatched && inv.matchingStatus.isTermsMatched ? (
                         <Badge color="success" variant="flat">✓ Matched</Badge>
@@ -3243,111 +3524,26 @@ export default function InventorySupplyChainDashboard({
                           inv.status === 'rejected' || inv.status === 'cancelled' ? 'danger' : 'default'
                         } 
                         variant="flat"
+                        className="capitalize"
                       >
                         {inv.status}
                       </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex gap-2">
-                        <Tooltip content="View Details">
-                          <Button 
-                            size="sm" 
-                            variant="flat" 
-                            color="primary"
-                            onPress={() => {
-                              setViewingInvoice(inv);
-                              onInvoiceViewOpen();
-                            }}
-                          >
-                            👁️
-                          </Button>
-                        </Tooltip>
-                        {inv.status === 'pending' && (
-                          <Tooltip content="3-Way Match">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="warning"
-                              onPress={() => {
-                                setViewingInvoice(inv);
-                                onThreeWayMatchOpen();
-                              }}
-                            >
-                              🔗 Match
-                            </Button>
-                          </Tooltip>
-                        )}
-                        {inv.status === 'matched' && (
-                          <>
-                            <Tooltip content="Approve Invoice">
-                              <Button 
-                                size="sm" 
-                                variant="flat" 
-                                color="success"
-                                onPress={() => {
-                                  if (confirm('Approve this invoice for payment?')) {
-                                    approveInvoice(inv.id, currentUserName);
-                                    trackEvent('Stores.Issued', { action: 'approve_invoice', invoiceNumber: inv.invoiceNumber });
-                                  }
-                                }}
-                              >
-                                ✓
-                              </Button>
-                            </Tooltip>
-                            <Tooltip content="Reject Invoice">
-                              <Button 
-                                size="sm" 
-                                variant="flat" 
-                                color="danger"
-                                onPress={() => {
-                                  const reason = prompt('Enter rejection reason:');
-                                  if (reason) {
-                                    rejectInvoice(inv.id, currentUserName, reason);
-                                    trackEvent('Stores.Issued', { action: 'reject_invoice', invoiceNumber: inv.invoiceNumber });
-                                  }
-                                }}
-                              >
-                                ✗
-                              </Button>
-                            </Tooltip>
-                          </>
-                        )}
-                        {inv.status === 'approved' && (
-                          <Tooltip content="Mark as Paid">
-                            <Button 
-                              size="sm" 
-                              variant="flat" 
-                              color="success"
-                              onPress={() => {
-                                const method = prompt('Enter payment method (e.g., Bank Transfer, Check, Cash):');
-                                const ref = prompt('Enter payment reference:');
-                                if (method && ref) {
-                                  markInvoicePaid(inv.id, currentUserName, method, ref);
-                                  trackEvent('Stores.Issued', { action: 'mark_invoice_paid', invoiceNumber: inv.invoiceNumber });
-                                }
-                              }}
-                            >
-                              💰 Pay
-                            </Button>
-                          </Tooltip>
-                        )}
-                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            </div>
 
-            {totalInvoicePages > 1 && (
-              <div className="flex justify-center mt-4">
-                <Pagination
-                  total={totalInvoicePages}
-                  page={invoicePage}
-                  onChange={setInvoicePage}
-                  showControls
-                />
-              </div>
-            )}
+            <div className="mt-3 flex justify-end">
+              <Pagination
+                total={totalInvoicePages}
+                page={invoicePageSafe}
+                onChange={setInvoicePage}
+                showControls
+                size="sm"
+              />
+            </div>
           </CardBody>
         </Card>
       </div>
@@ -3356,65 +3552,106 @@ export default function InventorySupplyChainDashboard({
 
   // Render Stock Operations Function — receive + recon only
   const renderStockOperations = () => {
+    const activeOpTab = stockOpSubTab === 'grn-management' ? 'goods-receipt' : stockOpSubTab;
     // Get POs ready for receipt (confirmed or in-transit)
     const posForReceipt = supplierStorePurchaseOrders.filter(po => 
       po.status === 'confirmed' || po.status === 'in-transit'
     );
+    const receiptFiltered = posForReceipt.filter((po) =>
+      po.poNumber.toLowerCase().includes(poSearchTerm.toLowerCase()) ||
+      po.supplierName.toLowerCase().includes(poSearchTerm.toLowerCase())
+    );
+    const receiptDir = receiptSort.direction === 'asc' ? 1 : -1;
+    const receiptMs = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
+    const receiptSorted = [...receiptFiltered].sort((a, b) => {
+      switch (receiptSort.column) {
+        case 'supplier': return a.supplierName.localeCompare(b.supplierName) * receiptDir;
+        case 'ordered': return (receiptMs(a.orderDate) - receiptMs(b.orderDate)) * receiptDir;
+        case 'expected': return (receiptMs(a.expectedDeliveryDate) - receiptMs(b.expectedDeliveryDate)) * receiptDir;
+        case 'lines': return (a.items.length - b.items.length) * receiptDir;
+        case 'status': return a.status.localeCompare(b.status) * receiptDir;
+        case 'number':
+        default: return a.poNumber.localeCompare(b.poNumber) * receiptDir;
+      }
+    });
+    const receiptPages = Math.max(1, Math.ceil(receiptSorted.length / DESK_PAGE_SIZE));
+    const receiptPageSafe = Math.min(receiptPage, receiptPages);
+    const receiptPaged = receiptSorted.slice((receiptPageSafe - 1) * DESK_PAGE_SIZE, receiptPageSafe * DESK_PAGE_SIZE);
+
+    const countFiltered = stockCounts.filter((c) =>
+      (stockCountSearchTerm === '' ||
+        c.countNumber.toLowerCase().includes(stockCountSearchTerm.toLowerCase()) ||
+        c.location.toLowerCase().includes(stockCountSearchTerm.toLowerCase())) &&
+      (stockCountFilterStatus === 'all' || c.status === stockCountFilterStatus)
+    );
+    const countDir = countSort.direction === 'asc' ? 1 : -1;
+    const countMs = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
+    const countSorted = [...countFiltered].sort((a, b) => {
+      switch (countSort.column) {
+        case 'type': return a.countType.localeCompare(b.countType) * countDir;
+        case 'location': return a.location.localeCompare(b.location) * countDir;
+        case 'started': return (countMs(a.startDate) - countMs(b.startDate)) * countDir;
+        case 'lines': return (a.items.length - b.items.length) * countDir;
+        case 'variance': return (a.varianceItems - b.varianceItems) * countDir;
+        case 'status': return a.status.localeCompare(b.status) * countDir;
+        case 'number':
+        default: return a.countNumber.localeCompare(b.countNumber) * countDir;
+      }
+    });
+    const countPages = Math.max(1, Math.ceil(countSorted.length / DESK_PAGE_SIZE));
+    const countPageSafe = Math.min(countPage, countPages);
+    const countPaged = countSorted.slice((countPageSafe - 1) * DESK_PAGE_SIZE, countPageSafe * DESK_PAGE_SIZE);
 
     return (
       <div className="space-y-6">
         <Tabs
-          selectedKey={stockOpSubTab}
+          selectedKey={activeOpTab}
           onSelectionChange={(key) => setStockOpSubTab(key as string)}
         >
           <Tab key="goods-receipt" title="📥 Goods Receipt" />
-          <Tab key="grn-management" title="📋 GRN & Quality" />
           <Tab key="stock-counts" title="🔍 Stock Count" />
         </Tabs>
 
-        {stockOpSubTab === 'grn-management' && renderGRNManagement()}
-
-        {stockOpSubTab === 'goods-receipt' && (
+        {activeOpTab === 'goods-receipt' && (
           <div className="space-y-6">
-            <Card className="border-0 shadow-lg">
+            <Card className={deskTableCardClassName}>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between w-full">
                   <div>
                     <h3 className="text-xl font-semibold text-ghana-black">📥 Goods Receipt</h3>
-                    <p className="text-sm text-gray-500">Receive against confirmed / in-transit POs — creates a GRN</p>
+                    <p className="text-sm text-gray-500">Receive against confirmed / in-transit POs — QC follows in the receipt view</p>
                   </div>
                   <Badge color="primary" variant="flat">{posForReceipt.length} ready</Badge>
                 </div>
               </CardHeader>
-              <CardBody>
+              <CardBody className={deskTableCardBodyClassName}>
                 <div className="mb-6">
                   <Input
                     placeholder="Search PO # or supplier..."
                     value={poSearchTerm}
-                    onChange={(e) => setPOSearchTerm(e.target.value)}
+                    onChange={(e) => { setPOSearchTerm(e.target.value); setReceiptPage(1); }}
                     startContent={<span className="text-gray-400">🔍</span>}
                   />
                 </div>
-                <Table aria-label="POs ready for receipt" classNames={{ th: 'whitespace-nowrap' }}>
+                <div ref={receiptCols.frameRef} style={receiptCols.frameStyle}>
+                <Table aria-label="POs ready for receipt" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
                   <TableHeader>
-                    <TableColumn className="w-[130px]">PO #</TableColumn>
-                    <TableColumn>Supplier</TableColumn>
-                    <TableColumn className="w-[110px]">Ordered</TableColumn>
-                    <TableColumn className="w-[110px]">Expected</TableColumn>
-                    <TableColumn className="w-[70px]">Lines</TableColumn>
-                    <TableColumn className="w-[100px]">Status</TableColumn>
-                    <TableColumn className="w-[70px]">Actions</TableColumn>
+                    <TableColumn className="relative" style={receiptCols.style('number')}>{<SortHeader label="PO #" column="number" sort={receiptSort} onSort={(column) => setReceiptSort((prev) => toggleColumnSort(prev, column))} />}{receiptCols.sizer('number', 'PO #')}</TableColumn>
+                    <TableColumn className="relative" style={receiptCols.style('supplier')}>{<SortHeader label="Supplier" column="supplier" sort={receiptSort} onSort={(column) => setReceiptSort((prev) => toggleColumnSort(prev, column))} />}{receiptCols.sizer('supplier', 'Supplier')}</TableColumn>
+                    <TableColumn className="relative" style={receiptCols.style('ordered')}>{<SortHeader label="Ordered" column="ordered" sort={receiptSort} onSort={(column) => setReceiptSort((prev) => toggleColumnSort(prev, column))} />}{receiptCols.sizer('ordered', 'Ordered')}</TableColumn>
+                    <TableColumn className="relative" style={receiptCols.style('expected')}>{<SortHeader label="Expected" column="expected" sort={receiptSort} onSort={(column) => setReceiptSort((prev) => toggleColumnSort(prev, column))} />}{receiptCols.sizer('expected', 'Expected')}</TableColumn>
+                    <TableColumn className="relative" style={receiptCols.style('lines')}>{<SortHeader label="Lines" column="lines" sort={receiptSort} onSort={(column) => setReceiptSort((prev) => toggleColumnSort(prev, column))} align="right" />}{receiptCols.sizer('lines', 'Lines')}</TableColumn>
+                    <TableColumn className="relative" style={receiptCols.style('status')}>{<SortHeader label="Status" column="status" sort={receiptSort} onSort={(column) => setReceiptSort((prev) => toggleColumnSort(prev, column))} />}{receiptCols.sizer('status', 'Status')}</TableColumn>
                   </TableHeader>
                   <TableBody emptyContent="No POs ready. Confirm a purchase order first.">
-                    {posForReceipt
-                      .filter((po) =>
-                        po.poNumber.toLowerCase().includes(poSearchTerm.toLowerCase()) ||
-                        po.supplierName.toLowerCase().includes(poSearchTerm.toLowerCase())
-                      )
-                      .map((po) => (
-                        <TableRow key={po.id}>
+                    {receiptPaged.map((po) => (
+                        <TableRow
+                          key={po.id}
+                          className="cursor-pointer hover:bg-gray-50"
+                          onClick={() => handleOpenGoodsReceipt(po)}
+                        >
                           <TableCell>
-                            <span className="font-mono text-sm font-semibold whitespace-nowrap">{po.poNumber}</span>
+                            <span className="text-gray-600 whitespace-nowrap">{po.poNumber}</span>
                           </TableCell>
                           <TableCell className="truncate max-w-[160px]" title={po.supplierName}>{po.supplierName}</TableCell>
                           <TableCell className="whitespace-nowrap">
@@ -3423,60 +3660,119 @@ export default function InventorySupplyChainDashboard({
                           <TableCell className="whitespace-nowrap">
                             {po.expectedDeliveryDate instanceof Date ? po.expectedDeliveryDate.toLocaleDateString() : new Date(po.expectedDeliveryDate).toLocaleDateString()}
                           </TableCell>
-                          <TableCell>{po.items.length}</TableCell>
+                          <TableCell>
+                            <span className="block text-right tabular-nums">{po.items.length}</span>
+                          </TableCell>
                           <TableCell>
                             <Badge color={po.status === 'confirmed' ? 'warning' : 'primary'} size="sm" variant="flat" className="capitalize">
                               {po.status}
                             </Badge>
                           </TableCell>
-                          <TableCell>
-                            <Tooltip content="Receive this shipment">
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="success"
-                                className="bg-ghana-green text-white"
-                                onPress={() => handleOpenGoodsReceipt(po)}
-                              >
-                                📥
-                              </Button>
-                            </Tooltip>
-                          </TableCell>
                         </TableRow>
                       ))}
                   </TableBody>
                 </Table>
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination page={receiptPageSafe} total={receiptPages} onChange={setReceiptPage} showControls size="sm" />
+                </div>
               </CardBody>
             </Card>
+
+            {(() => {
+              const pendingGrns = goodsReceiptNotes
+                .filter((g) => g.status === 'pending' || g.status === 'quality-check')
+                .sort((a, b) => {
+                  const ta = a.receiptDate instanceof Date ? a.receiptDate.getTime() : new Date(a.receiptDate).getTime();
+                  const tb = b.receiptDate instanceof Date ? b.receiptDate.getTime() : new Date(b.receiptDate).getTime();
+                  return tb - ta;
+                });
+              if (pendingGrns.length === 0) return null;
+              return (
+                <Card className={deskTableCardClassName}>
+                  <CardHeader className="pb-3">
+                    <div>
+                      <h3 className="text-lg font-semibold text-ghana-black">Awaiting QC / Approve</h3>
+                      <p className="text-sm text-gray-500">Receipts created — finish quality check, then approve</p>
+                    </div>
+                  </CardHeader>
+                  <CardBody className={deskTableCardBodyClassName}>
+                    <Table aria-label="GRNs awaiting QC" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
+                      <TableHeader>
+                        <TableColumn>GRN</TableColumn>
+                        <TableColumn>PO</TableColumn>
+                        <TableColumn>Supplier</TableColumn>
+                        <TableColumn>Received</TableColumn>
+                        <TableColumn>Status</TableColumn>
+                      </TableHeader>
+                      <TableBody>
+                        {pendingGrns.map((grn) => (
+                          <TableRow
+                            key={grn.id}
+                            className="cursor-pointer hover:bg-gray-50"
+                            onClick={() => {
+                              setViewingGRN(grn);
+                              onGRNViewOpen();
+                            }}
+                          >
+                            <TableCell>
+                              <span className="text-gray-600 whitespace-nowrap font-mono">{grn.grnNumber}</span>
+                            </TableCell>
+                            <TableCell className="font-mono whitespace-nowrap">{grn.poNumber}</TableCell>
+                            <TableCell className="truncate max-w-[160px]" title={grn.supplierName}>{grn.supplierName}</TableCell>
+                            <TableCell className="whitespace-nowrap">
+                              {grn.receiptDate instanceof Date
+                                ? grn.receiptDate.toLocaleDateString()
+                                : new Date(grn.receiptDate).toLocaleDateString()}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                color={grn.status === 'quality-check' ? 'primary' : 'warning'}
+                                size="sm"
+                                variant="flat"
+                                className="capitalize"
+                              >
+                                {grn.status.replace('-', ' ')}
+                              </Badge>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardBody>
+                </Card>
+              );
+            })()}
           </div>
         )}
 
-        {stockOpSubTab === 'stock-counts' && (
+        {activeOpTab === 'stock-counts' && (
           <div className="space-y-6">
-            <Card className="border-0 shadow-lg">
+            <Card className={deskTableCardClassName}>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between w-full">
                   <div>
                     <h3 className="text-xl font-semibold text-ghana-black">🔍 Stock Count</h3>
-                    <p className="text-sm text-gray-500">Physical vs book — post variances on Complete</p>
                   </div>
-                  <Button color="primary" className="bg-ghana-gold text-white" variant="flat" onPress={handleAddStockCount}>
-                    + New Count
-                  </Button>
+                  {canRunStockCount && (
+                    <Button color="primary" className="bg-ghana-gold text-white" variant="flat" onPress={handleAddStockCount}>
+                      + New Count
+                    </Button>
+                  )}
                 </div>
               </CardHeader>
-              <CardBody>
+              <CardBody className={deskTableCardBodyClassName}>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                   <Input
                     placeholder="Search count # or location..."
                     value={stockCountSearchTerm}
-                    onChange={(e) => setStockCountSearchTerm(e.target.value)}
+                    onChange={(e) => { setStockCountSearchTerm(e.target.value); setCountPage(1); }}
                     startContent={<span className="text-gray-400">🔍</span>}
                     className="md:col-span-2"
                   />
                   <Select
                     selectedKeys={[stockCountFilterStatus]}
-                    onSelectionChange={(keys) => setStockCountFilterStatus(Array.from(keys)[0] as string)}
+                    onSelectionChange={(keys) => { setStockCountFilterStatus(Array.from(keys)[0] as string); setCountPage(1); }}
                   >
                     <SelectItem key="all">All Status</SelectItem>
                     <SelectItem key="planned">Planned</SelectItem>
@@ -3485,29 +3781,29 @@ export default function InventorySupplyChainDashboard({
                     <SelectItem key="cancelled">Cancelled</SelectItem>
                   </Select>
                 </div>
-                <Table aria-label="Stock counts" classNames={{ th: 'whitespace-nowrap' }}>
+                <div ref={countCols.frameRef} style={countCols.frameStyle}>
+                <Table aria-label="Stock counts" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
                   <TableHeader>
-                    <TableColumn className="w-[130px]">Count #</TableColumn>
-                    <TableColumn className="w-[90px]">Type</TableColumn>
-                    <TableColumn>Location</TableColumn>
-                    <TableColumn className="w-[110px]">Started</TableColumn>
-                    <TableColumn className="w-[70px]">Lines</TableColumn>
-                    <TableColumn className="w-[70px]">Δ</TableColumn>
-                    <TableColumn className="w-[110px]">Status</TableColumn>
-                    <TableColumn className="w-[70px]">Actions</TableColumn>
+                    <TableColumn className="relative" style={countCols.style('number')}>{<SortHeader label="Count #" column="number" sort={countSort} onSort={(column) => setCountSort((prev) => toggleColumnSort(prev, column))} />}{countCols.sizer('number', 'Count #')}</TableColumn>
+                    <TableColumn className="relative" style={countCols.style('type')}>{<SortHeader label="Type" column="type" sort={countSort} onSort={(column) => setCountSort((prev) => toggleColumnSort(prev, column))} />}{countCols.sizer('type', 'Type')}</TableColumn>
+                    <TableColumn className="relative" style={countCols.style('location')}>{<SortHeader label="Location" column="location" sort={countSort} onSort={(column) => setCountSort((prev) => toggleColumnSort(prev, column))} />}{countCols.sizer('location', 'Location')}</TableColumn>
+                    <TableColumn className="relative" style={countCols.style('started')}>{<SortHeader label="Started" column="started" sort={countSort} onSort={(column) => setCountSort((prev) => toggleColumnSort(prev, column))} />}{countCols.sizer('started', 'Started')}</TableColumn>
+                    <TableColumn className="relative" style={countCols.style('lines')}>{<SortHeader label="Lines" column="lines" sort={countSort} onSort={(column) => setCountSort((prev) => toggleColumnSort(prev, column))} align="right" />}{countCols.sizer('lines', 'Lines')}</TableColumn>
+                    <TableColumn className="relative" style={countCols.style('variance')}>{<SortHeader label="Δ" column="variance" sort={countSort} onSort={(column) => setCountSort((prev) => toggleColumnSort(prev, column))} align="right" />}{countCols.sizer('variance', 'Variance')}</TableColumn>
+                    <TableColumn className="relative" style={countCols.style('status')}>{<SortHeader label="Status" column="status" sort={countSort} onSort={(column) => setCountSort((prev) => toggleColumnSort(prev, column))} />}{countCols.sizer('status', 'Status')}</TableColumn>
                   </TableHeader>
                   <TableBody emptyContent="No counts yet. Create one to reconcile a location.">
-                    {stockCounts
-                      .filter((c) =>
-                        (stockCountSearchTerm === '' ||
-                          c.countNumber.toLowerCase().includes(stockCountSearchTerm.toLowerCase()) ||
-                          c.location.toLowerCase().includes(stockCountSearchTerm.toLowerCase())) &&
-                        (stockCountFilterStatus === 'all' || c.status === stockCountFilterStatus)
-                      )
-                      .map((count) => (
-                        <TableRow key={count.id}>
+                    {countPaged.map((count) => (
+                        <TableRow
+                          key={count.id}
+                          className="cursor-pointer hover:bg-gray-50"
+                          onClick={() => {
+                            setViewingStockCount(count);
+                            onStockCountViewOpen();
+                          }}
+                        >
                           <TableCell>
-                            <span className="font-mono text-sm font-semibold whitespace-nowrap">{count.countNumber}</span>
+                            <span className="text-gray-600 whitespace-nowrap">{count.countNumber}</span>
                           </TableCell>
                           <TableCell>
                             <Chip size="sm" variant="flat" className="capitalize">{count.countType}</Chip>
@@ -3516,9 +3812,11 @@ export default function InventorySupplyChainDashboard({
                           <TableCell className="whitespace-nowrap">
                             {count.startDate instanceof Date ? count.startDate.toLocaleDateString() : new Date(count.startDate).toLocaleDateString()}
                           </TableCell>
-                          <TableCell>{count.items.length}</TableCell>
+                          <TableCell>
+                            <span className="block text-right tabular-nums">{count.items.length}</span>
+                          </TableCell>
                           <TableCell className={count.varianceItems > 0 ? 'font-semibold text-orange-600' : ''}>
-                            {count.varianceItems}
+                            <span className="block text-right tabular-nums">{count.varianceItems}</span>
                           </TableCell>
                           <TableCell>
                             <Badge
@@ -3534,25 +3832,14 @@ export default function InventorySupplyChainDashboard({
                               {count.status}
                             </Badge>
                           </TableCell>
-                          <TableCell>
-                            <Tooltip content="Review — then edit or complete">
-                              <Button
-                                size="sm"
-                                variant="flat"
-                                color="primary"
-                                onPress={() => {
-                                  setViewingStockCount(count);
-                                  onStockCountViewOpen();
-                                }}
-                              >
-                                👁️
-                              </Button>
-                            </Tooltip>
-                          </TableCell>
                         </TableRow>
                       ))}
                   </TableBody>
                 </Table>
+                </div>
+                <div className="mt-3 flex justify-end">
+                  <Pagination page={countPageSafe} total={countPages} onChange={setCountPage} showControls size="sm" />
+                </div>
               </CardBody>
             </Card>
           </div>
@@ -3569,10 +3856,26 @@ export default function InventorySupplyChainDashboard({
         t.toLocation.toLowerCase().includes(stockTransferSearchTerm.toLowerCase())) &&
       (stockTransferFilterStatus === 'all' || t.status === stockTransferFilterStatus)
     );
+    const dir = transferSort.direction === 'asc' ? 1 : -1;
+    const ms = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
+    const sorted = [...filtered].sort((a, b) => {
+      switch (transferSort.column) {
+        case 'from': return a.fromLocation.localeCompare(b.fromLocation) * dir;
+        case 'to': return a.toLocation.localeCompare(b.toLocation) * dir;
+        case 'date': return (ms(a.transferDate) - ms(b.transferDate)) * dir;
+        case 'items': return (a.items.length - b.items.length) * dir;
+        case 'status': return a.status.localeCompare(b.status) * dir;
+        case 'number':
+        default: return a.transferNumber.localeCompare(b.transferNumber) * dir;
+      }
+    });
+    const pages = Math.max(1, Math.ceil(sorted.length / DESK_PAGE_SIZE));
+    const pageSafe = Math.min(transferPage, pages);
+    const paged = sorted.slice((pageSafe - 1) * DESK_PAGE_SIZE, pageSafe * DESK_PAGE_SIZE);
 
     return (
       <div className="space-y-6">
-        <Card className="border-0 shadow-lg">
+        <Card className={deskTableCardClassName}>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between w-full">
               <div>
@@ -3584,19 +3887,19 @@ export default function InventorySupplyChainDashboard({
               </Button>
             </div>
           </CardHeader>
-          <CardBody>
+          <CardBody className={deskTableCardBodyClassName}>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
               <Input
                 placeholder="Search transfer # or location..."
                 value={stockTransferSearchTerm}
-                onChange={(e) => setStockTransferSearchTerm(e.target.value)}
+                onChange={(e) => { setStockTransferSearchTerm(e.target.value); setTransferPage(1); }}
                 startContent={<span className="text-gray-400">🔍</span>}
                 className="md:col-span-2"
               />
               <Select
                 placeholder="Filter by Status"
                 selectedKeys={[stockTransferFilterStatus]}
-                onSelectionChange={(keys) => setStockTransferFilterStatus(Array.from(keys)[0] as string)}
+                onSelectionChange={(keys) => { setStockTransferFilterStatus(Array.from(keys)[0] as string); setTransferPage(1); }}
               >
                 <SelectItem key="all">All Status</SelectItem>
                 <SelectItem key="pending">Pending</SelectItem>
@@ -3605,28 +3908,37 @@ export default function InventorySupplyChainDashboard({
                 <SelectItem key="cancelled">Cancelled</SelectItem>
               </Select>
             </div>
-            <Table aria-label="Stock transfers" classNames={{ th: "whitespace-nowrap" }}>
+            <div ref={transferCols.frameRef} style={transferCols.frameStyle}>
+            <Table aria-label="Stock transfers" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
               <TableHeader>
-                <TableColumn className="w-[130px]">Transfer #</TableColumn>
-                <TableColumn>From</TableColumn>
-                <TableColumn>To</TableColumn>
-                <TableColumn className="w-[110px]">Date</TableColumn>
-                <TableColumn className="w-[70px]">Items</TableColumn>
-                <TableColumn className="w-[100px]">Status</TableColumn>
-                <TableColumn className="w-[70px]">Actions</TableColumn>
+                <TableColumn className="relative" style={transferCols.style('number')}>{<SortHeader label="Transfer #" column="number" sort={transferSort} onSort={(column) => setTransferSort((prev) => toggleColumnSort(prev, column))} />}{transferCols.sizer('number', 'Transfer #')}</TableColumn>
+                <TableColumn className="relative" style={transferCols.style('from')}>{<SortHeader label="From" column="from" sort={transferSort} onSort={(column) => setTransferSort((prev) => toggleColumnSort(prev, column))} />}{transferCols.sizer('from', 'From')}</TableColumn>
+                <TableColumn className="relative" style={transferCols.style('to')}>{<SortHeader label="To" column="to" sort={transferSort} onSort={(column) => setTransferSort((prev) => toggleColumnSort(prev, column))} />}{transferCols.sizer('to', 'To')}</TableColumn>
+                <TableColumn className="relative" style={transferCols.style('date')}>{<SortHeader label="Date" column="date" sort={transferSort} onSort={(column) => setTransferSort((prev) => toggleColumnSort(prev, column))} />}{transferCols.sizer('date', 'Date')}</TableColumn>
+                <TableColumn className="relative" style={transferCols.style('items')}>{<SortHeader label="Items" column="items" sort={transferSort} onSort={(column) => setTransferSort((prev) => toggleColumnSort(prev, column))} align="right" />}{transferCols.sizer('items', 'Items')}</TableColumn>
+                <TableColumn className="relative" style={transferCols.style('status')}>{<SortHeader label="Status" column="status" sort={transferSort} onSort={(column) => setTransferSort((prev) => toggleColumnSort(prev, column))} />}{transferCols.sizer('status', 'Status')}</TableColumn>
               </TableHeader>
               <TableBody emptyContent="No stock transfers yet. Create one to move stock between locations.">
-                {filtered.map((transfer) => (
-                  <TableRow key={transfer.id}>
+                {paged.map((transfer) => (
+                  <TableRow
+                    key={transfer.id}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => {
+                      setViewingStockTransfer(transfer);
+                      onStockTransferViewOpen();
+                    }}
+                  >
                     <TableCell>
-                      <span className="font-mono text-sm font-semibold whitespace-nowrap">{transfer.transferNumber}</span>
+                      <span className="text-gray-600 whitespace-nowrap">{transfer.transferNumber}</span>
                     </TableCell>
                     <TableCell className="truncate max-w-[140px]" title={transfer.fromLocation}>{transfer.fromLocation}</TableCell>
                     <TableCell className="truncate max-w-[140px]" title={transfer.toLocation}>{transfer.toLocation}</TableCell>
                     <TableCell className="whitespace-nowrap">
                       {transfer.transferDate instanceof Date ? transfer.transferDate.toLocaleDateString() : new Date(transfer.transferDate).toLocaleDateString()}
                     </TableCell>
-                    <TableCell>{transfer.items.length}</TableCell>
+                    <TableCell>
+                      <span className="block text-right tabular-nums">{transfer.items.length}</span>
+                    </TableCell>
                     <TableCell>
                       <Badge
                         color={
@@ -3641,25 +3953,14 @@ export default function InventorySupplyChainDashboard({
                         {transfer.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>
-                      <Tooltip content="Review — then edit or complete">
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          color="primary"
-                          onPress={() => {
-                            setViewingStockTransfer(transfer);
-                            onStockTransferViewOpen();
-                          }}
-                        >
-                          👁️
-                        </Button>
-                      </Tooltip>
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Pagination page={pageSafe} total={pages} onChange={setTransferPage} showControls size="sm" />
+            </div>
           </CardBody>
         </Card>
       </div>
@@ -3673,6 +3974,22 @@ export default function InventorySupplyChainDashboard({
       row.department.toLowerCase().includes(issueSearchTerm.toLowerCase()) ||
       row.issuedTo.toLowerCase().includes(issueSearchTerm.toLowerCase())
     );
+    const dir = issueSort.direction === 'asc' ? 1 : -1;
+    const ms = (d: Date | string) => (d instanceof Date ? d : new Date(d)).getTime();
+    const sorted = [...filtered].sort((a, b) => {
+      switch (issueSort.column) {
+        case 'department': return a.department.localeCompare(b.department) * dir;
+        case 'issuedTo': return a.issuedTo.localeCompare(b.issuedTo) * dir;
+        case 'date': return (ms(a.issueDate) - ms(b.issueDate)) * dir;
+        case 'lines': return (a.totalItems - b.totalItems) * dir;
+        case 'value': return (a.totalValue - b.totalValue) * dir;
+        case 'number':
+        default: return a.issueNumber.localeCompare(b.issueNumber) * dir;
+      }
+    });
+    const pages = Math.max(1, Math.ceil(sorted.length / DESK_PAGE_SIZE));
+    const pageSafe = Math.min(issuePage, pages);
+    const paged = sorted.slice((pageSafe - 1) * DESK_PAGE_SIZE, pageSafe * DESK_PAGE_SIZE);
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -3684,7 +4001,7 @@ export default function InventorySupplyChainDashboard({
 
     return (
       <div className="space-y-6">
-        <Card className="border-0 shadow-lg">
+        <Card className={deskTableCardClassName}>
           <CardHeader className="pb-3">
             <div className="flex items-center justify-between w-full">
               <div>
@@ -3699,59 +4016,57 @@ export default function InventorySupplyChainDashboard({
               </div>
             </div>
           </CardHeader>
-          <CardBody>
+          <CardBody className={deskTableCardBodyClassName}>
             <div className="mb-6">
               <Input
                 placeholder="Search issue #, department, or person..."
                 value={issueSearchTerm}
-                onChange={(e) => setIssueSearchTerm(e.target.value)}
+                onChange={(e) => { setIssueSearchTerm(e.target.value); setIssuePage(1); }}
                 startContent={<span className="text-gray-400">🔍</span>}
               />
             </div>
-            <Table aria-label="Goods issues" classNames={{ th: 'whitespace-nowrap' }}>
+            <div ref={issueCols.frameRef} style={issueCols.frameStyle}>
+            <Table aria-label="Goods issues" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
               <TableHeader>
-                <TableColumn className="w-[130px]">Issue #</TableColumn>
-                <TableColumn className="w-[110px]">Date</TableColumn>
-                <TableColumn>Department</TableColumn>
-                <TableColumn>Issued To</TableColumn>
-                <TableColumn className="w-[70px]">Lines</TableColumn>
-                <TableColumn className="w-[120px] text-right">Value</TableColumn>
-                <TableColumn className="w-[70px]">Actions</TableColumn>
+                <TableColumn className="relative" style={issueCols.style('number')}>{<SortHeader label="Issue #" column="number" sort={issueSort} onSort={(column) => setIssueSort((prev) => toggleColumnSort(prev, column))} />}{issueCols.sizer('number', 'Issue #')}</TableColumn>
+                <TableColumn className="relative" style={issueCols.style('date')}>{<SortHeader label="Date" column="date" sort={issueSort} onSort={(column) => setIssueSort((prev) => toggleColumnSort(prev, column))} />}{issueCols.sizer('date', 'Date')}</TableColumn>
+                <TableColumn className="relative" style={issueCols.style('department')}>{<SortHeader label="Department" column="department" sort={issueSort} onSort={(column) => setIssueSort((prev) => toggleColumnSort(prev, column))} />}{issueCols.sizer('department', 'Department')}</TableColumn>
+                <TableColumn className="relative" style={issueCols.style('issuedTo')}>{<SortHeader label="Issued To" column="issuedTo" sort={issueSort} onSort={(column) => setIssueSort((prev) => toggleColumnSort(prev, column))} />}{issueCols.sizer('issuedTo', 'Issued To')}</TableColumn>
+                <TableColumn className="relative" style={issueCols.style('lines')}>{<SortHeader label="Lines" column="lines" sort={issueSort} onSort={(column) => setIssueSort((prev) => toggleColumnSort(prev, column))} align="right" />}{issueCols.sizer('lines', 'Lines')}</TableColumn>
+                <TableColumn className="relative" style={issueCols.style('value')}>{<SortHeader label="Value" column="value" sort={issueSort} onSort={(column) => setIssueSort((prev) => toggleColumnSort(prev, column))} align="right" />}{issueCols.sizer('value', 'Value')}</TableColumn>
               </TableHeader>
               <TableBody emptyContent="No issues yet. Create one to send stock to a department.">
-                {filtered.map((row) => (
-                  <TableRow key={row.id}>
+                {paged.map((row) => (
+                  <TableRow
+                    key={row.id}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => {
+                      setViewingGoodsIssue(row);
+                      onGoodsIssueViewOpen();
+                    }}
+                  >
                     <TableCell>
-                      <span className="font-mono text-sm font-semibold whitespace-nowrap">{row.issueNumber}</span>
+                      <span className="text-gray-600 whitespace-nowrap">{row.issueNumber}</span>
                     </TableCell>
                     <TableCell className="whitespace-nowrap">
                       {row.issueDate instanceof Date ? row.issueDate.toLocaleDateString() : new Date(row.issueDate).toLocaleDateString()}
                     </TableCell>
-                    <TableCell>{row.department}</TableCell>
-                    <TableCell>{row.issuedTo}</TableCell>
-                    <TableCell>{row.totalItems}</TableCell>
+                    <TableCell className="truncate" title={row.department}>{row.department}</TableCell>
+                    <TableCell className="truncate" title={row.issuedTo}>{row.issuedTo}</TableCell>
+                    <TableCell>
+                      <span className="block text-right tabular-nums">{row.totalItems}</span>
+                    </TableCell>
                     <TableCell className="text-right tabular-nums font-semibold whitespace-nowrap">
                       ₵{row.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </TableCell>
-                    <TableCell>
-                      <Tooltip content="View issue">
-                        <Button
-                          size="sm"
-                          variant="flat"
-                          color="primary"
-                          onPress={() => {
-                            setViewingGoodsIssue(row);
-                            onGoodsIssueViewOpen();
-                          }}
-                        >
-                          👁️
-                        </Button>
-                      </Tooltip>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Pagination page={pageSafe} total={pages} onChange={setIssuePage} showControls size="sm" />
+            </div>
           </CardBody>
         </Card>
       </div>
@@ -3775,7 +4090,7 @@ export default function InventorySupplyChainDashboard({
           const tab = String(key);
           setSelectedTab(tab);
           // Keep recon sub-tab on a receive-related default when opening Recon
-          if (tab === 'stock-operations' && !['goods-receipt', 'grn-management', 'stock-counts'].includes(stockOpSubTab)) {
+          if (tab === 'stock-operations' && !['goods-receipt', 'stock-counts'].includes(stockOpSubTab)) {
             setStockOpSubTab('goods-receipt');
           }
         }}
@@ -3912,12 +4227,20 @@ export default function InventorySupplyChainDashboard({
                     }}
                     description="Alert when on hand falls to this"
                   />
-                  <Input
+                  <Select
                     label="Location"
-                    value={formData.location || ''}
-                    onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-                    placeholder="e.g. Main Store"
-                  />
+                    placeholder="Pick a stock location"
+                    selectedKeys={formData.location ? [formData.location] : []}
+                    onSelectionChange={(keys) => {
+                      const next = Array.from(keys)[0] as string;
+                      if (next) setFormData({ ...formData, location: next });
+                    }}
+                    description="Managed in Settings → Stock Locations"
+                  >
+                    {availableLocations.map((loc) => (
+                      <SelectItem key={loc}>{loc}</SelectItem>
+                    ))}
+                  </Select>
                   <Textarea
                     label="Description (optional)"
                     value={formData.description || ''}
@@ -4915,7 +5238,7 @@ export default function InventorySupplyChainDashboard({
       </Modal>
 
       {/* Requisition Modals */}
-      <Modal isOpen={isRequisitionModalOpen} onClose={onRequisitionModalClose} size="5xl" scrollBehavior="inside">
+      <Modal isOpen={isRequisitionModalOpen} onClose={onRequisitionModalClose} size="5xl" scrollBehavior="inside" classNames={{ base: '!max-w-[calc(64rem*0.85)]' }}>
         <ModalContent>
           <ModalHeader>
             {editingRequisition ? 'Edit Requisition' : 'Create Requisition'}
@@ -5846,15 +6169,20 @@ export default function InventorySupplyChainDashboard({
               <div className="grid grid-cols-2 gap-4">
                 <Select
                   label="Department"
-                  selectedKeys={issueFormData.department ? [issueFormData.department] : []}
-                  onSelectionChange={(keys) => setIssueFormData({ ...issueFormData, department: Array.from(keys)[0] as string })}
+                  selectionMode="single"
+                  disallowEmptySelection
+                  selectedKeys={issueFormData.department ? new Set([issueFormData.department]) : new Set()}
+                  onSelectionChange={(keys) => {
+                    if (keys === 'all') return;
+                    const dept = Array.from(keys)[0] as string | undefined;
+                    if (!dept) return;
+                    setIssueFormData({ ...issueFormData, department: dept });
+                  }}
                   isRequired
                 >
-                  <>
-                    {departments.map(dept => (
-                      <SelectItem key={dept}>{dept}</SelectItem>
-                    ))}
-                  </>
+                  {departments.map((dept) => (
+                    <SelectItem key={dept} textValue={dept}>{dept}</SelectItem>
+                  ))}
                 </Select>
                 <Input
                   label="Issued To"
@@ -6037,33 +6365,43 @@ export default function InventorySupplyChainDashboard({
                 </Select>
                 <Select
                   label="From Location"
-                  selectedKeys={stockTransferFormData.fromLocation ? [stockTransferFormData.fromLocation] : []}
-                  onSelectionChange={(keys) => setStockTransferFormData({ 
-                    ...stockTransferFormData, 
-                    fromLocation: Array.from(keys)[0] as string 
-                  })}
+                  selectionMode="single"
+                  disallowEmptySelection
+                  selectedKeys={stockTransferFormData.fromLocation ? new Set([stockTransferFormData.fromLocation]) : new Set()}
+                  onSelectionChange={(keys) => {
+                    if (keys === 'all') return;
+                    const loc = Array.from(keys)[0] as string | undefined;
+                    if (!loc) return;
+                    setStockTransferFormData({
+                      ...stockTransferFormData,
+                      fromLocation: loc,
+                    });
+                  }}
                   isRequired
                 >
-                  <>
-                    {availableLocations.map(loc => (
-                      <SelectItem key={loc}>{loc}</SelectItem>
-                    ))}
-                  </>
+                  {availableLocations.map((loc) => (
+                    <SelectItem key={loc} textValue={loc}>{loc}</SelectItem>
+                  ))}
                 </Select>
                 <Select
                   label="To Location"
-                  selectedKeys={stockTransferFormData.toLocation ? [stockTransferFormData.toLocation] : []}
-                  onSelectionChange={(keys) => setStockTransferFormData({ 
-                    ...stockTransferFormData, 
-                    toLocation: Array.from(keys)[0] as string 
-                  })}
+                  selectionMode="single"
+                  disallowEmptySelection
+                  selectedKeys={stockTransferFormData.toLocation ? new Set([stockTransferFormData.toLocation]) : new Set()}
+                  onSelectionChange={(keys) => {
+                    if (keys === 'all') return;
+                    const loc = Array.from(keys)[0] as string | undefined;
+                    if (!loc) return;
+                    setStockTransferFormData({
+                      ...stockTransferFormData,
+                      toLocation: loc,
+                    });
+                  }}
                   isRequired
                 >
-                  <>
-                    {availableLocations.map(loc => (
-                      <SelectItem key={loc}>{loc}</SelectItem>
-                    ))}
-                  </>
+                  {availableLocations.map((loc) => (
+                    <SelectItem key={loc} textValue={loc}>{loc}</SelectItem>
+                  ))}
                 </Select>
               </div>
 
@@ -6303,12 +6641,40 @@ export default function InventorySupplyChainDashboard({
                 <Select
                   label="Location"
                   selectedKeys={stockCountFormData.location ? [stockCountFormData.location] : []}
-                  onSelectionChange={(keys) => {
+                  onSelectionChange={async (keys) => {
                     const selectedLocation = Array.from(keys)[0] as string;
-                    setStockCountFormData({
-                      ...stockCountFormData,
-                      location: selectedLocation,
-                      items: stockItems
+                    const selectedMasterLoc = masterLocations.find((l) => l.name === selectedLocation);
+                    const deptEntry = (selectedMasterLoc?.department && DEPARTMENT_LOCATIONS[selectedMasterLoc.department])
+                      ? [selectedMasterLoc.department, DEPARTMENT_LOCATIONS[selectedMasterLoc.department]] as const
+                      : Object.entries(DEPARTMENT_LOCATIONS).find(([, loc]) => loc.name === selectedLocation);
+                    let lines: StockCountItem[] = [];
+                    if (deptEntry) {
+                      try {
+                        const res = await fetch(
+                          `/api/inventory/stock-levels?department=${encodeURIComponent(deptEntry[0])}`,
+                          { headers: inventoryHeaders(), cache: 'no-store' },
+                        );
+                        if (res.ok) {
+                          const data = await res.json();
+                          lines = (data.items || [])
+                            .filter((item: any) => Number(item.onHand || 0) > 0)
+                            .map((item: any) => ({
+                              id: Date.now().toString() + Math.random(),
+                              itemId: item.id,
+                              itemCode: item.code,
+                              itemName: item.name,
+                              expectedQuantity: Number(item.onHand || 0),
+                              countedQuantity: Number(item.onHand || 0),
+                              variance: 0,
+                              unitCost: Number(item.defaultCost || 0),
+                              varianceValue: 0,
+                            }));
+                        }
+                      } catch {
+                        lines = [];
+                      }
+                    } else {
+                      lines = stockItems
                         .filter((i) => i.location === selectedLocation)
                         .map((item) => ({
                           id: Date.now().toString() + Math.random(),
@@ -6319,8 +6685,13 @@ export default function InventorySupplyChainDashboard({
                           countedQuantity: item.currentStock,
                           variance: 0,
                           unitCost: item.unitCost,
-                          varianceValue: 0
-                        }))
+                          varianceValue: 0,
+                        }));
+                    }
+                    setStockCountFormData({
+                      ...stockCountFormData,
+                      location: selectedLocation,
+                      items: lines,
                     });
                   }}
                   isRequired
@@ -6538,11 +6909,55 @@ export default function InventorySupplyChainDashboard({
       {/* Stock Count View Modal */}
       <Modal isOpen={isStockCountViewOpen} onClose={onStockCountViewClose} size="4xl" scrollBehavior="inside">
         <ModalContent>
-          <ModalHeader>
+          <ModalHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
               <div className="text-xl font-semibold">Stock Count Details</div>
               <div className="text-sm text-gray-500 font-mono">{viewingStockCount?.countNumber}</div>
             </div>
+            {viewingStockCount && (
+              <div className="flex flex-wrap items-center gap-1 border-b border-default-200 pb-0.5" role="tablist" aria-label="Stock count actions">
+                {canPrintInventoryDocs && (
+                  <Button size="sm" variant="light" className="min-w-16 h-8 rounded-none border-b-2 border-transparent data-[hover=true]:border-primary" onPress={() => handlePrintStockCount(viewingStockCount)}>
+                    Print
+                  </Button>
+                )}
+                {canEditInventoryDocs && (
+                  <Button
+                    size="sm"
+                    variant="light"
+                    className="min-w-16 h-8 rounded-none border-b-2 border-transparent data-[hover=true]:border-primary"
+                    isDisabled={viewingStockCount.status === 'completed' || viewingStockCount.status === 'cancelled'}
+                    onPress={() => handleEditStockCountFromView(viewingStockCount)}
+                  >
+                    Edit
+                  </Button>
+                )}
+                {canDeleteInventoryDocs && (
+                  <Button
+                    size="sm"
+                    variant="light"
+                    color="danger"
+                    className="min-w-16 h-8 rounded-none border-b-2 border-transparent data-[hover=true]:border-danger"
+                    isDisabled={viewingStockCount.status === 'completed'}
+                    onPress={() => handleDeleteStockCount(viewingStockCount)}
+                  >
+                    Delete
+                  </Button>
+                )}
+                {canVoidInventoryDocs && (
+                  <Button
+                    size="sm"
+                    variant="light"
+                    color="warning"
+                    className="min-w-16 h-8 rounded-none border-b-2 border-transparent data-[hover=true]:border-warning"
+                    isDisabled={viewingStockCount.status === 'completed' || viewingStockCount.status === 'cancelled'}
+                    onPress={() => handleVoidStockCount(viewingStockCount)}
+                  >
+                    Void
+                  </Button>
+                )}
+              </div>
+            )}
           </ModalHeader>
           <ModalBody>
             {viewingStockCount && (
@@ -6562,7 +6977,7 @@ export default function InventorySupplyChainDashboard({
                   </div>
                   <div>
                     <div className="text-xs text-gray-500 mb-1">Status</div>
-                    <Badge color={viewingStockCount.status === 'completed' ? 'success' : viewingStockCount.status === 'in-progress' ? 'warning' : 'default'} variant="flat">
+                    <Badge color={viewingStockCount.status === 'completed' ? 'success' : viewingStockCount.status === 'in-progress' ? 'warning' : viewingStockCount.status === 'cancelled' ? 'danger' : 'default'} variant="flat">
                       {viewingStockCount.status}
                     </Badge>
                   </div>
@@ -6631,21 +7046,7 @@ export default function InventorySupplyChainDashboard({
           </ModalBody>
           <ModalFooter className="flex flex-wrap gap-2">
             <Button variant="bordered" onPress={onStockCountViewClose}>Close</Button>
-            {viewingStockCount && viewingStockCount.status === 'in-progress' && (
-              <Button
-                color="warning"
-                variant="flat"
-                onPress={() => {
-                  onStockCountViewClose();
-                  setEditingStockCount(viewingStockCount);
-                  setStockCountFormData({ ...viewingStockCount, items: viewingStockCount.items });
-                  onStockCountOpen();
-                }}
-              >
-                ✏️ Edit Counts
-              </Button>
-            )}
-            {viewingStockCount && viewingStockCount.status === 'in-progress' && (
+            {viewingStockCount && viewingStockCount.status === 'in-progress' && canRunStockCount && (
               <Button
                 color="success"
                 onPress={() => {
@@ -6685,9 +7086,12 @@ export default function InventorySupplyChainDashboard({
                 <Select
                   label="Purchase Order"
                   placeholder="Select PO"
-                  selectedKeys={invoiceFormData.poId ? [invoiceFormData.poId] : []}
+                  selectionMode="single"
+                  disallowEmptySelection
+                  selectedKeys={invoiceFormData.poId ? new Set([invoiceFormData.poId]) : new Set()}
                   onSelectionChange={(keys) => {
-                    const id = Array.from(keys)[0] as string;
+                    if (keys === 'all') return;
+                    const id = Array.from(keys)[0] as string | undefined;
                     if (id) handleInvoicePOChange(id);
                   }}
                   isRequired

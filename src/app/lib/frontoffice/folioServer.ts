@@ -131,6 +131,46 @@ export async function appendGuestFolioCharge(params: {
   return { folioId: folio.id, appended: true }
 }
 
+/** Post a reversing folio line for an existing charge (audit-friendly void). */
+export async function voidGuestFolioCharge(params: {
+  tenantId: string
+  reservationId: string
+  chargeId: string
+  reason?: string
+  db?: Tx
+}): Promise<{ voided: boolean }> {
+  const db = params.db ?? prisma
+  const folio = await ensureGuestFolio(params.tenantId, params.reservationId, db)
+  const charges = asLineArray(folio.charges)
+  const original = charges.find((c) => c.id === params.chargeId)
+  if (!original) return { voided: false }
+  const voidId = `VOID-${params.chargeId}`
+  if (charges.some((c) => c.id === voidId)) return { voided: false }
+
+  const amount = Math.abs(Number(original.amount || 0))
+  const tax = Math.abs(Number(original.tax || 0))
+  charges.push({
+    id: voidId,
+    date: new Date().toISOString(),
+    description: `VOID ${original.description || params.chargeId} — ${params.reason || 'refund'}`,
+    amount: -amount,
+    tax: -tax,
+    category: original.category,
+    glAccountCode: original.glAccountCode,
+    reference: original.reference,
+  })
+  const payments = asLineArray(folio.payments)
+  const totals = recomputeFolioTotals(charges, payments, await loadFolioRounding(params.tenantId))
+  await db.guestFolio.update({
+    where: { id: folio.id },
+    data: {
+      charges: charges as any,
+      ...totals,
+    },
+  })
+  return { voided: true }
+}
+
 export async function replaceGuestFolioPayments(params: {
   tenantId: string
   folioId: string

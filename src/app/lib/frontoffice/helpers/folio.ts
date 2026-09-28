@@ -53,7 +53,14 @@ function isRoomCharge(description?: string) {
 }
 
 /** Map folio charge to GL revenue account at checkout (simpleFlow). */
-export function folioChargeGlCode(charge: { description?: string; category?: string }): string {
+export function folioChargeGlCode(charge: {
+	description?: string;
+	category?: string;
+	/** Prefer venue leaf written at bill time (4210/4220/4230). */
+	glAccountCode?: string;
+}): string {
+	const stored = String(charge.glAccountCode || '').trim();
+	if (/^\d{4}$/.test(stored)) return stored;
 	const cat = (charge.category || '').toLowerCase();
 	// F&B keyword check (includes the phrase "room service") must run before the
 	// generic room-charge check below — "room service" contains "room" as a plain

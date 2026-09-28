@@ -67,7 +67,7 @@ export const helpMaintainerGuide = {
   file: 'src/app/help/helpContent.ts',
   steps: [
     'Add or edit an entry in the helpTopics array (id, title, description, keywords, category).',
-    'To deep-link into Settings, set section: "settings" and settingsTab to users | rooms | numbering | security.',
+    'To deep-link into Settings, set section: "settings" and settingsTab to users | rooms | numbering | locations | security.',
     'To deep-link into Compliance, set section: "compliance" and complianceTab to tax | payroll | reports.',
     'For standalone pages (e.g. setup wizard), set href: "/setup" instead of section.',
     'Optional: add steps[] for procedures and notHere to warn users away from the wrong module.',

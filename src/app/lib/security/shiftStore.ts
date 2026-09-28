@@ -11,6 +11,7 @@ interface ShiftStore {
 
   hydrateFromApi: () => Promise<void>;
   checkIn: (personKey: string, personName: string, notes?: string) => SecurityShift;
+  updateShift: (id: string, updates: Partial<Pick<SecurityShift, 'notes'>>) => void;
   checkOut: (id: string) => void;
 }
 
@@ -61,6 +62,18 @@ export const useShiftStore = create<ShiftStore>((set) => ({
     set((state) => ({ shifts: [newShift, ...state.shifts] }));
     syncShiftToApi(newShift, 'POST');
     return newShift;
+  },
+
+  updateShift: (id, updates) => {
+    let updated: SecurityShift | undefined;
+    set((state) => ({
+      shifts: state.shifts.map((s) => {
+        if (s.id !== id) return s;
+        updated = { ...s, ...updates, updatedAt: new Date() };
+        return updated;
+      }),
+    }));
+    if (updated) syncShiftToApi(updated, 'PATCH');
   },
 
   checkOut: (id) => {

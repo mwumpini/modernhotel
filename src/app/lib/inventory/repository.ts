@@ -1,4 +1,7 @@
 import { prisma } from '../database/client'
+import { DEPARTMENT_LOCATIONS } from './departmentLocations'
+
+export { DEPARTMENT_LOCATIONS };
 
 /**
  * Tax on a purchase order — sums whichever real, tenant-editable compliance Tax Type
@@ -412,22 +415,159 @@ export async function recordStockTransfer(params: {
 // tracked location — see the transfer_out `fromLocationId: undefined` above.
 // ---------------------------------------------------------------------------
 
-export const DEPARTMENT_LOCATIONS: Record<string, { code: string; name: string }> = {
-	restaurant: { code: 'RESTAURANT', name: 'Restaurant & Bar' },
-	kitchen: { code: 'KITCHEN', name: 'Kitchen' },
-	housekeeping: { code: 'HOUSEKEEPING', name: 'Housekeeping' },
-};
+/** Hotel-wide stock places. Seeded once; hotels rename/add/deactivate in Settings. */
+export const DEFAULT_STOCK_LOCATIONS: {
+	code: string;
+	name: string;
+	type: string;
+	department?: string | null;
+}[] = [
+	{ code: 'MAIN_STORE', name: 'Main Store', type: 'central' },
+	{ code: 'DRY_STORE', name: 'Dry Store', type: 'dry' },
+	{ code: 'COLD_ROOM', name: 'Cold Room', type: 'cold' },
+	{ code: 'FRIDGE_1', name: 'Fridge 1', type: 'cold' },
+	{ code: 'FRIDGE_2', name: 'Fridge 2', type: 'cold' },
+	{ code: 'BAR_STORE', name: 'Bar Store', type: 'outlet', department: 'restaurant' },
+	{ code: 'REST_FRIDGE_SOFT', name: 'Restaurant Soft Drinks Fridge', type: 'cold', department: 'restaurant' },
+	{ code: 'REST_FRIDGE_BAR', name: 'Restaurant Bar Fridge', type: 'cold', department: 'restaurant' },
+	{ code: 'WAREHOUSE_1', name: 'Warehouse 1', type: 'central' },
+	{ code: 'RESTAURANT', name: 'Restaurant & Bar', type: 'department', department: 'restaurant' },
+	{ code: 'KITCHEN', name: 'Kitchen', type: 'department', department: 'kitchen' },
+	{ code: 'KITCHEN_FRIDGE', name: 'Kitchen Fridge', type: 'cold', department: 'kitchen' },
+	{ code: 'HOUSEKEEPING', name: 'Housekeeping', type: 'department', department: 'housekeeping' },
+];
+
+function toStockLocation(row: {
+	id: string;
+	code: string;
+	name: string;
+	type: string;
+	department: string | null;
+	isActive: boolean;
+	createdAt: Date;
+	updatedAt: Date;
+}) {
+	return {
+		id: row.id,
+		code: row.code,
+		name: row.name,
+		type: row.type,
+		department: row.department ?? null,
+		isActive: row.isActive,
+		createdAt: row.createdAt,
+		updatedAt: row.updatedAt,
+	};
+}
+
+export async function ensureStockLocations(tenantId: string): Promise<void> {
+	const existing = await prisma.stockLocation.findMany({
+		where: { tenantId },
+		select: { id: true, code: true, department: true },
+	});
+	const byCode = new Map(existing.map((row) => [row.code, row]));
+
+	await Promise.all(
+		DEFAULT_STOCK_LOCATIONS.map(async (loc) => {
+			const row = byCode.get(loc.code);
+			if (!row) {
+				await prisma.stockLocation.create({
+					data: {
+						tenantId,
+						code: loc.code,
+						name: loc.name,
+						type: loc.type,
+						department: loc.department ?? null,
+						isActive: true,
+					},
+				});
+				return;
+			}
+			// Backfill department on older seeds only — never overwrite hotel edits
+			if (row.department == null && loc.department) {
+				await prisma.stockLocation.update({
+					where: { id: row.id },
+					data: { department: loc.department },
+				});
+			}
+		}),
+	);
+}
 
 export async function ensureDepartmentLocations(tenantId: string): Promise<void> {
-	await Promise.all(
-		Object.values(DEPARTMENT_LOCATIONS).map((loc) =>
-			prisma.stockLocation.upsert({
-				where: { tenantId_code: { tenantId, code: loc.code } },
-				update: {},
-				create: { tenantId, code: loc.code, name: loc.name, type: 'department', isActive: true },
-			}),
-		),
-	);
+	await ensureStockLocations(tenantId);
+}
+
+export async function listStockLocations(
+	tenantId: string,
+	opts?: { activeOnly?: boolean; seed?: boolean; department?: string },
+) {
+	if (opts?.seed !== false) await ensureStockLocations(tenantId);
+	const rows = await prisma.stockLocation.findMany({
+		where: {
+			tenantId,
+			...(opts?.activeOnly ? { isActive: true } : {}),
+			...(opts?.department ? { department: opts.department } : {}),
+		},
+		orderBy: [{ type: 'asc' }, { name: 'asc' }],
+	});
+	return rows.map(toStockLocation);
+}
+
+export async function findStockLocationByName(tenantId: string, name: string) {
+	await ensureStockLocations(tenantId);
+	const trimmed = name.trim();
+	const exact = await prisma.stockLocation.findFirst({
+		where: { tenantId, name: trimmed },
+	});
+	if (exact) return exact;
+	const all = await prisma.stockLocation.findMany({
+		where: { tenantId },
+		select: { id: true, name: true, department: true, code: true, tenantId: true, type: true, isActive: true, createdAt: true, updatedAt: true },
+	});
+	return all.find((row) => row.name.toLowerCase() === trimmed.toLowerCase()) ?? null;
+}
+
+export async function upsertStockLocation(
+	tenantId: string,
+	id: string,
+	data: {
+		code?: string;
+		name?: string;
+		type?: string;
+		department?: string | null;
+		isActive?: boolean;
+	},
+) {
+	const existing = await prisma.stockLocation.findUnique({ where: { id } });
+	if (existing && existing.tenantId !== tenantId) {
+		throw new Error('Record belongs to a different tenant');
+	}
+	const code = (data.code || existing?.code || '').trim().toUpperCase().replace(/[^A-Z0-9_]+/g, '_');
+	const name = (data.name || existing?.name || '').trim();
+	if (!code || !name) throw new Error('code and name are required');
+	const type = data.type || existing?.type || 'central';
+	const department =
+		data.department === undefined ? existing?.department ?? null : data.department || null;
+	const isActive = data.isActive ?? existing?.isActive ?? true;
+
+	if (existing) {
+		const row = await prisma.stockLocation.update({
+			where: { id },
+			data: { code, name, type, department, isActive },
+		});
+		return toStockLocation(row);
+	}
+	const row = await prisma.stockLocation.create({
+		data: { id, tenantId, code, name, type, department, isActive },
+	});
+	return toStockLocation(row);
+}
+
+export async function setStockLocationActive(tenantId: string, id: string, isActive: boolean) {
+	const existing = await prisma.stockLocation.findFirst({ where: { id, tenantId } });
+	if (!existing) return null;
+	const row = await prisma.stockLocation.update({ where: { id }, data: { isActive } });
+	return toStockLocation(row);
 }
 
 export async function getDepartmentLocationId(tenantId: string, department: string): Promise<string | null> {
@@ -438,41 +578,62 @@ export async function getDepartmentLocationId(tenantId: string, department: stri
 	return row?.id ?? null;
 }
 
-/** Use stock sitting in a department (housekeeping task, kitchen prep). Reduces that location and the hotel-wide balance. */
+/** Use stock sitting in a department (housekeeping task, kitchen prep, F&B sale). Reduces that location and the hotel-wide balance. */
 export async function issueDepartmentStock(params: {
 	tenantId: string;
 	department: string;
+	/** Override department floor — e.g. Bar Store / fridge tagged to this department */
+	locationId?: string;
 	items: { itemId: string; quantity: number }[];
 	referenceType: string;
 	referenceId: string;
 	performedBy?: string;
 	notes?: string;
+	/** strict (default): fail if any line short. best_effort: issue what we can and return warnings. */
+	mode?: 'strict' | 'best_effort';
 }) {
 	if (!DEPARTMENT_LOCATIONS[params.department]) return { error: 'unknown_department' as const };
-	const locationId = await getDepartmentLocationId(params.tenantId, params.department);
+
+	let locationId = params.locationId || null;
+	if (locationId) {
+		const loc = await prisma.stockLocation.findFirst({
+			where: { id: locationId, tenantId: params.tenantId, isActive: true },
+		});
+		if (!loc) return { error: 'no_location' as const };
+		if (loc.department && loc.department !== params.department) {
+			return { error: 'no_location' as const };
+		}
+	} else {
+		locationId = await getDepartmentLocationId(params.tenantId, params.department);
+	}
 	if (!locationId) return { error: 'no_location' as const };
 
-	const levels = await getLocationStockLevels(params.tenantId, params.department);
+	const levels = await getStockLevelsAtLocation(params.tenantId, locationId);
 	const onHand = new Map(levels.map((row) => [row.id, row.onHand]));
 	const wanted = params.items.filter((item) => item.itemId && Number(item.quantity) > 0);
+	const mode = params.mode || 'strict';
+	const warnings: { itemId: string; itemName: string; needed: number; onHand: number }[] = [];
+	const issued: { itemId: string; itemName: string; quantity: number; unitCost: number }[] = [];
 
-	for (const item of wanted) {
-		const qty = Number(item.quantity);
-		const already = await prisma.inventoryTransaction.findFirst({
-			where: {
-				tenantId: params.tenantId,
-				itemId: item.itemId,
-				locationId,
-				type: 'issue',
-				referenceType: params.referenceType,
-				referenceId: params.referenceId,
-			},
-		});
-		if (already) continue;
-		const have = onHand.get(item.itemId) ?? 0;
-		if (have < qty) {
-			const name = levels.find((row) => row.id === item.itemId)?.name || item.itemId;
-			return { error: 'insufficient' as const, itemName: name, onHand: have };
+	if (mode === 'strict') {
+		for (const item of wanted) {
+			const qty = Number(item.quantity);
+			const already = await prisma.inventoryTransaction.findFirst({
+				where: {
+					tenantId: params.tenantId,
+					itemId: item.itemId,
+					locationId,
+					type: 'issue',
+					referenceType: params.referenceType,
+					referenceId: params.referenceId,
+				},
+			});
+			if (already) continue;
+			const have = onHand.get(item.itemId) ?? 0;
+			if (have < qty) {
+				const name = levels.find((row) => row.id === item.itemId)?.name || item.itemId;
+				return { error: 'insufficient' as const, itemName: name, onHand: have };
+			}
 		}
 	}
 
@@ -488,7 +649,26 @@ export async function issueDepartmentStock(params: {
 				referenceId: params.referenceId,
 			},
 		});
-		if (already) continue;
+		if (already) {
+			// Idempotent re-read: treat prior issue as already issued for callers that need COGS.
+			const level = levels.find((row) => row.id === item.itemId);
+			issued.push({
+				itemId: item.itemId,
+				itemName: level?.name || item.itemId,
+				quantity: Math.abs(Number(already.quantity || qty)),
+				unitCost: Number(level?.defaultCost || 0),
+			});
+			continue;
+		}
+		const have = onHand.get(item.itemId) ?? 0;
+		if (have < qty) {
+			const name = levels.find((row) => row.id === item.itemId)?.name || item.itemId;
+			if (mode === 'best_effort') {
+				warnings.push({ itemId: item.itemId, itemName: name, needed: qty, onHand: have });
+				continue;
+			}
+			return { error: 'insufficient' as const, itemName: name, onHand: have };
+		}
 		await recordStockTransaction({
 			tenantId: params.tenantId,
 			itemId: item.itemId,
@@ -500,15 +680,20 @@ export async function issueDepartmentStock(params: {
 			notes: params.notes,
 			performedBy: params.performedBy,
 		});
+		const level = levels.find((row) => row.id === item.itemId);
+		issued.push({
+			itemId: item.itemId,
+			itemName: level?.name || item.itemId,
+			quantity: qty,
+			unitCost: Number(level?.defaultCost || 0),
+		});
+		onHand.set(item.itemId, have - qty);
 	}
 
-	return { error: null as null };
+	return { error: null as null, warnings, issued };
 }
 
-export async function getLocationStockLevels(tenantId: string, department: string) {
-	const locationId = await getDepartmentLocationId(tenantId, department);
-	if (!locationId) return [];
-
+export async function getStockLevelsAtLocation(tenantId: string, locationId: string) {
 	const [items, sums] = await Promise.all([
 		prisma.inventoryItem.findMany({
 			where: { tenantId, isActive: true },
@@ -533,6 +718,63 @@ export async function getLocationStockLevels(tenantId: string, department: strin
 		sellingPrice: Number(item.sellingPrice || 0),
 		onHand: onHandByItem.get(item.id) ?? 0,
 	}));
+}
+
+export async function getLocationStockLevels(tenantId: string, department: string) {
+	const locationId = await getDepartmentLocationId(tenantId, department);
+	if (!locationId) return [];
+	return getStockLevelsAtLocation(tenantId, locationId);
+}
+
+/** Post count variances onto a location ledger (does not change catalog quantityOnHand). */
+export async function postLocationStockCountVariances(params: {
+	tenantId: string;
+	locationId: string;
+	countId: string;
+	performedBy: string;
+	items: { itemId: string; variance: number; unitCost?: number; notes?: string }[];
+}) {
+	const location = await prisma.stockLocation.findFirst({
+		where: { id: params.locationId, tenantId: params.tenantId },
+	});
+	if (!location) throw new Error('Location missing');
+
+	const lines = params.items.filter((item) => Number(item.variance) !== 0);
+	if (lines.length === 0) return { posted: 0 };
+
+	await prisma.$transaction(
+		lines.map((item) =>
+			prisma.inventoryTransaction.create({
+				data: {
+					tenantId: params.tenantId,
+					itemId: item.itemId,
+					locationId: params.locationId,
+					type: 'count',
+					quantity: Number(item.variance),
+					unitCost: item.unitCost,
+					referenceType: 'stock_count',
+					referenceId: params.countId,
+					notes: item.notes,
+					performedBy: params.performedBy,
+				},
+			}),
+		),
+	);
+
+	return { posted: lines.length };
+}
+
+/** @deprecated Prefer postLocationStockCountVariances with an explicit locationId */
+export async function postDepartmentStockCountVariances(params: {
+	tenantId: string;
+	department: string;
+	countId: string;
+	performedBy: string;
+	items: { itemId: string; variance: number; unitCost?: number; notes?: string }[];
+}) {
+	const locationId = await getDepartmentLocationId(params.tenantId, params.department);
+	if (!locationId) throw new Error('Department location missing');
+	return postLocationStockCountVariances({ ...params, locationId });
 }
 
 export async function listStockTransactions(
@@ -1303,7 +1545,19 @@ export async function upsertStockCount(params: {
 	}
 
 	const count = await prisma.stockCount.count({ where: { tenantId: params.tenantId } });
-	const countNumber = params.countNumber || `CNT-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
+	let countNumber = params.countNumber || `CNT-${new Date().getFullYear()}-${String(count + 1).padStart(3, '0')}`;
+
+	// The number the client suggests comes from a per-browser local counter
+	// (Settings -> Document Numbering), not a server-side sequence, so two
+	// sessions — or a counter that's drifted out of sync with the database —
+	// can both land on the same countNumber. Before that reaches the unique
+	// constraint and crashes the request, check for a collision and
+	// disambiguate; this is stock movement data, so silently losing a count
+	// under a 500 is worse than a number that doesn't exactly match Settings' preview.
+	const collision = await prisma.stockCount.findFirst({ where: { tenantId: params.tenantId, countNumber } });
+	if (collision) {
+		countNumber = `${countNumber}-${Date.now().toString().slice(-5)}`;
+	}
 
 	return prisma.stockCount.create({
 		data: {
@@ -1317,6 +1571,13 @@ export async function upsertStockCount(params: {
 		},
 		include: { items: true },
 	});
+}
+
+export async function deleteStockCount(tenantId: string, id: string): Promise<boolean> {
+	const existing = await prisma.stockCount.findFirst({ where: { id, tenantId } });
+	if (!existing) return false;
+	await prisma.stockCount.delete({ where: { id } });
+	return true;
 }
 
 export interface GoodsIssueItemInput {

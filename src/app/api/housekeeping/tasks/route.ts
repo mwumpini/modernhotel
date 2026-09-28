@@ -44,13 +44,42 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     if (!body.taskType) return NextResponse.json({ error: 'taskType is required' }, { status: 400 })
 
+    const roomNumber = body.roomNumber != null ? String(body.roomNumber).trim() : ''
+    const taskType = String(body.taskType)
+    const isMaintenance = taskType === 'maintenance'
+    const openStatuses = ['pending', 'in-progress', 'in_progress']
+
+    // Idempotent create by client id (assign-after-create race)
+    if (body.id) {
+      const byId = await prisma.housekeepingTask.findFirst({
+        where: { id: String(body.id), tenantId: ctx.tenantId },
+      })
+      if (byId) return NextResponse.json({ task: byId, deduped: true }, { status: 200 })
+    }
+
+    // Block duplicate open cleaning tasks for the same room/area
+    if (!isMaintenance && roomNumber) {
+      const openExisting = await prisma.housekeepingTask.findFirst({
+        where: {
+          tenantId: ctx.tenantId,
+          roomNumber,
+          status: { in: openStatuses },
+          NOT: { taskType: 'maintenance' },
+        },
+        orderBy: [{ createdAt: 'asc' }],
+      })
+      if (openExisting) {
+        return NextResponse.json({ task: openExisting, deduped: true }, { status: 200 })
+      }
+    }
+
     const task = await prisma.housekeepingTask.create({
       data: {
         ...(body.id ? { id: body.id } : {}),
         tenantId: ctx.tenantId,
         roomId: body.roomId,
-        roomNumber: body.roomNumber,
-        taskType: body.taskType,
+        roomNumber: roomNumber || body.roomNumber,
+        taskType,
         status: body.status || 'pending',
         priority: body.priority || 'normal',
         assignedTo: body.assignedTo,

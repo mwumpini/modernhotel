@@ -1,9 +1,12 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import HeadingInfo from './HeadingInfo';
-import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Badge, Tabs, Tab } from "@heroui/react";
+import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Tabs, Tab } from "@heroui/react";
+import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
+import { sizedTableClassNames, useResizableColumns } from './frontoffice/columnResize';
 import { ordersStore } from '../lib/fb/ordersStore';
+import { DateFilterPills, matchesDateFilter, useDateFilter } from './fb/DateFilterPills';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import DepartmentActivityLog from './DepartmentActivityLog';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
@@ -16,12 +19,46 @@ function fbHeaders() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
 }
 
+const deskTableClassNames = {
+  ...worksheetTableClassNames,
+  table: 'w-full min-w-max',
+  th: `${worksheetTableClassNames.th} relative`,
+};
+
+type ColumnSort = { column: string; direction: 'asc' | 'desc' };
+
+function SortHeader({
+  label,
+  column,
+  sort,
+  onSort,
+}: {
+  label: string;
+  column: string;
+  sort: ColumnSort;
+  onSort: (column: string) => void;
+}) {
+  const active = sort.column === column;
+  return (
+    <button type="button" className="max-w-full truncate font-semibold text-ghana-black" onClick={() => onSort(column)}>
+      {label}{active ? (sort.direction === 'asc' ? ' ↑' : ' ↓') : ''}
+    </button>
+  );
+}
+
+function toggleColumnSort(prev: ColumnSort, column: string): ColumnSort {
+  return prev.column === column
+    ? { column, direction: prev.direction === 'asc' ? 'desc' : 'asc' }
+    : { column, direction: 'asc' };
+}
+
 interface RestaurantTable {
   id: string;
   number: string;
   capacity: number;
   section?: string;
   status: 'available' | 'occupied' | 'reserved' | 'cleaning';
+  createdAt?: string;
 }
 
 interface Reservation {
@@ -67,8 +104,29 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
 
   const [isNewReservationModalOpen, setIsNewReservationModalOpen] = useState(false);
   const [viewingReservationId, setViewingReservationId] = useState<string | null>(null);
+  const [reservationSort, setReservationSort] = useState<ColumnSort>({ column: 'date', direction: 'desc' });
+  const reservationCols = useResizableColumns({
+    customer: 180,
+    table: 100,
+    date: 160,
+    guests: 90,
+    status: 120,
+    requests: 240,
+  });
   const [isNewMenuItemModalOpen, setIsNewMenuItemModalOpen] = useState(false);
   const [isNewTableModalOpen, setIsNewTableModalOpen] = useState(false);
+  const [tableQuery, setTableQuery] = useState('');
+  const [tableLayout, setTableLayout] = useState<'cards' | 'table'>('cards');
+  const [tableSort, setTableSort] = useState<ColumnSort>({ column: 'number', direction: 'asc' });
+  const tableDates = useDateFilter();
+  const tableCols = useResizableColumns({
+    number: 120,
+    capacity: 110,
+    section: 160,
+    status: 160,
+  });
+  const [reservationQuery, setReservationQuery] = useState('');
+  const reservationDates = useDateFilter();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [selectedVenue, setSelectedVenue] = useState('all');
 
@@ -282,13 +340,65 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
   const pendingReservations = todaysReservations.filter((r) => r.status === 'pending').length;
   const activeStaffCount = staff.filter((s) => s.status === 'active').length;
 
+  const visibleTables = useMemo(() => {
+    const term = tableQuery.trim().toLowerCase();
+    const list = tables.filter((table) => {
+      if (!matchesDateFilter(table.createdAt, tableDates.mode, tableDates.single, tableDates.from, tableDates.to)) return false;
+      if (!term) return true;
+      return [table.number, table.section, table.status, String(table.capacity)]
+        .some((value) => String(value || '').toLowerCase().includes(term));
+    });
+    const direction = tableSort.direction === 'asc' ? 1 : -1;
+    const value = (table: RestaurantTable) => {
+      switch (tableSort.column) {
+        case 'capacity': return table.capacity || 0;
+        case 'section': return table.section || '';
+        case 'status': return table.status || '';
+        default: return table.number || '';
+      }
+    };
+    return [...list].sort((a, b) => {
+      const left = value(a);
+      const right = value(b);
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction;
+      return String(left).localeCompare(String(right), undefined, { numeric: true }) * direction;
+    });
+  }, [tables, tableQuery, tableSort, tableDates.mode, tableDates.single, tableDates.from, tableDates.to]);
+
+  const sortedReservations = useMemo(() => {
+    const term = reservationQuery.trim().toLowerCase();
+    const list = reservations.filter((reservation) => {
+      if (!matchesDateFilter(reservation.reservationDate, reservationDates.mode, reservationDates.single, reservationDates.from, reservationDates.to)) return false;
+      if (!term) return true;
+      return [reservation.customerName, reservation.phone, reservation.tableNumber, reservation.specialRequests, reservation.status]
+        .some((value) => String(value || '').toLowerCase().includes(term));
+    });
+    const direction = reservationSort.direction === 'asc' ? 1 : -1;
+    const value = (reservation: Reservation) => {
+      switch (reservationSort.column) {
+        case 'customer': return reservation.customerName || '';
+        case 'table': return reservation.tableNumber || '';
+        case 'guests': return reservation.guests || 0;
+        case 'status': return reservation.status || '';
+        case 'requests': return reservation.specialRequests || '';
+        default: return new Date(`${reservation.reservationDate}T${reservation.time || '00:00'}`).getTime();
+      }
+    };
+    return [...list].sort((a, b) => {
+      const left = value(a);
+      const right = value(b);
+      if (typeof left === 'number' && typeof right === 'number') return (left - right) * direction;
+      return String(left).localeCompare(String(right)) * direction;
+    });
+  }, [reservations, reservationSort, reservationQuery, reservationDates.mode, reservationDates.single, reservationDates.from, reservationDates.to]);
+
   const embedded = Boolean(panel);
   const openReservation = viewingReservationId
     ? reservations.find((r) => r.id === viewingReservationId) ?? null
     : null;
 
   return (
-    <div className={embedded ? 'p-2' : 'p-6'}>
+    <div className={embedded ? 'px-2 pb-2' : 'p-6'}>
       {/* Header */}
       {!embedded && (
       <div className="flex items-center justify-between mb-6">
@@ -384,23 +494,62 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
             classNames={embedded ? { tabList: 'hidden', panel: 'p-0' } : undefined}
           >
             {!embedded && (
-            <Tab key="pos-activity" title="📊 POS Activity Table">
+            <Tab key="pos-activity" title="📊 Transactions">
               <div className="p-6">
-                <DepartmentActivityLog area="f&b" title="POS Activity Table" showCategory showAlias />
+                <DepartmentActivityLog area="f&b" title="Transactions" showCategory showAlias />
               </div>
             </Tab>
             )}
 
             {(!embedded || panel === 'tables') && (
             <Tab key="tables" title="🪑 Table Management">
-              <div className="p-6">
-                <div className="flex justify-end mb-4">
-                  <Button size="sm" color="primary" variant="flat" onClick={() => setIsNewTableModalOpen(true)}>
-                    + Add Table
-                  </Button>
+              <div className={embedded ? 'px-2 pb-3' : 'p-6'}>
+                <div className="mb-[18px] flex flex-wrap items-center gap-2">
+                  <Input
+                    aria-label="Search tables"
+                    placeholder="Search tables"
+                    size="sm"
+                    value={tableQuery}
+                    onValueChange={setTableQuery}
+                    isClearable
+                    onClear={() => setTableQuery('')}
+                    className="w-56 shrink-0"
+                  />
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    <DateFilterPills
+                      mode={tableDates.mode}
+                      onMode={tableDates.setMode}
+                      single={tableDates.single}
+                      onSingle={tableDates.setSingle}
+                      from={tableDates.from}
+                      onFrom={tableDates.setFrom}
+                      to={tableDates.to}
+                      onTo={tableDates.setTo}
+                    />
+                    <div className="flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+                      <button
+                        type="button"
+                        className={`rounded-md px-3 min-h-8 text-sm ${tableLayout === 'cards' ? 'bg-white font-semibold text-ghana-black shadow-sm' : 'text-gray-600'}`}
+                        onClick={() => setTableLayout('cards')}
+                      >
+                        Cards
+                      </button>
+                      <button
+                        type="button"
+                        className={`rounded-md px-3 min-h-8 text-sm ${tableLayout === 'table' ? 'bg-white font-semibold text-ghana-black shadow-sm' : 'text-gray-600'}`}
+                        onClick={() => setTableLayout('table')}
+                      >
+                        Table
+                      </button>
+                    </div>
+                    <Button size="sm" color="primary" variant="flat" className="shrink-0" onClick={() => setIsNewTableModalOpen(true)}>
+                      + Add Table
+                    </Button>
+                  </div>
                 </div>
+                {tableLayout === 'cards' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                  {tables.map((table) => (
+                  {visibleTables.map((table) => (
                     <Card key={table.id} className={`border-2 transition-colors ${
                       table.status === 'available' ? 'border-green-200 hover:border-green-400' :
                       table.status === 'occupied' ? 'border-yellow-200 hover:border-yellow-400' :
@@ -432,73 +581,125 @@ export default function FoodBeverageRestaurantBar({ panel }: { panel?: 'tables' 
                       </CardBody>
                     </Card>
                   ))}
-                  {tables.length === 0 && (
-                    <p className="text-gray-500 col-span-full text-center py-8">No tables yet. Add one to get started.</p>
+                  {visibleTables.length === 0 && (
+                    <p className="text-gray-500 col-span-full text-center py-8">{tables.length === 0 ? 'No tables yet. Add one to get started.' : 'No tables match.'}</p>
                   )}
                 </div>
+                ) : (
+                <div ref={tableCols.frameRef} style={tableCols.frameStyle}>
+                <Table aria-label="Tables" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
+                  <TableHeader>
+                    <TableColumn className="relative" style={tableCols.style('number')}>{<SortHeader label="Table" column="number" sort={tableSort} onSort={(column) => setTableSort((prev) => toggleColumnSort(prev, column))} />}{tableCols.sizer('number', 'Table')}</TableColumn>
+                    <TableColumn className="relative" style={tableCols.style('capacity')}>{<SortHeader label="Capacity" column="capacity" sort={tableSort} onSort={(column) => setTableSort((prev) => toggleColumnSort(prev, column))} />}{tableCols.sizer('capacity', 'Capacity')}</TableColumn>
+                    <TableColumn className="relative" style={tableCols.style('section')}>{<SortHeader label="Section" column="section" sort={tableSort} onSort={(column) => setTableSort((prev) => toggleColumnSort(prev, column))} />}{tableCols.sizer('section', 'Section')}</TableColumn>
+                    <TableColumn className="relative" style={tableCols.style('status')}>{<SortHeader label="Status" column="status" sort={tableSort} onSort={(column) => setTableSort((prev) => toggleColumnSort(prev, column))} />}{tableCols.sizer('status', 'Status')}</TableColumn>
+                  </TableHeader>
+                  <TableBody emptyContent={tables.length === 0 ? 'No tables yet. Add one to get started.' : 'No tables match.'}>
+                    {visibleTables.map((table) => (
+                      <TableRow key={table.id}>
+                        <TableCell className="font-medium">Table {table.number}</TableCell>
+                        <TableCell>{table.capacity} guests</TableCell>
+                        <TableCell>{table.section || '—'}</TableCell>
+                        <TableCell>
+                          <Select
+                            aria-label={`Status for table ${table.number}`}
+                            selectedKeys={[table.status]}
+                            onChange={(e) => setTableStatus(table, e.target.value as RestaurantTable['status'])}
+                            size="sm"
+                            className="max-w-[9rem]"
+                          >
+                            {TABLE_STATUSES.map((s) => (
+                              <SelectItem key={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</SelectItem>
+                            ))}
+                          </Select>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                </div>
+                )}
               </div>
             </Tab>
             )}
 
             {(!embedded || panel === 'reservations') && (
             <Tab key="reservations" title="📅 Reservations">
-              <div className="p-6">
-                {embedded && (
-                  <div className="flex justify-end mb-4">
-                    <Button color="primary" className="bg-ghana-green text-white" onClick={() => setIsNewReservationModalOpen(true)}>
-                      + New Reservation
-                    </Button>
+              <div className="px-2 pb-3">
+                <div className="mb-[18px] flex flex-wrap items-center gap-2">
+                  <Input
+                    aria-label="Search reservations"
+                    placeholder="Search reservations"
+                    size="sm"
+                    value={reservationQuery}
+                    onValueChange={setReservationQuery}
+                    isClearable
+                    onClear={() => setReservationQuery('')}
+                    className="w-56 shrink-0"
+                  />
+                  <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                    <DateFilterPills
+                      mode={reservationDates.mode}
+                      onMode={reservationDates.setMode}
+                      single={reservationDates.single}
+                      onSingle={reservationDates.setSingle}
+                      from={reservationDates.from}
+                      onFrom={reservationDates.setFrom}
+                      to={reservationDates.to}
+                      onTo={reservationDates.setTo}
+                    />
+                    {embedded && (
+                      <Button size="sm" color="primary" className="shrink-0 bg-ghana-green text-white" onClick={() => setIsNewReservationModalOpen(true)}>
+                        + New Reservation
+                      </Button>
+                    )}
                   </div>
-                )}
-                <div className="max-h-[560px] overflow-y-auto">
-                  <Table aria-label="Reservations table">
-                    <TableHeader>
-                      <TableColumn>CUSTOMER</TableColumn>
-                      <TableColumn>TABLE</TableColumn>
-                      <TableColumn>DATE & TIME</TableColumn>
-                      <TableColumn>GUESTS</TableColumn>
-                      <TableColumn>STATUS</TableColumn>
-                      <TableColumn>SPECIAL REQUESTS</TableColumn>
-                      <TableColumn>ACTIONS</TableColumn>
-                    </TableHeader>
-                    <TableBody emptyContent="No reservations yet.">
-                      {reservations.map((reservation) => (
-                        <TableRow key={reservation.id}>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium text-ghana-black">{reservation.customerName}</p>
-                              <p className="text-sm text-gray-600">{reservation.phone}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge color="primary" variant="flat">{reservation.tableNumber || '—'}</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div>
-                              <p className="font-medium">{new Date(reservation.reservationDate).toLocaleDateString()}</p>
-                              <p className="text-sm text-gray-600">{reservation.time}</p>
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge color="secondary" variant="flat">{reservation.guests} guests</Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Chip color={getReservationStatusColor(reservation.status)} size="sm">
-                              {reservation.status.charAt(0).toUpperCase() + reservation.status.slice(1)}
-                            </Chip>
-                          </TableCell>
-                          <TableCell>
-                            <p className="text-sm text-gray-600 max-w-xs truncate">
-                              {reservation.specialRequests || 'None'}
-                            </p>
-                          </TableCell>
-                          <TableCell>
-                            <Button size="sm" variant="flat" onClick={() => setViewingReservationId(reservation.id)}>View</Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                </div>
+                <div ref={reservationCols.frameRef} style={reservationCols.frameStyle}>
+                <Table aria-label="Reservations table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
+                  <TableHeader>
+                    <TableColumn className="relative" style={reservationCols.style('customer')}>{<SortHeader label="Customer" column="customer" sort={reservationSort} onSort={(column) => setReservationSort((prev) => toggleColumnSort(prev, column))} />}{reservationCols.sizer('customer', 'Customer')}</TableColumn>
+                    <TableColumn className="relative" style={reservationCols.style('table')}>{<SortHeader label="Table" column="table" sort={reservationSort} onSort={(column) => setReservationSort((prev) => toggleColumnSort(prev, column))} />}{reservationCols.sizer('table', 'Table')}</TableColumn>
+                    <TableColumn className="relative" style={reservationCols.style('date')}>{<SortHeader label="Date & time" column="date" sort={reservationSort} onSort={(column) => setReservationSort((prev) => toggleColumnSort(prev, column))} />}{reservationCols.sizer('date', 'Date & time')}</TableColumn>
+                    <TableColumn className="relative" style={reservationCols.style('guests')}>{<SortHeader label="Guests" column="guests" sort={reservationSort} onSort={(column) => setReservationSort((prev) => toggleColumnSort(prev, column))} />}{reservationCols.sizer('guests', 'Guests')}</TableColumn>
+                    <TableColumn className="relative" style={reservationCols.style('status')}>{<SortHeader label="Status" column="status" sort={reservationSort} onSort={(column) => setReservationSort((prev) => toggleColumnSort(prev, column))} />}{reservationCols.sizer('status', 'Status')}</TableColumn>
+                    <TableColumn className="relative" style={reservationCols.style('requests')}>{<SortHeader label="Special requests" column="requests" sort={reservationSort} onSort={(column) => setReservationSort((prev) => toggleColumnSort(prev, column))} />}{reservationCols.sizer('requests', 'Special requests')}</TableColumn>
+                  </TableHeader>
+                  <TableBody emptyContent={reservations.length === 0 ? 'No reservations yet.' : 'No reservations match.'}>
+                    {sortedReservations.map((reservation) => (
+                      <TableRow
+                        key={reservation.id}
+                        className="cursor-pointer hover:bg-gray-50"
+                        onClick={() => setViewingReservationId(reservation.id)}
+                      >
+                        <TableCell>
+                          <div className="min-w-0 whitespace-normal">
+                            <p className="font-medium text-ghana-black">{reservation.customerName}</p>
+                            <p className="text-xs text-gray-500">{reservation.phone}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>{reservation.tableNumber || '—'}</TableCell>
+                        <TableCell>
+                          <div className="whitespace-normal">
+                            <p className="font-medium">{new Date(reservation.reservationDate).toLocaleDateString()}</p>
+                            <p className="text-xs text-gray-500">{reservation.time}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>{reservation.guests} guests</TableCell>
+                        <TableCell>
+                          <Chip color={getReservationStatusColor(reservation.status)} size="sm" variant="flat">
+                            {reservation.status.charAt(0).toUpperCase() + reservation.status.slice(1)}
+                          </Chip>
+                        </TableCell>
+                        <TableCell>
+                          <p className="min-w-0 whitespace-normal text-sm text-gray-600">
+                            {reservation.specialRequests || 'None'}
+                          </p>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
                 </div>
               </div>
             </Tab>

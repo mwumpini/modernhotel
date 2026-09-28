@@ -193,7 +193,7 @@ export default function OfflineManager() {
       {/* Offline Status Overview */}
       <Card className="border-0 shadow-lg">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between w-full">
             <h3 className="text-lg font-semibold text-ghana-black">🌐 Offline Capabilities</h3>
             <div className="flex items-center space-x-2">
               <Badge 

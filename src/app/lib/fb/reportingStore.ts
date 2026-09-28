@@ -22,6 +22,30 @@ function orderDate(order: FBOrder): Date {
 
 class ReportingStore {
   private listeners: Array<() => void> = [];
+  private paymentSnap: { cash: number; card: number; mobile: number; roomCharge: number } | null = null;
+
+  async hydrateReportsFromApi(date?: string) {
+    try {
+      const { getClientTenantSubdomain } = await import('../api/clientTenant');
+      const day = date || new Date().toISOString().slice(0, 10);
+      const res = await fetch(`/api/fb/reports?date=${day}`, {
+        headers: { 'x-tenant-subdomain': getClientTenantSubdomain() },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data?.paymentBreakdown) {
+        this.paymentSnap = {
+          cash: Number(data.paymentBreakdown.cash || 0),
+          card: Number(data.paymentBreakdown.card || 0),
+          mobile: Number(data.paymentBreakdown.mobile || 0),
+          roomCharge: Number(data.paymentBreakdown.roomCharge || 0),
+        };
+        this.notifyListeners();
+      }
+    } catch {
+      /* keep prior snapshot */
+    }
+  }
 
   // Sales Reports
   generateDailySalesReport(date: string): SalesReport {
@@ -39,13 +63,10 @@ class ReportingStore {
     const totalOrders = orders.length;
     const averageOrderValue = totalOrders > 0 ? totalSales / totalOrders : 0;
 
-    // Payment breakdown (simplified - in real system this would come from payment records)
-    const paymentBreakdown = {
-      cash: totalSales * 0.4, // 40% cash
-      card: totalSales * 0.45, // 45% card
-      mobile: totalSales * 0.1, // 10% mobile
-      roomCharge: totalSales * 0.05 // 5% room charge
-    };
+    // Real payment mix from /api/fb/reports (zeros until hydrate).
+    const paymentBreakdown = this.paymentSnap
+      ? { ...this.paymentSnap }
+      : { cash: 0, card: 0, mobile: 0, roomCharge: 0 };
 
     // Top selling items
     const itemSales: Record<string, { itemId: string; name: string; quantity: number; revenue: number }> = {};

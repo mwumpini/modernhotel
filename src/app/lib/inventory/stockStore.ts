@@ -195,7 +195,24 @@ function syncCountToApi(count: StockCount) {
         notes: i.notes,
       })),
     }),
-  }).catch((e) => console.warn('[Inventory] Failed to sync stock count:', e));
+  })
+    // fetch() only rejects on a network failure, not on a non-2xx response —
+    // without checking res.ok, a save that the server actually rejected (e.g.
+    // a 500) looked identical here to one that succeeded, and the optimistic
+    // local state never got corrected, so the count silently only ever
+    // existed in this tab and vanished on reload.
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body?.error || `Save failed (${res.status})`);
+      }
+    })
+    .catch((e) => {
+      console.warn('[Inventory] Failed to sync stock count:', e);
+      if (typeof window !== 'undefined') {
+        window.alert(`Stock count "${count.countNumber}" did not save to the server: ${e?.message || e}. Please retry.`);
+      }
+    });
 }
 
 function mapApiIssueToStore(raw: any): GoodsIssue {
@@ -326,6 +343,7 @@ interface StockStore {
   hydrateIssuesFromApi: () => Promise<void>;
   upsertStockTransfer: (transfer: StockTransfer) => void;
   upsertStockCount: (count: StockCount) => void;
+  deleteStockCount: (id: string) => void;
   upsertGoodsIssue: (issue: GoodsIssue) => void;
 
   // Stock Item Management
@@ -483,6 +501,18 @@ export const useStockStore = create<StockStore>((set, get) => ({
       };
     });
     syncCountToApi(count);
+  },
+
+  deleteStockCount: (id) => {
+    set((state) => ({
+      stockCounts: state.stockCounts.filter((c) => c.id !== id),
+    }));
+    if (typeof window !== 'undefined') {
+      fetch(`/api/inventory/stock-counts?id=${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        headers: invHeaders(),
+      }).catch((e) => console.warn('[Inventory] Failed to delete stock count:', e));
+    }
   },
 
   upsertGoodsIssue: (issue) => {

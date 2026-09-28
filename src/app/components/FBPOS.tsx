@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Button,
   Card,
@@ -33,19 +33,71 @@ import { buildReceiptHtml, printReceipt, buildKOTHtml, printHtml, previewReceipt
 import { storesIssueBus } from '../lib/fb/stores';
 import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
 import { storesStore } from '../lib/stores/store';
-import { useAccountingStore } from '../lib/accounting/store';
-import { captureCompleteSale, type DepartmentSource } from '../lib/accounting/integration';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { customerStore } from '../lib/fb/customerStore';
-import { fbTenantHeaders, normalizePosVenue, createFbOrder, patchFbOrderStatus, fetchFbOrderById, type FbOrderStatus } from '../lib/fb/api';
+import { fbTenantHeaders, normalizePosVenue, createFbOrder, patchFbOrderStatus, fetchFbOrderById, alertStockWarnings, type FbOrderStatus, type FbStockWarning } from '../lib/fb/api';
+import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { computeSalesTaxTotal } from '../lib/tax/engine';
 import { useSettingsStore } from '../lib/settings/store';
 import { managerPinMatches } from '../lib/settings/managerPin';
 import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
+import { useSession } from 'next-auth/react';
 
 type CustomerType = 'In-house' | 'Walk-in';
 type VenueMode = 'Restaurant' | 'Bar';
 type PaymentMethod = 'Cash' | 'Card' | 'Mobile Money' | 'Room Charge';
+
+const ACTIVITY_COLUMN_WIDTHS = {
+  id: 120,
+  date: 96,
+  time: 80,
+  itemName: 180,
+  customerName: 160,
+  room: 88,
+  table: 80,
+  venue: 110,
+  qty: 64,
+  amount: 96,
+  discount: 96,
+  price: 88,
+  category: 120,
+  status: 110,
+  waiter: 140,
+  actions: 96,
+} as const;
+
+type ActivityColumnKey = keyof typeof ACTIVITY_COLUMN_WIDTHS;
+const ACTIVITY_MIN_COLUMN = 56;
+
+function ActivityColumnSizer({
+  label,
+  onResizeStart,
+  onReset,
+}: {
+  label: string;
+  onResizeStart: (clientX: number) => void;
+  onReset: () => void;
+}) {
+  return (
+    <span
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={`Resize ${label} column`}
+      title="Drag to resize. Double-click to reset this column."
+      className="absolute -right-2 top-0 z-10 h-full w-2 cursor-col-resize touch-none hover:bg-ghana-gold/80"
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onResizeStart(event.clientX);
+      }}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onReset();
+      }}
+    />
+  );
+}
 
 interface FBPOSProps {
   onClose: () => void;
@@ -55,6 +107,7 @@ interface MenuItem {
   id: string;
   code?: string;
   name: string;
+  alias?: string;
   price: number;
   category: string;
   route: 'kitchen' | 'bar';
@@ -87,6 +140,9 @@ interface PendingOrder {
 }
 
 export default function FBPOS({ onClose }: FBPOSProps) {
+  const { data: session } = useSession();
+  const cashierUserId = (session?.user as { id?: string } | undefined)?.id;
+  const cashierName = session?.user?.name || session?.user?.email || undefined;
   const [venue, setVenue] = useState<VenueMode>('Restaurant');
   const [customerType, setCustomerType] = useState<CustomerType>('Walk-in');
   const [roomNumber, setRoomNumber] = useState('');
@@ -97,6 +153,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [selectedWalkIn, setSelectedWalkIn] = useState<any>(null);
   const [walkInFocused, setWalkInFocused] = useState(false);
   const [tableNumber, setTableNumber] = useState('T01');
+  const [floorTables, setFloorTables] = useState<{ number: string; status: string; capacity?: number }[]>([]);
+  const [hasOpenTill, setHasOpenTill] = useState<boolean | null>(null);
   const [waiterId, setWaiterId] = useState('W1');
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -141,6 +199,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [activitySearch, setActivitySearch] = useState<string>('');
   const [activityQueue, setActivityQueue] = useState<'all' | 'pending-kot' | 'pending-bot' | 'unpaid' | 'billed' | 'cancelled'>('all');
   const [activityWaiterFilter, setActivityWaiterFilter] = useState<string>('all');
+  const [activityDateMode, setActivityDateMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
+  const [activityDateSingle, setActivityDateSingle] = useState('');
+  const [activityDateFrom, setActivityDateFrom] = useState('');
+  const [activityDateTo, setActivityDateTo] = useState('');
   const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: number }>>([]);
   const [tipAmount, setTipAmount] = useState<number>(0);
   const [settleRoomSearch, setSettleRoomSearch] = useState<string>('');
@@ -170,7 +232,50 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [activityVenue, setActivityVenue] = useState<VenueMode>('Restaurant');
   const [activityWaiter, setActivityWaiter] = useState<string>('');
 
-  const accountingStore = useAccountingStore();
+  // Load floor tables + whether this cashier has an open restaurant till
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [tablesRes, shiftsRes] = await Promise.all([
+          fetch('/api/fb/tables', { headers: fbTenantHeaders() }),
+          fetch('/api/frontoffice/cashier-shifts?outlet=restaurant', {
+            headers: {
+              'Content-Type': 'application/json',
+              'x-tenant-subdomain': getClientTenantSubdomain(),
+            },
+          }),
+        ]);
+        if (cancelled) return;
+        if (tablesRes.ok) {
+          const data = await tablesRes.json();
+          const tables = Array.isArray(data.tables) ? data.tables : [];
+          setFloorTables(
+            tables.map((t: any) => ({
+              number: String(t.number),
+              status: String(t.status || 'available'),
+              capacity: t.capacity,
+            }))
+          );
+          if (tables.length && !tables.some((t: any) => String(t.number) === tableNumber)) {
+            setTableNumber(String(tables[0].number));
+          }
+        }
+        if (shiftsRes.ok && cashierUserId) {
+          const data = await shiftsRes.json();
+          const shifts = Array.isArray(data.shifts) ? data.shifts : [];
+          setHasOpenTill(
+            shifts.some((s: any) => s.status === 'open' && s.cashierUserId === cashierUserId)
+          );
+        } else if (!cashierUserId) {
+          setHasOpenTill(false);
+        }
+      } catch {
+        if (!cancelled) setHasOpenTill(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [cashierUserId]);
 
   // Get available rooms (checked-in guests only)
   const availableRooms = useMemo(() => {
@@ -261,7 +366,9 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   const [selectedOrder, setSelectedOrder] = useState<PendingOrder | null>(null);
 
-  const tables = Array.from({ length: 20 }).map((_, i) => `T${String(i + 1).padStart(2, '0')}`);
+  const tables = floorTables.length
+    ? floorTables.map((t) => t.number)
+    : Array.from({ length: 20 }).map((_, i) => `T${String(i + 1).padStart(2, '0')}`);
 
   const [menuLoading, setMenuLoading] = useState(true);
   const [menu, setMenu] = useState<MenuItem[]>(() => {
@@ -288,6 +395,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           id: it.id,
           code: it.code,
           name: it.name,
+          alias: it.alias || '',
           price: Number(it.unitPrice),
           category: it.category,
           venue: it.venue,
@@ -346,6 +454,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     const qs = q.trim().toLowerCase();
     if (!qs) return true;
     if (m.name.toLowerCase().includes(qs)) return true;
+    if ((m.alias || '').toLowerCase().includes(qs)) return true;
     const a = aliases[m.id] || [];
     return a.some(x => x.toLowerCase().includes(qs));
   };
@@ -451,7 +560,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     return sorted;
   }, [orders, menuIdToCategory, waiters, sortKey, sortDirection]);
 
-  const activityLineOpen = (status: string) => status !== 'served' && status !== 'billed' && status !== 'cancelled';
+  const activityLineOpen = (status: string) => status !== 'served' && status !== 'billed' && status !== 'cancelled' && status !== 'refunded';
 
   const activityRowInQueue = (
     queue: 'pending-kot' | 'pending-bot' | 'unpaid' | 'billed' | 'cancelled',
@@ -478,19 +587,88 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [orders, waiters]);
 
-  const activitySortValue =
-    (sortKey === 'time' || sortKey === 'date') && sortDirection === 'asc' ? 'time-asc'
-    : sortKey === 'table' ? 'table'
-    : sortKey === 'waiter' ? 'waiter'
-    : sortKey === 'amount' && sortDirection === 'asc' ? 'amount-asc'
-    : sortKey === 'amount' ? 'amount-desc'
-    : 'time-desc';
+  const [activityWidths, setActivityWidths] = useState(ACTIVITY_COLUMN_WIDTHS);
+  const activityWidthsRef = useRef(activityWidths);
+  activityWidthsRef.current = activityWidths;
+  const activityDragRef = useRef<{ key: ActivityColumnKey; startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    const move = (event: PointerEvent) => {
+      const drag = activityDragRef.current;
+      if (!drag) return;
+      const next = Math.max(ACTIVITY_MIN_COLUMN, Math.round(drag.startWidth + event.clientX - drag.startX));
+      setActivityWidths((current) => (current[drag.key] === next ? current : { ...current, [drag.key]: next }));
+    };
+    const stop = () => {
+      if (!activityDragRef.current) return;
+      activityDragRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, []);
+
+  const beginActivityResize = (key: ActivityColumnKey, clientX: number) => {
+    activityDragRef.current = { key, startX: clientX, startWidth: activityWidthsRef.current[key] };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
+  const resetActivityWidth = (key: ActivityColumnKey) => {
+    setActivityWidths((current) => ({ ...current, [key]: ACTIVITY_COLUMN_WIDTHS[key] }));
+  };
+  const activityTableWidth = (Object.keys(ACTIVITY_COLUMN_WIDTHS) as ActivityColumnKey[]).reduce((sum, key) => sum + activityWidths[key], 0);
+  const activityHeader = (key: ActivityColumnKey, label: string, sortable = true) => (
+    <TableColumn key={key} className="relative" style={{ width: activityWidths[key], minWidth: activityWidths[key], maxWidth: activityWidths[key] }}>
+      {sortable ? (
+        <button
+          type="button"
+          className="max-w-full truncate font-semibold text-ghana-black"
+          onClick={() => {
+            if (sortKey === key) setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+            else {
+              setSortKey(key);
+              setSortDirection('desc');
+            }
+          }}
+        >
+          {label}{sortKey === key ? (sortDirection === 'asc' ? ' ↑' : ' ↓') : ''}
+        </button>
+      ) : (
+        <span className="font-semibold text-ghana-black">{label}</span>
+      )}
+      <ActivityColumnSizer label={label} onResizeStart={(clientX) => beginActivityResize(key, clientX)} onReset={() => resetActivityWidth(key)} />
+    </TableColumn>
+  );
 
   const filteredActivityRows = useMemo(() => {
     const term = activitySearch.trim().toLowerCase();
+    const activityDay = (iso?: string) => {
+      const when = iso ? new Date(iso) : null;
+      if (!when || Number.isNaN(when.getTime())) return '';
+      const month = String(when.getMonth() + 1).padStart(2, '0');
+      const day = String(when.getDate()).padStart(2, '0');
+      return `${when.getFullYear()}-${month}-${day}`;
+    };
+    const today = activityDay(new Date().toISOString());
     return sortedOrders.filter(({ order, item }) => {
       if (activityQueue !== 'all' && !activityRowInQueue(activityQueue, order, item)) return false;
       if (activityWaiterFilter !== 'all' && order.waiterId !== activityWaiterFilter) return false;
+      const orderDay = activityDay(order.createdAt || order.timestamp);
+      if (activityDateMode === 'today' && orderDay !== today) return false;
+      if (activityDateMode === 'specific' && activityDateSingle && orderDay !== activityDateSingle) return false;
+      if (activityDateMode === 'range' && (activityDateFrom || activityDateTo)) {
+        if (activityDateFrom && orderDay < activityDateFrom) return false;
+        if (activityDateTo && orderDay > activityDateTo) return false;
+      }
       if (!term) return true;
       const haystack = [
         order.orderNumber, order.id, item.name, order.guestName, order.table, order.roomNumber,
@@ -498,7 +676,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       ].filter(Boolean).join(' ').toLowerCase();
       return haystack.includes(term);
     });
-  }, [sortedOrders, activitySearch, activityQueue, activityWaiterFilter, waiters]);
+  }, [sortedOrders, activitySearch, activityQueue, activityWaiterFilter, activityDateMode, activityDateSingle, activityDateFrom, activityDateTo, waiters]);
 
   const totalActivityPages = Math.max(1, Math.ceil((filteredActivityRows.length || 0) / (activityRowsPerPage || 10)));
   React.useEffect(() => {
@@ -506,7 +684,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   }, [activityRowsPerPage, filteredActivityRows.length, totalActivityPages, activityPage]);
   React.useEffect(() => {
     setActivityPage(1);
-  }, [activitySearch, activityQueue, activityWaiterFilter]);
+  }, [activitySearch, activityQueue, activityWaiterFilter, activityDateMode, activityDateSingle, activityDateFrom, activityDateTo]);
 
   const openActivityModal = (o: FBOrder, it: any) => {
     setActivitySelected({ order: o, item: it });
@@ -804,6 +982,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       return;
     }
 
+    if (paymentMethod !== 'Room Charge' && hasOpenTill === false) {
+      alert('Open a Restaurant / Bar till (Cashiering tab) before taking cash, card, or MoMo.');
+      return;
+    }
+
     setIsProcessingPayment(true);
     try {
       const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
@@ -877,21 +1060,37 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       // since silently continuing here means the guest gets charged for an order that
       // was never actually billed on the server.
       const STATUS_SEQUENCE: FbOrderStatus[] = ['pending', 'preparing', 'ready', 'served', 'billed'];
+      let stockWarnings: FbStockWarning[] | undefined;
+      let billCogsAmount = 0;
       if (apiOrder?.id) {
         let currentStatus: string = 'pending';
         if (sentOrderData) {
           const liveOrder = await fetchFbOrderById(apiOrder.id);
           currentStatus = liveOrder.status;
         }
-        if (currentStatus === 'cancelled' || currentStatus === 'billed') {
+        if (currentStatus === 'cancelled' || currentStatus === 'billed' || currentStatus === 'refunded') {
           throw new Error(`Order is already '${currentStatus}' and cannot be billed`);
         }
         const startIdx = STATUS_SEQUENCE.indexOf(currentStatus as FbOrderStatus);
         const remainingSteps = startIdx === -1 ? STATUS_SEQUENCE.slice(1) : STATUS_SEQUENCE.slice(startIdx + 1);
         for (const status of remainingSteps) {
-          await patchFbOrderStatus(apiOrder.id, status);
+          const patched = await patchFbOrderStatus(
+            apiOrder.id,
+            status,
+            status === 'billed'
+              ? {
+                  paymentMethod,
+                  staffId: waiterId,
+                  staffName: waiters.find(w => w.id === waiterId)?.name || waiterId,
+                }
+              : undefined,
+          );
+          if (status === 'billed') {
+            if (patched.stockWarnings?.length) stockWarnings = patched.stockWarnings;
+            if (patched.cogs?.amount) billCogsAmount = Number(patched.cogs.amount);
+          }
         }
-        // 'billed' PATCH triggers auto-folio posting for Room Charge orders
+        // 'billed' PATCH posts folio (room charge) + stock + GL on the server
       }
 
       const newId = apiOrder?.id ?? `ORD-${Date.now().toString().slice(-6)}`;
@@ -948,61 +1147,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         });
       });
 
-      // ===== ACCOUNTING INTEGRATION =====
-      // Cash/card/MoMo: capture in GL immediately.
-      // Room Charge: folio posting already handled above via API PATCH to 'billed'.
-      if (paymentMethod !== 'Room Charge') {
-        try {
-          const departmentSource: DepartmentSource = venue === 'Restaurant' ? 'restaurant'
-            : venue === 'Bar' ? 'bar'
-            : 'restaurant';
-          const accountingPaymentMethod = paymentMethod as 'Cash' | 'Card' | 'Mobile Money';
-          const taxPercent = finalSubtotal > 0 ? (totalTax / finalSubtotal) * 100 : 0;
-          const currentWaiter = waiters.find(w => w.id === waiterId);
-          const staffInfo = {
-            staffId: waiterId,
-            staffName: currentWaiter?.name || waiterId,
-            staffRole: venue === 'Bar' ? 'Bartender' : 'Waiter/Cashier',
-          };
-          const result = captureCompleteSale(
-            {
-              id: newId,
-              source: departmentSource,
-              customerId: customerType === 'In-house' && roomNumber ? `ROOM-${roomNumber}` : undefined,
-              customerName: guestDisplayName,
-              reference: newId,
-              description: `${venue} Sale - Table ${tableNumber || 'N/A'}`,
-              items: (cart.length > 0 ? cart : [{ name: `${venue} order`, qty: 1, price: finalSubtotal }]).map(item => ({
-                description: item.name,
-                quantity: item.qty,
-                unitPrice: item.price,
-                taxPercent,
-              })),
-              subtotal: finalSubtotal,
-              taxAmount: totalTax,
-              total,
-              ...staffInfo,
-            },
-            {
-              id: `PAY-${newId}`,
-              customerName: guestDisplayName,
-              amount: total,
-              paymentMethod: accountingPaymentMethod,
-              reference: newId,
-              description: `Payment for ${venue} order ${newId}`,
-              ...staffInfo,
-            }
-          );
-          if (result) {
-            console.log(`[F&B POS] ✅ Accounting captured - Invoice: ${result.invoiceId}, Receipt: ${result.receiptId}`);
-          }
-        } catch (err) {
-          console.error('[F&B POS] ❌ Accounting integration error:', err);
-          // The order IS billed server-side at this point (state-machine transitions above
-          // already succeeded) — don't roll that back over an accounting hiccup, but do
-          // surface it: a silently-lost GL capture here is real revenue with no ledger entry.
-          alert(`Order ${newId} was billed, but recording it in accounting failed. Please notify a manager to post it manually.`);
-        }
+      // ===== ACCOUNTING =====
+      // Sale + COGS + cashier stamps post on the server during status=billed.
+      // Client no longer double-posts to avoid billed-without-GL / duplicate JE.
+      if (billCogsAmount > 0) {
+        console.log(`[F&B POS] Server COGS on bill: GH₵${billCogsAmount.toFixed(2)}`);
       }
 
       // Track payment received
@@ -1033,6 +1182,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
       // Close payment modal
       paymentModal.onClose();
+      alertStockWarnings(`Order ${newId}`, stockWarnings);
 
     } catch (error) {
       console.error('Payment processing error:', error);
@@ -1119,11 +1269,41 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       : status === 'paid' ? 'billed'
       : status;
     try {
-      await patchFbOrderStatus(orderId, apiStatus);
+      const patched = await patchFbOrderStatus(
+        orderId,
+        apiStatus,
+        apiStatus === 'billed' ? { paymentMethod: 'Cash' } : undefined,
+      );
+      if (apiStatus === 'billed') {
+        alertStockWarnings(`Order ${orderId}`, patched.stockWarnings);
+      }
     } catch { /* silent — in-memory store already updated */ }
     const found = pendingOrders.find(o => o.id === orderId);
     if (found) {
       ordersStore.update({ ...found, status } as any);
+    }
+  };
+
+  const refundBilledOrder = async (orderId: string, _orderVenue?: string) => {
+    const reason = window.prompt('Refund reason (required):', 'Guest request');
+    if (!reason || !reason.trim()) return;
+    if (!window.confirm(`Refund order ${orderId}? This restocks inventory, voids the folio charge (if any), and reverses accounting.`)) {
+      return;
+    }
+    try {
+      const patched = await patchFbOrderStatus(orderId, 'refunded', { refundReason: reason.trim() });
+      ordersStore.update({ id: orderId, status: 'cancelled' } as any);
+      setPendingOrders((prev) => prev.map((o) => (o.id === orderId ? { ...o, status: 'cancelled' } : o)));
+      setActivitySelected(null);
+      trackEvent('FB.OrderRefunded' as any, { orderId, stockRestored: patched.stockRestored }, { sourceModule: 'F&B' });
+      const glOk = (patched as any).glRefund?.ok !== false;
+      alert(
+        glOk
+          ? `Order ${orderId} refunded.${patched.stockRestored ? ` Restocked ${patched.stockRestored} line(s).` : ''}`
+          : `Order ${orderId} refunded; check accounting if GL reverse failed.`,
+      );
+    } catch (err) {
+      alert(`Refund failed: ${err instanceof Error ? err.message : 'unknown error'}`);
     }
   };
 
@@ -1537,7 +1717,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         <div id="pos-activity-table">
         <Card className="border border-gray-300 shadow-lg mt-6">
                         <CardHeader className="pb-2 flex items-center justify-between">
-                <h3 className="font-semibold text-ghana-black">POS Activity Table</h3>
+                <h3 className="font-semibold text-ghana-black">Transactions</h3>
                 <div className="flex items-center gap-2">
                   <Select size="sm" label="Rows" selectedKeys={[String(activityRowsPerPage)]} onSelectionChange={(k) => {
                     const v = Number(Array.from(k as Set<string>)[0] || '10');
@@ -1556,7 +1736,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 </div>
               </CardHeader>
           <CardBody>
-                  <div className="flex flex-wrap items-center gap-2 mb-3">
+                  <div className="mb-3 flex w-full items-center justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
                     <Select
                       size="sm"
                       label="Queue"
@@ -1613,228 +1794,82 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                         <SelectItem key={w.id}>{w.name}</SelectItem>
                       ))}
                     </Select>
-                    <Select
-                      size="sm"
-                      label="Sort"
-                      selectedKeys={[activitySortValue]}
-                      onSelectionChange={(k) => {
-                        const v = Array.from(k as Set<string>)[0] || 'time-desc';
-                        if (v === 'time-asc') { setSortKey('time'); setSortDirection('asc'); }
-                        else if (v === 'table') { setSortKey('table'); setSortDirection('asc'); }
-                        else if (v === 'waiter') { setSortKey('waiter'); setSortDirection('asc'); }
-                        else if (v === 'amount-desc') { setSortKey('amount'); setSortDirection('desc'); }
-                        else if (v === 'amount-asc') { setSortKey('amount'); setSortDirection('asc'); }
-                        else { setSortKey('time'); setSortDirection('desc'); }
-                      }}
-                      className="w-40"
-                    >
-                      <SelectItem key="time-desc">Newest</SelectItem>
-                      <SelectItem key="time-asc">Oldest</SelectItem>
-                      <SelectItem key="table">Table</SelectItem>
-                      <SelectItem key="waiter">Waiter</SelectItem>
-                      <SelectItem key="amount-desc">Amount high</SelectItem>
-                      <SelectItem key="amount-asc">Amount low</SelectItem>
-                    </Select>
+                    </div>
+                    <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+                      <span className="text-sm font-medium text-gray-500 mr-1">📅 Date:</span>
+                      {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
+                        const labels = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
+                        return (
+                          <button
+                            key={mode}
+                            type="button"
+                            onClick={() => setActivityDateMode(mode)}
+                            className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                              activityDateMode === mode
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
+                            }`}
+                          >
+                            {labels[mode]}
+                          </button>
+                        );
+                      })}
+                      {activityDateMode === 'specific' && (
+                        <input
+                          type="date"
+                          aria-label="Specific date"
+                          value={activityDateSingle}
+                          onChange={(event) => setActivityDateSingle(event.target.value)}
+                          className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                      )}
+                      {activityDateMode === 'range' && (
+                        <div className="flex items-center gap-2 ml-2">
+                          <input
+                            type="date"
+                            aria-label="From date"
+                            value={activityDateFrom}
+                            onChange={(event) => setActivityDateFrom(event.target.value)}
+                            className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                          <span className="text-gray-400 text-sm">→</span>
+                          <input
+                            type="date"
+                            aria-label="To date"
+                            value={activityDateTo}
+                            onChange={(event) => setActivityDateTo(event.target.value)}
+                            className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
-                            <div className="w-full overflow-x-auto max-h-[50vh] overflow-y-auto">
-                  <Table aria-label="POS Activity Table - item level log" className="min-w-[1200px]">
+                            <div className="w-full max-h-[50vh] overflow-auto" style={{ ['--pos-activity-width' as string]: `${activityTableWidth}px` }}>
+                  <Table
+                    aria-label="Transactions"
+                    classNames={{
+                      table: 'table-fixed w-[var(--pos-activity-width)] min-w-[var(--pos-activity-width)] max-w-none',
+                      th: 'relative',
+                      td: 'overflow-hidden',
+                    }}
+                  >
                     <TableHeader>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'id') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('id');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        TICKET {sortKey === 'id' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none whitespace-nowrap"
-                        onClick={() => {
-                          if (sortKey === 'date') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('date');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        DATE {sortKey === 'date' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none whitespace-nowrap"
-                        onClick={() => {
-                          if (sortKey === 'time') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('time');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        TIME {sortKey === 'time' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none min-w-[16rem]"
-                        onClick={() => {
-                          if (sortKey === 'itemName') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('itemName');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        ITEM NAME {sortKey === 'itemName' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'customerName') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('customerName');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        CUSTOMER NAME {sortKey === 'customerName' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'room') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('room');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        ROOM {sortKey === 'room' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'table') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('table');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        TABLE {sortKey === 'table' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'venue') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('venue');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        VENUE {sortKey === 'venue' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'qty') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('qty');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        QTY {sortKey === 'qty' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'amount') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('amount');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        AMOUNT {sortKey === 'amount' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'discount') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('discount');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        DISCOUNT {sortKey === 'discount' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'price') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('price');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        PRICE {sortKey === 'price' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'category') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('category');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        CATEGORY {sortKey === 'category' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'status') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('status');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        STATUS {sortKey === 'status' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn 
-                        className="cursor-pointer select-none"
-                        onClick={() => {
-                          if (sortKey === 'waiter') {
-                            setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-                          } else {
-                            setSortKey('waiter');
-                            setSortDirection('desc');
-                          }
-                        }}
-                      >
-                        WAITER/ESS {sortKey === 'waiter' && (sortDirection === 'asc' ? '↑' : '↓')}
-                      </TableColumn>
-                      <TableColumn>ACTIONS</TableColumn>
+                      {activityHeader('id', 'Ticket')}
+                      {activityHeader('date', 'Date')}
+                      {activityHeader('time', 'Time')}
+                      {activityHeader('itemName', 'Item name')}
+                      {activityHeader('customerName', 'Customer name')}
+                      {activityHeader('room', 'Room')}
+                      {activityHeader('table', 'Table')}
+                      {activityHeader('venue', 'Venue')}
+                      {activityHeader('qty', 'Qty')}
+                      {activityHeader('amount', 'Amount')}
+                      {activityHeader('discount', 'Discount')}
+                      {activityHeader('price', 'Price')}
+                      {activityHeader('category', 'Category')}
+                      {activityHeader('status', 'Status')}
+                      {activityHeader('waiter', 'Waiter/ess')}
+                      {activityHeader('actions', 'Actions', false)}
                     </TableHeader>
                     <TableBody emptyContent="No matching orders.">
                       {filteredActivityRows.slice((activityPage - 1) * activityRowsPerPage, activityPage * activityRowsPerPage).map(({ order: o, item: it }) => (
@@ -1842,7 +1877,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           <TableCell>{lineTicket(o.notes, it.route, o.orderNumber || o.id)}</TableCell>
                           <TableCell className="whitespace-nowrap">{activityStamp(o.createdAt).date}</TableCell>
                           <TableCell className="whitespace-nowrap">{activityStamp(o.createdAt).time}</TableCell>
-                          <TableCell className="min-w-[16rem]">{it.name}</TableCell>
+                          <TableCell><span className="block truncate" title={it.name}>{it.name}</span></TableCell>
                           <TableCell>{o.guestName || '-'}</TableCell>
                           <TableCell>{o.roomNumber || '-'}</TableCell>
                           <TableCell><Badge color="primary" variant="flat">{o.table}</Badge></TableCell>
@@ -2060,41 +2095,34 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 } catch { /* fallback totals already set */ }
               }
 
-              // Advance order through state machine → billed
+              // Advance order through state machine → billed (server posts GL + COGS)
+              let billCogsAmount = 0;
+              const primaryTender =
+                (splitPayments.find((s) => s.method !== 'Room Charge' && Number(s.amount) > 0)?.method as PaymentMethod) ||
+                'Cash';
+              if (primaryTender !== 'Room Charge' && hasOpenTill === false) {
+                alert('Open a Restaurant / Bar till before taking cash, card, or MoMo.');
+                return;
+              }
               if (orderId) {
                 try {
                   await patchFbOrderStatus(orderId, 'preparing');
                   await patchFbOrderStatus(orderId, 'ready');
                   await patchFbOrderStatus(orderId, 'served');
-                  await patchFbOrderStatus(orderId, 'billed');
-                } catch { /* silent */ }
+                  const billed = await patchFbOrderStatus(orderId, 'billed', {
+                    paymentMethod: primaryTender,
+                    staffId: waiterId,
+                    staffName: waiters.find(w => w.id === waiterId)?.name || waiterId,
+                  });
+                  alertStockWarnings(`Order ${orderId}`, billed.stockWarnings);
+                  if (billed.cogs?.amount) billCogsAmount = Number(billed.cogs.amount);
+                } catch (err) {
+                  alert(`Billing failed: ${err instanceof Error ? err.message : 'unknown error'}`);
+                  return;
+                }
               }
-
-              // GL capture for each non-room-charge split
-              const departmentSource: DepartmentSource = venue === 'Restaurant' ? 'restaurant' : 'bar';
-              const taxPercent = finalSubtotal > 0 ? (finalTax / finalSubtotal) * 100 : 0;
-              const currentWaiter = waiters.find(w => w.id === waiterId);
-              const staffInfo = { staffId: waiterId, staffName: currentWaiter?.name || waiterId, staffRole: 'Waiter/Cashier' as const };
-
-              for (const split of splitPayments) {
-                if (split.method === 'Room Charge') continue; // handled via folio PATCH above
-                if (Number(split.amount) <= 0) continue;
-                try {
-                  captureCompleteSale(
-                    {
-                      id: orderId ?? `SPLIT-${Date.now()}`, source: departmentSource,
-                      customerName: guestDisplayName, reference: orderId ?? '',
-                      description: `${venue} Split — ${split.method}`,
-                      items: cart.map(item => ({ description: item.name, quantity: item.qty, unitPrice: item.price, taxPercent })),
-                      subtotal: finalSubtotal, taxAmount: finalTax, total: finalTotal, ...staffInfo,
-                    },
-                    {
-                      id: `SPLIT-${split.method}-${Date.now()}`, customerName: guestDisplayName,
-                      amount: Number(split.amount), paymentMethod: split.method as 'Cash' | 'Card' | 'Mobile Money',
-                      reference: orderId ?? '', description: `Split payment: ${split.method}`, ...staffInfo,
-                    }
-                  );
-                } catch { /* silent GL error — order already billed */ }
+              if (billCogsAmount > 0) {
+                console.log(`[F&B POS] Server COGS on split bill: GH₵${billCogsAmount.toFixed(2)}`);
               }
 
               // Print combined receipt
@@ -2224,13 +2252,14 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             const o = activitySelected.order;
             const it = activitySelected.item;
             const status = String(o.status || activityLineStatus(o, it)).toLowerCase();
-            const canServe = status !== 'served' && status !== 'billed' && status !== 'cancelled';
-            const canPay = status !== 'billed' && status !== 'cancelled';
+            const canServe = status !== 'served' && status !== 'billed' && status !== 'cancelled' && status !== 'refunded';
+            const canPay = status !== 'billed' && status !== 'cancelled' && status !== 'refunded';
+            const canRefund = status === 'billed';
             const waiterName = waiters.find(w => w.id === o.waiterId)?.name || o.waiterId || '—';
             const linesSubtotal = o.items.reduce((sum, i) => sum + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
             const storedTotal = Number(o.total) || 0;
             const ticketTotal = storedTotal > 0 ? storedTotal : linesSubtotal + computeSalesTaxTotal(linesSubtotal);
-            const statusColor = status === 'billed' ? 'success' : status === 'cancelled' ? 'danger' : status === 'served' ? 'primary' : 'warning';
+            const statusColor = status === 'billed' ? 'success' : status === 'cancelled' || status === 'refunded' ? 'danger' : status === 'served' ? 'primary' : 'warning';
             return (
               <>
                 <ModalHeader className="flex flex-col items-start gap-1 text-ghana-black">
@@ -2259,13 +2288,16 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <span>Total</span>
                     <span>₵{ticketTotal.toFixed(2)}</span>
                   </div>
-                  {(canServe || canPay) && (
+                  {(canServe || canPay || canRefund) && (
                     <div className="mt-4 flex gap-2">
                       {canServe && (
                         <Button fullWidth variant="flat" className="bg-orange-50 text-orange-700 border border-orange-200" onClick={() => serveActivityItem(o, it)}>Serve</Button>
                       )}
                       {canPay && (
                         <Button fullWidth variant="flat" className="bg-blue-600 text-white" onClick={() => payActivityOrder(o)}>Pay ticket</Button>
+                      )}
+                      {canRefund && (
+                        <Button fullWidth variant="flat" className="bg-red-600 text-white" onClick={() => refundBilledOrder(o.id, o.venue)}>Refund</Button>
                       )}
                     </div>
                   )}

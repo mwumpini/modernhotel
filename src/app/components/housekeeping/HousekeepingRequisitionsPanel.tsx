@@ -4,8 +4,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Badge,
   Button,
-  Card,
-  CardBody,
   Chip,
   Select,
   SelectItem,
@@ -93,39 +91,34 @@ export default function HousekeepingRequisitionsPanel() {
   }, [requisitions, statusFilter]);
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-gray-600">
-          Request soap, towels, and other supplies from Stores. When Stores marks the request Ready, the items land on the Inventory tab. Finishing a room task uses that stock.
-        </p>
-        <Button color="primary" onPress={() => setOpen(true)} className="shrink-0">+ Request Stock</Button>
+    <div className="space-y-3">
+      <div className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+        <h3 className="text-base font-semibold text-ghana-black shrink-0">Requisitions</h3>
+        <Button size="sm" color="primary" onPress={() => setOpen(true)} className="shrink-0">+ Request Stock</Button>
       </div>
 
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Select
-              placeholder="Filter by status"
-              selectedKeys={[statusFilter]}
-              onSelectionChange={(keys) => {
-                const next = Array.from(keys)[0] as string;
-                if (next) setStatusFilter(next);
-              }}
-            >
-              <SelectItem key="all">🔍 All Statuses</SelectItem>
-              <SelectItem key="pending">⏳ Pending</SelectItem>
-              <SelectItem key="approved">👍 Approved</SelectItem>
-              <SelectItem key="ready">✅ Ready</SelectItem>
-              <SelectItem key="rejected">❌ Rejected</SelectItem>
-            </Select>
-            <div />
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-600">Filtered:</span>
-              <Badge color="primary" variant="flat">{visible.length}</Badge>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+      <div className="mb-[18px] flex flex-nowrap items-center gap-2 overflow-x-auto">
+        <Select
+          size="sm"
+          placeholder="Filter by status"
+          selectedKeys={[statusFilter]}
+          onSelectionChange={(keys) => {
+            const next = Array.from(keys)[0] as string;
+            if (next) setStatusFilter(next);
+          }}
+          className="w-44 shrink-0"
+        >
+          <SelectItem key="all">🔍 All Statuses</SelectItem>
+          <SelectItem key="pending">⏳ Pending</SelectItem>
+          <SelectItem key="approved">👍 Approved</SelectItem>
+          <SelectItem key="ready">✅ Ready</SelectItem>
+          <SelectItem key="rejected">❌ Rejected</SelectItem>
+        </Select>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-sm text-gray-600">Filtered:</span>
+          <Badge color="primary" variant="flat">{visible.length}</Badge>
+        </div>
+      </div>
 
       <Table aria-label="Housekeeping requisitions">
         <TableHeader>

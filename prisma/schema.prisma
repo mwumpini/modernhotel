@@ -66,6 +66,7 @@ model Tenant {
   maintenanceRequests    MaintenanceRequest[]
   housekeepingStaff      HousekeepingStaff[]
   housekeepingRoomResponsibilities HousekeepingRoomResponsibility[]
+  housekeepingCleaningAreas        HousekeepingCleaningArea[]
   purchaseOrders         PurchaseOrder[]
   purchaseOrderItems     PurchaseOrderItem[]
   requisitions           Requisition[]
@@ -107,6 +108,7 @@ model Tenant {
   hrAttendances          HrAttendance[]
   hrShifts               HrShift[]
   cashierShifts          CashierShift[]
+  cashTransfers          CashTransfer[]
   nightAuditLogs         NightAuditLog[]
   hrBenefitsPackages     HrBenefitsPackage[]
   hrEmployeeBenefits     HrEmployeeBenefits[]
@@ -764,7 +766,8 @@ model StockLocation {
   propertyId String?
   code       String
   name       String
-  type       String
+  type       String // central | cold | dry | outlet | department
+  department String? // restaurant | kitchen | housekeeping | null for shared/central
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -1203,6 +1206,12 @@ model FBMenuItem {
   isAvailable   Boolean  @default(true)
   allergens     String?
   prepMinutes   Int      @default(10)
+  alias         String?  // comma-separated short names for POS search
+  unit          String?  @default("portion") // selling unit: portion, plate, glass, bottle
+  /// Optional 1:1 link to catalog stock — when set, billing issues this qty from Restaurant stock
+  inventoryItemId String?
+  /// Optional override location (e.g. Bar Store / Soft Drinks Fridge); null = Restaurant & Bar floor
+  stockLocationId String?
   sortOrder     Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -1212,6 +1221,7 @@ model FBMenuItem {
   @@unique([tenantId, code])
   @@index([tenantId, venue])
   @@index([tenantId, category])
+  @@index([tenantId, inventoryItemId])
   @@map("fb_menu_items")
 }
 
@@ -1393,6 +1403,25 @@ model HousekeepingRoomResponsibility {
   @@index([tenantId, shift])
   @@index([tenantId, staffId])
   @@map("housekeeping_room_responsibilities")
+}
+
+// Public / non-room locations housekeeping cleans (lobby, corridors, F&B floors, …).
+// Guest rooms stay in Front Office room inventory; this list feeds New Task → Area.
+model HousekeepingCleaningArea {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isActive])
+  @@unique([tenantId, name])
+  @@map("housekeeping_cleaning_areas")
 }
 
 model MaintenanceRequest {
@@ -2200,6 +2229,10 @@ model HrAttendance {
 model CashierShift {
   id               String    @id @default(cuid())
   tenantId         String
+  /** frontoffice | restaurant — keeps FO and F&B tills separate */
+  outlet           String    @default("frontoffice")
+  /** Hotel / outlet business day this till belongs to (YYYY-MM-DD) */
+  businessDate     String    @default("")
   cashierUserId    String
   cashierName      String
   openingFloat     Float
@@ -2214,14 +2247,60 @@ model CashierShift {
   totalOther       Float?
   status           String    @default("open")
   notes            String?
+  /** accounts | cashier — cash drop / till handover after close */
+  transferTo       String?
+  transferToName   String?
+  transferAmount   Float?
+  transferredAt    DateTime?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  cashTransfers CashTransfer[]
 
   @@index([tenantId, status])
   @@index([tenantId, cashierUserId])
+  @@index([tenantId, outlet, status])
+  @@index([tenantId, outlet, businessDate])
   @@map("cashier_shifts")
+}
+
+/**
+ * Physical cash custody micro-journal (not GL).
+ * Tracks who holds till cash: cashier → head cashier → accounts/safe.
+ * Holding for a cashier = sum(in to them) − sum(out from them).
+ */
+model CashTransfer {
+  id            String    @id @default(cuid())
+  tenantId      String
+  /** frontoffice | restaurant */
+  outlet        String    @default("frontoffice")
+  businessDate  String
+  fromUserId    String
+  fromName      String
+  /** accounts | cashier */
+  toType        String
+  toUserId      String?
+  toName        String
+  amount        Float
+  shiftId       String?
+  /** till_drop = from closed shift; custody_forward = from holding (head cashier hop) */
+  kind          String    @default("till_drop")
+  notes         String?
+  /** posted | void */
+  status        String    @default("posted")
+  transferredAt DateTime  @default(now())
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  shift  CashierShift? @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, outlet, transferredAt])
+  @@index([tenantId, fromUserId, status])
+  @@index([tenantId, toUserId, toType, status])
+  @@index([tenantId, shiftId])
+  @@map("cash_transfers")
 }
 
 // One row per tenant per night-audit run (server cron or manual "Run Night
@@ -2574,7 +2653,9 @@ model Recipe {
   preparationTime Int      @default(0)
   difficulty      String   @default("medium") // easy | medium | hard
   allergens       String?  // comma-separated, matches FBMenuItem convention
-  ingredients     Json     // [{ name, quantity, unit }]
+  /// Optional link to a kitchen menu dish — when billed, ingredients with inventoryItemId issue from Kitchen
+  menuItemId      String?
+  ingredients     Json     // [{ name, quantity, unit, inventoryItemId? }]
   instructions    Json     // [string]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -2582,6 +2663,7 @@ model Recipe {
   tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, category])
+  @@index([tenantId, menuItemId])
   @@map("recipes")
 }
 

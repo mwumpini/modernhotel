@@ -4,6 +4,7 @@ import { requireAuth } from '@/app/lib/api/auth-guard';
 import {
   listStockCounts,
   upsertStockCount,
+  deleteStockCount,
   type StockCountItemInput,
 } from '@/app/lib/inventory/repository';
 
@@ -80,6 +81,26 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ count });
   } catch (error) {
     console.error('Error upserting stock count:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    const auth = await requireAuth(req);
+    if (!auth.ok) return auth.response;
+    const tenantId = await resolveTenantId(req);
+    if (!tenantId) return NextResponse.json({ error: 'Missing or unknown tenant' }, { status: 400 });
+
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get('id');
+    if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
+
+    const ok = await deleteStockCount(tenantId, id);
+    if (!ok) return NextResponse.json({ error: 'Stock count not found' }, { status: 404 });
+    return NextResponse.json({ success: true });
+  } catch (error) {
+    console.error('Error deleting stock count:', error);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

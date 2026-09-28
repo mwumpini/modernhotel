@@ -30,6 +30,7 @@ import { assertPeriodNotClosed } from './periodClose';
 import { hasReversalForEntry, postJournalEntryReversal } from './journalReversal';
 import { GL_ACCOUNTS, REVENUE_CENTERS, PAYMENT_GL_MAP } from './glAccounts';
 import { mirrorGlCashToCashbook } from './cashbookMirror';
+import { departmentSourceGlAccount } from '../fb/venueGl';
 
 export type DepartmentSource = 'front_office' | 'restaurant' | 'bar' | 'room_service' | 'conference' | 'spa' | 'other';
 
@@ -86,6 +87,8 @@ export interface RevenueTransaction {
   total: number;
   currency?: string;
   date?: string;
+  /** Override revenue leaf (e.g. venue 4210/4220/4230). */
+  glAccountCode?: string;
   // Staff tracking
   staffId?: string;
   staffName?: string;
@@ -103,23 +106,27 @@ export interface PaymentTransaction {
   description?: string;
   currency?: string;
   date?: string;
-  // Staff tracking
+  // Staff tracking (waiter / server on the ticket)
   staffId?: string;
   staffName?: string;
   staffRole?: string;
+  /** Logged-in till cashier — used for restaurant/bar shift recon */
+  cashierUserId?: string;
+  cashierName?: string;
 }
 
 /**
  * Get the GL revenue account for a department
  */
-function getRevenueGLAccount(source: DepartmentSource): string {
+function getRevenueGLAccount(source: DepartmentSource, override?: string): string {
+  if (override && /^\d{4}$/.test(override.trim())) return override.trim();
   switch (source) {
     case 'front_office':
       return GL_ACCOUNTS.ROOM_REVENUE;
     case 'restaurant':
     case 'bar':
     case 'room_service':
-      return GL_ACCOUNTS.FB_REVENUE;
+      return departmentSourceGlAccount(source);
     case 'conference':
       return GL_ACCOUNTS.CONFERENCE_REVENUE;
     case 'spa':
@@ -280,7 +287,7 @@ export function captureRevenue(
       }
     }
     const invoiceNumber = generateInvoiceNumber(transaction.source);
-    const revenueGLAccount = getRevenueGLAccount(transaction.source);
+    const revenueGLAccount = getRevenueGLAccount(transaction.source, transaction.glAccountCode);
     
     const invoiceLines = transaction.items.map((item, idx) => ({
       id: `IL-${Date.now()}-${idx}`,
@@ -784,6 +791,8 @@ export function capturePayment(
       staffId: transaction.staffId,
       staffName: transaction.staffName,
       staffRole: transaction.staffRole,
+      cashierUserId: transaction.cashierUserId,
+      cashierName: transaction.cashierName,
     };
     
     store.addPayment(receipt as any);
@@ -972,6 +981,162 @@ export function captureCompleteSale(
     console.error('[Accounting Integration] ❌ Error capturing complete sale:', error);
     return null;
   }
+}
+
+/**
+ * Post F&B COGS when stock was issued on bill (Dr 5110 / Cr 1310).
+ * Idempotent per order via JE id. Skip when amount is 0 (unlinked / no cost).
+ */
+export function captureFbCogs(params: {
+  orderId: string;
+  source: DepartmentSource;
+  amount: number;
+  description?: string;
+  reference?: string;
+}): { journalEntryId: string } | null {
+  const amount = +Number(params.amount || 0).toFixed(2);
+  if (amount <= 0) return null;
+
+  const store = useAccountingStore.getState();
+  const journalEntryId = `JE-COGS-${params.source.toUpperCase()}-${params.orderId}`;
+  if (store.journalEntries.some((je) => je.id === journalEntryId && je.status === 'Posted')) {
+    return { journalEntryId };
+  }
+  if (store.journalEntries.some((je) => je.id === journalEntryId)) {
+    return { journalEntryId };
+  }
+
+  const now = new Date().toISOString();
+  const periodCheck = assertPeriodNotClosed(store.journalEntries, now);
+  if (!periodCheck.ok) {
+    console.error('[Accounting Integration] COGS aborted — closed period', periodCheck.error);
+    return null;
+  }
+
+  const description = params.description || `F&B COGS — ${params.orderId}`;
+  const journalEntry = {
+    id: journalEntryId,
+    entryNumber: `JE-COGS-${new Date().getFullYear()}-${Date.now().toString().slice(-6)}`,
+    date: now,
+    description: `Auto-posted: ${description}`,
+    reference: params.reference || params.orderId,
+    status: 'Posted' as const,
+    lines: [
+      {
+        id: `JL-${journalEntryId}-1`,
+        journalEntryId,
+        accountCode: GL_ACCOUNTS.FB_COGS,
+        description: `COGS — ${description}`,
+        debit: amount,
+        credit: 0,
+        costCenter: getRevenueCenterCode(params.source),
+      },
+      {
+        id: `JL-${journalEntryId}-2`,
+        journalEntryId,
+        accountCode: GL_ACCOUNTS.FB_INVENTORY,
+        description: `Inventory issue — ${description}`,
+        debit: 0,
+        credit: amount,
+        costCenter: getRevenueCenterCode(params.source),
+      },
+    ],
+    totalDebit: amount,
+    totalCredit: amount,
+    createdBy: 'system',
+    postedBy: 'system',
+    postedAt: now,
+    createdAt: now,
+    updatedAt: now,
+    sourceModule: params.source,
+    sourceTransactionId: `cogs:${params.orderId}`,
+  };
+
+  store.addJournalEntry(journalEntry as any);
+  logAccountingProcess('AccountingCapture', 'F&B COGS captured', {
+    orderId: params.orderId,
+    amount,
+    journalEntryId,
+  });
+  return { journalEntryId };
+}
+
+/**
+ * Refund a walk-in F&B sale: void receipts + sales invoice (reverses JEs) and reverse COGS.
+ * Stock/folio reverse is handled by PATCH status=refunded on the server.
+ */
+export async function refundFbSale(params: {
+  orderId: string;
+  source: DepartmentSource;
+  reason?: string;
+}): Promise<{ ok: boolean; error?: string }> {
+  const store = useAccountingStore.getState();
+  const sourceKey = params.source.toUpperCase();
+  const invoiceId = `INV-${sourceKey}-${params.orderId}`;
+  const cogsId = `JE-COGS-${sourceKey}-${params.orderId}`;
+  const reason = params.reason || `F&B refund ${params.orderId}`;
+
+  const invoice = store.invoices.find((inv) => inv.id === invoiceId || inv.reference === params.orderId);
+  if (invoice && String(invoice.status) !== 'Void') {
+    const receipts = store.payments.filter(
+      (p) => p.type === 'Receipt' && p.status !== 'Void' && (p.invoiceId === invoice.id || p.reference === params.orderId),
+    );
+    for (const receipt of receipts) {
+      const latest = useAccountingStore.getState();
+      if (receipt.journalEntryId && !hasReversalForEntry(latest.journalEntries, receipt.journalEntryId)) {
+        const reversed = postJournalEntryReversal(receipt.journalEntryId, latest, {
+          postedBy: 'system',
+          reason: `Refund receipt — ${reason}`,
+        });
+        if (!reversed.ok) {
+          return { ok: false, error: reversed.error };
+        }
+      }
+      try {
+        await useAccountingStore.getState().voidPayment(receipt.id);
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'Could not void receipt' };
+      }
+    }
+
+    const afterReceipts = useAccountingStore.getState();
+    const current = afterReceipts.invoices.find((row) => row.id === invoice.id);
+    if (current && String(current.status) !== 'Void') {
+      if (current.journalEntryId && !hasReversalForEntry(afterReceipts.journalEntries, current.journalEntryId)) {
+        const reversed = postJournalEntryReversal(current.journalEntryId, afterReceipts, {
+          postedBy: 'system',
+          reason: `Refund invoice — ${reason}`,
+        });
+        if (!reversed.ok) {
+          return { ok: false, error: reversed.error };
+        }
+      }
+      try {
+        await useAccountingStore.getState().voidInvoice(current.id);
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : 'Could not void invoice' };
+      }
+    }
+  }
+
+  const afterInv = useAccountingStore.getState();
+  const cogsJe = afterInv.journalEntries.find((je) => je.id === cogsId && je.status === 'Posted');
+  if (cogsJe && !hasReversalForEntry(afterInv.journalEntries, cogsId)) {
+    const reversed = postJournalEntryReversal(cogsId, afterInv, {
+      postedBy: 'system',
+      reason: `Refund COGS — ${reason}`,
+    });
+    if (!reversed.ok) {
+      return { ok: false, error: reversed.error };
+    }
+  }
+
+  logAccountingProcess('AccountingCapture', 'F&B sale refunded', {
+    orderId: params.orderId,
+    source: params.source,
+    reason,
+  });
+  return { ok: true };
 }
 
 export function conferenceDocBelongsToLiveEvent(

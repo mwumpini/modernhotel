@@ -2,8 +2,8 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Card, CardBody, CardHeader, Button, Badge, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
-  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Tabs, Tab, Avatar, Input, Select, SelectItem, Textarea,
+  Card, CardBody, CardHeader, Button, Badge, Chip, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell,
+  Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Tabs, Tab, Input, Select, SelectItem, Textarea,
   Autocomplete, AutocompleteItem
 } from '@heroui/react';
 import { useSession } from 'next-auth/react';
@@ -18,23 +18,22 @@ import { usePatrolRouteStore } from '../lib/security/patrolRouteStore';
 import { useShiftStore } from '../lib/security/shiftStore';
 import { CheckpointLocation, PatrolLog, PatrolRoute, SecurityIncident, SecurityPersonnel, SecurityShift, Visitor } from '../lib/security/models';
 import { getClientTenantSubdomain } from '../lib/api/clientTenant';
-import { HideCardButton } from './dashboard/CustomizeViewControl';
 import type { DashboardSectionDef } from '../lib/dashboard/useDashboardVisibility';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
+// Same resizable/sortable/click-to-open table kit Front Desk's stay
+// worksheet pioneered — unified here so every module's tables look and
+// behave the same way (font, header sort arrows, drag-to-resize columns,
+// click-anywhere-on-row to open).
+import { SortLabel, unifiedTableClassNames, rowClassNames, useResizableColumns } from './frontoffice/columnResize';
+import { DetailGrid, DetailField } from './frontoffice/detailView';
 
-// Hideable summary cards for the whole Security module — the Overview tab's
-// own cards, plus (shared with SecurityMainDashboard.tsx, which renders this
-// component and owns the single useDashboardVisibility call, passed down as
-// props) the bottom Recent Activities/Notices cards that live outside this
-// component. Both sets of cards share one list and one "Customize View"
-// control (rendered here) so hiding/restoring either works from one place.
-// The other tabs here (Incident Management, Visitor Management, etc.) are
-// core navigation, not clutter, so they're deliberately not included.
+// Hideable summary cards for the whole Security module — the Recent
+// Activities/Notices cards that live outside this component, in
+// SecurityMainDashboard.tsx, which owns the single useDashboardVisibility
+// call and passes it down as props so hiding/restoring works from one place.
+// The tabs here (Incident Management, Visitor Management, etc.) are core
+// navigation, not clutter, so they're deliberately not included.
 export const SECURITY_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
-  { id: 'totalIncidents', label: 'Total Incidents' },
-  { id: 'criticalIssues', label: 'Critical Issues' },
-  { id: 'currentVisitors', label: 'Current Visitors' },
-  { id: 'quickActions', label: 'Quick Actions' },
   { id: 'recentActivities', label: 'Recent Activities' },
   { id: 'notices', label: 'Security Notices' },
 ];
@@ -43,28 +42,11 @@ function securityHeaders(): HeadersInit {
   return { 'x-tenant-subdomain': getClientTenantSubdomain() };
 }
 
-/**
- * Visibility props are passed down from SecurityMainDashboard (the only
- * renderer of this component) rather than this component calling its own
- * useDashboardVisibility — two independent hook instances sharing one
- * storage key would each keep a stale local copy of the other's writes,
- * since neither instance's toggle/hide re-renders the other's component.
- */
 interface SecurityComplianceDashboardProps {
-  isHidden: (id: string) => boolean;
-  hide: (id: string) => void;
-  toggle: (id: string) => void;
-  showAll: () => void;
-  hiddenCount: number;
   fullPage?: boolean;
 }
 
 export default function SecurityComplianceDashboard({
-  isHidden,
-  hide,
-  toggle,
-  showAll,
-  hiddenCount,
   fullPage = false,
 }: SecurityComplianceDashboardProps) {
   const { data: session } = useSession();
@@ -82,7 +64,7 @@ export default function SecurityComplianceDashboard({
   const canManageCheckpoints = settings.hasPermission('security.manage-checkpoints') || canManagePatrols;
   const canManageRoutes = settings.hasPermission('security.manage-routes') || canManagePatrols;
 
-  const [selectedTab, setSelectedTab] = useState('overview');
+  const [selectedTab, setSelectedTab] = useState('patrols');
   const [isIncidentModalOpen, setIsIncidentModalOpen] = useState(false);
   const [isVisitorModalOpen, setIsVisitorModalOpen] = useState(false);
   const [isPatrolModalOpen, setIsPatrolModalOpen] = useState(false);
@@ -94,13 +76,74 @@ export default function SecurityComplianceDashboard({
   const [viewingLocation, setViewingLocation] = useState<CheckpointLocation | null>(null);
   const [viewingRoute, setViewingRoute] = useState<PatrolRoute | null>(null);
 
-  const { incidents, hydrateFromApi: hydrateIncidents, addIncident, assignIncident, resolveIncident } = useIncidentStore();
-  const { visitors, hydrateFromApi: hydrateVisitors, addVisitor, checkOutVisitor } = useVisitorStore();
-  const { patrols, hydrateFromApi: hydratePatrols, startPatrol, endPatrol, completeCheckpoint, missCheckpoint, getPatrolAnalytics } = usePatrolStore();
-  const { personnel, hydrateFromApi: hydratePersonnel, addPersonnel, setPersonnelActive } = usePersonnelStore();
+  // Each "View X" modal doubles as its own editor — flip to a form in place
+  // rather than opening a second modal, so there's one modal per record, not
+  // two. Edit-form state is seeded from the record when Edit is pressed.
+  const [isEditingIncident, setIsEditingIncident] = useState(false);
+  const [incidentEditForm, setIncidentEditForm] = useState<{
+    type: SecurityIncident['type']; severity: SecurityIncident['severity']; status: SecurityIncident['status'];
+    location: string; floor: string; room: string; description: string; assignedTo: string; resolution: string;
+  } | null>(null);
+  const [isEditingVisitor, setIsEditingVisitor] = useState(false);
+  const [visitorEditForm, setVisitorEditForm] = useState<{
+    name: string; phone: string; idType: NonNullable<Visitor['idType']>; idNumber: string;
+    purpose: string; hostName: string; hostRoom: string; vehicleNumber: string;
+  } | null>(null);
+  const [isEditingPatrol, setIsEditingPatrol] = useState(false);
+  const [patrolEditForm, setPatrolEditForm] = useState<{ route: string; notes: string } | null>(null);
+  const [isEditingShift, setIsEditingShift] = useState(false);
+  const [shiftEditForm, setShiftEditForm] = useState<{ notes: string } | null>(null);
+  const [isEditingPersonnel, setIsEditingPersonnel] = useState(false);
+  const [personnelEditForm, setPersonnelEditForm] = useState<{ name: string; phone: string; agency: string; role: string; notes: string } | null>(null);
+
+  const closeIncidentView = () => { setViewingIncident(null); setIsEditingIncident(false); };
+  const closeVisitorView = () => { setViewingVisitor(null); setIsEditingVisitor(false); };
+  const closePatrolView = () => { setViewingPatrol(null); setIsEditingPatrol(false); };
+  const closeShiftView = () => { setViewingShift(null); setIsEditingShift(false); };
+  const closePersonnelView = () => { setViewingPersonnel(null); setIsEditingPersonnel(false); };
+
+  // Sort state for each table — one key/dir pair per table, matching the
+  // click-header-to-sort behavior Front Desk's stay worksheet uses.
+  type IncidentSortKey = 'incidentNumber' | 'type' | 'severity' | 'location' | 'status' | 'assignedTo';
+  const [incidentSort, setIncidentSort] = useState<{ key: IncidentSortKey; dir: 'asc' | 'desc' }>({ key: 'incidentNumber', dir: 'desc' });
+  type VisitorSortKey = 'visitorNumber' | 'name' | 'purpose' | 'hostName' | 'checkInTime' | 'status';
+  const [visitorSort, setVisitorSort] = useState<{ key: VisitorSortKey; dir: 'asc' | 'desc' }>({ key: 'checkInTime', dir: 'desc' });
+  type PatrolSortKey = 'patrolNumber' | 'officerName' | 'route' | 'startTime' | 'checkpoints' | 'status';
+  const [patrolSort, setPatrolSort] = useState<{ key: PatrolSortKey; dir: 'asc' | 'desc' }>({ key: 'startTime', dir: 'desc' });
+  type ShiftSortKey = 'personName' | 'checkInTime' | 'checkOutTime' | 'duration' | 'status';
+  const [shiftSort, setShiftSort] = useState<{ key: ShiftSortKey; dir: 'asc' | 'desc' }>({ key: 'checkInTime', dir: 'desc' });
+  type PersonnelSortKey = 'name' | 'agency' | 'role' | 'phone' | 'status';
+  const [personnelSort, setPersonnelSort] = useState<{ key: PersonnelSortKey; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' });
+  type NamedRefSortKey = 'name' | 'status';
+  const [checkpointSort, setCheckpointSort] = useState<{ key: NamedRefSortKey; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' });
+  const [routeSort, setRouteSort] = useState<{ key: NamedRefSortKey; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' });
+
+  const incidentColumns = useResizableColumns<IncidentSortKey>({ incidentNumber: 132, type: 140, severity: 108, location: 140, status: 120, assignedTo: 132 });
+  const visitorColumns = useResizableColumns<VisitorSortKey>({ visitorNumber: 120, name: 176, purpose: 176, hostName: 132, checkInTime: 140, status: 120 });
+  const patrolColumns = useResizableColumns<PatrolSortKey>({ patrolNumber: 120, officerName: 140, route: 160, startTime: 160, checkpoints: 108, status: 108 });
+  const shiftColumns = useResizableColumns<ShiftSortKey>({ personName: 160, checkInTime: 160, checkOutTime: 160, duration: 108, status: 108 });
+  const personnelColumns = useResizableColumns<PersonnelSortKey>({ name: 160, agency: 140, role: 140, phone: 132, status: 108 });
+  const checkpointColumns = useResizableColumns<NamedRefSortKey>({ name: 240, status: 120 });
+  const routeColumns = useResizableColumns<NamedRefSortKey>({ name: 240, status: 120 });
+
+  function sortRows<T, K extends string>(rows: T[], sort: { key: K; dir: 'asc' | 'desc' }, getValue: (row: T, key: K) => string | number): T[] {
+    const sorted = [...rows].sort((a, b) => {
+      const av = getValue(a, sort.key);
+      const bv = getValue(b, sort.key);
+      if (av < bv) return -1;
+      if (av > bv) return 1;
+      return 0;
+    });
+    return sort.dir === 'asc' ? sorted : sorted.reverse();
+  }
+
+  const { incidents, hydrateFromApi: hydrateIncidents, addIncident, updateIncident, assignIncident, resolveIncident } = useIncidentStore();
+  const { visitors, hydrateFromApi: hydrateVisitors, addVisitor, updateVisitor, checkOutVisitor } = useVisitorStore();
+  const { patrols, hydrateFromApi: hydratePatrols, startPatrol, updatePatrol, endPatrol, completeCheckpoint, missCheckpoint, getPatrolAnalytics } = usePatrolStore();
+  const { personnel, hydrateFromApi: hydratePersonnel, addPersonnel, updatePersonnel, setPersonnelActive } = usePersonnelStore();
   const { locations: checkpointLocations, hydrateFromApi: hydrateCheckpointLocations, addLocation: addCheckpointLocation, setLocationActive: setCheckpointLocationActive } = useCheckpointLocationStore();
   const { routes: patrolRoutes, hydrateFromApi: hydratePatrolRoutes, addRoute: addPatrolRoute, setRouteActive: setPatrolRouteActive } = usePatrolRouteStore();
-  const { shifts, hydrateFromApi: hydrateShifts, checkIn, checkOut } = useShiftStore();
+  const { shifts, hydrateFromApi: hydrateShifts, checkIn, checkOut, updateShift } = useShiftStore();
 
   const openIncident = viewingIncident ? incidents.find((i) => i.id === viewingIncident.id) ?? null : null;
   const openVisitor = viewingVisitor ? visitors.find((v) => v.id === viewingVisitor.id) ?? null : null;
@@ -109,6 +152,99 @@ export default function SecurityComplianceDashboard({
   const openPersonnel = viewingPersonnel ? personnel.find((p) => p.id === viewingPersonnel.id) ?? null : null;
   const openLocation = viewingLocation ? checkpointLocations.find((l) => l.id === viewingLocation.id) ?? null : null;
   const openRoute = viewingRoute ? patrolRoutes.find((r) => r.id === viewingRoute.id) ?? null : null;
+
+  const startEditIncident = () => {
+    if (!openIncident) return;
+    setIncidentEditForm({
+      type: openIncident.type, severity: openIncident.severity, status: openIncident.status,
+      location: openIncident.location, floor: openIncident.floor || '', room: openIncident.room || '',
+      description: openIncident.description, assignedTo: openIncident.assignedTo || '', resolution: openIncident.resolution || '',
+    });
+    setIsEditingIncident(true);
+  };
+  const saveEditIncident = () => {
+    if (!openIncident || !incidentEditForm) return;
+    if (!incidentEditForm.location.trim() || !incidentEditForm.description.trim()) return;
+    updateIncident(openIncident.id, {
+      type: incidentEditForm.type,
+      severity: incidentEditForm.severity,
+      status: incidentEditForm.status,
+      location: incidentEditForm.location.trim(),
+      floor: incidentEditForm.floor.trim() || undefined,
+      room: incidentEditForm.room.trim() || undefined,
+      description: incidentEditForm.description.trim(),
+      assignedTo: incidentEditForm.assignedTo.trim() || undefined,
+      resolution: incidentEditForm.resolution.trim() || undefined,
+    });
+    setIsEditingIncident(false);
+  };
+
+  const startEditVisitor = () => {
+    if (!openVisitor) return;
+    setVisitorEditForm({
+      name: openVisitor.name, phone: openVisitor.phone || '', idType: openVisitor.idType || 'ghana-card',
+      idNumber: openVisitor.idNumber || '', purpose: openVisitor.purpose, hostName: openVisitor.hostName || '',
+      hostRoom: openVisitor.hostRoom || '', vehicleNumber: openVisitor.vehicleNumber || '',
+    });
+    setIsEditingVisitor(true);
+  };
+  const saveEditVisitor = () => {
+    if (!openVisitor || !visitorEditForm) return;
+    if (!visitorEditForm.name.trim() || !visitorEditForm.purpose.trim()) return;
+    updateVisitor(openVisitor.id, {
+      name: visitorEditForm.name.trim(),
+      phone: visitorEditForm.phone.trim() || undefined,
+      idType: visitorEditForm.idType,
+      idNumber: visitorEditForm.idNumber.trim() || undefined,
+      purpose: visitorEditForm.purpose.trim(),
+      hostName: visitorEditForm.hostName.trim() || undefined,
+      hostRoom: visitorEditForm.hostRoom.trim() || undefined,
+      vehicleNumber: visitorEditForm.vehicleNumber.trim() || undefined,
+    });
+    setIsEditingVisitor(false);
+  };
+
+  const startEditPatrol = () => {
+    if (!openPatrol) return;
+    setPatrolEditForm({ route: openPatrol.route, notes: openPatrol.notes || '' });
+    setIsEditingPatrol(true);
+  };
+  const saveEditPatrol = () => {
+    if (!openPatrol || !patrolEditForm || !patrolEditForm.route.trim()) return;
+    updatePatrol(openPatrol.id, { route: patrolEditForm.route.trim(), notes: patrolEditForm.notes.trim() || undefined });
+    setIsEditingPatrol(false);
+  };
+
+  const startEditShift = () => {
+    if (!openShift) return;
+    setShiftEditForm({ notes: openShift.notes || '' });
+    setIsEditingShift(true);
+  };
+  const saveEditShift = () => {
+    if (!openShift || !shiftEditForm) return;
+    updateShift(openShift.id, { notes: shiftEditForm.notes.trim() || undefined });
+    setIsEditingShift(false);
+  };
+
+  const startEditPersonnel = () => {
+    if (!openPersonnel) return;
+    setPersonnelEditForm({
+      name: openPersonnel.name, phone: openPersonnel.phone || '', agency: openPersonnel.agency || '',
+      role: openPersonnel.role || '', notes: openPersonnel.notes || '',
+    });
+    setIsEditingPersonnel(true);
+  };
+  const saveEditPersonnel = () => {
+    if (!openPersonnel || !personnelEditForm || !personnelEditForm.name.trim()) return;
+    updatePersonnel(openPersonnel.id, {
+      name: personnelEditForm.name.trim(),
+      phone: personnelEditForm.phone.trim() || undefined,
+      agency: personnelEditForm.agency.trim() || undefined,
+      role: personnelEditForm.role.trim() || undefined,
+      notes: personnelEditForm.notes.trim() || undefined,
+    });
+    setIsEditingPersonnel(false);
+  };
 
   useEffect(() => {
     hydrateIncidents();
@@ -233,11 +369,6 @@ export default function SecurityComplianceDashboard({
     closeMissCheckpoint();
   };
 
-  const totalIncidents = incidents.length;
-  const openIncidents = incidents.filter(i => !['resolved', 'closed'].includes(i.status)).length;
-  const criticalIncidents = incidents.filter(i => i.severity === 'critical' && !['resolved', 'closed'].includes(i.status)).length;
-  const currentVisitors = visitors.filter(v => v.status === 'checked_in').length;
-
   const submitIncident = () => {
     if (!incidentForm.location.trim() || !incidentForm.description.trim()) return;
     addIncident({
@@ -308,192 +439,11 @@ export default function SecurityComplianceDashboard({
     setIsPatrolModalOpen(false);
   };
 
-  const renderOverview = () => (
-    <div className="space-y-6">
-      {!fullPage && (!isHidden('totalIncidents') || !isHidden('criticalIssues') || !isHidden('currentVisitors')) && (
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {!isHidden('totalIncidents') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Incidents</p>
-                <p className="text-2xl font-bold text-ghana-black">{totalIncidents}</p>
-                <p className="text-sm text-orange-600">{openIncidents} open</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('totalIncidents')} label="Total Incidents" />
-                <div className="text-3xl">🚨</div>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
-
-        {!isHidden('criticalIssues') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Critical Issues</p>
-                <p className="text-2xl font-bold text-red-600">{criticalIncidents}</p>
-                <p className="text-sm text-red-600">Requires immediate attention</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('criticalIssues')} label="Critical Issues" />
-                <div className="text-3xl">⚠️</div>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
-
-        {!isHidden('currentVisitors') && (
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Current Visitors</p>
-                <p className="text-2xl font-bold text-ghana-black">{currentVisitors}</p>
-                <p className="text-sm text-blue-600">On premises</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                <HideCardButton onHide={() => hide('currentVisitors')} label="Current Visitors" />
-                <div className="text-3xl">👥</div>
-              </div>
-            </div>
-          </CardBody>
-        </Card>
-        )}
-      </div>
-      )}
-
-      {!fullPage && !isHidden('quickActions') && (
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3 flex items-center justify-between">
-          <h3 className="text-xl font-semibold text-ghana-black">🚀 Quick Actions</h3>
-          <HideCardButton onHide={() => hide('quickActions')} label="Quick Actions" />
-        </CardHeader>
-        <CardBody>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <Button
-              variant="flat"
-              className="bg-red-500 text-white h-20 flex flex-col items-center justify-center space-y-2"
-              size="lg"
-              onClick={() => { setViewingIncident(null); setIsIncidentModalOpen(true); }}
-            >
-              <span className="text-2xl">🚨</span>
-              <span className="text-sm font-medium">Report Incident</span>
-            </Button>
-            <Button
-              variant="flat"
-              className="bg-blue-500 text-white h-20 flex flex-col items-center justify-center space-y-2"
-              size="lg"
-              onClick={() => { setViewingVisitor(null); setIsVisitorModalOpen(true); }}
-            >
-              <span className="text-2xl">👤</span>
-              <span className="text-sm font-medium">Register Visitor</span>
-            </Button>
-            <Button
-              variant="flat"
-              className="bg-ghana-green text-white h-20 flex flex-col items-center justify-center space-y-2"
-              size="lg"
-              onClick={openPatrolModal}
-              isDisabled={!canManagePatrols}
-            >
-              <span className="text-2xl">🚶</span>
-              <span className="text-sm font-medium">Start Patrol</span>
-            </Button>
-          </div>
-        </CardBody>
-      </Card>
-      )}
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card className="border-0 shadow-lg">
-          <CardHeader className="pb-3">
-            <h3 className="text-xl font-semibold text-ghana-black">🚨 Recent Security Incidents</h3>
-          </CardHeader>
-          <CardBody>
-            {incidents.length === 0 && <p className="text-sm text-gray-500 py-4 text-center">No incidents reported.</p>}
-            <div className="space-y-3">
-              {incidents.slice(0, 3).map((incident) => (
-                <div key={incident.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    <div className={`h-3 w-3 rounded-full ${
-                      incident.severity === 'critical' ? 'bg-red-500' :
-                      incident.severity === 'high' ? 'bg-orange-500' :
-                      incident.severity === 'medium' ? 'bg-yellow-500' :
-                      'bg-green-500'
-                    }`}></div>
-                    <div>
-                      <div className="font-medium">{incident.incidentNumber}</div>
-                      <div className="text-sm text-gray-600">
-                        {incident.type.replace('_', ' ')} • {incident.location}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-2">
-                    <Badge
-                      color={
-                        incident.status === 'resolved' ? 'success' :
-                        incident.status === 'investigating' ? 'warning' :
-                        'default'
-                      }
-                      size="sm"
-                    >
-                      {incident.status}
-                    </Badge>
-                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingIncident(incident)}>
-                      View
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardBody>
-        </Card>
-
-        <Card className="border-0 shadow-lg">
-          <CardHeader className="pb-3">
-            <h3 className="text-xl font-semibold text-ghana-black">👥 Current Visitors</h3>
-          </CardHeader>
-          <CardBody>
-            {currentVisitors === 0 && <p className="text-sm text-gray-500 py-4 text-center">No visitors on premises.</p>}
-            <div className="space-y-3">
-              {visitors.filter(v => v.status === 'checked_in').slice(0, 3).map((visitor) => (
-                <div key={visitor.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center space-x-3">
-                    <Avatar name={visitor.name} size="sm" className="bg-blue-500 text-white" />
-                    <div>
-                      <div className="font-medium">{visitor.name}</div>
-                      <div className="text-sm text-gray-600">
-                        {visitor.purpose}{visitor.hostName ? ` • Host: ${visitor.hostName}` : ''}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-xs text-gray-500">
-                      In: {visitor.checkInTime.toLocaleTimeString()}
-                    </div>
-                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingVisitor(visitor)}>
-                      View
-                    </Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardBody>
-        </Card>
-      </div>
-    </div>
-  );
-
   const renderIncidentManagement = () => (
     <div className="space-y-6">
       <Card className="border-0 shadow-lg">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between w-full">
             <h3 className="text-xl font-semibold text-ghana-black">🚨 Security Incident Management</h3>
             <Button color="primary" className="bg-red-500 text-white" variant="flat" onClick={() => { setViewingIncident(null); setIsIncidentModalOpen(true); }}>
               🚨 Report Incident
@@ -501,20 +451,34 @@ export default function SecurityComplianceDashboard({
           </div>
         </CardHeader>
         <CardBody>
-          <div className="max-h-[560px] overflow-y-auto">
-            <Table aria-label="Security incidents table">
+          <div className="max-h-[560px] overflow-y-auto" ref={incidentColumns.frameRef} style={incidentColumns.frameStyle}>
+            <Table
+              aria-label="Security incidents table"
+              removeWrapper
+              classNames={{
+                ...unifiedTableClassNames,
+                table: `${unifiedTableClassNames.table} table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none`,
+                th: `${unifiedTableClassNames.th} relative`,
+                td: `${unifiedTableClassNames.td} overflow-hidden`,
+              }}
+            >
               <TableHeader>
-                <TableColumn>Incident #</TableColumn>
-                <TableColumn>Type</TableColumn>
-                <TableColumn>Severity</TableColumn>
-                <TableColumn>Location</TableColumn>
-                <TableColumn>Status</TableColumn>
-                <TableColumn>Assigned To</TableColumn>
-                <TableColumn>Actions</TableColumn>
+                {(['incidentNumber', 'type', 'severity', 'location', 'status', 'assignedTo'] as IncidentSortKey[]).map((key) => (
+                  <TableColumn key={key} className="relative" style={incidentColumns.style(key)}>
+                    <SortLabel
+                      active={incidentSort.key === key}
+                      dir={incidentSort.dir}
+                      onPress={() => setIncidentSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))}
+                    >
+                      {{ incidentNumber: 'Incident #', type: 'Type', severity: 'Severity', location: 'Location', status: 'Status', assignedTo: 'Assigned To' }[key]}
+                    </SortLabel>
+                    {incidentColumns.sizer(key, key)}
+                  </TableColumn>
+                ))}
               </TableHeader>
               <TableBody emptyContent="No incidents reported yet.">
-                {incidents.map((incident) => (
-                  <TableRow key={incident.id}>
+                {sortRows(incidents, incidentSort, (row, key) => (key === 'assignedTo' ? row.assignedTo || 'Unassigned' : (row[key] as string) ?? '')).map((incident) => (
+                  <TableRow key={incident.id} className={rowClassNames(viewingIncident?.id === incident.id)} onClick={() => setViewingIncident(incident)}>
                     <TableCell className="font-mono font-semibold">{incident.incidentNumber}</TableCell>
                     <TableCell>
                       <Badge color={incident.type === 'theft' ? 'danger' : incident.type === 'fire_alarm' ? 'warning' : incident.type === 'medical_emergency' ? 'primary' : 'default'} size="sm">
@@ -533,11 +497,6 @@ export default function SecurityComplianceDashboard({
                       </Badge>
                     </TableCell>
                     <TableCell>{incident.assignedTo || 'Unassigned'}</TableCell>
-                    <TableCell>
-                      <Button size="sm" variant="flat" color="primary" onClick={() => setViewingIncident(incident)}>
-                        View
-                      </Button>
-                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -552,7 +511,7 @@ export default function SecurityComplianceDashboard({
     <div className="space-y-6">
       <Card className="border-0 shadow-lg">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between w-full">
             <h3 className="text-xl font-semibold text-ghana-black">👥 Visitor Management</h3>
             <Button color="primary" className="bg-blue-500 text-white" variant="flat" onClick={() => { setViewingVisitor(null); setIsVisitorModalOpen(true); }}>
               👤 Register Visitor
@@ -560,31 +519,46 @@ export default function SecurityComplianceDashboard({
           </div>
         </CardHeader>
         <CardBody>
-          <div className="max-h-[560px] overflow-y-auto">
-            <Table aria-label="Visitors table">
+          <div className="max-h-[560px] overflow-y-auto" ref={visitorColumns.frameRef} style={visitorColumns.frameStyle}>
+            <Table
+              aria-label="Visitors table"
+              removeWrapper
+              classNames={{
+                ...unifiedTableClassNames,
+                table: `${unifiedTableClassNames.table} table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none`,
+                th: `${unifiedTableClassNames.th} relative`,
+                td: `${unifiedTableClassNames.td} overflow-hidden`,
+              }}
+            >
               <TableHeader>
-                <TableColumn>Visitor #</TableColumn>
-                <TableColumn>Name</TableColumn>
-                <TableColumn>Purpose</TableColumn>
-                <TableColumn>Host</TableColumn>
-                <TableColumn>Check In</TableColumn>
-                <TableColumn>Status</TableColumn>
-                <TableColumn>Actions</TableColumn>
+                {(['visitorNumber', 'name', 'purpose', 'hostName', 'checkInTime', 'status'] as VisitorSortKey[]).map((key) => (
+                  <TableColumn key={key} className="relative" style={visitorColumns.style(key)}>
+                    <SortLabel
+                      active={visitorSort.key === key}
+                      dir={visitorSort.dir}
+                      onPress={() => setVisitorSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))}
+                    >
+                      {{ visitorNumber: 'Visitor #', name: 'Name', purpose: 'Purpose', hostName: 'Host', checkInTime: 'Check In', status: 'Status' }[key]}
+                    </SortLabel>
+                    {visitorColumns.sizer(key, key)}
+                  </TableColumn>
+                ))}
               </TableHeader>
               <TableBody emptyContent="No visitors registered yet.">
-                {visitors.map((visitor) => (
-                  <TableRow key={visitor.id}>
+                {sortRows(visitors, visitorSort, (row, key) => {
+                  if (key === 'checkInTime') return row.checkInTime.getTime();
+                  if (key === 'hostName') return row.hostName || '';
+                  return (row[key] as string) ?? '';
+                }).map((visitor) => (
+                  <TableRow key={visitor.id} className={rowClassNames(viewingVisitor?.id === visitor.id)} onClick={() => setViewingVisitor(visitor)}>
                     <TableCell className="font-mono font-semibold">{visitor.visitorNumber}</TableCell>
                     <TableCell>
-                      <div className="flex items-center space-x-3">
-                        <Avatar name={visitor.name} size="sm" className="bg-blue-500 text-white" />
-                        <div>
-                          <div className="font-semibold">{visitor.name}</div>
-                          <div className="text-sm text-gray-500">{visitor.phone}</div>
-                        </div>
+                      <div className="min-w-0">
+                        <div className="font-semibold truncate">{visitor.name}</div>
+                        <div className="text-sm text-gray-500 truncate">{visitor.phone}</div>
                       </div>
                     </TableCell>
-                    <TableCell className="max-w-xs truncate">{visitor.purpose}</TableCell>
+                    <TableCell className="truncate">{visitor.purpose}</TableCell>
                     <TableCell>{visitor.hostName || '-'}</TableCell>
                     <TableCell>
                       <div className="text-sm">
@@ -596,11 +570,6 @@ export default function SecurityComplianceDashboard({
                       <Badge color={visitor.status === 'checked_in' ? 'success' : visitor.status === 'checked_out' ? 'default' : 'warning'} size="sm">
                         {visitor.status.replace('_', ' ')}
                       </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <Button size="sm" variant="flat" color="primary" onClick={() => setViewingVisitor(visitor)}>
-                        View
-                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -659,7 +628,7 @@ export default function SecurityComplianceDashboard({
 
       <Card className="border-0 shadow-lg">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between w-full">
             <h3 className="text-xl font-semibold text-ghana-black">🚶 Patrol Log</h3>
             {canManagePatrols && (
               <Button color="primary" className="bg-ghana-green text-white" variant="flat" onClick={openPatrolModal}>
@@ -669,22 +638,40 @@ export default function SecurityComplianceDashboard({
           </div>
         </CardHeader>
         <CardBody>
-          <div className="max-h-[560px] overflow-y-auto">
-            <Table aria-label="Patrol log table">
+          <div className="max-h-[560px] overflow-y-auto" ref={patrolColumns.frameRef} style={patrolColumns.frameStyle}>
+            <Table
+              aria-label="Patrol log table"
+              removeWrapper
+              classNames={{
+                ...unifiedTableClassNames,
+                table: `${unifiedTableClassNames.table} table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none`,
+                th: `${unifiedTableClassNames.th} relative`,
+                td: `${unifiedTableClassNames.td} overflow-hidden`,
+              }}
+            >
               <TableHeader>
-                <TableColumn>Patrol #</TableColumn>
-                <TableColumn>Officer</TableColumn>
-                <TableColumn>Route</TableColumn>
-                <TableColumn>Started</TableColumn>
-                <TableColumn>Checkpoints</TableColumn>
-                <TableColumn>Status</TableColumn>
-                <TableColumn>Actions</TableColumn>
+                {(['patrolNumber', 'officerName', 'route', 'startTime', 'checkpoints', 'status'] as PatrolSortKey[]).map((key) => (
+                  <TableColumn key={key} className="relative" style={patrolColumns.style(key)}>
+                    <SortLabel
+                      active={patrolSort.key === key}
+                      dir={patrolSort.dir}
+                      onPress={() => setPatrolSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))}
+                    >
+                      {{ patrolNumber: 'Patrol #', officerName: 'Officer', route: 'Route', startTime: 'Started', checkpoints: 'Checkpoints', status: 'Status' }[key]}
+                    </SortLabel>
+                    {patrolColumns.sizer(key, key)}
+                  </TableColumn>
+                ))}
               </TableHeader>
               <TableBody emptyContent="No patrols logged yet.">
-                {patrols.map((patrol) => {
+                {sortRows(patrols, patrolSort, (row, key) => {
+                  if (key === 'startTime') return row.startTime.getTime();
+                  if (key === 'checkpoints') return row.checkpoints.filter((c) => c.status !== 'pending').length;
+                  return (row[key] as string) ?? '';
+                }).map((patrol) => {
                   const logged = patrol.checkpoints.filter((c) => c.status !== 'pending').length;
                   return (
-                    <TableRow key={patrol.id}>
+                    <TableRow key={patrol.id} className={rowClassNames(viewingPatrol?.id === patrol.id)} onClick={() => setViewingPatrol(patrol)}>
                       <TableCell className="font-mono font-semibold">{patrol.patrolNumber}</TableCell>
                       <TableCell>{patrol.officerName}</TableCell>
                       <TableCell>{patrol.route}</TableCell>
@@ -694,11 +681,6 @@ export default function SecurityComplianceDashboard({
                         <Badge color={patrol.status === 'completed' ? 'success' : patrol.status === 'interrupted' ? 'danger' : 'primary'} size="sm">
                           {patrol.status}
                         </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Button size="sm" variant="flat" color="primary" onClick={() => setViewingPatrol(patrol)}>
-                          View
-                        </Button>
                       </TableCell>
                     </TableRow>
                   );
@@ -761,18 +743,39 @@ export default function SecurityComplianceDashboard({
           </div>
         </CardHeader>
         <CardBody>
-          <Table aria-label="Shift log table">
+          <div ref={shiftColumns.frameRef} style={shiftColumns.frameStyle}>
+          <Table
+            aria-label="Shift log table"
+            removeWrapper
+            classNames={{
+              ...unifiedTableClassNames,
+              table: `${unifiedTableClassNames.table} table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none`,
+              th: `${unifiedTableClassNames.th} relative`,
+              td: `${unifiedTableClassNames.td} overflow-hidden`,
+            }}
+          >
             <TableHeader>
-              <TableColumn>Name</TableColumn>
-              <TableColumn>Checked In</TableColumn>
-              <TableColumn>Checked Out</TableColumn>
-              <TableColumn>Duration</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              {(['personName', 'checkInTime', 'checkOutTime', 'duration', 'status'] as ShiftSortKey[]).map((key) => (
+                <TableColumn key={key} className="relative" style={shiftColumns.style(key)}>
+                  <SortLabel
+                    active={shiftSort.key === key}
+                    dir={shiftSort.dir}
+                    onPress={() => setShiftSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    {{ personName: 'Name', checkInTime: 'Checked In', checkOutTime: 'Checked Out', duration: 'Duration', status: 'Status' }[key]}
+                  </SortLabel>
+                  {shiftColumns.sizer(key, key)}
+                </TableColumn>
+              ))}
             </TableHeader>
             <TableBody emptyContent="No shifts logged yet.">
-              {shifts.map((s) => (
-                <TableRow key={s.id}>
+              {sortRows(shifts, shiftSort, (row, key) => {
+                if (key === 'checkInTime') return row.checkInTime.getTime();
+                if (key === 'checkOutTime') return row.checkOutTime ? row.checkOutTime.getTime() : Number.MAX_SAFE_INTEGER;
+                if (key === 'duration') return (row.checkOutTime ?? new Date()).getTime() - row.checkInTime.getTime();
+                return (row[key] as string) ?? '';
+              }).map((s) => (
+                <TableRow key={s.id} className={rowClassNames(viewingShift?.id === s.id)} onClick={() => setViewingShift(s)}>
                   <TableCell className="font-semibold">{s.personName}</TableCell>
                   <TableCell>{s.checkInTime.toLocaleString()}</TableCell>
                   <TableCell>{s.checkOutTime ? s.checkOutTime.toLocaleString() : '—'}</TableCell>
@@ -782,15 +785,11 @@ export default function SecurityComplianceDashboard({
                       {s.status === 'on_duty' ? 'on duty' : 'completed'}
                     </Badge>
                   </TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingShift(s)}>
-                      View
-                    </Button>
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardBody>
       </Card>
     </div>
@@ -820,18 +819,37 @@ export default function SecurityComplianceDashboard({
           </div>
         </CardHeader>
         <CardBody>
-          <Table aria-label="Security personnel table">
+          <div ref={personnelColumns.frameRef} style={personnelColumns.frameStyle}>
+          <Table
+            aria-label="Security personnel table"
+            removeWrapper
+            classNames={{
+              ...unifiedTableClassNames,
+              table: `${unifiedTableClassNames.table} table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none`,
+              th: `${unifiedTableClassNames.th} relative`,
+              td: `${unifiedTableClassNames.td} overflow-hidden`,
+            }}
+          >
             <TableHeader>
-              <TableColumn>Name</TableColumn>
-              <TableColumn>Agency</TableColumn>
-              <TableColumn>Role</TableColumn>
-              <TableColumn>Phone</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              {(['name', 'agency', 'role', 'phone', 'status'] as PersonnelSortKey[]).map((key) => (
+                <TableColumn key={key} className="relative" style={personnelColumns.style(key)}>
+                  <SortLabel
+                    active={personnelSort.key === key}
+                    dir={personnelSort.dir}
+                    onPress={() => setPersonnelSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    {{ name: 'Name', agency: 'Agency', role: 'Role', phone: 'Phone', status: 'Status' }[key]}
+                  </SortLabel>
+                  {personnelColumns.sizer(key, key)}
+                </TableColumn>
+              ))}
             </TableHeader>
             <TableBody emptyContent="No outsourced personnel on file yet.">
-              {personnel.map((p) => (
-                <TableRow key={p.id}>
+              {sortRows(personnel, personnelSort, (row, key) => {
+                if (key === 'status') return row.isActive ? 'active' : 'inactive';
+                return (row[key] as string) || '';
+              }).map((p) => (
+                <TableRow key={p.id} className={rowClassNames(viewingPersonnel?.id === p.id)} onClick={() => setViewingPersonnel(p)}>
                   <TableCell className="font-semibold">{p.name}</TableCell>
                   <TableCell>{p.agency || '—'}</TableCell>
                   <TableCell>{p.role || '—'}</TableCell>
@@ -839,15 +857,11 @@ export default function SecurityComplianceDashboard({
                   <TableCell>
                     <Badge color={p.isActive ? 'success' : 'default'} size="sm">{p.isActive ? 'active' : 'inactive'}</Badge>
                   </TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingPersonnel(p)}>
-                      View
-                    </Button>
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardBody>
       </Card>
 
@@ -873,28 +887,43 @@ export default function SecurityComplianceDashboard({
               </Button>
             </div>
           )}
-          <Table aria-label="Checkpoint locations table">
+          <div ref={checkpointColumns.frameRef} style={checkpointColumns.frameStyle}>
+          <Table
+            aria-label="Checkpoint locations table"
+            removeWrapper
+            classNames={{
+              ...unifiedTableClassNames,
+              table: `${unifiedTableClassNames.table} table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none`,
+              th: `${unifiedTableClassNames.th} relative`,
+              td: `${unifiedTableClassNames.td} overflow-hidden`,
+            }}
+          >
             <TableHeader>
-              <TableColumn>Location</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              {(['name', 'status'] as NamedRefSortKey[]).map((key) => (
+                <TableColumn key={key} className="relative" style={checkpointColumns.style(key)}>
+                  <SortLabel
+                    active={checkpointSort.key === key}
+                    dir={checkpointSort.dir}
+                    onPress={() => setCheckpointSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    {{ name: 'Location', status: 'Status' }[key]}
+                  </SortLabel>
+                  {checkpointColumns.sizer(key, key)}
+                </TableColumn>
+              ))}
             </TableHeader>
             <TableBody emptyContent="No checkpoint locations yet — they're also saved automatically the first time you type a new one on a patrol.">
-              {checkpointLocations.map((loc) => (
-                <TableRow key={loc.id}>
+              {sortRows(checkpointLocations, checkpointSort, (row, key) => (key === 'status' ? (row.isActive ? 'active' : 'inactive') : row.name)).map((loc) => (
+                <TableRow key={loc.id} className={rowClassNames(viewingLocation?.id === loc.id)} onClick={() => setViewingLocation(loc)}>
                   <TableCell className="font-medium">{loc.name}</TableCell>
                   <TableCell>
                     <Badge color={loc.isActive ? 'success' : 'default'} size="sm">{loc.isActive ? 'active' : 'inactive'}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingLocation(loc)}>
-                      View
-                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardBody>
       </Card>
 
@@ -920,28 +949,43 @@ export default function SecurityComplianceDashboard({
               </Button>
             </div>
           )}
-          <Table aria-label="Patrol routes table">
+          <div ref={routeColumns.frameRef} style={routeColumns.frameStyle}>
+          <Table
+            aria-label="Patrol routes table"
+            removeWrapper
+            classNames={{
+              ...unifiedTableClassNames,
+              table: `${unifiedTableClassNames.table} table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none`,
+              th: `${unifiedTableClassNames.th} relative`,
+              td: `${unifiedTableClassNames.td} overflow-hidden`,
+            }}
+          >
             <TableHeader>
-              <TableColumn>Route</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              {(['name', 'status'] as NamedRefSortKey[]).map((key) => (
+                <TableColumn key={key} className="relative" style={routeColumns.style(key)}>
+                  <SortLabel
+                    active={routeSort.key === key}
+                    dir={routeSort.dir}
+                    onPress={() => setRouteSort((s) => ({ key, dir: s.key === key && s.dir === 'asc' ? 'desc' : 'asc' }))}
+                  >
+                    {{ name: 'Route', status: 'Status' }[key]}
+                  </SortLabel>
+                  {routeColumns.sizer(key, key)}
+                </TableColumn>
+              ))}
             </TableHeader>
             <TableBody emptyContent="No patrol routes yet — they're also saved automatically the first time you type a new one when starting a patrol.">
-              {patrolRoutes.map((r) => (
-                <TableRow key={r.id}>
+              {sortRows(patrolRoutes, routeSort, (row, key) => (key === 'status' ? (row.isActive ? 'active' : 'inactive') : row.name)).map((r) => (
+                <TableRow key={r.id} className={rowClassNames(viewingRoute?.id === r.id)} onClick={() => setViewingRoute(r)}>
                   <TableCell className="font-medium">{r.name}</TableCell>
                   <TableCell>
                     <Badge color={r.isActive ? 'success' : 'default'} size="sm">{r.isActive ? 'active' : 'inactive'}</Badge>
-                  </TableCell>
-                  <TableCell>
-                    <Button size="sm" variant="flat" color="primary" onClick={() => setViewingRoute(r)}>
-                      View
-                    </Button>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          </div>
         </CardBody>
       </Card>
     </div>
@@ -961,19 +1005,17 @@ export default function SecurityComplianceDashboard({
         onSelectionChange={(key) => setSelectedTab(key as string)}
         className="w-full"
       >
-        <Tab key="overview" title="Overview" />
+        <Tab key="patrols" title="Patrol Log" />
         <Tab key="incidents" title="Incident Management" />
         <Tab key="visitors" title="Visitor Management" />
-        <Tab key="patrols" title="Patrol Log" />
         <Tab key="shifts" title="Shift Log" />
         <Tab key="staff" title="Staff Management" />
       </Tabs>
 
       <div className="mt-6">
-        {selectedTab === 'overview' && renderOverview()}
+        {selectedTab === 'patrols' && renderPatrolManagement()}
         {selectedTab === 'incidents' && renderIncidentManagement()}
         {selectedTab === 'visitors' && renderVisitorManagement()}
-        {selectedTab === 'patrols' && renderPatrolManagement()}
         {selectedTab === 'shifts' && renderShiftLog()}
         {selectedTab === 'staff' && renderStaffManagement()}
       </div>
@@ -1231,80 +1273,173 @@ export default function SecurityComplianceDashboard({
         </ModalContent>
       </Modal>
 
-      {/* View Incident */}
-      <Modal isOpen={!!openIncident} onClose={() => setViewingIncident(null)} size="2xl">
+      {/* View / Edit Incident */}
+      <Modal isOpen={!!openIncident} onClose={closeIncidentView} size="2xl">
         <ModalContent>
-          <ModalHeader>{openIncident?.incidentNumber}</ModalHeader>
-          <ModalBody className="gap-2">
-            {openIncident && (
+          <ModalHeader>{openIncident?.incidentNumber}{isEditingIncident ? ' — Edit' : ''}</ModalHeader>
+          <ModalBody className="gap-4">
+            {openIncident && !isEditingIncident && (
+              <DetailGrid>
+                <DetailField label="Type" value={openIncident.type.replace(/_/g, ' ')} />
+                <DetailField label="Severity" value={
+                  <Chip variant="flat" color={openIncident.severity === 'critical' ? 'danger' : openIncident.severity === 'high' ? 'warning' : openIncident.severity === 'medium' ? 'secondary' : 'success'} size="sm">{openIncident.severity}</Chip>
+                } />
+                <DetailField label="Status" value={
+                  <Chip variant="flat" color={openIncident.status === 'resolved' ? 'success' : openIncident.status === 'investigating' ? 'warning' : openIncident.status === 'closed' ? 'default' : 'primary'} size="sm">{openIncident.status}</Chip>
+                } />
+                <DetailField label="Location" value={openIncident.location + (openIncident.room ? `, Room ${openIncident.room}` : '')} />
+                <DetailField label="Reported by" value={`${openIncident.reportedBy} on ${openIncident.reportedAt.toLocaleString()}`} full />
+                <DetailField label="Assigned to" value={openIncident.assignedTo} />
+                <DetailField label="Description" value={openIncident.description} full />
+                <DetailField label="Resolution" value={openIncident.resolution} full />
+              </DetailGrid>
+            )}
+            {openIncident && isEditingIncident && incidentEditForm && (
               <>
-                <p><strong>Type:</strong> {openIncident.type.replace('_', ' ')}</p>
-                <p><strong>Severity:</strong> {openIncident.severity}</p>
-                <p><strong>Status:</strong> {openIncident.status}</p>
-                <p><strong>Location:</strong> {openIncident.location}{openIncident.room ? `, Room ${openIncident.room}` : ''}</p>
-                <p><strong>Reported by:</strong> {openIncident.reportedBy} on {openIncident.reportedAt.toLocaleString()}</p>
-                {openIncident.assignedTo && <p><strong>Assigned to:</strong> {openIncident.assignedTo}</p>}
-                <p><strong>Description:</strong> {openIncident.description}</p>
-                {openIncident.resolution && <p><strong>Resolution:</strong> {openIncident.resolution}</p>}
+                <div className="grid grid-cols-2 gap-3">
+                  <Select label="Type" selectedKeys={[incidentEditForm.type]} onSelectionChange={(k) => setIncidentEditForm((f) => f && ({ ...f, type: Array.from(k as Set<string>)[0] as SecurityIncident['type'] }))}>
+                    <SelectItem key="theft">Theft</SelectItem>
+                    <SelectItem key="vandalism">Vandalism</SelectItem>
+                    <SelectItem key="trespassing">Trespassing</SelectItem>
+                    <SelectItem key="suspicious_activity">Suspicious activity</SelectItem>
+                    <SelectItem key="medical_emergency">Medical emergency</SelectItem>
+                    <SelectItem key="fire_alarm">Fire alarm</SelectItem>
+                    <SelectItem key="power_outage">Power outage</SelectItem>
+                    <SelectItem key="water_leak">Water leak</SelectItem>
+                    <SelectItem key="equipment_failure">Equipment failure</SelectItem>
+                    <SelectItem key="other">Other</SelectItem>
+                  </Select>
+                  <Select label="Severity" selectedKeys={[incidentEditForm.severity]} onSelectionChange={(k) => setIncidentEditForm((f) => f && ({ ...f, severity: Array.from(k as Set<string>)[0] as SecurityIncident['severity'] }))}>
+                    <SelectItem key="low">Low</SelectItem>
+                    <SelectItem key="medium">Medium</SelectItem>
+                    <SelectItem key="high">High</SelectItem>
+                    <SelectItem key="critical">Critical</SelectItem>
+                  </Select>
+                </div>
+                <Select label="Status" selectedKeys={[incidentEditForm.status]} onSelectionChange={(k) => setIncidentEditForm((f) => f && ({ ...f, status: Array.from(k as Set<string>)[0] as SecurityIncident['status'] }))}>
+                  <SelectItem key="reported">Reported</SelectItem>
+                  <SelectItem key="investigating">Investigating</SelectItem>
+                  <SelectItem key="resolved">Resolved</SelectItem>
+                  <SelectItem key="closed">Closed</SelectItem>
+                  <SelectItem key="escalated">Escalated</SelectItem>
+                </Select>
+                <Input label="Location" value={incidentEditForm.location} onChange={(e) => setIncidentEditForm((f) => f && ({ ...f, location: e.target.value }))} isRequired />
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label="Floor" value={incidentEditForm.floor} onChange={(e) => setIncidentEditForm((f) => f && ({ ...f, floor: e.target.value }))} />
+                  <Input label="Room" value={incidentEditForm.room} onChange={(e) => setIncidentEditForm((f) => f && ({ ...f, room: e.target.value }))} />
+                </div>
+                <Input label="Assigned To" placeholder="Optional" value={incidentEditForm.assignedTo} onChange={(e) => setIncidentEditForm((f) => f && ({ ...f, assignedTo: e.target.value }))} />
+                <Textarea label="Description" value={incidentEditForm.description} onChange={(e) => setIncidentEditForm((f) => f && ({ ...f, description: e.target.value }))} isRequired />
+                <Textarea label="Resolution" placeholder="Optional" value={incidentEditForm.resolution} onChange={(e) => setIncidentEditForm((f) => f && ({ ...f, resolution: e.target.value }))} />
               </>
             )}
           </ModalBody>
           <ModalFooter>
-            {openIncident?.status === 'reported' && (
+            {!isEditingIncident && openIncident?.status === 'reported' && (
               <Button color="warning" variant="flat" onPress={() => assignIncident(openIncident.id, currentUserName)}>
                 Assign to me
               </Button>
             )}
-            {openIncident?.status === 'investigating' && (
+            {!isEditingIncident && openIncident?.status === 'investigating' && (
               <Button color="success" variant="flat" onPress={() => resolveIncident(openIncident.id, 'Resolved')}>
                 Resolve
               </Button>
             )}
-            <Button variant="light" onPress={() => setViewingIncident(null)}>Close</Button>
+            {!isEditingIncident && openIncident && (
+              <Button color="primary" variant="flat" onPress={startEditIncident}>Edit</Button>
+            )}
+            {isEditingIncident ? (
+              <>
+                <Button variant="light" onPress={() => setIsEditingIncident(false)}>Cancel</Button>
+                <Button color="primary" onPress={saveEditIncident} isDisabled={!incidentEditForm?.location.trim() || !incidentEditForm?.description.trim()}>Save Changes</Button>
+              </>
+            ) : (
+              <Button variant="light" onPress={closeIncidentView}>Close</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>
 
-      {/* View Visitor */}
-      <Modal isOpen={!!openVisitor} onClose={() => setViewingVisitor(null)} size="2xl">
+      {/* View / Edit Visitor */}
+      <Modal isOpen={!!openVisitor} onClose={closeVisitorView} size="2xl">
         <ModalContent>
-          <ModalHeader>{openVisitor?.name}</ModalHeader>
-          <ModalBody className="gap-2">
-            {openVisitor && (
+          <ModalHeader>{openVisitor?.name}{isEditingVisitor ? ' — Edit' : ''}</ModalHeader>
+          <ModalBody className="gap-4">
+            {openVisitor && !isEditingVisitor && (
+              <DetailGrid>
+                <DetailField label="Visitor #" value={openVisitor.visitorNumber} />
+                <DetailField label="Status" value={
+                  <Chip variant="flat" color={openVisitor.status === 'checked_in' ? 'success' : openVisitor.status === 'checked_out' ? 'default' : 'warning'} size="sm">{openVisitor.status.replace('_', ' ')}</Chip>
+                } />
+                <DetailField label="Purpose" value={openVisitor.purpose} full />
+                <DetailField label="Host" value={openVisitor.hostName ? `${openVisitor.hostName}${openVisitor.hostRoom ? ` (Room ${openVisitor.hostRoom})` : ''}` : undefined} />
+                <DetailField label="Vehicle" value={openVisitor.vehicleNumber} />
+                <DetailField label="Check-in" value={openVisitor.checkInTime.toLocaleString()} />
+                <DetailField label="Check-out" value={openVisitor.checkOutTime?.toLocaleString()} />
+                <DetailField label="ID" value={openVisitor.idType ? `${openVisitor.idType} ${openVisitor.idNumber || ''}`.trim() : undefined} />
+              </DetailGrid>
+            )}
+            {openVisitor && isEditingVisitor && visitorEditForm && (
               <>
-                <p><strong>Visitor #:</strong> {openVisitor.visitorNumber}</p>
-                <p><strong>Purpose:</strong> {openVisitor.purpose}</p>
-                {openVisitor.hostName && <p><strong>Host:</strong> {openVisitor.hostName}{openVisitor.hostRoom ? ` (Room ${openVisitor.hostRoom})` : ''}</p>}
-                <p><strong>Check-in:</strong> {openVisitor.checkInTime.toLocaleString()}</p>
-                {openVisitor.checkOutTime && <p><strong>Check-out:</strong> {openVisitor.checkOutTime.toLocaleString()}</p>}
-                <p><strong>Status:</strong> {openVisitor.status.replace('_', ' ')}</p>
-                {openVisitor.idType && <p><strong>ID:</strong> {openVisitor.idType} {openVisitor.idNumber}</p>}
-                {openVisitor.vehicleNumber && <p><strong>Vehicle:</strong> {openVisitor.vehicleNumber}</p>}
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label="Full Name" value={visitorEditForm.name} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, name: e.target.value }))} isRequired />
+                  <Input label="Phone" value={visitorEditForm.phone} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, phone: e.target.value }))} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Select label="ID Type" selectedKeys={[visitorEditForm.idType]} onSelectionChange={(k) => setVisitorEditForm((f) => f && ({ ...f, idType: Array.from(k as Set<string>)[0] as any }))}>
+                    <SelectItem key="ghana-card">Ghana Card</SelectItem>
+                    <SelectItem key="passport">Passport</SelectItem>
+                    <SelectItem key="drivers-license">Driver's License</SelectItem>
+                    <SelectItem key="other">Other</SelectItem>
+                  </Select>
+                  <Input label="ID Number" value={visitorEditForm.idNumber} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, idNumber: e.target.value }))} />
+                </div>
+                <Input label="Purpose of Visit" value={visitorEditForm.purpose} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, purpose: e.target.value }))} isRequired />
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label="Host Name" placeholder="Optional" value={visitorEditForm.hostName} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, hostName: e.target.value }))} />
+                  <Input label="Host Room" placeholder="Optional" value={visitorEditForm.hostRoom} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, hostRoom: e.target.value }))} />
+                </div>
+                <Input label="Vehicle Number" placeholder="Optional" value={visitorEditForm.vehicleNumber} onChange={(e) => setVisitorEditForm((f) => f && ({ ...f, vehicleNumber: e.target.value }))} />
               </>
             )}
           </ModalBody>
           <ModalFooter>
-            {openVisitor?.status === 'checked_in' && (
+            {!isEditingVisitor && openVisitor?.status === 'checked_in' && (
               <Button color="success" variant="flat" onPress={() => checkOutVisitor(openVisitor.id)}>
                 Check Out
               </Button>
             )}
-            <Button variant="light" onPress={() => setViewingVisitor(null)}>Close</Button>
+            {!isEditingVisitor && openVisitor && (
+              <Button color="primary" variant="flat" onPress={startEditVisitor}>Edit</Button>
+            )}
+            {isEditingVisitor ? (
+              <>
+                <Button variant="light" onPress={() => setIsEditingVisitor(false)}>Cancel</Button>
+                <Button color="primary" onPress={saveEditVisitor} isDisabled={!visitorEditForm?.name.trim() || !visitorEditForm?.purpose.trim()}>Save Changes</Button>
+              </>
+            ) : (
+              <Button variant="light" onPress={closeVisitorView}>Close</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>
 
-      {/* View Patrol */}
-      <Modal isOpen={!!openPatrol} onClose={() => setViewingPatrol(null)} size="2xl" scrollBehavior="inside">
+      {/* View / Edit Patrol */}
+      <Modal isOpen={!!openPatrol} onClose={closePatrolView} size="2xl" scrollBehavior="inside">
         <ModalContent>
-          <ModalHeader>{openPatrol ? `${openPatrol.patrolNumber} — ${openPatrol.route}` : 'Patrol'}</ModalHeader>
-          <ModalBody className="gap-3">
-            {openPatrol && (
+          <ModalHeader>{openPatrol ? `${openPatrol.patrolNumber} — ${openPatrol.route}` : 'Patrol'}{isEditingPatrol ? ' — Edit' : ''}</ModalHeader>
+          <ModalBody className="gap-4">
+            {openPatrol && !isEditingPatrol && (
               <>
-                <p><strong>Officer:</strong> {openPatrol.officerName}</p>
-                <p><strong>Started:</strong> {openPatrol.startTime.toLocaleString()}</p>
-                {openPatrol.endTime && <p><strong>Ended:</strong> {openPatrol.endTime.toLocaleString()}</p>}
-                <p><strong>Status:</strong> {openPatrol.status}</p>
+                <DetailGrid>
+                  <DetailField label="Officer" value={openPatrol.officerName} />
+                  <DetailField label="Status" value={
+                    <Chip variant="flat" color={openPatrol.status === 'completed' ? 'success' : openPatrol.status === 'interrupted' ? 'danger' : 'primary'} size="sm">{openPatrol.status}</Chip>
+                  } />
+                  <DetailField label="Started" value={openPatrol.startTime.toLocaleString()} />
+                  <DetailField label="Ended" value={openPatrol.endTime?.toLocaleString()} />
+                  <DetailField label="Notes" value={openPatrol.notes} full />
+                </DetailGrid>
                 <div className="space-y-1.5">
                   {openPatrol.checkpoints.map((cp) => (
                     <div key={cp.id} className="flex items-center justify-between gap-3 px-3 py-2 bg-gray-50 rounded-lg">
@@ -1344,61 +1479,107 @@ export default function SecurityComplianceDashboard({
                 </div>
               </>
             )}
+            {openPatrol && isEditingPatrol && patrolEditForm && (
+              <>
+                <Input label="Route Name" value={patrolEditForm.route} onChange={(e) => setPatrolEditForm((f) => f && ({ ...f, route: e.target.value }))} isRequired />
+                <Textarea label="Notes" placeholder="Optional" value={patrolEditForm.notes} onChange={(e) => setPatrolEditForm((f) => f && ({ ...f, notes: e.target.value }))} />
+              </>
+            )}
           </ModalBody>
           <ModalFooter>
-            {openPatrol?.status === 'active' && canManagePatrols && (
+            {!isEditingPatrol && openPatrol?.status === 'active' && canManagePatrols && (
               <Button color="success" variant="flat" onPress={() => endPatrol(openPatrol.id)}>
                 End Patrol
               </Button>
             )}
-            <Button variant="light" onPress={() => setViewingPatrol(null)}>Close</Button>
+            {!isEditingPatrol && openPatrol && canManagePatrols && (
+              <Button color="primary" variant="flat" onPress={startEditPatrol}>Edit</Button>
+            )}
+            {isEditingPatrol ? (
+              <>
+                <Button variant="light" onPress={() => setIsEditingPatrol(false)}>Cancel</Button>
+                <Button color="primary" onPress={saveEditPatrol} isDisabled={!patrolEditForm?.route.trim()}>Save Changes</Button>
+              </>
+            ) : (
+              <Button variant="light" onPress={closePatrolView}>Close</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>
 
-      {/* View Shift */}
-      <Modal isOpen={!!openShift} onClose={() => setViewingShift(null)} size="lg">
+      {/* View / Edit Shift */}
+      <Modal isOpen={!!openShift} onClose={closeShiftView} size="lg">
         <ModalContent>
-          <ModalHeader>{openShift?.personName}</ModalHeader>
-          <ModalBody className="gap-2">
-            {openShift && (
-              <>
-                <p><strong>Checked in:</strong> {openShift.checkInTime.toLocaleString()}</p>
-                <p><strong>Checked out:</strong> {openShift.checkOutTime ? openShift.checkOutTime.toLocaleString() : '—'}</p>
-                <p><strong>Duration:</strong> {formatShiftDuration(openShift.checkInTime, openShift.checkOutTime)}</p>
-                <p><strong>Status:</strong> {openShift.status === 'on_duty' ? 'on duty' : 'completed'}</p>
-                {openShift.notes && <p><strong>Notes:</strong> {openShift.notes}</p>}
-              </>
+          <ModalHeader>{openShift?.personName}{isEditingShift ? ' — Edit' : ''}</ModalHeader>
+          <ModalBody className="gap-4">
+            {openShift && !isEditingShift && (
+              <DetailGrid>
+                <DetailField label="Status" value={
+                  <Chip variant="flat" color={openShift.status === 'on_duty' ? 'success' : 'default'} size="sm">{openShift.status === 'on_duty' ? 'on duty' : 'completed'}</Chip>
+                } />
+                <DetailField label="Duration" value={formatShiftDuration(openShift.checkInTime, openShift.checkOutTime)} />
+                <DetailField label="Checked in" value={openShift.checkInTime.toLocaleString()} />
+                <DetailField label="Checked out" value={openShift.checkOutTime?.toLocaleString()} />
+                <DetailField label="Notes" value={openShift.notes} full />
+              </DetailGrid>
+            )}
+            {openShift && isEditingShift && shiftEditForm && (
+              <Textarea label="Notes" placeholder="Optional" value={shiftEditForm.notes} onChange={(e) => setShiftEditForm({ notes: e.target.value })} />
             )}
           </ModalBody>
           <ModalFooter>
-            {openShift?.status === 'on_duty' && canManageShifts && (
+            {!isEditingShift && openShift?.status === 'on_duty' && canManageShifts && (
               <Button color="danger" variant="flat" onPress={() => checkOut(openShift.id)}>
                 Check Out
               </Button>
             )}
-            <Button variant="light" onPress={() => setViewingShift(null)}>Close</Button>
+            {!isEditingShift && openShift && canManageShifts && (
+              <Button color="primary" variant="flat" onPress={startEditShift}>Edit</Button>
+            )}
+            {isEditingShift ? (
+              <>
+                <Button variant="light" onPress={() => setIsEditingShift(false)}>Cancel</Button>
+                <Button color="primary" onPress={saveEditShift}>Save Changes</Button>
+              </>
+            ) : (
+              <Button variant="light" onPress={closeShiftView}>Close</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>
 
-      {/* View personnel */}
-      <Modal isOpen={!!openPersonnel} onClose={() => setViewingPersonnel(null)} size="lg">
+      {/* View / Edit personnel */}
+      <Modal isOpen={!!openPersonnel} onClose={closePersonnelView} size="lg">
         <ModalContent>
-          <ModalHeader>{openPersonnel?.name}</ModalHeader>
-          <ModalBody className="gap-2">
-            {openPersonnel && (
+          <ModalHeader>{openPersonnel?.name}{isEditingPersonnel ? ' — Edit' : ''}</ModalHeader>
+          <ModalBody className="gap-4">
+            {openPersonnel && !isEditingPersonnel && (
+              <DetailGrid>
+                <DetailField label="Status" value={
+                  <Chip variant="flat" color={openPersonnel.isActive ? 'success' : 'default'} size="sm">{openPersonnel.isActive ? 'active' : 'inactive'}</Chip>
+                } />
+                <DetailField label="Role" value={openPersonnel.role} />
+                <DetailField label="Agency" value={openPersonnel.agency} />
+                <DetailField label="Phone" value={openPersonnel.phone} />
+                <DetailField label="Notes" value={openPersonnel.notes} full />
+              </DetailGrid>
+            )}
+            {openPersonnel && isEditingPersonnel && personnelEditForm && (
               <>
-                <p><strong>Agency:</strong> {openPersonnel.agency || '—'}</p>
-                <p><strong>Role:</strong> {openPersonnel.role || '—'}</p>
-                <p><strong>Phone:</strong> {openPersonnel.phone || '—'}</p>
-                <p><strong>Status:</strong> {openPersonnel.isActive ? 'active' : 'inactive'}</p>
-                {openPersonnel.notes && <p><strong>Notes:</strong> {openPersonnel.notes}</p>}
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label="Full Name" value={personnelEditForm.name} onChange={(e) => setPersonnelEditForm((f) => f && ({ ...f, name: e.target.value }))} isRequired />
+                  <Input label="Phone" placeholder="Optional" value={personnelEditForm.phone} onChange={(e) => setPersonnelEditForm((f) => f && ({ ...f, phone: e.target.value }))} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input label="Agency / Company" placeholder="Leave blank if independently contracted" value={personnelEditForm.agency} onChange={(e) => setPersonnelEditForm((f) => f && ({ ...f, agency: e.target.value }))} />
+                  <Input label="Role" placeholder="e.g. Guard, Supervisor" value={personnelEditForm.role} onChange={(e) => setPersonnelEditForm((f) => f && ({ ...f, role: e.target.value }))} />
+                </div>
+                <Textarea label="Notes" placeholder="Optional" value={personnelEditForm.notes} onChange={(e) => setPersonnelEditForm((f) => f && ({ ...f, notes: e.target.value }))} />
               </>
             )}
           </ModalBody>
           <ModalFooter>
-            {openPersonnel && canManagePersonnel && (
+            {!isEditingPersonnel && openPersonnel && canManagePersonnel && (
               <Button
                 color={openPersonnel.isActive ? 'danger' : 'success'}
                 variant="flat"
@@ -1407,7 +1588,17 @@ export default function SecurityComplianceDashboard({
                 {openPersonnel.isActive ? 'Deactivate' : 'Reactivate'}
               </Button>
             )}
-            <Button variant="light" onPress={() => setViewingPersonnel(null)}>Close</Button>
+            {!isEditingPersonnel && openPersonnel && canManagePersonnel && (
+              <Button color="primary" variant="flat" onPress={startEditPersonnel}>Edit</Button>
+            )}
+            {isEditingPersonnel ? (
+              <>
+                <Button variant="light" onPress={() => setIsEditingPersonnel(false)}>Cancel</Button>
+                <Button color="primary" onPress={saveEditPersonnel} isDisabled={!personnelEditForm?.name.trim()}>Save Changes</Button>
+              </>
+            ) : (
+              <Button variant="light" onPress={closePersonnelView}>Close</Button>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>
@@ -1417,7 +1608,13 @@ export default function SecurityComplianceDashboard({
         <ModalContent>
           <ModalHeader>{openLocation?.name}</ModalHeader>
           <ModalBody>
-            {openLocation && <p><strong>Status:</strong> {openLocation.isActive ? 'active' : 'inactive'}</p>}
+            {openLocation && (
+              <DetailGrid>
+                <DetailField label="Status" value={
+                  <Chip variant="flat" color={openLocation.isActive ? 'success' : 'default'} size="sm">{openLocation.isActive ? 'active' : 'inactive'}</Chip>
+                } />
+              </DetailGrid>
+            )}
           </ModalBody>
           <ModalFooter>
             {openLocation && canManageCheckpoints && (
@@ -1439,7 +1636,13 @@ export default function SecurityComplianceDashboard({
         <ModalContent>
           <ModalHeader>{openRoute?.name}</ModalHeader>
           <ModalBody>
-            {openRoute && <p><strong>Status:</strong> {openRoute.isActive ? 'active' : 'inactive'}</p>}
+            {openRoute && (
+              <DetailGrid>
+                <DetailField label="Status" value={
+                  <Chip variant="flat" color={openRoute.isActive ? 'success' : 'default'} size="sm">{openRoute.isActive ? 'active' : 'inactive'}</Chip>
+                } />
+              </DetailGrid>
+            )}
           </ModalBody>
           <ModalFooter>
             {openRoute && canManageRoutes && (

@@ -1,11 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import HeadingInfo from '../HeadingInfo';
+import React, { useState, useEffect, useMemo } from 'react';
+import { HideCardButton } from '../dashboard/CustomizeViewControl';
 import { 
   Card, 
   CardBody, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -25,7 +24,7 @@ import {
   TableRow,
   TableCell,
   Avatar,
-  Tooltip
+  Pagination,
 } from "@heroui/react";
 import { housekeepingStore } from '../../lib/housekeeping/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
@@ -34,8 +33,16 @@ import {
   TaskPriority,
   HousekeepingStaff 
 } from '../../lib/housekeeping/types';
+import { sizedTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { deskTableCardBodyClassName, deskTableCardClassName, deskTableClassNames, SortHeader, toggleColumnSort, DESK_PAGE_SIZE, type ColumnSort } from '../dashboard/deskTableUi';
 
-export default function MaintenancePanel() {
+export default function MaintenancePanel({
+  hideStats = false,
+  onHideStats,
+}: {
+  hideStats?: boolean;
+  onHideStats?: () => void;
+} = {}) {
   const [maintenanceRequests, setMaintenanceRequests] = useState<MaintenanceRequest[]>([]);
   const [staff, setStaff] = useState<HousekeepingStaff[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
@@ -46,6 +53,18 @@ export default function MaintenancePanel() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [priorityFilter, setPriorityFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [sort, setSort] = useState<ColumnSort>({ column: 'reported', direction: 'desc' });
+  const [page, setPage] = useState(1);
+  const cols = useResizableColumns({
+    id: 120,
+    room: 80,
+    category: 120,
+    priority: 90,
+    status: 120,
+    description: 200,
+    assigned: 140,
+    reported: 110,
+  });
 
   // Form state
   const [maintenanceForm, setMaintenanceForm] = useState({
@@ -201,6 +220,37 @@ export default function MaintenancePanel() {
     return true;
   });
 
+  const sortedRequests = useMemo(() => {
+    const dir = sort.direction === 'asc' ? 1 : -1;
+    return [...filteredRequests].sort((a, b) => {
+      switch (sort.column) {
+        case 'id':
+          return a.id.localeCompare(b.id) * dir;
+        case 'room':
+          return a.roomNumber.localeCompare(b.roomNumber, undefined, { numeric: true }) * dir;
+        case 'category':
+          return a.category.localeCompare(b.category) * dir;
+        case 'priority':
+          return a.priority.localeCompare(b.priority) * dir;
+        case 'status':
+          return a.status.localeCompare(b.status) * dir;
+        case 'description':
+          return a.description.localeCompare(b.description) * dir;
+        case 'assigned':
+          return (a.assignedTo || '').localeCompare(b.assignedTo || '') * dir;
+        case 'reported':
+        default:
+          return (new Date(a.reportedAt).getTime() - new Date(b.reportedAt).getTime()) * dir;
+      }
+    });
+  }, [filteredRequests, sort]);
+
+  const pages = Math.max(1, Math.ceil(sortedRequests.length / DESK_PAGE_SIZE));
+  const pageSafe = Math.min(page, pages);
+  const pagedRequests = sortedRequests.slice((pageSafe - 1) * DESK_PAGE_SIZE, pageSafe * DESK_PAGE_SIZE);
+
+  useEffect(() => { setPage(1); }, [searchTerm, statusFilter, priorityFilter, categoryFilter]);
+
   const getStaffName = (staffId: string) => {
     return staff.find(s => s.id === staffId)?.name || 'Unassigned';
   };
@@ -210,17 +260,13 @@ export default function MaintenancePanel() {
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-3">
       {/* Header and Actions */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-1.5">
-            <h2 className="text-xl font-semibold text-ghana-black">🔧 Maintenance Management</h2>
-            <HeadingInfo label="About maintenance">Track and manage maintenance requests and repairs</HeadingInfo>
-          </div>
-        </div>
-        <Button 
-          color="primary" 
+      <div className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+        <h2 className="text-lg font-semibold text-ghana-black shrink-0">Maintenance</h2>
+        <Button
+          size="sm"
+          color="primary"
           className="bg-ghana-green text-white"
           onClick={handleCreateRequest}
         >
@@ -228,76 +274,44 @@ export default function MaintenancePanel() {
         </Button>
       </div>
 
-      {/* Maintenance Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Requests</p>
-                <p className="text-2xl font-bold text-ghana-black">{maintenanceRequests.length}</p>
-              </div>
-              <span className="text-2xl">🔧</span>
-            </div>
-          </CardBody>
-        </Card>
-        
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Open Requests</p>
-                <p className="text-2xl font-bold text-yellow-600">
-                  {maintenanceRequests.filter(r => r.status !== 'completed').length}
-                </p>
-              </div>
-              <span className="text-2xl">⚠️</span>
-            </div>
-          </CardBody>
-        </Card>
-        
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">In Progress</p>
-                <p className="text-2xl font-bold text-blue-600">
-                  {maintenanceRequests.filter(r => r.status === 'in-progress').length}
-                </p>
-              </div>
-              <span className="text-2xl">🔄</span>
-            </div>
-          </CardBody>
-        </Card>
-        
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Completed</p>
-                <p className="text-2xl font-bold text-green-600">
-                  {maintenanceRequests.filter(r => r.status === 'completed').length}
-                </p>
-              </div>
-              <span className="text-2xl">✅</span>
-            </div>
-          </CardBody>
-        </Card>
-        
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Urgent</p>
-                <p className="text-2xl font-bold text-red-600">
-                  {maintenanceRequests.filter(r => r.priority === 'urgent').length}
-                </p>
-              </div>
-              <span className="text-2xl">🚨</span>
-            </div>
-          </CardBody>
-        </Card>
-      </div>
+      {/* Maintenance Overview Cards — Desk-style compact */}
+      {!hideStats && (
+        <div className="flex items-start gap-1">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {([
+              { label: 'Total', value: maintenanceRequests.length, tone: 'text-ghana-black' },
+              {
+                label: 'Open',
+                value: maintenanceRequests.filter((r) => r.status !== 'completed' && r.status !== 'verified').length,
+                tone: 'text-yellow-700',
+              },
+              {
+                label: 'In progress',
+                value: maintenanceRequests.filter((r) => r.status === 'in-progress').length,
+                tone: 'text-blue-700',
+              },
+              {
+                label: 'Completed',
+                value: maintenanceRequests.filter((r) => r.status === 'completed' || r.status === 'verified').length,
+                tone: 'text-green-700',
+              },
+              {
+                label: 'Urgent',
+                value: maintenanceRequests.filter((r) => r.priority === 'urgent').length,
+                tone: 'text-red-700',
+              },
+            ] as const).map((stat) => (
+              <Card key={stat.label} className="border border-gray-200 shadow-none">
+                <CardBody className="px-2 py-1.5 text-center">
+                  <div className={`text-base font-semibold tabular-nums ${stat.tone}`}>{stat.value}</div>
+                  <div className="text-xs leading-tight text-gray-500">{stat.label}</div>
+                </CardBody>
+              </Card>
+            ))}
+          </div>
+          {onHideStats && <HideCardButton onHide={onHideStats} label="Maintenance summary" />}
+        </div>
+      )}
 
       {/* Filters */}
       <Card className="border-0 shadow-lg">
@@ -355,27 +369,27 @@ export default function MaintenancePanel() {
       </Card>
 
       {/* Maintenance Requests Table */}
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <h3 className="text-lg font-semibold text-ghana-black">Maintenance Requests</h3>
-        </CardHeader>
-        <CardBody className="p-0">
-          <div className="max-h-[560px] overflow-y-auto">
-          <Table aria-label="Maintenance requests table">
+      <Card className={deskTableCardClassName}>
+        <CardBody className={deskTableCardBodyClassName}>
+          <div ref={cols.frameRef} style={cols.frameStyle}>
+          <Table aria-label="Maintenance requests table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
             <TableHeader>
-              <TableColumn>Request ID</TableColumn>
-              <TableColumn>Room</TableColumn>
-              <TableColumn>Category</TableColumn>
-              <TableColumn>Priority</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Description</TableColumn>
-              <TableColumn>Assigned To</TableColumn>
-              <TableColumn>Reported</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              <TableColumn className="relative" style={cols.style('id')}>{<SortHeader label="ID" column="id" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('id', 'ID')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('room')}>{<SortHeader label="Room" column="room" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('room', 'Room')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('category')}>{<SortHeader label="Category" column="category" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('category', 'Category')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('priority')}>{<SortHeader label="Priority" column="priority" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('priority', 'Priority')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('status')}>{<SortHeader label="Status" column="status" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('status', 'Status')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('description')}>{<SortHeader label="Description" column="description" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('description', 'Description')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('assigned')}>{<SortHeader label="Assigned" column="assigned" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('assigned', 'Assigned')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('reported')}>{<SortHeader label="Reported" column="reported" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('reported', 'Reported')}</TableColumn>
             </TableHeader>
-            <TableBody>
-              {filteredRequests.map((request) => (
-                <TableRow key={request.id} className="hover:bg-gray-50">
+            <TableBody emptyContent="No maintenance requests match.">
+              {pagedRequests.map((request) => (
+                <TableRow
+                  key={request.id}
+                  className="cursor-pointer hover:bg-gray-50"
+                  onClick={() => handleEditRequest(request)}
+                >
                   <TableCell>
                     <span className="font-semibold text-ghana-black">{request.id}</span>
                   </TableCell>
@@ -414,89 +428,32 @@ export default function MaintenancePanel() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <span className="text-sm text-gray-700 max-w-[200px] truncate block">
+                    <span className="text-sm text-gray-700 truncate block" title={request.description}>
                       {request.description}
                     </span>
                   </TableCell>
                   <TableCell>
                     {request.assignedTo ? (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
                         <Avatar size="sm" name={getStaffName(request.assignedTo)} />
-                        <span className="text-sm">{getStaffName(request.assignedTo)}</span>
+                        <span className="text-sm truncate" title={getStaffName(request.assignedTo)}>{getStaffName(request.assignedTo)}</span>
                       </div>
                     ) : (
                       <span className="text-gray-400 text-sm">Unassigned</span>
                     )}
                   </TableCell>
                   <TableCell>
-                    <span className="text-sm text-gray-600">
+                    <span className="whitespace-nowrap text-sm text-gray-600">
                       {new Date(request.reportedAt).toLocaleDateString()}
                     </span>
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Tooltip content="View details">
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="flat"
-                          isIconOnly
-                          onClick={() => handleEditRequest(request)}
-                        >
-                          👁️
-                        </Button>
-                      </Tooltip>
-                      
-                      {request.status === 'reported' && (
-                        <Tooltip content="Assign request">
-                          <Button
-                            size="sm"
-                            color="secondary"
-                            variant="flat"
-                            isIconOnly
-                            onClick={() => {
-                              // This would open an assignment modal
-                              console.log('Assign request:', request.id);
-                            }}
-                          >
-                            👥
-                          </Button>
-                        </Tooltip>
-                      )}
-                      
-                      {request.status === 'assigned' && (
-                        <Tooltip content="Start work">
-                          <Button
-                            size="sm"
-                            color="success"
-                            variant="flat"
-                            isIconOnly
-                            onClick={() => handleUpdateStatus(request.id, 'in-progress')}
-                          >
-                            ▶️
-                          </Button>
-                        </Tooltip>
-                      )}
-                      
-                      {request.status === 'in-progress' && (
-                        <Tooltip content="Mark complete">
-                          <Button
-                            size="sm"
-                            color="success"
-                            variant="flat"
-                            isIconOnly
-                            onClick={() => handleUpdateStatus(request.id, 'completed')}
-                          >
-                            ✅
-                          </Button>
-                        </Tooltip>
-                      )}
-                    </div>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Pagination page={pageSafe} total={pages} onChange={setPage} showControls size="sm" />
           </div>
         </CardBody>
       </Card>

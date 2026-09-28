@@ -122,6 +122,8 @@ export default function OvertimeManagementPanel() {
               <TableColumn>TIMESHEET</TableColumn>
               <TableColumn>EMPLOYEE</TableColumn>
               <TableColumn>DATE</TableColumn>
+              <TableColumn>START</TableColumn>
+              <TableColumn>END</TableColumn>
               <TableColumn>HOURS</TableColumn>
               <TableColumn>OVERTIME</TableColumn>
               <TableColumn>STATUS</TableColumn>
@@ -139,6 +141,8 @@ export default function OvertimeManagementPanel() {
                     <TableCell className="font-mono">{a.id}</TableCell>
                     <TableCell>{name}</TableCell>
                     <TableCell>{new Date(a.date).toLocaleDateString()}</TableCell>
+                    <TableCell className="whitespace-nowrap tabular-nums">{a.checkInTime ? new Date(a.checkInTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}</TableCell>
+                    <TableCell className="whitespace-nowrap tabular-nums">{a.checkOutTime ? new Date(a.checkOutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}</TableCell>
                     <TableCell>{(a.totalHours || 0).toFixed(2)}</TableCell>
                     <TableCell>
                       {isEditing ? (

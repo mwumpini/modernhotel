@@ -10,7 +10,7 @@ export type RoomStatus =
   | 'maintenance';
 
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type TaskStatus = 'pending' | 'in-progress' | 'completed' | 'verified';
+export type TaskStatus = 'pending' | 'in-progress' | 'completed' | 'verified' | 'cancelled';
 
 export interface HousekeepingTask {
   id: string;

@@ -4,9 +4,9 @@
  * Module `key`s mirror Navigation.tsx's `navigationSections[].key` exactly —
  * that's what `hasModuleAccess(modulePrefix)` gates the sidebar with today,
  * so checking a module's "Full access" box here is what actually shows/hides
- * it for a role. `view`/`create`/`edit`/`delete` are the matrix columns the
- * Role editor renders; `extra` holds the handful of bespoke action strings
- * the default roles already use that don't fit that shape (frontdesk.checkin,
+ * it for a role. `view`/`create`/`edit`/`delete`/`print`/`void` are the matrix
+ * columns the Role editor renders; `extra` holds the handful of bespoke action
+ * strings the default roles already use that don't fit that shape (frontdesk.checkin,
  * restaurant.pos). None of the finer actions are enforced anywhere yet beyond the
  * sidebar's module check — add real hasPermission() calls as they're wired up.
  */
@@ -27,7 +27,9 @@ export interface PermissionModule {
   create?: PermissionAction;
   edit?: PermissionAction;
   delete?: PermissionAction;
-  /** Bespoke actions outside the View/Create/Edit/Delete shape, shown below the matrix. */
+  print?: PermissionAction;
+  void?: PermissionAction;
+  /** Bespoke actions outside the View/Create/Edit/Delete/Print/Void shape, shown below the matrix. */
   extra: PermissionAction[];
 }
 
@@ -37,21 +39,37 @@ interface CrudOptions {
   create?: boolean;
   edit?: boolean;
   delete?: boolean;
+  print?: boolean;
+  void?: boolean;
+  /** Keep a legacy void permission id (e.g. accounting.void-transaction). */
+  voidId?: string;
 }
 
 /**
- * Standard View/Create/Edit/Delete slots for a module's own records
+ * Standard View/Create/Edit/Delete/Print/Void slots for a module's own records
  * (reservations, orders, incidents, employee records, etc). `noun` reads
  * into each label, e.g. crud('frontdesk', 'reservations').create ->
  * { id: 'frontdesk.create', label: 'Create reservations' }.
  */
 function crud(key: string, noun: string, opts: CrudOptions = {}) {
-  const { viewId = `${key}.view`, create = true, edit = true, delete: del = true } = opts;
+  const {
+    viewId = `${key}.view`,
+    create = true,
+    edit = true,
+    delete: del = true,
+    print = false,
+    void: voidOpt = false,
+    voidId,
+  } = opts;
   return {
     view: { id: viewId, label: `View ${noun}` },
     create: create ? { id: `${key}.create`, label: `Create ${noun}` } : undefined,
     edit: edit ? { id: `${key}.edit`, label: `Edit ${noun}` } : undefined,
     delete: del ? { id: `${key}.delete`, label: `Delete ${noun}` } : undefined,
+    print: print ? { id: `${key}.print`, label: `Print ${noun}` } : undefined,
+    void: voidOpt
+      ? { id: voidId || `${key}.void`, label: `Void ${noun}` }
+      : undefined,
   };
 }
 
@@ -69,7 +87,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Front Office Operations',
     icon: '🏨',
     fullAccessId: 'frontdesk.*',
-    ...crud('frontdesk', 'reservations'),
+    ...crud('frontdesk', 'reservations', { print: true, void: true }),
     extra: [
       { id: 'frontdesk.checkin', label: 'Check guests in' },
       { id: 'frontdesk.checkout', label: 'Check guests out' },
@@ -95,7 +113,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Events & Conferences',
     icon: '🎪',
     fullAccessId: 'events-conferences.*',
-    ...crud('events-conferences', 'events & bookings'),
+    ...crud('events-conferences', 'events & bookings', { print: true, void: true }),
     extra: [
       { id: 'events-conferences.manage-venues', label: 'Add/edit a venue (hall)' },
       { id: 'events-conferences.delete-venue', label: 'Delete a venue' },
@@ -118,7 +136,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Restaurant & Bar',
     icon: '🍽️',
     fullAccessId: 'restaurant.*',
-    ...crud('restaurant', 'menu items & orders'),
+    ...crud('restaurant', 'menu items & orders', { print: true, void: true }),
     extra: [
       { id: 'restaurant.pos', label: 'Use POS terminal' },
       { id: 'restaurant.apply-discount', label: 'Apply a discount' },
@@ -134,7 +152,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Kitchen',
     icon: '👨‍🍳',
     fullAccessId: 'kitchen.*',
-    ...crud('kitchen', 'kitchen tickets', { create: false, delete: false }),
+    ...crud('kitchen', 'kitchen tickets', { create: false, delete: false, print: true, void: true }),
     extra: [
       { id: 'kitchen.send-to-kitchen', label: 'Send an order to the kitchen' },
       { id: 'kitchen.cancel-order', label: 'Cancel an order' },
@@ -148,7 +166,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Housekeeping & Maintenance',
     icon: '🛏️',
     fullAccessId: 'housekeeping.*',
-    ...crud('housekeeping', 'tasks', { viewId: 'housekeeping.view' }),
+    ...crud('housekeeping', 'tasks', { viewId: 'housekeeping.view', print: true, void: true }),
     extra: [
       { id: 'housekeeping.update-room-status', label: 'Mark room clean/dirty/ready' },
       { id: 'housekeeping.block-room', label: 'Block a room (out-of-order)' },
@@ -166,7 +184,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Inventory & Stores',
     icon: '📦',
     fullAccessId: 'inventory.*',
-    ...crud('inventory', 'stock & purchase orders'),
+    ...crud('inventory', 'stock & purchase orders', { print: true, void: true }),
     extra: [
       { id: 'inventory.manage-suppliers', label: 'Add/edit a supplier' },
       { id: 'inventory.approve-po', label: 'Approve/reject a purchase order' },
@@ -189,7 +207,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Security Operations',
     icon: '🚨',
     fullAccessId: 'security.*',
-    ...crud('security', 'incident logs'),
+    ...crud('security', 'incident logs', { print: true }),
     extra: [
       { id: 'security.assign-incident', label: 'Assign an incident to staff' },
       { id: 'security.resolve-incident', label: 'Resolve an incident' },
@@ -209,7 +227,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'HR & Payroll',
     icon: '👥',
     fullAccessId: 'hr.*',
-    ...crud('hr', 'employee records'),
+    ...crud('hr', 'employee records', { print: true }),
     extra: [
       { id: 'hr.log-employee-change', label: 'Log an employee change' },
       { id: 'hr.manage-payroll-periods', label: 'Create a payroll period' },
@@ -230,14 +248,17 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Accounting & Finance',
     icon: '🧾',
     fullAccessId: 'accounting.*',
-    ...crud('accounting', 'transactions & invoices'),
+    ...crud('accounting', 'transactions & invoices', {
+      print: true,
+      void: true,
+      voidId: 'accounting.void-transaction',
+    }),
     extra: [
       { id: 'accounting.post-journal-entry', label: 'Post a journal entry' },
       { id: 'accounting.approve-journal-entry', label: 'Approve/reverse a journal entry' },
       { id: 'accounting.approve-payment', label: 'Approve a payment at or above the director approval threshold' },
       { id: 'accounting.manage-ap', label: 'Record a supplier invoice/payment (AP)' },
       { id: 'accounting.manage-ar', label: 'Record a customer invoice/receipt (AR)' },
-      { id: 'accounting.void-transaction', label: 'Void an invoice or receipt' },
       { id: 'accounting.manage-wht', label: 'Record/receive a WHT payment or certificate' },
       { id: 'accounting.manage-bank', label: 'Sync cashbook / post bank items to ledger' },
       { id: 'accounting.reconcile-bank', label: 'Complete a bank reconciliation' },
@@ -254,7 +275,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
     label: 'Compliance & Reports',
     icon: '⚖️',
     fullAccessId: 'compliance.*',
-    ...crud('compliance', 'filings', { viewId: 'reports.view' }),
+    ...crud('compliance', 'filings', { viewId: 'reports.view', print: true }),
     extra: [
       { id: 'compliance.manage-tax-types', label: 'Create/edit a tax type' },
       { id: 'compliance.manage-tax-rules', label: 'Create/edit/delete a tax rule' },
@@ -279,6 +300,7 @@ export const PERMISSION_MODULES: PermissionModule[] = [
       { id: 'settings.manage-security-policy', label: 'Configure security policy (2FA, session timeout, passwords)' },
       { id: 'settings.view-audit-log', label: 'View the system audit log (logins & actions)' },
       { id: 'settings.manage-approval-thresholds', label: 'Configure director-approval thresholds for expenses, purchase orders & payments' },
+      { id: 'settings.manage-stock-locations', label: 'Add/edit/deactivate stock locations (stores, fridges, outlets)' },
     ],
   },
 ];

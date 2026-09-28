@@ -11,37 +11,26 @@ import {
   stayFigures,
   type StaySortKey,
 } from '../../lib/frontoffice/stayWorksheet';
+import { SortLabel, unifiedTableClassNames, useResizableColumns } from './columnResize';
 
-export const worksheetTableClassNames = {
-  base: 'overflow-x-auto',
-  table: 'w-full table-fixed',
-  th: 'border-b border-gray-200 bg-gray-50 px-2 py-2.5 text-xs font-medium uppercase tracking-wide text-gray-500 whitespace-nowrap',
-  td: 'border-b border-gray-100 px-2 py-2.5 align-middle whitespace-nowrap',
+// Kept as its own export/name — 13+ other tables already import this
+// constant — but it's just the shared unified look now, not a second copy of it.
+export const worksheetTableClassNames = unifiedTableClassNames;
+
+const defaultColumnWidths: Record<StaySortKey, number> = {
+  id: 136,
+  guest: 144,
+  status: 120,
+  room: 108,
+  arrival: 100,
+  departure: 100,
+  nights: 72,
+  rate: 88,
+  discount: 96,
+  other: 128,
+  amount: 92,
+  balance: 92,
 };
-
-function SortLabel({
-  active,
-  dir,
-  onPress,
-  align = 'left',
-  children,
-}: {
-  active: boolean;
-  dir: 'asc' | 'desc';
-  onPress: () => void;
-  align?: 'left' | 'right';
-  children: string;
-}) {
-  return (
-    <button
-      type="button"
-      className={`font-semibold text-ghana-black ${align === 'right' ? 'ml-auto block' : ''}`}
-      onClick={onPress}
-    >
-      {children}{active ? (dir === 'asc' ? ' ↑' : ' ↓') : ''}
-    </button>
-  );
-}
 
 export default function StayWorksheetTable({
   stays,
@@ -62,29 +51,40 @@ export default function StayWorksheetTable({
   onOpen: (id: string) => void;
   emptyContent?: string;
 }) {
+  const cols = useResizableColumns<StaySortKey>(defaultColumnWidths);
+
+  const column = (key: StaySortKey, label: string, align: 'left' | 'right' | 'center' = 'left') => (
+    <TableColumn key={key} className="relative" style={cols.style(key)}>
+      <SortLabel active={sortKey === key} dir={sortDir} align={align} onPress={() => onSort(key)}>{label}</SortLabel>
+      {cols.sizer(key, label)}
+    </TableColumn>
+  );
+
   return (
+    <div ref={cols.frameRef} style={cols.frameStyle}>
     <Table
       aria-label="Stay worksheet"
       removeWrapper
       classNames={{
         ...worksheetTableClassNames,
-        table: 'w-full min-w-[79rem] table-fixed',
+        table: 'table-fixed w-[var(--col-table-width)] min-w-[var(--col-table-width)] max-w-none',
+        th: `${worksheetTableClassNames.th} relative`,
         td: `${worksheetTableClassNames.td} overflow-hidden`,
       }}
     >
       <TableHeader>
-        <TableColumn className="w-[8.5rem]">ID</TableColumn>
-        <TableColumn className="w-[9rem]"><SortLabel active={sortKey === 'guest'} dir={sortDir} onPress={() => onSort('guest')}>Guest</SortLabel></TableColumn>
-        <TableColumn className="w-[7.5rem]">Status</TableColumn>
-        <TableColumn className="w-[6.75rem]"><SortLabel active={sortKey === 'room'} dir={sortDir} onPress={() => onSort('room')}>Room</SortLabel></TableColumn>
-        <TableColumn className="w-[6.25rem]"><SortLabel active={sortKey === 'arrival'} dir={sortDir} onPress={() => onSort('arrival')}>Check-in</SortLabel></TableColumn>
-        <TableColumn className="w-[6.25rem]"><SortLabel active={sortKey === 'departure'} dir={sortDir} onPress={() => onSort('departure')}>Check-out</SortLabel></TableColumn>
-        <TableColumn className="w-[4rem] text-center"><span className="block w-full text-center">Nights</span></TableColumn>
-        <TableColumn className="w-[5.5rem] text-right">Rate</TableColumn>
-        <TableColumn className="w-[5.5rem] text-right">Discount</TableColumn>
-        <TableColumn className="w-[8rem] text-right">Other charges</TableColumn>
-        <TableColumn className="w-[5.75rem] text-right"><SortLabel active={sortKey === 'amount'} dir={sortDir} onPress={() => onSort('amount')} align="right">Amount</SortLabel></TableColumn>
-        <TableColumn className="w-[5.75rem] text-right">Balance</TableColumn>
+        {column('id', 'ID')}
+        {column('guest', 'Guest')}
+        {column('status', 'Status')}
+        {column('room', 'Room')}
+        {column('arrival', 'Check-in')}
+        {column('departure', 'Check-out')}
+        {column('nights', 'Nights', 'center')}
+        {column('rate', 'Rate', 'right')}
+        {column('discount', 'Discount', 'right')}
+        {column('other', 'Other charges', 'right')}
+        {column('amount', 'Amount', 'right')}
+        {column('balance', 'Balance', 'right')}
       </TableHeader>
       <TableBody emptyContent={emptyContent}>
         {stays.map((stay) => {
@@ -131,5 +131,6 @@ export default function StayWorksheetTable({
         })}
       </TableBody>
     </Table>
+    </div>
   );
 }

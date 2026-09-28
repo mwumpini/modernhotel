@@ -137,18 +137,13 @@ export default function DepartmentShiftsPanel({
   };
 
   return (
-    <div className="pt-4">
+    <div className="space-y-3">
       <Card className="border border-slate-200 shadow-sm">
-        <CardHeader className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <div className="font-medium text-slate-900">
-              Shift roster — {dayLabel(week)} to {dayLabel(addDays(week, 6))}
-            </div>
-            <p className="text-xs text-slate-500">
-              Stored HR shifts for this department’s staff. Empty cells are unscheduled, not a coverage score.
-            </p>
+        <CardHeader className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+          <div className="font-medium text-slate-900 shrink-0 whitespace-nowrap">
+            Shift roster — {dayLabel(week)} to {dayLabel(addDays(week, 6))}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-nowrap items-center gap-2">
             <Button size="sm" variant="flat" onPress={() => setWeek(addDays(week, -7))}>
               ← Prev
             </Button>

@@ -28,6 +28,7 @@ export interface EventsModuleFiltersProps {
   dateFilterTo?: string;
   onDateFilterToChange?: (value: string) => void;
   extraFilters?: React.ReactNode;
+  singleRow?: boolean;
 }
 
 const DATE_FILTER_OPTIONS: { key: EventsDateFilterMode; label: string }[] = [
@@ -148,6 +149,7 @@ export default function EventsModuleFilters({
   dateFilterTo = '',
   onDateFilterToChange,
   extraFilters,
+  singleRow = false,
 }: EventsModuleFiltersProps) {
   const showStatus = Boolean(onStatusChange && statusOptions && statusOptions.length > 0);
   const showDatePicker =
@@ -157,13 +159,16 @@ export default function EventsModuleFilters({
 
   return (
     <div className="rounded-lg border border-gray-200 bg-gray-50/80 px-3 py-2">
-      <div className="flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center">
+      <div className={singleRow
+        ? 'flex flex-nowrap items-center gap-2 overflow-x-auto'
+        : 'flex flex-col gap-2 lg:flex-row lg:flex-wrap lg:items-center'
+      }>
         <Input
           size="sm"
           placeholder={searchPlaceholder}
           value={searchTerm}
           onValueChange={onSearchChange}
-          className="w-full lg:flex-1 lg:min-w-[180px]"
+          className={singleRow ? 'min-w-[140px] flex-1' : 'w-full lg:flex-1 lg:min-w-[180px]'}
           aria-label={searchPlaceholder}
         />
 
@@ -173,7 +178,7 @@ export default function EventsModuleFilters({
             aria-label={statusPlaceholder}
             placeholder={statusPlaceholder}
             selectedKeys={[statusFilter || 'all']}
-            className="w-full lg:w-40"
+            className={singleRow ? 'w-36 shrink-0' : 'w-full lg:w-40'}
             disallowEmptySelection
             onSelectionChange={(keys) => {
               const value = Array.from(keys)[0] as string;
@@ -191,7 +196,7 @@ export default function EventsModuleFilters({
             size="sm"
             aria-label="Date filter"
             selectedKeys={[dateFilterMode]}
-            className="w-full lg:w-44"
+            className={singleRow ? 'w-36 shrink-0' : 'w-full lg:w-44'}
             disallowEmptySelection
             renderValue={() => (
               <span className="text-sm">
@@ -239,7 +244,11 @@ export default function EventsModuleFilters({
           </div>
         )}
 
-        {extraFilters && <div className="w-full lg:w-auto lg:min-w-[200px] lg:flex-1">{extraFilters}</div>}
+        {extraFilters && (
+          <div className={singleRow ? 'contents' : 'w-full lg:w-auto lg:min-w-[200px] lg:flex-1'}>
+            {extraFilters}
+          </div>
+        )}
       </div>
     </div>
   );

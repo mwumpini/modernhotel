@@ -677,7 +677,7 @@ export default function FrontOfficeOperationsDashboard() {
     <div className="space-y-6">
       <Card className="border-0 shadow-lg">
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between w-full">
             <h3 className="text-xl font-semibold text-ghana-black">📅 Reservations</h3>
             <Button color="primary" className="bg-ghana-green text-white" variant="flat" onClick={() => setIsReservationModalOpen(true)}>
               ➕ New Reservation

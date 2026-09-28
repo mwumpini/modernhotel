@@ -131,7 +131,7 @@ export default function DepartmentRequisitionModal({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} size="5xl" scrollBehavior="inside">
+    <Modal isOpen={isOpen} onClose={onClose} size="5xl" scrollBehavior="inside" classNames={{ base: '!max-w-[calc(64rem*0.85)]' }}>
       <ModalContent>
         <ModalHeader>Create Requisition — {departmentLabel} → Stores</ModalHeader>
         <ModalBody>

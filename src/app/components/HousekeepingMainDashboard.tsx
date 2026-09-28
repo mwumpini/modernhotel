@@ -26,6 +26,10 @@ const HOUSEKEEPING_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'occupiedRooms', label: 'Occupied Rooms' },
   { id: 'maintenance', label: 'Maintenance & Cleaning' },
   { id: 'todayOps', label: "Today's Operations" },
+  { id: 'quickCreate', label: 'Quick create templates' },
+  { id: 'inspectionStats', label: 'Inspections summary' },
+  { id: 'maintenanceStats', label: 'Maintenance summary' },
+  { id: 'inventoryStats', label: 'Inventory summary' },
   { id: 'recentActivities', label: 'Recent Activities' },
   { id: 'notices', label: 'Housekeeping Notices' },
 ];
@@ -37,23 +41,86 @@ import MaintenancePanel from './housekeeping/MaintenancePanel';
 import RoomInspectionPanel from './housekeeping/RoomInspectionPanel';
 import HousekeepingInventoryPanel from './housekeeping/HousekeepingInventoryPanel';
 import HousekeepingRequisitionsPanel from './housekeeping/HousekeepingRequisitionsPanel';
+import DepartmentStockCountPanel from './inventory/DepartmentStockCountPanel';
 import HousekeepingReportsAnalysis from './HousekeepingReportsAnalysis';
 import DepartmentStaffTab from './hr/DepartmentStaffTab';
 import RoomResponsibilitiesPanel from './housekeeping/RoomResponsibilitiesPanel';
+import CleaningAreasPanel from './housekeeping/CleaningAreasPanel';
+import PublicSpacesStatusGrid from './housekeeping/PublicSpacesStatusGrid';
+import SubViewPills from './dashboard/SubViewPills';
 
-const HK_TABS = ['rooms', 'tasks', 'maintenance', 'inspections', 'inventory', 'requisitions', 'staff', 'reports'] as const;
+/** Slim top-level tabs — Desk/Events style. Legacy keys remap below. */
+const HK_PRIMARY = ['floor', 'work', 'supplies', 'staff', 'reports'] as const;
+type HkPrimary = (typeof HK_PRIMARY)[number];
 
-const HK_TAB_ALIASES: Record<string, string> = {
-  overview: 'rooms',
-  supplies: 'inventory',
-  analytics: 'reports',
-};
+type FloorView = 'rooms' | 'spaces' | 'inspections';
+type WorkView = 'tasks' | 'maintenance' | 'areas';
+type SuppliesView = 'inventory' | 'stock-count' | 'requisitions';
 
-function resolveHkTab(value: string | null | undefined): string {
-  if (!value) return 'rooms';
+const FLOOR_VIEWS: { key: FloorView; label: string }[] = [
+  { key: 'rooms', label: '🏠 Rooms' },
+  { key: 'spaces', label: '📍 Public spaces' },
+  { key: 'inspections', label: '✅ Inspections' },
+];
+const WORK_VIEWS: { key: WorkView; label: string }[] = [
+  { key: 'tasks', label: '🧹 Cleaning' },
+  { key: 'maintenance', label: '🔧 Maintenance' },
+  { key: 'areas', label: '📍 Cleaning areas' },
+];
+const SUPPLIES_VIEWS: { key: SuppliesView; label: string }[] = [
+  { key: 'inventory', label: '📦 Inventory' },
+  { key: 'stock-count', label: '🔍 Stock Count' },
+  { key: 'requisitions', label: '📝 Requisitions' },
+];
+
+function resolveHkNav(value: string | null | undefined): {
+  primary: HkPrimary;
+  floor?: FloorView;
+  work?: WorkView;
+  supplies?: SuppliesView;
+} {
+  if (!value) return { primary: 'floor', floor: 'rooms' };
   const key = value.trim().toLowerCase();
-  if ((HK_TABS as readonly string[]).includes(key)) return key;
-  return HK_TAB_ALIASES[key] || 'rooms';
+  if ((HK_PRIMARY as readonly string[]).includes(key)) {
+    return {
+      primary: key as HkPrimary,
+      floor: key === 'floor' ? 'rooms' : undefined,
+      work: key === 'work' ? 'tasks' : undefined,
+      supplies: key === 'supplies' ? 'inventory' : undefined,
+    };
+  }
+  switch (key) {
+    case 'rooms':
+    case 'overview':
+      return { primary: 'floor', floor: 'rooms' };
+    case 'inspections':
+      return { primary: 'floor', floor: 'inspections' };
+    case 'spaces':
+    case 'public-spaces':
+    case 'publicspaces':
+      return { primary: 'floor', floor: 'spaces' };
+    case 'tasks':
+      return { primary: 'work', work: 'tasks' };
+    case 'maintenance':
+      return { primary: 'work', work: 'maintenance' };
+    case 'areas':
+    case 'cleaning-areas':
+    case 'cleaningareas':
+      return { primary: 'work', work: 'areas' };
+    case 'inventory':
+      return { primary: 'supplies', supplies: 'inventory' };
+    case 'stock-count':
+      return { primary: 'supplies', supplies: 'stock-count' };
+    case 'requisitions':
+      return { primary: 'supplies', supplies: 'requisitions' };
+    case 'staff':
+      return { primary: 'staff' };
+    case 'reports':
+    case 'analytics':
+      return { primary: 'reports' };
+    default:
+      return { primary: 'floor', floor: 'rooms' };
+  }
 }
 
 export default function HousekeepingMainDashboard({
@@ -63,13 +130,25 @@ export default function HousekeepingMainDashboard({
   initialTab?: string;
   fullPage?: boolean;
 } = {}) {
+  const boot = resolveHkNav(initialTab);
   const [, setTick] = useState(0);
-  const [selectedTab, setSelectedTab] = useState(() => resolveHkTab(initialTab));
+  const [selectedTab, setSelectedTab] = useState<HkPrimary>(boot.primary);
+  const [floorView, setFloorView] = useState<FloorView>(boot.floor || 'rooms');
+  const [workView, setWorkView] = useState<WorkView>(boot.work || 'tasks');
+  const [suppliesView, setSuppliesView] = useState<SuppliesView>(boot.supplies || 'inventory');
   const searchParams = useSearchParams();
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.housekeeping', HOUSEKEEPING_DASHBOARD_SECTIONS);
 
   const reservations = frontOfficeStore.reservations;
+
+  const applyNav = (raw: string) => {
+    const nav = resolveHkNav(raw);
+    setSelectedTab(nav.primary);
+    if (nav.floor) setFloorView(nav.floor);
+    if (nav.work) setWorkView(nav.work);
+    if (nav.supplies) setSuppliesView(nav.supplies);
+  };
 
   useEffect(() => {
     const unsubscribe = housekeepingStore.subscribe(() => setTick(t => t + 1));
@@ -82,7 +161,7 @@ export default function HousekeepingMainDashboard({
       try {
         const stored = localStorage.getItem('hk.tab');
         if (!stored) return;
-        setSelectedTab(resolveHkTab(stored));
+        applyNav(stored);
         localStorage.removeItem('hk.tab');
       } catch {
         /* ignore */
@@ -95,7 +174,7 @@ export default function HousekeepingMainDashboard({
 
   useEffect(() => {
     const tabParam = searchParams.get('tab');
-    if (tabParam) setSelectedTab(resolveHkTab(tabParam));
+    if (tabParam) applyNav(tabParam);
   }, [searchParams]);
 
   // Get data from stores
@@ -115,7 +194,7 @@ export default function HousekeepingMainDashboard({
 
 
   return (
-    <div className={fullPage ? 'p-6 pt-2' : 'p-6'}>
+    <div className={fullPage ? 'px-3 pt-2 pb-4' : 'p-6'}>
       {!fullPage && (
         <>
       <DeptMessenger from="housekeeping" mode="drawer" />
@@ -275,56 +354,106 @@ export default function HousekeepingMainDashboard({
 
       <Card className="border-0 shadow-lg">
         {fullPage && (
-          <CardHeader className="pb-3">
+          <CardHeader className="pb-3 px-4 pt-4">
             <h3 className="text-xl font-semibold text-ghana-black">Housekeeping</h3>
           </CardHeader>
         )}
-        <CardBody>
+        <CardBody className={fullPage ? 'px-3 py-3' : undefined}>
           <Tabs
             selectedKey={selectedTab}
-            onSelectionChange={(key) => setSelectedTab(String(key))}
+            onSelectionChange={(key) => setSelectedTab(String(key) as HkPrimary)}
             className="w-full"
             aria-label="Housekeeping operations"
           >
-            <Tab key="rooms" title="🏠 Rooms">
-              {selectedTab === 'rooms' && <div className="pt-4"><RoomStatusGrid /></div>}
-            </Tab>
-            <Tab key="tasks" title="🧹 Tasks">
-              {selectedTab === 'tasks' && <div className="pt-4"><TaskManagementPanel /></div>}
-            </Tab>
-            <Tab key="maintenance" title="🔧 Maintenance">
-              {selectedTab === 'maintenance' && <div className="pt-4"><MaintenancePanel /></div>}
-            </Tab>
-            <Tab key="inspections" title="🔍 Inspections">
-              {selectedTab === 'inspections' && <div className="pt-4"><RoomInspectionPanel /></div>}
-            </Tab>
-            <Tab key="inventory" title="📦 Inventory">
-              {selectedTab === 'inventory' && <div className="pt-4"><HousekeepingInventoryPanel /></div>}
-            </Tab>
-            <Tab key="requisitions" title="📝 Requisitions">
-              {selectedTab === 'requisitions' && <div className="pt-4"><HousekeepingRequisitionsPanel /></div>}
-            </Tab>
-            <Tab key="staff" title="👥 Staff Management">
-              {selectedTab === 'staff' && (
-                <DepartmentStaffTab
-                  departmentLabel="Housekeeping"
-                  overtimePermissionId="housekeeping.log-overtime"
-                  departmentNameHints={['housekeeping', 'house keeping', 'hk', 'maintenance']}
-                  helperText="HR staff in a Housekeeping or Maintenance department. Weekly shifts and overtime sit here; hiring and payroll stay in HR. Names come from the HR file — this tab does not invent staff."
-                  extraTabs={[
-                    {
-                      key: 'rooms',
-                      title: '🛏️ Responsible for',
-                      render: (hkStaff) => <RoomResponsibilitiesPanel staff={hkStaff} />,
-                    },
-                  ]}
-                />
-              )}
-            </Tab>
-            <Tab key="reports" title="📈 Reports & Analysis">
-              {selectedTab === 'reports' && <div className="pt-4"><HousekeepingReportsAnalysis embedded /></div>}
-            </Tab>
+            <Tab key="floor" title="🏠 Floor" />
+            <Tab key="work" title="🧹 Work" />
+            <Tab key="supplies" title="📦 Supplies" />
+            <Tab key="staff" title="👥 Staff" />
+            <Tab key="reports" title="📈 Reports" />
           </Tabs>
+
+          <div className="mt-4 px-0 pb-2">
+            {selectedTab === 'floor' && (
+              <div>
+                <SubViewPills
+                  views={FLOOR_VIEWS}
+                  selected={floorView}
+                  onSelect={setFloorView}
+                  ariaLabel="Floor views"
+                />
+                {floorView === 'rooms' && <RoomStatusGrid />}
+                {floorView === 'spaces' && <PublicSpacesStatusGrid />}
+                {floorView === 'inspections' && (
+                  <RoomInspectionPanel
+                    hideStats={isHidden('inspectionStats')}
+                    onHideStats={() => hide('inspectionStats')}
+                  />
+                )}
+              </div>
+            )}
+
+            {selectedTab === 'work' && (
+              <div>
+                <SubViewPills
+                  views={WORK_VIEWS}
+                  selected={workView}
+                  onSelect={setWorkView}
+                  ariaLabel="Work views"
+                />
+                {workView === 'tasks' && (
+                  <TaskManagementPanel
+                    hideQuickCreate={isHidden('quickCreate')}
+                    onHideQuickCreate={() => hide('quickCreate')}
+                  />
+                )}
+                {workView === 'maintenance' && (
+                  <MaintenancePanel
+                    hideStats={isHidden('maintenanceStats')}
+                    onHideStats={() => hide('maintenanceStats')}
+                  />
+                )}
+                {workView === 'areas' && <CleaningAreasPanel />}
+              </div>
+            )}
+
+            {selectedTab === 'supplies' && (
+              <div>
+                <SubViewPills
+                  views={SUPPLIES_VIEWS}
+                  selected={suppliesView}
+                  onSelect={setSuppliesView}
+                  ariaLabel="Supplies views"
+                />
+                {suppliesView === 'inventory' && (
+                  <HousekeepingInventoryPanel
+                    hideStats={isHidden('inventoryStats')}
+                    onHideStats={() => hide('inventoryStats')}
+                  />
+                )}
+                {suppliesView === 'stock-count' && (
+                  <DepartmentStockCountPanel department="housekeeping" />
+                )}
+                {suppliesView === 'requisitions' && <HousekeepingRequisitionsPanel />}
+              </div>
+            )}
+
+            {selectedTab === 'staff' && (
+              <DepartmentStaffTab
+                departmentLabel="Housekeeping"
+                overtimePermissionId="housekeeping.log-overtime"
+                departmentNameHints={['housekeeping', 'house keeping', 'hk', 'maintenance']}
+                extraTabs={[
+                  {
+                    key: 'rooms',
+                    title: '🛏️ Responsible for',
+                    render: (hkStaff) => <RoomResponsibilitiesPanel staff={hkStaff} />,
+                  },
+                ]}
+              />
+            )}
+
+            {selectedTab === 'reports' && <HousekeepingReportsAnalysis embedded />}
+          </div>
         </CardBody>
       </Card>
 

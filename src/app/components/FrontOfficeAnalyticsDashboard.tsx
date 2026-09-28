@@ -260,7 +260,7 @@ export default function FrontOfficeAnalyticsDashboard() {
         {kpiMetrics.map((metric) => (
           <Card key={metric.id} className="border-0 shadow-lg">
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between w-full">
                 <h3 className="text-lg font-semibold text-ghana-black">{metric.name}</h3>
                 <Chip 
                   color={getTrendColor(metric.trend)} 

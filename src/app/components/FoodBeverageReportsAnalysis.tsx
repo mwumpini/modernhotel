@@ -317,9 +317,18 @@ export default function FoodBeverageReportsAnalysis({ embedded = false }: { embe
   useEffect(() => {
     ordersStore.hydrateFromApi().then(() => setOrdersTick((tick) => tick + 1));
     customerStore.hydrateFromApi();
-    const unsub = ordersStore.subscribe(() => setOrdersTick((tick) => tick + 1));
-    return unsub;
+    void reportingStore.hydrateReportsFromApi(startDate);
+    const unsubOrders = ordersStore.subscribe(() => setOrdersTick((tick) => tick + 1));
+    const unsubReports = reportingStore.subscribe(() => setOrdersTick((tick) => tick + 1));
+    return () => {
+      unsubOrders();
+      unsubReports();
+    };
   }, []);
+
+  useEffect(() => {
+    void reportingStore.hydrateReportsFromApi(startDate);
+  }, [startDate]);
 
   useEffect(() => {
     setGeneratedAt(new Date().toLocaleString('en-GH'));
@@ -347,6 +356,7 @@ export default function FoodBeverageReportsAnalysis({ embedded = false }: { embe
 
   const handleRefresh = () => {
     ordersStore.hydrateFromApi().then(() => setOrdersTick((tick) => tick + 1));
+    void reportingStore.hydrateReportsFromApi(startDate);
     setRefreshVersion((version) => version + 1);
     setGeneratedAt(new Date().toLocaleString('en-GH'));
   };

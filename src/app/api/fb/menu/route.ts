@@ -81,6 +81,10 @@ export async function POST(request: NextRequest) {
         isAvailable: body.isAvailable !== false,
         allergens: body.allergens,
         prepMinutes: body.prepMinutes ?? 10,
+        alias: body.alias || null,
+        unit: body.unit || 'portion',
+        inventoryItemId: body.inventoryItemId || null,
+        stockLocationId: body.stockLocationId || null,
         sortOrder: body.sortOrder ?? 0,
       },
     })
@@ -115,6 +119,7 @@ export async function PATCH(request: NextRequest) {
     const item = await prisma.fBMenuItem.update({
       where: { id: body.id },
       data: {
+        code: body.code || existing.code,
         name: body.name ?? existing.name,
         description: body.description ?? existing.description,
         category: body.category ?? existing.category,
@@ -126,12 +131,25 @@ export async function PATCH(request: NextRequest) {
         isAvailable: body.isAvailable ?? existing.isAvailable,
         allergens: body.allergens ?? existing.allergens,
         prepMinutes: body.prepMinutes ?? existing.prepMinutes,
+        alias: body.alias === undefined ? existing.alias : (body.alias || null),
+        unit: body.unit ?? existing.unit,
+        inventoryItemId:
+          body.inventoryItemId === undefined
+            ? existing.inventoryItemId
+            : body.inventoryItemId || null,
+        stockLocationId:
+          body.stockLocationId === undefined
+            ? existing.stockLocationId
+            : body.stockLocationId || null,
         sortOrder: body.sortOrder ?? existing.sortOrder,
       },
     })
 
     return NextResponse.json({ item })
-  } catch (error) {
+  } catch (error: any) {
+    if (error.code === 'P2002') {
+      return NextResponse.json({ error: 'Menu item code already exists' }, { status: 409 })
+    }
     console.error('[fb/menu][PATCH] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
   }

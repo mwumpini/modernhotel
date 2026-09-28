@@ -12,6 +12,7 @@ interface VisitorStore {
 
   hydrateFromApi: () => Promise<void>;
   addVisitor: (visitor: Omit<Visitor, 'id' | 'visitorNumber' | 'createdAt' | 'updatedAt' | 'status' | 'checkInTime'>) => Visitor;
+  updateVisitor: (id: string, updates: Partial<Omit<Visitor, 'id' | 'visitorNumber' | 'createdAt' | 'updatedAt'>>) => void;
   checkOutVisitor: (id: string) => void;
 
   getVisitorAnalytics: (period: 'daily' | 'weekly' | 'monthly') => {
@@ -28,10 +29,10 @@ function periodStart(period: 'daily' | 'weekly' | 'monthly'): Date {
   const d = new Date(now); d.setDate(1); d.setHours(0, 0, 0, 0); return d;
 }
 
-function syncVisitorToApi(visitor: Visitor) {
+function syncVisitorToApi(visitor: Visitor, method: 'POST' | 'PATCH' = 'POST') {
   if (typeof window === 'undefined') return;
   fetch('/api/security/visitors', {
-    method: 'POST',
+    method,
     headers: hkHeaders(),
     body: JSON.stringify(visitor),
   }).catch((e) => console.warn('Security: Failed to sync visitor:', e));
@@ -74,6 +75,18 @@ export const useVisitorStore = create<VisitorStore>((set, get) => ({
     set((state) => ({ visitors: [newVisitor, ...state.visitors] }));
     syncVisitorToApi(newVisitor);
     return newVisitor;
+  },
+
+  updateVisitor: (id, updates) => {
+    let updated: Visitor | undefined;
+    set((state) => ({
+      visitors: state.visitors.map((v) => {
+        if (v.id !== id) return v;
+        updated = { ...v, ...updates, updatedAt: new Date() };
+        return updated;
+      }),
+    }));
+    if (updated) syncVisitorToApi(updated, 'PATCH');
   },
 
   checkOutVisitor: (id) => {

@@ -722,7 +722,7 @@ export default function UserManagementUnified() {
   };
 
   const moduleActionIds = (mod: typeof PERMISSION_MODULES[number]) =>
-    [mod.view, mod.create, mod.edit, mod.delete, ...mod.extra]
+    [mod.view, mod.create, mod.edit, mod.delete, mod.print, mod.void, ...mod.extra]
       .filter((a): a is { id: string; label: string } => !!a)
       .map(a => a.id);
 
@@ -1255,6 +1255,8 @@ export default function UserManagementUnified() {
                         <th className="text-center px-2 py-2 font-medium">Create</th>
                         <th className="text-center px-2 py-2 font-medium">Edit</th>
                         <th className="text-center px-2 py-2 font-medium">Delete</th>
+                        <th className="text-center px-2 py-2 font-medium">Print</th>
+                        <th className="text-center px-2 py-2 font-medium">Void</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1272,7 +1274,7 @@ export default function UserManagementUnified() {
                                 onValueChange={(v) => toggleModuleFullAccess(mod, v)}
                               />
                             </td>
-                            {(['view', 'create', 'edit', 'delete'] as const).map((col) => {
+                            {(['view', 'create', 'edit', 'delete', 'print', 'void'] as const).map((col) => {
                               const action = mod[col];
                               return (
                                 <td key={col} className="text-center px-2 py-2">
@@ -1299,7 +1301,7 @@ export default function UserManagementUnified() {
                 {PERMISSION_MODULES.some((m) => m.extra.length > 0) && (
                   <div className={`mt-3 ${hasFullSystemAccess ? 'opacity-50 pointer-events-none' : ''}`}>
                     <div className="text-sm font-medium text-default-600 mb-2">
-                      Specific actions <span className="text-default-400 font-normal">— granted on top of View/Create/Edit/Delete above</span>
+                      Specific actions <span className="text-default-400 font-normal">— granted on top of View/Create/Edit/Delete/Print/Void above</span>
                     </div>
                     <Accordion variant="bordered" itemClasses={{ title: 'text-sm' }}>
                       {PERMISSION_MODULES.filter((m) => m.extra.length > 0).map((mod) => {

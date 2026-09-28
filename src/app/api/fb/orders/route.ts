@@ -5,20 +5,10 @@ import { prisma } from '@/app/lib/database/client'
 import { resolveTaxConfigs, type PrismaTaxRow } from '@/app/lib/tax/resolveConfigs'
 import { computeStackedTaxLines } from '@/app/lib/accounting/taxFromConfig'
 import { resolveItemRouteFromPayload, serializeFbOrder } from '@/app/lib/fb/serializeOrder'
+import { venueGlAccount } from '@/app/lib/fb/venueGl'
 import { resolveCheckedInReservationId } from '@/app/lib/frontoffice/folioServer'
 
 function round2(n: number) { return Math.round((n + Number.EPSILON) * 100) / 100 }
-
-/** Map venue to correct GL revenue account */
-function venueGL(venue: string): string {
-  switch (venue) {
-    case 'restaurant': return '4210'
-    case 'bar':
-    case 'pool_bar':   return '4220'
-    case 'room_service': return '4230'
-    default:           return '4200'
-  }
-}
 
 // GET /api/fb/orders — list orders, optionally filter by status/venue
 export async function GET(request: NextRequest) {
@@ -150,7 +140,7 @@ export async function POST(request: NextRequest) {
     const total = round2(taxableAmount + taxAmount)
 
     // ── Determine GL code per item based on venue ─────────────────────────────
-    const revenueGL = venueGL(body.venue)
+    const revenueGL = venueGlAccount(body.venue)
 
     const reservationId = await resolveCheckedInReservationId({
       tenantId: ctx.tenantId,
@@ -206,6 +196,18 @@ export async function POST(request: NextRequest) {
       { orderNumber, venue: order.venue, subtotal, discountAmount, taxAmount, total },
       request
     )
+
+    // Occupy table when an order is placed to the floor
+    if (body.tableNumber) {
+      try {
+        const { syncRestaurantTableStatus } = await import('@/app/lib/fb/fbSaleAccountingServer')
+        await syncRestaurantTableStatus({
+          tenantId: ctx.tenantId,
+          tableNumber: body.tableNumber,
+          status: 'occupied',
+        })
+      } catch { /* table may not exist yet */ }
+    }
 
     return NextResponse.json({
       order: serializeFbOrder(order),

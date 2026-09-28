@@ -48,7 +48,8 @@ export type FbOrderStatus =
   | 'ready'
   | 'served'
   | 'cancelled'
-  | 'billed';
+  | 'billed'
+  | 'refunded';
 
 export interface FbOrderItemDto {
   id: string;
@@ -84,6 +85,24 @@ export interface FbOrderDto {
   total?: number;
   items: FbOrderItemDto[];
 }
+
+export type FbStockWarning = {
+  itemName: string;
+  needed: number;
+  onHand: number;
+};
+
+/** PATCH response may include stock shortfalls / COGS when status becomes billed. */
+export type FbCogsSummary = {
+  amount: number;
+  lines: { itemName: string; quantity: number; unitCost: number; amount: number }[];
+};
+
+export type FbOrderPatchResult = FbOrderDto & {
+  stockWarnings?: FbStockWarning[];
+  cogs?: FbCogsSummary;
+  stockRestored?: number;
+};
 
 export async function fetchFbOrders(params?: {
   status?: string;
@@ -137,7 +156,7 @@ export async function createFbOrder(body: Record<string, unknown>): Promise<{ or
 export async function patchFbOrder(
   orderId: string,
   body: Record<string, unknown>
-): Promise<FbOrderDto> {
+): Promise<FbOrderPatchResult> {
   const res = await fetch(`/api/fb/orders/${orderId}`, {
     method: 'PATCH',
     headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
@@ -147,7 +166,22 @@ export async function patchFbOrder(
   if (!res.ok) {
     throw new Error((data as { error?: string }).error || `Update order HTTP ${res.status}`);
   }
-  return (data as { order: FbOrderDto }).order;
+  const payload = data as {
+    order: FbOrderDto;
+    stockWarnings?: FbStockWarning[];
+    cogs?: FbCogsSummary;
+    stockRestored?: number;
+    glRefund?: { ok: boolean; error?: string };
+    accounting?: { invoiceId?: string; receiptId?: string; cogsJournalId?: string };
+  };
+  return {
+    ...payload.order,
+    ...(payload.stockWarnings?.length ? { stockWarnings: payload.stockWarnings } : {}),
+    ...(payload.cogs ? { cogs: payload.cogs } : {}),
+    ...(typeof payload.stockRestored === 'number' ? { stockRestored: payload.stockRestored } : {}),
+    ...(payload.glRefund ? { glRefund: payload.glRefund } : {}),
+    ...(payload.accounting ? { accounting: payload.accounting } : {}),
+  };
 }
 
 export async function fetchKitchenStaff(): Promise<{ id: string; name: string }[]> {
@@ -164,6 +198,25 @@ export async function patchFbOrderStatus(
   orderId: string,
   status: string,
   extra?: Record<string, unknown>
-): Promise<FbOrderDto> {
+): Promise<FbOrderPatchResult> {
   return patchFbOrder(orderId, { status, ...extra });
+}
+
+/** Human-readable stock shortfall lines for till alerts. */
+export function formatStockWarnings(warnings: FbStockWarning[]): string {
+  return warnings
+    .map((w) => {
+      if (w.needed > 0) {
+        return `• ${w.itemName}: needed ${w.needed}, on hand ${w.onHand}`;
+      }
+      return `• ${w.itemName}: short (on hand ${w.onHand})`;
+    })
+    .join('\n');
+}
+
+export function alertStockWarnings(orderLabel: string, warnings?: FbStockWarning[] | null) {
+  if (!warnings?.length) return;
+  alert(
+    `${orderLabel} was billed, but stock was short:\n\n${formatStockWarnings(warnings)}\n\nThose lines were not deducted. Check Restaurant inventory.`
+  );
 }

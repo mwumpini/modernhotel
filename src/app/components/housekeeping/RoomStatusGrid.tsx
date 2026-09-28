@@ -96,6 +96,22 @@ export default function RoomStatusGrid() {
     let reason: string;
 
     switch (action) {
+      case 'dirty':
+        newStatus = 'dirty';
+        reason = 'Marked for cleaning';
+        break;
+      case 'progress':
+        newStatus = 'dirty';
+        reason = 'Cleaning in progress';
+        break;
+      case 'ready':
+        newStatus = 'clean';
+        reason = 'Marked clean';
+        break;
+      case 'inspected':
+        newStatus = 'inspected';
+        reason = 'Passed floor inspection';
+        break;
       case 'clean':
         newStatus = 'dirty';
         reason = 'Marked for cleaning';
@@ -121,7 +137,36 @@ export default function RoomStatusGrid() {
     }
 
     housekeepingStore.updateRoomStatus(room.roomNumber, newStatus, 'Housekeeping Staff', reason);
-    
+
+    if (action === 'dirty') {
+      // Stayover clean while occupied; turnover after vacant/checkout-style dirty.
+      const taskType = room.status === 'occupied' ? 'daily' : 'turnover';
+      housekeepingStore.ensureOpenCleaningTask({
+        location: room.roomNumber,
+        roomTypeId: room.roomTypeId || 'standard',
+        taskType,
+        priority: 'high',
+        estimatedMinutes: taskType === 'turnover' ? 45 : 25,
+        notes: `Auto-created when room marked dirty`,
+      });
+    }
+
+    if (action === 'progress') {
+      let task = housekeepingStore.getOpenCleaningTask(room.roomNumber);
+      if (!task) {
+        task = housekeepingStore.ensureOpenCleaningTask({
+          location: room.roomNumber,
+          roomTypeId: room.roomTypeId || 'standard',
+          taskType: 'daily',
+          priority: 'high',
+          notes: 'Auto-created when cleaning started',
+        });
+      }
+      if (task.status === 'pending') {
+        housekeepingStore.updateTaskStatus(task.id, 'in-progress');
+      }
+    }
+
     trackEvent('HK.RoomStatus.QuickAction', {
       action,
       roomNumber: room.roomNumber,
@@ -179,166 +224,151 @@ export default function RoomStatusGrid() {
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-3">
       {/* Filters and Search */}
-      <Card className="border-0 shadow-lg">
-        <CardBody className="p-4">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Input
-              placeholder="Search room numbers..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              startContent={<span className="text-gray-400">🔍</span>}
-            />
-            <Select
-              placeholder="Filter by status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <SelectItem key="all">All Statuses</SelectItem>
-              <SelectItem key="occupied">🟢 Occupied</SelectItem>
-              <SelectItem key="vacant">⚪ Vacant</SelectItem>
-              <SelectItem key="dirty">🟡 Dirty</SelectItem>
-              <SelectItem key="clean">🔵 Clean</SelectItem>
-              <SelectItem key="inspected">🟣 Inspected</SelectItem>
-              <SelectItem key="out-of-order">🔴 Out of Order</SelectItem>
-              <SelectItem key="maintenance">🟠 Maintenance</SelectItem>
-            </Select>
-            <Select
-              placeholder="Filter by floor"
-              value={floorFilter}
-              onChange={(e) => setFloorFilter(e.target.value)}
-            >
-              <SelectItem key="all">All Floors</SelectItem>
-              <SelectItem key="1">Floor 1</SelectItem>
-              <SelectItem key="2">Floor 2</SelectItem>
-              <SelectItem key="3">Floor 3</SelectItem>
-            </Select>
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-600">Filtered:</span>
-              <Badge color="primary" variant="flat">{filteredRooms.length}</Badge>
-            </div>
-          </div>
-        </CardBody>
-      </Card>
+      <div className="mb-[18px] flex flex-nowrap items-center gap-2 overflow-x-auto">
+        <Input
+          size="sm"
+          placeholder="Search room numbers..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          startContent={<span className="text-gray-400">🔍</span>}
+          className="w-52 shrink-0"
+        />
+        <Select
+          size="sm"
+          placeholder="Filter by status"
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value)}
+          className="w-44 shrink-0"
+        >
+          <SelectItem key="all">All Statuses</SelectItem>
+          <SelectItem key="occupied">🟢 Occupied</SelectItem>
+          <SelectItem key="vacant">⚪ Vacant</SelectItem>
+          <SelectItem key="dirty">🟡 Dirty</SelectItem>
+          <SelectItem key="clean">🔵 Clean</SelectItem>
+          <SelectItem key="inspected">🟣 Inspected</SelectItem>
+          <SelectItem key="out-of-order">🔴 Out of Order</SelectItem>
+          <SelectItem key="maintenance">🟠 Maintenance</SelectItem>
+        </Select>
+        <Select
+          size="sm"
+          placeholder="Filter by floor"
+          value={floorFilter}
+          onChange={(e) => setFloorFilter(e.target.value)}
+          className="w-36 shrink-0"
+        >
+          <SelectItem key="all">All Floors</SelectItem>
+          <SelectItem key="1">Floor 1</SelectItem>
+          <SelectItem key="2">Floor 2</SelectItem>
+          <SelectItem key="3">Floor 3</SelectItem>
+        </Select>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-sm text-gray-600">Filtered:</span>
+          <Badge color="primary" variant="flat">{filteredRooms.length}</Badge>
+        </div>
+      </div>
 
-      {/* Room Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      {/* Room Grid — slightly wider cards so status + actions don’t collide */}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(9.5rem,1fr))] gap-2.5">
         {filteredRooms.map((room) => (
-          <Card 
-            key={room.roomNumber} 
-            className={`border-2 cursor-pointer transition-all hover:shadow-lg ${
-              room.status === 'dirty' ? 'border-red-200 hover:border-red-400' :
-              room.status === 'maintenance' ? 'border-orange-200 hover:border-orange-400' :
-              room.status === 'out-of-order' ? 'border-red-300 hover:border-red-500' :
-              room.status === 'clean' ? 'border-green-200 hover:border-green-400' :
-              room.status === 'inspected' ? 'border-blue-200 hover:border-blue-400' :
-              'border-gray-200 hover:border-gray-400'
+          <Card
+            key={room.roomNumber}
+            className={`border shadow-none cursor-pointer transition-colors hover:border-ghana-gold ${
+              room.status === 'dirty' ? 'border-red-200' :
+              room.status === 'maintenance' ? 'border-orange-200' :
+              room.status === 'out-of-order' ? 'border-red-300' :
+              room.status === 'clean' ? 'border-green-200' :
+              room.status === 'inspected' ? 'border-blue-200' :
+              'border-gray-200'
             }`}
             onClick={() => handleRoomClick(room)}
           >
-            <CardBody className="p-4">
-              <div className="text-center">
-                {/* Room Header */}
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-lg font-bold text-ghana-black">Room {room.roomNumber}</h3>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-gray-500">F{room.roomNumber.charAt(0)}</span>
-                    {room.status === 'dirty' || room.status === 'maintenance' || room.status === 'out-of-order' ? (
-                      <Badge color={getPriorityColor(room.status) as any} variant="flat" size="sm">
-                        !
-                      </Badge>
-                    ) : null}
-                  </div>
+            <CardBody className="gap-2 overflow-hidden p-3">
+              <div className="flex items-start justify-between gap-2 min-w-0">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-[15px] font-semibold text-ghana-black leading-tight">
+                    {room.roomNumber}
+                  </p>
+                  <p className="truncate text-xs text-gray-500 leading-tight">
+                    F{room.roomNumber.charAt(0)} · {getRoomTypeName(room.roomTypeId)}
+                  </p>
                 </div>
-                
-                {/* Status Display */}
-                <div className="mb-3">
-                  <div className="flex items-center justify-center gap-2 mb-2">
-                    <span className="text-2xl">{getStatusIcon(room.status)}</span>
-                    <Chip 
-                      color={getStatusColor(room.status) as any} 
+                {(room.status === 'dirty' || room.status === 'maintenance' || room.status === 'out-of-order') && (
+                  <Badge color={getPriorityColor(room.status) as any} variant="flat" size="sm" className="shrink-0">
+                    !
+                  </Badge>
+                )}
+              </div>
+
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="text-base leading-none shrink-0" aria-hidden>{getStatusIcon(room.status)}</span>
+                <Chip
+                  color={getStatusColor(room.status) as any}
+                  size="sm"
+                  variant="flat"
+                  className="h-6 max-w-full min-w-0"
+                  classNames={{ content: 'truncate px-1 text-xs' }}
+                >
+                  {room.status.replace('-', ' ').charAt(0).toUpperCase() + room.status.replace('-', ' ').slice(1)}
+                </Chip>
+              </div>
+
+              {room.currentGuest && (
+                <p className="truncate text-xs text-blue-700" title={room.currentGuest}>
+                  {room.currentGuest}
+                </p>
+              )}
+
+              <div className="mt-auto flex flex-col gap-1.5 pt-1">
+                <span className="text-[11px] tabular-nums text-gray-400">
+                  {new Date(room.lastUpdated).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+                <div className="flex flex-wrap gap-1" onClick={(e) => e.stopPropagation()}>
+                  <Tooltip content="Mark dirty">
+                    <Button
                       size="sm"
-                      variant="flat"
-                    >
-                      {room.status.replace('-', ' ').charAt(0).toUpperCase() + room.status.replace('-', ' ').slice(1)}
-                    </Chip>
-                  </div>
-                </div>
-                
-                {/* Room Details */}
-                <div className="space-y-2 mb-3 text-sm">
-                  <div className="flex items-center justify-between">
-                    <span className="text-gray-600">Type:</span>
-                    <Badge color="secondary" variant="flat" size="sm">
-                      {getRoomTypeName(room.roomTypeId)}
-                    </Badge>
-                  </div>
-                  
-                  {room.currentGuest && (
-                    <div className="p-2 bg-blue-50 rounded text-left">
-                      <p className="text-xs font-medium text-blue-800">Guest: {room.currentGuest}</p>
-                      {room.checkOutDate && (
-                        <p className="text-xs text-blue-600">
-                          Check-out: {new Date(room.checkOutDate).toLocaleDateString()}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                  
-                  {room.notes && (
-                    <div className="p-2 bg-yellow-50 rounded text-left">
-                      <p className="text-xs text-yellow-800">{room.notes}</p>
-                    </div>
-                  )}
-                  
-                  <div className="text-xs text-gray-500">
-                    <p>Updated: {new Date(room.lastUpdated).toLocaleTimeString()}</p>
-                  </div>
-                </div>
-                
-                {/* Quick Actions */}
-                <div className="flex gap-1 justify-center">
-                  <Tooltip content="Mark for cleaning">
-                    <Button 
-                      size="sm" 
-                      color="warning" 
+                      color="warning"
                       variant="flat"
                       isIconOnly
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleQuickAction('clean', room);
-                      }}
+                      className="min-w-7 w-7 h-7"
+                      onPress={() => handleQuickAction('dirty', room)}
                     >
                       🧹
                     </Button>
                   </Tooltip>
-                  
-                  <Tooltip content="Report issue">
-                    <Button 
-                      size="sm" 
-                      color="danger" 
+                  <Tooltip content="In progress">
+                    <Button
+                      size="sm"
+                      color="primary"
                       variant="flat"
                       isIconOnly
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleQuickAction('maintenance', room);
-                      }}
+                      className="min-w-7 w-7 h-7"
+                      onPress={() => handleQuickAction('progress', room)}
                     >
-                      🔧
+                      🔄
                     </Button>
                   </Tooltip>
-                  
-                  <Tooltip content="Ready for inspection">
-                    <Button 
-                      size="sm" 
-                      color="primary" 
+                  <Tooltip content="Mark clean">
+                    <Button
+                      size="sm"
+                      color="success"
                       variant="flat"
                       isIconOnly
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleQuickAction('inspect', room);
-                      }}
+                      className="min-w-7 w-7 h-7"
+                      onPress={() => handleQuickAction('ready', room)}
+                    >
+                      ✅
+                    </Button>
+                  </Tooltip>
+                  <Tooltip content="Mark inspected">
+                    <Button
+                      size="sm"
+                      color="secondary"
+                      variant="flat"
+                      isIconOnly
+                      className="min-w-7 w-7 h-7"
+                      onPress={() => handleQuickAction('inspected', room)}
                     >
                       🔍
                     </Button>

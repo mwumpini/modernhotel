@@ -6,7 +6,19 @@ import { hourStamp } from './operationalPolicies';
 import { formatMoney } from '../format/currency';
 import type { Reservation } from './types';
 
-export type StaySortKey = 'arrival' | 'departure' | 'guest' | 'room' | 'amount';
+export type StaySortKey =
+  | 'id'
+  | 'guest'
+  | 'status'
+  | 'room'
+  | 'arrival'
+  | 'departure'
+  | 'nights'
+  | 'rate'
+  | 'discount'
+  | 'other'
+  | 'amount'
+  | 'balance';
 
 export function dayOf(iso?: string) {
   return (iso || '').slice(0, 10);
@@ -99,16 +111,31 @@ export function deskStatus(stay: Reservation, today: string): { label: string; c
   return { label: 'In-house', color: 'primary' };
 }
 
-export function sortStays(stays: Reservation[], sortKey: StaySortKey, sortDir: 'asc' | 'desc') {
+function sortValue(stay: Reservation, sortKey: StaySortKey, today: string): string | number {
+  if (sortKey === 'id') return stay.resId || stay.id;
+  if (sortKey === 'guest') return stay.guestName;
+  if (sortKey === 'status') return deskStatus(stay, today).label;
+  if (sortKey === 'room') return stay.roomId && stay.roomId !== 'TBD' ? stay.roomId : '';
+  if (sortKey === 'arrival') return dayOf(stay.arrival);
+  if (sortKey === 'departure') return dayOf(stay.departure);
+  const figures = stayFigures(stay);
+  if (sortKey === 'nights') return figures.nights;
+  if (sortKey === 'rate') return figures.rate;
+  if (sortKey === 'discount') return figures.discount;
+  if (sortKey === 'other') return figures.other;
+  if (sortKey === 'balance') return figures.balance;
+  return figures.amount;
+}
+
+export function sortStays(stays: Reservation[], sortKey: StaySortKey, sortDir: 'asc' | 'desc', today = localStayDay()) {
   const dir = sortDir === 'asc' ? 1 : -1;
   return [...stays].sort((a, b) => {
-    let order = 0;
-    if (sortKey === 'guest') order = a.guestName.localeCompare(b.guestName);
-    else if (sortKey === 'room') order = (a.roomId || '').localeCompare(b.roomId || '', undefined, { numeric: true });
-    else if (sortKey === 'departure') order = dayOf(a.departure).localeCompare(dayOf(b.departure));
-    else if (sortKey === 'amount') order = stayFigures(a).amount - stayFigures(b).amount;
-    else order = dayOf(a.arrival).localeCompare(dayOf(b.arrival));
-    if (order === 0) order = a.guestName.localeCompare(b.guestName);
-    return order * dir;
+    const left = sortValue(a, sortKey, today);
+    const right = sortValue(b, sortKey, today);
+    const order = typeof left === 'number' && typeof right === 'number'
+      ? left - right
+      : String(left).localeCompare(String(right), undefined, { numeric: true, sensitivity: 'base' });
+    if (order !== 0) return order * dir;
+    return a.guestName.localeCompare(b.guestName) * dir;
   });
 }

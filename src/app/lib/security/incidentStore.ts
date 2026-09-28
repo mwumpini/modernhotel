@@ -11,6 +11,7 @@ interface IncidentStore {
 
   hydrateFromApi: () => Promise<void>;
   addIncident: (incident: Omit<SecurityIncident, 'id' | 'createdAt' | 'updatedAt'>) => SecurityIncident;
+  updateIncident: (id: string, updates: Partial<Omit<SecurityIncident, 'id' | 'createdAt' | 'updatedAt'>>) => void;
   assignIncident: (id: string, assignedTo: string) => void;
   resolveIncident: (id: string, resolution: string) => void;
   updateIncidentStatus: (id: string, status: SecurityIncident['status']) => void;
@@ -30,10 +31,10 @@ function periodStart(period: 'daily' | 'weekly' | 'monthly'): Date {
   const d = new Date(now); d.setDate(1); d.setHours(0, 0, 0, 0); return d;
 }
 
-function syncIncidentToApi(incident: SecurityIncident) {
+function syncIncidentToApi(incident: SecurityIncident, method: 'POST' | 'PATCH' = 'POST') {
   if (typeof window === 'undefined') return;
   fetch('/api/security/incidents', {
-    method: 'POST',
+    method,
     headers: hkHeaders(),
     body: JSON.stringify(incident),
   }).catch((e) => console.warn('Security: Failed to sync incident:', e));
@@ -73,6 +74,18 @@ export const useIncidentStore = create<IncidentStore>((set, get) => ({
     set((state) => ({ incidents: [newIncident, ...state.incidents] }));
     syncIncidentToApi(newIncident);
     return newIncident;
+  },
+
+  updateIncident: (id, updates) => {
+    let updated: SecurityIncident | undefined;
+    set((state) => ({
+      incidents: state.incidents.map((i) => {
+        if (i.id !== id) return i;
+        updated = { ...i, ...updates, updatedAt: new Date() };
+        return updated;
+      }),
+    }));
+    if (updated) syncIncidentToApi(updated, 'PATCH');
   },
 
   assignIncident: (id, assignedTo) => {

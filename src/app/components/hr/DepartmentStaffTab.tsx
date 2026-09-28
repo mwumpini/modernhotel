@@ -1,11 +1,13 @@
 'use client';
 
-import React from 'react';
-import { Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Badge, Chip, Tabs, Tab, Button } from '@heroui/react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Button, Card, CardBody, Chip, Modal, ModalBody, ModalContent, ModalFooter, ModalHeader, Pagination, Table, TableBody, TableCell, TableColumn, TableHeader, TableRow } from '@heroui/react';
 import { useDepartmentStaff, type DepartmentStaffMember } from '../../lib/hr/useDepartmentStaff';
 import DepartmentShiftsPanel from './DepartmentShiftsPanel';
 import DepartmentOvertimePanel from './DepartmentOvertimePanel';
 import { printSimpleReport } from '../../lib/print/simpleReport';
+import { sizedTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { deskTableCardBodyClassName, deskTableCardClassName, deskTableClassNames, SortHeader, toggleColumnSort, DESK_PAGE_SIZE, type ColumnSort } from '../dashboard/deskTableUi';
 
 function statusColor(status: string) {
   switch (status) {
@@ -33,7 +35,6 @@ export default function DepartmentStaffTab({
   departmentNameHints,
   excludeNameHints = [],
   emptyLabel,
-  helperText,
   staff: preloadedStaff,
   alsoStaffNames = [],
   extraTabs = [],
@@ -46,6 +47,7 @@ export default function DepartmentStaffTab({
    * must not pick up a "Kitchen" department that also contains "food". */
   excludeNameHints?: string[];
   emptyLabel?: string;
+  /** @deprecated No longer rendered; accepted for call-site compat. */
   helperText?: string;
   /** Pass this when the parent already calls useDepartmentStaff itself (e.g.
    * for its own staff-count summary card) so the list isn't fetched twice. */
@@ -58,10 +60,45 @@ export default function DepartmentStaffTab({
 }) {
   const fetchedStaff = useDepartmentStaff(departmentNameHints, excludeNameHints, !preloadedStaff, alsoStaffNames);
   const staff = preloadedStaff ?? fetchedStaff;
-  const listHelper =
-    helperText ||
-    `HR staff in a ${departmentLabel} department. Names come from the HR file — this tab does not invent staff.`;
   const listEmpty = emptyLabel || `No ${departmentLabel} department in HR.`;
+
+  const [section, setSection] = useState('list');
+  const [sort, setSort] = useState<ColumnSort>({ column: 'name', direction: 'asc' });
+  const [page, setPage] = useState(1);
+  const [selectedMember, setSelectedMember] = useState<DepartmentStaffMember | null>(null);
+  const cols = useResizableColumns({
+    name: 180,
+    position: 140,
+    department: 140,
+    employmentType: 130,
+    status: 110,
+  });
+  const sections = [
+    { key: 'list', label: '👥 Staff List' },
+    { key: 'shifts', label: '🕐 Shift Scheduling' },
+    { key: 'overtime', label: '⏱️ Overtime' },
+    ...extraTabs.map((tab) => ({ key: tab.key, label: tab.title })),
+  ];
+
+  const sortedStaff = useMemo(() => {
+    const direction = sort.direction === 'asc' ? 1 : -1;
+    const value = (member: DepartmentStaffMember) => {
+      switch (sort.column) {
+        case 'position': return member.position || '';
+        case 'department': return member.department || '';
+        case 'employmentType': return member.employmentType || '';
+        case 'status': return member.status || '';
+        default: return member.name || '';
+      }
+    };
+    return [...staff].sort((a, b) => String(value(a)).localeCompare(String(value(b))) * direction);
+  }, [staff, sort]);
+
+  const pages = Math.max(1, Math.ceil(sortedStaff.length / DESK_PAGE_SIZE));
+  const pageSafe = Math.min(page, pages);
+  const pagedStaff = sortedStaff.slice((pageSafe - 1) * DESK_PAGE_SIZE, pageSafe * DESK_PAGE_SIZE);
+
+  useEffect(() => { setPage(1); }, [staff.length]);
 
   const printStaffList = () => {
     printSimpleReport(
@@ -73,37 +110,68 @@ export default function DepartmentStaffTab({
   };
 
   return (
-    <div className="p-6">
-      <Tabs aria-label="Staff management sections">
-        <Tab key="list" title="👥 Staff List">
-          <div className="pt-4">
-            <div className="flex items-center justify-between mb-4">
-              <p className="text-sm text-slate-500">
-                {listHelper}
-              </p>
-              <Button size="sm" color="primary" variant="flat" onPress={printStaffList}>Print</Button>
+    <div className="mt-4 space-y-3">
+      <div
+        role="tablist"
+        aria-label="Staff management sections"
+        className="flex w-full flex-nowrap gap-1 overflow-x-auto rounded-lg border border-gray-200 bg-gray-50 p-1 scrollbar-thin"
+      >
+        {sections.map((tab) => (
+          <button
+            key={tab.key}
+            type="button"
+            role="tab"
+            aria-selected={section === tab.key}
+            onClick={() => setSection(tab.key)}
+            className={`min-h-9 flex-shrink-0 whitespace-nowrap rounded-md px-3 text-sm transition-colors ${
+              section === tab.key
+                ? 'bg-white font-semibold text-ghana-black shadow-sm'
+                : 'text-gray-600 hover:bg-white/60 hover:text-ghana-black'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {section === 'list' && (
+        <Card className={deskTableCardClassName}>
+          <CardBody className={deskTableCardBodyClassName}>
+            <div className="mb-[18px] flex flex-nowrap items-center justify-end gap-2 overflow-x-auto">
+              <Button size="sm" variant="bordered" onPress={printStaffList}>Print</Button>
             </div>
-            <Table aria-label="Department staff table">
+            <div ref={cols.frameRef} style={cols.frameStyle}>
+            <Table aria-label="Department staff table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
               <TableHeader>
-                <TableColumn>STAFF MEMBER</TableColumn>
-                <TableColumn>POSITION</TableColumn>
-                <TableColumn>DEPARTMENT</TableColumn>
-                <TableColumn>EMPLOYMENT TYPE</TableColumn>
-                <TableColumn>STATUS</TableColumn>
+                <TableColumn className="relative" style={cols.style('name')}>{<SortHeader label="Staff member" column="name" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('name', 'Staff member')}</TableColumn>
+                <TableColumn className="relative" style={cols.style('position')}>{<SortHeader label="Position" column="position" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('position', 'Position')}</TableColumn>
+                <TableColumn className="relative" style={cols.style('department')}>{<SortHeader label="Department" column="department" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('department', 'Department')}</TableColumn>
+                <TableColumn className="relative" style={cols.style('employmentType')}>{<SortHeader label="Employment type" column="employmentType" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('employmentType', 'Employment type')}</TableColumn>
+                <TableColumn className="relative" style={cols.style('status')}>{<SortHeader label="Status" column="status" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('status', 'Status')}</TableColumn>
               </TableHeader>
               <TableBody emptyContent={listEmpty}>
-                {staff.map((member) => (
-                  <TableRow key={member.id}>
+                {pagedStaff.map((member) => (
+                  <TableRow
+                    key={member.id}
+                    className="cursor-pointer hover:bg-gray-50"
+                    onClick={() => setSelectedMember(member)}
+                  >
                     <TableCell>
-                      <p className="font-medium text-ghana-black">{member.name}</p>
+                      <p className="font-medium text-ghana-black truncate" title={member.name}>{member.name}</p>
                     </TableCell>
-                    <TableCell>{member.position}</TableCell>
-                    <TableCell>{member.department}</TableCell>
                     <TableCell>
-                      <Badge color="primary" variant="flat">{String(member.employmentType || '—').replace(/_/g, ' ')}</Badge>
+                      <span className="truncate block" title={member.position}>{member.position}</span>
                     </TableCell>
                     <TableCell>
-                      <Chip color={statusColor(member.status) as any} size="sm">
+                      <span className="truncate block" title={member.department}>{member.department}</span>
+                    </TableCell>
+                    <TableCell>
+                      <Chip size="sm" variant="flat" color="primary">
+                        {String(member.employmentType || '—').replace(/_/g, ' ')}
+                      </Chip>
+                    </TableCell>
+                    <TableCell>
+                      <Chip color={statusColor(member.status) as any} size="sm" variant="flat">
                         {member.status?.charAt(0).toUpperCase() + member.status?.slice(1).replace('_', ' ')}
                       </Chip>
                     </TableCell>
@@ -111,28 +179,57 @@ export default function DepartmentStaffTab({
                 ))}
               </TableBody>
             </Table>
-          </div>
-        </Tab>
+            </div>
+            <div className="mt-3 flex justify-end">
+              <Pagination page={pageSafe} total={pages} onChange={setPage} showControls size="sm" />
+            </div>
+          </CardBody>
+        </Card>
+      )}
 
-        <Tab key="shifts" title="🕐 Shift Scheduling">
-          <DepartmentShiftsPanel staff={staff} departmentLabel={departmentLabel} />
-        </Tab>
+      <Modal isOpen={!!selectedMember} onClose={() => setSelectedMember(null)} size="md">
+        <ModalContent>
+          <ModalHeader>Staff member</ModalHeader>
+          <ModalBody>
+            {selectedMember && (
+              <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm">
+                <dt className="text-gray-500">Name</dt>
+                <dd className="font-medium text-ghana-black">{selectedMember.name}</dd>
+                <dt className="text-gray-500">Position</dt>
+                <dd>{selectedMember.position || '—'}</dd>
+                <dt className="text-gray-500">Department</dt>
+                <dd>{selectedMember.department || '—'}</dd>
+                <dt className="text-gray-500">Employment</dt>
+                <dd>{String(selectedMember.employmentType || '—').replace(/_/g, ' ')}</dd>
+                <dt className="text-gray-500">Status</dt>
+                <dd>
+                  <Chip color={statusColor(selectedMember.status) as any} size="sm" variant="flat">
+                    {selectedMember.status?.charAt(0).toUpperCase() + selectedMember.status?.slice(1).replace('_', ' ')}
+                  </Chip>
+                </dd>
+              </dl>
+            )}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="light" onPress={() => setSelectedMember(null)}>Close</Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
-        <Tab key="overtime" title="⏱️ Overtime">
-          <DepartmentOvertimePanel
-            staff={staff}
-            departmentLabel={departmentLabel}
-            overtimePermissionId={overtimePermissionId}
-            departmentNameHints={departmentNameHints}
-          />
-        </Tab>
+      {section === 'shifts' && (
+        <DepartmentShiftsPanel staff={staff} departmentLabel={departmentLabel} />
+      )}
 
-        {extraTabs.map((tab) => (
-          <Tab key={tab.key} title={tab.title}>
-            {tab.render(staff)}
-          </Tab>
-        ))}
-      </Tabs>
+      {section === 'overtime' && (
+        <DepartmentOvertimePanel
+          staff={staff}
+          departmentLabel={departmentLabel}
+          overtimePermissionId={overtimePermissionId}
+          departmentNameHints={departmentNameHints}
+        />
+      )}
+
+      {extraTabs.map((tab) => section === tab.key ? <div key={tab.key}>{tab.render(staff)}</div> : null)}
     </div>
   );
 }

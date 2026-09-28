@@ -2133,6 +2133,10 @@ model HrAttendance {
 model CashierShift {
   id               String    @id @default(cuid())
   tenantId         String
+  /** frontoffice | restaurant — keeps FO and F&B tills separate */
+  outlet           String    @default("frontoffice")
+  /** Hotel / outlet business day this till belongs to (YYYY-MM-DD) */
+  businessDate     String    @default("")
   cashierUserId    String
   cashierName      String
   openingFloat     Float
@@ -2154,6 +2158,8 @@ model CashierShift {
 
   @@index([tenantId, status])
   @@index([tenantId, cashierUserId])
+  @@index([tenantId, outlet, status])
+  @@index([tenantId, outlet, businessDate])
   @@map("cashier_shifts")
 }
 

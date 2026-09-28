@@ -11,6 +11,7 @@ interface PatrolStore {
 
   hydrateFromApi: () => Promise<void>;
   startPatrol: (patrol: { officerId?: string; officerName: string; route: string; checkpoints: Omit<PatrolCheckpoint, 'id' | 'status' | 'actualTime'>[]; notes?: string }) => PatrolLog;
+  updatePatrol: (id: string, updates: Partial<Pick<PatrolLog, 'route' | 'notes'>>) => void;
   endPatrol: (id: string) => void;
   completeCheckpoint: (patrolId: string, checkpointId: string, notes?: string) => void;
   missCheckpoint: (patrolId: string, checkpointId: string, reason: string) => void;
@@ -29,10 +30,10 @@ function periodStart(period: 'daily' | 'weekly' | 'monthly'): Date {
   const d = new Date(now); d.setDate(1); d.setHours(0, 0, 0, 0); return d;
 }
 
-function syncPatrolToApi(patrol: PatrolLog) {
+function syncPatrolToApi(patrol: PatrolLog, method: 'POST' | 'PATCH' = 'POST') {
   if (typeof window === 'undefined') return;
   fetch('/api/security/patrols', {
-    method: 'POST',
+    method,
     headers: hkHeaders(),
     body: JSON.stringify(patrol),
   }).catch((e) => console.warn('Security: Failed to sync patrol:', e));
@@ -88,6 +89,18 @@ export const usePatrolStore = create<PatrolStore>((set, get) => ({
     set((state) => ({ patrols: [newPatrol, ...state.patrols] }));
     syncPatrolToApi(newPatrol);
     return newPatrol;
+  },
+
+  updatePatrol: (id, updates) => {
+    let updated: PatrolLog | undefined;
+    set((state) => ({
+      patrols: state.patrols.map((p) => {
+        if (p.id !== id) return p;
+        updated = { ...p, ...updates, updatedAt: new Date() };
+        return updated;
+      }),
+    }));
+    if (updated) syncPatrolToApi(updated, 'PATCH');
   },
 
   endPatrol: (id) => {

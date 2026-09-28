@@ -1,11 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import HeadingInfo from '../HeadingInfo';
+import React, { useState, useEffect, useMemo } from 'react';
+import { HideCardButton } from '../dashboard/CustomizeViewControl';
 import { 
   Card, 
   CardBody, 
-  CardHeader, 
   Button, 
   Input, 
   Select, 
@@ -25,9 +24,8 @@ import {
   TableRow,
   TableCell,
   Progress,
-  Avatar,
-  Tooltip,
-  Slider
+  Slider,
+  Pagination,
 } from "@heroui/react";
 import { housekeepingStore } from '../../lib/housekeeping/store';
 import { trackEvent } from '../../lib/analytics/trackEvent';
@@ -35,8 +33,16 @@ import {
   RoomInspection, 
   HousekeepingStaff 
 } from '../../lib/housekeeping/types';
+import { sizedTableClassNames, useResizableColumns } from '../frontoffice/columnResize';
+import { deskTableCardBodyClassName, deskTableCardClassName, deskTableClassNames, SortHeader, toggleColumnSort, DESK_PAGE_SIZE, type ColumnSort } from '../dashboard/deskTableUi';
 
-export default function RoomInspectionPanel() {
+export default function RoomInspectionPanel({
+  hideStats = false,
+  onHideStats,
+}: {
+  hideStats?: boolean;
+  onHideStats?: () => void;
+} = {}) {
   const [inspections, setInspections] = useState<RoomInspection[]>([]);
   const [staff, setStaff] = useState<HousekeepingStaff[]>([]);
   const [rooms, setRooms] = useState<any[]>([]);
@@ -46,6 +52,17 @@ export default function RoomInspectionPanel() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [inspectorFilter, setInspectorFilter] = useState<string>('all');
+  const [sort, setSort] = useState<ColumnSort>({ column: 'date', direction: 'desc' });
+  const [page, setPage] = useState(1);
+  const cols = useResizableColumns({
+    id: 120,
+    room: 80,
+    inspector: 140,
+    score: 100,
+    status: 110,
+    date: 110,
+    followUp: 96,
+  });
 
   // Form state
   const [inspectionForm, setInspectionForm] = useState({
@@ -192,6 +209,35 @@ export default function RoomInspectionPanel() {
     return true;
   });
 
+  const sortedInspections = useMemo(() => {
+    const dir = sort.direction === 'asc' ? 1 : -1;
+    return [...filteredInspections].sort((a, b) => {
+      switch (sort.column) {
+        case 'id':
+          return a.id.localeCompare(b.id) * dir;
+        case 'room':
+          return a.roomNumber.localeCompare(b.roomNumber, undefined, { numeric: true }) * dir;
+        case 'inspector':
+          return a.inspectorName.localeCompare(b.inspectorName) * dir;
+        case 'score':
+          return (a.score - b.score) * dir;
+        case 'status':
+          return a.status.localeCompare(b.status) * dir;
+        case 'followUp':
+          return (Number(a.followUpRequired) - Number(b.followUpRequired)) * dir;
+        case 'date':
+        default:
+          return (new Date(a.inspectionDate).getTime() - new Date(b.inspectionDate).getTime()) * dir;
+      }
+    });
+  }, [filteredInspections, sort]);
+
+  const pages = Math.max(1, Math.ceil(sortedInspections.length / DESK_PAGE_SIZE));
+  const pageSafe = Math.min(page, pages);
+  const pagedInspections = sortedInspections.slice((pageSafe - 1) * DESK_PAGE_SIZE, pageSafe * DESK_PAGE_SIZE);
+
+  React.useEffect(() => { setPage(1); }, [searchTerm, statusFilter, inspectorFilter]);
+
   const getInspectorName = (inspectorId: string) => {
     return staff.find(s => s.id === inspectorId)?.name || 'Unknown';
   };
@@ -206,17 +252,13 @@ export default function RoomInspectionPanel() {
   };
 
   return (
-    <div className="p-6 space-y-4">
+    <div className="space-y-3">
       {/* Header and Actions */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-1.5">
-            <h2 className="text-xl font-semibold text-ghana-black">🔍 Room Inspections</h2>
-            <HeadingInfo label="About inspections">Conduct quality control inspections and track room standards</HeadingInfo>
-          </div>
-        </div>
-        <Button 
-          color="primary" 
+      <div className="mb-[18px] flex flex-nowrap items-center justify-between gap-2 overflow-x-auto">
+        <h2 className="text-lg font-semibold text-ghana-black shrink-0">Room Inspections</h2>
+        <Button
+          size="sm"
+          color="primary"
           className="bg-ghana-green text-white"
           onClick={handleCreateInspection}
         >
@@ -224,76 +266,48 @@ export default function RoomInspectionPanel() {
         </Button>
       </div>
 
-      {/* Inspection Overview Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Total Inspections</p>
-                <p className="text-2xl font-bold text-ghana-black">{inspections.length}</p>
-              </div>
-              <span className="text-2xl">🔍</span>
-            </div>
-          </CardBody>
-        </Card>
-        
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Passed</p>
-                <p className="text-2xl font-bold text-green-600">
-                  {inspections.filter(i => i.status === 'passed').length}
-                </p>
-              </div>
-              <span className="text-2xl">✅</span>
-            </div>
-          </CardBody>
-        </Card>
-        
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Partial</p>
-                <p className="text-2xl font-bold text-yellow-600">
-                  {inspections.filter(i => i.status === 'partial').length}
-                </p>
-              </div>
-              <span className="text-2xl">⚠️</span>
-            </div>
-          </CardBody>
-        </Card>
-        
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Failed</p>
-                <p className="text-2xl font-bold text-red-600">
-                  {inspections.filter(i => i.status === 'failed').length}
-                </p>
-              </div>
-              <span className="text-2xl">❌</span>
-            </div>
-          </CardBody>
-        </Card>
-        
-        <Card className="border-0 shadow-lg">
-          <CardBody className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Avg Score</p>
-                <p className="text-2xl font-bold text-purple-600">
-                  {inspections.length > 0 ? Math.round(inspections.reduce((sum, i) => sum + i.score, 0) / inspections.length) : 0}%
-                </p>
-              </div>
-              <span className="text-2xl">📊</span>
-            </div>
-          </CardBody>
-        </Card>
-      </div>
+      {/* Inspection Overview Cards — Desk-style compact */}
+      {!hideStats && (
+        <div className="flex items-start gap-1">
+          <div className="grid min-w-0 flex-1 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+            {([
+              { label: 'Total', value: String(inspections.length), tone: 'text-ghana-black' },
+              {
+                label: 'Passed',
+                value: String(inspections.filter((i) => i.status === 'passed').length),
+                tone: 'text-green-700',
+              },
+              {
+                label: 'Partial',
+                value: String(inspections.filter((i) => i.status === 'partial').length),
+                tone: 'text-yellow-700',
+              },
+              {
+                label: 'Failed',
+                value: String(inspections.filter((i) => i.status === 'failed').length),
+                tone: 'text-red-700',
+              },
+              {
+                label: 'Avg score',
+                value: `${
+                  inspections.length > 0
+                    ? Math.round(inspections.reduce((sum, i) => sum + i.score, 0) / inspections.length)
+                    : 0
+                }%`,
+                tone: 'text-purple-700',
+              },
+            ] as const).map((stat) => (
+              <Card key={stat.label} className="border border-gray-200 shadow-none">
+                <CardBody className="px-2 py-1.5 text-center">
+                  <div className={`text-base font-semibold tabular-nums ${stat.tone}`}>{stat.value}</div>
+                  <div className="text-xs leading-tight text-gray-500">{stat.label}</div>
+                </CardBody>
+              </Card>
+            ))}
+          </div>
+          {onHideStats && <HideCardButton onHide={onHideStats} label="Inspections summary" />}
+        </div>
+      )}
 
       {/* Filters */}
       <Card className="border-0 shadow-lg">
@@ -335,27 +349,26 @@ export default function RoomInspectionPanel() {
       </Card>
 
       {/* Inspections Table */}
-      <Card className="border-0 shadow-lg">
-        <CardHeader className="pb-3">
-          <h3 className="text-lg font-semibold text-ghana-black">Room Inspections</h3>
-        </CardHeader>
-        <CardBody className="p-0">
-          <div className="max-h-[560px] overflow-y-auto">
-          <Table aria-label="Inspections table">
+      <Card className={deskTableCardClassName}>
+        <CardBody className={deskTableCardBodyClassName}>
+          <div ref={cols.frameRef} style={cols.frameStyle}>
+          <Table aria-label="Inspections table" removeWrapper classNames={sizedTableClassNames(deskTableClassNames)}>
             <TableHeader>
-              <TableColumn>Inspection ID</TableColumn>
-              <TableColumn>Room</TableColumn>
-              <TableColumn>Inspector</TableColumn>
-              <TableColumn>Score</TableColumn>
-              <TableColumn>Status</TableColumn>
-              <TableColumn>Categories</TableColumn>
-              <TableColumn>Date</TableColumn>
-              <TableColumn>Follow-up</TableColumn>
-              <TableColumn>Actions</TableColumn>
+              <TableColumn className="relative" style={cols.style('id')}>{<SortHeader label="ID" column="id" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('id', 'ID')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('room')}>{<SortHeader label="Room" column="room" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('room', 'Room')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('inspector')}>{<SortHeader label="Inspector" column="inspector" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('inspector', 'Inspector')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('score')}>{<SortHeader label="Score" column="score" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('score', 'Score')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('status')}>{<SortHeader label="Status" column="status" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('status', 'Status')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('date')}>{<SortHeader label="Date" column="date" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('date', 'Date')}</TableColumn>
+              <TableColumn className="relative" style={cols.style('followUp')}>{<SortHeader label="Follow-up" column="followUp" sort={sort} onSort={(c) => setSort((p) => toggleColumnSort(p, c))} />}{cols.sizer('followUp', 'Follow-up')}</TableColumn>
             </TableHeader>
-            <TableBody>
-              {filteredInspections.map((inspection) => (
-                <TableRow key={inspection.id} className="hover:bg-gray-50">
+            <TableBody emptyContent="No inspections match.">
+              {pagedInspections.map((inspection) => (
+                <TableRow
+                  key={inspection.id}
+                  className="cursor-pointer hover:bg-gray-50"
+                  onClick={() => handleEditInspection(inspection)}
+                >
                   <TableCell>
                     <span className="font-semibold text-ghana-black">{inspection.id}</span>
                   </TableCell>
@@ -365,21 +378,17 @@ export default function RoomInspectionPanel() {
                     </Chip>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      <Avatar size="sm" name={inspection.inspectorName} />
-                      <span className="text-sm">{inspection.inspectorName}</span>
-                    </div>
+                    <span className="text-sm truncate block" title={inspection.inspectorName}>{inspection.inspectorName}</span>
                   </TableCell>
                   <TableCell>
-                    <div className="w-full">
-                      <div className="flex items-center justify-between text-sm mb-1">
-                        <span>{inspection.score}%</span>
-                      </div>
+                    <div className="flex items-center gap-2 min-w-0">
                       <Progress 
                         value={inspection.score} 
                         color={getScoreColor(inspection.score) as any}
                         size="sm"
+                        className="flex-1"
                       />
+                      <span className="text-sm tabular-nums shrink-0">{inspection.score}%</span>
                     </div>
                   </TableCell>
                   <TableCell>
@@ -393,72 +402,24 @@ export default function RoomInspectionPanel() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="space-y-1">
-                      {Object.entries(inspection.categories).map(([category, score]) => (
-                        <div key={category} className="flex items-center justify-between text-xs">
-                          <span className="flex items-center gap-1">
-                            <span>{getCategoryIcon(category)}</span>
-                            <span className="text-gray-600">{getCategoryName(category)}</span>
-                          </span>
-                          <Badge 
-                            color={getScoreColor(score) as any}
-                            variant="flat"
-                            size="sm"
-                          >
-                            {score}%
-                          </Badge>
-                        </div>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <span className="text-sm text-gray-600">
+                    <span className="whitespace-nowrap text-sm text-gray-600">
                       {new Date(inspection.inspectionDate).toLocaleDateString()}
                     </span>
                   </TableCell>
                   <TableCell>
                     {inspection.followUpRequired ? (
-                      <Badge color="warning" variant="flat" size="sm">
-                        Required
-                      </Badge>
+                      <Badge color="warning" variant="flat" size="sm">Required</Badge>
                     ) : (
-                      <Badge color="success" variant="flat" size="sm">
-                        None
-                      </Badge>
+                      <Badge color="success" variant="flat" size="sm">None</Badge>
                     )}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-1">
-                      <Tooltip content="View details">
-                        <Button
-                          size="sm"
-                          color="primary"
-                          variant="flat"
-                          isIconOnly
-                          onClick={() => handleEditInspection(inspection)}
-                        >
-                          👁️
-                        </Button>
-                      </Tooltip>
-                      
-                      {inspection.followUpRequired && (
-                        <Tooltip content="Follow-up required">
-                          <Button
-                            size="sm"
-                            color="warning"
-                            variant="flat"
-                            isIconOnly
-                          >
-                            ⚠️
-                          </Button>
-                        </Tooltip>
-                      )}
-                    </div>
                   </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <Pagination page={pageSafe} total={pages} onChange={setPage} showControls size="sm" />
           </div>
         </CardBody>
       </Card>

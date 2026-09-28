@@ -24,6 +24,8 @@ function mapItems(body: any): RequisitionItemInput[] {
     itemName: item.itemName,
     quantity: Number(item.quantity),
     estimatedPrice: Number(item.estimatedPrice),
+    preferredSupplierId: item.preferredSupplierId,
+    preferredSupplierName: item.preferredSupplierName,
     notes: item.notes,
   }));
 }

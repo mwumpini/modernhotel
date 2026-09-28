@@ -40,6 +40,7 @@ import {
   shortDay,
   sortStays,
   stayFigures,
+  type StaySortKey,
 } from '../lib/frontoffice/stayWorksheet';
 import StayWorksheetTable from './frontoffice/StayWorksheetTable';
 import { CompanyStatement } from './frontoffice/CompanyAccounts';
@@ -154,7 +155,7 @@ export default function FrontDeskCounter() {
   const [billing, setBilling] = useState('all');
   const [centre, setCentre] = useState('all');
   const [staff, setStaff] = useState('all');
-  const [sortKey, setSortKey] = useState<'arrival' | 'departure' | 'guest' | 'room' | 'amount'>('arrival');
+  const [sortKey, setSortKey] = useState<StaySortKey>('arrival');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [chosenRoom, setChosenRoom] = useState('');
@@ -292,7 +293,7 @@ export default function FrontDeskCounter() {
     if (staff !== 'all' && staff !== 'none' && !clerks.includes(staff)) return false;
     return true;
   });
-  const shown = sortStays(filtered, sortKey, sortDir);
+  const shown = sortStays(filtered, sortKey, sortDir, today);
 
   const summary = shown.reduce(
     (sum, stay) => {
@@ -614,11 +615,18 @@ export default function FrontDeskCounter() {
                 setSortKey(next);
               }}
             >
+              <SelectItem key="id">Sort by ID</SelectItem>
+              <SelectItem key="guest">Sort by guest</SelectItem>
+              <SelectItem key="status">Sort by status</SelectItem>
+              <SelectItem key="room">Sort by room</SelectItem>
               <SelectItem key="arrival">Sort by check-in</SelectItem>
               <SelectItem key="departure">Sort by check-out</SelectItem>
-              <SelectItem key="guest">Sort by guest</SelectItem>
-              <SelectItem key="room">Sort by room</SelectItem>
+              <SelectItem key="nights">Sort by nights</SelectItem>
+              <SelectItem key="rate">Sort by rate</SelectItem>
+              <SelectItem key="discount">Sort by discount</SelectItem>
+              <SelectItem key="other">Sort by other charges</SelectItem>
               <SelectItem key="amount">Sort by amount</SelectItem>
+              <SelectItem key="balance">Sort by balance</SelectItem>
             </Select>
           </div>
           <div className="flex flex-wrap items-center justify-between gap-2">

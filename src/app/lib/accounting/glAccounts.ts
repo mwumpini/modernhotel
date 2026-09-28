@@ -23,11 +23,18 @@ export const GL_ACCOUNTS = {
   // Revenue
   ROOM_REVENUE: '4100',
   FB_REVENUE: '4200',
+  FB_REVENUE_RESTAURANT: '4210',
+  FB_REVENUE_BAR: '4220',
+  FB_REVENUE_ROOM_SERVICE: '4230',
   // 4300 is the "Other Revenue" category HEADER — children 4320/4330 are postable leaves.
   CONFERENCE_REVENUE: '4320',
   SERVICE_CHARGES: '4400',
   OTHER_REVENUE: '4330',
   ROUNDING_ADJUSTMENT: '4900',
+
+  // Inventory / COGS (F&B stock issue on bill)
+  FB_INVENTORY: '1310',
+  FB_COGS: '5110',
 } as const;
 
 export const REVENUE_CENTERS = {

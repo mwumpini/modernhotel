@@ -34,6 +34,7 @@ function toStoreRecipe(row: any) {
     preparationTime: row.preparationTime,
     difficulty: row.difficulty,
     allergens: row.allergens ? row.allergens.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
+    menuItemId: row.menuItemId || null,
     ingredients: Array.isArray(row.ingredients) ? row.ingredients : [],
     instructions: Array.isArray(row.instructions) ? row.instructions : [],
     createdAt: row.createdAt,
@@ -53,12 +54,14 @@ export async function upsertRecipe(tenantId: string, id: string, recipe: Record<
     preparationTime: recipe.preparationTime,
     difficulty: recipe.difficulty,
     allergens: recipe.allergens,
+    menuItemId: recipe.menuItemId === undefined ? undefined : (recipe.menuItemId || null),
     ingredients: recipe.ingredients,
     instructions: recipe.instructions,
   })
   const row = await ownershipCheckedUpsert(prisma.recipe, id, tenantId, data, {
     name: recipe.name,
     category: recipe.category,
+    menuItemId: recipe.menuItemId || null,
     ingredients: recipe.ingredients ?? [],
     instructions: recipe.instructions ?? [],
   })

@@ -443,6 +443,32 @@ async function main() {
   }
   console.log(`✅ Seeded ${menuItems.length} F&B menu items`)
 
+  // ── Restaurant floor tables ────────────────────────────────────────────────
+  const floorTables = [
+    { number: '1', capacity: 2, section: 'main floor' },
+    { number: '2', capacity: 4, section: 'main floor' },
+    { number: '3', capacity: 4, section: 'main floor' },
+    { number: '4', capacity: 6, section: 'main floor' },
+    { number: '5', capacity: 2, section: 'patio' },
+    { number: '6', capacity: 4, section: 'patio' },
+    { number: 'B1', capacity: 2, section: 'bar' },
+    { number: 'B2', capacity: 4, section: 'bar' },
+  ]
+  for (const t of floorTables) {
+    await prisma.restaurantTable.upsert({
+      where: { tenantId_number: { tenantId: demoTenant.id, number: t.number } },
+      update: { capacity: t.capacity, section: t.section },
+      create: {
+        tenantId: demoTenant.id,
+        number: t.number,
+        capacity: t.capacity,
+        section: t.section,
+        status: 'available',
+      },
+    })
+  }
+  console.log(`✅ Seeded ${floorTables.length} restaurant tables`)
+
   console.log('🎉 Database seeding completed successfully!')
   console.log('\n📋 Demo Credentials:')
   console.log('Tenant: demo')

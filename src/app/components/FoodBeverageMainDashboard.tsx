@@ -1,13 +1,13 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { 
-  Card, 
-  CardBody, 
-  CardHeader, 
-  Button, 
-  Tabs, 
-  Tab, 
+import {
+  Card,
+  CardBody,
+  CardHeader,
+  Button,
+  Tabs,
+  Tab,
 } from "@heroui/react";
 import { ordersStore } from '../lib/fb/ordersStore';
 import OfflineIndicator from './OfflineIndicator';
@@ -28,12 +28,38 @@ const FB_DASHBOARD_SECTIONS: DashboardSectionDef[] = [
   { id: 'notices', label: 'F&B Notices' },
 ];
 
-const FB_TABS = new Set(['tables', 'reservations', 'menu', 'inventory', 'requisitions', 'reports']);
+const FB_TAB_OPTIONS = [
+  { key: 'activity', label: '💳 Transactions' },
+  { key: 'tables', label: '🪑 Tables' },
+  { key: 'reservations', label: '📅 Reservations' },
+  { key: 'menu', label: '🍽️ Menu' },
+  { key: 'cashiering', label: '💵 Cashiering' },
+  { key: 'supplies', label: '📦 Supplies' },
+  { key: 'reports', label: '📈 Reports & Analysis' },
+] as const;
+
+type SuppliesView = 'inventory' | 'stock-count' | 'requisitions';
+
+const SUPPLIES_VIEWS: { key: SuppliesView; label: string }[] = [
+  { key: 'inventory', label: '📦 Inventory' },
+  { key: 'stock-count', label: '🔍 Stock Count' },
+  { key: 'requisitions', label: '📝 Requisitions' },
+];
+
+const FB_TABS = new Set<string>([
+  ...FB_TAB_OPTIONS.map((tab) => tab.key),
+  'inventory',
+  'stock-count',
+  'requisitions',
+]);
 const FB_TAB_ALIASES: Record<string, string> = {
   overview: 'tables',
   restaurant: 'tables',
   staff: 'tables',
   analytics: 'reports',
+  inventory: 'supplies',
+  'stock-count': 'supplies',
+  requisitions: 'supplies',
 };
 
 function resolveFbTab(raw: string | null) {
@@ -42,11 +68,20 @@ function resolveFbTab(raw: string | null) {
   return FB_TABS.has(mapped) ? mapped : null;
 }
 
+function resolveSuppliesView(raw: string | null | undefined): SuppliesView {
+  if (raw === 'stock-count' || raw === 'requisitions' || raw === 'inventory') return raw;
+  return 'inventory';
+}
+
 import ModuleExpandButton from './ModuleExpandButton';
+import SubViewPills from './dashboard/SubViewPills';
 import FBPOS from './FBPOS';
+import FoodBeveragePosActivity from './FoodBeveragePosActivity';
 import FoodBeverageRestaurantBar from './FoodBeverageRestaurantBar';
 import FoodBeverageMenuInventory from './FoodBeverageMenuInventory';
 import FoodBeverageReportsAnalysis from './FoodBeverageReportsAnalysis';
+import DepartmentStockCountPanel from './inventory/DepartmentStockCountPanel';
+import CashierShiftPanel from './CashierShiftPanel';
 
 export default function FoodBeverageMainDashboard({
   initialTab,
@@ -57,6 +92,7 @@ export default function FoodBeverageMainDashboard({
 } = {}) {
   const [, setTick] = useState(0);
   const [selectedTab, setSelectedTab] = useState(resolveFbTab(initialTab || null) || 'tables');
+  const [suppliesView, setSuppliesView] = useState<SuppliesView>(() => resolveSuppliesView(initialTab));
   const [showPOS, setShowPOS] = useState(false);
 
   const { isHidden, hide, toggle: toggleSection, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.restaurantBar', FB_DASHBOARD_SECTIONS);
@@ -64,11 +100,14 @@ export default function FoodBeverageMainDashboard({
   useEffect(() => {
     const applyStoredTab = () => {
       try {
-        const tab = resolveFbTab(localStorage.getItem('fb.tab'));
-        if (tab) {
-          setSelectedTab(tab);
-          localStorage.removeItem('fb.tab');
+        const tab = localStorage.getItem('fb.tab');
+        if (!tab) return;
+        const resolved = resolveFbTab(tab);
+        if (resolved) setSelectedTab(resolved);
+        if (tab === 'inventory' || tab === 'stock-count' || tab === 'requisitions') {
+          setSuppliesView(resolveSuppliesView(tab));
         }
+        localStorage.removeItem('fb.tab');
       } catch {
         /* ignore */
       }
@@ -296,36 +335,39 @@ export default function FoodBeverageMainDashboard({
           </CardHeader>
         )}
         <CardBody>
-          <Tabs 
-            selectedKey={selectedTab} 
-            onSelectionChange={(key) => setSelectedTab(key as string)}
+          <Tabs
+            selectedKey={selectedTab}
+            onSelectionChange={(key) => setSelectedTab(String(key))}
             className="w-full"
             aria-label="Restaurant and bar operations"
           >
-            <Tab key="tables" title="🪑 Tables">
-              <FoodBeverageRestaurantBar panel="tables" />
-            </Tab>
-
-            <Tab key="reservations" title="📅 Reservations">
-              <FoodBeverageRestaurantBar panel="reservations" />
-            </Tab>
-
-            <Tab key="menu" title="🍽️ Menu">
-              <FoodBeverageMenuInventory panel="menu" />
-            </Tab>
-
-            <Tab key="inventory" title="📦 Inventory">
-              <FoodBeverageMenuInventory panel="inventory" />
-            </Tab>
-
-            <Tab key="requisitions" title="📝 Requisitions">
-              <FoodBeverageMenuInventory panel="requisitions" />
-            </Tab>
-
-            <Tab key="reports" title="📈 Reports & Analysis">
-              <FoodBeverageReportsAnalysis embedded />
-            </Tab>
+            {FB_TAB_OPTIONS.map((tab) => (
+              <Tab key={tab.key} title={tab.label} />
+            ))}
           </Tabs>
+          <div className="mt-4 px-2 pb-2">
+            {selectedTab === 'activity' && <FoodBeveragePosActivity />}
+            {selectedTab === 'tables' && <FoodBeverageRestaurantBar panel="tables" />}
+            {selectedTab === 'reservations' && <FoodBeverageRestaurantBar panel="reservations" />}
+            {selectedTab === 'menu' && <FoodBeverageMenuInventory panel="menu" />}
+            {selectedTab === 'cashiering' && <CashierShiftPanel outlet="restaurant" />}
+            {selectedTab === 'supplies' && (
+              <div>
+                <SubViewPills
+                  views={SUPPLIES_VIEWS}
+                  selected={suppliesView}
+                  onSelect={setSuppliesView}
+                  ariaLabel="Restaurant supplies views"
+                />
+                {suppliesView === 'inventory' && <FoodBeverageMenuInventory panel="inventory" />}
+                {suppliesView === 'stock-count' && (
+                  <DepartmentStockCountPanel department="restaurant" />
+                )}
+                {suppliesView === 'requisitions' && <FoodBeverageMenuInventory panel="requisitions" />}
+              </div>
+            )}
+            {selectedTab === 'reports' && <FoodBeverageReportsAnalysis embedded />}
+          </div>
         </CardBody>
       </Card>
 

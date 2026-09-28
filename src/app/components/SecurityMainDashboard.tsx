@@ -15,10 +15,9 @@ export default function SecurityMainDashboard({
 }: {
   fullPage?: boolean;
 } = {}) {
-  // Owns the one useDashboardVisibility call for the whole Security module —
-  // passed down to SecurityComplianceDashboard, which renders the actual
-  // "Customize View" control, so there's a single source of truth instead of
-  // two components each keeping their own stale copy of the same storage key.
+  // Controls the Recent Activities/Notices cards below — the only hideable
+  // sections left in the Security module now that Overview (with its own
+  // hideable stat/quick-action cards) has been removed.
   const { isHidden, hide, toggle, showAll, hiddenCount } = useDashboardVisibility('dashboard.hidden.security', SECURITY_DASHBOARD_SECTIONS);
 
   return (
@@ -45,14 +44,7 @@ export default function SecurityMainDashboard({
         </>
       )}
 
-      <SecurityComplianceDashboard
-        fullPage={fullPage}
-        isHidden={isHidden}
-        hide={hide}
-        toggle={toggle}
-        showAll={showAll}
-        hiddenCount={hiddenCount}
-      />
+      <SecurityComplianceDashboard fullPage={fullPage} />
 
       {!fullPage && (!isHidden('recentActivities') || !isHidden('notices')) && (
       <div className="mt-8">

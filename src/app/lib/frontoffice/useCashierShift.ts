@@ -2,23 +2,30 @@
 
 import React from 'react';
 import { getClientTenantSubdomain } from '../api/clientTenant';
-import type { CashierShiftDTO } from './cashierShiftRepository';
+import type { CashierOutlet, CashierShiftDTO } from './cashierShiftRepository';
 
 function headers() {
   return { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() };
 }
 
-/** Cashier shifts for this tenant — a front-desk agent's till session (opening
- * float, real payments they processed while open, counted closing balance and
- * variance). See /api/frontoffice/cashier-shifts. */
-export function useCashierShift(currentUserId?: string) {
+export type ShiftPreview = {
+  totalCash: number;
+  totalCard: number;
+  totalMobileMoney: number;
+  totalOther: number;
+  expectedCash: number;
+};
+
+/** Cashier shifts for this tenant — till session (opening float, payments while
+ * open, counted closing balance and variance). Outlet scopes FO vs Restaurant. */
+export function useCashierShift(currentUserId?: string, outlet: CashierOutlet = 'frontoffice') {
   const [shifts, setShifts] = React.useState<CashierShiftDTO[]>([]);
   const [loading, setLoading] = React.useState(true);
 
   const refresh = React.useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/frontoffice/cashier-shifts', { headers: headers() });
+      const res = await fetch(`/api/frontoffice/cashier-shifts?outlet=${outlet}`, { headers: headers() });
       if (res.ok) {
         const data = await res.json();
         setShifts(Array.isArray(data.shifts) ? data.shifts : []);
@@ -28,7 +35,7 @@ export function useCashierShift(currentUserId?: string) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [outlet]);
 
   React.useEffect(() => { void refresh(); }, [refresh]);
 
@@ -37,27 +44,72 @@ export function useCashierShift(currentUserId?: string) {
     [shifts, currentUserId]
   );
 
-  const openShift = React.useCallback(async (openingFloat: number, notes?: string) => {
+  const openShift = React.useCallback(async (openingFloat: number, notes?: string, businessDate?: string) => {
     const res = await fetch('/api/frontoffice/cashier-shifts', {
       method: 'POST',
       headers: headers(),
-      body: JSON.stringify({ openingFloat, notes }),
+      body: JSON.stringify({ openingFloat, notes, outlet, businessDate }),
     });
     const data = await res.json().catch(() => null);
     if (res.ok) await refresh();
     return { ok: res.ok, error: data?.error, shift: data?.shift as CashierShiftDTO | undefined };
-  }, [refresh]);
+  }, [refresh, outlet]);
 
   const closeShift = React.useCallback(async (id: string, closingCount: number, notes?: string) => {
     const res = await fetch(`/api/frontoffice/cashier-shifts/${id}`, {
       method: 'PATCH',
       headers: headers(),
-      body: JSON.stringify({ closingCount, notes }),
+      body: JSON.stringify({ action: 'close', closingCount, notes }),
     });
     const data = await res.json().catch(() => null);
     if (res.ok) await refresh();
     return { ok: res.ok, error: data?.error, shift: data?.shift as CashierShiftDTO | undefined };
   }, [refresh]);
 
-  return { shifts, myOpenShift, loading, openShift, closeShift, refresh };
+  const updateShift = React.useCallback(async (
+    id: string,
+    patch: {
+      businessDate?: string;
+      openingFloat?: number;
+      closingCount?: number;
+      notes?: string | null;
+      recompute?: boolean;
+      transferTo?: 'accounts' | 'cashier' | null;
+      transferToName?: string | null;
+      transferToUserId?: string | null;
+      transferAmount?: number | null;
+    },
+  ) => {
+    const res = await fetch(`/api/frontoffice/cashier-shifts/${id}`, {
+      method: 'PATCH',
+      headers: headers(),
+      body: JSON.stringify({ action: 'update', ...patch }),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok) await refresh();
+    return { ok: res.ok, error: data?.error, shift: data?.shift as CashierShiftDTO | undefined };
+  }, [refresh]);
+
+  const deleteShift = React.useCallback(async (id: string) => {
+    const res = await fetch(`/api/frontoffice/cashier-shifts/${id}`, {
+      method: 'DELETE',
+      headers: headers(),
+    });
+    const data = await res.json().catch(() => null);
+    if (res.ok) await refresh();
+    return { ok: res.ok, error: data?.error as string | undefined };
+  }, [refresh]);
+
+  const fetchPreview = React.useCallback(async (id: string): Promise<ShiftPreview | null> => {
+    try {
+      const res = await fetch(`/api/frontoffice/cashier-shifts/${id}`, { headers: headers() });
+      if (!res.ok) return null;
+      const data = await res.json();
+      return (data?.preview as ShiftPreview) || null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  return { shifts, myOpenShift, loading, openShift, closeShift, updateShift, deleteShift, fetchPreview, refresh };
 }
