@@ -125,7 +125,11 @@ function syncSecurityToApi(security: SystemSettings['security']) {
 let setupStatusFetchPromise: Promise<any> | null = null;
 function fetchSetupStatusOnce(tenant: string): Promise<any> {
   if (!setupStatusFetchPromise) {
-    setupStatusFetchPromise = fetch('/api/settings/setup-status', { headers: { 'x-tenant-subdomain': tenant } })
+    // no-store: the route has no cache-control of its own, so without this the
+    // browser's default HTTP cache can keep serving whatever this exact URL+headers
+    // combo first returned — including a `false` fetched before the tenant's setup
+    // was ever completed — forever, regardless of what the server now says.
+    setupStatusFetchPromise = fetch('/api/settings/setup-status', { headers: { 'x-tenant-subdomain': tenant }, cache: 'no-store' })
       .then((res) => (res.ok ? res.json() : null))
       .catch((e) => { console.warn('[Settings] Failed to hydrate setup status:', e); return null; });
   }

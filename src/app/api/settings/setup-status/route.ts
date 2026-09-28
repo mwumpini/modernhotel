@@ -3,6 +3,12 @@ import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 
+// Without this, Next.js can treat the GET below as a static/cacheable route
+// (it has no request-derived dynamic API calls Next.js would otherwise detect),
+// letting the CDN or a client's default HTTP cache keep serving whatever this
+// URL first returned — including a stale `false` from before setup completed.
+export const dynamic = 'force-dynamic'
+
 /**
  * Whether this tenant has completed the setup wizard — shared across devices.
  * Previously tracked only in the completing browser's localStorage, so every
