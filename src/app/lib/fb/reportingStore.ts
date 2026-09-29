@@ -117,7 +117,9 @@ class ReportingStore {
   generateDailySalesReport(date: string, filters: DailySalesFilters = {}): Array<{
     orderNumber: string;
     time: string;
+    room: string;
     table: string;
+    venue: string;
     category: string;
     item: string;
     quantity: number;
@@ -127,6 +129,7 @@ class ReportingStore {
     customerType: string;
     server: string;
     discount: number;
+    price: number;
     tax: number;
     billedPaid: 'Yes' | 'No';
   }> {
@@ -147,10 +150,17 @@ class ReportingStore {
         .filter((item) => matchesCategoryFilter(item, filters.categories || []))
         .filter((item) => matchesList(item.name, filters.items))
         .forEach((item) => {
+          // Real per-unit net price after discount/service charge — reverse-derived from
+          // the persisted amount vs unitPrice (see ordersStore.hydrateFromApi's field-
+          // reconciliation notes), the same values the live POS Activity Table's own
+          // Price column already shows, not a new computation invented for this report.
+          const netPrice = item.price - (item.discountPerUnit || 0) + (item.serviceChargePerUnit || 0);
           rows.push({
             orderNumber: order.orderNumber || order.id,
             time,
+            room: order.roomNumber || '—',
             table: order.table || '—',
+            venue: order.venue,
             category: item.category || 'Uncategorized',
             item: item.name,
             quantity: item.qty,
@@ -161,6 +171,7 @@ class ReportingStore {
             // waiterId already holds the real server name for API-hydrated orders (see
             // ordersStore.hydrateFromApi's field-reconciliation notes), not a raw staff id.
             server: order.waiterId || '—',
+            price: netPrice,
             // Discount/Tax are captured per ORDER, not per item (see FBOrderItem —
             // taxAmount is always 0 there; "tax tracked at order level" per the order
             // creation route) — so on a multi-item order, the same order-level figure

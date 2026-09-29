@@ -502,6 +502,29 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setActivityWaiter(o.waiterId);
   };
 
+  // The FBOrder -> cart-shaped order mapping needed by both "Edit in Cart" and
+  // "Pay" in the View modal below — was duplicated inline at each call site.
+  const mapOrderForCart = (o: FBOrder) => ({
+    id: o.id,
+    table: o.table,
+    waiterId: o.waiterId,
+    items: o.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: '', route: i.route })),
+    status: o.status as any,
+    customerType: o.customerType as any,
+    venue: o.venue as any,
+    notes: o.notes,
+    urgent: o.urgent,
+    priority: o.priority,
+  } as any);
+
+  // Loads the order into the cart and opens the payment modal — the same "Pay" path
+  // the POS Activity Table's own row used to offer as its own button, now reached
+  // from inside the View modal instead (see the "POS Item Actions" Modal below).
+  const openPaymentForOrder = (o: FBOrder) => {
+    loadOrderIntoCart(mapOrderForCart(o));
+    paymentModal.onOpen();
+  };
+
   const activityReceipt = () => {
     if (!activitySelected) return;
     const { order: o, item: it } = activitySelected;
@@ -1482,7 +1505,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       >
                         ID {sortKey === 'id' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </TableColumn>
-                      <TableColumn 
+                      <TableColumn
                         className="cursor-pointer select-none"
                         onClick={() => {
                           if (sortKey === 'time') {
@@ -1493,8 +1516,9 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           }
                         }}
                       >
-                        DATE/TIME {sortKey === 'time' && (sortDirection === 'asc' ? '↑' : '↓')}
+                        DATE {sortKey === 'time' && (sortDirection === 'asc' ? '↑' : '↓')}
                       </TableColumn>
+                      <TableColumn>TIME</TableColumn>
                       <TableColumn 
                         className="cursor-pointer select-none"
                         onClick={() => {
@@ -1657,7 +1681,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       {filteredActivityRows.slice((activityPage - 1) * activityRowsPerPage, activityPage * activityRowsPerPage).map(({ order: o, item: it }) => (
                         <TableRow key={`${o.id}-${it.id}`} onDoubleClick={() => openActivityModal(o, it)}>
                           <TableCell>{o.orderNumber || o.id}</TableCell>
-                          <TableCell>{o.createdAt ? new Date(o.createdAt).toLocaleString() : '-'}</TableCell>
+                          <TableCell>{o.createdAt ? new Date(o.createdAt).toLocaleDateString() : '-'}</TableCell>
+                          <TableCell>{o.createdAt ? new Date(o.createdAt).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }) : '-'}</TableCell>
                           <TableCell>{it.name}</TableCell>
                           <TableCell>{it.category || menuIdToCategory[it.id] || '-'}</TableCell>
                           <TableCell>{(it.status || o.status)}</TableCell>
@@ -1694,24 +1719,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                               >
                                 {(it.status || o.status) === 'served' ? 'Served' : 'Serve'}
                               </Button>
-                              <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => openActivityModal(o, it)}>Actions</Button>
-                              <Button size="sm" variant="flat" className="bg-blue-50 text-blue-700 border border-blue-200" onClick={() => {
-                                // Open payment modal for current cart based on this order
-                                const mapped = {
-                                  id: o.id,
-                                  table: o.table,
-                                  waiterId: o.waiterId,
-                                  items: o.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: '', route: i.route })),
-                                  status: o.status as any,
-                                  customerType: o.customerType as any,
-                                  venue: o.venue as any,
-                                  notes: o.notes,
-                                  urgent: o.urgent,
-                                  priority: o.priority,
-                                } as any;
-                                loadOrderIntoCart(mapped);
-                                paymentModal.onOpen();
-                              }}>Payment</Button>
+                              <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => openActivityModal(o, it)}>View</Button>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -2104,10 +2112,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         </ModalContent>
       </Modal>
 
-      {/* Activity Row Actions Modal */}
+      {/* POS Activity Table's "View" modal — one place for everything that used to be
+          three separate row buttons (Actions + Payment; Serve stays its own quick
+          button in the row since it's the most frequent single click). */}
       <Modal isOpen={!!activitySelected} onClose={() => setActivitySelected(null)}>
         <ModalContent>
-          <ModalHeader className="text-ghana-black">POS Item Actions</ModalHeader>
+          <ModalHeader className="text-ghana-black">Order Item — View</ModalHeader>
           <ModalBody>
             {!activitySelected ? null : (
               <div className="space-y-3 text-sm">
@@ -2124,22 +2134,13 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <span>Status: {(activitySelected.item.status || activitySelected.order.status)}</span>
                   </div>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                   <Button variant="flat" className="bg-blue-50 text-blue-700 border border-blue-200" onClick={() => {
-                    const o = activitySelected.order;
-                    const mapped = {
-                      id: o.id,
-                      table: o.table,
-                      waiterId: o.waiterId,
-                      items: o.items.map(i => ({ id: i.id, name: i.name, price: i.price, qty: i.qty, category: '', route: i.route })),
-                      status: o.status as any,
-                      customerType: o.customerType as any,
-                      venue: o.venue as any,
-                      notes: o.notes,
-                      urgent: o.urgent,
-                      priority: o.priority,
-                    } as any;
-                    loadOrderIntoCart(mapped);
+                    openPaymentForOrder(activitySelected.order);
+                    setActivitySelected(null);
+                  }}>Pay</Button>
+                  <Button variant="flat" className="bg-gray-100" onClick={() => {
+                    loadOrderIntoCart(mapOrderForCart(activitySelected.order));
                     setActivitySelected(null);
                   }}>Edit in Cart</Button>
                   <Button variant="flat" className="bg-red-50 text-red-700 border border-red-200" onClick={() => cancelReasonModal.onOpen()}>Cancel Item</Button>
