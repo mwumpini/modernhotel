@@ -110,6 +110,37 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [tableNumber, setTableNumber] = useState('T01');
   const [floorTables, setFloorTables] = useState<{ number: string; status: string; capacity?: number }[]>([]);
   const [hasOpenTill, setHasOpenTill] = useState<boolean | null>(null);
+  // Open the Restaurant / Bar till from right here (same call as the Cashiering tab), instead of
+  // sending the cashier off to another screen when the POS says there's no till.
+  const openTillModal = useDisclosure();
+  const [tillFloat, setTillFloat] = useState('');
+  const [tillBusy, setTillBusy] = useState(false);
+  const [tillError, setTillError] = useState('');
+  const promptOpenTill = () => { setTillError(''); openTillModal.onOpen(); };
+  const openTill = async () => {
+    const floatValue = parseFloat(tillFloat);
+    if (Number.isNaN(floatValue) || floatValue < 0) { setTillError('Enter the cash in the drawer, e.g. 200.'); return; }
+    setTillBusy(true);
+    setTillError('');
+    try {
+      const now = new Date();
+      const businessDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+      const res = await fetch('/api/frontoffice/cashier-shifts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-tenant-subdomain': getClientTenantSubdomain() },
+        body: JSON.stringify({ openingFloat: floatValue, outlet: 'restaurant', businessDate }),
+      });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) { setTillError(data?.error || 'Could not open the till.'); return; }
+      setHasOpenTill(true);
+      setTillFloat('');
+      openTillModal.onClose();
+    } catch {
+      setTillError('Could not reach the server. Try again.');
+    } finally {
+      setTillBusy(false);
+    }
+  };
   const [waiterId, setWaiterId] = useState('W1');
   // Who is taking orders on this terminal right now. The signed-in account is trusted as it is;
   // anyone else switches in with their own PIN, and the terminal locks again after each order.
@@ -795,7 +826,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     }
 
     if (paymentMethod !== 'Room Charge' && hasOpenTill === false) {
-      alert('Open a Restaurant / Bar till (Cashiering tab) before taking cash, card, or MoMo.');
+      promptOpenTill();
       return;
     }
 
@@ -1399,9 +1430,14 @@ export default function FBPOS({ onClose }: FBPOSProps) {
               </span>
             )}
             {hasOpenTill === false && (
-              <Chip color="warning" variant="flat" size="sm" title="Cash, card and MoMo need an open till (Cashiering tab). Room charges work without one.">
-                No open till
-              </Chip>
+              <button
+                type="button"
+                onClick={promptOpenTill}
+                className="inline-flex h-9 items-center gap-1.5 rounded-full bg-amber-100 px-3 text-xs font-semibold text-amber-800 hover:bg-amber-200"
+                title="Cash, card and MoMo need an open till. Room charges work without one."
+              >
+                No open till · Open one
+              </button>
             )}
             <Button size="sm" variant="flat" className="h-9 bg-white border border-slate-200" startContent={<ChefHat size={16} aria-hidden />} onClick={() => {
               try {
@@ -1885,6 +1921,40 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         </div>
       )}
 
+      {/* Open the Restaurant / Bar till: count the cash in the drawer and start the shift. */}
+      <Modal isOpen={openTillModal.isOpen} onClose={openTillModal.onClose} size="sm" placement="center">
+        <ModalContent>
+          <ModalHeader className="flex flex-col gap-0.5">
+            Open the till
+            <span className="text-sm font-normal text-slate-500">
+              {cashierName ? `${cashierName}'s Restaurant / Bar shift. ` : ''}Count the cash in the drawer before you start.
+            </span>
+          </ModalHeader>
+          <ModalBody>
+            <Input
+              autoFocus
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="0.01"
+              label="Starting cash (float), GH₵"
+              placeholder="e.g. 200.00"
+              value={tillFloat}
+              onValueChange={setTillFloat}
+              onKeyDown={(e) => { if (e.key === 'Enter') void openTill(); }}
+            />
+            <p className="text-xs text-slate-500">At the end of the shift, close the till under Restaurant &amp; Bar → Cashiering to count up.</p>
+            {tillError && <p className="text-sm text-red-600" role="alert">{tillError}</p>}
+          </ModalBody>
+          <ModalFooter>
+            <Button variant="flat" onPress={openTillModal.onClose}>Cancel</Button>
+            <Button className="bg-ghana-green text-white" isLoading={tillBusy} isDisabled={tillFloat === ''} onPress={() => void openTill()}>
+              Open till
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
       {/* Shared terminal: tap your name, type your PIN. Locks again after each order is sent. */}
       <Modal isOpen={waiterSwitchModal.isOpen} onClose={waiterSwitchModal.onClose} size="md" placement="center">
         <ModalContent>
@@ -2160,7 +2230,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 (splitPayments.find((s) => s.method !== 'Room Charge' && Number(s.amount) > 0)?.method as PaymentMethod) ||
                 'Cash';
               if (primaryTender !== 'Room Charge' && hasOpenTill === false) {
-                alert('Open a Restaurant / Bar till before taking cash, card, or MoMo.');
+                promptOpenTill();
                 return;
               }
               if (orderId) {
