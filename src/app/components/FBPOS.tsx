@@ -1,23 +1,21 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Button,
-  Card,
-  CardBody,
-  CardHeader,
   Input,
   Select,
   SelectItem,
-  Tabs,
-  Tab,
   Table,
   TableHeader,
   TableColumn,
   TableBody,
   TableRow,
   TableCell,
-  Badge,
+  Dropdown,
+  DropdownTrigger,
+  DropdownMenu,
+  DropdownItem,
   Modal,
   ModalContent,
   ModalHeader,
@@ -43,62 +41,14 @@ import { managerPinMatches } from '../lib/settings/managerPin';
 import { notifyError } from '../lib/notifications/notify';
 import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
 import { useSession } from 'next-auth/react';
+import {
+  ChefHat, ChevronDown, ChevronUp, ClipboardList, CreditCard, Minus, MoreHorizontal, Plus, Printer,
+  Receipt, Search, Send, Trash2, UtensilsCrossed, Wine,
+} from 'lucide-react';
 
 type CustomerType = 'In-house' | 'Walk-in';
 type VenueMode = 'Restaurant' | 'Bar';
 type PaymentMethod = 'Cash' | 'Card' | 'Mobile Money' | 'Room Charge';
-
-const ACTIVITY_COLUMN_WIDTHS = {
-  id: 120,
-  date: 96,
-  time: 80,
-  itemName: 180,
-  customerName: 160,
-  room: 88,
-  table: 80,
-  venue: 110,
-  qty: 64,
-  amount: 96,
-  discount: 96,
-  price: 88,
-  category: 120,
-  status: 110,
-  waiter: 140,
-  actions: 96,
-} as const;
-
-type ActivityColumnKey = keyof typeof ACTIVITY_COLUMN_WIDTHS;
-const ACTIVITY_MIN_COLUMN = 56;
-
-function ActivityColumnSizer({
-  label,
-  onResizeStart,
-  onReset,
-}: {
-  label: string;
-  onResizeStart: (clientX: number) => void;
-  onReset: () => void;
-}) {
-  return (
-    <span
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={`Resize ${label} column`}
-      title="Drag to resize. Double-click to reset this column."
-      className="absolute -right-2 top-0 z-10 h-full w-2 cursor-col-resize touch-none hover:bg-ghana-gold/80"
-      onPointerDown={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onResizeStart(event.clientX);
-      }}
-      onDoubleClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onReset();
-      }}
-    />
-  );
-}
 
 interface FBPOSProps {
   onClose: () => void;
@@ -194,18 +144,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [pinError, setPinError] = useState<string>('');
   const [pendingManagerAction, setPendingManagerAction] = useState<{ type: 'delete'; orderId: string } | null>(null);
   const [orders, setOrders] = useState<FBOrder[]>([]);
-  const [showAllItems, setShowAllItems] = useState(false);
-  const [sortKey, setSortKey] = useState<string>('time');
-  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('desc');
-  const [activityPage, setActivityPage] = useState<number>(1);
-  const [activityRowsPerPage, setActivityRowsPerPage] = useState<number>(10);
-  const [activitySearch, setActivitySearch] = useState<string>('');
-  const [activityQueue, setActivityQueue] = useState<'all' | 'pending-kot' | 'pending-bot' | 'unpaid' | 'billed' | 'cancelled'>('all');
-  const [activityWaiterFilter, setActivityWaiterFilter] = useState<string>('all');
-  const [activityDateMode, setActivityDateMode] = useState<'all' | 'today' | 'specific' | 'range'>('all');
-  const [activityDateSingle, setActivityDateSingle] = useState('');
-  const [activityDateFrom, setActivityDateFrom] = useState('');
-  const [activityDateTo, setActivityDateTo] = useState('');
   const [splitPayments, setSplitPayments] = useState<Array<{ method: PaymentMethod; amount: number }>>([]);
   const [tipAmount, setTipAmount] = useState<number>(0);
   const [settleRoomSearch, setSettleRoomSearch] = useState<string>('');
@@ -502,12 +440,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       notifyError(`Could not ${pinned ? 'pin' : 'unpin'} ${item.name}. Please try again.`, 'Pin not saved');
     }
   };
-  const menuIdToCategory = useMemo(() => {
-    const map: Record<string, string> = {};
-    menu.forEach(m => { map[m.id] = m.category; });
-    return map;
-  }, [menu]);
-
   const activityStamp = (iso?: string) => {
     if (!iso) return { date: '-', time: '-' };
     const when = new Date(iso);
@@ -517,208 +449,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       time: when.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
     };
   };
-
-  const sortedOrders = useMemo(() => {
-    const allItems = orders.flatMap((o) => o.items.map((it) => ({ order: o, item: it })));
-    const sorted = [...allItems].sort((a, b) => {
-      let aValue: any, bValue: any;
-      
-      switch (sortKey) {
-        case 'id':
-          aValue = a.order.orderNumber || a.order.id;
-          bValue = b.order.orderNumber || b.order.id;
-          break;
-        case 'date':
-        case 'time':
-          aValue = a.order.createdAt || '';
-          bValue = b.order.createdAt || '';
-          break;
-        case 'itemName':
-          aValue = a.item.name;
-          bValue = b.item.name;
-          break;
-        case 'category':
-          aValue = a.item.category || menuIdToCategory[a.item.id] || '';
-          bValue = b.item.category || menuIdToCategory[b.item.id] || '';
-          break;
-        case 'status':
-          aValue = a.item.status || a.order.status;
-          bValue = b.item.status || b.order.status;
-          break;
-        case 'customerName':
-          aValue = a.order.guestName || '';
-          bValue = b.order.guestName || '';
-          break;
-        case 'room':
-          aValue = a.order.roomNumber || '';
-          bValue = b.order.roomNumber || '';
-          break;
-        case 'table':
-          aValue = a.order.table;
-          bValue = b.order.table;
-          break;
-        case 'venue':
-          aValue = a.order.venue;
-          bValue = b.order.venue;
-          break;
-        case 'qty':
-          aValue = a.item.qty;
-          bValue = b.item.qty;
-          break;
-        case 'amount':
-          aValue = a.item.price * a.item.qty;
-          bValue = b.item.price * b.item.qty;
-          break;
-        case 'discount':
-          aValue = ((a.item as any).discountPerUnit || 0) * a.item.qty;
-          bValue = ((b.item as any).discountPerUnit || 0) * b.item.qty;
-          break;
-        case 'price':
-          aValue = a.item.price - ((a.item as any).discountPerUnit || 0) + (((a.item as any).serviceChargePerUnit || 0));
-          bValue = b.item.price - ((b.item as any).discountPerUnit || 0) + (((b.item as any).serviceChargePerUnit || 0));
-          break;
-        case 'waiter':
-          aValue = waiters.find(w => w.id === a.order.waiterId)?.name || a.order.waiterId;
-          bValue = waiters.find(w => w.id === b.order.waiterId)?.name || b.order.waiterId;
-          break;
-        default:
-          aValue = a.order.id;
-          bValue = b.order.id;
-      }
-      
-      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
-      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
-    });
-    
-    return sorted;
-  }, [orders, menuIdToCategory, waiters, sortKey, sortDirection]);
-
-  const activityLineOpen = (status: string) => status !== 'served' && status !== 'billed' && status !== 'cancelled' && status !== 'refunded';
-
-  const activityRowInQueue = (
-    queue: 'pending-kot' | 'pending-bot' | 'unpaid' | 'billed' | 'cancelled',
-    order: { status?: string },
-    item: { status?: string; route?: string },
-  ) => {
-    const status = String(item.status || order.status || '').toLowerCase();
-    const route = item.route === 'bar' ? 'bar' : 'kitchen';
-    if (queue === 'pending-kot') return route === 'kitchen' && activityLineOpen(status);
-    if (queue === 'pending-bot') return route === 'bar' && activityLineOpen(status);
-    if (queue === 'unpaid') return status === 'served' || status === 'ready';
-    if (queue === 'billed') return status === 'billed';
-    return status === 'cancelled';
-  };
-
-  const activityWaiterOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const order of orders) {
-      if (!order.waiterId) continue;
-      map.set(order.waiterId, waiters.find(w => w.id === order.waiterId)?.name || order.waiterId);
-    }
-    return Array.from(map.entries())
-      .map(([id, name]) => ({ id, name }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  }, [orders, waiters]);
-
-  const [activityWidths, setActivityWidths] = useState(ACTIVITY_COLUMN_WIDTHS);
-  const activityWidthsRef = useRef(activityWidths);
-  activityWidthsRef.current = activityWidths;
-  const activityDragRef = useRef<{ key: ActivityColumnKey; startX: number; startWidth: number } | null>(null);
-
-  useEffect(() => {
-    const move = (event: PointerEvent) => {
-      const drag = activityDragRef.current;
-      if (!drag) return;
-      const next = Math.max(ACTIVITY_MIN_COLUMN, Math.round(drag.startWidth + event.clientX - drag.startX));
-      setActivityWidths((current) => (current[drag.key] === next ? current : { ...current, [drag.key]: next }));
-    };
-    const stop = () => {
-      if (!activityDragRef.current) return;
-      activityDragRef.current = null;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', stop);
-    window.addEventListener('pointercancel', stop);
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', stop);
-      window.removeEventListener('pointercancel', stop);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-  }, []);
-
-  const beginActivityResize = (key: ActivityColumnKey, clientX: number) => {
-    activityDragRef.current = { key, startX: clientX, startWidth: activityWidthsRef.current[key] };
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-  };
-  const resetActivityWidth = (key: ActivityColumnKey) => {
-    setActivityWidths((current) => ({ ...current, [key]: ACTIVITY_COLUMN_WIDTHS[key] }));
-  };
-  const activityTableWidth = (Object.keys(ACTIVITY_COLUMN_WIDTHS) as ActivityColumnKey[]).reduce((sum, key) => sum + activityWidths[key], 0);
-  const activityHeader = (key: ActivityColumnKey, label: string, sortable = true) => (
-    <TableColumn key={key} className="relative" style={{ width: activityWidths[key], minWidth: activityWidths[key], maxWidth: activityWidths[key] }}>
-      {sortable ? (
-        <button
-          type="button"
-          className="max-w-full truncate font-semibold text-ghana-black"
-          onClick={() => {
-            if (sortKey === key) setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
-            else {
-              setSortKey(key);
-              setSortDirection('desc');
-            }
-          }}
-        >
-          {label}{sortKey === key ? (sortDirection === 'asc' ? ' ↑' : ' ↓') : ''}
-        </button>
-      ) : (
-        <span className="font-semibold text-ghana-black">{label}</span>
-      )}
-      <ActivityColumnSizer label={label} onResizeStart={(clientX) => beginActivityResize(key, clientX)} onReset={() => resetActivityWidth(key)} />
-    </TableColumn>
-  );
-
-  const filteredActivityRows = useMemo(() => {
-    const term = activitySearch.trim().toLowerCase();
-    const activityDay = (iso?: string) => {
-      const when = iso ? new Date(iso) : null;
-      if (!when || Number.isNaN(when.getTime())) return '';
-      const month = String(when.getMonth() + 1).padStart(2, '0');
-      const day = String(when.getDate()).padStart(2, '0');
-      return `${when.getFullYear()}-${month}-${day}`;
-    };
-    const today = activityDay(new Date().toISOString());
-    return sortedOrders.filter(({ order, item }) => {
-      if (activityQueue !== 'all' && !activityRowInQueue(activityQueue, order, item)) return false;
-      if (activityWaiterFilter !== 'all' && order.waiterId !== activityWaiterFilter) return false;
-      const orderDay = activityDay(order.createdAt || order.timestamp);
-      if (activityDateMode === 'today' && orderDay !== today) return false;
-      if (activityDateMode === 'specific' && activityDateSingle && orderDay !== activityDateSingle) return false;
-      if (activityDateMode === 'range' && (activityDateFrom || activityDateTo)) {
-        if (activityDateFrom && orderDay < activityDateFrom) return false;
-        if (activityDateTo && orderDay > activityDateTo) return false;
-      }
-      if (!term) return true;
-      const haystack = [
-        order.orderNumber, order.id, item.name, order.guestName, order.table, order.roomNumber,
-        waiters.find(w => w.id === order.waiterId)?.name || order.waiterId,
-      ].filter(Boolean).join(' ').toLowerCase();
-      return haystack.includes(term);
-    });
-  }, [sortedOrders, activitySearch, activityQueue, activityWaiterFilter, activityDateMode, activityDateSingle, activityDateFrom, activityDateTo, waiters]);
-
-  const totalActivityPages = Math.max(1, Math.ceil((filteredActivityRows.length || 0) / (activityRowsPerPage || 10)));
-  React.useEffect(() => {
-    if (activityPage > totalActivityPages) setActivityPage(totalActivityPages);
-  }, [activityRowsPerPage, filteredActivityRows.length, totalActivityPages, activityPage]);
-  React.useEffect(() => {
-    setActivityPage(1);
-  }, [activitySearch, activityQueue, activityWaiterFilter, activityDateMode, activityDateSingle, activityDateFrom, activityDateTo]);
 
   const openActivityModal = (o: FBOrder, it: any) => {
     setActivitySelected({ order: o, item: it });
@@ -1399,346 +1129,347 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     return () => window.removeEventListener('keydown', handler);
   }, [sendOrder, openPayment, onClose]);
 
+  // Order panel: "Details" folds away once the order is set up; the second tab replaces the old
+  // transactions table at the bottom of this screen (the full list is the dashboard's Transactions tab).
+  const [showOrderDetails, setShowOrderDetails] = useState<boolean>(() => {
+    try { return localStorage.getItem('fbpos.detailsOpen') === 'true'; } catch { return false; }
+  });
+  React.useEffect(() => {
+    try { localStorage.setItem('fbpos.detailsOpen', String(showOrderDetails)); } catch {}
+  }, [showOrderDetails]);
+  const [panelTab, setPanelTab] = useState<'current' | 'orders'>('current');
+  const [ordersView, setOrdersView] = useState<'open' | 'paid'>('open');
+  const [ordersScope, setOrdersScope] = useState<'table' | 'all'>('table');
+  const panelOrders = useMemo(() => {
+    const today = new Date().toDateString();
+    return orders
+      .filter((o) => {
+        const status = String(o.status || '').toLowerCase();
+        const settled = status === 'billed' || status === 'paid';
+        if (status === 'cancelled' || status === 'refunded') return false;
+        if (ordersScope === 'table' && o.table !== tableNumber) return false;
+        if (ordersView === 'open') return !settled;
+        const when = new Date(o.createdAt || o.timestamp || '');
+        return settled && !Number.isNaN(when.getTime()) && when.toDateString() === today;
+      })
+      .sort((a, b) => String(b.createdAt || b.timestamp || '').localeCompare(String(a.createdAt || a.timestamp || '')));
+  }, [orders, ordersView, ordersScope, tableNumber]);
+
+  const waiterName = waiters.find(w => w.id === waiterId)?.name || waiterId;
+  const customerLabel = customerType === 'In-house'
+    ? (roomNumber ? `Room ${roomNumber}${guestName ? ` · ${guestName}` : ''}` : 'In-house · pick a room')
+    : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : 'Walk-in');
+  const taxAmount = computeSalesTaxTotal(total);
+  const cartCount = cart.reduce((n, ci) => n + ci.qty, 0);
+
+  const sendOrUpdate = () => {
+    if (editingOrderId) {
+      // Update existing order instead of creating a new one
+      const existing = orders.find(o => o.id === editingOrderId);
+      if (existing) {
+        const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
+        const updated = {
+          ...existing,
+          table: tableNumber,
+          waiterId,
+          venue,
+          notes: orderNotes,
+          items: itemsWithOrderDiscount.map(i => ({
+            id: i.id,
+            name: i.name,
+            price: i.price,
+            qty: i.qty,
+            route: i.route,
+            status: (existing.items.find(x => x.id === i.id)?.status) || 'pending',
+            prepMinutes: i.route === 'kitchen' ? 15 : 2,
+            isRoomService: i.isRoomService || false,
+            discountPerUnit: i.discountPerUnit || 0,
+            serviceChargePerUnit: i.serviceChargePerUnit || 0
+          }))
+        } as any;
+        // Reflect to store and local pending list
+        ordersStore.update(updated);
+        trackEvent('FB.OrderUpdated', { id: updated.id, items: updated.items.map((it: any) => ({ id: it.id, qty: it.qty, discountPerUnit: it.discountPerUnit || 0 })) }, { sourceModule: 'F&B' });
+        setPendingOrders(prev => prev.map(po => po.id === editingOrderId ? {
+          ...po,
+          table: updated.table,
+          waiterId: updated.waiterId,
+          venue: updated.venue,
+          notes: updated.notes,
+          items: cart
+        } : po));
+      }
+      setEditingOrderId(null);
+      clearCart();
+      setOrderNotes('');
+      return;
+    }
+    sendOrder();
+  };
+
+  const previewCartReceipt = () => {
+    const html = buildReceiptHtml({
+      hotelName,
+      contact: 'Accra, Ghana',
+      code: `RCPT-${Date.now().toString().slice(-6)}`,
+      datetime: new Date().toLocaleString(),
+      items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
+      subtotal,
+      discount: orderDiscountAmount,
+      total,
+      table: tableNumber,
+      waiter: waiters.find(w => w.id === waiterId)?.name,
+    });
+    setPrintPreview({ title: 'Receipt Preview', html });
+    printPreviewModal.onOpen();
+  };
+
+  // The one full transactions list lives on the Restaurant & Bar dashboard's Transactions tab.
+  const openAllTransactions = () => {
+    try { localStorage.setItem('fb.tab', 'activity'); } catch {}
+    onClose();
+    window.dispatchEvent(new Event('fb-navigate'));
+  };
+
+  const itemIcon = (route: 'kitchen' | 'bar', size = 22) =>
+    route === 'bar' ? <Wine size={size} aria-hidden /> : <UtensilsCrossed size={size} aria-hidden />;
+
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold text-ghana-black">🛒 POS Terminal</h1>
-          <div className="flex gap-2">
-            <Button variant="flat" className="bg-gray-200" onClick={() => {
+    <div className="min-h-screen bg-slate-50 p-3 pb-24 md:p-4 lg:pb-4">
+      <div className="mx-auto max-w-[1600px]">
+        {/* Top bar: title, venue, menu search, shortcuts */}
+        <div className="mb-3 flex flex-wrap items-center gap-2 md:gap-3">
+          <h1 className="text-xl font-bold text-ghana-black md:text-2xl">POS Terminal</h1>
+          <div className="inline-flex rounded-xl border border-slate-200 bg-white p-1" role="group" aria-label="Venue">
+            {(['Restaurant', 'Bar'] as VenueMode[]).map(v => (
+              <button
+                key={v}
+                type="button"
+                aria-pressed={venue === v}
+                onClick={() => setVenue(v)}
+                className={`h-9 rounded-lg px-3 text-sm font-medium transition-colors ${venue === v ? 'bg-ghana-green text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+          <Input
+            aria-label="Search menu"
+            placeholder="Search menu or short name…"
+            value={search}
+            onValueChange={setSearch}
+            isClearable
+            onClear={() => setSearch('')}
+            startContent={<Search size={18} className="text-slate-400" aria-hidden />}
+            className="order-last w-full md:order-none md:w-auto md:min-w-[16rem] md:flex-1"
+            classNames={{ inputWrapper: 'h-11 bg-white border border-slate-200 shadow-none' }}
+          />
+          <div className="ml-auto flex items-center gap-2">
+            {hasOpenTill === false && (
+              <Chip color="warning" variant="flat" size="sm" title="Cash, card and MoMo need an open till (Cashiering tab). Room charges work without one.">
+                No open till
+              </Chip>
+            )}
+            <Button size="sm" variant="flat" className="h-9 bg-white border border-slate-200" startContent={<ChefHat size={16} aria-hidden />} onClick={() => {
               try {
                 const evt = new CustomEvent('app.navigate', { detail: { section: 'fb-kitchen' } });
                 window.dispatchEvent(evt);
               } catch {}
-            }}>Kitchen Orders</Button>
-            <Button variant="flat" className="bg-gray-200" onClick={() => {
-              document.getElementById('pos-activity-table')?.scrollIntoView({ behavior: 'auto', block: 'start' });
-            }}>POS Table</Button>
+            }}>Kitchen</Button>
+            <Button size="sm" variant="flat" className="h-9 bg-white border border-slate-200" startContent={<ClipboardList size={16} aria-hidden />} onClick={openAllTransactions}>
+              All transactions
+            </Button>
           </div>
         </div>
 
-        
+        <div className="grid grid-cols-1 gap-3 lg:h-[calc(100vh-7.5rem)] lg:grid-cols-[minmax(0,1fr)_400px] xl:grid-cols-[minmax(0,1fr)_440px] md:gap-4">
+          {/* Menu */}
+          <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 md:p-4" aria-label="Menu">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              {searching ? (
+                <p className="text-sm text-slate-600">Results for “{search.trim()}”</p>
+              ) : (
+                <div className="-mx-1 flex min-w-0 gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Menu categories">
+                  {menuTabs.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      role="tab"
+                      aria-selected={activeTab === t}
+                      onClick={() => setMenuTab(t)}
+                      className={`h-10 shrink-0 rounded-xl border px-4 text-sm font-medium transition-colors ${activeTab === t ? 'border-ghana-green bg-ghana-green text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      {t === PINNED_TAB ? `★ Pinned (${pinnedItems.length})` : t}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {menuLoading && <span className="shrink-0 text-xs text-slate-400 animate-pulse">Loading…</span>}
+            </div>
+            {!menuLoading && menu.length === 0 && (
+              <p className="text-sm text-orange-600">No menu items yet. Add them under Menu &amp; Inventory.</p>
+            )}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {shownMenu.length === 0 ? (
+                <p className="py-10 text-center text-sm text-slate-500">{searching ? 'No items match your search.' : 'No items here yet.'}</p>
+              ) : (
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2.5">
+                  {shownMenu.map(mi => (
+                    <div key={mi.id} className="relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:border-ghana-green/50 hover:shadow-md">
+                      <button type="button" onClick={() => addToCart(mi)} className="flex flex-1 flex-col text-left" aria-label={`Add ${mi.name}, GH₵ ${mi.price.toFixed(2)}`}>
+                        <div className={`flex h-16 items-center justify-center md:h-20 ${mi.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
+                          {itemIcon(mi.route, 28)}
+                        </div>
+                        <div className="flex flex-1 flex-col gap-0.5 p-2.5">
+                          <span className="line-clamp-2 text-sm font-semibold leading-snug text-ghana-black">{mi.name}</span>
+                          <span className="truncate text-xs text-slate-500">{mi.category}</span>
+                          <div className="mt-auto flex items-center justify-between gap-2 pt-2">
+                            <span className="whitespace-nowrap text-sm font-bold text-ghana-black">GH₵ {mi.price.toFixed(2)}</span>
+                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ghana-green text-white" aria-hidden>
+                              <Plus size={16} />
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={mi.isPinned ? `Unpin ${mi.name}` : `Pin ${mi.name}`}
+                        title={mi.isPinned ? 'Unpin' : 'Pin to the top'}
+                        className={`absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-lg leading-none shadow-sm ${mi.isPinned ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}`}
+                        onClick={() => togglePin(mi)}
+                      >
+                        {mi.isPinned ? '★' : '☆'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 lg:h-[calc(100vh-10.5rem)] lg:items-stretch">
-          <div className="lg:col-span-3 h-full min-h-0">
-            <Card className="border-0 shadow-lg h-full">
-              <CardHeader className="pb-2"><h3 className="font-semibold text-ghana-black">Order Context</h3></CardHeader>
-              <CardBody className="space-y-3 min-h-0 overflow-y-auto">
-                <Select label="Venue" selectedKeys={[venue]} onSelectionChange={(k) => setVenue(Array.from(k as Set<string>)[0] as VenueMode)}>
-                  <SelectItem key="Restaurant">Restaurant</SelectItem>
-                  <SelectItem key="Bar">Bar</SelectItem>
-                </Select>
-                <Select label="Customer Type" selectedKeys={[customerType]} onSelectionChange={(k) => handleCustomerTypeChange(Array.from(k as Set<string>)[0] as CustomerType)}>
-                  <SelectItem key="In-house">In-house</SelectItem>
-                  <SelectItem key="Walk-in">Walk-in</SelectItem>
-                </Select>
-                {/* Unified guest/customer search directly under customer type */}
-                {customerType === 'In-house' ? (
-                  <div>
-                    <Input 
-                      label="Room Number" 
-                      placeholder="Search by room number or guest name..."
-                      value={roomSearchTerm || roomNumber}
-                      onChange={(e) => {
-                        setRoomSearchTerm(e.target.value);
-                        if (!e.target.value) {
-                          setRoomNumber('');
-                          setGuestName('');
-                          setSelectedGuest(null);
-                        }
-                      }}
-                      onFocus={() => setRoomSearchTerm(roomNumber)}
-                      startContent={<span>🏨</span>}
-                    />
-                    {roomSearchTerm && filteredRooms.length > 0 && (
-                      <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg z-10">
-                        {filteredRooms.map((room) => (
-                          <div
-                            key={room.roomId}
-                            className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
-                            onClick={() => handleRoomSelect(room)}
-                          >
-                            <div className="font-medium">Room {room.roomId}</div>
-                            <div className="text-sm text-gray-600">{room.guestName} • {room.roomType}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+          {/* Order panel */}
+          <aside id="pos-order-panel" className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white" aria-label="Order">
+            {/* Who / where the order is for */}
+            <div className="border-b border-slate-100 p-3 md:p-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-lg font-bold text-ghana-black">{orderMode === 'Takeaway' ? 'Takeaway' : `Table ${tableNumber}`}</span>
+                    <Chip size="sm" variant="flat" color={venue === 'Bar' ? 'primary' : 'success'}>{venue}</Chip>
+                    {editingOrderId && <Chip size="sm" variant="flat" color="warning">Editing an order</Chip>}
                   </div>
-                ) : (
-                  <div>
-                    <Input 
-                      label="Customer (Walk-in)" 
-                      placeholder="Search by name, phone, or email..."
-                      value={walkInSearchTerm || (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : '')}
-                      onChange={(e) => {
-                        setWalkInSearchTerm(e.target.value);
-                        if (!e.target.value) {
-                          setSelectedWalkIn(null);
-                        }
-                      }}
-                      onFocus={() => { setWalkInFocused(true); setWalkInSearchTerm(selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : ''); }}
-                      onBlur={() => { setTimeout(() => setWalkInFocused(false), 150); }}
-                      startContent={<span>🧾</span>}
-                    />
-                    {(walkInFocused || !!walkInSearchTerm) && filteredWalkIns.length > 0 && (
-                      <div className="mt-1 max-h-40 overflow-y-auto border border-gray-200 rounded-lg bg-white shadow-lg z-10">
-                        {filteredWalkIns.map((c) => (
-                          <div
-                            key={c.id}
-                            className="p-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
-                            onClick={() => handleWalkInSelect(c)}
-                          >
-                            <div className="font-medium">{c.firstName} {c.lastName}</div>
-                            <div className="text-sm text-gray-600">
-                              {c.phone && `📞 ${c.phone}`}
-                              {c.email && ` • ✉️ ${c.email}`}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
-                <div className="grid grid-cols-2 gap-2">
-                  <Select label="Order Mode" selectedKeys={[orderMode]} onSelectionChange={(k) => setOrderMode(Array.from(k as Set<string>)[0] as any)}>
+                  <p className="mt-0.5 truncate text-xs text-slate-500">{customerLabel} · {waiterName}</p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="flat"
+                  className="shrink-0 bg-slate-100"
+                  aria-expanded={showOrderDetails}
+                  endContent={showOrderDetails ? <ChevronUp size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}
+                  onClick={() => setShowOrderDetails(v => !v)}
+                >
+                  Details
+                </Button>
+              </div>
+
+              {showOrderDetails && (
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+                  <Select size="sm" label="Customer type" selectedKeys={[customerType]} onSelectionChange={(k) => handleCustomerTypeChange(Array.from(k as Set<string>)[0] as CustomerType)}>
+                    <SelectItem key="In-house">In-house guest</SelectItem>
+                    <SelectItem key="Walk-in">Walk-in</SelectItem>
+                  </Select>
+                  <Select size="sm" label="Order mode" selectedKeys={[orderMode]} onSelectionChange={(k) => setOrderMode(Array.from(k as Set<string>)[0] as any)}>
                     <SelectItem key="Dine-in">Dine-in</SelectItem>
                     <SelectItem key="Takeaway">Takeaway</SelectItem>
                   </Select>
-                  {orderMode === 'Takeaway' ? (
-                    <Input type="number" label="Packaging Fee (₵)" value={String(packagingFee)} onChange={(e) => setPackagingFee(Number(e.target.value || 0))} />
-                  ) : (
-                    <div />
-                  )}
-                </div>
-
-                {customerType === 'In-house' && (
-                  <div className="space-y-3">
-                    {selectedGuest && (
-                      <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                        <div className="text-sm text-green-800">
-                          <div className="font-medium">✓ Guest Selected</div>
-                          <div>Room: {roomNumber} • Guest: {guestName}</div>
-                        </div>
+                  <div className="sm:col-span-2 lg:col-span-1 xl:col-span-2">
+                    {customerType === 'In-house' ? (
+                      <div>
+                        <Input
+                          size="sm"
+                          label="Room"
+                          placeholder="Room number or guest name…"
+                          value={roomSearchTerm || roomNumber}
+                          onChange={(e) => {
+                            setRoomSearchTerm(e.target.value);
+                            if (!e.target.value) {
+                              setRoomNumber('');
+                              setGuestName('');
+                              setSelectedGuest(null);
+                            }
+                          }}
+                          onFocus={() => setRoomSearchTerm(roomNumber)}
+                        />
+                        {roomSearchTerm && filteredRooms.length > 0 && (
+                          <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                            {filteredRooms.map((room) => (
+                              <button
+                                type="button"
+                                key={room.roomId}
+                                className="block w-full border-b border-slate-100 p-2 text-left last:border-b-0 hover:bg-slate-50"
+                                onClick={() => handleRoomSelect(room)}
+                              >
+                                <div className="font-medium">Room {room.roomId}</div>
+                                <div className="text-sm text-slate-600">{room.guestName} • {room.roomType}</div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {selectedGuest && (
+                          <p className="mt-1 text-xs text-green-700">✓ Room {roomNumber} · {guestName}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <div>
+                        <Input
+                          size="sm"
+                          label="Customer"
+                          placeholder="Name, phone or email…"
+                          value={walkInSearchTerm || (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : '')}
+                          onChange={(e) => {
+                            setWalkInSearchTerm(e.target.value);
+                            if (!e.target.value) {
+                              setSelectedWalkIn(null);
+                            }
+                          }}
+                          onFocus={() => { setWalkInFocused(true); setWalkInSearchTerm(selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : ''); }}
+                          onBlur={() => { setTimeout(() => setWalkInFocused(false), 150); }}
+                        />
+                        {(walkInFocused || !!walkInSearchTerm) && filteredWalkIns.length > 0 && (
+                          <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                            {filteredWalkIns.map((c) => (
+                              <button
+                                type="button"
+                                key={c.id}
+                                className="block w-full border-b border-slate-100 p-2 text-left last:border-b-0 hover:bg-slate-50"
+                                onClick={() => handleWalkInSelect(c)}
+                              >
+                                <div className="font-medium">{c.firstName} {c.lastName}</div>
+                                <div className="text-sm text-slate-600">
+                                  {c.phone && `📞 ${c.phone}`}
+                                  {c.email && ` • ✉️ ${c.email}`}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
-
-                <Select label="Waiter/Waitress" selectedKeys={[waiterId]} onSelectionChange={(k) => setWaiterId(Array.from(k as Set<string>)[0])}>
-                  {waiters.map(w => (
-                    <SelectItem key={w.id}>{w.name}</SelectItem>
-                  ))}
-                </Select>
-                <Select label="Table" selectedKeys={[tableNumber]} onSelectionChange={(k) => setTableNumber(Array.from(k as Set<string>)[0])}>
-                  {tables.map(t => (
-                    <SelectItem key={t}>{t}</SelectItem>
-                  ))}
-                </Select>
-                <Input label="Order notes / allergies" value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} />
-                <div className="grid grid-cols-2 gap-2">
-                  <Select label="Room Service" selectedKeys={[applyRoomServiceCharge ? 'yes' : 'no']} onSelectionChange={(k) => setApplyRoomServiceCharge(Array.from(k as Set<string>)[0] === 'yes')}>
-                    <SelectItem key="no">No</SelectItem>
-                    <SelectItem key="yes">Yes</SelectItem>
-                  </Select>
-                  <Input type="number" label="Room Service Charge / Unit (₵)" value={String(roomServiceChargePerUnit)} onChange={(e) => setRoomServiceChargePerUnit(Number(e.target.value || 0))} />
-                </div>
-              </CardBody>
-            </Card>
-
-            {/* Orders table removed per request; replaced by POS Activity Table at top of screen */}
-          </div>
-
-          <div className="lg:col-span-5 h-full min-h-0">
-            <Card className="border-0 shadow-lg h-full">
-              <CardHeader className="pb-2 flex-col items-stretch gap-2">
-                <div className="flex items-center justify-between gap-3">
-                  <h3 className="font-semibold text-ghana-black">Menu</h3>
-                  {menuLoading && <span className="text-xs text-gray-400 animate-pulse">Loading from database…</span>}
-                  {!menuLoading && menu.length === 0 && <span className="text-xs text-orange-500">No menu items found. Run accounting setup to seed.</span>}
-                </div>
-                {!searching && menuTabs.length > 0 && (
-                  <Tabs aria-label="Menu categories" selectedKey={activeTab} onSelectionChange={(k) => setMenuTab(String(k))}>
-                    {menuTabs.map(t => <Tab key={t} title={t === PINNED_TAB ? `★ Pinned (${pinnedItems.length})` : t} />)}
-                  </Tabs>
-                )}
-              </CardHeader>
-              <CardBody className="min-h-0 overflow-y-auto">
-                {shownMenu.length === 0 ? (
-                  <p className="text-sm text-gray-500">{searching ? 'No items match your search.' : 'No items here yet.'}</p>
-                ) : (
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    {shownMenu.map(mi => (
-                      <div key={mi.id} className="relative">
-                        <button className="w-full h-full p-3 rounded-lg border border-gray-200 bg-white text-left hover:bg-gray-50" onClick={() => addToCart(mi)}>
-                          <div className="flex items-center justify-between">
-                            <div>
-                              <div className="font-medium text-ghana-black">{mi.name}</div>
-                              <div className="text-xs text-gray-500 capitalize">{mi.route}</div>
-                            </div>
-                            <div className="text-sm font-semibold">₵{mi.price}</div>
-                          </div>
-                        </button>
-                        <button
-                          aria-label={mi.isPinned ? `Unpin ${mi.name}` : `Pin ${mi.name}`}
-                          title={mi.isPinned ? 'Unpin' : 'Pin to the top'}
-                          className={`absolute bottom-1 right-2 text-base leading-none ${mi.isPinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}
-                          onClick={() => togglePin(mi)}
-                        >
-                          {mi.isPinned ? '★' : '☆'}
-                        </button>
-                      </div>
+                  <Select size="sm" label="Table" selectedKeys={[tableNumber]} onSelectionChange={(k) => setTableNumber(Array.from(k as Set<string>)[0])}>
+                    {tables.map(t => (
+                      <SelectItem key={t}>{t}</SelectItem>
                     ))}
-                  </div>
-                )}
-              </CardBody>
-            </Card>
-          </div>
-
-          <div className="lg:col-span-4 h-full min-h-0">
-            <Card className="border-0 shadow-lg h-full">
-              <CardHeader className="pb-2 flex items-center justify-between">
-                <h3 className="font-semibold text-ghana-black">Current Order</h3>
-                <Chip size="sm" variant="flat" color="primary">{venue}</Chip>
-              </CardHeader>
-              <CardBody {...({ ref: cartRef } as any)} className="flex flex-col min-h-0 overflow-hidden">
-                {cart.length === 0 && !sentOrderData && (
-                  <div className="py-8 text-center text-sm text-gray-500">Tap a menu item.</div>
-                )}
-                {cart.length === 0 && sentOrderData && (
-                  <div className="space-y-2 text-sm">
-                    <div className="text-xs font-medium text-ghana-green">Sent to kitchen</div>
-                    <div className="flex justify-between"><span>Subtotal</span><span>₵{sentOrderData.subtotal.toFixed(2)}</span></div>
-                    <div className="flex justify-between text-gray-500"><span>Tax</span><span>₵{sentOrderData.taxAmount.toFixed(2)}</span></div>
-                    <div className="flex justify-between border-t pt-2 text-base font-bold text-ghana-black"><span>Total</span><span>₵{sentOrderData.total.toFixed(2)}</span></div>
-                  </div>
-                )}
-                {cart.length > 1 && (
-                  <div className="mb-1 text-sm text-gray-500">{cart.length} items</div>
-                )}
-                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                  {cart.map(ci => (
-                    <div key={ci.id} className="border-b border-gray-100 py-2">
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="font-medium text-ghana-black leading-snug">{ci.name}</div>
-                          <div className="text-xs text-gray-500 capitalize">{ci.route}</div>
-                        </div>
-                        <div className="shrink-0 text-sm font-semibold">₵{((ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty).toFixed(2)}</div>
-                      </div>
-                      <div className="mt-2 flex items-center gap-2">
-                        <Button size="sm" variant="flat" className="bg-gray-100 min-w-8" onClick={() => updateQty(ci.id, -1)}>-</Button>
-                        <div className="w-6 text-center text-sm">{ci.qty}</div>
-                        <Button size="sm" variant="flat" className="bg-gray-100 min-w-8" onClick={() => updateQty(ci.id, 1)}>+</Button>
-                      </div>
-                      {showItemDiscounts && (
-                        <div className="mt-1">
-                          <Input
-                            size="sm"
-                            type="number"
-                            label="Disc/Unit (₵)"
-                            value={String(ci.discountPerUnit || 0)}
-                            onChange={(e) => setCart(prev => prev.map(x => x.id === ci.id ? { ...x, discountPerUnit: Number(e.target.value || 0) } : x))}
-                          />
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                {cart.length > 0 && (
-                  <div className="shrink-0">
-                    <button
-                      type="button"
-                      className="mt-2 text-sm text-ghana-green hover:underline"
-                      onClick={() => setShowItemDiscounts(v => !v)}
-                    >
-                      {showItemDiscounts ? 'Hide item discounts' : 'Item discounts'}
-                    </button>
-                    <div className="mt-3 space-y-2 text-sm">
-                      <div className="flex justify-between"><span>Subtotal</span><span>₵{subtotal.toFixed(2)}</span></div>
-                      <div className="flex items-center justify-between gap-2">
-                        <span>Discount %</span>
-                        <Input size="sm" className="w-16" type="number" aria-label="Discount percent" value={String(discountPercent)} onChange={(e) => setDiscountPercent(Number(e.target.value || 0))} />
-                      </div>
-                      {orderDiscountAmount > 0 && (
-                        <div className="flex justify-between text-gray-500"><span>Discount</span><span>-₵{orderDiscountAmount.toFixed(2)}</span></div>
-                      )}
-                      {serviceChargeAmount > 0 && (
-                        <div className="flex justify-between text-gray-500"><span>Service</span><span>₵{serviceChargeAmount.toFixed(2)}</span></div>
-                      )}
-                      {orderMode === 'Takeaway' && packagingFee > 0 && (
-                        <div className="flex justify-between text-gray-500"><span>Packaging</span><span>₵{packagingFee.toFixed(2)}</span></div>
-                      )}
-                      <div className="flex justify-between text-gray-500"><span>Tax</span><span>₵{computeSalesTaxTotal(total).toFixed(2)}</span></div>
-                      <div className="flex justify-between border-t pt-2 text-base font-bold text-ghana-black"><span>Total</span><span>₵{(total + computeSalesTaxTotal(total)).toFixed(2)}</span></div>
-                    </div>
-                  </div>
-                )}
-                <div className="mt-4 shrink-0 space-y-2">
-                  <Button fullWidth variant="flat" className="bg-ghana-green text-white" onClick={() => {
-                    if (editingOrderId) {
-                      // Update existing order instead of creating a new one
-                      const existing = orders.find(o => o.id === editingOrderId);
-                      if (existing) {
-                        const itemsWithOrderDiscount = distributeOrderDiscountPerUnit(cart);
-                        const updated = {
-                          ...existing,
-                          table: tableNumber,
-                          waiterId,
-                          venue,
-                          notes: orderNotes,
-                          items: itemsWithOrderDiscount.map(i => ({
-                            id: i.id,
-                            name: i.name,
-                            price: i.price,
-                            qty: i.qty,
-                            route: i.route,
-                            status: (existing.items.find(x => x.id === i.id)?.status) || 'pending',
-                            prepMinutes: i.route === 'kitchen' ? 15 : 2,
-                            isRoomService: i.isRoomService || false,
-                            discountPerUnit: i.discountPerUnit || 0,
-                            serviceChargePerUnit: i.serviceChargePerUnit || 0
-                          }))
-                        } as any;
-                        // Reflect to store and local pending list
-                        ordersStore.update(updated);
-                        trackEvent('FB.OrderUpdated', { id: updated.id, items: updated.items.map((it: any) => ({ id: it.id, qty: it.qty, discountPerUnit: it.discountPerUnit || 0 })) }, { sourceModule: 'F&B' });
-                        setPendingOrders(prev => prev.map(po => po.id === editingOrderId ? {
-                          ...po,
-                          table: updated.table,
-                          waiterId: updated.waiterId,
-                          venue: updated.venue,
-                          notes: updated.notes,
-                          items: cart
-                        } : po));
-                      }
-                      setEditingOrderId(null);
-                      clearCart();
-                      setOrderNotes('');
-                      return;
-                    }
-                    sendOrder();
-                  }} isLoading={isSending} isDisabled={isSending || cart.length === 0}>{editingOrderId ? 'Update' : (isSending ? 'Sending…' : 'Send to Kitchen')}</Button>
-                  <Button fullWidth variant="flat" className="bg-blue-600 text-white" isDisabled={cart.length === 0 && !sentOrderData} onClick={openPayment}>Pay</Button>
-                  <div className="grid grid-cols-2 gap-2">
-                  <Button size="sm" variant="flat" className="bg-gray-100 text-gray-700" onClick={() => clearCart()}>Clear</Button>
-                  <Button size="sm" variant="flat" className="bg-gray-100 text-gray-700" isDisabled={cart.length === 0} onClick={() => {
-                    const html = buildReceiptHtml({
-                      hotelName,
-                      contact: 'Accra, Ghana',
-                      code: `RCPT-${Date.now().toString().slice(-6)}`,
-                      datetime: new Date().toLocaleString(),
-                      items: cart.map(i => ({ name: i.name, qty: i.qty, price: i.price })),
-                      subtotal,
-                      discount: orderDiscountAmount,
-                      total,
-                      table: tableNumber,
-                      waiter: waiters.find(w => w.id === waiterId)?.name,
-                    });
-                    setPrintPreview({ title: 'Receipt Preview', html });
-                    printPreviewModal.onOpen();
-                  }}>Preview</Button>
-                  <Select size="sm" aria-label="Priority" selectedKeys={[priority]} onSelectionChange={(k) => {
+                  </Select>
+                  <Select size="sm" label="Waiter / waitress" selectedKeys={[waiterId]} onSelectionChange={(k) => setWaiterId(Array.from(k as Set<string>)[0])}>
+                    {waiters.map(w => (
+                      <SelectItem key={w.id}>{w.name}</SelectItem>
+                    ))}
+                  </Select>
+                  {orderMode === 'Takeaway' && (
+                    <Input size="sm" type="number" label="Packaging fee (GH₵)" value={String(packagingFee)} onChange={(e) => setPackagingFee(Number(e.target.value || 0))} />
+                  )}
+                  <Select size="sm" label="Kitchen priority" selectedKeys={[priority]} onSelectionChange={(k) => {
                     const p = Array.from(k as Set<string>)[0] as 'low' | 'medium' | 'high' | 'urgent';
                     setPriority(p);
                     localStorage.setItem('kitchen.priority.filter', p);
@@ -1748,206 +1479,240 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <SelectItem key="medium">Medium</SelectItem>
                     <SelectItem key="low">Low</SelectItem>
                   </Select>
-                  <Button size="sm" variant="flat" className="bg-gray-100 text-gray-700" onClick={() => previewStationTicket('kot')}>Print KOT</Button>
-                  <Button size="sm" variant="flat" className="bg-gray-100 text-gray-700" onClick={() => previewStationTicket('bot')}>Print BOT</Button>
-                  </div>
-                </div>
-              </CardBody>
-            </Card>
-          </div>
-        </div>
-      </div>
-
-        {/* Visual divider between POS terminal and Activity Table */}
-        <div className="my-6 border-t border-gray-300" />
-
-        {/* POS Activity Table - moved to bottom */}
-        <div id="pos-activity-table">
-        <Card className="border border-gray-300 shadow-lg mt-6">
-                        <CardHeader className="pb-2 flex items-center justify-between">
-                <h3 className="font-semibold text-ghana-black">Transactions</h3>
-                <div className="flex items-center gap-2">
-                  <Select size="sm" label="Rows" selectedKeys={[String(activityRowsPerPage)]} onSelectionChange={(k) => {
-                    const v = Number(Array.from(k as Set<string>)[0] || '10');
-                    setActivityRowsPerPage(v);
-                    setActivityPage(1);
-                  }} className="w-24">
-                    <SelectItem key="10">10</SelectItem>
-                    <SelectItem key="25">25</SelectItem>
-                    <SelectItem key="50">50</SelectItem>
+                  <Select size="sm" label="Room service" selectedKeys={[applyRoomServiceCharge ? 'yes' : 'no']} onSelectionChange={(k) => setApplyRoomServiceCharge(Array.from(k as Set<string>)[0] === 'yes')}>
+                    <SelectItem key="no">No</SelectItem>
+                    <SelectItem key="yes">Yes</SelectItem>
                   </Select>
-                  <div className="flex items-center gap-1">
-                    <Button size="sm" variant="flat" className="bg-gray-100" isDisabled={activityPage <= 1} onClick={() => setActivityPage(p => Math.max(1, p - 1))}>Prev</Button>
-                    <span className="text-xs text-gray-600">Page {activityPage} / {totalActivityPages}</span>
-                    <Button size="sm" variant="flat" className="bg-gray-100" isDisabled={activityPage >= totalActivityPages} onClick={() => setActivityPage(p => Math.min(totalActivityPages, p + 1))}>Next</Button>
-                  </div>
+                  {applyRoomServiceCharge && (
+                    <Input size="sm" type="number" label="Room service charge / unit (GH₵)" value={String(roomServiceChargePerUnit)} onChange={(e) => setRoomServiceChargePerUnit(Number(e.target.value || 0))} />
+                  )}
+                  <Input size="sm" label="Order notes / allergies" value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} className="sm:col-span-2 lg:col-span-1 xl:col-span-2" />
                 </div>
-              </CardHeader>
-          <CardBody>
-                  <div className="mb-3 flex w-full items-center justify-between gap-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                    <Select
-                      size="sm"
-                      label="Queue"
-                      placeholder="Queue"
-                      isClearable
-                      selectedKeys={[activityQueue]}
-                      onSelectionChange={(k) => {
-                        const next = !k || k === 'all'
-                          ? 'all'
-                          : (typeof k === 'string' ? k : String(Array.from(k as Iterable<string>)[0] || 'all'));
-                        if (next === 'all' || next === 'pending-kot' || next === 'pending-bot' || next === 'unpaid' || next === 'billed' || next === 'cancelled') {
-                          setActivityQueue(next);
-                        } else {
-                          setActivityQueue('all');
-                        }
-                      }}
-                      onClear={() => setActivityQueue('all')}
-                      className="w-48"
-                    >
-                      {([
-                        { key: 'all', label: 'All' },
-                        { key: 'pending-kot', label: 'Pending KOT' },
-                        { key: 'pending-bot', label: 'Pending BOT' },
-                        { key: 'unpaid', label: 'Unpaid' },
-                        { key: 'billed', label: 'Billed' },
-                        { key: 'cancelled', label: 'Cancelled' },
-                      ] as const).map((q) => (
-                        <SelectItem key={q.key}>{q.label}</SelectItem>
-                      ))}
-                    </Select>
-                    <Input
-                      size="sm"
-                      className="w-56"
-                      placeholder="Search order #, item, table..."
-                      value={activitySearch}
-                      onChange={(e) => setActivitySearch(e.target.value)}
-                      startContent={<span className="text-gray-400">🔍</span>}
-                      isClearable
-                      onClear={() => setActivitySearch('')}
-                    />
-                    <Select
-                      size="sm"
-                      label="Waiter"
-                      selectedKeys={[activityWaiterFilter]}
-                      onSelectionChange={(k) => {
-                        const next = !k || k === 'all'
-                          ? 'all'
-                          : (typeof k === 'string' ? k : String(Array.from(k as Iterable<string>)[0] ?? 'all'));
-                        setActivityWaiterFilter(next || 'all');
-                      }}
-                      className="w-44"
-                    >
-                      {[{ id: 'all', name: 'All waiters' }, ...activityWaiterOptions].map((w) => (
-                        <SelectItem key={w.id}>{w.name}</SelectItem>
-                      ))}
-                    </Select>
+              )}
+            </div>
+
+            {/* Current order | Orders */}
+            <div className="flex border-b border-slate-100 px-3 md:px-4" role="tablist" aria-label="Order views">
+              {([['current', `Current order${cartCount ? ` (${cartCount})` : ''}`], ['orders', 'Orders']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={panelTab === key}
+                  onClick={() => setPanelTab(key)}
+                  className={`-mb-px h-11 border-b-2 px-3 text-sm font-semibold ${panelTab === key ? 'border-ghana-green text-ghana-green' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {panelTab === 'current' ? (
+              <div ref={cartRef} className="flex min-h-0 flex-1 flex-col p-3 md:p-4">
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  {cart.length === 0 && !sentOrderData && (
+                    <div className="py-10 text-center text-sm text-slate-500">Tap a menu item to start an order.</div>
+                  )}
+                  {cart.length === 0 && sentOrderData && (
+                    <div className="space-y-2 rounded-xl bg-green-50 p-3 text-sm">
+                      <div className="text-xs font-semibold text-ghana-green">Sent to kitchen — ready for payment</div>
+                      <div className="flex justify-between"><span>Subtotal</span><span>GH₵ {sentOrderData.subtotal.toFixed(2)}</span></div>
+                      <div className="flex justify-between text-slate-500"><span>Tax</span><span>GH₵ {sentOrderData.taxAmount.toFixed(2)}</span></div>
+                      <div className="flex justify-between border-t border-green-100 pt-2 text-base font-bold text-ghana-black"><span>Total</span><span>GH₵ {sentOrderData.total.toFixed(2)}</span></div>
                     </div>
-                    <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-                      <span className="text-sm font-medium text-gray-500 mr-1">📅 Date:</span>
-                      {(['all', 'today', 'specific', 'range'] as const).map((mode) => {
-                        const labels = { all: 'All Dates', today: 'Today', specific: 'Specific Date', range: 'Date Range' };
-                        return (
-                          <button
-                            key={mode}
-                            type="button"
-                            onClick={() => setActivityDateMode(mode)}
-                            className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors ${
-                              activityDateMode === mode
-                                ? 'bg-blue-600 text-white border-blue-600'
-                                : 'bg-white text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
-                            }`}
-                          >
-                            {labels[mode]}
-                          </button>
-                        );
-                      })}
-                      {activityDateMode === 'specific' && (
-                        <input
-                          type="date"
-                          aria-label="Specific date"
-                          value={activityDateSingle}
-                          onChange={(event) => setActivityDateSingle(event.target.value)}
-                          className="ml-2 px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                        />
-                      )}
-                      {activityDateMode === 'range' && (
-                        <div className="flex items-center gap-2 ml-2">
-                          <input
-                            type="date"
-                            aria-label="From date"
-                            value={activityDateFrom}
-                            onChange={(event) => setActivityDateFrom(event.target.value)}
-                            className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
-                          />
-                          <span className="text-gray-400 text-sm">→</span>
-                          <input
-                            type="date"
-                            aria-label="To date"
-                            value={activityDateTo}
-                            onChange={(event) => setActivityDateTo(event.target.value)}
-                            className="px-2 py-1 rounded border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  )}
+                  {cart.map(ci => (
+                    <div key={ci.id} className="border-b border-slate-100 py-2.5">
+                      <div className="flex items-center gap-3">
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${ci.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
+                          {itemIcon(ci.route, 18)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium leading-snug text-ghana-black">{ci.name}</div>
+                          <div className="text-xs text-slate-500">GH₵ {ci.price.toFixed(2)} each</div>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <Button isIconOnly size="sm" variant="bordered" className="min-w-9 border-slate-200" aria-label={`One less ${ci.name}`} onClick={() => updateQty(ci.id, -1)}><Minus size={14} /></Button>
+                          <span className="w-6 text-center text-sm font-semibold" aria-live="polite">{ci.qty}</span>
+                          <Button isIconOnly size="sm" variant="bordered" className="min-w-9 border-slate-200" aria-label={`One more ${ci.name}`} onClick={() => updateQty(ci.id, 1)}><Plus size={14} /></Button>
+                        </div>
+                        <div className="hidden w-20 shrink-0 text-right text-sm font-semibold sm:block">
+                          GH₵ {((ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty).toFixed(2)}
+                        </div>
+                        <Button isIconOnly size="sm" variant="light" color="danger" aria-label={`Remove ${ci.name}`} onClick={() => updateQty(ci.id, -ci.qty)}><Trash2 size={16} /></Button>
+                      </div>
+                      {showItemDiscounts && (
+                        <div className="mt-2 pl-[3.25rem]">
+                          <Input
+                            size="sm"
+                            type="number"
+                            label="Discount per unit (GH₵)"
+                            value={String(ci.discountPerUnit || 0)}
+                            onChange={(e) => setCart(prev => prev.map(x => x.id === ci.id ? { ...x, discountPerUnit: Number(e.target.value || 0) } : x))}
                           />
                         </div>
                       )}
                     </div>
-                  </div>
-                            <div className="w-full max-h-[50vh] overflow-auto" style={{ ['--pos-activity-width' as string]: `${activityTableWidth}px` }}>
-                  <Table
-                    aria-label="Transactions"
-                    classNames={{
-                      table: 'table-fixed w-[var(--pos-activity-width)] min-w-[var(--pos-activity-width)] max-w-none',
-                      th: 'relative',
-                      td: 'overflow-hidden',
-                    }}
-                  >
-                    <TableHeader>
-                      {activityHeader('id', 'Ticket')}
-                      {activityHeader('date', 'Date')}
-                      {activityHeader('time', 'Time')}
-                      {activityHeader('itemName', 'Item name')}
-                      {activityHeader('customerName', 'Customer name')}
-                      {activityHeader('room', 'Room')}
-                      {activityHeader('table', 'Table')}
-                      {activityHeader('venue', 'Venue')}
-                      {activityHeader('qty', 'Qty')}
-                      {activityHeader('amount', 'Amount')}
-                      {activityHeader('discount', 'Discount')}
-                      {activityHeader('price', 'Price')}
-                      {activityHeader('category', 'Category')}
-                      {activityHeader('status', 'Status')}
-                      {activityHeader('waiter', 'Waiter/ess')}
-                      {activityHeader('actions', 'Actions', false)}
-                    </TableHeader>
-                    <TableBody emptyContent="No matching orders.">
-                      {filteredActivityRows.slice((activityPage - 1) * activityRowsPerPage, activityPage * activityRowsPerPage).map(({ order: o, item: it }) => (
-                        <TableRow key={`${o.id}-${it.id}`} onDoubleClick={() => openActivityModal(o, it)}>
-                          <TableCell>{lineTicket(o.notes, it.route, o.orderNumber || o.id)}</TableCell>
-                          <TableCell className="whitespace-nowrap">{activityStamp(o.createdAt).date}</TableCell>
-                          <TableCell className="whitespace-nowrap">{activityStamp(o.createdAt).time}</TableCell>
-                          <TableCell><span className="block truncate" title={it.name}>{it.name}</span></TableCell>
-                          <TableCell>{o.guestName || '-'}</TableCell>
-                          <TableCell>{o.roomNumber || '-'}</TableCell>
-                          <TableCell><Badge color="primary" variant="flat">{o.table}</Badge></TableCell>
-                          <TableCell>{o.venue}</TableCell>
-                          <TableCell>{it.qty}</TableCell>
-                          <TableCell>₵{(it.price * it.qty).toFixed(2)}</TableCell>
-                          <TableCell>₵{(((it as any).discountPerUnit || 0) * it.qty).toFixed(2)}</TableCell>
-                          <TableCell>₵{(it.price - ((it as any).discountPerUnit || 0) + (((it as any).serviceChargePerUnit || 0))).toFixed(2)}</TableCell>
-                          <TableCell>{it.category || menuIdToCategory[it.id] || '-'}</TableCell>
-                          <TableCell>{(it.status || o.status)}</TableCell>
-                          <TableCell>{waiters.find(w => w.id === o.waiterId)?.name || o.waiterId}</TableCell>
-                          <TableCell>
-                            <Button size="sm" variant="flat" className="bg-gray-100" onClick={() => openActivityModal(o, it)}>View</Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  ))}
                 </div>
-          </CardBody>
-        </Card>
+
+                {cart.length > 0 && (
+                  <div className="mt-3 shrink-0 space-y-1.5 border-t border-slate-100 pt-3 text-sm">
+                    <div className="flex justify-between"><span className="text-slate-600">Subtotal</span><span>GH₵ {subtotal.toFixed(2)}</span></div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-slate-600">Discount %</span>
+                      <Input size="sm" className="w-20" type="number" aria-label="Discount percent" value={String(discountPercent)} onChange={(e) => setDiscountPercent(Number(e.target.value || 0))} />
+                    </div>
+                    {orderDiscountAmount > 0 && (
+                      <div className="flex justify-between text-slate-500"><span>Discount</span><span>−GH₵ {orderDiscountAmount.toFixed(2)}</span></div>
+                    )}
+                    {serviceChargeAmount > 0 && (
+                      <div className="flex justify-between text-slate-500"><span>Service</span><span>GH₵ {serviceChargeAmount.toFixed(2)}</span></div>
+                    )}
+                    {orderMode === 'Takeaway' && packagingFee > 0 && (
+                      <div className="flex justify-between text-slate-500"><span>Packaging</span><span>GH₵ {packagingFee.toFixed(2)}</span></div>
+                    )}
+                    <div className="flex justify-between text-slate-500"><span>Tax (VAT &amp; levies)</span><span>GH₵ {taxAmount.toFixed(2)}</span></div>
+                    <div className="flex items-baseline justify-between border-t border-slate-100 pt-2">
+                      <span className="text-base font-semibold text-ghana-black">Total</span>
+                      <span className="text-2xl font-bold text-ghana-black">GH₵ {(total + taxAmount).toFixed(2)}</span>
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-3 shrink-0 space-y-2">
+                  <div className="grid grid-cols-[1fr_auto] gap-2">
+                    <Button
+                      size="lg"
+                      variant="flat"
+                      className="h-12 border border-ghana-green bg-white font-semibold text-ghana-green"
+                      startContent={<Send size={18} aria-hidden />}
+                      onClick={sendOrUpdate}
+                      isLoading={isSending}
+                      isDisabled={isSending || cart.length === 0}
+                    >
+                      {editingOrderId ? 'Update order' : (isSending ? 'Sending…' : 'Send to kitchen')}
+                    </Button>
+                    <Dropdown placement="top-end">
+                      <DropdownTrigger>
+                        <Button isIconOnly size="lg" variant="flat" className="h-12 w-12 bg-slate-100" aria-label="More order actions">
+                          <MoreHorizontal size={20} />
+                        </Button>
+                      </DropdownTrigger>
+                      <DropdownMenu
+                        aria-label="More order actions"
+                        disabledKeys={cart.length === 0 ? ['preview', 'discounts', 'clear'] : []}
+                        onAction={(key) => {
+                          if (key === 'preview') previewCartReceipt();
+                          if (key === 'kot') previewStationTicket('kot');
+                          if (key === 'bot') previewStationTicket('bot');
+                          if (key === 'discounts') setShowItemDiscounts(v => !v);
+                          if (key === 'clear') clearCart();
+                        }}
+                      >
+                        <DropdownItem key="preview" startContent={<Receipt size={16} />}>Preview receipt</DropdownItem>
+                        <DropdownItem key="kot" startContent={<Printer size={16} />}>Print kitchen ticket (KOT)</DropdownItem>
+                        <DropdownItem key="bot" startContent={<Printer size={16} />}>Print bar ticket (BOT)</DropdownItem>
+                        <DropdownItem key="discounts">{showItemDiscounts ? 'Hide item discounts' : 'Item discounts'}</DropdownItem>
+                        <DropdownItem key="clear" className="text-danger" color="danger" startContent={<Trash2 size={16} />}>Clear order</DropdownItem>
+                      </DropdownMenu>
+                    </Dropdown>
+                  </div>
+                  <Button
+                    size="lg"
+                    className="h-14 w-full bg-ghana-green text-base font-semibold text-white"
+                    startContent={<CreditCard size={20} aria-hidden />}
+                    isDisabled={cart.length === 0 && !sentOrderData}
+                    onClick={openPayment}
+                  >
+                    Process payment
+                  </Button>
+                  <p className="hidden text-center text-[11px] text-slate-400 lg:block">Ctrl+Enter send · Ctrl+P pay</p>
+                </div>
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col p-3 md:p-4">
+                <div className="mb-3 flex flex-wrap items-center gap-2">
+                  <div className="inline-flex rounded-lg bg-slate-100 p-0.5" role="group" aria-label="Order status">
+                    {([['open', 'Open'], ['paid', 'Paid today']] as const).map(([key, label]) => (
+                      <button key={key} type="button" aria-pressed={ordersView === key} onClick={() => setOrdersView(key)}
+                        className={`h-8 rounded-md px-3 text-xs font-semibold ${ordersView === key ? 'bg-white text-ghana-black shadow-sm' : 'text-slate-500'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="inline-flex rounded-lg bg-slate-100 p-0.5" role="group" aria-label="Which tables">
+                    {([['table', `Table ${tableNumber}`], ['all', 'All tables']] as const).map(([key, label]) => (
+                      <button key={key} type="button" aria-pressed={ordersScope === key} onClick={() => setOrdersScope(key)}
+                        className={`h-8 rounded-md px-3 text-xs font-semibold ${ordersScope === key ? 'bg-white text-ghana-black shadow-sm' : 'text-slate-500'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto">
+                  {panelOrders.length === 0 ? (
+                    <p className="py-10 text-center text-sm text-slate-500">
+                      {ordersView === 'open' ? 'No open orders' : 'No paid orders today'}{ordersScope === 'table' ? ` for Table ${tableNumber}` : ''}.
+                    </p>
+                  ) : panelOrders.map(o => {
+                    const status = String(o.status || '').toLowerCase();
+                    const orderTotal = Number(o.total) || o.items.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.qty) || 0), 0);
+                    return (
+                      <div key={o.id} className="rounded-xl border border-slate-200 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-semibold text-ghana-black">{o.orderNumber || o.id}</div>
+                            <div className="text-xs text-slate-500">
+                              {o.table ? `Table ${o.table} · ` : ''}{activityStamp(o.createdAt || o.timestamp).time}
+                              {o.guestName ? ` · ${o.guestName}` : ''}
+                            </div>
+                          </div>
+                          <div className="shrink-0 text-right">
+                            <div className="text-sm font-bold">GH₵ {orderTotal.toFixed(2)}</div>
+                            <Chip size="sm" variant="flat" className="capitalize" color={status === 'billed' || status === 'paid' ? 'success' : status === 'served' || status === 'ready' ? 'primary' : 'warning'}>{status || '—'}</Chip>
+                          </div>
+                        </div>
+                        <ul className="mt-2 divide-y divide-slate-100">
+                          {o.items.map(it => (
+                            <li key={it.id}>
+                              <button type="button" onClick={() => openActivityModal(o, it)} className="flex w-full items-center justify-between gap-2 py-1.5 text-left text-sm hover:bg-slate-50">
+                                <span className="min-w-0 truncate">{it.qty} × {it.name}</span>
+                                <span className="shrink-0 text-xs capitalize text-slate-500">{it.status || o.status}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                        {ordersView === 'open' && (
+                          <Button size="sm" className="mt-2 w-full bg-ghana-green text-white" startContent={<CreditCard size={14} aria-hidden />} onClick={() => payActivityOrder(o)}>
+                            Pay this order
+                          </Button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="mt-2 shrink-0 text-center text-xs text-slate-400">Tap an item to serve, edit, cancel, refund or delete it.</p>
+              </div>
+            )}
+          </aside>
         </div>
+      </div>
+
+      {/* Phones and tablets: the order panel sits below the menu, so keep the running total in reach. */}
+      {cart.length > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-slate-200 bg-white/95 p-3 shadow-[0_-4px_16px_rgba(15,23,42,0.08)] backdrop-blur lg:hidden">
+          <Button
+            className="h-12 w-full bg-ghana-green font-semibold text-white"
+            onClick={() => {
+              setPanelTab('current');
+              document.getElementById('pos-order-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }}
+          >
+            View order · {cartCount} {cartCount === 1 ? 'item' : 'items'} · GH₵ {(total + taxAmount).toFixed(2)}
+          </Button>
+        </div>
+      )}
 
       <Modal isOpen={paymentModal.isOpen} onClose={paymentModal.onClose} size="lg">
         <ModalContent>
