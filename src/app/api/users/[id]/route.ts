@@ -5,6 +5,7 @@ import { requireAuth, requirePermission, requireAnyPermission } from '@/app/lib/
 import { prisma } from '@/app/lib/database/client'
 import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy'
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
+import { publicUser, withoutPinKeys } from '@/app/lib/auth/posPin'
 
 const USER_SELECT = {
   id: true,
@@ -95,7 +96,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
     if (body.preferences && typeof body.preferences === 'object') {
       const existingPreferences = (target.preferences as Record<string, unknown>) || {}
-      data.preferences = { ...existingPreferences, ...body.preferences }
+      // POS PIN fields are only written by /api/users/:id/pos-pin (hashed, with lockout) — never through here.
+      data.preferences = { ...existingPreferences, ...withoutPinKeys(body.preferences as Record<string, unknown>) }
     }
     if (typeof body.password === 'string' && body.password) {
       const existingPreferences = (data.preferences as Record<string, unknown>) || (target.preferences as Record<string, unknown>) || {}
@@ -125,7 +127,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!user) return NextResponse.json({ error: 'A user with this email already exists' }, { status: 409 })
 
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'USER_UPDATED', 'User', id, undefined, { email: user.email, role: user.role, isActive: user.isActive }, request)
-    return NextResponse.json({ user })
+    return NextResponse.json({ user: publicUser(user) })
   } catch (error) {
     console.error('[users/:id][PATCH] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })

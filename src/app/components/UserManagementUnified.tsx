@@ -40,6 +40,7 @@ import { applyDisplay, normalizeFontSize, normalizeTheme, type AppFont, type App
 import type { UserPreferences } from '../lib/settings/store';
 import { PERMISSION_MODULES, FULL_SYSTEM_ACCESS } from '../lib/settings/permissionCatalog';
 import { useEmployeeStore } from '../lib/hr/employeeStore';
+import PosPinSection from './settings/PosPinSection';
 
 const LIGHT_BACKGROUNDS = [
   { id: '', label: 'Soft gray', color: '#eef1f4' },
@@ -1205,6 +1206,9 @@ export default function UserManagementUnified() {
                 Active User
               </Switch>
             </div>
+            {isEditing && selectedUser && canEditUsers && (
+              <PosPinSection userId={selectedUser.id} userName={`${selectedUser.firstName} ${selectedUser.lastName}`.trim() || selectedUser.username} />
+            )}
           </ModalBody>
           <ModalFooter>
             <Button variant="flat" onPress={onClose}>

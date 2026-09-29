@@ -43,7 +43,7 @@ import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticket
 import { useSession } from 'next-auth/react';
 import {
   ChefHat, ChevronDown, ChevronUp, ClipboardList, CreditCard, Minus, MoreHorizontal, Plus, Printer,
-  Receipt, Search, Send, Trash2, UtensilsCrossed, Wine,
+  Receipt, Search, Send, Trash2, UserRound, UtensilsCrossed, Wine,
 } from 'lucide-react';
 
 type CustomerType = 'In-house' | 'Walk-in';
@@ -77,6 +77,8 @@ interface CartItem extends MenuItem {
 interface Waiter {
   id: string;
   name: string;
+  /** Has a POS PIN, so can switch in on a shared terminal. */
+  hasPin?: boolean;
 }
 
 interface PendingOrder {
@@ -109,6 +111,15 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [floorTables, setFloorTables] = useState<{ number: string; status: string; capacity?: number }[]>([]);
   const [hasOpenTill, setHasOpenTill] = useState<boolean | null>(null);
   const [waiterId, setWaiterId] = useState('W1');
+  // Who is taking orders on this terminal right now. The signed-in account is trusted as it is;
+  // anyone else switches in with their own PIN, and the terminal locks again after each order.
+  const [verifiedWaiter, setVerifiedWaiter] = useState<{ id: string; name: string } | null>(null);
+  const waiterSwitchModal = useDisclosure();
+  const [switchTarget, setSwitchTarget] = useState<Waiter | null>(null);
+  const [switchPin, setSwitchPin] = useState('');
+  const [switchError, setSwitchError] = useState('');
+  const [switchBusy, setSwitchBusy] = useState(false);
+  const lockAfterOrder = () => setVerifiedWaiter(null);
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discountPercent, setDiscountPercent] = useState<number>(0);
@@ -371,9 +382,15 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         const data = await res.json();
         if (data.hotelName) setHotelName(data.hotelName);
         if (Array.isArray(data.staff) && data.staff.length > 0) {
-          setWaiters(data.staff.map((s: any) => ({ id: s.id, name: s.name })));
-          // Default waiterId to first staff member
-          setWaiterId(data.staff[0].id);
+          setWaiters(data.staff.map((s: any) => ({ id: s.id, name: s.name, hasPin: !!s.hasPin })));
+          // Start as whoever is signed in on this terminal; otherwise nobody until someone switches in.
+          const me = cashierUserId ? data.staff.find((s: any) => s.id === cashierUserId) : null;
+          if (me) {
+            setWaiterId(me.id);
+            setVerifiedWaiter({ id: me.id, name: me.name });
+          } else {
+            setWaiterId(data.staff[0].id);
+          }
         }
       } catch {
         // Keep default fallback values
@@ -649,6 +666,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   const sendOrder = async () => {
     if (cart.length === 0) return;
+    if (!verifiedWaiter) {
+      waiterSwitchModal.onOpen();
+      return;
+    }
     if (customerType === 'In-house' && (!roomNumber || !guestName)) {
       alert('Please select a room and guest for in-house orders');
       return;
@@ -746,6 +767,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
     setOrderNotes('');
     setPriority('high');
     setIsSending(false);
+    lockAfterOrder();
   };
 
   const openPayment = () => paymentModal.onOpen();
@@ -1169,7 +1191,76 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       .sort((a, b) => String(b.createdAt || b.timestamp || '').localeCompare(String(a.createdAt || a.timestamp || '')));
   }, [orders, ordersView, ordersScope, tableNumber]);
 
-  const waiterName = waiters.find(w => w.id === waiterId)?.name || waiterId;
+  // Idle lock: two minutes with nothing on the order and no taps hands the terminal back to "Who's ordering?".
+  React.useEffect(() => {
+    if (!verifiedWaiter || cart.length > 0) return;
+    const IDLE_MS = 2 * 60 * 1000;
+    let timer = window.setTimeout(() => setVerifiedWaiter(null), IDLE_MS);
+    const reset = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setVerifiedWaiter(null), IDLE_MS);
+    };
+    window.addEventListener('pointerdown', reset);
+    window.addEventListener('keydown', reset);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('pointerdown', reset);
+      window.removeEventListener('keydown', reset);
+    };
+  }, [verifiedWaiter, cart.length]);
+
+  const openWaiterSwitch = () => {
+    setSwitchTarget(null);
+    setSwitchPin('');
+    setSwitchError('');
+    waiterSwitchModal.onOpen();
+  };
+  const becomeWaiter = (w: { id: string; name: string }) => {
+    setVerifiedWaiter({ id: w.id, name: w.name });
+    setWaiterId(w.id);
+    setSwitchTarget(null);
+    setSwitchPin('');
+    waiterSwitchModal.onClose();
+  };
+  const chooseWaiter = (w: Waiter) => {
+    // The signed-in account already proved who it is.
+    if (w.id === cashierUserId) return becomeWaiter(w);
+    setSwitchTarget(w);
+    setSwitchPin('');
+    setSwitchError('');
+  };
+  const confirmWaiterPin = async (pin = switchPin) => {
+    if (!switchTarget || !/^\d{4,6}$/.test(pin)) return;
+    setSwitchBusy(true);
+    setSwitchError('');
+    try {
+      const res = await fetch('/api/fb/staff-pin', {
+        method: 'POST',
+        headers: fbTenantHeaders({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ staffId: switchTarget.id, pin }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ok) {
+        becomeWaiter(data.staff || switchTarget);
+      } else {
+        setSwitchError(data.error || 'Wrong PIN.');
+        setSwitchPin('');
+      }
+    } catch {
+      setSwitchError('Could not reach the server. Try again.');
+    } finally {
+      setSwitchBusy(false);
+    }
+  };
+  const pressPinKey = (key: string) => {
+    if (switchBusy) return;
+    if (key === 'back') return setSwitchPin(p => p.slice(0, -1));
+    if (key === 'ok') return void confirmWaiterPin();
+    setSwitchError('');
+    setSwitchPin(p => (p.length >= 6 ? p : p + key));
+  };
+
+  const waiterName = verifiedWaiter?.name || waiters.find(w => w.id === waiterId)?.name || waiterId;
   const customerLabel = customerType === 'In-house'
     ? (roomNumber ? `Room ${roomNumber}${guestName ? ` · ${guestName}` : ''}` : 'In-house · pick a room')
     : (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : 'Walk-in');
@@ -1177,6 +1268,10 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const cartCount = cart.reduce((n, ci) => n + ci.qty, 0);
 
   const sendOrUpdate = () => {
+    if (!verifiedWaiter) {
+      openWaiterSwitch();
+      return;
+    }
     if (editingOrderId) {
       // Update existing order instead of creating a new one
       const existing = orders.find(o => o.id === editingOrderId);
@@ -1216,6 +1311,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       setEditingOrderId(null);
       clearCart();
       setOrderNotes('');
+      lockAfterOrder();
       return;
     }
     sendOrder();
@@ -1279,6 +1375,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
             classNames={{ inputWrapper: 'h-11 bg-white border border-slate-200 shadow-none' }}
           />
           <div className="ml-auto flex items-center gap-2">
+            {cashierName && (
+              <span className="hidden items-center gap-1.5 text-xs text-slate-500 sm:inline-flex" title="The account signed in on this terminal. Payments go to this person's till.">
+                <UserRound size={14} aria-hidden /> Signed in: <span className="font-semibold text-ghana-black">{cashierName}</span>
+              </span>
+            )}
             {hasOpenTill === false && (
               <Chip color="warning" variant="flat" size="sm" title="Cash, card and MoMo need an open till (Cashiering tab). Room charges work without one.">
                 No open till
@@ -1372,7 +1473,17 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <Chip size="sm" variant="flat" color={venue === 'Bar' ? 'primary' : 'success'}>{venue}</Chip>
                     {editingOrderId && <Chip size="sm" variant="flat" color="warning">Editing an order</Chip>}
                   </div>
-                  <p className="mt-0.5 truncate text-xs text-slate-500">{customerLabel} · {waiterName}</p>
+                  <p className="mt-0.5 truncate text-xs text-slate-500">{customerLabel}</p>
+                  <button
+                    type="button"
+                    onClick={openWaiterSwitch}
+                    className={`mt-1.5 inline-flex h-8 max-w-full items-center gap-1.5 rounded-full px-3 text-xs font-semibold ${verifiedWaiter ? 'bg-slate-100 text-ghana-black hover:bg-slate-200' : 'animate-pulse bg-amber-100 text-amber-800'}`}
+                    title="Switch who is taking the order"
+                  >
+                    <UserRound size={14} aria-hidden />
+                    <span className="truncate">{verifiedWaiter ? `Taking order: ${waiterName}` : "Who's ordering? Tap to choose"}</span>
+                    {verifiedWaiter && <span className="text-slate-400">· Switch</span>}
+                  </button>
                 </div>
                 <Button
                   size="sm"
@@ -1490,11 +1601,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                   <Select size="sm" label="Table" selectedKeys={[tableNumber]} onSelectionChange={(k) => setTableNumber(Array.from(k as Set<string>)[0])}>
                     {tables.map(t => (
                       <SelectItem key={t}>{t}</SelectItem>
-                    ))}
-                  </Select>
-                  <Select size="sm" label="Waiter / waitress" selectedKeys={[waiterId]} onSelectionChange={(k) => setWaiterId(Array.from(k as Set<string>)[0])}>
-                    {waiters.map(w => (
-                      <SelectItem key={w.id}>{w.name}</SelectItem>
                     ))}
                   </Select>
                   {orderMode === 'Takeaway' && (
@@ -1622,7 +1728,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       isLoading={isSending}
                       isDisabled={isSending || cart.length === 0}
                     >
-                      {editingOrderId ? 'Update order' : (isSending ? 'Sending…' : 'Send to kitchen')}
+                      {!verifiedWaiter ? "Choose who's ordering" : editingOrderId ? 'Update order' : (isSending ? 'Sending…' : 'Send to kitchen')}
                     </Button>
                     <Dropdown placement="top-end">
                       <DropdownTrigger>
@@ -1744,6 +1850,81 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           </Button>
         </div>
       )}
+
+      {/* Shared terminal: tap your name, type your PIN. Locks again after each order is sent. */}
+      <Modal isOpen={waiterSwitchModal.isOpen} onClose={waiterSwitchModal.onClose} size="md" placement="center">
+        <ModalContent>
+          <ModalHeader className="flex flex-col gap-0.5">
+            {switchTarget ? `Hi ${switchTarget.name}` : "Who's taking this order?"}
+            <span className="text-sm font-normal text-slate-500">
+              {switchTarget ? 'Enter your PIN' : 'Tap your name. Payments still go to the signed-in cashier.'}
+            </span>
+          </ModalHeader>
+          <ModalBody className="pb-6">
+            {!switchTarget ? (
+              <div className="grid max-h-[60vh] grid-cols-2 gap-2 overflow-y-auto">
+                {[...waiters]
+                  // Signed-in person first, then everyone who can switch in, then those still without a PIN.
+                  .sort((a, b) => Number(b.id === cashierUserId) - Number(a.id === cashierUserId) || Number(!!b.hasPin) - Number(!!a.hasPin))
+                  .map(w => {
+                  const isMe = w.id === cashierUserId;
+                  const usable = isMe || w.hasPin;
+                  return (
+                    <button
+                      key={w.id}
+                      type="button"
+                      disabled={!usable}
+                      onClick={() => chooseWaiter(w)}
+                      className={`flex min-h-16 flex-col items-start justify-center rounded-xl border px-3 py-2 text-left ${verifiedWaiter?.id === w.id ? 'border-ghana-green bg-green-50' : 'border-slate-200 bg-white hover:border-ghana-green/50'} disabled:cursor-not-allowed disabled:opacity-50`}
+                    >
+                      <span className="w-full truncate font-semibold text-ghana-black">{w.name}</span>
+                      <span className="text-xs text-slate-500">{isMe ? 'Signed in · no PIN needed' : w.hasPin ? 'PIN' : 'No PIN yet — ask a manager'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="mx-auto w-full max-w-xs">
+                <div className="mb-3 flex justify-center gap-2" aria-live="polite" aria-label={`${switchPin.length} digits entered`}>
+                  {Array.from({ length: Math.max(4, switchPin.length) }).map((_, i) => (
+                    <span key={i} className={`h-3.5 w-3.5 rounded-full ${i < switchPin.length ? 'bg-ghana-black' : 'bg-slate-200'}`} />
+                  ))}
+                </div>
+                {/* Physical keyboards work too: type digits, Enter to confirm. */}
+                <input
+                  autoFocus
+                  type="password"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  aria-label="PIN"
+                  className="sr-only"
+                  value={switchPin}
+                  onChange={(e) => { setSwitchError(''); setSwitchPin(e.target.value.replace(/\D/g, '').slice(0, 6)); }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void confirmWaiterPin(); }}
+                />
+                {switchError && <p className="mb-2 text-center text-sm text-red-600" role="alert">{switchError}</p>}
+                <div className="grid grid-cols-3 gap-2">
+                  {['1', '2', '3', '4', '5', '6', '7', '8', '9', 'back', '0', 'ok'].map(k => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => pressPinKey(k)}
+                      disabled={switchBusy || (k === 'ok' && switchPin.length < 4)}
+                      aria-label={k === 'back' ? 'Delete last digit' : k === 'ok' ? 'Confirm PIN' : k}
+                      className={`h-14 rounded-xl text-xl font-semibold disabled:opacity-40 ${k === 'ok' ? 'bg-ghana-green text-base text-white' : 'bg-slate-100 text-ghana-black active:bg-slate-200'}`}
+                    >
+                      {k === 'back' ? '⌫' : k === 'ok' ? (switchBusy ? '…' : 'OK') : k}
+                    </button>
+                  ))}
+                </div>
+                <button type="button" className="mt-3 w-full text-center text-sm text-slate-500 hover:underline" onClick={() => { setSwitchTarget(null); setSwitchPin(''); setSwitchError(''); }}>
+                  Not {switchTarget.name}? Pick another name
+                </button>
+              </div>
+            )}
+          </ModalBody>
+        </ModalContent>
+      </Modal>
 
       <Modal isOpen={paymentModal.isOpen} onClose={paymentModal.onClose} size="lg">
         <ModalContent>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext } from '@/app/lib/api/tenant'
 import { prisma } from '@/app/lib/database/client'
 import { ensureDefaultRolesForTenant, roleGrantsModule } from '@/app/lib/settings/roleRepository'
+import { hasPin } from '@/app/lib/auth/posPin'
 
 /**
  * GET /api/tenant
@@ -25,7 +26,7 @@ export async function GET(request: NextRequest) {
     // Pull active users as staff (all roles by default — POS lets manager choose who is serving)
     const users = await prisma.user.findMany({
       where: { tenantId: ctx.tenantId, isActive: true },
-      select: { id: true, name: true, role: true },
+      select: { id: true, name: true, role: true, preferences: true },
       orderBy: { name: 'asc' },
     })
 
@@ -54,7 +55,8 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       hotelName,
-      staff: scopedUsers.map(u => ({ id: u.id, name: u.name, role: u.role })),
+      // hasPin: whether this person can switch in on the shared POS terminal (the PIN itself never leaves the server).
+      staff: scopedUsers.map(u => ({ id: u.id, name: u.name, role: u.role, hasPin: hasPin(u.preferences) })),
     })
   } catch (error) {
     console.error('[/api/tenant][GET] error', error)

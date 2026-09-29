@@ -5,6 +5,7 @@ import { requireAuth, requirePermission } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
 import { passwordPolicyError } from '@/app/lib/settings/passwordPolicy'
 import { readTenantSecurity } from '@/app/lib/settings/securityPolicyDb'
+import { publicUser } from '@/app/lib/auth/posPin'
 
 const USER_SELECT = {
   id: true,
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
       select: USER_SELECT,
       orderBy: { createdAt: 'asc' },
     })
-    return NextResponse.json({ users })
+    return NextResponse.json({ users: users.map(publicUser) })
   } catch (error) {
     console.error('[users][GET] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
@@ -89,7 +90,7 @@ export async function POST(request: NextRequest) {
 
     const sessionUserId = (auth.session as any).user?.id
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'USER_CREATED', 'User', user.id, undefined, { email: user.email, role: user.role }, request)
-    return NextResponse.json({ user })
+    return NextResponse.json({ user: publicUser(user) })
   } catch (error) {
     console.error('[users][POST] error', error)
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 })
