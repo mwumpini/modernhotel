@@ -1179,6 +1179,12 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   // Order panel: "Details" folds away once the order is set up; the second tab replaces the old
   // transactions table at the bottom of this screen (the full list is the dashboard's Transactions tab).
+  const [showBreakdown, setShowBreakdown] = useState<boolean>(() => {
+    try { return localStorage.getItem('fbpos.breakdownOpen') === 'true'; } catch { return false; }
+  });
+  React.useEffect(() => {
+    try { localStorage.setItem('fbpos.breakdownOpen', String(showBreakdown)); } catch {}
+  }, [showBreakdown]);
   const [showOrderDetails, setShowOrderDetails] = useState<boolean>(() => {
     try { return localStorage.getItem('fbpos.detailsOpen') === 'true'; } catch { return false; }
   });
@@ -1606,12 +1612,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                         <div className="flex flex-1 flex-col gap-0.5 p-2.5">
                           <span className="line-clamp-2 text-sm font-semibold leading-snug text-ghana-black">{mi.name}</span>
                           <span className="truncate text-xs text-slate-500">{mi.category}</span>
-                          <div className="mt-auto flex items-center justify-between gap-2 pt-2">
-                            <span className="whitespace-nowrap text-sm font-bold text-ghana-black">GH₵ {mi.price.toFixed(2)}</span>
-                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ghana-green text-white" aria-hidden>
-                              <Plus size={16} />
-                            </span>
-                          </div>
+                          <span className="mt-auto whitespace-nowrap pt-2 text-sm font-bold text-ghana-black">GH₵ {mi.price.toFixed(2)}</span>
                         </div>
                       </button>
                       <button
@@ -1689,7 +1690,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                           <span className="w-6 text-center text-sm font-semibold" aria-live="polite">{ci.qty}</span>
                           <Button isIconOnly size="sm" variant="bordered" className="min-w-9 border-slate-200" aria-label={`One more ${ci.name}`} onClick={() => updateQty(ci.id, 1)}><Plus size={14} /></Button>
                         </div>
-                        <div className="hidden w-20 shrink-0 text-right text-sm font-semibold sm:block">
+                        <div className="hidden min-w-[5.5rem] shrink-0 whitespace-nowrap text-right text-sm font-semibold sm:block">
                           GH₵ {((ci.price - (ci.discountPerUnit || 0) + (ci.serviceChargePerUnit || 0)) * ci.qty).toFixed(2)}
                         </div>
                         <Button isIconOnly size="sm" variant="light" color="danger" aria-label={`Remove ${ci.name}`} onClick={() => updateQty(ci.id, -ci.qty)}><Trash2 size={16} /></Button>
@@ -1711,6 +1712,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
                 {cart.length > 0 && (
                   <div className="mt-3 shrink-0 space-y-1.5 border-t border-slate-100 pt-3 text-sm">
+                    {/* Breakdown folds away under the total so the item list keeps the room; a discount stays visible when set. */}
+                    <div id="pos-totals-breakdown" className={showBreakdown ? 'space-y-1.5' : 'hidden'}>
                     <div className="flex justify-between"><span className="text-slate-600">Subtotal</span><span>GH₵ {subtotal.toFixed(2)}</span></div>
                     <div className="flex items-center justify-between gap-2">
                       <span className="text-slate-600">Discount %</span>
@@ -1726,10 +1729,25 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       <div className="flex justify-between text-slate-500"><span>Packaging</span><span>GH₵ {packagingFee.toFixed(2)}</span></div>
                     )}
                     <div className="flex justify-between text-slate-500"><span>Tax (VAT &amp; levies)</span><span>GH₵ {taxAmount.toFixed(2)}</span></div>
-                    <div className="flex items-baseline justify-between border-t border-slate-100 pt-2">
-                      <span className="text-base font-semibold text-ghana-black">Total</span>
-                      <span className="text-2xl font-bold text-ghana-black">GH₵ {(total + taxAmount).toFixed(2)}</span>
                     </div>
+                    <button
+                      type="button"
+                      aria-expanded={showBreakdown}
+                      aria-controls="pos-totals-breakdown"
+                      onClick={() => setShowBreakdown(v => !v)}
+                      className={`flex w-full items-baseline justify-between gap-2 text-left ${showBreakdown ? 'border-t border-slate-100 pt-2' : ''}`}
+                    >
+                      <span className="flex items-center gap-1 text-base font-semibold text-ghana-black">
+                        Total
+                        {showBreakdown ? <ChevronUp size={16} className="text-slate-400" aria-hidden /> : <ChevronDown size={16} className="text-slate-400" aria-hidden />}
+                        {!showBreakdown && (
+                          <span className="text-xs font-normal text-slate-500">
+                            incl. tax GH₵ {taxAmount.toFixed(2)}{orderDiscountAmount > 0 ? ` · ${discountPercent}% off` : ''}
+                          </span>
+                        )}
+                      </span>
+                      <span className="whitespace-nowrap text-2xl font-bold text-ghana-black">GH₵ {(total + taxAmount).toFixed(2)}</span>
+                    </button>
                   </div>
                 )}
 
