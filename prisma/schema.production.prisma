@@ -1193,6 +1193,8 @@ model FBMenuItem {
   glAccountCode String   @default("4200")
   isAvailable   Boolean  @default(true)
   allergens     String?
+  aliases       String?
+  isPinned      Boolean  @default(false)
   prepMinutes   Int      @default(10)
   alias         String?  // comma-separated short names for POS search
   unit          String?  @default("portion") // selling unit: portion, plate, glass, bottle

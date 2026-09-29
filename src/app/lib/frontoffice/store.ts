@@ -36,7 +36,7 @@ import { isLateCheckoutNow } from './lateCheckout';
 import { depositBlocksConfirm, planEarlyCheckout, requiredDeposit } from './operationalPolicies';
 import { type NightAuditResult } from './nightAudit';
 import { postNoShowPenaltyToLedger } from '../accounting/simpleFlow';
-import { DEMO_BILLING_PERSONS, isDemoFixturesEnabled } from '../demo';
+import { DEMO_BILLING_PERSONS, DEMO_RESERVATION_IDS as demoReservationIds, isDemoFixturesEnabled } from '../demo';
 import { notifyError } from '../notifications/notify';
 import { genId } from './helpers/ids';
 
@@ -382,6 +382,10 @@ class FrontOfficeStore {
           const byId = new Map<string, Reservation>();
           this.reservations.forEach((r) => byId.set(r.id, r));
           data.reservations.forEach((r: Reservation) => byId.set(r.id, this.ensureReservationRates(r)));
+          // The tenant has real reservations now, so the placeholder demo ones (initializeSampleReservations)
+          // no longer serve their purpose — a fixed set of fake ids (never persisted server-side) that would
+          // otherwise sit in this merge forever, since nothing with a matching id ever arrives to replace them.
+          demoReservationIds.forEach((id) => byId.delete(id));
           this.reservations = Array.from(byId.values());
           // First-night room charges and the gl_pending retry both read folios, so
           // they run at the end of this pull, once /api/folios has landed — see below.

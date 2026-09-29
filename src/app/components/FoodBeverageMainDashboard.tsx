@@ -84,7 +84,7 @@ import FBPOS from './FBPOS';
 import FoodBeveragePosActivity from './FoodBeveragePosActivity';
 import FoodBeverageRestaurantBar from './FoodBeverageRestaurantBar';
 import FoodBeverageMenuInventory from './FoodBeverageMenuInventory';
-import FoodBeverageReportsAnalysis from './FoodBeverageReportsAnalysis';
+import FoodBeverageAnalyticsDashboard from './FoodBeverageAnalyticsDashboard';
 import DepartmentStockCountPanel from './inventory/DepartmentStockCountPanel';
 import CashierShiftPanel from './CashierShiftPanel';
 
@@ -377,7 +377,7 @@ export default function FoodBeverageMainDashboard({
                 {suppliesView === 'requisitions' && <FoodBeverageMenuInventory panel="requisitions" />}
               </div>
             )}
-            {selectedTab === 'reports' && <FoodBeverageReportsAnalysis embedded />}
+            {selectedTab === 'reports' && <FoodBeverageAnalyticsDashboard />}
           </div>
         </CardBody>
       </Card>

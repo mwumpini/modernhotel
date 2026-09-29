@@ -36,7 +36,7 @@ export interface FBOrder {
   table: string;
   waiterId: string;
   items: OrderItem[];
-  status: 'pending' | 'sent' | 'served' | 'paid' | 'preparing' | 'ready';
+  status: 'pending' | 'sent' | 'served' | 'paid' | 'preparing' | 'ready' | 'billed' | 'cancelled';
   customerType: CustomerType;
   venue: VenueMode;
   priority?: 'low' | 'medium' | 'high' | 'urgent';
@@ -52,6 +52,20 @@ export interface FBOrder {
   notes?: string;
   edited?: boolean;
   audit?: Array<{ at: string; by: string; action: string; details?: string }>;
+  // Real, Prisma-persisted fields (see serializeFbOrder.ts) that reporting needs
+  // for real history tables — KOT/BOT tickets, voids, discounts, table sales —
+  // and that weren't previously carried over by hydrateFromApi() below.
+  covers?: number;
+  discountAmount?: number;
+  serviceCharge?: number;
+  subtotal?: number;
+  taxAmount?: number;
+  assignedToName?: string;
+  preparingAt?: string;
+  servedAt?: string;
+  billedAt?: string;
+  folioId?: string;
+  guestId?: string;
 }
 
 class OrdersStore {
@@ -187,6 +201,17 @@ class OrdersStore {
           createdAt: o.createdAt,
           updatedAt: o.updatedAt,
           notes: o.notes || undefined,
+          covers: o.covers ?? undefined,
+          discountAmount: Number(o.discountAmount) || undefined,
+          serviceCharge: Number(o.serviceCharge) || undefined,
+          subtotal: Number(o.subtotal) || undefined,
+          taxAmount: Number(o.taxAmount) || undefined,
+          assignedToName: o.assignedToName || undefined,
+          preparingAt: o.preparingAt || undefined,
+          servedAt: o.servedAt || undefined,
+          billedAt: o.billedAt || undefined,
+          folioId: o.folioId || undefined,
+          guestId: o.guestId || undefined,
         };
       });
       this.listeners.forEach((l) => l());

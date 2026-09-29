@@ -40,6 +40,7 @@ import { getClientTenantSubdomain } from '../lib/api/clientTenant';
 import { computeSalesTaxTotal } from '../lib/tax/engine';
 import { useSettingsStore } from '../lib/settings/store';
 import { managerPinMatches } from '../lib/settings/managerPin';
+import { notifyError } from '../lib/notifications/notify';
 import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
 import { useSession } from 'next-auth/react';
 
@@ -111,6 +112,8 @@ interface MenuItem {
   price: number;
   category: string;
   route: 'kitchen' | 'bar';
+  aliases?: string[];
+  isPinned?: boolean;
 }
 
 interface CartItem extends MenuItem {
@@ -399,6 +402,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           price: Number(it.unitPrice),
           category: it.category,
           venue: it.venue,
+          aliases: it.aliases ? it.aliases.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
+          isPinned: !!it.isPinned,
           route: (it.route || (it.category?.toLowerCase().includes('drink') || it.category?.toLowerCase().includes('bever') ? 'bar' : 'kitchen')) as 'kitchen' | 'bar',
         }));
         if (mapped.length > 0) {
@@ -468,6 +473,35 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
 
   const categories = useMemo(() => Array.from(new Set(visibleMenu.map(m => m.category))), [visibleMenu]);
+
+  // Pinned items get a tab of their own, first in line, so frequent orders stay a tap away
+  // however long the menu grows. While a search is typed the results are shown across all tabs.
+  const PINNED_TAB = '__pinned';
+  const [menuTab, setMenuTab] = useState('');
+  const pinnedItems = useMemo(() => visibleMenu.filter(m => m.isPinned), [visibleMenu]);
+  const menuTabs = useMemo(() => [...(pinnedItems.length ? [PINNED_TAB] : []), ...categories], [pinnedItems, categories]);
+  const activeTab = menuTabs.includes(menuTab) ? menuTab : menuTabs[0];
+  const searching = search.trim() !== '';
+  const shownMenu = searching ? visibleMenu : activeTab === PINNED_TAB ? pinnedItems : visibleMenu.filter(m => m.category === activeTab);
+
+  // Pins are kept on the menu item itself, so every terminal shows the same ones.
+  const togglePin = async (item: MenuItem) => {
+    const setPinned = (pinned: boolean) => setMenu(prev => {
+      const next = prev.map(m => (m.id === item.id ? { ...m, isPinned: pinned } : m));
+      try { localStorage.setItem('fbpos.menu', JSON.stringify(next)); } catch {}
+      return next;
+    });
+    const pinned = !item.isPinned;
+    if (!searching) setMenuTab(activeTab); // stay on this tab, even when this is the first pin and the Pinned tab appears
+    setPinned(pinned);
+    try {
+      const res = await fetch('/api/fb/menu', { method: 'PATCH', headers: fbTenantHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ id: item.id, isPinned: pinned }) });
+      if (!res.ok) throw new Error(`Menu API ${res.status}`);
+    } catch {
+      setPinned(!pinned);
+      notifyError(`Could not ${pinned ? 'pin' : 'unpin'} ${item.name}. Please try again.`, 'Pin not saved');
+    }
+  };
   const menuIdToCategory = useMemo(() => {
     const map: Record<string, string> = {};
     menu.forEach(m => { map[m.id] = m.category; });
@@ -1501,7 +1535,6 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                     <SelectItem key={t}>{t}</SelectItem>
                   ))}
                 </Select>
-                <Input label="Search menu" value={search} onChange={(e) => setSearch(e.target.value)} />
                 <Input label="Order notes / allergies" value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} />
                 <div className="grid grid-cols-2 gap-2">
                   <Select label="Room Service" selectedKeys={[applyRoomServiceCharge ? 'yes' : 'no']} onSelectionChange={(k) => setApplyRoomServiceCharge(Array.from(k as Set<string>)[0] === 'yes')}>
@@ -1518,31 +1551,46 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
           <div className="lg:col-span-5 h-full min-h-0">
             <Card className="border-0 shadow-lg h-full">
-              <CardHeader className="pb-2 flex items-center justify-between">
-                <h3 className="font-semibold text-ghana-black">Menu</h3>
-                {menuLoading && <span className="text-xs text-gray-400 animate-pulse">Loading from database…</span>}
-                {!menuLoading && menu.length === 0 && <span className="text-xs text-orange-500">No menu items found. Run accounting setup to seed.</span>}
+              <CardHeader className="pb-2 flex-col items-stretch gap-2">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="font-semibold text-ghana-black">Menu</h3>
+                  {menuLoading && <span className="text-xs text-gray-400 animate-pulse">Loading from database…</span>}
+                  {!menuLoading && menu.length === 0 && <span className="text-xs text-orange-500">No menu items found. Run accounting setup to seed.</span>}
+                </div>
+                {!searching && menuTabs.length > 0 && (
+                  <Tabs aria-label="Menu categories" selectedKey={activeTab} onSelectionChange={(k) => setMenuTab(String(k))}>
+                    {menuTabs.map(t => <Tab key={t} title={t === PINNED_TAB ? `★ Pinned (${pinnedItems.length})` : t} />)}
+                  </Tabs>
+                )}
               </CardHeader>
               <CardBody className="min-h-0 overflow-y-auto">
-                <Tabs aria-label="Menu categories">
-                  {categories.map(cat => (
-                    <Tab key={cat} title={cat}>
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                        {visibleMenu.filter(m => m.category === cat).map(mi => (
-                          <button key={mi.id} className="p-3 rounded-lg border border-gray-200 bg-white text-left hover:bg-gray-50" onClick={() => addToCart(mi)}>
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <div className="font-medium text-ghana-black">{mi.name}</div>
-                                <div className="text-xs text-gray-500 capitalize">{mi.route}</div>
-                              </div>
-                              <div className="text-sm font-semibold">₵{mi.price}</div>
+                {shownMenu.length === 0 ? (
+                  <p className="text-sm text-gray-500">{searching ? 'No items match your search.' : 'No items here yet.'}</p>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                    {shownMenu.map(mi => (
+                      <div key={mi.id} className="relative">
+                        <button className="w-full h-full p-3 rounded-lg border border-gray-200 bg-white text-left hover:bg-gray-50" onClick={() => addToCart(mi)}>
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <div className="font-medium text-ghana-black">{mi.name}</div>
+                              <div className="text-xs text-gray-500 capitalize">{mi.route}</div>
                             </div>
-                          </button>
-                        ))}
+                            <div className="text-sm font-semibold">₵{mi.price}</div>
+                          </div>
+                        </button>
+                        <button
+                          aria-label={mi.isPinned ? `Unpin ${mi.name}` : `Pin ${mi.name}`}
+                          title={mi.isPinned ? 'Unpin' : 'Pin to the top'}
+                          className={`absolute bottom-1 right-2 text-base leading-none ${mi.isPinned ? 'text-amber-500' : 'text-gray-300 hover:text-amber-400'}`}
+                          onClick={() => togglePin(mi)}
+                        >
+                          {mi.isPinned ? '★' : '☆'}
+                        </button>
                       </div>
-                    </Tab>
-                  ))}
-                </Tabs>
+                    ))}
+                  </div>
+                )}
               </CardBody>
             </Card>
           </div>

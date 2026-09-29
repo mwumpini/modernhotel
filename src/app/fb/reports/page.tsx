@@ -3,7 +3,7 @@
 import React from 'react';
 import PageLayout from '../../components/PageLayout';
 import FoodBeverageBackButton from '../../components/FoodBeverageBackButton';
-import FoodBeverageReportsAnalysis from '../../components/FoodBeverageReportsAnalysis';
+import FoodBeverageAnalyticsDashboard from '../../components/FoodBeverageAnalyticsDashboard';
 
 export default function FoodBeverageReportsPage() {
   return (
@@ -11,7 +11,7 @@ export default function FoodBeverageReportsPage() {
       <div className="px-3 pt-2 pb-0">
         <FoodBeverageBackButton />
       </div>
-      <FoodBeverageReportsAnalysis />
+      <FoodBeverageAnalyticsDashboard />
     </PageLayout>
   );
 }

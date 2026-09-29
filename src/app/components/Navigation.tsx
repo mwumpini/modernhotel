@@ -117,6 +117,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
   const pathname = usePathname();
   const [expandedKeys, setExpandedKeys] = React.useState<Set<string>>(new Set(['dashboard']));
   const [activeSection, setActiveSection] = React.useState<ActiveSection>('dashboard');
+  // (narrow screens: choosing a section closes the open pane — see the effect after the sidebar state)
   const [hasMounted, setHasMounted] = React.useState(false);
   React.useEffect(() => { setHasMounted(true); }, []);
   // The side pane can be tucked away to give the work area the full width. The choice is a
@@ -849,7 +850,7 @@ export default function Navigation({ onLogout }: NavigationProps) {
       </nav>
 
       {/* Main Content Area */}
-      <div className="flex-1 bg-gray-50 overflow-y-auto">
+      <div className="flex-1 min-w-0 bg-gray-50 overflow-y-auto">
         {renderDashboardContent()}
       </div>
     </div>

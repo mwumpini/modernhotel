@@ -12,6 +12,11 @@ import { useStockStore } from '../lib/inventory/stockStore';
 import { announcementStore } from '../lib/analytics/announcementStore';
 import { ordersStore } from '../lib/fb/ordersStore';
 import { kitchenOpsStore } from '../lib/fb/kitchenOpsStore';
+import { useIncidentStore } from '../lib/security/incidentStore';
+import { usePatrolStore } from '../lib/security/patrolStore';
+import { fetchEventBookings } from '../lib/frontoffice/eventsApi';
+import { getZonedClockParts } from '../lib/frontoffice/propertyTime';
+import { resolvePropertyTimezone } from '../lib/frontoffice/propertyTimeClient';
 import { useAccountingStore } from '../lib/accounting/store';
 import { toRollupCoa } from '../lib/accounting/coaHierarchy';
 import { buildFinancialAccountTree } from '../lib/accounting/financialReportRollup';
@@ -65,6 +70,36 @@ const DASHBOARD_SECTIONS: DashboardSectionDef[] = [
 ];
 
 
+/** Today's date at the hotel, in the hotel's own timezone — not the browser's clock or UTC. */
+function propertyToday(): string {
+  return getZonedClockParts(new Date(), resolvePropertyTimezone()).date;
+}
+
+function addDays(isoDate: string, days: number): string {
+  const [y, m, d] = isoDate.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+}
+
+/** A smooth curve through the given points (Catmull-Rom, converted to cubic Beziers) — used for the
+ * occupancy trend so it reads as a trend line rather than a bar-by-bar comparison. */
+function smoothLinePath(points: Array<{ x: number; y: number }>): string {
+  if (points.length === 0) return '';
+  if (points.length === 1) return `M ${points[0].x},${points[0].y}`;
+  let d = `M ${points[0].x},${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${c1x},${c1y} ${c2x},${c2y} ${p2.x},${p2.y}`;
+  }
+  return d;
+}
+
 function formatCurrency(amount: number | undefined) {
   // Intl already renders GHS as "GH₵" for this locale (the .replace below is a
   // no-op safety net for locales/engines that instead spell out "GHS") — the
@@ -78,11 +113,6 @@ function formatCurrency(amount: number | undefined) {
   }
 }
 
-function isoDaysFromToday(offset: number) {
-  const d = new Date();
-  d.setDate(d.getDate() + offset);
-  return d.toISOString().split('T')[0];
-}
 
 function openModule(section: string) {
   window.dispatchEvent(new CustomEvent('app.navigate', { detail: { section } }));
@@ -375,30 +405,31 @@ export default function ExecutiveManagementDashboard() {
   const [arrivals, setArrivals] = React.useState<number>(0);
   const [departures, setDepartures] = React.useState<number>(0);
   const [occupancyTrend, setOccupancyTrend] = React.useState<Array<{date: string; rate: number}>>([]);
+  const [trendHoverIdx, setTrendHoverIdx] = React.useState<number | null>(null);
   const [revenueSplit, setRevenueSplit] = React.useState<{room: number; fb: number; other: number; total: number}>({ room: 0, fb: 0, other: 0, total: 0 });
   const [selectedDate, setSelectedDate] = React.useState<string>('');
+  // Live store updates refresh whichever date is on screen, not just today.
+  const selectedDateRef = React.useRef('');
+  selectedDateRef.current = selectedDate;
   // Room counts for the selected date — kept separate from `occupancy` (which is
   // always "today") so CSV/PDF exports don't mix today's room counts with a
   // different selected date's revenue/ADR/arrivals figures.
   const [roomCounts, setRoomCounts] = React.useState<{ totalRooms: number; occupiedRooms: number; availableRooms: number }>({ totalRooms: 0, occupiedRooms: 0, availableRooms: 0 });
 
   // LIVE OPS SNAPSHOT
-  const [inHouse, setInHouse] = React.useState<number>(0);
-  const [arrivalsToday, setArrivalsToday] = React.useState<number>(0);
-  const [departuresToday, setDeparturesToday] = React.useState<number>(0);
+  const [guestsInHouse, setGuestsInHouse] = React.useState<number>(0);
+  const [awaitingArrival, setAwaitingArrival] = React.useState<number>(0);
+  const [awaitingDeparture, setAwaitingDeparture] = React.useState<number>(0);
+  const [overstays, setOverstays] = React.useState<number>(0);
   const [expectedOcc, setExpectedOcc] = React.useState<number>(0);
-  const [nextHourCheckins, setNextHourCheckins] = React.useState<number>(0);
-  const [nextHourCheckouts, setNextHourCheckouts] = React.useState<number>(0);
 
-  // SECURITY
-  const [incidentsToday, setIncidentsToday] = React.useState<number>(0);
-  const [securityRoundsComplete, setSecurityRoundsComplete] = React.useState<boolean>(true);
+  // HOUSEKEEPING SUMMARY — rooms by their real status
+  const [hk, setHk] = React.useState({ total: 0, ready: 0, occupied: 0, inProgress: 0, dirty: 0, outOfOrder: 0 });
 
-  // HOUSEKEEPING SUMMARY
-  const [hkCleanReadyPct, setHkCleanReadyPct] = React.useState<number>(0);
-  const [hkInProgressPct, setHkInProgressPct] = React.useState<number>(0);
-  const [hkDirtyPct, setHkDirtyPct] = React.useState<number>(0);
-  const [hkOooPct, setHkOooPct] = React.useState<number>(0);
+  // SECURITY and EVENTS come straight from their own stores / bookings
+  const incidents = useIncidentStore((st) => st.incidents);
+  const patrols = usePatrolStore((st) => st.patrols);
+  const [eventBookings, setEventBookings] = React.useState<Array<Record<string, any>>>([]);
 
   // F&B and Kitchen Efficiency
   const [fbEff, setFbEff] = React.useState<{ total: number; served: number; queue: number; avgOrder: number; lastHour: number }>({ total: 0, served: 0, queue: 0, avgOrder: 0, lastHour: 0 });
@@ -448,50 +479,39 @@ export default function ExecutiveManagementDashboard() {
       setPostedRevenue(0);
     }
 
-    // Live operations snapshot from Front Office store
+    // Live operations snapshot — the same definitions as the Daily Flash report, so every screen agrees.
     try {
       const res = frontOfficeStore.reservations || [];
-      const today = isoDate;
-      // Individually checked-in reservations, plus pax from bulk accommodation
-      // event bookings checked in as a group (headcounts only — see
-      // EventsConferencesMainDashboard's checkInEventGroup / addInHouseGroup).
-      const inHouseNow = res.filter(r => r.status === 'checked-in' && r.arrival <= today && r.departure > today).length
-        + frontOfficeStore.getInHouseGroupPax();
-      const arr = res.filter(r => r.arrival === today).length;
-      const dep = res.filter(r => r.departure === today).length;
-      setInHouse(inHouseNow);
-      setArrivalsToday(arr);
-      setDeparturesToday(dep);
+      const on = (d?: string) => (d || '').slice(0, 10);
+      const today = propertyToday();
+      const isToday = isoDate === today;
+      // Headcount, not reservations. Event groups checked in as a block are only known "right now".
+      setGuestsInHouse((flash?.occupancy?.guestsInHouse || 0) + (isToday ? frontOfficeStore.getInHouseGroupPax() : 0));
       const occRate = Number(flash?.occupancy?.occupancyRate);
       setExpectedOcc(Number.isFinite(occRate) ? occRate : 0);
-      // Without check-in times, we cannot compute next-hour movements precisely
-      setNextHourCheckins(0);
-      setNextHourCheckouts(0);
+      // What is still to happen today (meaningless for another date)
+      setAwaitingArrival(isToday ? res.filter(r => on(r.arrival) === isoDate && (r.status === 'confirmed' || r.status === 'pending')).length : 0);
+      setAwaitingDeparture(isToday ? res.filter(r => r.status === 'checked-in' && on(r.departure) === isoDate).length : 0);
+      // Still checked in after their departure date
+      setOverstays(res.filter(r => r.status === 'checked-in' && on(r.departure) < today).length);
     } catch {}
 
-    // Housekeeping summary from housekeepingStore
+    // Housekeeping: rooms by their real status right now (a room held by a checked-in guest is occupied).
     try {
-      const attn = housekeepingStore.getRoomsNeedingAttention();
-      const total = Math.max(attn.total || 0, 1);
-      const dirty = (attn.dirty?.length || 0);
-      const ooo = (attn.outOfOrder?.length || 0);
-      const maintenance = (attn.maintenance?.length || 0);
-      const notReady = dirty + ooo + maintenance;
-      const cleanReady = Math.max(total - notReady, 0);
-      setHkCleanReadyPct((cleanReady / total) * 100);
-      setHkDirtyPct((dirty / total) * 100);
-      setHkOooPct((ooo / total) * 100);
-      // We do not track in-progress explicitly; approximate
-      setHkInProgressPct(Math.max(0, 100 - ((cleanReady / total) * 100) - ((dirty / total) * 100) - ((ooo / total) * 100)));
+      const rooms = housekeepingStore.getAllRooms();
+      const heldNow = new Set((frontOfficeStore.reservations || []).filter(r => r.status === 'checked-in' && r.roomId).map(r => r.roomId));
+      const beingCleaned = new Set(housekeepingStore.getAllTasks().filter(t => t.status === 'in-progress').map(t => t.roomNumber));
+      const count = { ready: 0, occupied: 0, inProgress: 0, dirty: 0, outOfOrder: 0 };
+      for (const room of rooms) {
+        if (room.status === 'out-of-order' || room.status === 'maintenance') count.outOfOrder++;
+        else if (beingCleaned.has(room.roomNumber)) count.inProgress++;
+        else if (room.status === 'occupied' || heldNow.has(room.roomNumber)) count.occupied++;
+        else if (room.status === 'dirty') count.dirty++;
+        else count.ready++;
+      }
+      setHk({ total: rooms.length, ...count });
     } catch {}
 
-    // Security incidents from audit log (area === 'security') as proxy
-    try {
-      const todayStr = new Date(isoDate).toISOString().split('T')[0];
-      const secs = auditLogStore.all().filter(r => (r as any).area === 'security' && (r.at || '').startsWith(todayStr));
-      setIncidentsToday(secs.length);
-      setSecurityRoundsComplete(true);
-    } catch {}
     // Refresh analytics-derived trend to keep it live
     try { setOccupancyTrend(calculateOccupancyAnalytics()?.occupancyTrend || []); } catch {}
     // F&B efficiency from orders (today)
@@ -528,7 +548,7 @@ export default function ExecutiveManagementDashboard() {
     // Refresh KPIs on mount
     // Compute metrics on client after mount to avoid SSR/client mismatches
     setOccupancy(calculateOccupancyAnalytics());
-    const todayISO = new Date().toISOString().split('T')[0];
+    const todayISO = propertyToday();
     setSelectedDate(todayISO);
     refreshForDate(todayISO);
 
@@ -543,8 +563,8 @@ export default function ExecutiveManagementDashboard() {
 
     // Subscriptions for live updates
     const unsubs: Array<(() => void) | null> = [];
-    try { unsubs.push(frontOfficeStore.subscribe(() => refreshForDate(todayISO))); } catch {}
-    try { unsubs.push(housekeepingStore.subscribe(() => refreshForDate(todayISO))); } catch {}
+    try { unsubs.push(frontOfficeStore.subscribe(() => refreshForDate(selectedDateRef.current || todayISO))); } catch {}
+    try { unsubs.push(housekeepingStore.subscribe(() => refreshForDate(selectedDateRef.current || todayISO))); } catch {}
     try {
       const uaUnsub = (useAnalyticsStore as any).subscribe?.(() => {
         try {
@@ -558,10 +578,8 @@ export default function ExecutiveManagementDashboard() {
       const stockUnsub = (useStockStore as any).subscribe?.(() => setStockSummary(computeStockSummary())) || null;
       unsubs.push(stockUnsub);
     } catch {}
-    // Announcement store (no unsubscribe returned)
-    try { announcementStore.subscribe(() => setEventsList(announcementStore.getForDepartment('events', 3).map(m => m.message))); } catch {}
-    try { unsubs.push(ordersStore.subscribe(() => refreshForDate(todayISO))); } catch {}
-    try { unsubs.push(kitchenOpsStore.subscribe(() => refreshForDate(todayISO))); } catch {}
+    try { unsubs.push(ordersStore.subscribe(() => refreshForDate(selectedDateRef.current || todayISO))); } catch {}
+    try { unsubs.push(kitchenOpsStore.subscribe(() => refreshForDate(selectedDateRef.current || todayISO))); } catch {}
     // Pulls in real persisted order history — the subscribe above re-runs
     // refreshForDate once this resolves and notifies listeners.
     try { ordersStore.hydrateFromApi(); } catch {}
@@ -569,6 +587,11 @@ export default function ExecutiveManagementDashboard() {
     // Executive dashboard sees every room as the default 'vacant' instead of
     // its real logged status.
     try { housekeepingStore.hydrateFromApi(); } catch {}
+    // Security, stock and events aren't loaded by anything else on this screen — without these the
+    // cards would show only what another page happened to load first.
+    try { useIncidentStore.getState().hydrateFromApi(); } catch {}
+    try { usePatrolStore.getState().hydrateFromApi(); } catch {}
+    try { useStockStore.getState().hydrateFromApi(); } catch {}
 
     return () => {
       unsubs.forEach((fn) => {
@@ -578,6 +601,15 @@ export default function ExecutiveManagementDashboard() {
       });
     };
   }, [calculateOccupancyAnalytics, refreshForDate, generateDailyFlashReport]);
+
+  // Event bookings (the hotel's real conference / event calendar)
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = () => { fetchEventBookings().then((b) => { if (!cancelled) setEventBookings(b); }).catch(() => {}); };
+    load();
+    const timer = setInterval(load, 5 * 60_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
 
   // Auto-refresh timers
   React.useEffect(() => {
@@ -598,7 +630,7 @@ export default function ExecutiveManagementDashboard() {
 
   const handleExportCSV = () => {
     const data = {
-      date: selectedDate || new Date().toISOString().split('T')[0],
+      date: selectedDate || propertyToday(),
       totalRooms,
       occupiedRooms,
       availableRooms,
@@ -606,6 +638,7 @@ export default function ExecutiveManagementDashboard() {
       postedRevenue,
       adr,
       revpar,
+      guestsInHouse,
       arrivals,
       departures,
       revenueSplit
@@ -622,7 +655,7 @@ export default function ExecutiveManagementDashboard() {
 
   const handleExportPDF = async () => {
     const data = {
-      date: selectedDate || new Date().toISOString().split('T')[0],
+      date: selectedDate || propertyToday(),
       kpis: { totalRooms, occupiedRooms, availableRooms, revenueToday, postedRevenue, adr, revpar, arrivals, departures },
       trend: occupancyTrend,
       revenueSplit
@@ -652,8 +685,29 @@ export default function ExecutiveManagementDashboard() {
   };
   const [stockSummary, setStockSummary] = React.useState(computeStockSummary());
 
-  // Conferences & Events - live from announcements (events dept)
-  const [eventsList, setEventsList] = React.useState<string[]>(() => announcementStore.getForDepartment('events', 3).map(m => m.message));
+  // The hotel's own timezone decides what "today" is; everything below is for the selected date.
+  const isTodaySelected = selectedDate !== '' && selectedDate === propertyToday();
+  const hkDirtyPct = hk.total > 0 ? (hk.dirty / hk.total) * 100 : 0;
+
+  const security = React.useMemo(() => {
+    const tz = resolvePropertyTimezone();
+    const dayOf = (d: unknown) => (d ? getZonedClockParts(new Date(d as any), tz).date : '');
+    const open = incidents.filter((i) => i.status !== 'resolved' && i.status !== 'closed');
+    const dayPatrols = patrols.filter((p) => dayOf(p.startTime) === selectedDate);
+    return {
+      reported: incidents.filter((i) => dayOf(i.reportedAt) === selectedDate).length,
+      open: open.length,
+      openSerious: open.filter((i) => i.severity === 'high' || i.severity === 'critical').length,
+      patrolsTotal: dayPatrols.length,
+      patrolsCompleted: dayPatrols.filter((p) => p.status === 'completed').length,
+      missedCheckpoints: dayPatrols.reduce((n, p) => n + p.checkpoints.filter((c) => c.status === 'missed').length, 0),
+    };
+  }, [incidents, patrols, selectedDate]);
+
+  const eventsOnDate = React.useMemo(() => {
+    const on = (d: unknown) => (d ? String(d).slice(0, 10) : '');
+    return eventBookings.filter((b) => b.status !== 'cancelled' && on(b.startDate) <= selectedDate && selectedDate <= on(b.endDate));
+  }, [eventBookings, selectedDate]);
 
   // Generate live system alerts from stores
   const buildLiveAlerts = React.useCallback(() => {
@@ -665,21 +719,25 @@ export default function ExecutiveManagementDashboard() {
         out[sev].push({ id: `inv-${a.id}`, severity: sev as any, text: `${a.message} (${a.itemName})`, nav: '/?tab=overview' });
       });
     } catch {}
-    try {
-      if ((occupancy?.occupancyRate || expectedOcc) > 95) {
-        out.warning.push({ id: 'occ-high', severity: 'warning', text: 'Occupancy above 95% - monitor overbooking risk', nav: '/reports' });
-      }
-    } catch {}
-    try {
-      if (hkDirtyPct > 30) {
-        out.warning.push({ id: 'hk-backlog', severity: 'warning', text: 'Housekeeping backlog: Dirty rooms exceed 30%', nav: '/housekeeping' });
-      }
-    } catch {}
+    // Ids carry the date (or the count), so acknowledging one occurrence doesn't hide every future one.
+    if (expectedOcc > 95) {
+      out.warning.push({ id: `occ-high:${selectedDate}`, severity: 'warning', text: 'Occupancy above 95% - monitor overbooking risk', nav: '/reports' });
+    }
+    if (hkDirtyPct > 30) {
+      out.warning.push({ id: `hk-backlog:${selectedDate}`, severity: 'warning', text: 'Housekeeping backlog: Dirty rooms exceed 30%', nav: '/housekeeping' });
+    }
+    if (overstays > 0) {
+      out.warning.push({ id: `overstays:${overstays}`, severity: 'warning', text: `${overstays} guest${overstays === 1 ? '' : 's'} still checked in past their check-out date`, nav: '/guest-services/check-ins?tab=checkouts' });
+    }
+    if (security.openSerious > 0) {
+      out.critical.push({ id: `sec-serious:${security.openSerious}`, severity: 'critical', text: `${security.openSerious} high-severity security incident${security.openSerious === 1 ? '' : 's'} still open` });
+    }
     return out;
-  }, [occupancy?.occupancyRate, expectedOcc, hkDirtyPct]);
+  }, [expectedOcc, hkDirtyPct, overstays, security.openSerious, selectedDate]);
 
-  const todayISO = isoDaysFromToday(0);
-  const yesterdayISO = isoDaysFromToday(-1);
+  // "Today" follows the hotel's timezone, same as the rest of this screen.
+  const todayISO = propertyToday();
+  const yesterdayISO = addDays(todayISO, -1);
   const occupancyPct = Number.isFinite(expectedOcc) ? Math.round(expectedOcc) : 0;
   const dateChip = (active: boolean) =>
     `h-8 rounded-lg px-3 text-sm font-medium transition-colors ${
@@ -762,14 +820,16 @@ export default function ExecutiveManagementDashboard() {
             <HideCardButton onHide={() => hide('liveOps')} label="Live Operations" />
           </div>
           <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
-            <OpsMetric label="In-house guests" value={String(inHouse)} icon={<Users className="h-4 w-4" />} iconClass="bg-blue-100 text-blue-600" onClick={() => go('/housekeeping')} />
-            <OpsMetric label="Today's arrivals" value={String(arrivalsToday)} icon={<LogIn className="h-4 w-4" />} iconClass="bg-green-100 text-green-600" onClick={() => go('/guest-services/check-ins?tab=checkins')} />
-            <OpsMetric label="Today's departures" value={String(departuresToday)} icon={<LogOut className="h-4 w-4" />} iconClass="bg-orange-100 text-orange-600" onClick={() => go('/guest-services/check-ins?tab=checkouts')} />
+            <OpsMetric label="In-house guests" value={`${guestsInHouse} · ${occupiedRooms} ${occupiedRooms === 1 ? 'room' : 'rooms'}`} icon={<Users className="h-4 w-4" />} iconClass="bg-blue-100 text-blue-600" onClick={() => go('/housekeeping')} />
+            <OpsMetric label={isTodaySelected ? "Today's arrivals" : 'Arrivals'} value={String(arrivals)} icon={<LogIn className="h-4 w-4" />} iconClass="bg-green-100 text-green-600" onClick={() => go('/guest-services/check-ins?tab=checkins')} />
+            <OpsMetric label={isTodaySelected ? "Today's departures" : 'Departures'} value={String(departures)} icon={<LogOut className="h-4 w-4" />} iconClass="bg-orange-100 text-orange-600" onClick={() => go('/guest-services/check-ins?tab=checkouts')} />
             <OpsMetric label="Expected occupancy" value={`${occupancyPct}%`} icon={<Gauge className="h-4 w-4" />} iconClass="bg-purple-100 text-purple-600" onClick={() => go('/reports')} />
           </div>
-          <p className="mt-2 text-xs text-gray-600">
-            Next hour · {nextHourCheckins} check-ins · {nextHourCheckouts} check-outs
-          </p>
+          {isTodaySelected && (
+            <p className="mt-2 text-xs text-gray-600">
+              Still to arrive · {awaitingArrival} · Still to depart · {awaitingDeparture}
+            </p>
+          )}
         </section>
       )}
 
@@ -796,42 +856,23 @@ export default function ExecutiveManagementDashboard() {
               hideLabel="Security & Safety"
             />
             <CardBody className="pt-2 grid grid-cols-2 gap-3 text-sm">
+              <StatTile label="Incidents reported" value={security.reported} />
               <StatTile
-                label="Incident Log"
+                label="Open incidents"
                 value={
-                  <span className={`inline-flex items-center gap-1.5 ${incidentsToday === 0 ? 'text-green-700' : 'text-red-700'}`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${incidentsToday === 0 ? 'bg-green-500' : 'bg-red-500'}`} />
-                    {incidentsToday}
+                  <span className={`inline-flex items-center gap-1.5 ${security.openSerious > 0 ? 'text-red-700' : security.open === 0 ? 'text-green-700' : ''}`}>
+                    <span className={`h-1.5 w-1.5 rounded-full ${security.openSerious > 0 ? 'bg-red-500' : security.open === 0 ? 'bg-green-500' : 'bg-amber-500'}`} />
+                    {security.open}{security.openSerious > 0 ? ` (${security.openSerious} high/critical)` : ''}
                   </span>
                 }
               />
               <StatTile
-                label="Security Checks"
-                value={
-                  <span className={`inline-flex items-center gap-1.5 text-base ${securityRoundsComplete ? 'text-green-700' : 'text-red-700'}`}>
-                    <span className={`h-1.5 w-1.5 rounded-full ${securityRoundsComplete ? 'bg-green-500' : 'bg-red-500'}`} />
-                    {securityRoundsComplete ? 'Complete' : 'Pending'}
-                  </span>
-                }
+                label="Patrols completed"
+                value={<span className="text-base">{security.patrolsTotal === 0 ? 'None logged' : `${security.patrolsCompleted} of ${security.patrolsTotal}`}</span>}
               />
-              <StatTile
-                label="CCTV Status"
-                value={
-                  <span className="inline-flex items-center gap-1.5 text-base text-green-700">
-                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                    Operational
-                  </span>
-                }
-              />
-              <StatTile
-                label="Fire Panel"
-                value={
-                  <span className="inline-flex items-center gap-1.5 text-base text-green-700">
-                    <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
-                    Normal
-                  </span>
-                }
-              />
+              {security.missedCheckpoints > 0 && (
+                <StatTile label="Checkpoints missed" value={<span className="text-red-700">{security.missedCheckpoints}</span>} />
+              )}
             </CardBody>
           </Card>
           )}
@@ -846,27 +887,27 @@ export default function ExecutiveManagementDashboard() {
               hideLabel="Housekeeping Status"
             />
             <CardBody className="pt-2 grid grid-cols-2 gap-2 text-sm">
-              <div className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>Clean/Ready</span><span className="font-semibold text-ghana-black">{Math.round(hkCleanReadyPct)}%</span></div>
-                <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className="h-1.5 bg-green-600" style={{ width: `${hkCleanReadyPct}%` }} /></div>
-              </div>
-              <div className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>In Progress</span><span className="font-semibold text-ghana-black">{Math.round(hkInProgressPct)}%</span></div>
-                <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className="h-1.5 bg-blue-600" style={{ width: `${hkInProgressPct}%` }} /></div>
-              </div>
-              <div className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>Dirty</span><span className="font-semibold text-ghana-black">{Math.round(hkDirtyPct)}%</span></div>
-                <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className="h-1.5 bg-yellow-500" style={{ width: `${hkDirtyPct}%` }} /></div>
-              </div>
-              <div className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
-                <div className="flex justify-between"><span>Out of Order</span><span className="font-semibold text-ghana-black">{Math.round(hkOooPct)}%</span></div>
-                <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className="h-1.5 bg-red-600" style={{ width: `${hkOooPct}%` }} /></div>
-              </div>
+              {hk.total === 0 ? (
+                <p className="col-span-2 text-gray-500">No rooms configured yet.</p>
+              ) : (
+                ([
+                  ['Clean / Ready', hk.ready, 'bg-green-600'],
+                  ['Occupied', hk.occupied, 'bg-slate-500'],
+                  ['Being cleaned', hk.inProgress, 'bg-blue-600'],
+                  ['Dirty', hk.dirty, 'bg-yellow-500'],
+                  ['Out of order', hk.outOfOrder, 'bg-red-600'],
+                ] as const).map(([label, count, color]) => (
+                  <div key={label} className="space-y-1 cursor-pointer rounded-lg bg-gray-50 p-2.5" onClick={() => go('/housekeeping')}>
+                    <div className="flex justify-between"><span>{label}</span><span className="font-semibold text-ghana-black">{count} <span className="text-xs font-normal text-gray-500">· {Math.round((count / hk.total) * 100)}%</span></span></div>
+                    <div className="h-1.5 bg-gray-200 rounded overflow-hidden"><div className={`h-1.5 ${color}`} style={{ width: `${(count / hk.total) * 100}%` }} /></div>
+                  </div>
+                ))
+              )}
             </CardBody>
           </Card>
           )}
 
-          {/* Conferences & Events - live from announcements */}
+          {/* Conferences & Events — the hotel's real event bookings for the selected date */}
           {!isHidden('events') && (
           <Card className="border border-gray-200/70 border-l-4 border-l-purple-300 rounded-2xl shadow-sm transition-shadow duration-200 hover:shadow-md">
             <SectionHeader
@@ -877,12 +918,19 @@ export default function ExecutiveManagementDashboard() {
               hideLabel="Conferences & Events"
             />
             <CardBody className="pt-2 space-y-2 text-sm">
-              {eventsList.length === 0 && (
-                <div className="p-3 bg-gray-50 border border-gray-200 rounded text-left">No events today</div>
+              {eventsOnDate.length === 0 && (
+                <div className="p-3 bg-gray-50 border border-gray-200 rounded text-left">{isTodaySelected ? 'No events today' : 'No events on this date'}</div>
               )}
-              {eventsList.slice(0,3).map((t, idx) => (
-                <div key={idx} className="p-3 bg-green-50 border border-green-200 rounded text-left">{t}</div>
+              {eventsOnDate.slice(0, 4).map((e) => (
+                <div key={e.id} className="p-3 bg-green-50 border border-green-200 rounded text-left">
+                  <div className="font-medium">{e.title}</div>
+                  <div className="text-xs text-gray-600">
+                    {[e.hallName, e.startTime && e.endTime ? `${e.startTime}–${e.endTime}` : null, e.attendees ? `${e.attendees} guests` : null].filter(Boolean).join(' · ')}
+                  </div>
+                  {e.status === 'pending' && <div className="text-xs text-amber-700">Pending confirmation</div>}
+                </div>
               ))}
+              {eventsOnDate.length > 4 && <div className="text-xs text-gray-500">+{eventsOnDate.length - 4} more</div>}
             </CardBody>
           </Card>
           )}
@@ -896,7 +944,7 @@ export default function ExecutiveManagementDashboard() {
             <SectionHeader
               icon={<Wallet className="h-4 w-4" />}
               iconClass="bg-green-100 text-green-600"
-              title="Today's Financial Pulse"
+              title={isTodaySelected || !selectedDate ? "Today's Financial Pulse" : `Financial Pulse — ${selectedDate}`}
               onHide={() => hide('financial')}
               hideLabel="Today's Financial Pulse"
             />
@@ -971,7 +1019,7 @@ export default function ExecutiveManagementDashboard() {
                       <div className="font-semibold mb-1">{b.title}</div>
                       {b.items.length === 0 && <div className="text-xs text-gray-600">No alerts</div>}
                       {b.items.map(a => (
-                        <div key={a.id} className="flex items-start justify-between gap-2">
+                        <div key={a.id} className="flex flex-col items-start gap-1.5">
                           <button onClick={() => a.nav && go(a.nav)} className="text-left hover:underline">{a.text}</button>
                           <Button size="sm" variant="flat" onPress={() => acknowledgeAlert(a.id)}>Acknowledge</Button>
                         </div>
@@ -1064,7 +1112,7 @@ export default function ExecutiveManagementDashboard() {
                 <div className="font-semibold mb-2">🟡 Low (Reorder)</div>
                  <ul className="space-y-1 list-disc list-inside">
                   {stockSummary.low.map(i => (
-                    <li key={i.id} className="flex justify-between items-center">
+                    <li key={i.id} className="flex justify-between items-center gap-2">
                       <span>{i.name}</span>
                       <Button size="sm" variant="flat" onPress={() => {
                         try {
@@ -1081,7 +1129,7 @@ export default function ExecutiveManagementDashboard() {
                 <div className="font-semibold mb-2">🔴 Critical</div>
                 <ul className="space-y-1 list-disc list-inside">
                   {stockSummary.critical.map(i => (
-                    <li key={i.id} className="flex justify-between items-center">
+                    <li key={i.id} className="flex justify-between items-center gap-2">
                       <span>{i.name}</span>
                       <Button size="sm" color="danger" variant="flat" onPress={() => {
                         try {

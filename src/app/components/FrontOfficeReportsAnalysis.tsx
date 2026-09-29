@@ -11,6 +11,7 @@ import {
   Filter, Printer, RefreshCw, RotateCcw, Search, SlidersHorizontal, StickyNote, TrendingUp, X
 } from 'lucide-react';
 import { useReportingStore } from '../lib/frontoffice/reportingStore';
+import { isPercentKey, formatPercent } from '../lib/frontoffice/reportExportFormat';
 import { useSettingsStore } from '../lib/settings/store';
 import { frontOfficeStore } from '../lib/frontoffice/store';
 import { useNightAuditLog } from '../lib/frontoffice/useNightAuditLog';
@@ -104,7 +105,7 @@ function ReportSummarySection({ data }: { data: Record<string, unknown> }) {
 const RANGE_REPORT_KEYS = new Set([
   'arrivals', 'departures', 'check-ins', 'high-balance', 'wake-up-calls',
   'daily-transactions', 'cashier-report', 'credit-card-reconciliation', 'guest-ledger',
-  'occupancy', 'pace', 'no-shows', 'night-audit-history',
+  'occupancy', 'room-performance', 'pace', 'no-shows', 'night-audit-history',
   'source-business', 'market-segmentation', 'discount-request', 'complimentary-room', 'pricing-analytics',
 ]);
 // Reports that don't take a date at all (guest-history reads guestId instead).
@@ -148,6 +149,7 @@ const REPORT_GROUPS = {
     description: 'Occupancy, booking mix and commercial leakage.',
     reports: [
       ['occupancy', 'Occupancy'],
+      ['room-performance', 'Room Performance'],
       ['pace', 'Pace'],
       ['no-shows', 'No-Shows'],
       ['source-business', 'Source of Business'],
@@ -576,6 +578,8 @@ export default function FrontOfficeReportsAnalysis({ embedded = false }: { embed
         return generateDailyFlashReport;
       case 'occupancy':
         return reportingStore.generateOccupancyReport(startDate, endDate);
+      case 'room-performance':
+        return reportingStore.generateRoomPerformanceReport(startDate, endDate);
       case 'pace':
         return reportingStore.generatePaceReport(startDate, endDate);
       case 'no-shows':
@@ -850,7 +854,9 @@ export default function FrontOfficeReportsAnalysis({ embedded = false }: { embed
             <TableRow key={index}>
               {visibleColumns.map((column) => (
                 <TableCell key={column.key}>
-                  {typeof row[column.key] === 'number' && /(amount|balance|rate|revenue|charges|payments|deposit|price|loss|impact|spent|limit)/i.test(column.key)
+                  {typeof row[column.key] === 'number' && isPercentKey(column.key)
+                    ? formatPercent(row[column.key])
+                    : typeof row[column.key] === 'number' && /(amount|balance|rate|revenue|charges|payments|deposit|price|loss|impact|spent|limit)/i.test(column.key)
                     ? money(row[column.key])
                     : typeof row[column.key] === 'number' && /(percentage|occupancy|revpar|adr)/i.test(column.key)
                     ? `${row[column.key].toLocaleString('en-GH', { maximumFractionDigits: 1 })}%`

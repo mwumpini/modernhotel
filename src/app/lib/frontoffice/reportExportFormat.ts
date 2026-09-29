@@ -19,10 +19,37 @@ function labelize(key: string): string {
   return key.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase());
 }
 
-function cell(value: unknown): string | number {
+/** Report fields that hold a share of 0-100 (occupancy, discount %, approval rate...). Matched by
+ * name because plenty of other "...Rate" fields (averageDailyRate, originalRate) are money. */
+export function isPercentKey(key: string): boolean {
+  return key === 'percentage' || key.endsWith('Percentage') || key === 'occupancyRate' || key === 'approvalRate';
+}
+
+export function formatPercent(value: number): string {
+  return `${value.toFixed(2)}%`;
+}
+
+/** Whole-number fields (a count of things, not an amount of money) — most numeric report
+ * fields ARE money, so this is a small explicit exception list rather than trying to guess
+ * "looks like money" from the value itself (a ₵35 sale and a quantity of 35 are both just
+ * the number 35 — only the field name tells them apart). */
+const COUNT_KEYS = new Set([
+  'quantity', 'qty', 'hour', 'covers', 'orders', 'totalOrders', 'totalCustomers', 'activeCustomers',
+  'totalVoids', 'pendingOrders', 'visitCount', 'loyaltyPoints', 'totalSuppliers', 'activeSuppliers',
+  'prepTimeMinutes', 'orderCount', 'transactions', 'voids',
+  // Front Office report fields — nights/stays/guests/rooms are counted, never money.
+  'rank', 'adults', 'children', 'guests', 'guestCount', 'nights', 'nightsInPeriod', 'nightsOccupied',
+  'roomNights', 'stays', 'daysInPeriod', 'leadTimeDays', 'availableRooms', 'totalRooms', 'totalNights',
+  'totalComplimentaryRooms', 'totalGuestsInHouse', 'transactionCount',
+]);
+export function isCountKey(key: string): boolean {
+  return COUNT_KEYS.has(key);
+}
+
+function cell(value: unknown, key?: string): string | number {
   if (value === null || value === undefined || value === '') return '';
   if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (typeof value === 'number') return value;
+  if (typeof value === 'number') return key && isPercentKey(key) ? formatPercent(value) : value;
   if (Array.isArray(value)) return value.join(', ');
   if (typeof value === 'object') return Object.entries(value as Record<string, unknown>).map(([k, v]) => `${k}: ${v}`).join(', ');
   return String(value);
@@ -40,7 +67,7 @@ function objectSections(data: Record<string, unknown>, titlePrefix = ''): Export
     sections.push({
       title: titlePrefix || 'Summary',
       columns: ['Field', 'Value'],
-      rows: primitives.map(([key, value]) => [labelize(key), cell(value)]),
+      rows: primitives.map(([key, value]) => [labelize(key), cell(value, key)]),
     });
   }
 
@@ -61,7 +88,7 @@ function objectSections(data: Record<string, unknown>, titlePrefix = ''): Export
       sections.push({
         title,
         columns: columns.map(labelize),
-        rows: rows.map((row) => columns.map((c) => cell(row[c]))),
+        rows: rows.map((row) => columns.map((c) => cell(row[c], c))),
       });
     } else {
       sections.push({ title, columns: ['Value'], rows: (arr as unknown[]).map((v) => [cell(v)]) });
@@ -78,7 +105,7 @@ export function reportDataToSections(data: unknown): ExportSection[] {
     return [{
       title: 'Report',
       columns: columns.map(labelize),
-      rows: data.map((row: Record<string, unknown>) => columns.map((c) => cell(row[c]))),
+      rows: data.map((row: Record<string, unknown>) => columns.map((c) => cell(row[c], c))),
     }];
   }
   return objectSections((data as Record<string, unknown>) || {});

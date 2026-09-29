@@ -1207,6 +1207,8 @@ model FBMenuItem {
   glAccountCode String   @default("4200")
   isAvailable   Boolean  @default(true)
   allergens     String?
+  aliases       String?  // comma-separated short names the POS search also matches
+  isPinned      Boolean  @default(false) // shown first in the POS so frequent items are a tap away
   prepMinutes   Int      @default(10)
   alias         String?  // comma-separated short names for POS search
   unit          String?  @default("portion") // selling unit: portion, plate, glass, bottle

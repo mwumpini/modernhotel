@@ -376,6 +376,10 @@ const RESERVATION_SEEDS: ReservationSeed[] = [
   { id: 'R-006', resId: 'RES-006', guestIndex: 5, roomTypeKey: 'standard', roomId: '103', arrivalOffset: -2, departureOffset: 0, status: 'checked-in', adults: 2, children: 0, paymentMethod: 'Cash', remarksToGuest: 'Late checkout if possible', stayReason: 'leisure', createdDaysAgo: 2 },
 ];
 
+/** Ids of the placeholder reservations above — so a real fetch can drop them once the tenant
+ * actually has reservations of its own (see FrontOfficeStore.pullFromApi). */
+export const DEMO_RESERVATION_IDS = new Set(RESERVATION_SEEDS.map((s) => s.id));
+
 /** Build sample reservations with dates relative to today. */
 export function buildDemoReservations(): Reservation[] {
   const today = new Date();

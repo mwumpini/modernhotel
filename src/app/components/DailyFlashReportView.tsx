@@ -30,12 +30,13 @@ export type DailyFlashReport = {
   collections: {
     totalPayments: number;
     cashOnHand: number;
-    outstandingBalance: number;
+    /** What in-house guests owe as of the end of the date, from their folios. */
+    inHouseBalanceDue: number;
   };
   exceptions: {
     highBalanceFolios: number;
   };
-  arrivals?: { total: number; guaranteed?: number };
+  arrivals?: { total: number; guaranteed?: number; walkIns?: number };
 };
 
 function money(value: number) {
@@ -109,6 +110,7 @@ export default function DailyFlashReportView({ flash }: { flash: DailyFlashRepor
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Movement</h3>
           <Line label="Arrivals" value={String(movement.arrivals)} />
           <Line label="Guaranteed arrivals" value={String(movement.guaranteedArrivals)} />
+          {flash.arrivals?.walkIns !== undefined && <Line label="Walk-ins" value={String(flash.arrivals.walkIns)} />}
           <Line label="Departures" value={String(movement.departures)} />
           <Line label="Stay-overs" value={String(movement.stayOvers)} />
           <Line label="No-shows" value={String(movement.noShows)} strong />
@@ -128,7 +130,7 @@ export default function DailyFlashReportView({ flash }: { flash: DailyFlashRepor
           <h3 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-500">Collections</h3>
           <Line label="Payments received" value={money(collections.totalPayments)} />
           <Line label="Cash collected" value={money(collections.cashOnHand)} />
-          <Line label="Outstanding" value={money(collections.outstandingBalance)} strong />
+          <Line label="In-house balance due" value={money(collections.inHouseBalanceDue)} strong />
           {exceptions.highBalanceFolios > 0 && (
             <Line label="High-balance folios" value={String(exceptions.highBalanceFolios)} />
           )}

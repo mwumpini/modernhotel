@@ -280,6 +280,10 @@ export default function SystemSettingsMainDashboard() {
             <Tab key="audit" title="Audit Log">
               <AuditLogPanel />
             </Tab>
+
+            <Tab key="sample-data" title="Sample Data">
+              <SampleDataPanel />
+            </Tab>
           </Tabs>
         </CardBody>
       </Card>
