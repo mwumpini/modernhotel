@@ -1386,90 +1386,107 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                 </Button>
               </div>
 
+              {/* Who the order is for — in view on every order, not tucked under Details. */}
+              <div className="mt-3 flex items-start gap-2">
+                <div className="inline-flex shrink-0 rounded-lg bg-slate-100 p-0.5" role="group" aria-label="Customer type">
+                  {([['Walk-in', 'Walk-in'], ['In-house', 'In-house']] as const).map(([t, label]) => (
+                    <button
+                      key={t}
+                      type="button"
+                      aria-pressed={customerType === t}
+                      onClick={() => handleCustomerTypeChange(t)}
+                      className={`h-9 rounded-md px-3 text-xs font-semibold ${customerType === t ? 'bg-white text-ghana-black shadow-sm' : 'text-slate-500'}`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="relative min-w-0 flex-1">
+                  {customerType === 'In-house' ? (
+                    <div>
+                      <Input
+                        size="sm"
+                        startContent={<Search size={16} className="text-slate-400" aria-hidden />}
+                        classNames={{ inputWrapper: 'h-10' }}
+                        aria-label="Room number or guest name"
+                        placeholder="Room number or guest name…"
+                        value={roomSearchTerm || roomNumber}
+                        onChange={(e) => {
+                          setRoomSearchTerm(e.target.value);
+                          if (!e.target.value) {
+                            setRoomNumber('');
+                            setGuestName('');
+                            setSelectedGuest(null);
+                          }
+                        }}
+                        onFocus={() => setRoomSearchTerm(roomNumber)}
+                      />
+                      {roomSearchTerm && filteredRooms.length > 0 && (
+                        <div className="absolute inset-x-0 top-full z-20 mt-1 max-h-60 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                          {filteredRooms.map((room) => (
+                            <button
+                              type="button"
+                              key={room.roomId}
+                              className="block w-full border-b border-slate-100 p-2 text-left last:border-b-0 hover:bg-slate-50"
+                              onClick={() => handleRoomSelect(room)}
+                            >
+                              <div className="font-medium">Room {room.roomId}</div>
+                              <div className="text-sm text-slate-600">{room.guestName} • {room.roomType}</div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {selectedGuest && (
+                        <p className="mt-1 text-xs text-green-700">✓ Room {roomNumber} · {guestName}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <Input
+                        size="sm"
+                        startContent={<Search size={16} className="text-slate-400" aria-hidden />}
+                        classNames={{ inputWrapper: 'h-10' }}
+                        aria-label="Walk-in customer"
+                        placeholder="Name, phone or email…"
+                        value={walkInSearchTerm || (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : '')}
+                        onChange={(e) => {
+                          setWalkInSearchTerm(e.target.value);
+                          if (!e.target.value) {
+                            setSelectedWalkIn(null);
+                          }
+                        }}
+                        onFocus={() => { setWalkInFocused(true); setWalkInSearchTerm(selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : ''); }}
+                        onBlur={() => { setTimeout(() => setWalkInFocused(false), 150); }}
+                      />
+                      {(walkInFocused || !!walkInSearchTerm) && filteredWalkIns.length > 0 && (
+                        <div className="absolute inset-x-0 top-full z-20 mt-1 max-h-60 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                          {filteredWalkIns.map((c) => (
+                            <button
+                              type="button"
+                              key={c.id}
+                              className="block w-full border-b border-slate-100 p-2 text-left last:border-b-0 hover:bg-slate-50"
+                              onClick={() => handleWalkInSelect(c)}
+                            >
+                              <div className="font-medium">{c.firstName} {c.lastName}</div>
+                              <div className="text-sm text-slate-600">
+                                {c.phone && `📞 ${c.phone}`}
+                                {c.email && ` • ✉️ ${c.email}`}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {showOrderDetails && (
                 <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                  <Select size="sm" label="Customer type" selectedKeys={[customerType]} onSelectionChange={(k) => handleCustomerTypeChange(Array.from(k as Set<string>)[0] as CustomerType)}>
-                    <SelectItem key="In-house">In-house guest</SelectItem>
-                    <SelectItem key="Walk-in">Walk-in</SelectItem>
-                  </Select>
                   <Select size="sm" label="Order mode" selectedKeys={[orderMode]} onSelectionChange={(k) => setOrderMode(Array.from(k as Set<string>)[0] as any)}>
                     <SelectItem key="Dine-in">Dine-in</SelectItem>
                     <SelectItem key="Takeaway">Takeaway</SelectItem>
                   </Select>
-                  <div className="sm:col-span-2 lg:col-span-1 xl:col-span-2">
-                    {customerType === 'In-house' ? (
-                      <div>
-                        <Input
-                          size="sm"
-                          label="Room"
-                          placeholder="Room number or guest name…"
-                          value={roomSearchTerm || roomNumber}
-                          onChange={(e) => {
-                            setRoomSearchTerm(e.target.value);
-                            if (!e.target.value) {
-                              setRoomNumber('');
-                              setGuestName('');
-                              setSelectedGuest(null);
-                            }
-                          }}
-                          onFocus={() => setRoomSearchTerm(roomNumber)}
-                        />
-                        {roomSearchTerm && filteredRooms.length > 0 && (
-                          <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                            {filteredRooms.map((room) => (
-                              <button
-                                type="button"
-                                key={room.roomId}
-                                className="block w-full border-b border-slate-100 p-2 text-left last:border-b-0 hover:bg-slate-50"
-                                onClick={() => handleRoomSelect(room)}
-                              >
-                                <div className="font-medium">Room {room.roomId}</div>
-                                <div className="text-sm text-slate-600">{room.guestName} • {room.roomType}</div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {selectedGuest && (
-                          <p className="mt-1 text-xs text-green-700">✓ Room {roomNumber} · {guestName}</p>
-                        )}
-                      </div>
-                    ) : (
-                      <div>
-                        <Input
-                          size="sm"
-                          label="Customer"
-                          placeholder="Name, phone or email…"
-                          value={walkInSearchTerm || (selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : '')}
-                          onChange={(e) => {
-                            setWalkInSearchTerm(e.target.value);
-                            if (!e.target.value) {
-                              setSelectedWalkIn(null);
-                            }
-                          }}
-                          onFocus={() => { setWalkInFocused(true); setWalkInSearchTerm(selectedWalkIn ? `${selectedWalkIn.firstName} ${selectedWalkIn.lastName}` : ''); }}
-                          onBlur={() => { setTimeout(() => setWalkInFocused(false), 150); }}
-                        />
-                        {(walkInFocused || !!walkInSearchTerm) && filteredWalkIns.length > 0 && (
-                          <div className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                            {filteredWalkIns.map((c) => (
-                              <button
-                                type="button"
-                                key={c.id}
-                                className="block w-full border-b border-slate-100 p-2 text-left last:border-b-0 hover:bg-slate-50"
-                                onClick={() => handleWalkInSelect(c)}
-                              >
-                                <div className="font-medium">{c.firstName} {c.lastName}</div>
-                                <div className="text-sm text-slate-600">
-                                  {c.phone && `📞 ${c.phone}`}
-                                  {c.email && ` • ✉️ ${c.email}`}
-                                </div>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
                   <Select size="sm" label="Table" selectedKeys={[tableNumber]} onSelectionChange={(k) => setTableNumber(Array.from(k as Set<string>)[0])}>
                     {tables.map(t => (
                       <SelectItem key={t}>{t}</SelectItem>
