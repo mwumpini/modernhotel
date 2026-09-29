@@ -410,17 +410,31 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
 
 
-  const categories = useMemo(() => Array.from(new Set(visibleMenu.map(m => m.category))), [visibleMenu]);
+  // Everyday categories first, in the order staff reach for them; anything else the hotel adds follows alphabetically.
+  const CATEGORY_ORDER = ['food', 'beverage', 'dessert', 'snack'];
+  const categories = useMemo(() => {
+    const rank = (c: string) => {
+      const i = CATEGORY_ORDER.indexOf(c.toLowerCase());
+      return i === -1 ? CATEGORY_ORDER.length : i;
+    };
+    return Array.from(new Set(visibleMenu.map(m => m.category)))
+      .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  }, [visibleMenu]);
 
-  // Pinned items get a tab of their own, first in line, so frequent orders stay a tap away
+  // "All" opens the POS; pinned items get their own tab next, so frequent orders stay a tap away
   // however long the menu grows. While a search is typed the results are shown across all tabs.
+  const ALL_TAB = '__all';
   const PINNED_TAB = '__pinned';
-  const [menuTab, setMenuTab] = useState('');
+  const [menuTab, setMenuTab] = useState(ALL_TAB);
   const pinnedItems = useMemo(() => visibleMenu.filter(m => m.isPinned), [visibleMenu]);
-  const menuTabs = useMemo(() => [...(pinnedItems.length ? [PINNED_TAB] : []), ...categories], [pinnedItems, categories]);
-  const activeTab = menuTabs.includes(menuTab) ? menuTab : menuTabs[0];
+  const menuTabs = useMemo(() => [ALL_TAB, ...(pinnedItems.length ? [PINNED_TAB] : []), ...categories], [pinnedItems, categories]);
+  const activeTab = menuTabs.includes(menuTab) ? menuTab : ALL_TAB;
   const searching = search.trim() !== '';
-  const shownMenu = searching ? visibleMenu : activeTab === PINNED_TAB ? pinnedItems : visibleMenu.filter(m => m.category === activeTab);
+  const shownMenu = searching || activeTab === ALL_TAB
+    ? visibleMenu
+    : activeTab === PINNED_TAB ? pinnedItems : visibleMenu.filter(m => m.category === activeTab);
+  const menuTabLabel = (t: string) =>
+    t === ALL_TAB ? 'All' : t === PINNED_TAB ? `★ Pinned (${pinnedItems.length})` : t.charAt(0).toUpperCase() + t.slice(1);
 
   // Pins are kept on the menu item itself, so every terminal shows the same ones.
   const togglePin = async (item: MenuItem) => {
@@ -1299,7 +1313,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       onClick={() => setMenuTab(t)}
                       className={`h-10 shrink-0 rounded-xl border px-4 text-sm font-medium transition-colors ${activeTab === t ? 'border-ghana-green bg-ghana-green text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
                     >
-                      {t === PINNED_TAB ? `★ Pinned (${pinnedItems.length})` : t}
+                      {menuTabLabel(t)}
                     </button>
                   ))}
                 </div>
