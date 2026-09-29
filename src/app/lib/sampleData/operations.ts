@@ -87,6 +87,9 @@ export async function loadOperations(ctx: SampleCtx) {
     booking(1, 'Sample Mining Annual Meeting', 'Sample Mining Ltd', 'board', 14, 14, 18, 'confirmed', 'corporate', { catering: true, audioVisual: true, totalCost: 800 + 18 * 140 }),
     booking(2, 'Owusu–Mensah Wedding Reception', 'Mrs. Owusu', 'ball', 30, 30, 150, 'confirmed', 'wedding', { catering: true, decoration: true, totalCost: 3500 + 150 * 220 }),
     booking(3, 'Front Office Staff Seminar', 'Sample Hotel HR', 'pav', 7, 7, 40, 'pending', 'seminar', { catering: true, totalCost: 1800 + 40 * 45 }),
+    // One running today and one tomorrow, so the dashboards' "today" views have something to show.
+    booking(4, 'Sample Bank Regional Workshop', 'Sample Bank Ghana', 'board', 0, 0, 16, 'confirmed', 'corporate', { catering: true, audioVisual: true, totalCost: 800 + 16 * 140 }),
+    booking(5, 'Adjei Family Naming Ceremony', 'Mr. Adjei', 'pav', 1, 1, 60, 'pending', 'private', { catering: true, decoration: true, totalCost: 1800 + 60 * 120 }),
   ])
 
   // ---- restaurant: tables, regular customers, recipes ----

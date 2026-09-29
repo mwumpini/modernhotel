@@ -188,6 +188,20 @@ export async function loadAccounting(ctx: SampleCtx): Promise<string[]> {
     }
   }
 
+  // ---- waiting for the director (Approvals inbox) ----
+  // Paying the produce bill (SMP-AP-001): no journal yet — approving it posts the payment the app's own way.
+  const [, produceBill, produceSupplier, , , , , produceAmount] = SUPPLIER_BILLS[0]
+  payments.push({
+    id: `${p}pay_pending`, tenantId, paymentNumber: 'SMP-PAY-004', date: dayOffset(ctx, 0), type: 'Payment', businessPartnerId: `${p}bp_${produceSupplier}`, invoiceId: `${p}inv_b1`,
+    reference: produceBill, description: `Payment for invoice ${produceBill}`, amount: produceAmount, paymentMethod: 'Bank Transfer', status: 'Pending Approval',
+  })
+  // A manual accrual keyed in by the accountant: parked until approved, so it is not in the GL or the cash book yet.
+  entries.push({
+    id: `${p}je_accrual`, entryNumber: 'SMP-JE-ACR-001', date: atTime(ctx, 0, 9), reference: 'SMP-ACR-001', description: 'Accrual — generator service done this month, invoice to follow', sourceModule: 'manual',
+    status: 'Pending Approval',
+    lines: [{ account: '5415', description: 'Generator servicing', debit: 1500 }, { account: '2205', description: 'Accrued — Power Solutions invoice to follow', credit: 1500 }],
+  })
+
   // ---- day-to-day expenses and a cash deposit ----
   for (const [key, ago, description, gl, amount, from] of EXPENSES) {
     entries.push({

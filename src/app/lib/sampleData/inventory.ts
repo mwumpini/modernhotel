@@ -104,8 +104,9 @@ export async function loadInventory(ctx: SampleCtx) {
   ])
   await seedRows(prisma.purchaseOrderItem, [...lines1, ...lines2])
 
-  // Requisitions: the kitchen is waiting on one, the bar's was approved.
-  const req1 = `${p}req_1`, req2 = `${p}req_2`
+  // Requisitions: the kitchen is waiting on one, the bar's was approved, and a large banquet order
+  // is over the approval threshold so it waits in the director's Approvals inbox.
+  const req1 = `${p}req_1`, req2 = `${p}req_2`, req3 = `${p}req_3`
   const reqLines = (lines: Array<[string, number]>, reqId: string) => lines.map(([key, quantity], n) => {
     const [, name, , , , cost] = itemRow(key)
     return { id: `${reqId}_l${n + 1}`, tenantId, requisitionId: reqId, itemId: itemId(key), itemCode: `SMP-ITM-${String(ITEMS.findIndex((x) => x[0] === key) + 1).padStart(3, '0')}`, itemName: name, quantity, estimatedPrice: cost, totalCost: round2(quantity * cost) }
@@ -113,8 +114,13 @@ export async function loadInventory(ctx: SampleCtx) {
   await seedRows(prisma.requisition, [
     { id: req1, tenantId, requisitionNumber: 'SMP-REQ-001', requestedBy: 'Nana Yaa Asare', requestedDate: dayOffset(ctx, -1), status: 'pending', department: 'kitchen', notes: 'Weekend banquet prep' },
     { id: req2, tenantId, requisitionNumber: 'SMP-REQ-002', requestedBy: 'Kofi Adjei', requestedDate: dayOffset(ctx, -3), status: 'approved', department: 'restaurant', approvedBy: 'Sample Manager', approvedAt: dayOffset(ctx, -2), notes: 'Bar restock' },
+    { id: req3, tenantId, requisitionNumber: 'SMP-REQ-003', requestedBy: 'Nana Yaa Asare', requestedDate: dayOffset(ctx, 0), status: 'pending-director-approval', department: 'kitchen', notes: 'Owusu–Mensah wedding reception — 150 guests' },
   ])
-  await seedRows(prisma.requisitionItem, [...reqLines([['rice', 5], ['oil', 6], ['fish', 10]], req1), ...reqLines([['star', 4], ['water', 6]], req2)])
+  await seedRows(prisma.requisitionItem, [
+    ...reqLines([['rice', 5], ['oil', 6], ['fish', 10]], req1),
+    ...reqLines([['star', 4], ['water', 6]], req2),
+    ...reqLines([['rice', 40], ['chicken', 120], ['oil', 30], ['fish', 60]], req3),
+  ])
 
   const code = (key: string) => `SMP-ITM-${String(ITEMS.findIndex((x) => x[0] === key) + 1).padStart(3, '0')}`
 

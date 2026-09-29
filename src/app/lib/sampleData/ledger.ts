@@ -46,7 +46,8 @@ export type Entry = {
   description: string
   sourceModule: string
   sourceTransactionId?: string
-  status?: 'Posted' | 'Draft'
+  /** 'Pending Approval' waits in the director's Approvals inbox; nothing reaches the GL or cash book until it is approved. */
+  status?: 'Posted' | 'Draft' | 'Pending Approval'
   lines: Line[]
 }
 
@@ -118,18 +119,22 @@ async function ensureRegister(ctx: SampleCtx, code: string) {
   })
 }
 
-/** Removes every sample entry, its cash-book lines, and takes their amounts back off the registers. */
+/**
+ * Removes every sample entry, its cash-book lines, and takes their amounts back off the registers.
+ * Matches the sample prefix anywhere in the id: approving a sample payment posts it under the app's own
+ * id (JE-PAY-<payment id>), which contains the prefix rather than starting with it.
+ */
 export async function removeEntries(ctx: SampleCtx) {
   const t = ctx.tenantId
-  const txs = await prisma.bankTransaction.findMany({ where: { tenantId: t, journalEntryId: { startsWith: ctx.p } } })
+  const txs = await prisma.bankTransaction.findMany({ where: { tenantId: t, journalEntryId: { contains: ctx.p } } })
   const byAccount = new Map<string, number>()
   for (const tx of txs) byAccount.set(tx.bankAccountId, (byAccount.get(tx.bankAccountId) || 0) + (tx.type === 'Deposit' ? tx.amount : -tx.amount))
   for (const [id, net] of Array.from(byAccount)) {
     const bank = await prisma.bankAccount.findFirst({ where: { id, tenantId: t } })
     if (bank) await prisma.bankAccount.update({ where: { id }, data: { currentBalance: round2((bank.currentBalance || 0) - net) } })
   }
-  await prisma.bankTransaction.deleteMany({ where: { tenantId: t, journalEntryId: { startsWith: ctx.p } } })
-  await prisma.journalEntry.deleteMany({ where: { tenantId: t, id: { startsWith: ctx.p } } })
+  await prisma.bankTransaction.deleteMany({ where: { tenantId: t, journalEntryId: { contains: ctx.p } } })
+  await prisma.journalEntry.deleteMany({ where: { tenantId: t, id: { contains: ctx.p } } })
 }
 
 /** True when the hotel has a chart of accounts — postings are skipped otherwise. */

@@ -96,18 +96,20 @@ export async function loadHr(ctx: SampleCtx) {
     leave('4', 'kojo', 'personal', -14, -13, 2, 'rejected', { reason: 'Personal errand', rejectionReason: 'Kitchen was short-staffed that week.' }),
   ])
 
-  // Attendance for the last five days for six staff — one late morning, one absence.
+  // Attendance for the last five days for six staff — one late morning, one absence, and one long
+  // shift whose overtime waits for approval (shown in the Approvals inbox when Settings requires it).
   const attendanceStaff = ['akosua', 'ibrahim', 'ama', 'efua', 'kofi', 'kojo']
   const attendance: Array<Record<string, any>> = []
   for (let back = 1; back <= 5; back++) {
     attendanceStaff.forEach((key, i) => {
       const absent = key === 'kojo' && back === 3
       const late = key === 'efua' && back === 2
+      const overtime = key === 'kofi' && back === 1 ? 3 : 0
       const inMin = late ? 35 : 50 + ((i + back) % 5)
       attendance.push({
         id: `${p}att_${key}_${back}`, tenantId, employeeId: emp(key), date: dayOffset(ctx, -back),
-        checkInTime: absent ? null : atTime(ctx, -back, 6, inMin), checkOutTime: absent ? null : atTime(ctx, -back, 15, 5),
-        totalHours: absent ? 0 : 8, overtimeHours: 0, breakTime: 1, status: absent ? 'absent' : late ? 'late' : 'present', shift: 'morning', location: 'Main building',
+        checkInTime: absent ? null : atTime(ctx, -back, 6, inMin), checkOutTime: absent ? null : atTime(ctx, -back, 15 + overtime, 5),
+        totalHours: absent ? 0 : 8 + overtime, overtimeHours: overtime, breakTime: 1, status: absent ? 'absent' : late ? 'late' : 'present', shift: 'morning', location: 'Main building',
       })
     })
   }
