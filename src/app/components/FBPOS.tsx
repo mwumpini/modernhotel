@@ -119,7 +119,19 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const [switchPin, setSwitchPin] = useState('');
   const [switchError, setSwitchError] = useState('');
   const [switchBusy, setSwitchBusy] = useState(false);
-  const lockAfterOrder = () => setVerifiedWaiter(null);
+  // Hotel setting (Settings → Security): off by default — orders are then simply recorded under the
+  // signed-in person, with no "Who's ordering?" step and no lock.
+  const [waiterSwitchOn, setWaiterSwitchOn] = useState(false);
+  React.useEffect(() => {
+    let cancelled = false;
+    fetch('/api/settings/pos', { headers: fbTenantHeaders() })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled) setWaiterSwitchOn(!!d?.policy?.waiterSwitch); })
+      .catch(() => { /* keep it off */ });
+    return () => { cancelled = true; };
+  }, []);
+  const lockAfterOrder = () => { if (waiterSwitchOn) setVerifiedWaiter(null); };
+  const needsWaiter = waiterSwitchOn && !verifiedWaiter;
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discountPercent, setDiscountPercent] = useState<number>(0);
@@ -666,7 +678,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   const sendOrder = async () => {
     if (cart.length === 0) return;
-    if (!verifiedWaiter) {
+    if (needsWaiter) {
       waiterSwitchModal.onOpen();
       return;
     }
@@ -1193,7 +1205,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
 
   // Idle lock: two minutes with nothing on the order and no taps hands the terminal back to "Who's ordering?".
   React.useEffect(() => {
-    if (!verifiedWaiter || cart.length > 0) return;
+    if (!waiterSwitchOn || !verifiedWaiter || cart.length > 0) return;
     const IDLE_MS = 2 * 60 * 1000;
     let timer = window.setTimeout(() => setVerifiedWaiter(null), IDLE_MS);
     const reset = () => {
@@ -1207,7 +1219,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
       window.removeEventListener('pointerdown', reset);
       window.removeEventListener('keydown', reset);
     };
-  }, [verifiedWaiter, cart.length]);
+  }, [waiterSwitchOn, verifiedWaiter, cart.length]);
 
   const openWaiterSwitch = () => {
     setSwitchTarget(null);
@@ -1268,7 +1280,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   const cartCount = cart.reduce((n, ci) => n + ci.qty, 0);
 
   const sendOrUpdate = () => {
-    if (!verifiedWaiter) {
+    if (needsWaiter) {
       openWaiterSwitch();
       return;
     }
@@ -1398,107 +1410,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
         </div>
 
         <div className="grid grid-cols-1 gap-3 lg:h-[calc(100vh-7.5rem)] lg:grid-cols-[minmax(0,1fr)_400px] xl:grid-cols-[minmax(0,1fr)_440px] md:gap-4">
-          {/* Menu */}
-          <section className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white p-3 md:p-4" aria-label="Menu">
-            <div className="mb-3 flex items-center justify-between gap-3">
-              {searching ? (
-                <p className="text-sm text-slate-600">Results for “{search.trim()}”</p>
-              ) : (
-                <div className="-mx-1 flex min-w-0 gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Menu categories">
-                  {menuTabs.map(t => (
-                    <button
-                      key={t}
-                      type="button"
-                      role="tab"
-                      aria-selected={activeTab === t}
-                      onClick={() => setMenuTab(t)}
-                      className={`h-10 shrink-0 rounded-xl border px-4 text-sm font-medium transition-colors ${activeTab === t ? 'border-ghana-green bg-ghana-green text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
-                    >
-                      {menuTabLabel(t)}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {menuLoading && <span className="shrink-0 text-xs text-slate-400 animate-pulse">Loading…</span>}
-            </div>
-            {!menuLoading && menu.length === 0 && (
-              <p className="text-sm text-orange-600">No menu items yet. Add them under Menu &amp; Inventory.</p>
-            )}
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {shownMenu.length === 0 ? (
-                <p className="py-10 text-center text-sm text-slate-500">{searching ? 'No items match your search.' : 'No items here yet.'}</p>
-              ) : (
-                <div className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2.5">
-                  {shownMenu.map(mi => (
-                    <div key={mi.id} className="relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:border-ghana-green/50 hover:shadow-md">
-                      <button type="button" onClick={() => addToCart(mi)} className="flex flex-1 flex-col text-left" aria-label={`Add ${mi.name}, GH₵ ${mi.price.toFixed(2)}`}>
-                        <div className={`flex h-16 items-center justify-center md:h-20 ${mi.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
-                          {itemIcon(mi.route, 28)}
-                        </div>
-                        <div className="flex flex-1 flex-col gap-0.5 p-2.5">
-                          <span className="line-clamp-2 text-sm font-semibold leading-snug text-ghana-black">{mi.name}</span>
-                          <span className="truncate text-xs text-slate-500">{mi.category}</span>
-                          <div className="mt-auto flex items-center justify-between gap-2 pt-2">
-                            <span className="whitespace-nowrap text-sm font-bold text-ghana-black">GH₵ {mi.price.toFixed(2)}</span>
-                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ghana-green text-white" aria-hidden>
-                              <Plus size={16} />
-                            </span>
-                          </div>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        aria-label={mi.isPinned ? `Unpin ${mi.name}` : `Pin ${mi.name}`}
-                        title={mi.isPinned ? 'Unpin' : 'Pin to the top'}
-                        className={`absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-lg leading-none shadow-sm ${mi.isPinned ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}`}
-                        onClick={() => togglePin(mi)}
-                      >
-                        {mi.isPinned ? '★' : '☆'}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </section>
-
-          {/* Order panel */}
-          <aside id="pos-order-panel" className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white" aria-label="Order">
-            {/* Who / where the order is for */}
-            <div className="border-b border-slate-100 p-3 md:p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-lg font-bold text-ghana-black">{orderMode === 'Takeaway' ? 'Takeaway' : `Table ${tableNumber}`}</span>
-                    <Chip size="sm" variant="flat" color={venue === 'Bar' ? 'primary' : 'success'}>{venue}</Chip>
-                    {editingOrderId && <Chip size="sm" variant="flat" color="warning">Editing an order</Chip>}
-                  </div>
-                  <p className="mt-0.5 truncate text-xs text-slate-500">{customerLabel}</p>
-                  <button
-                    type="button"
-                    onClick={openWaiterSwitch}
-                    className={`mt-1.5 inline-flex h-8 max-w-full items-center gap-1.5 rounded-full px-3 text-xs font-semibold ${verifiedWaiter ? 'bg-slate-100 text-ghana-black hover:bg-slate-200' : 'animate-pulse bg-amber-100 text-amber-800'}`}
-                    title="Switch who is taking the order"
-                  >
-                    <UserRound size={14} aria-hidden />
-                    <span className="truncate">{verifiedWaiter ? `Taking order: ${waiterName}` : "Who's ordering? Tap to choose"}</span>
-                    {verifiedWaiter && <span className="text-slate-400">· Switch</span>}
-                  </button>
-                </div>
-                <Button
-                  size="sm"
-                  variant="flat"
-                  className="shrink-0 bg-slate-100"
-                  aria-expanded={showOrderDetails}
-                  endContent={showOrderDetails ? <ChevronUp size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}
-                  onClick={() => setShowOrderDetails(v => !v)}
-                >
-                  Details
-                </Button>
-              </div>
-
-              {/* Who the order is for — in view on every order, not tucked under Details. */}
-              <div className="mt-3 flex items-start gap-2">
+          {/* Left column: order set-up above the menu, so the order panel on the right keeps its height for items. */}
+          <div className="flex min-h-0 flex-col gap-3">
+          <section className="rounded-2xl border border-slate-200 bg-white p-3" aria-label="Order set-up">
+            <div className="flex flex-wrap items-start gap-2">
+              <div className="flex min-w-0 flex-1 basis-[22rem] items-start gap-2">
                 <div className="inline-flex shrink-0 rounded-lg bg-slate-100 p-0.5" role="group" aria-label="Customer type">
                   {([['Walk-in', 'Walk-in'], ['In-house', 'In-house']] as const).map(([t, label]) => (
                     <button
@@ -1591,41 +1507,141 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                   )}
                 </div>
               </div>
+              {waiterSwitchOn && (
+                <button
+                  type="button"
+                  onClick={openWaiterSwitch}
+                  className={`inline-flex h-10 max-w-full items-center gap-1.5 rounded-full px-3 text-xs font-semibold ${verifiedWaiter ? 'bg-slate-100 text-ghana-black hover:bg-slate-200' : 'animate-pulse bg-amber-100 text-amber-800'}`}
+                  title="Switch who is taking the order"
+                >
+                  <UserRound size={14} aria-hidden />
+                  <span className="truncate">{verifiedWaiter ? `Taking order: ${waiterName}` : "Who's ordering? Tap to choose"}</span>
+                  {verifiedWaiter && <span className="text-slate-400">· Switch</span>}
+                </button>
+              )}
+            <Button
+              size="sm"
+              variant="flat"
+              className="h-10 shrink-0 bg-slate-100"
+              aria-expanded={showOrderDetails}
+              endContent={showOrderDetails ? <ChevronUp size={16} aria-hidden /> : <ChevronDown size={16} aria-hidden />}
+              onClick={() => setShowOrderDetails(v => !v)}
+            >
+              Details
+            </Button>
+            </div>
+            {showOrderDetails && (
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                <Select size="sm" label="Order mode" selectedKeys={[orderMode]} onSelectionChange={(k) => setOrderMode(Array.from(k as Set<string>)[0] as any)}>
+                  <SelectItem key="Dine-in">Dine-in</SelectItem>
+                  <SelectItem key="Takeaway">Takeaway</SelectItem>
+                </Select>
+                <Select size="sm" label="Table" selectedKeys={[tableNumber]} onSelectionChange={(k) => setTableNumber(Array.from(k as Set<string>)[0])}>
+                  {tables.map(t => (
+                    <SelectItem key={t}>{t}</SelectItem>
+                  ))}
+                </Select>
+                {orderMode === 'Takeaway' && (
+                  <Input size="sm" type="number" label="Packaging fee (GH₵)" value={String(packagingFee)} onChange={(e) => setPackagingFee(Number(e.target.value || 0))} />
+                )}
+                <Select size="sm" label="Kitchen priority" selectedKeys={[priority]} onSelectionChange={(k) => {
+                  const p = Array.from(k as Set<string>)[0] as 'low' | 'medium' | 'high' | 'urgent';
+                  setPriority(p);
+                  localStorage.setItem('kitchen.priority.filter', p);
+                }}>
+                  <SelectItem key="urgent">Urgent</SelectItem>
+                  <SelectItem key="high">High</SelectItem>
+                  <SelectItem key="medium">Medium</SelectItem>
+                  <SelectItem key="low">Low</SelectItem>
+                </Select>
+                <Select size="sm" label="Room service" selectedKeys={[applyRoomServiceCharge ? 'yes' : 'no']} onSelectionChange={(k) => setApplyRoomServiceCharge(Array.from(k as Set<string>)[0] === 'yes')}>
+                  <SelectItem key="no">No</SelectItem>
+                  <SelectItem key="yes">Yes</SelectItem>
+                </Select>
+                {applyRoomServiceCharge && (
+                  <Input size="sm" type="number" label="Room service charge / unit (GH₵)" value={String(roomServiceChargePerUnit)} onChange={(e) => setRoomServiceChargePerUnit(Number(e.target.value || 0))} />
+                )}
+                <Input size="sm" label="Order notes / allergies" value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} className="sm:col-span-2" />
+              </div>
+            )}
+          </section>
 
-              {showOrderDetails && (
-                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                  <Select size="sm" label="Order mode" selectedKeys={[orderMode]} onSelectionChange={(k) => setOrderMode(Array.from(k as Set<string>)[0] as any)}>
-                    <SelectItem key="Dine-in">Dine-in</SelectItem>
-                    <SelectItem key="Takeaway">Takeaway</SelectItem>
-                  </Select>
-                  <Select size="sm" label="Table" selectedKeys={[tableNumber]} onSelectionChange={(k) => setTableNumber(Array.from(k as Set<string>)[0])}>
-                    {tables.map(t => (
-                      <SelectItem key={t}>{t}</SelectItem>
-                    ))}
-                  </Select>
-                  {orderMode === 'Takeaway' && (
-                    <Input size="sm" type="number" label="Packaging fee (GH₵)" value={String(packagingFee)} onChange={(e) => setPackagingFee(Number(e.target.value || 0))} />
-                  )}
-                  <Select size="sm" label="Kitchen priority" selectedKeys={[priority]} onSelectionChange={(k) => {
-                    const p = Array.from(k as Set<string>)[0] as 'low' | 'medium' | 'high' | 'urgent';
-                    setPriority(p);
-                    localStorage.setItem('kitchen.priority.filter', p);
-                  }}>
-                    <SelectItem key="urgent">Urgent</SelectItem>
-                    <SelectItem key="high">High</SelectItem>
-                    <SelectItem key="medium">Medium</SelectItem>
-                    <SelectItem key="low">Low</SelectItem>
-                  </Select>
-                  <Select size="sm" label="Room service" selectedKeys={[applyRoomServiceCharge ? 'yes' : 'no']} onSelectionChange={(k) => setApplyRoomServiceCharge(Array.from(k as Set<string>)[0] === 'yes')}>
-                    <SelectItem key="no">No</SelectItem>
-                    <SelectItem key="yes">Yes</SelectItem>
-                  </Select>
-                  {applyRoomServiceCharge && (
-                    <Input size="sm" type="number" label="Room service charge / unit (GH₵)" value={String(roomServiceChargePerUnit)} onChange={(e) => setRoomServiceChargePerUnit(Number(e.target.value || 0))} />
-                  )}
-                  <Input size="sm" label="Order notes / allergies" value={orderNotes} onChange={(e) => setOrderNotes(e.target.value)} className="sm:col-span-2 lg:col-span-1 xl:col-span-2" />
+          {/* Menu */}
+          <section className="flex min-h-0 flex-1 flex-col rounded-2xl border border-slate-200 bg-white p-3 md:p-4" aria-label="Menu">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              {searching ? (
+                <p className="text-sm text-slate-600">Results for “{search.trim()}”</p>
+              ) : (
+                <div className="-mx-1 flex min-w-0 gap-2 overflow-x-auto px-1 pb-1" role="tablist" aria-label="Menu categories">
+                  {menuTabs.map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      role="tab"
+                      aria-selected={activeTab === t}
+                      onClick={() => setMenuTab(t)}
+                      className={`h-10 shrink-0 rounded-xl border px-4 text-sm font-medium transition-colors ${activeTab === t ? 'border-ghana-green bg-ghana-green text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}
+                    >
+                      {menuTabLabel(t)}
+                    </button>
+                  ))}
                 </div>
               )}
+              {menuLoading && <span className="shrink-0 text-xs text-slate-400 animate-pulse">Loading…</span>}
+            </div>
+            {!menuLoading && menu.length === 0 && (
+              <p className="text-sm text-orange-600">No menu items yet. Add them under Menu &amp; Inventory.</p>
+            )}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {shownMenu.length === 0 ? (
+                <p className="py-10 text-center text-sm text-slate-500">{searching ? 'No items match your search.' : 'No items here yet.'}</p>
+              ) : (
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-2.5">
+                  {shownMenu.map(mi => (
+                    <div key={mi.id} className="relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:border-ghana-green/50 hover:shadow-md">
+                      <button type="button" onClick={() => addToCart(mi)} className="flex flex-1 flex-col text-left" aria-label={`Add ${mi.name}, GH₵ ${mi.price.toFixed(2)}`}>
+                        <div className={`flex h-16 items-center justify-center md:h-20 ${mi.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
+                          {itemIcon(mi.route, 28)}
+                        </div>
+                        <div className="flex flex-1 flex-col gap-0.5 p-2.5">
+                          <span className="line-clamp-2 text-sm font-semibold leading-snug text-ghana-black">{mi.name}</span>
+                          <span className="truncate text-xs text-slate-500">{mi.category}</span>
+                          <div className="mt-auto flex items-center justify-between gap-2 pt-2">
+                            <span className="whitespace-nowrap text-sm font-bold text-ghana-black">GH₵ {mi.price.toFixed(2)}</span>
+                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ghana-green text-white" aria-hidden>
+                              <Plus size={16} />
+                            </span>
+                          </div>
+                        </div>
+                      </button>
+                      <button
+                        type="button"
+                        aria-label={mi.isPinned ? `Unpin ${mi.name}` : `Pin ${mi.name}`}
+                        title={mi.isPinned ? 'Unpin' : 'Pin to the top'}
+                        className={`absolute right-1.5 top-1.5 inline-flex h-8 w-8 items-center justify-center rounded-full bg-white/90 text-lg leading-none shadow-sm ${mi.isPinned ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}`}
+                        onClick={() => togglePin(mi)}
+                      >
+                        {mi.isPinned ? '★' : '☆'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+          </div>
+
+
+          {/* Order panel */}
+          <aside id="pos-order-panel" className="flex min-h-0 flex-col rounded-2xl border border-slate-200 bg-white" aria-label="Order">
+            {/* The order: table and customer at a glance, then the items get the rest of the height. */}
+            <div className="flex items-center justify-between gap-2 px-3 pt-3 md:px-4">
+              <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <span className="text-lg font-bold text-ghana-black">{orderMode === 'Takeaway' ? 'Takeaway' : `Table ${tableNumber}`}</span>
+                <Chip size="sm" variant="flat" color={venue === 'Bar' ? 'primary' : 'success'}>{venue}</Chip>
+                {editingOrderId && <Chip size="sm" variant="flat" color="warning">Editing an order</Chip>}
+              </div>
+              <span className="min-w-0 truncate text-xs text-slate-500">{customerLabel}</span>
             </div>
 
             {/* Current order | Orders */}
@@ -1728,7 +1744,7 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                       isLoading={isSending}
                       isDisabled={isSending || cart.length === 0}
                     >
-                      {!verifiedWaiter ? "Choose who's ordering" : editingOrderId ? 'Update order' : (isSending ? 'Sending…' : 'Send to kitchen')}
+                      {needsWaiter ? "Choose who's ordering" : editingOrderId ? 'Update order' : (isSending ? 'Sending…' : 'Send to kitchen')}
                     </Button>
                     <Dropdown placement="top-end">
                       <DropdownTrigger>

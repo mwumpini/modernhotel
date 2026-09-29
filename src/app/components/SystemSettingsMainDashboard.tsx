@@ -23,6 +23,7 @@ import ApprovalThresholdsPanel from './settings/ApprovalThresholdsPanel';
 import ModulesPanel from './settings/ModulesPanel';
 import StockLocationsPanel from './settings/StockLocationsPanel';
 import SampleDataPanel from './settings/SampleDataPanel';
+import PosWaiterSwitchSetting from './settings/PosWaiterSwitchSetting';
 import { deskBookTabsClassNames } from './dashboard/deskTabsUi';
 
 const VALID_TABS = ['users', 'rooms', 'numbering', 'templates', 'locations', 'security', 'approvals', 'modules', 'sample-data', 'audit'] as const;
@@ -184,6 +185,7 @@ export default function SystemSettingsMainDashboard() {
                     isDisabled={!canManage2fa}
                   />
                 </div>
+                <PosWaiterSwitchSetting isDisabled={!canManageSecurityPolicy} />
                 <div className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2">
                   <div>
                     <h4 className="text-sm font-medium">Session Timeout</h4>
