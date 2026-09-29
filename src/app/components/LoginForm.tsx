@@ -196,14 +196,17 @@ export default function LoginForm() {
             {isLoading ? 'Signing In...' : needsCode ? 'Verify code' : 'Sign In'}
           </Button>
 
-          <div className="text-center">
-            <p className="text-xs text-gray-500">
-              Demo Credentials: demo / admin@demohotel.com / password123
-            </p>
-            <p className="text-xs text-gray-500 mt-1">
-              Also try: manager@demohotel.com or staff@demohotel.com (same password)
-            </p>
-          </div>
+          {/* Local development only: on the live site this would hand anyone the admin login. */}
+          {process.env.NODE_ENV !== 'production' && (
+            <div className="text-center">
+              <p className="text-xs text-gray-500">
+                Demo Credentials: demo / admin@demohotel.com / password123
+              </p>
+              <p className="text-xs text-gray-500 mt-1">
+                Also try: manager@demohotel.com or staff@demohotel.com (same password)
+              </p>
+            </div>
+          )}
         </form>
       </div>
     </div>

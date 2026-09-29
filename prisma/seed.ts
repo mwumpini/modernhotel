@@ -480,6 +480,9 @@ async function main() {
   console.log(`✅ Seeded ${floorTables.length} restaurant tables`)
 
   console.log('🎉 Database seeding completed successfully!')
+  // Vercel keeps build logs; don't print a working admin login into them.
+  // Existing accounts are never updated above, so changed passwords survive every deploy.
+  if (process.env.VERCEL) return
   console.log('\n📋 Demo Credentials:')
   console.log('Tenant: demo')
   console.log('Admin: admin@demohotel.com / password123')
