@@ -1198,6 +1198,8 @@ model FBMenuItem {
   prepMinutes   Int      @default(10)
   alias         String?  // comma-separated short names for POS search
   unit          String?  @default("portion") // selling unit: portion, plate, glass, bottle
+  /// Optional photo for the POS (a small JPEG as a data URL; served by /api/fb/menu/image, shown when Settings allows)
+  imageUrl      String?
   /// Optional 1:1 link to catalog stock — when set, billing issues this qty from Restaurant stock
   inventoryItemId String?
   /// Optional override location (e.g. Bar Store / Soft Drinks Fridge); null = Restaurant & Bar floor

@@ -5,18 +5,21 @@ import { prisma } from '@/app/lib/database/client';
  * so every terminal follows the same rule.
  *
  * waiterSwitch: on a shared terminal, staff tap their name and type their PIN before an order goes to the
- * kitchen, and the terminal locks again after each order. Off (the default): orders are recorded under
- * whoever is signed in, with no extra step.
+ *   kitchen, and the terminal locks again after each order. Off (the default): orders are recorded under
+ *   whoever is signed in, with no extra step.
+ * showMenuImages: menu cards show the item's photo (where one was uploaded in Menu & Inventory).
+ *   Off (the default): every card shows the plain food / drink icon.
  */
-export type PosPolicy = { waiterSwitch: boolean };
+export type PosPolicy = { waiterSwitch: boolean; showMenuImages: boolean };
 
-export const DEFAULT_POS_POLICY: PosPolicy = { waiterSwitch: false };
+export const DEFAULT_POS_POLICY: PosPolicy = { waiterSwitch: false, showMenuImages: false };
 
 const EMPTY_JSON = {} as const;
 
-export function normalizePosPolicy(raw: unknown): PosPolicy {
+export function normalizePosPolicy(raw: unknown, base: PosPolicy = DEFAULT_POS_POLICY): PosPolicy {
   const src = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  return { waiterSwitch: typeof src.waiterSwitch === 'boolean' ? src.waiterSwitch : DEFAULT_POS_POLICY.waiterSwitch };
+  const flag = (key: keyof PosPolicy) => (typeof src[key] === 'boolean' ? (src[key] as boolean) : base[key]);
+  return { waiterSwitch: flag('waiterSwitch'), showMenuImages: flag('showMenuImages') };
 }
 
 export async function readTenantPos(tenantId: string): Promise<PosPolicy> {
@@ -25,10 +28,12 @@ export async function readTenantPos(tenantId: string): Promise<PosPolicy> {
   return normalizePosPolicy(general.pos);
 }
 
+/** Saves only the switches present in `raw`; the others keep their current value. */
 export async function saveTenantPos(tenantId: string, raw: unknown): Promise<PosPolicy> {
-  const policy = normalizePosPolicy(raw);
   const existing = await prisma.systemSettings.findUnique({ where: { tenantId } });
-  const generalSettings = { ...((existing?.generalSettings as Record<string, unknown>) || {}), pos: policy };
+  const general = (existing?.generalSettings as Record<string, unknown>) || {};
+  const policy = normalizePosPolicy(raw, normalizePosPolicy(general.pos));
+  const generalSettings = { ...general, pos: policy };
   await prisma.systemSettings.upsert({
     where: { tenantId },
     update: { generalSettings },

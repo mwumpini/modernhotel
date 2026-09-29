@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getTenantFromRequest, getTenantContext, createAuditLog } from '@/app/lib/api/tenant'
 import { requireAuth } from '@/app/lib/api/auth-guard'
 import { prisma } from '@/app/lib/database/client'
+import { incomingMenuImage, withoutImage } from '@/app/lib/fb/menuImage'
 
 // GET /api/fb/menu — list menu items, filterable by venue/category
 export async function GET(request: NextRequest) {
@@ -28,7 +29,7 @@ export async function GET(request: NextRequest) {
       orderBy: [{ category: 'asc' }, { sortOrder: 'asc' }, { name: 'asc' }],
     })
 
-    if (!includeUsage) return NextResponse.json({ items })
+    if (!includeUsage) return NextResponse.json({ items: items.map(withoutImage) })
 
     const counts = items.length
       ? await prisma.fBOrderItem.groupBy({
@@ -39,7 +40,7 @@ export async function GET(request: NextRequest) {
       : []
     const usedById = new Map(counts.filter((c) => c.menuItemId).map((c) => [c.menuItemId as string, c._count._all]))
     return NextResponse.json({
-      items: items.map((item) => ({ ...item, usedCount: usedById.get(item.id) || 0 })),
+      items: items.map((item) => ({ ...withoutImage(item), usedCount: usedById.get(item.id) || 0 })),
     })
   } catch (error) {
     console.error('[fb/menu][GET] error', error)
@@ -62,6 +63,9 @@ export async function POST(request: NextRequest) {
     if (!body.code || !body.name || !body.category || !body.venue || body.unitPrice == null) {
       return NextResponse.json({ error: 'code, name, category, venue and unitPrice are required' }, { status: 400 })
     }
+
+    const image = incomingMenuImage(body.imageUrl)
+    if (!image.ok) return NextResponse.json({ error: image.error }, { status: 400 })
 
     // Assign correct GL account code based on venue
     const glAccountCode = venueToGLCode(body.venue)
@@ -87,11 +91,12 @@ export async function POST(request: NextRequest) {
         inventoryItemId: body.inventoryItemId || null,
         stockLocationId: body.stockLocationId || null,
         sortOrder: body.sortOrder ?? 0,
+        imageUrl: image.value ?? null,
       },
     })
 
     await createAuditLog(ctx.tenantId, sessionUserId ?? null, 'FB_MENU_ITEM_CREATED', 'FBMenuItem', item.id, undefined, { code: item.code, name: item.name, venue: item.venue }, request)
-    return NextResponse.json({ item }, { status: 201 })
+    return NextResponse.json({ item: withoutImage(item) }, { status: 201 })
   } catch (error: any) {
     if (error.code === 'P2002') {
       return NextResponse.json({ error: 'Menu item code already exists' }, { status: 409 })
@@ -116,6 +121,8 @@ export async function PATCH(request: NextRequest) {
 
     const existing = await prisma.fBMenuItem.findFirst({ where: { id: body.id, tenantId: ctx.tenantId } })
     if (!existing) return NextResponse.json({ error: 'Menu item not found' }, { status: 404 })
+    const image = incomingMenuImage(body.imageUrl)
+    if (!image.ok) return NextResponse.json({ error: image.error }, { status: 400 })
 
     const item = await prisma.fBMenuItem.update({
       where: { id: body.id },
@@ -145,10 +152,11 @@ export async function PATCH(request: NextRequest) {
             ? existing.stockLocationId
             : body.stockLocationId || null,
         sortOrder: body.sortOrder ?? existing.sortOrder,
+        imageUrl: image.value === undefined ? existing.imageUrl : image.value,
       },
     })
 
-    return NextResponse.json({ item })
+    return NextResponse.json({ item: withoutImage(item) })
   } catch (error: any) {
     if (error.code === 'P2002') {
       return NextResponse.json({ error: 'Menu item code already exists' }, { status: 409 })

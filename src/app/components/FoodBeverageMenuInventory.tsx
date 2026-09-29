@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import HeadingInfo from './HeadingInfo';
+import MenuPhotoPicker, { menuImageSrc } from './fb/MenuPhotoPicker';
 import { Card, CardBody, Button, Input, Table, TableHeader, TableColumn, TableBody, TableRow, TableCell, Chip, Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Select, SelectItem, Tabs, Tab, Pagination } from "@heroui/react";
 import { worksheetTableClassNames } from './frontoffice/StayWorksheetTable';
 import { sizedTableClassNames, useResizableColumns } from './frontoffice/columnResize';
@@ -112,6 +113,8 @@ interface MenuItem {
   usedCount: number;
   inventoryItemId: string | null;
   stockLocationId: string | null;
+  hasImage: boolean;
+  imageVersion: number;
 }
 
 interface InventoryItem {
@@ -177,26 +180,33 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
           usedCount: Number(i.usedCount || 0),
           inventoryItemId: i.inventoryItemId || null,
           stockLocationId: i.stockLocationId || null,
+          hasImage: !!i.hasImage,
+          imageVersion: Number(i.imageVersion || 0),
         };
       })));
   };
   useEffect(() => { reloadMenu(); }, []);
 
   const [menuForm, setMenuForm] = useState(emptyMenuForm);
+  // Photo edit: undefined = keep the saved one, '' = remove it, a data URL = the new photo.
+  const [menuPhoto, setMenuPhoto] = useState<string | undefined>(undefined);
   const closeMenuForm = () => {
     setIsNewMenuItemModalOpen(false);
     setEditingMenuId(null);
     setMenuForm(emptyMenuForm);
+    setMenuPhoto(undefined);
   };
   const openCreateMenu = () => {
     setEditingMenuId(null);
     setMenuForm(emptyMenuForm);
+    setMenuPhoto(undefined);
     reloadInventoryItems();
     reloadRestaurantLocations();
     setIsNewMenuItemModalOpen(true);
   };
   const openEditMenu = (item: MenuItem) => {
     setEditingMenuId(item.id);
+    setMenuPhoto(undefined);
     reloadInventoryItems();
     reloadRestaurantLocations();
     setMenuForm({
@@ -234,6 +244,7 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
       allergens: menuForm.allergens || undefined,
       inventoryItemId: menuForm.inventoryItemId || null,
       stockLocationId: menuForm.inventoryItemId ? (menuForm.stockLocationId || null) : null,
+      ...(menuPhoto !== undefined ? { imageUrl: menuPhoto || null } : {}),
     };
     const res = await fetch('/api/fb/menu', {
       method: editingMenuId ? 'PATCH' : 'POST',
@@ -844,6 +855,16 @@ export default function FoodBeverageMenuInventory({ panel }: { panel?: 'menu' | 
               ) : null}
               <Input className="sm:col-span-2" label="Allergens" placeholder="Peanuts, fish, gluten" value={menuForm.allergens} onChange={(e) => setMenuForm({ ...menuForm, allergens: e.target.value })} />
               <Input className="sm:col-span-2" label="Description" placeholder="How it is served" value={menuForm.description} onChange={(e) => setMenuForm({ ...menuForm, description: e.target.value })} />
+              {(() => {
+                const saved = editingMenuId ? menuItems.find((m) => m.id === editingMenuId) : undefined;
+                return (
+                  <MenuPhotoPicker
+                    savedSrc={saved?.hasImage ? menuImageSrc(saved.id, saved.imageVersion) : null}
+                    value={menuPhoto}
+                    onChange={setMenuPhoto}
+                  />
+                );
+              })()}
             </div>
           </ModalBody>
           <ModalFooter>

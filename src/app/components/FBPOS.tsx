@@ -41,6 +41,7 @@ import { managerPinMatches } from '../lib/settings/managerPin';
 import { notifyError } from '../lib/notifications/notify';
 import { issueOrderIdentity, lineTicket, parseTicketTag } from '../lib/fb/ticketTag';
 import { useSession } from 'next-auth/react';
+import { menuImageSrc } from './fb/MenuPhotoPicker';
 import {
   ChefHat, ChevronDown, ChevronUp, ClipboardList, CreditCard, Minus, MoreHorizontal, Plus, Printer,
   Receipt, Search, Send, Trash2, UserRound, UtensilsCrossed, Wine,
@@ -64,6 +65,9 @@ interface MenuItem {
   route: 'kitchen' | 'bar';
   aliases?: string[];
   isPinned?: boolean;
+  /** A photo was uploaded in Menu & Inventory (shown only when the hotel turns menu photos on). */
+  hasImage?: boolean;
+  imageVersion?: number;
 }
 
 interface CartItem extends MenuItem {
@@ -153,11 +157,16 @@ export default function FBPOS({ onClose }: FBPOSProps) {
   // Hotel setting (Settings → Security): off by default — orders are then simply recorded under the
   // signed-in person, with no "Who's ordering?" step and no lock.
   const [waiterSwitchOn, setWaiterSwitchOn] = useState(false);
+  const [showMenuImages, setShowMenuImages] = useState(false);
   React.useEffect(() => {
     let cancelled = false;
     fetch('/api/settings/pos', { headers: fbTenantHeaders() })
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!cancelled) setWaiterSwitchOn(!!d?.policy?.waiterSwitch); })
+      .then((d) => {
+        if (cancelled) return;
+        setWaiterSwitchOn(!!d?.policy?.waiterSwitch);
+        setShowMenuImages(!!d?.policy?.showMenuImages);
+      })
       .catch(() => { /* keep it off */ });
     return () => { cancelled = true; };
   }, []);
@@ -396,6 +405,8 @@ export default function FBPOS({ onClose }: FBPOSProps) {
           venue: it.venue,
           aliases: it.aliases ? it.aliases.split(',').map((a: string) => a.trim()).filter(Boolean) : [],
           isPinned: !!it.isPinned,
+          hasImage: !!it.hasImage,
+          imageVersion: Number(it.imageVersion || 0),
           route: (it.route || (it.category?.toLowerCase().includes('drink') || it.category?.toLowerCase().includes('bever') ? 'bar' : 'kitchen')) as 'kitchen' | 'bar',
         }));
         if (mapped.length > 0) {
@@ -1644,8 +1655,11 @@ export default function FBPOS({ onClose }: FBPOSProps) {
                   {shownMenu.map(mi => (
                     <div key={mi.id} className="relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white transition hover:border-ghana-green/50 hover:shadow-md">
                       <button type="button" onClick={() => addToCart(mi)} className="flex flex-1 flex-col text-left" aria-label={`Add ${mi.name}, GH₵ ${mi.price.toFixed(2)}`}>
-                        <div className={`flex h-16 items-center justify-center md:h-20 ${mi.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
-                          {itemIcon(mi.route, 28)}
+                        <div className={`flex items-center justify-center overflow-hidden ${showMenuImages ? 'h-24 md:h-28' : 'h-16 md:h-20'} ${mi.route === 'bar' ? 'bg-sky-50 text-sky-500' : 'bg-amber-50 text-amber-600'}`}>
+                          {showMenuImages && mi.hasImage ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- small cached API image
+                            <img src={menuImageSrc(mi.id, mi.imageVersion)} alt="" loading="lazy" className="h-full w-full object-cover" />
+                          ) : itemIcon(mi.route, 28)}
                         </div>
                         <div className="flex flex-1 flex-col gap-0.5 p-2.5">
                           <span className="line-clamp-2 text-sm font-semibold leading-snug text-ghana-black">{mi.name}</span>
