@@ -2000,7 +2000,8 @@ const defaultSettings: SystemSettings = {
 
   security: {
     sessionTimeout: 30,
-    twoFactorAuth: true,
+    // Off until an admin turns it on — same default as the server (securityPolicy.ts).
+    twoFactorAuth: false,
     ipWhitelist: [],
     passwordPolicy: {
       minLength: 8,
@@ -2809,7 +2810,11 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
               });
               return;
             }
-            syncSecurityToApi(get().security);
+            // Nothing saved for this hotel yet: show the server's defaults rather than pushing
+            // whatever this browser has cached. Security rules are stored only when an admin
+            // changes them in Settings, so opening the app never turns on two-factor or tightens
+            // password rules by itself.
+            set({ security: { ...get().security, ...data.policy } });
           })
           .catch((e) => console.warn('[Settings] Failed to hydrate security policy:', e));
 
